@@ -1,7 +1,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from relay_server import app, _reset_state
+from relay_server import _reset_state, app
 
 
 @pytest.fixture(autouse=True)
