@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import uuid
 from collections import defaultdict
@@ -16,12 +17,59 @@ message_queues: dict[str, list[dict]] = defaultdict(list)
 participants: set[str] = set()
 locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
+MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
+MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
+
 
 def _reset_state():
     """Reset state between tests."""
     message_queues.clear()
     participants.clear()
     locks.clear()
+
+
+def _save_to_file():
+    """Save current state to JSON file."""
+    data = {
+        "messages": {k: list(v) for k, v in message_queues.items()},
+        "participants": sorted(participants),
+    }
+    with open(MESSAGES_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _load_from_file():
+    """Load state from JSON file if it exists."""
+    if not os.path.exists(MESSAGES_FILE):
+        return
+    with open(MESSAGES_FILE) as f:
+        data = json.load(f)
+    for recipient, msgs in data.get("messages", {}).items():
+        message_queues[recipient] = msgs
+    for p in data.get("participants", []):
+        participants.add(p)
+
+
+def _trim_messages():
+    """If total messages exceed MAX_MESSAGES, remove oldest across all queues."""
+    all_messages = []
+    for recipient, msgs in message_queues.items():
+        for msg in msgs:
+            all_messages.append((recipient, msg))
+
+    if len(all_messages) <= MAX_MESSAGES:
+        return
+
+    all_messages.sort(key=lambda x: x[1]["timestamp"])
+    to_remove = len(all_messages) - MAX_MESSAGES
+    remove_set = set()
+    for i in range(to_remove):
+        remove_set.add(all_messages[i][1]["id"])
+
+    for recipient in message_queues:
+        message_queues[recipient] = [
+            m for m in message_queues[recipient] if m["id"] not in remove_set
+        ]
 
 
 async def verify_auth(request: Request) -> None:
@@ -52,6 +100,8 @@ async def send_message(msg: SendMessageRequest):
     }
     async with locks[msg.to]:
         message_queues[msg.to].append(message)
+        _trim_messages()
+        _save_to_file()
     participants.add(msg.from_name)
     return {"id": message["id"], "timestamp": message["timestamp"]}
 
@@ -67,3 +117,15 @@ async def get_messages(recipient: str):
 @app.get("/participants", dependencies=[Depends(verify_auth)])
 async def list_participants_endpoint():
     return sorted(participants)
+
+
+@app.on_event("startup")
+async def startup():
+    _load_from_file()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("PORT", "8080"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

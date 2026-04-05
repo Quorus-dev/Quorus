@@ -1,7 +1,12 @@
+import asyncio
+import os
+import tempfile
+from unittest.mock import patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from relay_server import _reset_state, app
+from relay_server import _load_from_file, _reset_state, _save_to_file, app
 
 
 @pytest.fixture(autouse=True)
@@ -104,3 +109,61 @@ async def test_send_registers_participant(client: AsyncClient, auth_headers: dic
     resp = await client.get("/participants", headers=auth_headers)
     participants = resp.json()
     assert "charlie" in participants
+
+
+async def test_file_persistence_save_and_load(client: AsyncClient, auth_headers: dict):
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        filepath = f.name
+
+    with patch("relay_server.MESSAGES_FILE", filepath):
+        await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "persist me"},
+            headers=auth_headers,
+        )
+        _save_to_file()
+
+        _reset_state()
+        _load_from_file()
+
+        resp = await client.get("/messages/bob", headers=auth_headers)
+        messages = resp.json()
+        assert len(messages) == 1
+        assert messages[0]["content"] == "persist me"
+
+    os.unlink(filepath)
+
+
+async def test_message_cap_trims_oldest(client: AsyncClient, auth_headers: dict):
+    with patch("relay_server.MAX_MESSAGES", 5):
+        for i in range(7):
+            await client.post(
+                "/messages",
+                json={"from_name": "alice", "to": "bob", "content": f"msg-{i}"},
+                headers=auth_headers,
+            )
+
+        resp = await client.get("/messages/bob", headers=auth_headers)
+        messages = resp.json()
+        assert len(messages) == 5
+        assert messages[0]["content"] == "msg-2"
+        assert messages[-1]["content"] == "msg-6"
+
+
+async def test_concurrent_sends_no_data_loss(client: AsyncClient, auth_headers: dict):
+    """Send 20 messages concurrently to same recipient, verify none lost."""
+
+    async def send_one(i: int):
+        await client.post(
+            "/messages",
+            json={"from_name": f"sender-{i}", "to": "target", "content": f"msg-{i}"},
+            headers=auth_headers,
+        )
+
+    await asyncio.gather(*[send_one(i) for i in range(20)])
+
+    resp = await client.get("/messages/target", headers=auth_headers)
+    messages = resp.json()
+    assert len(messages) == 20
+    contents = {m["content"] for m in messages}
+    assert contents == {f"msg-{i}" for i in range(20)}
