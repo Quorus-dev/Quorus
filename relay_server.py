@@ -3,6 +3,7 @@ import json
 import os
 import uuid
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -10,7 +11,13 @@ from pydantic import BaseModel
 
 RELAY_SECRET = os.environ.get("RELAY_SECRET", "test-secret")
 
-app = FastAPI(title="Claude Tunnel Relay")
+@asynccontextmanager
+async def lifespan(app):
+    _load_from_file()
+    yield
+
+
+app = FastAPI(title="Claude Tunnel Relay", lifespan=lifespan)
 
 # In-memory state
 message_queues: dict[str, list[dict]] = defaultdict(list)
@@ -42,8 +49,11 @@ def _load_from_file():
     """Load state from JSON file if it exists."""
     if not os.path.exists(MESSAGES_FILE):
         return
-    with open(MESSAGES_FILE) as f:
-        data = json.load(f)
+    try:
+        with open(MESSAGES_FILE) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        return
     for recipient, msgs in data.get("messages", {}).items():
         message_queues[recipient] = msgs
     for p in data.get("participants", []):
@@ -100,9 +110,9 @@ async def send_message(msg: SendMessageRequest):
     }
     async with locks[msg.to]:
         message_queues[msg.to].append(message)
+        participants.add(msg.from_name)
         _trim_messages()
         _save_to_file()
-    participants.add(msg.from_name)
     return {"id": message["id"], "timestamp": message["timestamp"]}
 
 
@@ -117,11 +127,6 @@ async def get_messages(recipient: str):
 @app.get("/participants", dependencies=[Depends(verify_auth)])
 async def list_participants_endpoint():
     return sorted(participants)
-
-
-@app.on_event("startup")
-async def startup():
-    _load_from_file()
 
 
 if __name__ == "__main__":
