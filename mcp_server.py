@@ -5,11 +5,12 @@ from pathlib import Path
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-CONFIG_FILE = Path.home() / ".claude-tunnel.json"
+CONFIG_DIR = Path.home() / "claude-tunnel"
+CONFIG_FILE = CONFIG_DIR / "config.json"
 
 
 def _load_config() -> dict:
-    """Load config from ~/.claude-tunnel.json, falling back to env vars."""
+    """Load config from ~/claude-tunnel/config.json, falling back to env vars."""
     file_config = {}
     if CONFIG_FILE.exists():
         try:
