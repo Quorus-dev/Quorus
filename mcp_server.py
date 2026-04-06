@@ -1,11 +1,35 @@
+import json
 import os
+from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-RELAY_URL = os.environ.get("RELAY_URL", "http://localhost:8080")
-RELAY_SECRET = os.environ.get("RELAY_SECRET", "test-secret")
-INSTANCE_NAME = os.environ.get("INSTANCE_NAME", "default")
+CONFIG_FILE = Path.home() / ".claude-tunnel.json"
+
+
+def _load_config() -> dict:
+    """Load config from ~/.claude-tunnel.json, falling back to env vars."""
+    file_config = {}
+    if CONFIG_FILE.exists():
+        try:
+            file_config = json.loads(CONFIG_FILE.read_text())
+        except (json.JSONDecodeError, ValueError):
+            pass
+    def get(env_key: str, file_key: str, default: str) -> str:
+        return os.environ.get(env_key) or file_config.get(file_key, default)
+
+    return {
+        "relay_url": get("RELAY_URL", "relay_url", "http://localhost:8080"),
+        "relay_secret": get("RELAY_SECRET", "relay_secret", "test-secret"),
+        "instance_name": get("INSTANCE_NAME", "instance_name", "default"),
+    }
+
+
+_config = _load_config()
+RELAY_URL = _config["relay_url"]
+RELAY_SECRET = _config["relay_secret"]
+INSTANCE_NAME = _config["instance_name"]
 
 mcp = FastMCP("claude-tunnel")
 

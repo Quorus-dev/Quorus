@@ -33,25 +33,31 @@ Note the public URL (e.g., `https://abc123.ngrok.io`).
 
 ### 4. Configure Claude Code (both users)
 
-Add to your Claude Code MCP config (`.claude.json` or project settings):
+Each user needs `mcp_server.py` and the `mcp` + `httpx` packages installed (`pip install mcp httpx`).
 
-```json
-{
-  "mcpServers": {
-    "claude-tunnel": {
-      "command": "python",
-      "args": ["/absolute/path/to/mcp_server.py"],
-      "env": {
-        "RELAY_URL": "https://abc123.ngrok.io",
-        "RELAY_SECRET": "my-shared-secret",
-        "INSTANCE_NAME": "alice"
-      }
-    }
-  }
-}
+**Step 1: Write config file (`~/.claude-tunnel.json`):**
+
+```bash
+echo '{"relay_url": "https://your-tunnel-url", "relay_secret": "my-shared-secret", "instance_name": "alice"}' > ~/.claude-tunnel.json
 ```
 
-Replace `INSTANCE_NAME` with a unique name for each user (e.g., `"alice"` and `"bob"`).
+Replace `instance_name` with a unique name for each user (e.g., `"alice"` and `"bob"`).
+
+**Step 2: Add the MCP server (one-time):**
+
+```bash
+claude mcp add claude-tunnel -s user -- python /absolute/path/to/mcp_server.py
+```
+
+**Update the tunnel URL later** (e.g., when tunnel restarts):
+
+```bash
+echo '{"relay_url": "https://new-url", "relay_secret": "my-shared-secret", "instance_name": "alice"}' > ~/.claude-tunnel.json
+```
+
+No need to re-add the MCP server -- it reads `~/.claude-tunnel.json` on startup. Just restart Claude Code.
+
+Config is loaded with this priority: **env vars > ~/.claude-tunnel.json > defaults**.
 
 ### 5. Use in Claude Code
 
