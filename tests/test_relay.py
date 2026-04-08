@@ -363,3 +363,63 @@ async def test_no_wait_param_returns_immediately(client: AsyncClient, auth_heade
     resp = await client.get("/messages/nobody", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+async def test_register_webhook(client: AsyncClient, auth_headers: dict):
+    """Should register a webhook for an instance."""
+    resp = await client.post(
+        "/webhooks",
+        json={"instance_name": "bob", "callback_url": "http://localhost:9999/incoming"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "registered"
+
+
+async def test_delete_webhook(client: AsyncClient, auth_headers: dict):
+    """Should deregister a webhook."""
+    await client.post(
+        "/webhooks",
+        json={"instance_name": "bob", "callback_url": "http://localhost:9999/incoming"},
+        headers=auth_headers,
+    )
+    resp = await client.delete("/webhooks/bob", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "removed"
+
+
+async def test_delete_nonexistent_webhook(client: AsyncClient, auth_headers: dict):
+    """Deleting a non-existent webhook should still return 200."""
+    resp = await client.delete("/webhooks/nobody", headers=auth_headers)
+    assert resp.status_code == 200
+
+
+async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict):
+    """When a webhook is registered, sending a message should POST to the callback."""
+    from unittest.mock import AsyncMock, patch as mock_patch
+
+    # Register webhook
+    await client.post(
+        "/webhooks",
+        json={"instance_name": "bob", "callback_url": "http://localhost:9999/incoming"},
+        headers=auth_headers,
+    )
+
+    mock_response = AsyncMock()
+    mock_response.raise_for_status = lambda: None
+    mock_client_instance = AsyncMock()
+    mock_client_instance.post = AsyncMock(return_value=mock_response)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with mock_patch("relay_server.httpx.AsyncClient", return_value=mock_client_instance):
+        await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "push this"},
+            headers=auth_headers,
+        )
+
+    mock_client_instance.post.assert_called_once()
+    call_args = mock_client_instance.post.call_args
+    assert call_args[0][0] == "http://localhost:9999/incoming"
+    assert call_args[1]["json"]["content"] == "push this"

@@ -8,6 +8,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
@@ -35,6 +36,7 @@ message_queues: dict[str, list[dict]] = defaultdict(list)
 participants: set[str] = set()
 locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 message_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
+webhooks: dict[str, str] = {}  # instance_name -> callback_url
 
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
@@ -57,6 +59,7 @@ def _reset_state():
     participants.clear()
     locks.clear()
     message_events.clear()
+    webhooks.clear()
     analytics["total_sent"] = 0
     analytics["total_delivered"] = 0
     analytics["per_participant"].clear()
@@ -169,9 +172,28 @@ class SendMessageRequest(BaseModel):
     content: str
 
 
+class RegisterWebhookRequest(BaseModel):
+    instance_name: str
+    callback_url: str
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+async def _notify_webhook(recipient: str, message: dict):
+    """Fire webhook notification for recipient, if registered. Failures are logged and ignored."""
+    callback_url = webhooks.get(recipient)
+    if not callback_url:
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(callback_url, json=message, timeout=5)
+            resp.raise_for_status()
+            logger.info("Webhook delivered to %s for %s", callback_url, recipient)
+    except Exception:
+        logger.warning("Webhook delivery failed for %s at %s", recipient, callback_url)
 
 
 @app.post("/messages", dependencies=[Depends(verify_auth)])
@@ -213,6 +235,7 @@ async def send_message(msg: SendMessageRequest):
             "Message chunked into %d parts (%s -> %s, group %s)",
             chunk_total, msg.from_name, msg.to, chunk_group,
         )
+        await _notify_webhook(msg.to, messages[0])
         return {"id": messages[0]["id"], "timestamp": timestamp}
     else:
         message = {
@@ -231,6 +254,7 @@ async def send_message(msg: SendMessageRequest):
         message_events[msg.to].set()
         message_events[msg.to].clear()
         logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
+        await _notify_webhook(msg.to, message)
         return {"id": message["id"], "timestamp": message["timestamp"]}
 
 
@@ -301,6 +325,20 @@ async def get_messages(recipient: str, wait: int = 0):
 @app.get("/participants", dependencies=[Depends(verify_auth)])
 async def list_participants_endpoint():
     return sorted(participants)
+
+
+@app.post("/webhooks", dependencies=[Depends(verify_auth)])
+async def register_webhook(req: RegisterWebhookRequest):
+    webhooks[req.instance_name] = req.callback_url
+    logger.info("Webhook registered: %s -> %s", req.instance_name, req.callback_url)
+    return {"status": "registered"}
+
+
+@app.delete("/webhooks/{instance_name}", dependencies=[Depends(verify_auth)])
+async def delete_webhook(instance_name: str):
+    webhooks.pop(instance_name, None)
+    logger.info("Webhook removed: %s", instance_name)
+    return {"status": "removed"}
 
 
 @app.get("/analytics", dependencies=[Depends(verify_auth)])
