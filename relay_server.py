@@ -36,6 +36,7 @@ locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
+MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 
 
 def _reset_state():
@@ -118,29 +119,102 @@ async def health():
 
 @app.post("/messages", dependencies=[Depends(verify_auth)])
 async def send_message(msg: SendMessageRequest):
-    message = {
-        "id": str(uuid.uuid4()),
-        "from_name": msg.from_name,
-        "to": msg.to,
-        "content": msg.content,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    async with locks[msg.to]:
-        message_queues[msg.to].append(message)
-        participants.add(msg.from_name)
-        _trim_messages()
-        _save_to_file()
-    logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
-    return {"id": message["id"], "timestamp": message["timestamp"]}
+    timestamp = datetime.now(timezone.utc).isoformat()
+    content = msg.content
+
+    if len(content.encode("utf-8")) > MAX_MESSAGE_SIZE:
+        chunk_group = str(uuid.uuid4())
+        chunks = []
+        encoded = content.encode("utf-8")
+        for i in range(0, len(encoded), MAX_MESSAGE_SIZE):
+            chunk_bytes = encoded[i : i + MAX_MESSAGE_SIZE]
+            chunks.append(chunk_bytes.decode("utf-8", errors="replace"))
+        chunk_total = len(chunks)
+
+        messages = []
+        for idx, chunk_content in enumerate(chunks):
+            messages.append({
+                "id": str(uuid.uuid4()),
+                "from_name": msg.from_name,
+                "to": msg.to,
+                "content": chunk_content,
+                "timestamp": timestamp,
+                "chunk_group": chunk_group,
+                "chunk_index": idx,
+                "chunk_total": chunk_total,
+            })
+
+        async with locks[msg.to]:
+            message_queues[msg.to].extend(messages)
+            participants.add(msg.from_name)
+            _trim_messages()
+            _save_to_file()
+        logger.info(
+            "Message chunked into %d parts (%s -> %s, group %s)",
+            chunk_total, msg.from_name, msg.to, chunk_group,
+        )
+        return {"id": messages[0]["id"], "timestamp": timestamp}
+    else:
+        message = {
+            "id": str(uuid.uuid4()),
+            "from_name": msg.from_name,
+            "to": msg.to,
+            "content": content,
+            "timestamp": timestamp,
+        }
+        async with locks[msg.to]:
+            message_queues[msg.to].append(message)
+            participants.add(msg.from_name)
+            _trim_messages()
+            _save_to_file()
+        logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
+        return {"id": message["id"], "timestamp": message["timestamp"]}
+
+
+def _reassemble_chunks(messages: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Separate messages into ready (reassembled + non-chunked) and held-back (incomplete chunks).
+
+    Returns (ready_messages, held_back_messages).
+    """
+    non_chunked = []
+    chunk_groups: dict[str, list[dict]] = defaultdict(list)
+
+    for msg in messages:
+        if "chunk_group" in msg:
+            chunk_groups[msg["chunk_group"]].append(msg)
+        else:
+            non_chunked.append(msg)
+
+    ready = list(non_chunked)
+    held_back = []
+
+    for group_id, chunks in chunk_groups.items():
+        expected = chunks[0]["chunk_total"]
+        if len(chunks) == expected:
+            chunks.sort(key=lambda c: c["chunk_index"])
+            reassembled = {
+                "id": chunks[0]["id"],
+                "from_name": chunks[0]["from_name"],
+                "to": chunks[0]["to"],
+                "content": "".join(c["content"] for c in chunks),
+                "timestamp": chunks[0]["timestamp"],
+            }
+            ready.append(reassembled)
+        else:
+            held_back.extend(chunks)
+
+    ready.sort(key=lambda m: m["timestamp"])
+    return ready, held_back
 
 
 @app.get("/messages/{recipient}", dependencies=[Depends(verify_auth)])
 async def get_messages(recipient: str):
     async with locks[recipient]:
-        messages = list(message_queues[recipient])
-        message_queues[recipient].clear()
-    logger.info("Fetched %d messages for %s", len(messages), recipient)
-    return messages
+        all_msgs = list(message_queues[recipient])
+        ready, held_back = _reassemble_chunks(all_msgs)
+        message_queues[recipient] = held_back
+    logger.info("Fetched %d messages for %s (%d chunks held back)", len(ready), recipient, len(held_back))
+    return ready
 
 
 @app.get("/participants", dependencies=[Depends(verify_auth)])

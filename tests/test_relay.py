@@ -167,3 +167,72 @@ async def test_concurrent_sends_no_data_loss(client: AsyncClient, auth_headers: 
     assert len(messages) == 20
     contents = {m["content"] for m in messages}
     assert contents == {f"msg-{i}" for i in range(20)}
+
+
+async def test_small_message_has_no_chunk_fields(client: AsyncClient, auth_headers: dict):
+    """Messages under the size limit should have no chunk metadata."""
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "small"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    msg = resp.json()[0]
+    assert "chunk_group" not in msg
+
+
+async def test_large_message_is_chunked_and_reassembled(client: AsyncClient, auth_headers: dict):
+    """A message exceeding MAX_MESSAGE_SIZE should be chunked on send and reassembled on fetch."""
+    large_content = "x" * 200
+
+    with patch("relay_server.MAX_MESSAGE_SIZE", 100):
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": large_content},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        resp = await client.get("/messages/bob", headers=auth_headers)
+        messages = resp.json()
+        assert len(messages) == 1
+        assert messages[0]["content"] == large_content
+        assert "chunk_group" not in messages[0]
+
+
+async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: dict):
+    """If not all chunks have arrived, they should not be returned."""
+    from relay_server import locks, message_queues
+
+    async with locks["bob"]:
+        message_queues["bob"].append({
+            "id": "chunk-1",
+            "from_name": "alice",
+            "to": "bob",
+            "content": "part1",
+            "timestamp": "2026-04-08T00:00:00Z",
+            "chunk_group": "group-1",
+            "chunk_index": 0,
+            "chunk_total": 2,
+        })
+
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    messages = resp.json()
+    assert len(messages) == 0
+
+    async with locks["bob"]:
+        message_queues["bob"].append({
+            "id": "chunk-2",
+            "from_name": "alice",
+            "to": "bob",
+            "content": "part2",
+            "timestamp": "2026-04-08T00:00:01Z",
+            "chunk_group": "group-1",
+            "chunk_index": 1,
+            "chunk_total": 2,
+        })
+
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    messages = resp.json()
+    assert len(messages) == 1
+    assert messages[0]["content"] == "part1part2"
