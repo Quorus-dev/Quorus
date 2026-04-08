@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+import time
 from unittest.mock import patch
 
 import pytest
@@ -298,3 +299,63 @@ async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: di
     messages = resp.json()
     assert len(messages) == 1
     assert messages[0]["content"] == "part1part2"
+
+
+async def test_long_poll_returns_immediately_with_messages(client: AsyncClient, auth_headers: dict):
+    """Long-poll should return immediately if messages are already queued."""
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hi"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/messages/bob?wait=10", headers=auth_headers)
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+
+async def test_long_poll_returns_empty_on_timeout(client: AsyncClient, auth_headers: dict):
+    """Long-poll should return empty list after timeout if no messages arrive."""
+    resp = await client.get("/messages/nobody?wait=1", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_long_poll_wakes_on_new_message(client: AsyncClient, auth_headers: dict):
+    """Long-poll should return as soon as a message arrives."""
+
+    async def poll():
+        return await client.get("/messages/bob?wait=10", headers=auth_headers)
+
+    async def send_delayed():
+        await asyncio.sleep(0.5)
+        await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "wake up"},
+            headers=auth_headers,
+        )
+
+    start = time.monotonic()
+    poll_task = asyncio.create_task(poll())
+    send_task = asyncio.create_task(send_delayed())
+
+    resp = await poll_task
+    await send_task
+    elapsed = time.monotonic() - start
+
+    assert len(resp.json()) == 1
+    assert resp.json()[0]["content"] == "wake up"
+    assert elapsed < 5
+
+
+async def test_long_poll_clamps_max_wait(client: AsyncClient, auth_headers: dict):
+    """Wait values above 60 should be clamped to 60."""
+    resp = await client.get("/messages/nobody?wait=120", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_no_wait_param_returns_immediately(client: AsyncClient, auth_headers: dict):
+    """Without wait param, should return immediately even if empty."""
+    resp = await client.get("/messages/nobody", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []

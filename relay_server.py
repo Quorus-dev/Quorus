@@ -34,6 +34,7 @@ app = FastAPI(title="Claude Tunnel Relay", lifespan=lifespan)
 message_queues: dict[str, list[dict]] = defaultdict(list)
 participants: set[str] = set()
 locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+message_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
 
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
@@ -55,6 +56,7 @@ def _reset_state():
     message_queues.clear()
     participants.clear()
     locks.clear()
+    message_events.clear()
     analytics["total_sent"] = 0
     analytics["total_delivered"] = 0
     analytics["per_participant"].clear()
@@ -205,6 +207,8 @@ async def send_message(msg: SendMessageRequest):
             _track_send(msg.from_name)
             _trim_messages()
             _save_to_file()
+        message_events[msg.to].set()
+        message_events[msg.to].clear()
         logger.info(
             "Message chunked into %d parts (%s -> %s, group %s)",
             chunk_total, msg.from_name, msg.to, chunk_group,
@@ -224,6 +228,8 @@ async def send_message(msg: SendMessageRequest):
             _track_send(msg.from_name)
             _trim_messages()
             _save_to_file()
+        message_events[msg.to].set()
+        message_events[msg.to].clear()
         logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
         return {"id": message["id"], "timestamp": message["timestamp"]}
 
@@ -265,13 +271,30 @@ def _reassemble_chunks(messages: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 @app.get("/messages/{recipient}", dependencies=[Depends(verify_auth)])
-async def get_messages(recipient: str):
+async def get_messages(recipient: str, wait: int = 0):
+    wait = min(max(wait, 0), 60)  # Clamp to 0-60
+
     async with locks[recipient]:
         all_msgs = list(message_queues[recipient])
         ready, held_back = _reassemble_chunks(all_msgs)
         message_queues[recipient] = held_back
+
+    if not ready and wait > 0:
+        try:
+            await asyncio.wait_for(message_events[recipient].wait(), timeout=wait)
+        except asyncio.TimeoutError:
+            pass
+        # Re-check after waking
+        async with locks[recipient]:
+            all_msgs = list(message_queues[recipient])
+            ready, held_back = _reassemble_chunks(all_msgs)
+            message_queues[recipient] = held_back
+
     _track_delivery(recipient, len(ready))
-    logger.info("Fetched %d messages for %s (%d chunks held back)", len(ready), recipient, len(held_back))
+    logger.info(
+        "Fetched %d messages for %s (%d chunks held back)",
+        len(ready), recipient, len(held_back),
+    )
     return ready
 
 
