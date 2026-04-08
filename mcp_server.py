@@ -1,9 +1,17 @@
 import json
+import logging
 import os
 from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("claude_tunnel.mcp")
 
 CONFIG_DIR = Path.home() / "claude-tunnel"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -32,6 +40,12 @@ RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
 INSTANCE_NAME = _config["instance_name"]
 
+masked_secret = RELAY_SECRET[:4] + "***" if len(RELAY_SECRET) > 4 else "***"
+logger.info(
+    "Config loaded: relay_url=%s, instance=%s, secret=%s",
+    RELAY_URL, INSTANCE_NAME, masked_secret,
+)
+
 mcp = FastMCP("claude-tunnel")
 
 
@@ -50,10 +64,13 @@ async def _send_message(to: str, content: str) -> str:
             )
             resp.raise_for_status()
             data = resp.json()
+            logger.info("Sent message to %s (id: %s)", to, data["id"])
             return f"Message sent (id: {data['id']})"
     except httpx.ConnectError:
+        logger.warning("Cannot reach relay at %s", RELAY_URL)
         return f"Error: Cannot reach relay server at {RELAY_URL}"
     except httpx.HTTPStatusError as e:
+        logger.warning("Relay returned %d: %s", e.response.status_code, e.response.text)
         return f"Error: Relay returned {e.response.status_code}: {e.response.text}"
 
 
@@ -67,6 +84,7 @@ async def _check_messages() -> str:
             )
             resp.raise_for_status()
             messages = resp.json()
+            logger.info("Received %d messages", len(messages))
             if not messages:
                 return "No new messages."
             lines = []
@@ -74,8 +92,10 @@ async def _check_messages() -> str:
                 lines.append(f"[{msg['timestamp']}] {msg['from_name']}: {msg['content']}")
             return "\n".join(lines)
     except httpx.ConnectError:
+        logger.warning("Cannot reach relay at %s", RELAY_URL)
         return f"Error: Cannot reach relay server at {RELAY_URL}"
     except httpx.HTTPStatusError as e:
+        logger.warning("Relay returned %d: %s", e.response.status_code, e.response.text)
         return f"Error: Relay returned {e.response.status_code}: {e.response.text}"
 
 
@@ -89,12 +109,15 @@ async def _list_participants() -> str:
             )
             resp.raise_for_status()
             participants = resp.json()
+            logger.info("Listed %d participants", len(participants))
             if not participants:
                 return "No participants yet."
             return "Participants: " + ", ".join(participants)
     except httpx.ConnectError:
+        logger.warning("Cannot reach relay at %s", RELAY_URL)
         return f"Error: Cannot reach relay server at {RELAY_URL}"
     except httpx.HTTPStatusError as e:
+        logger.warning("Relay returned %d: %s", e.response.status_code, e.response.text)
         return f"Error: Relay returned {e.response.status_code}: {e.response.text}"
 
 
