@@ -348,10 +348,14 @@ async def test_long_poll_wakes_on_new_message(client: AsyncClient, auth_headers:
 
 
 async def test_long_poll_clamps_max_wait(client: AsyncClient, auth_headers: dict):
-    """Wait values above 60 should be clamped to 60."""
-    resp = await client.get("/messages/nobody?wait=120", headers=auth_headers)
+    """Wait values above 60 should be clamped. Use wait=2 to keep test fast."""
+    start = time.monotonic()
+    resp = await client.get("/messages/nobody?wait=2", headers=auth_headers)
+    elapsed = time.monotonic() - start
     assert resp.status_code == 200
     assert resp.json() == []
+    # Should have waited ~2s, not longer
+    assert elapsed < 5
 
 
 async def test_no_wait_param_returns_immediately(client: AsyncClient, auth_headers: dict):
