@@ -59,8 +59,9 @@ async def test_check_messages_calls_relay():
         result = await mcp_server._check_messages()
 
         mock_client.get.assert_called_once_with(
-            "http://relay:8080/messages/alice",
+            "http://relay:8080/messages/alice?wait=30",
             headers={"Authorization": "Bearer secret"},
+            timeout=35,
         )
         assert "bob" in result
 
@@ -90,3 +91,33 @@ async def test_send_message_relay_unreachable():
     with patch("mcp_server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp_server._send_message("bob", "hello")
         assert "error" in result.lower() or "cannot" in result.lower()
+
+
+async def test_webhook_receiver_handles_incoming():
+    """The local webhook receiver should accept POST /incoming and queue it."""
+    from mcp_server import _create_webhook_app, _incoming_queue
+
+    # Clear the queue
+    while not _incoming_queue.empty():
+        _incoming_queue.get_nowait()
+
+    webhook_app = _create_webhook_app()
+
+    from httpx import ASGITransport, AsyncClient
+
+    transport = ASGITransport(app=webhook_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/incoming",
+            json={
+                "id": "msg-1",
+                "from_name": "alice",
+                "content": "pushed",
+                "timestamp": "2026-04-08T12:00:00Z",
+            },
+        )
+        assert resp.status_code == 200
+
+    msg = _incoming_queue.get_nowait()
+    assert msg["from_name"] == "alice"
+    assert msg["content"] == "pushed"

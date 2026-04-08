@@ -1,9 +1,15 @@
+import asyncio
 import json
 import logging
 import os
+import queue
+import socket
+import threading
 from pathlib import Path
 
 import httpx
+import uvicorn
+from fastapi import FastAPI as WebhookFastAPI
 from mcp.server.fastmcp import FastMCP
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -46,6 +52,103 @@ logger.info(
     RELAY_URL, INSTANCE_NAME, masked_secret,
 )
 
+# Queue for incoming webhook-pushed messages
+_incoming_queue: queue.Queue = queue.Queue()
+
+
+def _create_webhook_app() -> WebhookFastAPI:
+    """Create the local webhook receiver FastAPI app."""
+    webhook_app = WebhookFastAPI()
+
+    @webhook_app.post("/incoming")
+    async def incoming(request: dict):
+        _incoming_queue.put(request)
+        logger.info("Received push notification from %s", request.get("from_name", "unknown"))
+        return {"status": "received"}
+
+    return webhook_app
+
+
+def _find_free_port() -> int:
+    """Find a free port on localhost."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _start_webhook_server() -> int:
+    """Start the local webhook HTTP server in a background thread. Returns the port."""
+    port = _find_free_port()
+    webhook_app = _create_webhook_app()
+
+    def run():
+        uvicorn.run(webhook_app, host="127.0.0.1", port=port, log_level="warning")
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    logger.info("Webhook receiver started on 127.0.0.1:%d", port)
+    return port
+
+
+async def _register_webhook(port: int):
+    """Register this instance's webhook with the relay."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{RELAY_URL}/webhooks",
+                json={
+                    "instance_name": INSTANCE_NAME,
+                    "callback_url": f"http://127.0.0.1:{port}/incoming",
+                },
+                headers=_auth_headers(),
+            )
+            resp.raise_for_status()
+            logger.info("Webhook registered with relay")
+    except Exception:
+        logger.warning("Failed to register webhook with relay - falling back to polling")
+
+
+async def _deregister_webhook():
+    """Deregister this instance's webhook from the relay."""
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.delete(
+                f"{RELAY_URL}/webhooks/{INSTANCE_NAME}",
+                headers=_auth_headers(),
+            )
+            logger.info("Webhook deregistered from relay")
+    except Exception:
+        logger.warning("Failed to deregister webhook")
+
+
+_mcp_session = None  # Set when MCP server starts
+
+
+async def _channel_notify(msg: dict):
+    """Send a channel notification to Claude Code."""
+    if _mcp_session is None:
+        return
+    try:
+        formatted = f"[{msg.get('timestamp', '')}] {msg.get('from_name', 'unknown')}: {msg.get('content', '')}"
+        await _mcp_session.send_notification(
+            method="notifications/claude/channel",
+            params={"channel": "claude-tunnel", "message": formatted},
+        )
+        logger.info("Channel notification sent for message from %s", msg.get("from_name"))
+    except Exception:
+        logger.warning("Failed to send channel notification")
+
+
+async def _poll_incoming_queue():
+    """Background task to drain the incoming queue and send channel notifications."""
+    while True:
+        try:
+            msg = _incoming_queue.get_nowait()
+            await _channel_notify(msg)
+        except queue.Empty:
+            await asyncio.sleep(0.1)
+
+
 mcp = FastMCP("claude-tunnel")
 
 
@@ -79,8 +182,9 @@ async def _check_messages() -> str:
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{RELAY_URL}/messages/{INSTANCE_NAME}",
+                f"{RELAY_URL}/messages/{INSTANCE_NAME}?wait=30",
                 headers=_auth_headers(),
+                timeout=35,
             )
             resp.raise_for_status()
             messages = resp.json()
