@@ -59,6 +59,14 @@ async def test_two_instances_conversation(client: AsyncClient):
     assert "alice" in participants
     assert "bob" in participants
 
+    # Analytics should reflect the conversation
+    resp = await client.get("/analytics", headers=HEADERS)
+    data = resp.json()
+    assert data["total_messages_sent"] == 2
+    assert data["total_messages_delivered"] == 2
+    assert "alice" in data["participants"]
+    assert "bob" in data["participants"]
+
     # No more messages for either
     resp = await client.get("/messages/alice", headers=HEADERS)
     assert resp.json() == []

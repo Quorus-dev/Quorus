@@ -148,7 +148,10 @@ def _trim_messages():
 
     all_messages.sort(key=lambda x: x[1]["timestamp"])
     to_remove = len(all_messages) - MAX_MESSAGES
-    logger.info("Trimming %d oldest messages (total %d > cap %d)", to_remove, len(all_messages), MAX_MESSAGES)
+    logger.info(
+        "Trimming %d oldest messages (total %d > cap %d)",
+        to_remove, len(all_messages), MAX_MESSAGES,
+    )
     remove_set = set()
     for i in range(to_remove):
         remove_set.add(all_messages[i][1]["id"])

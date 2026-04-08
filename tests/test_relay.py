@@ -396,7 +396,8 @@ async def test_delete_nonexistent_webhook(client: AsyncClient, auth_headers: dic
 
 async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict):
     """When a webhook is registered, sending a message should POST to the callback."""
-    from unittest.mock import AsyncMock, patch as mock_patch
+    from unittest.mock import AsyncMock
+    from unittest.mock import patch as mock_patch
 
     # Register webhook
     await client.post(

@@ -129,7 +129,10 @@ async def _channel_notify(msg: dict):
     if _mcp_session is None:
         return
     try:
-        formatted = f"[{msg.get('timestamp', '')}] {msg.get('from_name', 'unknown')}: {msg.get('content', '')}"
+        ts = msg.get("timestamp", "")
+        sender = msg.get("from_name", "unknown")
+        content = msg.get("content", "")
+        formatted = f"[{ts}] {sender}: {content}"
         await _mcp_session.send_notification(
             method="notifications/claude/channel",
             params={"channel": "claude-tunnel", "message": formatted},
