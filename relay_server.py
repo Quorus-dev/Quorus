@@ -2,10 +2,11 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
@@ -38,12 +39,55 @@ MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 
+# Analytics state
+analytics: dict = {
+    "total_sent": 0,
+    "total_delivered": 0,
+    "per_participant": {},
+    "hourly_volume": {},
+}
+_start_time = time.time()
+
 
 def _reset_state():
     """Reset state between tests."""
+    global _start_time
     message_queues.clear()
     participants.clear()
     locks.clear()
+    analytics["total_sent"] = 0
+    analytics["total_delivered"] = 0
+    analytics["per_participant"].clear()
+    analytics["hourly_volume"].clear()
+    _start_time = time.time()
+
+
+def _track_send(sender: str):
+    """Update analytics counters for a sent message."""
+    analytics["total_sent"] += 1
+    if sender not in analytics["per_participant"]:
+        analytics["per_participant"][sender] = {"sent": 0, "received": 0}
+    analytics["per_participant"][sender]["sent"] += 1
+    hour_key = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
+    analytics["hourly_volume"][hour_key] = analytics["hourly_volume"].get(hour_key, 0) + 1
+
+
+def _track_delivery(recipient: str, count: int):
+    """Update analytics counters for delivered messages."""
+    if count == 0:
+        return
+    analytics["total_delivered"] += count
+    if recipient not in analytics["per_participant"]:
+        analytics["per_participant"][recipient] = {"sent": 0, "received": 0}
+    analytics["per_participant"][recipient]["received"] += count
+
+
+def _prune_hourly_volume():
+    """Remove hourly volume entries older than 72 hours."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+    analytics["hourly_volume"] = {
+        k: v for k, v in analytics["hourly_volume"].items() if k >= cutoff
+    }
 
 
 def _save_to_file():
@@ -51,6 +95,12 @@ def _save_to_file():
     data = {
         "messages": {k: list(v) for k, v in message_queues.items()},
         "participants": sorted(participants),
+        "analytics": {
+            "total_sent": analytics["total_sent"],
+            "total_delivered": analytics["total_delivered"],
+            "per_participant": analytics["per_participant"],
+            "hourly_volume": analytics["hourly_volume"],
+        },
     }
     try:
         with open(MESSAGES_FILE, "w") as f:
@@ -73,6 +123,11 @@ def _load_from_file():
         message_queues[recipient] = msgs
     for p in data.get("participants", []):
         participants.add(p)
+    saved_analytics = data.get("analytics", {})
+    analytics["total_sent"] = saved_analytics.get("total_sent", 0)
+    analytics["total_delivered"] = saved_analytics.get("total_delivered", 0)
+    analytics["per_participant"] = saved_analytics.get("per_participant", {})
+    analytics["hourly_volume"] = saved_analytics.get("hourly_volume", {})
     logger.info("Loaded state from %s", MESSAGES_FILE)
 
 
@@ -147,6 +202,7 @@ async def send_message(msg: SendMessageRequest):
         async with locks[msg.to]:
             message_queues[msg.to].extend(messages)
             participants.add(msg.from_name)
+            _track_send(msg.from_name)
             _trim_messages()
             _save_to_file()
         logger.info(
@@ -165,6 +221,7 @@ async def send_message(msg: SendMessageRequest):
         async with locks[msg.to]:
             message_queues[msg.to].append(message)
             participants.add(msg.from_name)
+            _track_send(msg.from_name)
             _trim_messages()
             _save_to_file()
         logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
@@ -213,6 +270,7 @@ async def get_messages(recipient: str):
         all_msgs = list(message_queues[recipient])
         ready, held_back = _reassemble_chunks(all_msgs)
         message_queues[recipient] = held_back
+    _track_delivery(recipient, len(ready))
     logger.info("Fetched %d messages for %s (%d chunks held back)", len(ready), recipient, len(held_back))
     return ready
 
@@ -220,6 +278,24 @@ async def get_messages(recipient: str):
 @app.get("/participants", dependencies=[Depends(verify_auth)])
 async def list_participants_endpoint():
     return sorted(participants)
+
+
+@app.get("/analytics", dependencies=[Depends(verify_auth)])
+async def get_analytics():
+    _prune_hourly_volume()
+    pending = sum(len(msgs) for msgs in message_queues.values())
+    hourly = [
+        {"hour": k, "count": v}
+        for k, v in sorted(analytics["hourly_volume"].items())
+    ]
+    return {
+        "total_messages_sent": analytics["total_sent"],
+        "total_messages_delivered": analytics["total_delivered"],
+        "messages_pending": pending,
+        "participants": analytics["per_participant"],
+        "hourly_volume": hourly,
+        "uptime_seconds": round(time.time() - _start_time),
+    }
 
 
 if __name__ == "__main__":

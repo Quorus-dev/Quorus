@@ -200,6 +200,68 @@ async def test_large_message_is_chunked_and_reassembled(client: AsyncClient, aut
         assert "chunk_group" not in messages[0]
 
 
+async def test_analytics_empty(client: AsyncClient, auth_headers: dict):
+    """Analytics endpoint should return zeros when no messages have been sent."""
+    resp = await client.get("/analytics", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_messages_sent"] == 0
+    assert data["total_messages_delivered"] == 0
+    assert data["messages_pending"] == 0
+    assert data["participants"] == {}
+    assert isinstance(data["hourly_volume"], list)
+    assert "uptime_seconds" in data
+
+
+async def test_analytics_after_send_and_receive(client: AsyncClient, auth_headers: dict):
+    """Analytics should track sends and deliveries."""
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hi"},
+        headers=auth_headers,
+    )
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hello"},
+        headers=auth_headers,
+    )
+
+    resp = await client.get("/analytics", headers=auth_headers)
+    data = resp.json()
+    assert data["total_messages_sent"] == 2
+    assert data["total_messages_delivered"] == 0
+    assert data["messages_pending"] == 2
+    assert data["participants"]["alice"]["sent"] == 2
+
+    # Now bob fetches
+    await client.get("/messages/bob", headers=auth_headers)
+
+    resp = await client.get("/analytics", headers=auth_headers)
+    data = resp.json()
+    assert data["total_messages_delivered"] == 2
+    assert data["messages_pending"] == 0
+    assert data["participants"]["bob"]["received"] == 2
+
+
+async def test_analytics_hourly_volume(client: AsyncClient, auth_headers: dict):
+    """Analytics should track hourly message volume."""
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hi"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/analytics", headers=auth_headers)
+    data = resp.json()
+    assert len(data["hourly_volume"]) >= 1
+    assert data["hourly_volume"][0]["count"] >= 1
+
+
+async def test_analytics_requires_auth(client: AsyncClient):
+    """Analytics endpoint should require auth."""
+    resp = await client.get("/analytics")
+    assert resp.status_code == 401
+
+
 async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: dict):
     """If not all chunks have arrived, they should not be returned."""
     from relay_server import locks, message_queues
