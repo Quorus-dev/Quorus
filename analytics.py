@@ -1,25 +1,12 @@
-"""CLI tool for viewing Claude Tunnel analytics in the terminal."""
+"""CLI tool for viewing MCP Tunnel analytics in the terminal."""
 
-import json
 import sys
-from pathlib import Path
 
 import httpx
 from rich.console import Console
 from rich.table import Table
 
-CONFIG_DIR = Path.home() / "claude-tunnel"
-CONFIG_FILE = CONFIG_DIR / "config.json"
-
-
-def load_config() -> dict:
-    """Load config from ~/claude-tunnel/config.json."""
-    if CONFIG_FILE.exists():
-        try:
-            return json.loads(CONFIG_FILE.read_text())
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return {}
+from tunnel_config import load_config
 
 
 def fetch_analytics(relay_url: str, relay_secret: str) -> dict:

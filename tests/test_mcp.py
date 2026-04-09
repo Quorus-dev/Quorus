@@ -13,8 +13,13 @@ def configure_mcp():
         patch.object(mcp_server, "RELAY_URL", "http://relay:8080"),
         patch.object(mcp_server, "RELAY_SECRET", "secret"),
         patch.object(mcp_server, "INSTANCE_NAME", "alice"),
+        patch.object(mcp_server, "ENABLE_BACKGROUND_POLLING", False),
+        patch.object(mcp_server, "PUSH_NOTIFICATION_METHOD", None),
+        patch.object(mcp_server, "PUSH_NOTIFICATION_CHANNEL", "mcp-tunnel"),
     ):
+        mcp_server._reset_runtime_state()
         yield
+        mcp_server._reset_runtime_state()
 
 
 def _make_mock_client(mock_method: str, return_value):
@@ -59,11 +64,31 @@ async def test_check_messages_calls_relay():
         result = await mcp_server._check_messages()
 
         mock_client.get.assert_called_once_with(
-            "http://relay:8080/messages/alice?wait=30",
+            "http://relay:8080/messages/alice",
+            params={"wait": 30},
             headers={"Authorization": "Bearer secret"},
             timeout=35,
         )
         assert "bob" in result
+
+
+async def test_check_messages_uses_nonblocking_fetch_when_background_polling_enabled():
+    """Manual checks should not long-poll behind the background poller."""
+    mock_client = _make_mock_client("get", [])
+
+    with (
+        patch.object(mcp_server, "ENABLE_BACKGROUND_POLLING", True),
+        patch("mcp_server.httpx.AsyncClient", return_value=mock_client),
+    ):
+        result = await mcp_server._check_messages()
+
+    mock_client.get.assert_called_once_with(
+        "http://relay:8080/messages/alice",
+        params={"wait": 0},
+        headers={"Authorization": "Bearer secret"},
+        timeout=10,
+    )
+    assert result == "No new messages."
 
 
 async def test_list_participants_calls_relay():
@@ -93,31 +118,45 @@ async def test_send_message_relay_unreachable():
         assert "error" in result.lower() or "cannot" in result.lower()
 
 
-async def test_webhook_receiver_handles_incoming():
-    """The local webhook receiver should accept POST /incoming and queue it."""
-    from mcp_server import _create_webhook_app, _incoming_queue
+async def test_check_messages_prefers_local_buffer():
+    """Buffered channel messages should be returned before hitting the relay."""
+    await mcp_server._append_pending_messages([
+        {
+            "id": "msg-1",
+            "from_name": "alice",
+            "content": "pushed",
+            "timestamp": "2026-04-08T12:00:00Z",
+        }
+    ])
 
-    # Clear the queue
-    while not _incoming_queue.empty():
-        _incoming_queue.get_nowait()
+    mock_client = _make_mock_client("get", [])
+    with patch("mcp_server.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp_server._check_messages()
 
-    webhook_app = _create_webhook_app()
+    mock_client.get.assert_not_called()
+    assert "alice" in result
+    assert "pushed" in result
 
-    from httpx import ASGITransport, AsyncClient
 
-    transport = ASGITransport(app=webhook_app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post(
-            "/incoming",
-            json={
+async def test_send_push_notification_uses_configured_method():
+    """Push notifications should be emitted using the configured raw JSON-RPC method."""
+    session = MagicMock()
+    session.send_message = AsyncMock()
+
+    with patch.object(mcp_server, "PUSH_NOTIFICATION_METHOD", "notifications/custom/inbox"):
+        await mcp_server._send_push_notification(
+            session,
+            {
                 "id": "msg-1",
                 "from_name": "alice",
-                "content": "pushed",
+                "content": "hello",
                 "timestamp": "2026-04-08T12:00:00Z",
             },
         )
-        assert resp.status_code == 200
 
-    msg = _incoming_queue.get_nowait()
-    assert msg["from_name"] == "alice"
-    assert msg["content"] == "pushed"
+    session.send_message.assert_awaited_once()
+    session_message = session.send_message.await_args.args[0]
+    notification = session_message.message.root
+    assert notification.method == "notifications/custom/inbox"
+    assert notification.params["channel"] == "mcp-tunnel"
+    assert "alice: hello" in notification.params["message"]
