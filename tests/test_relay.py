@@ -112,6 +112,17 @@ async def test_send_registers_participant(client: AsyncClient, auth_headers: dic
     assert "charlie" in participants
 
 
+async def test_recipient_is_listed_as_participant(client: AsyncClient, auth_headers: dict):
+    await client.post(
+        "/messages",
+        json={"from_name": "charlie", "to": "dave", "content": "hi"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/participants", headers=auth_headers)
+    participants = resp.json()
+    assert "dave" in participants
+
+
 async def test_file_persistence_save_and_load(client: AsyncClient, auth_headers: dict):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         filepath = f.name
@@ -131,6 +142,31 @@ async def test_file_persistence_save_and_load(client: AsyncClient, auth_headers:
         messages = resp.json()
         assert len(messages) == 1
         assert messages[0]["content"] == "persist me"
+
+    os.unlink(filepath)
+
+
+async def test_delivered_messages_do_not_reappear_after_reload(
+    client: AsyncClient, auth_headers: dict
+):
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        filepath = f.name
+
+    with patch("relay_server.MESSAGES_FILE", filepath):
+        await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "deliver once"},
+            headers=auth_headers,
+        )
+
+        resp = await client.get("/messages/bob", headers=auth_headers)
+        assert [msg["content"] for msg in resp.json()] == ["deliver once"]
+
+        _reset_state()
+        _load_from_file()
+
+        resp = await client.get("/messages/bob", headers=auth_headers)
+        assert resp.json() == []
 
     os.unlink(filepath)
 
@@ -199,6 +235,65 @@ async def test_large_message_is_chunked_and_reassembled(client: AsyncClient, aut
         assert len(messages) == 1
         assert messages[0]["content"] == large_content
         assert "chunk_group" not in messages[0]
+
+
+async def test_large_unicode_message_is_chunked_without_corruption(
+    client: AsyncClient, auth_headers: dict
+):
+    """Chunking should preserve UTF-8 content across chunk boundaries."""
+    large_content = "🙂" * 60
+
+    with patch("relay_server.MAX_MESSAGE_SIZE", 101):
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": large_content},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        resp = await client.get("/messages/bob", headers=auth_headers)
+        messages = resp.json()
+        assert len(messages) == 1
+        assert messages[0]["content"] == large_content
+
+
+async def test_chunked_message_too_large_for_storage_cap_returns_413(
+    client: AsyncClient, auth_headers: dict
+):
+    """Reject chunked messages that cannot fit within the configured global cap."""
+    with patch("relay_server.MAX_MESSAGE_SIZE", 4), patch("relay_server.MAX_MESSAGES", 2):
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "abcdefghij"},
+            headers=auth_headers,
+        )
+
+    assert resp.status_code == 413
+
+
+async def test_message_cap_does_not_split_chunk_groups(client: AsyncClient, auth_headers: dict):
+    """When trimming is needed, whole chunked messages should be kept or removed together."""
+    with patch("relay_server.MAX_MESSAGE_SIZE", 4), patch("relay_server.MAX_MESSAGES", 4):
+        await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "one"},
+            headers=auth_headers,
+        )
+        await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "two"},
+            headers=auth_headers,
+        )
+        await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "abcdefghij"},
+            headers=auth_headers,
+        )
+
+        resp = await client.get("/messages/bob", headers=auth_headers)
+        messages = resp.json()
+
+    assert [msg["content"] for msg in messages] == ["two", "abcdefghij"]
 
 
 async def test_analytics_empty(client: AsyncClient, auth_headers: dict):
@@ -313,6 +408,22 @@ async def test_long_poll_returns_immediately_with_messages(client: AsyncClient, 
     assert len(resp.json()) == 1
 
 
+async def test_message_event_is_rearmed_by_consumer(client: AsyncClient, auth_headers: dict):
+    """Senders set the event; consumers clear it after observing the queue state."""
+    from relay_server import message_events
+
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hi"},
+        headers=auth_headers,
+    )
+    assert message_events["bob"].is_set()
+
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    assert resp.status_code == 200
+    assert not message_events["bob"].is_set()
+
+
 async def test_long_poll_returns_empty_on_timeout(client: AsyncClient, auth_headers: dict):
     """Long-poll should return empty list after timeout if no messages arrive."""
     resp = await client.get("/messages/nobody?wait=1", headers=auth_headers)
@@ -369,18 +480,28 @@ async def test_register_webhook(client: AsyncClient, auth_headers: dict):
     """Should register a webhook for an instance."""
     resp = await client.post(
         "/webhooks",
-        json={"instance_name": "bob", "callback_url": "http://localhost:9999/incoming"},
+        json={"instance_name": "bob", "callback_url": "https://example.com/incoming"},
         headers=auth_headers,
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "registered"
 
 
+async def test_register_webhook_rejects_localhost(client: AsyncClient, auth_headers: dict):
+    """Webhook targets must be public-facing to reduce SSRF risk."""
+    resp = await client.post(
+        "/webhooks",
+        json={"instance_name": "bob", "callback_url": "http://localhost:9999/incoming"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+
+
 async def test_delete_webhook(client: AsyncClient, auth_headers: dict):
     """Should deregister a webhook."""
     await client.post(
         "/webhooks",
-        json={"instance_name": "bob", "callback_url": "http://localhost:9999/incoming"},
+        json={"instance_name": "bob", "callback_url": "https://example.com/incoming"},
         headers=auth_headers,
     )
     resp = await client.delete("/webhooks/bob", headers=auth_headers)
@@ -402,7 +523,7 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
     # Register webhook
     await client.post(
         "/webhooks",
-        json={"instance_name": "bob", "callback_url": "http://localhost:9999/incoming"},
+        json={"instance_name": "bob", "callback_url": "https://example.com/incoming"},
         headers=auth_headers,
     )
 
@@ -422,5 +543,5 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
 
     mock_client_instance.post.assert_called_once()
     call_args = mock_client_instance.post.call_args
-    assert call_args[0][0] == "http://localhost:9999/incoming"
+    assert call_args[0][0] == "https://example.com/incoming"
     assert call_args[1]["json"]["content"] == "push this"

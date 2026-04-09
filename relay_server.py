@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -7,6 +8,7 @@ import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -19,7 +21,8 @@ logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
-logger = logging.getLogger("claude_tunnel.relay")
+logger = logging.getLogger("mcp_tunnel.relay")
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -28,13 +31,13 @@ async def lifespan(app):
     yield
     logger.info("Relay server shutting down")
 
-
-app = FastAPI(title="Claude Tunnel Relay", lifespan=lifespan)
+app = FastAPI(title="MCP Tunnel Relay", lifespan=lifespan)
 
 # In-memory state
 message_queues: dict[str, list[dict]] = defaultdict(list)
 participants: set[str] = set()
 locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+persistence_lock = asyncio.Lock()
 message_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
 webhooks: dict[str, str] = {}  # instance_name -> callback_url
 
@@ -52,12 +55,41 @@ analytics: dict = {
 _start_time = time.time()
 
 
+def _logical_message_units() -> list[dict]:
+    """Group stored entries into logical messages so chunk groups stay intact."""
+    units: dict[tuple[str, str, str], dict] = {}
+
+    for recipient, msgs in message_queues.items():
+        for msg in msgs:
+            if "chunk_group" in msg:
+                key = (recipient, "chunk_group", msg["chunk_group"])
+            else:
+                key = (recipient, "message", msg["id"])
+
+            unit = units.setdefault(
+                key,
+                {
+                    "recipient": recipient,
+                    "timestamp": msg["timestamp"],
+                    "ids": set(),
+                    "size": 0,
+                },
+            )
+            if msg["timestamp"] < unit["timestamp"]:
+                unit["timestamp"] = msg["timestamp"]
+            unit["ids"].add(msg["id"])
+            unit["size"] += 1
+
+    return sorted(units.values(), key=lambda unit: unit["timestamp"])
+
+
 def _reset_state():
     """Reset state between tests."""
-    global _start_time
+    global _start_time, persistence_lock
     message_queues.clear()
     participants.clear()
     locks.clear()
+    persistence_lock = asyncio.Lock()
     message_events.clear()
     webhooks.clear()
     analytics["total_sent"] = 0
@@ -114,6 +146,12 @@ def _save_to_file():
         logger.error("Failed to save state to %s", MESSAGES_FILE)
 
 
+async def _persist_state():
+    """Serialize in-memory state to disk without overlapping file writes."""
+    async with persistence_lock:
+        _save_to_file()
+
+
 def _load_from_file():
     """Load state from JSON file if it exists."""
     if not os.path.exists(MESSAGES_FILE):
@@ -137,29 +175,91 @@ def _load_from_file():
 
 
 def _trim_messages():
-    """If total messages exceed MAX_MESSAGES, remove oldest across all queues."""
-    all_messages = []
-    for recipient, msgs in message_queues.items():
-        for msg in msgs:
-            all_messages.append((recipient, msg))
-
-    if len(all_messages) <= MAX_MESSAGES:
+    """If total stored entries exceed MAX_MESSAGES, trim whole logical messages."""
+    total_entries = sum(len(msgs) for msgs in message_queues.values())
+    if total_entries <= MAX_MESSAGES:
         return
 
-    all_messages.sort(key=lambda x: x[1]["timestamp"])
-    to_remove = len(all_messages) - MAX_MESSAGES
+    to_remove = total_entries - MAX_MESSAGES
+    remove_ids = set()
+    removed_entries = 0
+    removed_units = 0
+
+    for unit in _logical_message_units():
+        remove_ids.update(unit["ids"])
+        removed_entries += unit["size"]
+        removed_units += 1
+        if removed_entries >= to_remove:
+            break
+
     logger.info(
-        "Trimming %d oldest messages (total %d > cap %d)",
-        to_remove, len(all_messages), MAX_MESSAGES,
+        "Trimming %d logical messages (%d stored entries) to stay within cap %d",
+        removed_units,
+        removed_entries,
+        MAX_MESSAGES,
     )
-    remove_set = set()
-    for i in range(to_remove):
-        remove_set.add(all_messages[i][1]["id"])
 
     for recipient in message_queues:
         message_queues[recipient] = [
-            m for m in message_queues[recipient] if m["id"] not in remove_set
+            m for m in message_queues[recipient] if m["id"] not in remove_ids
         ]
+
+
+def _chunk_content(content: str) -> list[str]:
+    """Split text into chunks that each respect MAX_MESSAGE_SIZE in UTF-8 bytes."""
+    chunks = []
+    current = []
+    current_size = 0
+
+    for char in content:
+        char_size = len(char.encode("utf-8"))
+        if current and current_size + char_size > MAX_MESSAGE_SIZE:
+            chunks.append("".join(current))
+            current = [char]
+            current_size = char_size
+        else:
+            current.append(char)
+            current_size += char_size
+
+    if current:
+        chunks.append("".join(current))
+
+    return chunks
+
+
+def _count_pending_messages() -> int:
+    return len(_logical_message_units())
+
+
+def _validate_webhook_callback_url(callback_url: str) -> str:
+    parsed = urlparse(callback_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="callback_url must be an http(s) URL")
+    if parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="callback_url must not include credentials")
+
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        raise HTTPException(status_code=400, detail="callback_url must target a public host")
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        if "." not in host:
+            raise HTTPException(status_code=400, detail="callback_url must target a public host")
+        return callback_url
+
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    ):
+        raise HTTPException(status_code=400, detail="callback_url must target a public host")
+
+    return callback_url
 
 
 async def verify_auth(request: Request) -> None:
@@ -196,7 +296,12 @@ async def _notify_webhook(recipient: str, message: dict):
             resp.raise_for_status()
             logger.info("Webhook delivered to %s for %s", callback_url, recipient)
     except Exception:
-        logger.warning("Webhook delivery failed for %s at %s", recipient, callback_url)
+        logger.warning(
+            "Webhook delivery failed for %s at %s",
+            recipient,
+            callback_url,
+            exc_info=True,
+        )
 
 
 @app.post("/messages", dependencies=[Depends(verify_auth)])
@@ -206,12 +311,13 @@ async def send_message(msg: SendMessageRequest):
 
     if len(content.encode("utf-8")) > MAX_MESSAGE_SIZE:
         chunk_group = str(uuid.uuid4())
-        chunks = []
-        encoded = content.encode("utf-8")
-        for i in range(0, len(encoded), MAX_MESSAGE_SIZE):
-            chunk_bytes = encoded[i : i + MAX_MESSAGE_SIZE]
-            chunks.append(chunk_bytes.decode("utf-8", errors="replace"))
+        chunks = _chunk_content(content)
         chunk_total = len(chunks)
+        if chunk_total > MAX_MESSAGES:
+            raise HTTPException(
+                status_code=413,
+                detail="Message is too large for the configured storage limit",
+            )
 
         messages = []
         for idx, chunk_content in enumerate(chunks):
@@ -228,17 +334,25 @@ async def send_message(msg: SendMessageRequest):
 
         async with locks[msg.to]:
             message_queues[msg.to].extend(messages)
-            participants.add(msg.from_name)
+            participants.update({msg.from_name, msg.to})
             _track_send(msg.from_name)
             _trim_messages()
-            _save_to_file()
+            await _persist_state()
         message_events[msg.to].set()
-        message_events[msg.to].clear()
         logger.info(
             "Message chunked into %d parts (%s -> %s, group %s)",
             chunk_total, msg.from_name, msg.to, chunk_group,
         )
-        await _notify_webhook(msg.to, messages[0])
+        await _notify_webhook(
+            msg.to,
+            {
+                "id": messages[0]["id"],
+                "from_name": msg.from_name,
+                "to": msg.to,
+                "content": content,
+                "timestamp": timestamp,
+            },
+        )
         return {"id": messages[0]["id"], "timestamp": timestamp}
     else:
         message = {
@@ -250,12 +364,11 @@ async def send_message(msg: SendMessageRequest):
         }
         async with locks[msg.to]:
             message_queues[msg.to].append(message)
-            participants.add(msg.from_name)
+            participants.update({msg.from_name, msg.to})
             _track_send(msg.from_name)
             _trim_messages()
-            _save_to_file()
+            await _persist_state()
         message_events[msg.to].set()
-        message_events[msg.to].clear()
         logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
         await _notify_webhook(msg.to, message)
         return {"id": message["id"], "timestamp": message["timestamp"]}
@@ -305,6 +418,12 @@ async def get_messages(recipient: str, wait: int = 0):
         all_msgs = list(message_queues[recipient])
         ready, held_back = _reassemble_chunks(all_msgs)
         message_queues[recipient] = held_back
+        # Re-arm after observing queue state while holding the same lock senders use
+        # before enqueueing, so a subsequent set() always represents newer data.
+        message_events[recipient].clear()
+        if ready:
+            _track_delivery(recipient, len(ready))
+            await _persist_state()
 
     if not ready and wait > 0:
         try:
@@ -316,8 +435,10 @@ async def get_messages(recipient: str, wait: int = 0):
             all_msgs = list(message_queues[recipient])
             ready, held_back = _reassemble_chunks(all_msgs)
             message_queues[recipient] = held_back
-
-    _track_delivery(recipient, len(ready))
+            message_events[recipient].clear()
+            if ready:
+                _track_delivery(recipient, len(ready))
+                await _persist_state()
     logger.info(
         "Fetched %d messages for %s (%d chunks held back)",
         len(ready), recipient, len(held_back),
@@ -332,8 +453,11 @@ async def list_participants_endpoint():
 
 @app.post("/webhooks", dependencies=[Depends(verify_auth)])
 async def register_webhook(req: RegisterWebhookRequest):
-    webhooks[req.instance_name] = req.callback_url
-    logger.info("Webhook registered: %s -> %s", req.instance_name, req.callback_url)
+    callback_url = _validate_webhook_callback_url(req.callback_url)
+    webhooks[req.instance_name] = callback_url
+    participants.add(req.instance_name)
+    await _persist_state()
+    logger.info("Webhook registered: %s -> %s", req.instance_name, callback_url)
     return {"status": "registered"}
 
 
@@ -347,7 +471,7 @@ async def delete_webhook(instance_name: str):
 @app.get("/analytics", dependencies=[Depends(verify_auth)])
 async def get_analytics():
     _prune_hourly_volume()
-    pending = sum(len(msgs) for msgs in message_queues.values())
+    pending = _count_pending_messages()
     hourly = [
         {"hour": k, "count": v}
         for k, v in sorted(analytics["hourly_volume"].items())
