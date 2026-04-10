@@ -35,6 +35,8 @@ if RELAY_SECRET == "test-secret":
 async def lifespan(app):
     logger.info("Relay server starting up")
     await asyncio.to_thread(_load_from_file)
+    if _expire_stale_messages():
+        await _persist_state()
     yield
     logger.info("Relay server shutting down — saving state")
     await _persist_state()
@@ -183,10 +185,10 @@ def _load_from_file():
     logger.info("Loaded state from %s", MESSAGES_FILE)
 
 
-def _expire_stale_messages():
-    """Remove messages older than MESSAGE_TTL_SECONDS."""
+def _expire_stale_messages() -> int:
+    """Remove messages older than MESSAGE_TTL_SECONDS and return the count expired."""
     if MESSAGE_TTL_SECONDS <= 0:
-        return
+        return 0
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=MESSAGE_TTL_SECONDS)).isoformat()
     expired = 0
     for recipient in message_queues:
@@ -197,6 +199,7 @@ def _expire_stale_messages():
         expired += before - len(message_queues[recipient])
     if expired:
         logger.info("Expired %d stale messages (TTL=%ds)", expired, MESSAGE_TTL_SECONDS)
+    return expired
 
 
 def _trim_messages():
@@ -463,6 +466,7 @@ async def get_messages(recipient: str, wait: int = 0):
     wait = min(max(wait, 0), 60)  # Clamp to 0-60
 
     async with locks[recipient]:
+        expired = _expire_stale_messages()
         all_msgs = list(message_queues[recipient])
         ready, held_back = _reassemble_chunks(all_msgs)
         message_queues[recipient] = held_back
@@ -471,6 +475,7 @@ async def get_messages(recipient: str, wait: int = 0):
         message_events[recipient].clear()
         if ready:
             _track_delivery(recipient, len(ready))
+        if ready or expired:
             await _persist_state()
 
     if not ready and wait > 0:
@@ -480,12 +485,14 @@ async def get_messages(recipient: str, wait: int = 0):
             pass
         # Re-check after waking
         async with locks[recipient]:
+            expired = _expire_stale_messages()
             all_msgs = list(message_queues[recipient])
             ready, held_back = _reassemble_chunks(all_msgs)
             message_queues[recipient] = held_back
             message_events[recipient].clear()
             if ready:
                 _track_delivery(recipient, len(ready))
+            if ready or expired:
                 await _persist_state()
     logger.info(
         "Fetched %d messages for %s (%d chunks held back)",
@@ -518,6 +525,8 @@ async def delete_webhook(instance_name: str):
 
 @app.get("/analytics", dependencies=[Depends(verify_auth)])
 async def get_analytics():
+    if _expire_stale_messages():
+        await _persist_state()
     _prune_hourly_volume()
     pending = _count_pending_messages()
     hourly = [

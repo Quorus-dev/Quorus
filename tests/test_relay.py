@@ -637,3 +637,40 @@ async def test_message_ttl_expires_old_messages(client: AsyncClient, auth_header
     contents = [m["content"] for m in messages]
     assert "stale" not in contents
     assert "fresh" in contents
+
+
+async def test_message_ttl_is_enforced_on_read_without_new_send(
+    client: AsyncClient, auth_headers: dict
+):
+    """Expired messages should not be returned even if no later send triggers trim."""
+    from relay_server import locks, message_queues
+
+    async with locks["bob"]:
+        message_queues["bob"].append({
+            "id": "old-msg",
+            "from_name": "alice",
+            "to": "bob",
+            "content": "stale",
+            "timestamp": "2020-01-01T00:00:00+00:00",
+        })
+
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    assert resp.json() == []
+
+
+async def test_analytics_excludes_expired_messages(client: AsyncClient, auth_headers: dict):
+    """Expired messages should not contribute to pending analytics totals."""
+    from relay_server import locks, message_queues
+
+    async with locks["bob"]:
+        message_queues["bob"].append({
+            "id": "old-msg",
+            "from_name": "alice",
+            "to": "bob",
+            "content": "stale",
+            "timestamp": "2020-01-01T00:00:00+00:00",
+        })
+
+    resp = await client.get("/analytics", headers=auth_headers)
+    data = resp.json()
+    assert data["messages_pending"] == 0
