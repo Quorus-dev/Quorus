@@ -487,6 +487,17 @@ async def test_register_webhook(client: AsyncClient, auth_headers: dict):
     assert resp.json()["status"] == "registered"
 
 
+async def test_register_webhook_allows_http_ip_callback(client: AsyncClient, auth_headers: dict):
+    """Public HTTP callback URLs should be accepted."""
+    resp = await client.post(
+        "/webhooks",
+        json={"instance_name": "bob", "callback_url": "http://100.127.251.47:9000/incoming"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "registered"
+
+
 async def test_register_webhook_rejects_localhost(client: AsyncClient, auth_headers: dict):
     """Webhook targets must be public-facing to reduce SSRF risk."""
     resp = await client.post(
@@ -545,3 +556,43 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
     call_args = mock_client_instance.post.call_args
     assert call_args[0][0] == "https://example.com/incoming"
     assert call_args[1]["json"]["content"] == "push this"
+
+
+async def test_send_rejects_empty_name(client: AsyncClient, auth_headers: dict):
+    """Empty from_name or to should be rejected."""
+    resp = await client.post(
+        "/messages",
+        json={"from_name": "", "to": "bob", "content": "hi"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_send_rejects_special_characters_in_name(client: AsyncClient, auth_headers: dict):
+    """Names with special characters should be rejected."""
+    resp = await client.post(
+        "/messages",
+        json={"from_name": "alice<script>", "to": "bob", "content": "hi"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_send_rejects_overly_long_name(client: AsyncClient, auth_headers: dict):
+    """Names exceeding MAX_NAME_LENGTH should be rejected."""
+    resp = await client.post(
+        "/messages",
+        json={"from_name": "a" * 65, "to": "bob", "content": "hi"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_send_accepts_valid_names(client: AsyncClient, auth_headers: dict):
+    """Alphanumeric names with hyphens and underscores should be accepted."""
+    resp = await client.post(
+        "/messages",
+        json={"from_name": "alice-01_test", "to": "bob-2", "content": "hi"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200

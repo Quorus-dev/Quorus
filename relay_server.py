@@ -10,9 +10,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
+import re
+
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(
@@ -274,15 +276,37 @@ async def verify_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing auth token")
 
 
+_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+MAX_NAME_LENGTH = 64
+
+
+def _validate_name(value: str) -> str:
+    if not value or len(value) > MAX_NAME_LENGTH:
+        raise ValueError(f"Name must be 1-{MAX_NAME_LENGTH} characters")
+    if not _NAME_RE.match(value):
+        raise ValueError("Name must contain only alphanumeric characters, hyphens, and underscores")
+    return value
+
+
 class SendMessageRequest(BaseModel):
     from_name: str
     to: str
     content: str
 
+    @field_validator("from_name", "to")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
 
 class RegisterWebhookRequest(BaseModel):
     instance_name: str
     callback_url: str
+
+    @field_validator("instance_name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
 
 
 @app.get("/health")
