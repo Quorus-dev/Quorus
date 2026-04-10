@@ -2,6 +2,7 @@ import asyncio
 import sys
 import time
 import types
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -357,6 +358,7 @@ async def test_analytics_requires_auth(client: AsyncClient):
 async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: dict):
     """If not all chunks have arrived, they should not be returned."""
     from relay_server import locks, message_queues
+    base_time = datetime.now(timezone.utc)
 
     async with locks["bob"]:
         message_queues["bob"].append({
@@ -364,7 +366,7 @@ async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: di
             "from_name": "alice",
             "to": "bob",
             "content": "part1",
-            "timestamp": "2026-04-08T00:00:00Z",
+            "timestamp": base_time.isoformat(),
             "chunk_group": "group-1",
             "chunk_index": 0,
             "chunk_total": 2,
@@ -380,7 +382,7 @@ async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: di
             "from_name": "alice",
             "to": "bob",
             "content": "part2",
-            "timestamp": "2026-04-08T00:00:01Z",
+            "timestamp": (base_time + timedelta(seconds=1)).isoformat(),
             "chunk_group": "group-1",
             "chunk_index": 1,
             "chunk_total": 2,
