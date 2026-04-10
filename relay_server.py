@@ -36,7 +36,8 @@ async def lifespan(app):
     logger.info("Relay server starting up")
     await asyncio.to_thread(_load_from_file)
     yield
-    logger.info("Relay server shutting down")
+    logger.info("Relay server shutting down — saving state")
+    await _persist_state()
 
 app = FastAPI(title="MCP Tunnel Relay", lifespan=lifespan)
 
