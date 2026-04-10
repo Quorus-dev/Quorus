@@ -52,6 +52,7 @@ webhooks: dict[str, str] = {}  # instance_name -> callback_url
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
+MESSAGE_TTL_SECONDS = int(os.environ.get("MESSAGE_TTL_SECONDS", str(24 * 60 * 60)))  # default 24h
 
 # Analytics state
 analytics: dict = {
@@ -182,8 +183,25 @@ def _load_from_file():
     logger.info("Loaded state from %s", MESSAGES_FILE)
 
 
+def _expire_stale_messages():
+    """Remove messages older than MESSAGE_TTL_SECONDS."""
+    if MESSAGE_TTL_SECONDS <= 0:
+        return
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=MESSAGE_TTL_SECONDS)).isoformat()
+    expired = 0
+    for recipient in message_queues:
+        before = len(message_queues[recipient])
+        message_queues[recipient] = [
+            m for m in message_queues[recipient] if m.get("timestamp", "") >= cutoff
+        ]
+        expired += before - len(message_queues[recipient])
+    if expired:
+        logger.info("Expired %d stale messages (TTL=%ds)", expired, MESSAGE_TTL_SECONDS)
+
+
 def _trim_messages():
     """If total stored entries exceed MAX_MESSAGES, trim whole logical messages."""
+    _expire_stale_messages()
     total_entries = sum(len(msgs) for msgs in message_queues.values())
     if total_entries <= MAX_MESSAGES:
         return

@@ -596,3 +596,31 @@ async def test_send_accepts_valid_names(client: AsyncClient, auth_headers: dict)
         headers=auth_headers,
     )
     assert resp.status_code == 200
+
+
+async def test_message_ttl_expires_old_messages(client: AsyncClient, auth_headers: dict):
+    """Messages older than MESSAGE_TTL_SECONDS should be removed on next trim."""
+    from relay_server import locks, message_queues
+
+    old_timestamp = "2020-01-01T00:00:00+00:00"
+    async with locks["bob"]:
+        message_queues["bob"].append({
+            "id": "old-msg",
+            "from_name": "alice",
+            "to": "bob",
+            "content": "stale",
+            "timestamp": old_timestamp,
+        })
+
+    # Send a new message to trigger trimming
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "fresh"},
+        headers=auth_headers,
+    )
+
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    messages = resp.json()
+    contents = [m["content"] for m in messages]
+    assert "stale" not in contents
+    assert "fresh" in contents
