@@ -23,16 +23,15 @@ def configure_mcp():
 
 
 def _make_mock_client(mock_method: str, return_value):
-    """Helper to create a mock httpx.AsyncClient context manager."""
+    """Helper to create a mock httpx.AsyncClient."""
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = return_value
     mock_response.raise_for_status = MagicMock()
 
     mock_client = AsyncMock()
+    mock_client.is_closed = False
     setattr(mock_client, mock_method, AsyncMock(return_value=mock_response))
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
     return mock_client
 
 
@@ -42,7 +41,7 @@ async def test_send_message_calls_relay():
         "post", {"id": "test-id", "timestamp": "2026-04-05T00:00:00Z"}
     )
 
-    with patch("mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._send_message("bob", "hello")
 
         mock_client.post.assert_called_once_with(
@@ -60,7 +59,7 @@ async def test_check_messages_calls_relay():
         [{"id": "1", "from_name": "bob", "content": "hi", "timestamp": "2026-04-05T00:00:00Z"}],
     )
 
-    with patch("mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
         mock_client.get.assert_called_once_with(
@@ -78,7 +77,7 @@ async def test_check_messages_uses_nonblocking_fetch_when_background_polling_ena
 
     with (
         patch.object(mcp_server, "ENABLE_BACKGROUND_POLLING", True),
-        patch("mcp_server.httpx.AsyncClient", return_value=mock_client),
+        patch("mcp_server._get_http_client", return_value=mock_client),
     ):
         result = await mcp_server._check_messages()
 
@@ -95,7 +94,7 @@ async def test_list_participants_calls_relay():
     """list_participants should GET /participants from relay."""
     mock_client = _make_mock_client("get", ["alice", "bob"])
 
-    with patch("mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._list_participants()
 
         mock_client.get.assert_called_once_with(
@@ -109,11 +108,10 @@ async def test_list_participants_calls_relay():
 async def test_send_message_relay_unreachable():
     """send_message should return error when relay is down."""
     mock_client = AsyncMock()
+    mock_client.is_closed = False
     mock_client.post.side_effect = httpx.ConnectError("Connection refused")
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._send_message("bob", "hello")
         assert "error" in result.lower() or "cannot" in result.lower()
 
@@ -130,7 +128,7 @@ async def test_check_messages_prefers_local_buffer():
     ])
 
     mock_client = _make_mock_client("get", [])
-    with patch("mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
     mock_client.get.assert_not_called()

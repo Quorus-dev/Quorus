@@ -53,17 +53,27 @@ logger.info(
     masked_secret,
 )
 
+_http_client: httpx.AsyncClient | None = None
 _pending_messages: list[dict[str, Any]] = []
 _pending_lock = asyncio.Lock()
 _active_session = None
 _active_session_lock = asyncio.Lock()
 
 
+def _get_http_client() -> httpx.AsyncClient:
+    """Return the shared HTTP client, creating one if needed (e.g. in tests)."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient()
+    return _http_client
+
+
 def _reset_runtime_state():
     """Reset in-memory MCP runtime state between tests."""
-    global _active_session
+    global _active_session, _http_client
     _pending_messages.clear()
     _active_session = None
+    _http_client = None
 
 
 def _auth_headers() -> dict[str, str]:
@@ -152,17 +162,17 @@ async def _notify_active_session(messages: list[dict]) -> None:
 async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None]:
     timeout = max(wait + 5, 10)
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{RELAY_URL}/messages/{INSTANCE_NAME}",
-                params={"wait": wait},
-                headers=_auth_headers(),
-                timeout=timeout,
-            )
-            resp.raise_for_status()
-            messages = resp.json()
-            logger.info("Received %d messages from relay", len(messages))
-            return messages, None
+        client = _get_http_client()
+        resp = await client.get(
+            f"{RELAY_URL}/messages/{INSTANCE_NAME}",
+            params={"wait": wait},
+            headers=_auth_headers(),
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        messages = resp.json()
+        logger.info("Received %d messages from relay", len(messages))
+        return messages, None
     except httpx.ConnectError:
         logger.warning("Cannot reach relay at %s", RELAY_URL)
         return [], f"Error: Cannot reach relay server at {RELAY_URL}"
@@ -201,6 +211,9 @@ async def _background_poll(stop_event: asyncio.Event) -> None:
 
 @asynccontextmanager
 async def _mcp_lifespan(server: FastMCP):
+    global _http_client
+    _http_client = httpx.AsyncClient()
+
     stop_event = asyncio.Event()
     poll_task = None
 
@@ -216,6 +229,8 @@ async def _mcp_lifespan(server: FastMCP):
             poll_task.cancel()
             with suppress(asyncio.CancelledError):
                 await poll_task
+        if _http_client is not None:
+            await _http_client.aclose()
         _reset_runtime_state()
 
 
@@ -245,16 +260,16 @@ async def _send_message(to: str, content: str, context: Context | None = None) -
     """Internal: send a message via the relay."""
     await _remember_session(context)
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{RELAY_URL}/messages",
-                json={"from_name": INSTANCE_NAME, "to": to, "content": content},
-                headers=_auth_headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            logger.info("Sent message to %s (id: %s)", to, data["id"])
-            return f"Message sent (id: {data['id']})"
+        client = _get_http_client()
+        resp = await client.post(
+            f"{RELAY_URL}/messages",
+            json={"from_name": INSTANCE_NAME, "to": to, "content": content},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info("Sent message to %s (id: %s)", to, data["id"])
+        return f"Message sent (id: {data['id']})"
     except httpx.ConnectError:
         logger.warning("Cannot reach relay at %s", RELAY_URL)
         return f"Error: Cannot reach relay server at {RELAY_URL}"
@@ -284,17 +299,17 @@ async def _list_participants(context: Context | None = None) -> str:
     """Internal: list all known participants."""
     await _remember_session(context)
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{RELAY_URL}/participants",
-                headers=_auth_headers(),
-            )
-            resp.raise_for_status()
-            participants = resp.json()
-            logger.info("Listed %d participants", len(participants))
-            if not participants:
-                return "No participants yet."
-            return "Participants: " + ", ".join(participants)
+        client = _get_http_client()
+        resp = await client.get(
+            f"{RELAY_URL}/participants",
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        participants = resp.json()
+        logger.info("Listed %d participants", len(participants))
+        if not participants:
+            return "No participants yet."
+        return "Participants: " + ", ".join(participants)
     except httpx.ConnectError:
         logger.warning("Cannot reach relay at %s", RELAY_URL)
         return f"Error: Cannot reach relay server at {RELAY_URL}"
