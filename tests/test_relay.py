@@ -1,6 +1,4 @@
 import asyncio
-import os
-import tempfile
 import time
 from unittest.mock import patch
 
@@ -123,9 +121,10 @@ async def test_recipient_is_listed_as_participant(client: AsyncClient, auth_head
     assert "dave" in participants
 
 
-async def test_file_persistence_save_and_load(client: AsyncClient, auth_headers: dict):
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        filepath = f.name
+async def test_file_persistence_save_and_load(
+    client: AsyncClient, auth_headers: dict, tmp_path
+):
+    filepath = str(tmp_path / "messages.json")
 
     with patch("relay_server.MESSAGES_FILE", filepath):
         await client.post(
@@ -143,14 +142,11 @@ async def test_file_persistence_save_and_load(client: AsyncClient, auth_headers:
         assert len(messages) == 1
         assert messages[0]["content"] == "persist me"
 
-    os.unlink(filepath)
-
 
 async def test_delivered_messages_do_not_reappear_after_reload(
-    client: AsyncClient, auth_headers: dict
+    client: AsyncClient, auth_headers: dict, tmp_path
 ):
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        filepath = f.name
+    filepath = str(tmp_path / "messages.json")
 
     with patch("relay_server.MESSAGES_FILE", filepath):
         await client.post(
@@ -167,8 +163,6 @@ async def test_delivered_messages_do_not_reappear_after_reload(
 
         resp = await client.get("/messages/bob", headers=auth_headers)
         assert resp.json() == []
-
-    os.unlink(filepath)
 
 
 async def test_message_cap_trims_oldest(client: AsyncClient, auth_headers: dict):
