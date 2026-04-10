@@ -1,5 +1,7 @@
 import asyncio
+import sys
 import time
+import types
 from unittest.mock import patch
 
 import pytest
@@ -518,6 +520,23 @@ async def test_delete_nonexistent_webhook(client: AsyncClient, auth_headers: dic
     """Deleting a non-existent webhook should still return 200."""
     resp = await client.delete("/webhooks/nobody", headers=auth_headers)
     assert resp.status_code == 200
+
+
+def test_main_runs_uvicorn(monkeypatch):
+    """CLI entrypoint should invoke uvicorn with the configured port."""
+    from relay_server import main
+
+    calls = []
+
+    def fake_run(app_arg, host: str, port: int):
+        calls.append((app_arg, host, port))
+
+    monkeypatch.setenv("PORT", "9090")
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(run=fake_run))
+
+    main()
+
+    assert calls == [(app, "0.0.0.0", 9090)]
 
 
 async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict):

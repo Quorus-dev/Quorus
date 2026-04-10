@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mcp-tunnel-relay = "relay_server:app"
+mcp-tunnel-relay = "relay_server:main"
 mcp-tunnel-analytics = "analytics:main"
 
 [tool.ruff]
