@@ -4,6 +4,7 @@ import os
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from mcp import types
@@ -29,8 +30,24 @@ ENABLE_BACKGROUND_POLLING = _config["enable_background_polling"]
 PUSH_NOTIFICATION_METHOD = _config["push_notification_method"]
 PUSH_NOTIFICATION_CHANNEL = _config["push_notification_channel"]
 
-if not RELAY_URL or not RELAY_URL.startswith(("http://", "https://")):
-    raise SystemExit(f"Invalid relay_url: {RELAY_URL!r}. Must be an http(s) URL.")
+
+def _validate_relay_url(value: str) -> str:
+    """Validate relay_url eagerly so bad config fails at startup."""
+    parsed = urlparse(value)
+    if (
+        not value
+        or parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        raise SystemExit(
+            f"Invalid relay_url: {value!r}. Must be an http(s) URL with a hostname."
+        )
+    return value
+
+
+_validate_relay_url(RELAY_URL)
 if not RELAY_SECRET:
     raise SystemExit("relay_secret is empty. Set RELAY_SECRET env var or config file value.")
 if RELAY_SECRET == "test-secret":

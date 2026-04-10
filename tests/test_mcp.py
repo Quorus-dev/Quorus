@@ -158,3 +158,31 @@ async def test_send_push_notification_uses_configured_method():
     assert notification.method == "notifications/custom/inbox"
     assert notification.params["channel"] == "mcp-tunnel"
     assert "alice: hello" in notification.params["message"]
+
+
+@pytest.mark.parametrize(
+    "relay_url",
+    [
+        "",
+        "http://",
+        "https://",
+        "ftp://relay.example",
+        "http://user:pass@relay.example",
+    ],
+)
+def test_validate_relay_url_rejects_invalid_values(relay_url: str):
+    with pytest.raises(SystemExit, match="Invalid relay_url"):
+        mcp_server._validate_relay_url(relay_url)
+
+
+@pytest.mark.parametrize(
+    "relay_url",
+    [
+        "http://relay.example",
+        "https://relay.example",
+        "https://relay.example/base",
+        "http://127.0.0.1:8080",
+    ],
+)
+def test_validate_relay_url_accepts_http_urls(relay_url: str):
+    assert mcp_server._validate_relay_url(relay_url) == relay_url
