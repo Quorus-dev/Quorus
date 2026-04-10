@@ -80,6 +80,17 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
 
 
+def _relay_error_message(exc: Exception) -> str:
+    """Convert a relay communication error to a user-facing string."""
+    if isinstance(exc, httpx.ConnectError):
+        logger.warning("Cannot reach relay at %s", RELAY_URL)
+        return f"Error: Cannot reach relay server at {RELAY_URL}"
+    if isinstance(exc, httpx.HTTPStatusError):
+        logger.warning("Relay returned %d: %s", exc.response.status_code, exc.response.text)
+        return f"Error: Relay returned {exc.response.status_code}: {exc.response.text}"
+    return f"Error: {exc}"
+
+
 def _format_message(msg: dict) -> str:
     ts = msg.get("timestamp", "")
     sender = msg.get("from_name", "unknown")
@@ -173,12 +184,8 @@ async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None]:
         messages = resp.json()
         logger.info("Received %d messages from relay", len(messages))
         return messages, None
-    except httpx.ConnectError:
-        logger.warning("Cannot reach relay at %s", RELAY_URL)
-        return [], f"Error: Cannot reach relay server at {RELAY_URL}"
-    except httpx.HTTPStatusError as e:
-        logger.warning("Relay returned %d: %s", e.response.status_code, e.response.text)
-        return [], f"Error: Relay returned {e.response.status_code}: {e.response.text}"
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return [], _relay_error_message(e)
 
 
 async def _background_poll(stop_event: asyncio.Event) -> None:
@@ -270,12 +277,8 @@ async def _send_message(to: str, content: str, context: Context | None = None) -
         data = resp.json()
         logger.info("Sent message to %s (id: %s)", to, data["id"])
         return f"Message sent (id: {data['id']})"
-    except httpx.ConnectError:
-        logger.warning("Cannot reach relay at %s", RELAY_URL)
-        return f"Error: Cannot reach relay server at {RELAY_URL}"
-    except httpx.HTTPStatusError as e:
-        logger.warning("Relay returned %d: %s", e.response.status_code, e.response.text)
-        return f"Error: Relay returned {e.response.status_code}: {e.response.text}"
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
 
 
 async def _check_messages(context: Context | None = None) -> str:
@@ -310,12 +313,8 @@ async def _list_participants(context: Context | None = None) -> str:
         if not participants:
             return "No participants yet."
         return "Participants: " + ", ".join(participants)
-    except httpx.ConnectError:
-        logger.warning("Cannot reach relay at %s", RELAY_URL)
-        return f"Error: Cannot reach relay server at {RELAY_URL}"
-    except httpx.HTTPStatusError as e:
-        logger.warning("Relay returned %d: %s", e.response.status_code, e.response.text)
-        return f"Error: Relay returned {e.response.status_code}: {e.response.text}"
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
 
 
 @mcp.tool()
