@@ -29,6 +29,16 @@ ENABLE_BACKGROUND_POLLING = _config["enable_background_polling"]
 PUSH_NOTIFICATION_METHOD = _config["push_notification_method"]
 PUSH_NOTIFICATION_CHANNEL = _config["push_notification_channel"]
 
+if not RELAY_URL or not RELAY_URL.startswith(("http://", "https://")):
+    raise SystemExit(f"Invalid relay_url: {RELAY_URL!r}. Must be an http(s) URL.")
+if not RELAY_SECRET:
+    raise SystemExit("relay_secret is empty. Set RELAY_SECRET env var or config file value.")
+if RELAY_SECRET == "test-secret":
+    logger.warning(
+        "relay_secret is set to the default 'test-secret'. "
+        "Set RELAY_SECRET env var to a strong secret before deploying."
+    )
+
 masked_secret = RELAY_SECRET[:4] + "***" if len(RELAY_SECRET) > 4 else "***"
 logger.info(
     (

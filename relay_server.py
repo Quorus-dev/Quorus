@@ -14,14 +14,19 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-RELAY_SECRET = os.environ.get("RELAY_SECRET", "test-secret")
-
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("mcp_tunnel.relay")
+
+RELAY_SECRET = os.environ.get("RELAY_SECRET", "test-secret")
+if RELAY_SECRET == "test-secret":
+    logger.warning(
+        "RELAY_SECRET is set to the default 'test-secret'. "
+        "Set RELAY_SECRET env var to a strong secret before deploying."
+    )
 
 
 @asynccontextmanager
