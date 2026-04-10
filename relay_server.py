@@ -27,7 +27,7 @@ logger = logging.getLogger("mcp_tunnel.relay")
 @asynccontextmanager
 async def lifespan(app):
     logger.info("Relay server starting up")
-    _load_from_file()
+    await asyncio.to_thread(_load_from_file)
     yield
     logger.info("Relay server shutting down")
 
@@ -149,7 +149,7 @@ def _save_to_file():
 async def _persist_state():
     """Serialize in-memory state to disk without overlapping file writes."""
     async with persistence_lock:
-        _save_to_file()
+        await asyncio.to_thread(_save_to_file)
 
 
 def _load_from_file():
