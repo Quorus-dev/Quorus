@@ -31,7 +31,16 @@ def render(data: dict) -> None:
     summary.add_row("Total Sent", str(data["total_messages_sent"]))
     summary.add_row("Total Delivered", str(data["total_messages_delivered"]))
     summary.add_row("Pending", str(data["messages_pending"]))
-    summary.add_row("Uptime", f"{data['uptime_seconds']}s")
+    uptime = data["uptime_seconds"]
+    hours, remainder = divmod(uptime, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        uptime_str = f"{hours}h {minutes}m"
+    elif minutes:
+        uptime_str = f"{minutes}m {secs}s"
+    else:
+        uptime_str = f"{secs}s"
+    summary.add_row("Uptime", uptime_str)
     console.print(summary)
     console.print()
 
