@@ -41,9 +41,27 @@ logger = structlog.get_logger("murmur.relay")
 RELAY_SECRET = os.environ.get("RELAY_SECRET", "")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
+BOOTSTRAP_SECRET = os.environ.get("BOOTSTRAP_SECRET", "")
 
-# Fail fast only if neither auth mechanism is configured
-if not RELAY_SECRET and not DATABASE_URL:
+# ---------------------------------------------------------------------------
+# Startup validation
+# ---------------------------------------------------------------------------
+
+# When Postgres is configured, JWT auth is the primary mechanism.
+if DATABASE_URL:
+    if not JWT_SECRET or len(JWT_SECRET) < 32:
+        raise SystemExit(
+            "JWT_SECRET must be set (min 32 chars) when DATABASE_URL is configured. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        )
+    if not BOOTSTRAP_SECRET:
+        logger.warning(
+            "BOOTSTRAP_SECRET is not set — tenant creation via the bootstrap "
+            "endpoint will be unavailable. Set it if you need to create tenants."
+        )
+elif not RELAY_SECRET:
+    # No Postgres and no legacy secret — nothing will work
     raise SystemExit(
         "Neither RELAY_SECRET nor DATABASE_URL is set. "
         "Set at least one to start the relay."
@@ -200,7 +218,23 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestContextMiddleware)
-Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+# Instrument Prometheus metrics but don't auto-expose — we add an auth-protected route.
+_instrumentator = Instrumentator()
+_instrumentator.instrument(app)
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics(request: Request):
+    """Prometheus metrics — requires valid auth."""
+    from murmur.auth.middleware import verify_auth
+
+    await verify_auth(request)
+
+    from prometheus_client import generate_latest
+    from starlette.responses import Response
+
+    return Response(content=generate_latest(), media_type="text/plain")
 
 # CORS
 _cors_origins = os.environ.get("CORS_ORIGINS", "")

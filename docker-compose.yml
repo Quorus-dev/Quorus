@@ -6,10 +6,10 @@ services:
     environment:
       RELAY_SECRET: ${RELAY_SECRET:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://murmur:murmur@postgres:5432/murmur}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required for JWT signing (min 32 chars)}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-86400}
-      BOOTSTRAP_SECRET: ${BOOTSTRAP_SECRET:-}
+      BOOTSTRAP_SECRET: ${BOOTSTRAP_SECRET:?BOOTSTRAP_SECRET is required for initial tenant creation}
       PORT: ${PORT:-8080}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MAX_MESSAGES: ${MAX_MESSAGES:-1000}
@@ -37,9 +37,8 @@ services:
     environment:
       POSTGRES_DB: murmur
       POSTGRES_USER: murmur
-      POSTGRES_PASSWORD: murmur
-    ports:
-      - "5432:5432"
+      # Change this password in production!
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-murmur}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

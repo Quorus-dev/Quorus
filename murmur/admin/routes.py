@@ -25,6 +25,21 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$")
 _NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
+def _enforce_tenant_isolation(auth: AuthContext, slug: str) -> None:
+    """Verify the authenticated user belongs to the requested tenant.
+
+    Legacy auth (RELAY_SECRET) is exempt — it has cross-tenant admin access.
+    JWT users must match the tenant_slug in their token.
+    """
+    if auth.is_legacy:
+        return
+    if auth.tenant_slug and auth.tenant_slug != slug:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Tenant mismatch: token grants access to '{auth.tenant_slug}', not '{slug}'",
+        )
+
+
 def _validate_slug(value: str) -> str:
     if not _SLUG_RE.match(value):
         raise ValueError(
@@ -177,6 +192,7 @@ async def create_participant(
 ):
     """Create a participant within a tenant. Requires admin role."""
     require_role(auth, "admin")
+    _enforce_tenant_isolation(auth, slug)
 
     async with get_db_session() as session:
         tenant = (
@@ -223,6 +239,8 @@ async def list_participants(
     auth: AuthContext = Depends(verify_auth),
 ):
     """List all participants in a tenant."""
+    _enforce_tenant_isolation(auth, slug)
+
     async with get_db_session() as session:
         tenant = (
             await session.execute(select(Tenant).where(Tenant.slug == slug))
@@ -262,6 +280,7 @@ async def issue_api_key(
 ):
     """Issue a new API key for a participant. Returns the raw key once."""
     require_role(auth, "admin")
+    _enforce_tenant_isolation(auth, slug)
 
     async with get_db_session() as session:
         tenant = (
@@ -309,6 +328,7 @@ async def list_api_keys(
 ):
     """List API keys for a participant (without hashes)."""
     require_role(auth, "admin")
+    _enforce_tenant_isolation(auth, slug)
 
     async with get_db_session() as session:
         tenant = (
@@ -352,10 +372,29 @@ async def revoke_api_key(
 ):
     """Revoke an API key."""
     require_role(auth, "admin")
+    _enforce_tenant_isolation(auth, slug)
 
     async with get_db_session() as session:
+        # Verify the key belongs to the correct tenant/participant path
+        tenant = (
+            await session.execute(select(Tenant).where(Tenant.slug == slug))
+        ).scalar_one_or_none()
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+
+        participant = (
+            await session.execute(
+                select(Participant).where(
+                    Participant.tenant_id == tenant.id,
+                    Participant.name == name,
+                )
+            )
+        ).scalar_one_or_none()
+        if not participant:
+            raise HTTPException(status_code=404, detail="Participant not found")
+
         api_key = await session.get(ApiKey, key_id)
-        if not api_key:
+        if not api_key or api_key.participant_id != participant.id:
             raise HTTPException(status_code=404, detail="API key not found")
 
         if api_key.revoked_at is not None:
