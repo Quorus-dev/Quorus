@@ -1347,3 +1347,36 @@ async def test_peek_with_messages(client: AsyncClient, auth_headers):
 async def test_peek_requires_auth(client: AsyncClient):
     resp = await client.get("/messages/bob/peek")
     assert resp.status_code == 401
+
+
+# --- Invite page tests ---
+
+
+async def test_invite_page_returns_html(client: AsyncClient, auth_headers):
+    """Invite page should return HTML for existing rooms."""
+    await client.post(
+        "/rooms", json={"name": "invite-test", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/invite/invite-test")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "invite-test" in resp.text
+    assert "Join Room" in resp.text
+
+
+async def test_invite_page_404_for_missing_room(client: AsyncClient):
+    """Invite page should 404 for nonexistent rooms."""
+    resp = await client.get("/invite/no-such-room")
+    assert resp.status_code == 404
+
+
+async def test_invite_page_no_auth_required(client: AsyncClient, auth_headers):
+    """Invite page should be accessible without auth."""
+    await client.post(
+        "/rooms", json={"name": "public-invite", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    # No auth headers
+    resp = await client.get("/invite/public-invite")
+    assert resp.status_code == 200

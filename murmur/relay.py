@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import string
 import time
 import uuid
 from collections import defaultdict
@@ -947,12 +948,12 @@ async def get_analytics():
     }
 
 
-_INVITE_HTML = """<!DOCTYPE html>
+_INVITE_TMPL = string.Template("""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Join {room_name} — Murmur</title>
+<title>Join $room_name — Murmur</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;
@@ -981,7 +982,7 @@ font-size:.85rem;color:#e6edf3}
 <body>
 <div class="card">
 <h1>You've been invited to</h1>
-<div class="room">{room_name}</div>
+<div class="room">$room_name</div>
 <form id="f">
 <input id="name" placeholder="Your name (e.g. aarya-agent-1)"
  required autocomplete="off">
@@ -990,45 +991,45 @@ font-size:.85rem;color:#e6edf3}
 <div id="result"></div>
 <div class="cli">
 <p>Or join via CLI:</p>
-<p><code>murmur join --name YOUR_NAME --relay {relay_url}
- --secret YOUR_SECRET --room {room_name}</code></p>
+<p><code>murmur join --name YOUR_NAME --relay $relay_url
+ --secret YOUR_SECRET --room $room_name</code></p>
 </div>
 </div>
 <script>
 const f=document.getElementById('f'),r=document.getElementById('result');
-f.onsubmit=async e=>{{
+f.onsubmit=async e=>{
 e.preventDefault();
 const name=document.getElementById('name').value.trim();
 if(!name)return;
 const btn=f.querySelector('button');
 btn.disabled=true;btn.textContent='Joining...';
-try{{
-const res=await fetch('/rooms/{room_name}/join',{{
+try{
+const res=await fetch('/rooms/$room_name/join',{
 method:'POST',
-headers:{{'Content-Type':'application/json',
-'Authorization':'Bearer {token}'}},
-body:JSON.stringify({{participant:name}})
-}});
-if(res.ok){{
-r.innerHTML='<div class="msg ok">Joined <b>{room_name}</b> as <b>'
+headers:{'Content-Type':'application/json',
+'Authorization':'Bearer $token'},
+body:JSON.stringify({participant:name})
+});
+if(res.ok){
+r.innerHTML='<div class="msg ok">Joined <b>$room_name</b> as <b>'
 +name+'</b>!</div>';
-}}else{{
+}else{
 const d=await res.json();
 r.innerHTML='<div class="msg err">'+(d.detail||'Failed')+'</div>';
 btn.disabled=false;btn.textContent='Join Room';
-}}
-}}catch(err){{
+}
+}catch(err){
 r.innerHTML='<div class="msg err">'+err.message+'</div>';
 btn.disabled=false;btn.textContent='Join Room';
-}}
-}};
+}
+};
 </script>
-</body></html>"""
+</body></html>""")
 
 INVITE_TOKEN = os.environ.get("INVITE_TOKEN", RELAY_SECRET)
 
 
-@app.get("/invite/{{room_name}}", response_class=HTMLResponse)
+@app.get("/invite/{room_name}", response_class=HTMLResponse)
 async def invite_page(room_name: str, request: Request):
     """Discord-style invite page. Anyone with the link can join."""
     # Verify room exists
@@ -1037,7 +1038,7 @@ async def invite_page(room_name: str, request: Request):
         raise HTTPException(status_code=404, detail="Room not found")
 
     relay_url = str(request.base_url).rstrip("/")
-    html = _INVITE_HTML.format(
+    html = _INVITE_TMPL.substitute(
         room_name=room_name,
         relay_url=relay_url,
         token=INVITE_TOKEN,
