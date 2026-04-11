@@ -113,11 +113,21 @@ async def invite_page(
     tid = _tid(auth)
     # Resolve room by name within the caller's tenant
     try:
-        room_id, _ = await room_svc.get(tid, room_name)
+        room_id, room_data = await room_svc.get(tid, room_name)
     except HTTPException:
         raise HTTPException(status_code=404, detail="Room not found")
-    relay_url = str(request.base_url).rstrip("/")
+
+    # Require room membership to generate invites
     issuer = auth.sub or "legacy"
+    if not auth.is_legacy:
+        members = await room_svc.get_members(tid, room_id)
+        if issuer not in members:
+            raise HTTPException(
+                status_code=403,
+                detail="Must be a room member to generate invites",
+            )
+
+    relay_url = str(request.base_url).rstrip("/")
     invite_token = invite_svc.create_token(
         tenant_id=tid, room_id=room_id, issuer=issuer, role="member",
     )

@@ -60,6 +60,13 @@ async def register_room_webhook(
         )
     room_svc = request.app.state.room_service
     rid, room_data = await room_svc.get(_tid(auth), room_id)
+    # Require room membership to manage webhooks
+    if not auth.is_legacy:
+        members = await room_svc.get_members(_tid(auth), rid)
+        if registered_by not in members:
+            raise HTTPException(
+                status_code=403, detail="Must be a room member to manage webhooks",
+            )
     webhook_svc = request.app.state.webhook_service
     # Check for duplicate URL
     existing = await webhook_svc.list_room(_tid(auth), rid)
@@ -86,6 +93,14 @@ async def list_room_webhooks(
 ):
     room_svc = request.app.state.room_service
     rid, _ = await room_svc.get(_tid(auth), room_id)
+    # Require room membership to view webhooks
+    if not auth.is_legacy:
+        members = await room_svc.get_members(_tid(auth), rid)
+        actor = auth.sub or ""
+        if actor not in members:
+            raise HTTPException(
+                status_code=403, detail="Must be a room member to view webhooks",
+            )
     webhook_svc = request.app.state.webhook_service
     return await webhook_svc.list_room(_tid(auth), rid)
 
@@ -103,6 +118,14 @@ async def delete_room_webhook(
         )
     room_svc = request.app.state.room_service
     rid, room_data = await room_svc.get(_tid(auth), room_id)
+    # Require room membership to delete webhooks
+    actor = auth.sub or req.registered_by
+    if not auth.is_legacy:
+        members = await room_svc.get_members(_tid(auth), rid)
+        if actor not in members:
+            raise HTTPException(
+                status_code=403, detail="Must be a room member to manage webhooks",
+            )
     webhook_svc = request.app.state.webhook_service
     removed = await webhook_svc.delete_room(_tid(auth), rid, req.callback_url)
     if not removed:
