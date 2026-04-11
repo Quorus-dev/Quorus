@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import ipaddress
 import json
 import logging
@@ -314,7 +315,7 @@ def _validate_webhook_callback_url(callback_url: str) -> str:
 
 async def verify_auth(request: Request) -> None:
     auth = request.headers.get("Authorization", "")
-    if auth != f"Bearer {RELAY_SECRET}":
+    if not hmac.compare_digest(auth, f"Bearer {RELAY_SECRET}"):
         logger.warning("Auth failure from %s", request.client.host if request.client else "unknown")
         raise HTTPException(status_code=401, detail="Invalid or missing auth token")
 
@@ -362,6 +363,10 @@ class CreateRoomRequest(BaseModel):
         return _validate_name(v)
 
 
+VALID_MESSAGE_TYPES = {"chat", "claim", "status", "request", "alert", "sync"}
+MAX_ROOM_MEMBERS = int(os.environ.get("MAX_ROOM_MEMBERS", "50"))
+
+
 class RoomMessageRequest(BaseModel):
     from_name: str
     content: str
@@ -371,6 +376,13 @@ class RoomMessageRequest(BaseModel):
     @classmethod
     def check_name(cls, v: str) -> str:
         return _validate_name(v)
+
+    @field_validator("message_type")
+    @classmethod
+    def check_message_type(cls, v: str) -> str:
+        if v not in VALID_MESSAGE_TYPES:
+            raise ValueError(f"message_type must be one of: {', '.join(sorted(VALID_MESSAGE_TYPES))}")
+        return v
 
 
 class JoinLeaveRequest(BaseModel):
@@ -490,7 +502,7 @@ async def send_message(msg: SendMessageRequest):
 @app.get("/stream/{recipient}")
 async def stream_messages(recipient: str, token: str = ""):
     """SSE endpoint for real-time message delivery."""
-    if token != RELAY_SECRET:
+    if not hmac.compare_digest(token, RELAY_SECRET):
         raise HTTPException(status_code=401, detail="Invalid token")
 
     q: asyncio.Queue = asyncio.Queue()
@@ -681,6 +693,11 @@ async def join_room(room_id: str, req: JoinLeaveRequest):
     room = rooms.get(room_id)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
+    if len(room["members"]) >= MAX_ROOM_MEMBERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Room is at maximum capacity ({MAX_ROOM_MEMBERS} members)",
+        )
     room["members"].add(req.participant)
     participants.add(req.participant)
     await _persist_state()
@@ -704,6 +721,12 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
         raise HTTPException(status_code=404, detail="Room not found")
     if msg.from_name not in room["members"]:
         raise HTTPException(status_code=403, detail="Not a member of this room")
+
+    if len(msg.content.encode("utf-8")) > MAX_MESSAGE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="Message content exceeds maximum size",
+        )
 
     timestamp = datetime.now(timezone.utc).isoformat()
     message_id = str(uuid.uuid4())
