@@ -75,6 +75,32 @@ class RedisMessageBackend:
     async def peek(self, tenant_id: str, to_name: str) -> int:
         return await self._r.llen(self._key(tenant_id, to_name))
 
+    async def count_all(self, tenant_id: str) -> int:
+        """Count total pending messages across all recipients for a tenant."""
+        cursor, total = "0", 0
+        while True:
+            cursor, keys = await self._r.scan(
+                cursor=cursor, match=f"t:{tenant_id}:dm:*", count=100
+            )
+            for key in keys:
+                total += await self._r.llen(key)
+            if cursor == 0 or cursor == "0":
+                break
+        return total
+
+    async def count_all_global(self) -> int:
+        """Count total pending messages globally."""
+        cursor, total = "0", 0
+        while True:
+            cursor, keys = await self._r.scan(
+                cursor=cursor, match="t:*:dm:*", count=100
+            )
+            for key in keys:
+                total += await self._r.llen(key)
+            if cursor == 0 or cursor == "0":
+                break
+        return total
+
 
 # -- Rooms ------------------------------------------------------------------
 
@@ -174,6 +200,23 @@ class RedisRoomBackend:
     async def get_members(self, tenant_id: str, room_id: str) -> dict[str, str]:
         return await self._r.hgetall(self._members_key(tenant_id, room_id))
 
+    async def count(self, tenant_id: str) -> int:
+        """Count rooms in a tenant."""
+        return await self._r.scard(self._room_index_key(tenant_id))
+
+    async def count_global(self) -> int:
+        """Count all rooms across all tenants."""
+        cursor, total = "0", 0
+        while True:
+            cursor, keys = await self._r.scan(
+                cursor=cursor, match="t:*:room:_index", count=100
+            )
+            for key in keys:
+                total += await self._r.scard(key)
+            if cursor == 0 or cursor == "0":
+                break
+        return total
+
 
 # -- Room history -----------------------------------------------------------
 
@@ -219,6 +262,29 @@ class RedisRoomHistoryBackend:
         results.reverse()
         return results
 
+    async def delete(self, tenant_id: str, room_id: str) -> None:
+        """Delete history for a room."""
+        await self._r.delete(self._key(tenant_id, room_id))
+
+    async def rename_room_in_history(
+        self, tenant_id: str, room_id: str, new_name: str
+    ) -> None:
+        """Update room name in all history messages."""
+        key = self._key(tenant_id, room_id)
+        raw = await self._r.lrange(key, 0, -1)
+        if not raw:
+            return
+        updated = []
+        for item in raw:
+            msg = json.loads(item)
+            msg["room"] = new_name
+            updated.append(json.dumps(msg))
+        async with self._r.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            if updated:
+                pipe.rpush(key, *updated)
+            await pipe.execute()
+
 
 # -- Presence / heartbeat --------------------------------------------------
 
@@ -247,20 +313,27 @@ class RedisPresenceBackend:
         }
         async with self._r.pipeline(transaction=True) as pipe:
             pipe.hset(entry_key, mapping=entry)
-            pipe.expire(entry_key, HEARTBEAT_TIMEOUT)
+            # No EXPIRE — sorted set tracks online/offline via score
             pipe.zadd(self._index_key(tenant_id), {name: now_ts})
             await pipe.execute()
         return entry
 
     async def list_all(self, tenant_id: str, timeout_seconds: int) -> list[dict]:
+        # Return ALL entries; caller uses timeout_seconds to classify online/offline
+        names = await self._r.zrange(self._index_key(tenant_id), 0, -1)
         cutoff = (
             datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
         ).timestamp()
-        names = await self._r.zrangebyscore(self._index_key(tenant_id), cutoff, "+inf")
         results: list[dict] = []
         for name in names:
             data = await self._r.hgetall(self._entry_key(tenant_id, name))
             if data:
+                # Mark online/offline based on score
+                score = await self._r.zscore(self._index_key(tenant_id), name)
+                if score is not None and score >= cutoff:
+                    data["_online"] = True
+                else:
+                    data["_online"] = False
                 results.append(data)
         return results
 
@@ -427,6 +500,38 @@ class RedisAnalyticsBackend:
         }
 
 
+# -- Participants -----------------------------------------------------------
+
+class RedisParticipantBackend:
+    """Track known participant names in Redis Sets."""
+
+    def __init__(self, r: Redis) -> None:
+        self._r = r
+
+    def _key(self, tid: str) -> str:
+        return f"t:{tid}:participants"
+
+    async def add(self, tenant_id: str, *names: str) -> None:
+        if names:
+            await self._r.sadd(self._key(tenant_id), *names)
+
+    async def list_all(self, tenant_id: str) -> list[str]:
+        members = await self._r.smembers(self._key(tenant_id))
+        return sorted(members)
+
+    async def count_global(self) -> int:
+        cursor, total = "0", 0
+        while True:
+            cursor, keys = await self._r.scan(
+                cursor=cursor, match="t:*:participants", count=100
+            )
+            for key in keys:
+                total += await self._r.scard(key)
+            if cursor == 0 or cursor == "0":
+                break
+        return total
+
+
 # -- Convenience bundle -----------------------------------------------------
 
 @dataclass
@@ -441,11 +546,7 @@ class RedisBackends:
     sse_tokens: RedisSSETokenBackend
     webhooks: RedisWebhookBackend
     analytics: RedisAnalyticsBackend
-    participants: set = None  # type: ignore[assignment]
-
-    def __post_init__(self):
-        if self.participants is None:
-            self.participants = set()
+    participants: RedisParticipantBackend = None  # type: ignore[assignment]
 
     @classmethod
     def create(cls, r: Redis, max_room_history: int = 200) -> RedisBackends:
@@ -459,5 +560,5 @@ class RedisBackends:
             sse_tokens=RedisSSETokenBackend(r),
             webhooks=RedisWebhookBackend(r),
             analytics=RedisAnalyticsBackend(r),
-            participants=set(),
+            participants=RedisParticipantBackend(r),
         )

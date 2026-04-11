@@ -45,6 +45,18 @@ class InMemoryMessageBackend:
         async with self._lock:
             return len(self._queues[(tenant_id, to_name)])
 
+    async def count_all(self, tenant_id: str) -> int:
+        async with self._lock:
+            total = 0
+            for (tid, _), msgs in self._queues.items():
+                if tid == tenant_id:
+                    total += len(msgs)
+            return total
+
+    async def count_all_global(self) -> int:
+        async with self._lock:
+            return sum(len(msgs) for msgs in self._queues.values())
+
     def clear(self) -> None:
         self._queues.clear()
 
@@ -150,6 +162,14 @@ class InMemoryRoomBackend:
                 return {}
             return dict(self._rooms[key].get("members", {}))
 
+    async def count(self, tenant_id: str) -> int:
+        async with self._lock:
+            return sum(1 for (tid, _) in self._rooms if tid == tenant_id)
+
+    async def count_global(self) -> int:
+        async with self._lock:
+            return len(self._rooms)
+
     def clear(self) -> None:
         self._rooms.clear()
         self._name_index.clear()
@@ -205,6 +225,17 @@ class InMemoryRoomHistoryBackend:
                     break
             results.reverse()
             return results
+
+    async def delete(self, tenant_id: str, room_id: str) -> None:
+        async with self._lock:
+            self._history.pop((tenant_id, room_id), None)
+
+    async def rename_room_in_history(
+        self, tenant_id: str, room_id: str, new_name: str
+    ) -> None:
+        async with self._lock:
+            for msg in self._history.get((tenant_id, room_id), []):
+                msg["room"] = new_name
 
     def clear(self) -> None:
         self._history.clear()
@@ -417,15 +448,24 @@ class InMemoryAnalyticsBackend:
                 "total_delivered": 0,
                 "per_sender": defaultdict(int),
                 "per_recipient": defaultdict(int),
+                "hourly_volume": defaultdict(int),
             }
         )
         self._lock = asyncio.Lock()
 
     async def track_send(self, tenant_id: str, sender: str) -> None:
+        from datetime import datetime, timezone
+
         async with self._lock:
             stats = self._stats[tenant_id]
             stats["total_sent"] += 1
             stats["per_sender"][sender] += 1
+            hour_key = (
+                datetime.now(timezone.utc)
+                .replace(minute=0, second=0, microsecond=0)
+                .isoformat()
+            )
+            stats["hourly_volume"][hour_key] += 1
 
     async def track_delivery(
         self, tenant_id: str, recipient: str, count: int
@@ -443,10 +483,38 @@ class InMemoryAnalyticsBackend:
                 "total_delivered": stats["total_delivered"],
                 "per_sender": dict(stats["per_sender"]),
                 "per_recipient": dict(stats["per_recipient"]),
+                "hourly_volume": dict(stats["hourly_volume"]),
             }
 
     def clear(self) -> None:
         self._stats.clear()
+
+
+# -- Participants -----------------------------------------------------------
+
+
+class InMemoryParticipantBackend:
+    """Track known participant names in memory."""
+
+    def __init__(self) -> None:
+        # (tenant_id,) -> set of names
+        self._participants: dict[str, set[str]] = defaultdict(set)
+        self._lock = asyncio.Lock()
+
+    async def add(self, tenant_id: str, *names: str) -> None:
+        async with self._lock:
+            self._participants[tenant_id].update(names)
+
+    async def list_all(self, tenant_id: str) -> list[str]:
+        async with self._lock:
+            return sorted(self._participants.get(tenant_id, set()))
+
+    async def count_global(self) -> int:
+        async with self._lock:
+            return sum(len(s) for s in self._participants.values())
+
+    def clear(self) -> None:
+        self._participants.clear()
 
 
 # -- Convenience bundle -----------------------------------------------------
@@ -464,7 +532,9 @@ class InMemoryBackends:
     sse_tokens: InMemorySSETokenBackend
     webhooks: InMemoryWebhookBackend
     analytics: InMemoryAnalyticsBackend
-    participants: set = field(default_factory=set)
+    participants: InMemoryParticipantBackend = field(
+        default_factory=InMemoryParticipantBackend
+    )
 
     @classmethod
     def create(cls, max_room_history: int = 200) -> InMemoryBackends:
@@ -480,7 +550,7 @@ class InMemoryBackends:
             sse_tokens=InMemorySSETokenBackend(),
             webhooks=InMemoryWebhookBackend(),
             analytics=InMemoryAnalyticsBackend(),
-            participants=set(),
+            participants=InMemoryParticipantBackend(),
         )
 
     def clear_all(self) -> None:

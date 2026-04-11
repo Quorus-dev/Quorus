@@ -36,6 +36,14 @@ class MessageBackend(Protocol):
         """Return the number of pending messages without consuming them."""
         ...
 
+    async def count_all(self, tenant_id: str) -> int:
+        """Count total pending messages across all recipients for a tenant."""
+        ...
+
+    async def count_all_global(self) -> int:
+        """Count total pending messages globally (for health checks)."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Rooms
@@ -86,6 +94,14 @@ class RoomBackend(Protocol):
         """Return ``{name: role}`` for all members of a room."""
         ...
 
+    async def count(self, tenant_id: str) -> int:
+        """Count rooms in a tenant."""
+        ...
+
+    async def count_global(self) -> int:
+        """Count all rooms (for health checks)."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Room history
@@ -115,6 +131,16 @@ class RoomHistoryBackend(Protocol):
         message_type: str = "",
         limit: int = 50,
     ) -> list[dict]:
+        ...
+
+    async def delete(self, tenant_id: str, room_id: str) -> None:
+        """Delete history for a room."""
+        ...
+
+    async def rename_room_in_history(
+        self, tenant_id: str, room_id: str, new_name: str
+    ) -> None:
+        """Update room name in all history messages."""
         ...
 
 
@@ -211,6 +237,25 @@ class WebhookBackend(Protocol):
     async def delete_room(
         self, tenant_id: str, room_id: str, callback_url: str
     ) -> bool:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class ParticipantBackend(Protocol):
+    """Track known participant names."""
+
+    async def add(self, tenant_id: str, *names: str) -> None:
+        ...
+
+    async def list_all(self, tenant_id: str) -> list[str]:
+        ...
+
+    async def count_global(self) -> int:
         ...
 
 
