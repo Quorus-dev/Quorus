@@ -1840,3 +1840,104 @@ async def test_dashboard_css_variables(client: AsyncClient):
     assert resp.status_code == 200
     assert ":root{" in resp.text or ":root {" in resp.text
     assert "var(--" in resp.text
+
+
+async def test_agent_profile_basic(client: AsyncClient, auth_headers: dict):
+  """Get agent profile returns agent info."""
+  # Create heartbeat for agent
+  await client.post(
+      "/heartbeat",
+      json={"instance_name": "alice", "status": "active"},
+      headers=auth_headers,
+  )
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  data = resp.json()
+  assert data["name"] == "alice"
+  assert "last_seen" in data
+  assert "rooms" in data
+  assert "message_count" in data
+  assert "online" in data
+
+
+async def test_agent_profile_not_found(client: AsyncClient, auth_headers: dict):
+  """Get agent profile returns 404 for unknown agent."""
+  resp = await client.get("/agents/nonexistent", headers=auth_headers)
+  assert resp.status_code == 404
+
+
+async def test_agent_profile_shows_rooms(client: AsyncClient, auth_headers: dict):
+  """Get agent profile shows rooms agent is in."""
+  # Create rooms with alice
+  await client.post(
+      "/rooms",
+      json={"name": "dev", "created_by": "alice"},
+      headers=auth_headers,
+  )
+  await client.post(
+      "/rooms",
+      json={"name": "ops", "created_by": "alice"},
+      headers=auth_headers,
+  )
+  # Heartbeat to register agent
+  await client.post(
+      "/heartbeat",
+      json={"instance_name": "alice", "status": "active"},
+      headers=auth_headers,
+  )
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  rooms = resp.json()["rooms"]
+  assert len(rooms) == 2
+  room_names = {r["name"] for r in rooms}
+  assert room_names == {"dev", "ops"}
+
+
+async def test_agent_profile_shows_message_count(client: AsyncClient, auth_headers: dict):
+  """Get agent profile shows message count."""
+  # Send messages from agent
+  await client.post(
+      "/messages",
+      json={"from_name": "alice", "to": "bob", "content": "msg1"},
+      headers=auth_headers,
+  )
+  await client.post(
+      "/messages",
+      json={"from_name": "alice", "to": "bob", "content": "msg2"},
+      headers=auth_headers,
+  )
+  # Heartbeat to register agent
+  await client.post(
+      "/heartbeat",
+      json={"instance_name": "alice", "status": "active"},
+      headers=auth_headers,
+  )
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  assert resp.json()["message_count"] == 2
+
+
+async def test_agent_profile_shows_online_status(client: AsyncClient, auth_headers: dict):
+  """Get agent profile shows online status."""
+  await client.post(
+      "/heartbeat",
+      json={"instance_name": "alice", "status": "active"},
+      headers=auth_headers,
+  )
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  assert resp.json()["online"] is True
+
+  # Backdate heartbeat to show as offline
+  backends = app.state.backends
+  backends.presence._entries[("_legacy", "alice")]["last_heartbeat"] = 0.0
+
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  assert resp.json()["online"] is False
+
+
+async def test_agent_profile_requires_auth(client: AsyncClient):
+  """Get agent profile requires auth."""
+  resp = await client.get("/agents/alice")
+  assert resp.status_code == 401

@@ -248,6 +248,27 @@ class InMemoryRoomHistoryBackend:
             results.reverse()
             return results
 
+    async def get_by_id(
+        self, tenant_id: str, room_id: str, message_id: str
+    ) -> dict | None:
+        """Return a single message by ID, or None if not found."""
+        async with self._lock:
+            for msg in self._history[(tenant_id, room_id)]:
+                if msg.get("id") == message_id:
+                    return dict(msg)
+            return None
+
+    async def get_thread(
+        self, tenant_id: str, room_id: str, message_id: str
+    ) -> list[dict]:
+        """Return the parent message and all direct replies."""
+        async with self._lock:
+            results = []
+            for msg in self._history[(tenant_id, room_id)]:
+                if msg.get("id") == message_id or msg.get("reply_to") == message_id:
+                    results.append(dict(msg))
+            return results
+
     async def delete(self, tenant_id: str, room_id: str) -> None:
         async with self._lock:
             self._history.pop((tenant_id, room_id), None)

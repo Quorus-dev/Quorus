@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from murmur.routes.agents import router as agents_router
 from murmur.routes.analytics import router as analytics_router
 from murmur.routes.health import router as health_router
 from murmur.routes.invites import router as invites_router
@@ -21,4 +22,5 @@ router.include_router(presence_router)
 router.include_router(webhooks_router)
 router.include_router(sse_router)
 router.include_router(analytics_router)
+router.include_router(agents_router)
 router.include_router(invites_router)
