@@ -1232,6 +1232,239 @@ def _cmd_status(args):
     asyncio.run(_status())
 
 
+# ---------------------------------------------------------------------------
+# murmur state <room>
+# ---------------------------------------------------------------------------
+
+async def _room_state(room_name: str) -> None:
+    """Show the Shared State Matrix for a room (goal, agents, locks, stats)."""
+    client = _get_client()
+    try:
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_name}/state",
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        state = resp.json()
+
+        console.print(f"[bold]Room:[/bold] {room_name}\n")
+
+        # Active goal
+        goal = state.get("active_goal") or "[dim]No active goal[/dim]"
+        console.print(f"[bold]Active Goal:[/bold] {goal}")
+
+        # Active agents
+        agents = state.get("active_agents", [])
+        if agents:
+            agent_list = ", ".join(agents)
+            console.print(
+                f"\n[bold]Active Agents:[/bold] {agent_list} "
+                f"[dim]({len(agents)} online)[/dim]"
+            )
+        else:
+            console.print("\n[bold]Active Agents:[/bold] [dim]None[/dim]")
+
+        # Locked files
+        locked = state.get("locked_files", {})
+        if locked:
+            console.print("\n[bold]Locked Files:[/bold]")
+            for fp, info in locked.items():
+                holder = info.get("held_by") or info.get("claimed_by") or "?"
+                exp = info.get("expires_at", "")
+                ttl_str = ""
+                if exp:
+                    import datetime as _dt
+                    try:
+                        diff = max(
+                            0,
+                            round(
+                                (
+                                    _dt.datetime.fromisoformat(
+                                        exp.replace("Z", "+00:00")
+                                    )
+                                    - _dt.datetime.now(_dt.timezone.utc)
+                                ).total_seconds()
+                            ),
+                        )
+                        m, s = divmod(diff, 60)
+                        ttl_str = f" (expires in {m}m {s:02d}s)"
+                    except ValueError:
+                        pass
+                console.print(f"  [cyan]{fp}[/cyan]  ->  [yellow]{holder}[/yellow]{ttl_str}")
+        else:
+            console.print("\n[bold]Locked Files:[/bold] [dim]None[/dim]")
+
+        # Decisions
+        decisions = state.get("resolved_decisions", [])
+        console.print(f"\n[bold]Decisions Made:[/bold] {len(decisions)}")
+
+        # Messages / last activity
+        msg_count = state.get("message_count", 0)
+        last_ts = state.get("last_activity", "")
+        last_str = ""
+        if last_ts:
+            import datetime as _dt
+            try:
+                diff = round(
+                    (
+                        _dt.datetime.now(_dt.timezone.utc)
+                        - _dt.datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+                    ).total_seconds()
+                )
+                if diff < 60:
+                    last_str = f" (last: {diff} seconds ago)"
+                elif diff < 3600:
+                    last_str = f" (last: {diff // 60} minutes ago)"
+                else:
+                    last_str = f" (last: {diff // 3600} hours ago)"
+            except ValueError:
+                last_str = f" (last: {last_ts})"
+        console.print(f"[bold]Messages:[/bold] {msg_count}{last_str}")
+
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_room_state(args):
+    asyncio.run(_room_state(args.room))
+
+
+# ---------------------------------------------------------------------------
+# murmur locks <room>
+# ---------------------------------------------------------------------------
+
+async def _room_locks(room_name: str) -> None:
+    """Show all active file locks for a room."""
+    client = _get_client()
+    try:
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_name}/state",
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        state = resp.json()
+        locked = state.get("locked_files", {})
+
+        console.print(f"[bold]File Locks in {room_name}:[/bold]\n")
+        if not locked:
+            console.print("  [dim]No active locks.[/dim]")
+            return
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("File Path", style="cyan")
+        table.add_column("Held By", style="yellow")
+        table.add_column("TTL", justify="right")
+        table.add_column("Lock Token")
+
+        import datetime as _dt
+        for fp, info in locked.items():
+            holder = info.get("held_by") or info.get("claimed_by") or "?"
+            exp = info.get("expires_at", "")
+            token = info.get("lock_token", "")
+            token_short = (token[:8] + "...") if len(token) > 8 else token
+            ttl_str = ""
+            if exp:
+                try:
+                    diff = max(
+                        0,
+                        round(
+                            (
+                                _dt.datetime.fromisoformat(exp.replace("Z", "+00:00"))
+                                - _dt.datetime.now(_dt.timezone.utc)
+                            ).total_seconds()
+                        ),
+                    )
+                    m, s = divmod(diff, 60)
+                    ttl_str = f"{m}m {s:02d}s"
+                except ValueError:
+                    ttl_str = exp
+            table.add_row(fp, holder, ttl_str, token_short)
+
+        console.print(table)
+
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_room_locks(args):
+    asyncio.run(_room_locks(args.room))
+
+
+# ---------------------------------------------------------------------------
+# murmur usage
+# ---------------------------------------------------------------------------
+
+async def _usage() -> None:
+    """Show global relay usage stats."""
+    client = _get_client()
+    try:
+        resp = await client.get(
+            f"{RELAY_URL}/analytics",
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        stats = resp.json()
+
+        # Count rooms
+        rooms_resp = await client.get(
+            f"{RELAY_URL}/rooms",
+            headers=_auth_headers(),
+        )
+        room_count = len(rooms_resp.json()) if rooms_resp.is_success else 0
+
+        # Count active agents (with presence info)
+        presence_resp = await client.get(
+            f"{RELAY_URL}/presence",
+            headers=_auth_headers(),
+        )
+        active_agents = 0
+        if presence_resp.is_success:
+            active_agents = sum(
+                1 for p in presence_resp.json() if p.get("online", False)
+            )
+
+        console.print("[bold]Usage Stats:[/bold]\n")
+        console.print(
+            f"  Total messages:  [bold]{stats.get('total_messages_sent', 0):,}[/bold]"
+        )
+        console.print(f"  Active rooms:    [bold]{room_count}[/bold]")
+        console.print(f"  Active agents:   [bold]{active_agents}[/bold]")
+
+        # Top senders
+        participants = stats.get("participants", {})
+        if participants:
+            console.print("\n  [bold]Top senders:[/bold]")
+            top = sorted(participants.items(), key=lambda kv: kv[1].get("sent", 0), reverse=True)
+            for name, data in top[:10]:
+                sent = data.get("sent", 0)
+                console.print(f"    [cyan]{name}[/cyan]: {sent:,} messages")
+
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_usage(args):
+    asyncio.run(_usage())
+
+
 def _cmd_init(args):
     """One-command setup: write config, register MCP server with Claude Code."""
     name = args.name
@@ -2255,6 +2488,14 @@ def main():
     p_hack.add_argument("--mission1", default=None, help="Mission for room 1")
     p_hack.add_argument("--mission2", default=None, help="Mission for room 2")
 
+    p_state = sub.add_parser("state", help="Show room state: goal, agents, locks, stats")
+    p_state.add_argument("room", help="Room name")
+
+    p_locks = sub.add_parser("locks", help="Show active file locks in a room")
+    p_locks.add_argument("room", help="Room name")
+
+    sub.add_parser("usage", help="Show global relay usage stats")
+
     p_join = sub.add_parser("join", help="One-liner to join a room")
     p_join.add_argument("--name", required=True, help="Your participant name")
     p_join.add_argument("--relay", dest="relay_url", required=True, help="Relay URL")
@@ -2327,6 +2568,9 @@ def main():
         "hackathon": _cmd_hackathon,
         "watch-daemon": _cmd_watch_daemon,
         "watch-context": _cmd_watch_context,
+        "state": _cmd_room_state,
+        "locks": _cmd_room_locks,
+        "usage": _cmd_usage,
     }
     commands[args.command](args)
 
