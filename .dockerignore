@@ -5,7 +5,10 @@ __pycache__
 .git
 .gitignore
 tests/
-*.md
+CLAUDE.md
+CONTEXT.md
+CONTRIBUTING.md
+agent-prompt-template.md
 .claude/
 .mcp.json
 messages.json

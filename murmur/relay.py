@@ -74,7 +74,7 @@ MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 MESSAGE_TTL_SECONDS = int(os.environ.get("MESSAGE_TTL_SECONDS", str(24 * 60 * 60)))  # default 24h
 MAX_ROOM_HISTORY = int(os.environ.get("MAX_ROOM_HISTORY", "200"))
-HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))  # seconds before agent is offline
+HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))  # offline threshold
 
 # Rate limiting: per-sender sliding window
 RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))  # seconds

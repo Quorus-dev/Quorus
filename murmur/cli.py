@@ -798,6 +798,111 @@ def _cmd_spawn_multiple(args):
     console.print(f"\n[bold green]Spawned {count} agents.[/bold green]")
 
 
+def _cmd_quickstart(args):
+    """One-command demo: start relay, create room, spawn agents, watch them talk."""
+    import secrets as secrets_mod
+    import time
+
+    repo_dir = Path(__file__).resolve().parent.parent
+    secret = secrets_mod.token_urlsafe(16)
+    port = 8080
+    room_name = "demo"
+    agent_count = args.agents
+
+    console.print("[bold green]Murmur Quickstart[/bold green]")
+    console.print("Starting relay, creating room, spawning agents...\n")
+
+    # 1. Start relay in background
+    env = os.environ.copy()
+    env["RELAY_SECRET"] = secret
+    env["PORT"] = str(port)
+    relay_proc = subprocess.Popen(
+        [
+            "uv", "run", "--directory", str(repo_dir),
+            "python", "-m", "uvicorn", "murmur.relay:app",
+            "--host", "127.0.0.1", "--port", str(port),
+        ],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    relay_url = f"http://127.0.0.1:{port}"
+    console.print(f"  [green]Relay started[/green] (pid {relay_proc.pid})")
+
+    # Wait for relay to be ready
+    import httpx as httpx_mod
+    for _ in range(20):
+        try:
+            r = httpx_mod.get(f"{relay_url}/health", timeout=1)
+            if r.status_code == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(0.25)
+    else:
+        console.print("[red]Relay failed to start.[/red]")
+        relay_proc.terminate()
+        sys.exit(1)
+
+    # 2. Write config for the human user
+    config_dir = Path.home() / "mcp-tunnel"
+    config_dir.mkdir(exist_ok=True)
+    config = {
+        "relay_url": relay_url,
+        "relay_secret": secret,
+        "instance_name": "human",
+        "enable_background_polling": True,
+        "push_notification_method": "notifications/claude/channel",
+        "push_notification_channel": "mcp-tunnel",
+    }
+    (config_dir / "config.json").write_text(json.dumps(config, indent=2))
+
+    # 3. Create room
+    headers = {"Authorization": f"Bearer {secret}"}
+    r = httpx_mod.post(
+        f"{relay_url}/rooms",
+        json={"name": room_name, "created_by": "human"},
+        headers=headers,
+    )
+    if r.status_code == 200:
+        r.json()  # validate response
+        console.print(f"  [green]Room '{room_name}' created[/green]")
+    elif r.status_code == 409:
+        console.print(f"  [yellow]Room '{room_name}' already exists[/yellow]")
+    else:
+        console.print(f"[red]Failed to create room: {r.text}[/red]")
+        relay_proc.terminate()
+        sys.exit(1)
+
+    # 4. Spawn agents
+    for i in range(1, agent_count + 1):
+        name = f"agent-{i}"
+        # Join agent to room
+        httpx_mod.post(
+            f"{relay_url}/rooms/{room_name}/join",
+            json={"participant": name},
+            headers=headers,
+        )
+        _spawn_agent(room_name, name, relay_url, secret)
+
+    console.print("\n[bold green]Quickstart ready![/bold green]")
+    console.print(f"  Relay: {relay_url}")
+    console.print(f"  Room: {room_name}")
+    console.print(f"  Agents: {agent_count}")
+    console.print(f"  Secret: {secret}")
+    console.print("\n[dim]Press Ctrl+C to stop the relay.[/dim]")
+    console.print(f"[dim]Watch the room: murmur chat {room_name}[/dim]\n")
+
+    # 5. Open interactive chat so user sees agents talking
+    try:
+        asyncio.run(_chat(room_name))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        relay_proc.terminate()
+        console.print("\n[dim]Relay stopped. Quickstart finished.[/dim]")
+
+
 def _cmd_relay(args):
     """Start the relay server."""
     repo_dir = Path(__file__).resolve().parent.parent
@@ -916,6 +1021,13 @@ def main():
         "--prefix", default="agent", help="Name prefix (default: agent)"
     )
 
+    p_quickstart = sub.add_parser(
+        "quickstart", help="One-command demo: relay + room + agents"
+    )
+    p_quickstart.add_argument(
+        "--agents", type=int, default=2, help="Number of agents (default 2)"
+    )
+
     p_join = sub.add_parser("join", help="One-liner to join a room")
     p_join.add_argument("--name", required=True, help="Your participant name")
     p_join.add_argument("--relay", dest="relay_url", required=True, help="Relay URL")
@@ -945,6 +1057,7 @@ def main():
         "invite-link": _cmd_invite_link,
         "spawn": _cmd_spawn,
         "spawn-multiple": _cmd_spawn_multiple,
+        "quickstart": _cmd_quickstart,
     }
     commands[args.command](args)
 

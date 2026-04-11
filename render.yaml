@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: murmur-relay
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: RELAY_SECRET
+        generateValue: true
+      - key: PORT
+        value: "8080"
+      - key: MESSAGES_FILE
+        value: /app/data/messages.json
+    healthCheckPath: /health
+    disk:
+      name: murmur-data
+      mountPath: /app/data
+      sizeGB: 1
