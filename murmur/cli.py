@@ -597,6 +597,59 @@ def _cmd_export(args):
     )
 
 
+async def _search(
+    room_name: str,
+    query: str = "",
+    sender: str = "",
+    message_type: str = "",
+    limit: int = 50,
+) -> None:
+    """Search room history by keyword, sender, or message type."""
+    client = _get_client()
+    try:
+        params: dict[str, str | int] = {"limit": limit}
+        if query:
+            params["q"] = query
+        if sender:
+            params["sender"] = sender
+        if message_type:
+            params["message_type"] = message_type
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_name}/search",
+            params=params,
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        messages = resp.json()
+        if not messages:
+            console.print("[dim]No matching messages[/dim]")
+            return
+        console.print(
+            f"[bold]Search results in {room_name}[/bold] "
+            f"({len(messages)} matches)\n"
+        )
+        for msg in messages:
+            console.print(_format_chat_msg(msg))
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_search(args):
+    asyncio.run(
+        _search(
+            args.room, args.query, args.sender,
+            args.type, args.limit,
+        )
+    )
+
+
 def _cmd_connect(args):
     """Generate platform-specific onboarding for an agent type."""
     platform = args.platform
@@ -1857,6 +1910,21 @@ def main():
         "--limit", type=int, default=50, help="Max messages (default 50)"
     )
 
+    p_search = sub.add_parser(
+        "search", help="Search room history by keyword, sender, or type"
+    )
+    p_search.add_argument("room", help="Room name")
+    p_search.add_argument("query", nargs="?", default="", help="Search keyword")
+    p_search.add_argument(
+        "--sender", default="", help="Filter by sender name"
+    )
+    p_search.add_argument(
+        "--type", default="", help="Filter by message type (chat, claim, status, etc.)"
+    )
+    p_search.add_argument(
+        "--limit", type=int, default=50, help="Max results (default 50)"
+    )
+
     p_export = sub.add_parser(
         "export", help="Export room history as JSON or Markdown"
     )
@@ -1971,6 +2039,7 @@ def main():
         "watch": _cmd_watch,
         "history": _cmd_history,
         "export": _cmd_export,
+        "search": _cmd_search,
         "chat": _cmd_chat,
         "ps": _cmd_ps,
         "status": _cmd_status,

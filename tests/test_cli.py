@@ -414,6 +414,75 @@ def test_connect_claude(capsys):
     assert "murmur add-agent" in captured.out
 
 
+# ── search command tests ─────────────────────────────────────────────────
+
+async def test_search_by_keyword(capsys):
+    from murmur.cli import _search
+
+    results = [_SAMPLE_MSGS[0]]  # only "hello world"
+    client = _mock_client(200, results)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("dev", query="hello")
+
+    captured = capsys.readouterr()
+    assert "alice" in captured.out
+    assert "1 matches" in captured.out
+
+
+async def test_search_by_sender(capsys):
+    from murmur.cli import _search
+
+    results = [_SAMPLE_MSGS[1]]  # only bob
+    client = _mock_client(200, results)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("dev", sender="bob")
+
+    captured = capsys.readouterr()
+    assert "bob" in captured.out
+
+
+async def test_search_by_message_type(capsys):
+    from murmur.cli import _search
+
+    results = [_SAMPLE_MSGS[1]]  # claim type
+    client = _mock_client(200, results)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("dev", message_type="claim")
+
+    captured = capsys.readouterr()
+    assert "claim" in captured.out
+
+
+async def test_search_no_results(capsys):
+    from murmur.cli import _search
+
+    client = _mock_client(200, [])
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("dev", query="nonexistent")
+
+    captured = capsys.readouterr()
+    assert "No matching" in captured.out
+
+
+async def test_search_room_not_found(capsys):
+    import httpx
+    from murmur.cli import _search
+
+    resp = MagicMock()
+    resp.status_code = 404
+    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not Found", request=MagicMock(), response=resp
+    )
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    client.aclose = AsyncMock()
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("ghost", query="test")
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out
+
+
 def test_connect_unknown_platform(capsys):
     from murmur.cli import _cmd_connect
 
