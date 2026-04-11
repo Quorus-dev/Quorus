@@ -60,13 +60,17 @@ murmur init <your-name> --relay <url> --secret <secret>
 - Integration guides for Codex, Cursor, Gemini, Ollama
 - Launch content (Show HN draft, X/Twitter thread draft)
 
-**Tests:** 134 passing, all green. Stress tested: 281 msg/s, p50=3.6ms. 6 agents across 2 isolated rooms verified.
+**Tests:** 148 passing, all green. Stress tested: 281 msg/s, p50=3.6ms. Hackathon dry run: 10/10 checks pass. PyPI publish ready.
+
+**Public relay:** Active via localhost.run tunnel (URL shared privately)
 
 ---
 
 ## In Progress (agents building now)
 
-- agent-3: Adding test coverage for presence/heartbeat and peek endpoints
+- agent-1: Edge case testing and error handling
+- agent-2: Performance, reliability, detailed health endpoint
+- agent-3: Developer experience (murmur doctor, better errors, --verbose)
 
 ---
 
