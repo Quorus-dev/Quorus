@@ -483,6 +483,105 @@ async def test_search_room_not_found(capsys):
     assert "not found" in captured.out
 
 
+# ── metrics command tests ────────────────────────────────────────────────
+
+_METRICS_MSGS = [
+    {
+        "from_name": "alice", "content": "hello", "message_type": "chat",
+        "timestamp": "2026-04-11T08:00:00Z",
+    },
+    {
+        "from_name": "bob", "content": "CLAIM: auth", "message_type": "claim",
+        "timestamp": "2026-04-11T08:01:00Z",
+    },
+    {
+        "from_name": "bob", "content": "STATUS: auth complete", "message_type": "status",
+        "timestamp": "2026-04-11T08:30:00Z",
+    },
+    {
+        "from_name": "alice", "content": "nice work", "message_type": "chat",
+        "timestamp": "2026-04-11T09:00:00Z",
+    },
+]
+
+_ANALYTICS_DATA = {
+    "total_messages_sent": 100,
+    "total_messages_delivered": 95,
+    "messages_pending": 5,
+    "participants": {"alice": {"sent": 50, "received": 45}},
+    "hourly_volume": [],
+    "uptime_seconds": 3661,
+}
+
+
+async def test_metrics_shows_agent_activity(capsys):
+    from murmur.cli import _metrics
+
+    hist_resp = MagicMock()
+    hist_resp.status_code = 200
+    hist_resp.json.return_value = _METRICS_MSGS
+    hist_resp.raise_for_status = MagicMock()
+
+    analytics_resp = MagicMock()
+    analytics_resp.status_code = 200
+    analytics_resp.json.return_value = _ANALYTICS_DATA
+    analytics_resp.raise_for_status = MagicMock()
+
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=[hist_resp, analytics_resp])
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _metrics("dev")
+
+    captured = capsys.readouterr()
+    assert "Agent Activity" in captured.out
+    assert "alice" in captured.out
+    assert "bob" in captured.out
+    assert "Message Types" in captured.out
+    assert "Relay Summary" in captured.out
+    assert "100" in captured.out  # total sent
+
+
+async def test_metrics_empty_room(capsys):
+    from murmur.cli import _metrics
+
+    hist_resp = MagicMock()
+    hist_resp.status_code = 200
+    hist_resp.json.return_value = []
+    hist_resp.raise_for_status = MagicMock()
+
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=hist_resp)
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _metrics("empty")
+
+    captured = capsys.readouterr()
+    assert "No messages" in captured.out
+
+
+async def test_metrics_room_not_found(capsys):
+    import httpx
+    from murmur.cli import _metrics
+
+    resp = MagicMock()
+    resp.status_code = 404
+    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not Found", request=MagicMock(), response=resp
+    )
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _metrics("ghost")
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out
+
+
 def test_connect_unknown_platform(capsys):
     from murmur.cli import _cmd_connect
 
