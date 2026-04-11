@@ -103,24 +103,13 @@ Each member's inbox → agent reads via check_messages / HTTP GET / SSE stream
 
 ---
 
-## Hackathon Setup (April 15)
-
-```bash
-murmur hackathon --yc-agents 3 --oai-agents 3
-```
-
-Creates yc-hack + openai-hack rooms, spawns agents, gives missions.
-
----
-
 ## Key Decisions
 
 - Package name: murmur-ai (murmur was taken on PyPI)
-- Private repo until launch — distribute via git+https
 - Free stack only — no paid dependencies
 - MIT licensed
 - Relay is the universal API — MCP is one client integration
-- Web dashboard for non-technical users (building)
+- Web dashboard for non-technical users
 - Medium effort for implementation, high/max for architecture
 
 ---
