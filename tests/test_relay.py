@@ -1526,3 +1526,32 @@ async def test_oversized_room_message_rejected(
         headers=auth_headers,
     )
     assert resp.status_code == 413
+
+
+# --- Health detailed tests ---
+
+
+async def test_health_detailed_returns_metrics(client: AsyncClient, auth_headers):
+    """Detailed health should return uptime, counts, and connection info."""
+    await client.post(
+        "/rooms", json={"name": "health-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    await client.post(
+        "/rooms/health-room/messages",
+        json={"from_name": "alice", "content": "test"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/health/detailed", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "uptime_seconds" in data
+    assert data["rooms"] >= 1
+    assert data["total_sent"] >= 1
+    assert "online_agents" in data
+
+
+async def test_health_detailed_requires_auth(client: AsyncClient):
+    resp = await client.get("/health/detailed")
+    assert resp.status_code == 401
