@@ -1205,3 +1205,145 @@ async def test_rate_limit_per_sender(client: AsyncClient, auth_headers):
             headers=auth_headers,
         )
         assert resp.status_code == 200
+
+
+# --- Heartbeat / Presence tests ---
+
+
+async def test_heartbeat_basic(client: AsyncClient, auth_headers):
+    resp = await client.post(
+        "/heartbeat",
+        json={"instance_name": "agent-1", "status": "active"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "timestamp" in data
+
+
+async def test_heartbeat_requires_auth(client: AsyncClient):
+    resp = await client.post(
+        "/heartbeat",
+        json={"instance_name": "agent-1"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_heartbeat_invalid_status(client: AsyncClient, auth_headers):
+    resp = await client.post(
+        "/heartbeat",
+        json={"instance_name": "agent-1", "status": "invalid"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_presence_shows_online(client: AsyncClient, auth_headers):
+    await client.post(
+        "/heartbeat",
+        json={"instance_name": "agent-1", "status": "active"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/presence", headers=auth_headers)
+    assert resp.status_code == 200
+    agents = resp.json()
+    assert len(agents) == 1
+    assert agents[0]["name"] == "agent-1"
+    assert agents[0]["online"] is True
+    assert agents[0]["status"] == "active"
+
+
+async def test_presence_shows_offline_after_timeout(client: AsyncClient, auth_headers):
+    from murmur import relay
+
+    await client.post(
+        "/heartbeat",
+        json={"instance_name": "old-agent"},
+        headers=auth_headers,
+    )
+    # Manually backdate the heartbeat
+    relay.presence["old-agent"]["last_heartbeat"] = "2000-01-01T00:00:00+00:00"
+
+    resp = await client.get("/presence", headers=auth_headers)
+    agents = resp.json()
+    assert len(agents) == 1
+    assert agents[0]["online"] is False
+    assert agents[0]["status"] == "offline"
+
+
+async def test_presence_requires_auth(client: AsyncClient):
+    resp = await client.get("/presence")
+    assert resp.status_code == 401
+
+
+async def test_presence_sorted_online_first(client: AsyncClient, auth_headers):
+    from murmur import relay
+
+    await client.post(
+        "/heartbeat",
+        json={"instance_name": "beta"},
+        headers=auth_headers,
+    )
+    await client.post(
+        "/heartbeat",
+        json={"instance_name": "alpha"},
+        headers=auth_headers,
+    )
+    # Backdate beta
+    relay.presence["beta"]["last_heartbeat"] = "2000-01-01T00:00:00+00:00"
+
+    resp = await client.get("/presence", headers=auth_headers)
+    agents = resp.json()
+    assert agents[0]["name"] == "alpha"
+    assert agents[0]["online"] is True
+    assert agents[1]["name"] == "beta"
+    assert agents[1]["online"] is False
+
+
+async def test_heartbeat_preserves_uptime_start(client: AsyncClient, auth_headers):
+    resp1 = await client.post(
+        "/heartbeat",
+        json={"instance_name": "agent-1"},
+        headers=auth_headers,
+    )
+    ts1 = resp1.json()["timestamp"]
+
+    await client.post(
+        "/heartbeat",
+        json={"instance_name": "agent-1"},
+        headers=auth_headers,
+    )
+
+    resp = await client.get("/presence", headers=auth_headers)
+    agent = resp.json()[0]
+    assert agent["uptime_start"] <= ts1
+
+
+# --- Peek endpoint tests ---
+
+
+async def test_peek_empty(client: AsyncClient, auth_headers):
+    resp = await client.get("/messages/nobody/peek", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 0, "recipient": "nobody"}
+
+
+async def test_peek_with_messages(client: AsyncClient, auth_headers):
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hi"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/messages/bob/peek", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+    # Peek doesn't consume — count stays the same
+    resp2 = await client.get("/messages/bob/peek", headers=auth_headers)
+    assert resp2.json()["count"] == 1
+
+
+async def test_peek_requires_auth(client: AsyncClient):
+    resp = await client.get("/messages/bob/peek")
+    assert resp.status_code == 401
