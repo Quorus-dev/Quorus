@@ -9,7 +9,6 @@ that needs to work on hackathon day.
 import asyncio
 import subprocess
 import sys
-import time
 
 import httpx
 

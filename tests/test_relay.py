@@ -1380,3 +1380,149 @@ async def test_invite_page_no_auth_required(client: AsyncClient, auth_headers):
     # No auth headers
     resp = await client.get("/invite/public-invite")
     assert resp.status_code == 200
+
+
+# --- Edge case tests for hackathon hardening ---
+
+
+async def test_empty_message_content(client: AsyncClient, auth_headers: dict):
+    """Empty message content should still be accepted."""
+    await client.post(
+        "/rooms", json={"name": "edge-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    await client.post(
+        "/rooms/edge-room/join", json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    resp = await client.post(
+        "/rooms/edge-room/messages",
+        json={"from_name": "alice", "content": ""},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+
+
+async def test_unicode_emoji_message(client: AsyncClient, auth_headers: dict):
+    """Messages with unicode and emoji should round-trip correctly."""
+    await client.post(
+        "/rooms", json={"name": "emoji-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    await client.post(
+        "/rooms/emoji-room/join", json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    content = "Hello! Agents coordinating perfectly."
+    await client.post(
+        "/rooms/emoji-room/messages",
+        json={"from_name": "alice", "content": content},
+        headers=auth_headers,
+    )
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    msgs = resp.json()
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == content
+
+
+async def test_kicked_agent_cannot_send(client: AsyncClient, auth_headers: dict):
+    """Agent removed from room should get 403 on send."""
+    create_resp = await client.post(
+        "/rooms", json={"name": "kick-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = create_resp.json()["id"]
+    await client.post(
+        f"/rooms/{room_id}/join", json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    # Remove bob
+    await client.post(
+        f"/rooms/{room_id}/leave", json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    # Bob tries to send
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "bob", "content": "I was kicked"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+
+
+async def test_persistence_survives_restart(
+    client: AsyncClient, auth_headers: dict, tmp_path
+):
+    """Rooms and history survive save/load (simulated restart)."""
+    filepath = str(tmp_path / "messages.json")
+    with patch("murmur.relay.MESSAGES_FILE", filepath):
+        # Create room and send message
+        await client.post(
+            "/rooms", json={"name": "persist-room", "created_by": "alice"},
+            headers=auth_headers,
+        )
+        await client.post(
+            "/rooms/persist-room/messages",
+            json={"from_name": "alice", "content": "before restart"},
+            headers=auth_headers,
+        )
+        # Save and reload
+        _save_to_file()
+        _reset_state()
+        _load_from_file()
+
+        # Room still exists
+        resp = await client.get("/rooms", headers=auth_headers)
+        names = [r["name"] for r in resp.json()]
+        assert "persist-room" in names
+
+        # History still has the message
+        from murmur.relay import room_history
+        rid = None
+        for r in resp.json():
+            if r["name"] == "persist-room":
+                rid = r["id"]
+        assert rid is not None
+        assert len(room_history[rid]) == 1
+        assert room_history[rid][0]["content"] == "before restart"
+
+
+async def test_dashboard_returns_html(client: AsyncClient):
+    """GET / should return the web dashboard without auth."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "murmur" in resp.text.lower()
+    assert "text/html" in resp.headers.get("content-type", "")
+
+
+async def test_large_message_in_room(client: AsyncClient, auth_headers: dict):
+    """Messages up to MAX_MESSAGE_SIZE should be accepted."""
+    await client.post(
+        "/rooms", json={"name": "large-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    # 40KB message (under default 50KB limit)
+    content = "x" * 40000
+    resp = await client.post(
+        "/rooms/large-room/messages",
+        json={"from_name": "alice", "content": content},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+
+
+async def test_oversized_room_message_rejected(
+    client: AsyncClient, auth_headers: dict
+):
+    """Messages over MAX_MESSAGE_SIZE should get 413."""
+    await client.post(
+        "/rooms", json={"name": "oversize-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    content = "x" * 60000  # Over 51200 default limit
+    resp = await client.post(
+        "/rooms/oversize-room/messages",
+        json={"from_name": "alice", "content": content},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 413

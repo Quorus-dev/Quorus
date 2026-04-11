@@ -1040,13 +1040,137 @@ def _cmd_hackathon(args):
             headers=headers,
         )
 
-    console.print(f"\n[bold green]Hackathon ready![/bold green]")
+    console.print("\n[bold green]Hackathon ready![/bold green]")
     console.print(f"  Rooms: {args.room1}, {args.room2}")
     console.print(f"  Agents: {agents_per_room} per room ({agents_per_room * 2} total)")
     console.print(f"  You: {INSTANCE_NAME} (in both rooms)")
     console.print(f"\n  Watch room 1: murmur watch {args.room1}")
     console.print(f"  Watch room 2: murmur watch {args.room2}")
     console.print(f"  Chat in room: murmur chat {args.room1}")
+
+
+def _cmd_doctor(args):
+    """Diagnose common setup issues."""
+    from murmur.config import resolve_config_file
+
+    checks_passed = 0
+    checks_total = 0
+    verbose = args.verbose
+
+    def check(name: str, ok: bool, detail: str = "", fix: str = ""):
+        nonlocal checks_passed, checks_total
+        checks_total += 1
+        if ok:
+            checks_passed += 1
+            console.print(f"  [green]OK[/green]  {name}")
+        else:
+            console.print(f"  [red]FAIL[/red] {name}")
+            if detail:
+                console.print(f"        {detail}")
+            if fix:
+                console.print(f"        [yellow]Fix: {fix}[/yellow]")
+        if verbose and detail and ok:
+            console.print(f"        {detail}")
+
+    console.print("[bold]Murmur Doctor[/bold]\n")
+
+    # 1. Config file
+    config_file = resolve_config_file()
+    check(
+        "Config file exists",
+        config_file.exists(),
+        detail=str(config_file),
+        fix="Run: murmur init <name> --secret <secret>",
+    )
+
+    # 2. Relay URL configured
+    check(
+        "Relay URL configured",
+        bool(RELAY_URL) and RELAY_URL != "http://localhost:8080" or True,
+        detail=RELAY_URL,
+    )
+
+    # 3. Secret configured
+    check(
+        "Relay secret configured",
+        bool(RELAY_SECRET),
+        fix="Set RELAY_SECRET env var or add relay_secret to config",
+    )
+
+    # 4. Instance name configured
+    check(
+        "Instance name configured",
+        INSTANCE_NAME != "default",
+        detail=INSTANCE_NAME,
+        fix="Set INSTANCE_NAME env var or run: murmur init <name>",
+    )
+
+    # 5. Relay reachable
+    relay_ok = False
+    try:
+        r = httpx.get(f"{RELAY_URL}/health", timeout=5)
+        relay_ok = r.status_code == 200
+    except Exception:
+        pass
+    check(
+        "Relay reachable",
+        relay_ok,
+        detail=f"{RELAY_URL}/health",
+        fix="Is the relay running? Try: murmur relay",
+    )
+
+    # 6. Auth works
+    auth_ok = False
+    if relay_ok:
+        try:
+            r = httpx.get(
+                f"{RELAY_URL}/rooms",
+                headers={"Authorization": f"Bearer {RELAY_SECRET}"},
+                timeout=5,
+            )
+            auth_ok = r.status_code == 200
+        except Exception:
+            pass
+    check(
+        "Authentication valid",
+        auth_ok,
+        fix="Check RELAY_SECRET matches the relay's RELAY_SECRET env var",
+    )
+
+    # 7. MCP config
+    mcp_json = Path.cwd() / ".mcp.json"
+    home_claude = Path.home() / ".claude.json"
+    mcp_found = mcp_json.exists() or home_claude.exists()
+    check(
+        "MCP config found",
+        mcp_found,
+        detail=str(mcp_json) if mcp_json.exists() else str(home_claude),
+        fix="Run: murmur init <name> --secret <secret>",
+    )
+
+    # 8. Rooms exist
+    if auth_ok:
+        try:
+            r = httpx.get(
+                f"{RELAY_URL}/rooms",
+                headers={"Authorization": f"Bearer {RELAY_SECRET}"},
+                timeout=5,
+            )
+            room_list = r.json()
+            check(
+                "Rooms exist",
+                len(room_list) > 0,
+                detail=f"{len(room_list)} room(s)",
+                fix="Create one: murmur create <room-name>",
+            )
+        except Exception:
+            check("Rooms exist", False)
+
+    console.print(f"\n[bold]{checks_passed}/{checks_total} checks passed[/bold]")
+    if checks_passed == checks_total:
+        console.print("[green]Everything looks good![/green]")
+    else:
+        console.print("[yellow]Fix the issues above to get started.[/yellow]")
 
 
 def _cmd_relay(args):
