@@ -85,3 +85,84 @@ async def test_cli_dm():
     with patch("murmur.cli._get_client", return_value=_mock_client(200, mock_data)):
         result = await _dm("bob", "private message")
     assert result["id"] == "m1"
+
+
+def test_cli_version(capsys):
+    from murmur.cli import _cmd_version
+
+    _cmd_version(MagicMock())
+    captured = capsys.readouterr()
+    assert "murmur-ai" in captured.out
+    assert "0.3.0" in captured.out
+
+
+def test_cli_logs(capsys):
+    import httpx
+    from murmur.cli import _cmd_logs
+
+    mock_stats = {
+        "total_messages_sent": 100,
+        "total_messages_delivered": 80,
+        "messages_pending": 5,
+        "uptime_seconds": 3661,
+        "participants": {
+            "alice": {"sent": 50, "received": 40},
+            "bob": {"sent": 50, "received": 40},
+        },
+        "hourly_volume": [{"hour": "2026-04-11T07:00:00", "count": 42}],
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = mock_stats
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("httpx.get", return_value=mock_resp):
+        _cmd_logs(MagicMock())
+
+    captured = capsys.readouterr()
+    assert "100" in captured.out
+    assert "alice" in captured.out
+
+
+def test_cli_logs_relay_down(capsys):
+    import httpx
+    from murmur.cli import _cmd_logs
+
+    with patch("httpx.get", side_effect=httpx.ConnectError("refused")):
+        _cmd_logs(MagicMock())
+
+    captured = capsys.readouterr()
+    assert "Cannot connect" in captured.out
+    assert "murmur relay" in captured.out
+
+
+def test_cli_doctor_all_pass(capsys):
+    import httpx
+    from murmur.cli import _cmd_doctor
+
+    mock_health = MagicMock()
+    mock_health.status_code = 200
+
+    mock_rooms = MagicMock()
+    mock_rooms.status_code = 200
+    mock_rooms.json.return_value = [{"id": "r1", "name": "test"}]
+
+    def mock_get(url, **kwargs):
+        if "health" in url:
+            return mock_health
+        return mock_rooms
+
+    args = MagicMock()
+    args.verbose = False
+
+    with patch("httpx.get", side_effect=mock_get), \
+         patch("murmur.cli.INSTANCE_NAME", "my-agent"), \
+         patch("murmur.cli.RELAY_SECRET", "secret"), \
+         patch("murmur.config.resolve_config_file") as mock_resolve:
+        mock_path = MagicMock()
+        mock_path.exists.return_value = True
+        mock_resolve.return_value = mock_path
+        _cmd_doctor(args)
+
+    captured = capsys.readouterr()
+    assert "checks passed" in captured.out
