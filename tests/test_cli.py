@@ -166,3 +166,119 @@ def test_cli_doctor_all_pass(capsys):
 
     captured = capsys.readouterr()
     assert "checks passed" in captured.out
+
+
+# ── export command tests ────────────────────────────────────────────────
+
+_SAMPLE_MSGS = [
+    {
+        "id": "m1",
+        "from_name": "alice",
+        "room": "dev",
+        "content": "hello world",
+        "message_type": "chat",
+        "timestamp": "2026-04-11T08:00:00Z",
+    },
+    {
+        "id": "m2",
+        "from_name": "bob",
+        "room": "dev",
+        "content": "claiming task",
+        "message_type": "claim",
+        "timestamp": "2026-04-11T08:01:00Z",
+    },
+]
+
+
+async def test_export_json_stdout(capsys):
+    from murmur.cli import _export
+
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="json")
+
+    captured = capsys.readouterr()
+    import json
+    data = json.loads(captured.out)
+    assert len(data) == 2
+    assert data[0]["from_name"] == "alice"
+
+
+async def test_export_md_stdout(capsys):
+    from murmur.cli import _export
+
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="md")
+
+    captured = capsys.readouterr()
+    assert "# Room: dev" in captured.out
+    assert "**alice**" in captured.out
+    assert "**[claim]**" in captured.out
+
+
+async def test_export_json_to_file(tmp_path):
+    from murmur.cli import _export
+
+    out_file = str(tmp_path / "export.json")
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="json", output=out_file)
+
+    import json
+    data = json.loads((tmp_path / "export.json").read_text())
+    assert len(data) == 2
+
+
+async def test_export_md_to_file(tmp_path):
+    from murmur.cli import _export
+
+    out_file = str(tmp_path / "export.md")
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="md", output=out_file)
+
+    content = (tmp_path / "export.md").read_text()
+    assert "# Room: dev" in content
+    assert "**bob**" in content
+
+
+async def test_export_empty_room(capsys):
+    from murmur.cli import _export
+
+    client = _mock_client(200, [])
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("empty-room", fmt="json")
+
+    captured = capsys.readouterr()
+    assert "No messages" in captured.out
+
+
+async def test_export_room_not_found(capsys):
+    import httpx
+    from murmur.cli import _export
+
+    resp = MagicMock()
+    resp.status_code = 404
+    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not Found", request=MagicMock(), response=resp
+    )
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    client.aclose = AsyncMock()
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("ghost-room", fmt="json")
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out
+
+
+async def test_export_unknown_format(capsys):
+    from murmur.cli import _export
+
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="csv")
+
+    captured = capsys.readouterr()
+    assert "Unknown format" in captured.out

@@ -452,6 +452,60 @@ async def _history(room_name: str, limit: int = 50):
         await client.aclose()
 
 
+async def _export(
+    room_name: str,
+    fmt: str = "json",
+    output: str | None = None,
+    limit: int = 1000,
+) -> None:
+    """Export room history as JSON or Markdown."""
+    client = _get_client()
+    try:
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_name}/history",
+            params={"limit": limit},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        messages = resp.json()
+        if not messages:
+            console.print(f"[dim]No messages in {room_name}[/dim]")
+            return
+
+        if fmt == "json":
+            body = json.dumps(messages, indent=2)
+        elif fmt == "md":
+            lines = [f"# Room: {room_name}", ""]
+            for msg in messages:
+                ts = msg.get("timestamp", "")[:19]
+                sender = msg.get("from_name", "?")
+                msg_type = msg.get("message_type", "chat")
+                content = msg.get("content", "")
+                tag = f" **[{msg_type}]**" if msg_type != "chat" else ""
+                lines.append(f"- `{ts}` **{sender}**{tag} {content}")
+            body = "\n".join(lines) + "\n"
+        else:
+            console.print(f"[red]Unknown format: {fmt} (use json or md)[/red]")
+            return
+
+        if output:
+            Path(output).write_text(body, encoding="utf-8")
+            console.print(
+                f"[green]Exported {len(messages)} messages → {output}[/green]"
+            )
+        else:
+            console.print(body, highlight=False, markup=False)
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
 async def _ps() -> None:
     """Show all agents with online/offline status from heartbeat presence."""
     client = _get_client()
@@ -534,6 +588,12 @@ def _cmd_ps(args):
 
 def _cmd_history(args):
     asyncio.run(_history(args.room, args.limit))
+
+
+def _cmd_export(args):
+    asyncio.run(
+        _export(args.room, args.format, args.output, args.limit)
+    )
 
 
 def _cmd_watch(args):
@@ -1326,6 +1386,22 @@ def main():
         "--limit", type=int, default=50, help="Max messages (default 50)"
     )
 
+    p_export = sub.add_parser(
+        "export", help="Export room history as JSON or Markdown"
+    )
+    p_export.add_argument("room", help="Room name")
+    p_export.add_argument(
+        "--format", default="json", choices=["json", "md"],
+        help="Output format (default: json)"
+    )
+    p_export.add_argument(
+        "--output", "-o", default=None, help="Write to file instead of stdout"
+    )
+    p_export.add_argument(
+        "--limit", type=int, default=1000,
+        help="Max messages to export (default 1000)"
+    )
+
     sub.add_parser("ps", help="Show agent presence (online/offline)")
     sub.add_parser("status", help="Show relay health and stats")
 
@@ -1397,6 +1473,7 @@ def main():
         "dm": _cmd_dm,
         "watch": _cmd_watch,
         "history": _cmd_history,
+        "export": _cmd_export,
         "chat": _cmd_chat,
         "ps": _cmd_ps,
         "status": _cmd_status,
