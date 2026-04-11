@@ -10,7 +10,7 @@ import asyncio
 import time
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # -- Messages ---------------------------------------------------------------
 
@@ -198,7 +198,7 @@ class InMemoryRoomHistoryBackend:
                     continue
                 if sender and msg.get("from") != sender:
                     continue
-                if message_type and msg.get("type") != message_type:
+                if message_type and msg.get("message_type") != message_type:
                     continue
                 results.append(msg)
                 if len(results) >= limit:
@@ -464,6 +464,7 @@ class InMemoryBackends:
     sse_tokens: InMemorySSETokenBackend
     webhooks: InMemoryWebhookBackend
     analytics: InMemoryAnalyticsBackend
+    participants: set = field(default_factory=set)
 
     @classmethod
     def create(cls, max_room_history: int = 200) -> InMemoryBackends:
@@ -479,6 +480,7 @@ class InMemoryBackends:
             sse_tokens=InMemorySSETokenBackend(),
             webhooks=InMemoryWebhookBackend(),
             analytics=InMemoryAnalyticsBackend(),
+            participants=set(),
         )
 
     def clear_all(self) -> None:
@@ -491,3 +493,4 @@ class InMemoryBackends:
         self.sse_tokens.clear()
         self.webhooks.clear()
         self.analytics.clear()
+        self.participants.clear()
