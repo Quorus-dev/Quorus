@@ -45,7 +45,17 @@ async def list_rooms(
     auth: AuthContext = Depends(verify_auth),
 ):
     svc = request.app.state.room_service
-    return await svc.list_all(_tid(auth))
+    tid = _tid(auth)
+    all_rooms = await svc.list_all(tid)
+    # Non-legacy users only see rooms they belong to
+    if auth.is_legacy or auth.role == "admin":
+        return all_rooms
+    result = []
+    for room in all_rooms:
+        members = await svc.get_members(tid, room["id"])
+        if auth.sub in members:
+            result.append(room)
+    return result
 
 
 @router.get("/rooms/{room_id}")
@@ -55,8 +65,15 @@ async def get_room(
     auth: AuthContext = Depends(verify_auth),
 ):
     svc = request.app.state.room_service
-    rid, data = await svc.get(_tid(auth), room_id)
-    members = await svc.get_members(_tid(auth), rid)
+    tid = _tid(auth)
+    rid, data = await svc.get(tid, room_id)
+    members = await svc.get_members(tid, rid)
+    # Require membership to view room details (unless legacy/admin)
+    if not auth.is_legacy and auth.role != "admin":
+        if auth.sub not in members:
+            raise HTTPException(
+                status_code=403, detail="Must be a room member to view details",
+            )
     return {
         "id": rid,
         "name": data.get("name", ""),
