@@ -1002,3 +1002,135 @@ async def test_sse_endpoint_rejects_bad_token(client: AsyncClient):
     """SSE endpoint should reject invalid tokens."""
     resp = await client.get("/stream/bob", params={"token": "wrong"})
     assert resp.status_code == 401
+
+
+async def test_room_history_returns_messages(client: AsyncClient, auth_headers: dict):
+    """History endpoint should return messages sent to a room."""
+    create_resp = await client.post(
+        "/rooms", json={"name": "hist-room", "created_by": "alice"}, headers=auth_headers
+    )
+    room_id = create_resp.json()["id"]
+    await client.post(
+        f"/rooms/{room_id}/join", json={"participant": "bob"}, headers=auth_headers
+    )
+
+    for i in range(3):
+        await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "alice", "content": f"msg-{i}"},
+            headers=auth_headers,
+        )
+
+    resp = await client.get(f"/rooms/{room_id}/history", headers=auth_headers)
+    assert resp.status_code == 200
+    msgs = resp.json()
+    assert len(msgs) == 3
+    assert msgs[0]["content"] == "msg-0"
+    assert msgs[2]["content"] == "msg-2"
+    assert msgs[0]["from_name"] == "alice"
+    assert msgs[0]["room"] == "hist-room"
+
+
+async def test_room_history_not_cleared_on_read(client: AsyncClient, auth_headers: dict):
+    """History should persist even after members read their inboxes."""
+    create_resp = await client.post(
+        "/rooms", json={"name": "persist-room", "created_by": "alice"}, headers=auth_headers
+    )
+    room_id = create_resp.json()["id"]
+    await client.post(
+        f"/rooms/{room_id}/join", json={"participant": "bob"}, headers=auth_headers
+    )
+
+    await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "alice", "content": "hello"},
+        headers=auth_headers,
+    )
+
+    # Read clears inbox
+    await client.get("/messages/bob", headers=auth_headers)
+    await client.get("/messages/alice", headers=auth_headers)
+
+    # History still has the message
+    resp = await client.get(f"/rooms/{room_id}/history", headers=auth_headers)
+    msgs = resp.json()
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "hello"
+
+
+async def test_room_history_limit_param(client: AsyncClient, auth_headers: dict):
+    """Limit parameter should cap the number of returned messages."""
+    create_resp = await client.post(
+        "/rooms", json={"name": "limit-room", "created_by": "alice"}, headers=auth_headers
+    )
+    room_id = create_resp.json()["id"]
+
+    for i in range(10):
+        await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "alice", "content": f"msg-{i}"},
+            headers=auth_headers,
+        )
+
+    resp = await client.get(
+        f"/rooms/{room_id}/history", params={"limit": 3}, headers=auth_headers
+    )
+    msgs = resp.json()
+    assert len(msgs) == 3
+    # Should return the LAST 3
+    assert msgs[0]["content"] == "msg-7"
+    assert msgs[2]["content"] == "msg-9"
+
+
+async def test_room_history_resolve_by_name(client: AsyncClient, auth_headers: dict):
+    """History endpoint should resolve rooms by name, not just ID."""
+    await client.post(
+        "/rooms", json={"name": "named-room", "created_by": "alice"}, headers=auth_headers
+    )
+
+    await client.post(
+        "/rooms/named-room/messages",
+        json={"from_name": "alice", "content": "by-name"},
+        headers=auth_headers,
+    )
+
+    resp = await client.get("/rooms/named-room/history", headers=auth_headers)
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+
+async def test_room_history_nonexistent_room(client: AsyncClient, auth_headers: dict):
+    """History for a nonexistent room should return 404."""
+    resp = await client.get("/rooms/no-such-room/history", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+async def test_room_history_requires_auth(client: AsyncClient):
+    """History endpoint should require authentication."""
+    resp = await client.get("/rooms/any-room/history")
+    assert resp.status_code == 401
+
+
+async def test_room_history_persists(client: AsyncClient, auth_headers: dict, tmp_path):
+    """Room history should survive save/load cycle."""
+    filepath = str(tmp_path / "messages.json")
+    with patch("relay_server.MESSAGES_FILE", filepath):
+        create_resp = await client.post(
+            "/rooms", json={"name": "save-room", "created_by": "alice"},
+            headers=auth_headers,
+        )
+        room_id = create_resp.json()["id"]
+
+        await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "alice", "content": "persisted"},
+            headers=auth_headers,
+        )
+
+        _save_to_file()
+        _reset_state()
+        _load_from_file()
+
+        from relay_server import room_history
+        assert len(room_history[room_id]) == 1
+        assert room_history[room_id][0]["content"] == "persisted"

@@ -53,12 +53,14 @@ persistence_lock = asyncio.Lock()
 message_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
 webhooks: dict[str, str] = {}  # instance_name -> callback_url
 rooms: dict[str, dict] = {}  # room_id -> {name, created_by, members, created_at}
+room_history: dict[str, list[dict]] = defaultdict(list)  # room_id -> last N messages
 sse_queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 MESSAGE_TTL_SECONDS = int(os.environ.get("MESSAGE_TTL_SECONDS", str(24 * 60 * 60)))  # default 24h
+MAX_ROOM_HISTORY = int(os.environ.get("MAX_ROOM_HISTORY", "200"))
 
 # Analytics state
 analytics: dict = {
@@ -108,6 +110,7 @@ def _reset_state():
     message_events.clear()
     webhooks.clear()
     rooms.clear()
+    room_history.clear()
     sse_queues.clear()
     analytics["total_sent"] = 0
     analytics["total_delivered"] = 0
@@ -164,6 +167,7 @@ def _save_to_file():
             }
             for rid, r in rooms.items()
         },
+        "room_history": {rid: msgs for rid, msgs in room_history.items()},
     }
     try:
         with open(MESSAGES_FILE, "w") as f:
@@ -204,6 +208,8 @@ def _load_from_file():
             "members": set(rdata.get("members", [])),
             "created_at": rdata["created_at"],
         }
+    for rid, msgs in data.get("room_history", {}).items():
+        room_history[rid] = msgs
     logger.info("Loaded state from %s", MESSAGES_FILE)
 
 
@@ -752,6 +758,19 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
             await q.put(fan_out_msg)
         await _notify_webhook(recipient, fan_out_msg)
 
+    # Store in room history (not cleared on read)
+    history_msg = {
+        "id": message_id,
+        "from_name": msg.from_name,
+        "room": room["name"],
+        "content": msg.content,
+        "message_type": msg.message_type,
+        "timestamp": timestamp,
+    }
+    room_history[room_id].append(history_msg)
+    if len(room_history[room_id]) > MAX_ROOM_HISTORY:
+        room_history[room_id] = room_history[room_id][-MAX_ROOM_HISTORY:]
+
     participants.add(msg.from_name)
     _track_send(msg.from_name)
     _trim_messages()
@@ -762,6 +781,15 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
         message_id, room["name"], msg.from_name, len(recipients),
     )
     return {"id": message_id, "timestamp": timestamp}
+
+
+@app.get("/rooms/{room_id}/history", dependencies=[Depends(verify_auth)])
+async def get_room_history(room_id: str, limit: int = 50):
+    """Return the last N messages sent to a room (not cleared on read)."""
+    rid, room = _resolve_room(room_id)
+    limit = min(max(limit, 1), MAX_ROOM_HISTORY)
+    msgs = room_history.get(rid, [])
+    return msgs[-limit:]
 
 
 @app.get("/analytics", dependencies=[Depends(verify_auth)])
