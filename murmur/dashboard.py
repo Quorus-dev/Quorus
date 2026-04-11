@@ -57,7 +57,17 @@ header{
 .conn-ok{background:var(--green)}
 .conn-err{background:var(--red);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.container{display:flex;height:calc(100vh - 52px)}
+/* Usage stats bar */
+.usage-bar{
+  background:var(--bg-1);border-bottom:1px solid var(--border);
+  padding:6px 20px;display:flex;gap:24px;align-items:center;flex-wrap:wrap;
+}
+.usage-stat{display:flex;align-items:center;gap:6px;font-size:12px}
+.usage-stat .us-label{color:var(--text-3)}
+.usage-stat .us-value{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.usage-stat .us-value.us-live{color:var(--green)}
+.usage-sep{width:1px;height:16px;background:var(--border)}
+.container{display:flex;height:calc(100vh - 52px - 34px)}
 .sidebar{
   width:260px;background:var(--bg-1);
   border-right:1px solid var(--border);
@@ -87,7 +97,9 @@ header{
   background:var(--accent);color:#fff;font-size:10px;font-weight:600;
   padding:2px 7px;border-radius:10px;min-width:18px;text-align:center;
 }
-.main{flex:1;display:flex;flex-direction:column;background:var(--bg-0)}
+/* Main split: chat + swarm panel */
+.main{flex:1;display:flex;flex-direction:row;background:var(--bg-0);overflow:hidden}
+.chat-col{flex:1;display:flex;flex-direction:column;min-width:0}
 .room-hdr{
   padding:14px 20px;border-bottom:1px solid var(--border);
   display:flex;align-items:center;gap:12px;
@@ -130,12 +142,87 @@ header{
 .input-bar button:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .empty{color:var(--text-3);text-align:center;padding:60px 20px;font-size:13px;line-height:1.6}
 .empty-icon{font-size:32px;margin-bottom:8px;opacity:.5}
+/* Swarm panel */
+.swarm-panel{
+  width:300px;flex-shrink:0;
+  background:var(--bg-1);border-left:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.swarm-hdr{
+  padding:14px 16px 10px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;
+}
+.swarm-hdr .sh-title{font-size:12px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em}
+.swarm-hdr .sh-badge{
+  margin-left:auto;font-size:10px;font-weight:600;
+  padding:2px 7px;border-radius:10px;
+  background:rgba(34,197,94,.15);color:var(--green);
+}
+.swarm-body{flex:1;overflow-y:auto;padding:12px}
+.swarm-body::-webkit-scrollbar{width:4px}
+.swarm-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+/* Goal card */
+.goal-card{
+  background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r);
+  padding:12px;margin-bottom:12px;
+}
+.goal-card .gc-label{font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.goal-card .gc-text{font-size:13px;color:var(--text);line-height:1.5;font-weight:500}
+.goal-card .gc-text.gc-none{color:var(--text-3);font-style:italic;font-weight:400}
+/* Section headings */
+.swarm-section{font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 6px}
+/* Agents */
+.agent-row{display:flex;align-items:center;gap:8px;padding:5px 0}
+.agent-avatar{
+  width:26px;height:26px;border-radius:50%;
+  background:var(--accent-s);border:1px solid var(--accent);
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;position:relative;
+}
+.agent-avatar .online-ring{
+  position:absolute;bottom:-1px;right:-1px;
+  width:8px;height:8px;border-radius:50%;
+  background:var(--green);border:1px solid var(--bg-1);
+}
+.agent-name{font-size:12px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-count{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+/* File locks */
+.lock-badge{
+  display:flex;align-items:center;gap:6px;
+  padding:6px 8px;border-radius:var(--r);margin-bottom:4px;
+  font-size:11px;border:1px solid;
+}
+.lock-badge.lock-held{
+  background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);
+}
+.lock-badge.lock-expiring{
+  background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.3);
+}
+.lock-badge .lb-file{flex:1;color:var(--text);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lock-badge .lb-holder{color:var(--text-3)}
+.lock-badge .lb-ttl-held{color:var(--red);font-variant-numeric:tabular-nums;flex-shrink:0}
+.lock-badge .lb-ttl-exp{color:var(--orange);font-variant-numeric:tabular-nums;flex-shrink:0}
+.lock-none{font-size:12px;color:var(--text-3);font-style:italic;padding:4px 0}
+/* Stats row */
+.stats-row{display:flex;gap:8px;margin-bottom:4px}
+.stat-chip{
+  flex:1;background:var(--bg-2);border:1px solid var(--border);
+  border-radius:var(--r);padding:8px;text-align:center;
+}
+.stat-chip .sc-val{font-size:18px;font-weight:700;color:var(--text)}
+.stat-chip .sc-lbl{font-size:10px;color:var(--text-3);margin-top:2px}
+/* Activity timestamp */
+.last-activity{font-size:11px;color:var(--text-3);margin-top:8px}
+@media(max-width:900px){
+  .swarm-panel{display:none}
+}
 @media(max-width:700px){
   .sidebar{position:fixed;left:-280px;top:52px;bottom:0;z-index:10;width:280px;transition:left .2s ease}
   .sidebar.open{left:0}
   .menu-btn{display:block !important}
   .msg{font-size:12px}
   .input-bar input{font-size:16px}
+  .container{height:calc(100vh - 52px - 34px)}
 }
 .menu-btn{display:none;background:none;border:none;color:var(--text-2);cursor:pointer;padding:4px;border-radius:4px}
 .menu-btn:hover{background:var(--bg-hover)}
@@ -177,6 +264,28 @@ header{
     <span id="connText">connecting</span>
   </div>
 </header>
+<!-- Usage stats bar -->
+<div class="usage-bar" id="usageBar">
+  <div class="usage-stat">
+    <span class="us-label">Messages today</span>
+    <span class="us-value" id="uMsgsToday">—</span>
+  </div>
+  <div class="usage-sep"></div>
+  <div class="usage-stat">
+    <span class="us-label">Active rooms</span>
+    <span class="us-value" id="uRooms">—</span>
+  </div>
+  <div class="usage-sep"></div>
+  <div class="usage-stat">
+    <span class="us-label">Active agents</span>
+    <span class="us-value" id="uAgents">—</span>
+  </div>
+  <div class="usage-sep"></div>
+  <div class="usage-stat">
+    <span class="us-label">msg/min</span>
+    <span class="us-value us-live" id="uMsgPerMin">—</span>
+  </div>
+</div>
 <div class="container">
   <div class="sidebar" id="sidebar">
     <div class="sidebar-hdr">Rooms</div>
@@ -186,18 +295,47 @@ header{
     </div>
   </div>
   <div class="main">
-    <div class="room-hdr" id="roomHdr" style="display:none">
-      <span class="rt" id="roomTitle"></span>
-      <button class="btn-share" id="shareBtn" onclick="showShare()" style="display:none">Share</button>
-      <span class="rm" id="roomMeta"></span>
+    <div class="chat-col">
+      <div class="room-hdr" id="roomHdr" style="display:none">
+        <span class="rt" id="roomTitle"></span>
+        <button class="btn-share" id="shareBtn" onclick="showShare()" style="display:none">Share</button>
+        <span class="rm" id="roomMeta"></span>
+      </div>
+      <div class="messages" id="messages">
+        <div class="empty"><div class="empty-icon">&#x1f4ac;</div>Select a room to start</div>
+      </div>
+      <div class="members-bar" id="members" style="display:none"></div>
+      <div class="input-bar">
+        <input id="msgInput" placeholder="Type a message..." disabled>
+        <button id="sendBtn" onclick="sendMsg()" disabled>Send</button>
+      </div>
     </div>
-    <div class="messages" id="messages">
-      <div class="empty"><div class="empty-icon">&#x1f4ac;</div>Select a room to start</div>
-    </div>
-    <div class="members-bar" id="members" style="display:none"></div>
-    <div class="input-bar">
-      <input id="msgInput" placeholder="Type a message..." disabled>
-      <button id="sendBtn" onclick="sendMsg()" disabled>Send</button>
+    <!-- Swarm Activity Panel -->
+    <div class="swarm-panel" id="swarmPanel">
+      <div class="swarm-hdr">
+        <span class="sh-title">Swarm Activity</span>
+        <span class="sh-badge" id="swarmLiveBadge">LIVE</span>
+      </div>
+      <div class="swarm-body">
+        <!-- Goal -->
+        <div class="goal-card">
+          <div class="gc-label">Active Goal</div>
+          <div class="gc-text gc-none" id="goalText">No active goal</div>
+        </div>
+        <!-- Active Agents -->
+        <div class="swarm-section">Active Agents</div>
+        <div id="swarmAgents"><div style="font-size:12px;color:var(--text-3)">Select a room</div></div>
+        <!-- Stats -->
+        <div class="swarm-section">Room Stats</div>
+        <div class="stats-row">
+          <div class="stat-chip"><div class="sc-val" id="swarmMsgCount">—</div><div class="sc-lbl">Messages</div></div>
+          <div class="stat-chip"><div class="sc-val" id="swarmAgentCount">—</div><div class="sc-lbl">Agents</div></div>
+        </div>
+        <div class="last-activity" id="swarmLastActivity"></div>
+        <!-- Locked Files -->
+        <div class="swarm-section">File Locks</div>
+        <div id="swarmLocks"><div class="lock-none">No active locks</div></div>
+      </div>
     </div>
   </div>
 </div>
@@ -210,8 +348,139 @@ const NAME=P.get('name')||'web-user';
 const H={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
 let currentRoom=null,sse=null;
 const unread={};
+
+// Rolling message counter for msg/min
+const _msgTimes=[];
+function _trackMsg(){
+  const now=Date.now();
+  _msgTimes.push(now);
+  // Keep only last 5 minutes
+  const cutoff=now-5*60*1000;
+  while(_msgTimes.length&&_msgTimes[0]<cutoff)_msgTimes.shift();
+}
+function _msgPerMin(){
+  const now=Date.now();
+  const cutoff=now-60*1000;
+  return _msgTimes.filter(t=>t>=cutoff).length;
+}
+
 function esc(s){const d=document.createElement('div');d.textContent=String(s);return d.innerHTML}
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open')}
+
+// ── Usage Stats ──────────────────────────────────────────────────────────────
+async function updateUsageStats(){
+  try{
+    // Rooms count
+    const rr=await fetch(API+'/rooms',{headers:H});
+    if(rr.ok){
+      const rooms=await rr.json();
+      document.getElementById('uRooms').textContent=rooms.length;
+    }
+    // Analytics for messages + agents
+    const ar=await fetch(API+'/analytics',{headers:H});
+    if(ar.ok){
+      const stats=await ar.json();
+      document.getElementById('uMsgsToday').textContent=(stats.total_messages_sent||0).toLocaleString();
+      const agentCount=Object.keys(stats.participants||{}).length;
+      document.getElementById('uAgents').textContent=agentCount;
+    }
+    document.getElementById('uMsgPerMin').textContent=_msgPerMin();
+  }catch(e){}
+}
+
+// ── Room State Panel ─────────────────────────────────────────────────────────
+function _fmtTtl(expiresAt){
+  if(!expiresAt)return '';
+  const diff=Math.max(0,Math.round((new Date(expiresAt)-Date.now())/1000));
+  const m=Math.floor(diff/60),s=diff%60;
+  return m>0?m+'m '+String(s).padStart(2,'0')+'s':s+'s';
+}
+function _expiringClass(expiresAt){
+  if(!expiresAt)return 'lock-held';
+  const diff=(new Date(expiresAt)-Date.now())/1000;
+  return diff<90?'lock-expiring':'lock-held';
+}
+function _ttlClass(expiresAt){
+  if(!expiresAt)return 'lb-ttl-held';
+  const diff=(new Date(expiresAt)-Date.now())/1000;
+  return diff<90?'lb-ttl-exp':'lb-ttl-held';
+}
+function _fmtRelative(iso){
+  if(!iso)return '';
+  const diff=Math.round((Date.now()-new Date(iso))/1000);
+  if(diff<5)return 'just now';
+  if(diff<60)return diff+'s ago';
+  if(diff<3600)return Math.floor(diff/60)+'m ago';
+  return Math.floor(diff/3600)+'h ago';
+}
+
+function updateStatePanel(state){
+  // Goal
+  const goalEl=document.getElementById('goalText');
+  if(state.active_goal){
+    goalEl.textContent=state.active_goal;
+    goalEl.classList.remove('gc-none');
+  }else{
+    goalEl.textContent='No active goal';
+    goalEl.classList.add('gc-none');
+  }
+
+  // Agents
+  const agents=state.active_agents||[];
+  document.getElementById('swarmAgentCount').textContent=agents.length;
+  const agEl=document.getElementById('swarmAgents');
+  if(!agents.length){
+    agEl.innerHTML='<div style="font-size:12px;color:var(--text-3)">No agents online</div>';
+  }else{
+    agEl.innerHTML=agents.map(a=>{
+      const initials=a.replace(/[^a-zA-Z0-9]/g,'-').split('-').filter(Boolean).slice(0,2).map(p=>p[0].toUpperCase()).join('');
+      return '<div class="agent-row"><div class="agent-avatar">'+esc(initials||'?')+'<span class="online-ring"></span></div><span class="agent-name">'+esc(a)+'</span></div>';
+    }).join('');
+  }
+
+  // Stats
+  document.getElementById('swarmMsgCount').textContent=(state.message_count||0).toLocaleString();
+  const actEl=document.getElementById('swarmLastActivity');
+  actEl.textContent=state.last_activity?'Last activity: '+_fmtRelative(state.last_activity):'';
+
+  // Locks
+  const locks=state.locked_files||{};
+  const lockKeys=Object.keys(locks);
+  const lockEl=document.getElementById('swarmLocks');
+  if(!lockKeys.length){
+    lockEl.innerHTML='<div class="lock-none">No active locks</div>';
+  }else{
+    lockEl.innerHTML=lockKeys.map(fp=>{
+      const lk=locks[fp];
+      const holder=lk.held_by||lk.claimed_by||'?';
+      const exp=lk.expires_at||'';
+      const ttl=_fmtTtl(exp);
+      const bCls=_expiringClass(exp);
+      const tCls=_ttlClass(exp);
+      return '<div class="lock-badge '+bCls+'">'
+        +'<span class="lb-file" title="'+esc(fp)+'">'+esc(fp)+'</span>'
+        +'<span class="lb-holder">'+esc(holder)+'</span>'
+        +(ttl?'<span class="'+tCls+'">'+esc(ttl)+'</span>':'')
+        +'</div>';
+    }).join('');
+  }
+}
+
+let _statePoller=null;
+function startStatePolling(roomName){
+  if(_statePoller)clearInterval(_statePoller);
+  async function poll(){
+    if(!roomName)return;
+    try{
+      const resp=await fetch(API+'/rooms/'+encodeURIComponent(roomName)+'/state',{headers:H});
+      if(resp.ok){const state=await resp.json();updateStatePanel(state);}
+    }catch(e){}
+  }
+  poll();
+  _statePoller=setInterval(poll,3000);
+}
+
+// ── Rooms / connection ───────────────────────────────────────────────────────
 async function loadRooms(){
   try{
     const r=await fetch(API+'/rooms',{headers:H});
@@ -248,6 +517,7 @@ async function selectRoom(name){
       return '<span class="member"><span class="dot '+d+'"></span>'+esc(m)+'</span>';
     }).join('');
   }catch(e){}
+  startStatePolling(name);
   connectSSE();
 }
 function setConn(ok){
@@ -260,7 +530,14 @@ async function connectSSE(){
   try{const r=await fetch(API+'/stream/token',{method:'POST',headers:H,body:JSON.stringify({recipient:NAME})});if(r.ok){const d=await r.json();sseToken=d.token;}}catch(e){}
   sse=new EventSource(API+'/stream/'+NAME+'?token='+sseToken);
   sse.onopen=()=>setConn(true);sse.onerror=()=>setConn(false);
-  sse.addEventListener('message',e=>{try{const msg=JSON.parse(e.data);if(msg.room===currentRoom){document.getElementById('messages').innerHTML+=formatMsg(msg);scrollToBottom()}else if(msg.room){unread[msg.room]=(unread[msg.room]||0)+1;loadRooms()}}catch(e){}});
+  sse.addEventListener('message',e=>{
+    try{
+      const msg=JSON.parse(e.data);
+      _trackMsg();
+      if(msg.room===currentRoom){document.getElementById('messages').innerHTML+=formatMsg(msg);scrollToBottom()}
+      else if(msg.room){unread[msg.room]=(unread[msg.room]||0)+1;loadRooms()}
+    }catch(e){}
+  });
 }
 let replyTo=null;
 function formatMsg(msg){
@@ -278,6 +555,7 @@ async function sendMsg(){
   const input=document.getElementById('msgInput');const text=input.value.trim();
   if(!text||!currentRoom)return;input.value='';
   const body={from_name:NAME,content:text};if(replyTo)body.reply_to=replyTo;replyTo=null;input.placeholder='Type a message...';
+  _trackMsg();
   try{await fetch(API+'/rooms/'+currentRoom+'/messages',{method:'POST',headers:H,body:JSON.stringify(body)})}catch(e){}
 }
 document.getElementById('msgInput').addEventListener('keydown',e=>{if(e.key==='Enter')sendMsg()});
@@ -306,7 +584,23 @@ async function copyShare(){
   const cmd=document.getElementById('shareCmd').textContent;
   try{await navigator.clipboard.writeText(cmd);const btn=document.getElementById('copyBtn');btn.textContent='Copied!';btn.classList.add('copied');setTimeout(()=>{btn.textContent='Copy';btn.classList.remove('copied')},2000)}catch(e){}
 }
-loadRooms();setInterval(()=>{loadRooms();refreshPresence()},30000);
+// Auto-select room from URL hash or first room
+async function autoSelectRoom(){
+  const hash=location.hash.replace('#','');
+  if(hash){selectRoom(decodeURIComponent(hash));return;}
+  try{
+    const r=await fetch(API+'/rooms',{headers:H});
+    if(r.ok){const rooms=await r.json();if(rooms.length)selectRoom(rooms[0].name);}
+  }catch(e){}
+}
+// Boot
+loadRooms();
+updateUsageStats();
+autoSelectRoom();
+setInterval(()=>{loadRooms();refreshPresence();},30000);
+setInterval(updateUsageStats,15000);
+// Keep msg/min counter fresh every 10s even without new messages
+setInterval(()=>{document.getElementById('uMsgPerMin').textContent=_msgPerMin();},10000);
 </script>
 </body>
 </html>
