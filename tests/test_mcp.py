@@ -431,3 +431,86 @@ async def test_sse_listener_reconnects_on_error():
     assert call_count >= 2
     assert len(msgs) == 1
     assert msgs[0]["content"] == "after reconnect"
+
+
+# ── search_room and room_metrics MCP tool tests ─────────────────────────
+
+async def test_search_room_by_keyword():
+    search_results = [
+        {"timestamp": "2026-04-11T08:00:00Z", "from_name": "alice",
+         "content": "hello world", "message_type": "chat"},
+    ]
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = search_results
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("murmur.mcp.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp_server.search_room("dev", q="hello")
+
+    assert "alice" in result
+    assert "hello world" in result
+
+
+async def test_search_room_no_results():
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = []
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("murmur.mcp.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp_server.search_room("dev", q="nonexistent")
+
+    assert "No matching" in result
+
+
+async def test_room_metrics_returns_stats():
+    messages = [
+        {"from_name": "alice", "content": "hello", "message_type": "chat"},
+        {"from_name": "bob", "content": "CLAIM: auth", "message_type": "claim"},
+        {"from_name": "bob", "content": "STATUS: auth complete", "message_type": "status"},
+    ]
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = messages
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("murmur.mcp.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp_server.room_metrics("dev")
+
+    assert "3 messages" in result
+    assert "alice" in result
+    assert "bob" in result
+    assert "Task completion: 1/1" in result
+
+
+async def test_room_metrics_empty():
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = []
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("murmur.mcp.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp_server.room_metrics("empty")
+
+    assert "No messages" in result
