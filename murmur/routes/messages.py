@@ -40,11 +40,11 @@ async def get_messages(
 ):
     require_identity(auth, recipient)
     svc = request.app.state.message_service
-    messages = await svc.fetch(_tid(auth), recipient, wait)
-    # ACK after response is built — if server crashes before this,
-    # messages remain in inflight and expire back to availability
-    await svc.ack_last_fetch()
-    return messages
+    result = await svc.fetch(_tid(auth), recipient, wait)
+    # ACK after response is built — per-request token, concurrency-safe.
+    # If server crashes before ACK, messages remain inflight until expiry.
+    await result.ack()
+    return result.messages
 
 
 @router.get("/messages/{recipient}/peek")

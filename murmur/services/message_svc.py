@@ -11,6 +11,7 @@ import asyncio
 import os
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,28 @@ from murmur.services.analytics_svc import AnalyticsService
 from murmur.services.rate_limit_svc import RateLimitService
 from murmur.services.sse_svc import SSEService
 from murmur.services.webhook_svc import WebhookService
+
+
+@dataclass
+class FetchResult:
+    """Per-request fetch result with deferred ACK.
+
+    Caller must call ``await result.ack()`` after the HTTP response is
+    sent.  Each FetchResult is independent — no shared mutable state.
+    """
+
+    messages: list[dict]
+    _backend: MessageBackend = field(repr=False)
+    _tenant_id: str = field(repr=False)
+    _recipient: str = field(repr=False)
+    _ack_token: str = field(default="", repr=False)
+
+    async def ack(self) -> None:
+        """Permanently remove fetched messages from inflight state."""
+        if self._ack_token:
+            await self._backend.ack(
+                self._tenant_id, self._recipient, self._ack_token
+            )
 
 if TYPE_CHECKING:
     from murmur.services.notification_svc import NotificationService
@@ -229,11 +252,11 @@ class MessageService:
         tenant_id: str,
         recipient: str,
         wait: int = 0,
-    ) -> list[dict]:
+    ) -> "FetchResult":
         """Dequeue and reassemble messages for *recipient*.
 
-        If *wait* > 0 and no messages are ready, long-poll up to *wait* seconds.
-        ACK is deferred — call ack_last_fetch() after the response is sent.
+        Returns a FetchResult with messages and a per-request ack() method.
+        Caller MUST call result.ack() after the response is sent.
         """
         wait = min(max(wait, 0), 60)
         ekey = self._event_key(tenant_id, recipient)
@@ -261,30 +284,19 @@ class MessageService:
                 tenant_id, recipient, len(ready)
             )
 
-        # Store ack_token for deferred ACK by the route handler
-        self._pending_ack = (tenant_id, recipient, ack_token)
-
         logger.info(
             "Fetched %d messages for %s (%d chunks held back)",
             len(ready),
             recipient,
             len(held_back),
         )
-        return ready
-
-    async def ack_last_fetch(self) -> None:
-        """ACK the most recent fetch — call after the HTTP response is built.
-
-        This ensures messages are only permanently removed after the client
-        has received them. If the server crashes before ACK, messages remain
-        in the inflight state and expire back to availability.
-        """
-        if not hasattr(self, "_pending_ack") or not self._pending_ack:
-            return
-        tenant_id, recipient, ack_token = self._pending_ack
-        self._pending_ack = None
-        if ack_token:
-            await self._backend.ack(tenant_id, recipient, ack_token)
+        return FetchResult(
+            messages=ready,
+            _backend=self._backend,
+            _tenant_id=tenant_id,
+            _recipient=recipient,
+            _ack_token=ack_token,
+        )
 
     async def _fetch_and_reassemble(
         self,
