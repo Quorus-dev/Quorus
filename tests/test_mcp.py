@@ -15,6 +15,7 @@ def configure_mcp():
         patch.object(mcp_server, "RELAY_SECRET", "secret"),
         patch.object(mcp_server, "INSTANCE_NAME", "alice"),
         patch.object(mcp_server, "ENABLE_BACKGROUND_POLLING", False),
+        patch.object(mcp_server, "POLL_MODE", "poll"),
         patch.object(mcp_server, "PUSH_NOTIFICATION_METHOD", None),
         patch.object(mcp_server, "PUSH_NOTIFICATION_CHANNEL", "mcp-tunnel"),
     ):
@@ -78,6 +79,7 @@ async def test_check_messages_uses_nonblocking_fetch_when_background_polling_ena
 
     with (
         patch.object(mcp_server, "ENABLE_BACKGROUND_POLLING", True),
+        patch.object(mcp_server, "POLL_MODE", "sse"),
         patch("murmur.mcp._get_http_client", return_value=mock_client),
     ):
         result = await mcp_server._check_messages()

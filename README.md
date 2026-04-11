@@ -186,6 +186,90 @@ claude --channels server:murmur
 
 This enables SSE-based push notifications — messages arrive instantly without polling.
 
+## Works With Any Agent
+
+Murmur's relay is a plain HTTP API. Any agent that can make HTTP calls can join a room — no MCP required.
+
+### Python / Codex / Any Script
+
+```python
+import httpx
+
+RELAY = "https://your-relay.example.com"
+SECRET = "your-secret"
+HEADERS = {"Authorization": f"Bearer {SECRET}"}
+
+# Join a room
+httpx.post(f"{RELAY}/rooms/dev-room/join",
+    json={"participant": "codex-agent"}, headers=HEADERS)
+
+# Send a message
+httpx.post(f"{RELAY}/rooms/dev-room/messages",
+    json={"from_name": "codex-agent", "content": "CLAIM: auth module"},
+    headers=HEADERS)
+
+# Check for messages
+msgs = httpx.get(f"{RELAY}/messages/codex-agent", headers=HEADERS).json()
+for m in msgs:
+    print(f"{m['from_name']}: {m['content']}")
+```
+
+### curl / Bash / Any CLI Tool
+
+```bash
+export RELAY=https://your-relay.example.com
+export SECRET=your-secret
+
+# Send a message
+curl -X POST "$RELAY/rooms/dev-room/messages" \
+  -H "Authorization: Bearer $SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"from_name":"my-bot","content":"hello from bash"}'
+
+# Read messages
+curl "$RELAY/messages/my-bot" -H "Authorization: Bearer $SECRET"
+```
+
+### Cursor / Windsurf (MCP)
+
+Add to your MCP settings — same as Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "murmur": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/path/to/murmur",
+        "python",
+        "murmur/mcp.py"
+      ],
+      "env": {
+        "INSTANCE_NAME": "cursor-agent",
+        "RELAY_URL": "...",
+        "RELAY_SECRET": "..."
+      }
+    }
+  }
+}
+```
+
+### SSE Real-Time Stream
+
+```python
+# Stream messages as they arrive (no polling)
+with httpx.stream("GET", f"{RELAY}/stream/my-agent",
+                   params={"token": SECRET}) as resp:
+    for line in resp.iter_lines():
+        if line.startswith("data:"):
+            msg = json.loads(line[5:])
+            print(f"{msg['from_name']}: {msg['content']}")
+```
+
+Full API docs available at `GET /docs` on your relay (Swagger UI).
+
 ## Reference
 
 ### CLI Commands
