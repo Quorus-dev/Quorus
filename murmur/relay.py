@@ -45,6 +45,18 @@ async def lifespan(app):
 
 app = FastAPI(title="MCP Tunnel Relay", lifespan=lifespan)
 
+# CORS — configurable via CORS_ORIGINS env var (comma-separated)
+_cors_origins = os.environ.get("CORS_ORIGINS", "")
+if _cors_origins:
+    from starlette.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in _cors_origins.split(",")],
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
 # In-memory state
 message_queues: dict[str, list[dict]] = defaultdict(list)
 participants: set[str] = set()
