@@ -66,17 +66,20 @@ def load_config() -> dict[str, Any]:
     if notification_method is None and as_bool(enable_background_polling, default=False):
         notification_method = "notifications/claude/channel"
 
-    # Poll mode: "lazy" (manual only), "sse" (realtime), "poll" (interval)
+    # Poll mode: "sse" (realtime push, default) or "lazy" (manual only).
+    # "poll" is removed — SSE is the only supported background delivery mode.
     poll_mode = os.environ.get("POLL_MODE") or file_config.get("poll_mode")
     if poll_mode is None:
-        # Backward compat: if background polling was explicitly enabled, use sse
-        if as_bool(enable_background_polling, default=False):
-            poll_mode = "sse"
-        else:
-            poll_mode = "lazy"
+        # Backward compat: enable_background_polling=true → sse (still supported)
+        # New default: sse, always. Polling is gone.
+        poll_mode = "sse"
     poll_mode = poll_mode.strip().lower()
-    if poll_mode not in {"lazy", "sse", "poll"}:
-        poll_mode = "lazy"
+    if poll_mode not in {"lazy", "sse"}:
+        poll_mode = "sse"
+
+    # When SSE is active and no push method configured, auto-wire Claude channel.
+    if poll_mode == "sse" and notification_method is None:
+        notification_method = "notifications/claude/channel"
 
     # API key for production auth (exchanges for JWT)
     api_key = os.environ.get("API_KEY") or file_config.get("api_key", "")

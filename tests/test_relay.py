@@ -1941,3 +1941,131 @@ async def test_agent_profile_requires_auth(client: AsyncClient):
   """Get agent profile requires auth."""
   resp = await client.get("/agents/alice")
   assert resp.status_code == 401
+
+
+# ── reply threading tests ────────────────────────────────────────────────
+
+async def _setup_thread_room(client: AsyncClient, auth_headers: dict):
+    """Create a room with alice and bob, send a root message, return (room_id, msg_id)."""
+    resp = await client.post(
+        "/rooms", json={"name": "thread-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = resp.json()["id"]
+    for name in ("alice", "bob"):
+        await client.post(
+            "/rooms/thread-room/join",
+            json={"participant": name}, headers=auth_headers,
+        )
+    # Send root message
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "alice", "content": "root message", "message_type": "chat"},
+        headers=auth_headers,
+    )
+    msg_id = resp.json()["id"]
+    return room_id, msg_id
+
+
+async def test_reply_to_stored_in_history(client: AsyncClient, auth_headers: dict):
+    """reply_to field should be persisted in room history."""
+    room_id, root_id = await _setup_thread_room(client, auth_headers)
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "bob", "content": "reply!", "reply_to": root_id},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    history = await client.get(
+        f"/rooms/{room_id}/history", headers=auth_headers,
+    )
+    msgs = history.json()
+    reply = next((m for m in msgs if m.get("reply_to") == root_id), None)
+    assert reply is not None
+    assert reply["content"] == "reply!"
+
+
+async def test_reply_to_invalid_id_returns_422(client: AsyncClient, auth_headers: dict):
+    """reply_to with a nonexistent message ID should return 422."""
+    room_id, _ = await _setup_thread_room(client, auth_headers)
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "bob", "content": "bad reply", "reply_to": "nonexistent-id"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_get_thread_returns_parent_and_replies(client: AsyncClient, auth_headers: dict):
+    """GET /rooms/{id}/thread/{msg_id} returns parent + all replies."""
+    room_id, root_id = await _setup_thread_room(client, auth_headers)
+    # Add two replies
+    for i in range(2):
+        await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "bob", "content": f"reply {i}", "reply_to": root_id},
+            headers=auth_headers,
+        )
+    resp = await client.get(
+        f"/rooms/{room_id}/thread/{root_id}", headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    thread = resp.json()
+    assert len(thread) == 3  # parent + 2 replies
+    assert thread[0]["id"] == root_id
+    assert all(m.get("reply_to") == root_id or m["id"] == root_id for m in thread)
+
+
+async def test_get_thread_not_found(client: AsyncClient, auth_headers: dict):
+    """GET /rooms/{id}/thread/{unknown_id} returns 404."""
+    resp = await client.post(
+        "/rooms", json={"name": "empty-thread-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = resp.json()["id"]
+    await client.post(
+        "/rooms/empty-thread-room/join",
+        json={"participant": "alice"}, headers=auth_headers,
+    )
+    resp = await client.get(
+        f"/rooms/{room_id}/thread/no-such-id", headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+async def test_get_thread_requires_auth(client: AsyncClient):
+    """GET /rooms/{id}/thread/{msg_id} requires authentication."""
+    resp = await client.get("/rooms/any-room/thread/any-id")
+    assert resp.status_code == 401
+
+
+async def test_reply_to_none_still_works(client: AsyncClient, auth_headers: dict):
+    """Messages without reply_to should work unchanged."""
+    room_id, _ = await _setup_thread_room(client, auth_headers)
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "alice", "content": "plain chat", "message_type": "chat"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    history = await client.get(f"/rooms/{room_id}/history", headers=auth_headers)
+    msgs = history.json()
+    plain = next((m for m in msgs if m["content"] == "plain chat"), None)
+    assert plain is not None
+    assert plain.get("reply_to") is None
+
+
+async def test_fan_out_preserves_reply_to(client: AsyncClient, auth_headers: dict):
+    """Fan-out messages should carry reply_to to all recipients."""
+    room_id, root_id = await _setup_thread_room(client, auth_headers)
+    await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "bob", "content": "reply to alice", "reply_to": root_id},
+        headers=auth_headers,
+    )
+    # alice should receive the reply with reply_to set
+    msgs_resp = await client.get("/messages/alice", headers=auth_headers)
+    msgs = msgs_resp.json()
+    reply = next((m for m in msgs if m.get("reply_to") == root_id), None)
+    assert reply is not None
+    assert reply["from_name"] == "bob"

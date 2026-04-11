@@ -1,3 +1,4 @@
+import contextlib
 from contextlib import asynccontextmanager, suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,15 +11,20 @@ import murmur.mcp as mcp_server
 @pytest.fixture(autouse=True)
 def configure_mcp():
     """Patch module-level constants for all tests."""
-    with (
+    patches = [
         patch.object(mcp_server, "RELAY_URL", "http://relay:8080"),
         patch.object(mcp_server, "RELAY_SECRET", "secret"),
         patch.object(mcp_server, "INSTANCE_NAME", "alice"),
-        patch.object(mcp_server, "ENABLE_BACKGROUND_POLLING", False),
-        patch.object(mcp_server, "POLL_MODE", "poll"),
+        patch.object(mcp_server, "POLL_MODE", "lazy"),
         patch.object(mcp_server, "PUSH_NOTIFICATION_METHOD", None),
         patch.object(mcp_server, "PUSH_NOTIFICATION_CHANNEL", "mcp-tunnel"),
-    ):
+    ]
+    # API_KEY added in newer mcp.py — patch only if present
+    if hasattr(mcp_server, "API_KEY"):
+        patches.append(patch.object(mcp_server, "API_KEY", ""))
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
         mcp_server._reset_runtime_state()
         yield
         mcp_server._reset_runtime_state()
@@ -66,22 +72,18 @@ async def test_check_messages_calls_relay():
 
         mock_client.get.assert_called_once_with(
             "http://relay:8080/messages/alice",
-            params={"wait": 30},
+            params={"wait": 0},
             headers={"Authorization": "Bearer secret"},
-            timeout=35,
+            timeout=10,
         )
         assert "bob" in result
 
 
-async def test_check_messages_uses_nonblocking_fetch_when_background_polling_enabled():
-    """Manual checks should not long-poll behind the background poller."""
+async def test_check_messages_always_uses_nonblocking_fetch():
+    """check_messages always uses wait=0 — SSE handles live delivery."""
     mock_client = _make_mock_client("get", [])
 
-    with (
-        patch.object(mcp_server, "ENABLE_BACKGROUND_POLLING", True),
-        patch.object(mcp_server, "POLL_MODE", "sse"),
-        patch("murmur.mcp._get_http_client", return_value=mock_client),
-    ):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
     mock_client.get.assert_called_once_with(
@@ -242,51 +244,13 @@ async def test_process_sse_ignores_connected_event():
     assert len(messages) == 0
 
 
-async def test_start_auto_poll_creates_task():
-    """start_auto_poll should create a background task."""
-    mock_client = _make_mock_client("get", [])
-    with patch("murmur.mcp._get_http_client", return_value=mock_client):
-        result = await mcp_server._start_auto_poll(interval=10)
-    assert "started" in result.lower()
-    assert mcp_server._auto_poll_task is not None
-    assert not mcp_server._auto_poll_task.done()
-    # Clean up
-    await mcp_server._stop_auto_poll()
-
-
-async def test_start_auto_poll_rejects_double_start():
-    """Starting auto-poll twice should return an already-running message."""
-    mock_client = _make_mock_client("get", [])
-    with patch("murmur.mcp._get_http_client", return_value=mock_client):
-        await mcp_server._start_auto_poll(interval=10)
-        result = await mcp_server._start_auto_poll(interval=10)
-    assert "already running" in result.lower()
-    await mcp_server._stop_auto_poll()
-
-
-async def test_stop_auto_poll_stops_task():
-    """stop_auto_poll should cancel the background task."""
-    mock_client = _make_mock_client("get", [])
-    with patch("murmur.mcp._get_http_client", return_value=mock_client):
-        await mcp_server._start_auto_poll(interval=10)
-        result = await mcp_server._stop_auto_poll()
-    assert "stopped" in result.lower()
-    assert mcp_server._auto_poll_task is None
-
-
-async def test_stop_auto_poll_when_not_running():
-    """stop_auto_poll should return a helpful message if not running."""
-    result = await mcp_server._stop_auto_poll()
-    assert "not running" in result.lower()
-
-
-async def test_auto_poll_clamps_interval():
-    """Interval should be clamped to [2, 300]."""
-    mock_client = _make_mock_client("get", [])
-    with patch("murmur.mcp._get_http_client", return_value=mock_client):
-        result = await mcp_server._start_auto_poll(interval=1)
-    assert "2s" in result
-    await mcp_server._stop_auto_poll()
+async def test_sse_listener_is_only_delivery_mode():
+    """SSE is the only background delivery mechanism — no interval polling."""
+    # start_auto_poll and stop_auto_poll no longer exist.
+    assert not hasattr(mcp_server, "_auto_poll_task")
+    assert not hasattr(mcp_server, "_auto_poll_stop")
+    assert not hasattr(mcp_server, "_start_auto_poll")
+    assert not hasattr(mcp_server, "_stop_auto_poll")
 
 
 async def test_auto_poll_delivers_messages():

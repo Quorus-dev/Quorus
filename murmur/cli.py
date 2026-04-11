@@ -1185,6 +1185,45 @@ def _cmd_watch_daemon(args):
         console.print("\n[dim]Daemon stopped.[/dim]")
 
 
+async def _watch_context(room_name: str, context_path: Path | None = None) -> None:
+    """Background watcher: write room context to .murmur/context.md every 10s."""
+    from murmur.watcher import Watcher
+
+    if context_path is None:
+        context_path = Path.cwd() / ".murmur" / "context.md"
+
+    console.print(f"[bold]Watching room context: {room_name}[/bold]")
+    console.print(f"  Context file: {context_path}")
+    console.print("  Ctrl+C to stop\n")
+
+    watcher = Watcher(
+        relay_url=RELAY_URL,
+        auth_headers=_auth_headers(),
+        room_name=room_name,
+        agent_name=INSTANCE_NAME,
+        interval_seconds=10,
+        context_path=context_path,
+    )
+
+    try:
+        await watcher.start()
+        # Keep running until interrupted
+        while True:
+            await asyncio.sleep(0.5)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Context watcher stopped.[/dim]")
+    finally:
+        await watcher.stop()
+
+
+def _cmd_watch_context(args):
+    context_path = Path(args.output) if args.output else None
+    try:
+        asyncio.run(_watch_context(args.room, context_path))
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
+
+
 def _cmd_status(args):
     asyncio.run(_status())
 
@@ -1204,7 +1243,7 @@ def _cmd_init(args):
     config = {
         "relay_url": relay_url,
         "instance_name": name,
-        "enable_background_polling": True,
+        "poll_mode": "sse",
         "push_notification_method": "notifications/claude/channel",
         "push_notification_channel": "mcp-tunnel",
     }
@@ -1287,7 +1326,7 @@ def _cmd_join(args):
     config = {
         "relay_url": relay_url,
         "instance_name": name,
-        "enable_background_polling": True,
+        "poll_mode": "sse",
         "push_notification_method": "notifications/claude/channel",
         "push_notification_channel": "mcp-tunnel",
     }

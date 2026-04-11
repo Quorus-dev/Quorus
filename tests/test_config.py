@@ -118,8 +118,8 @@ def test_load_config_corrupt_file_uses_defaults(tmp_path, monkeypatch):
     assert config["instance_name"] == "default"
 
 
-def test_poll_mode_defaults_to_lazy(tmp_path, monkeypatch):
-    """With no background polling config, poll_mode should be lazy."""
+def test_poll_mode_defaults_to_sse(tmp_path, monkeypatch):
+    """With no background polling config, poll_mode should default to sse."""
     monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(tmp_path / "nonexistent"))
     monkeypatch.delenv("POLL_MODE", raising=False)
     monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
@@ -128,7 +128,7 @@ def test_poll_mode_defaults_to_lazy(tmp_path, monkeypatch):
     monkeypatch.delenv("INSTANCE_NAME", raising=False)
 
     config = load_config()
-    assert config["poll_mode"] == "lazy"
+    assert config["poll_mode"] == "sse"
 
 
 def test_poll_mode_env_override(tmp_path, monkeypatch):
@@ -162,8 +162,8 @@ def test_poll_mode_backward_compat(tmp_path, monkeypatch):
     assert config["poll_mode"] == "sse"
 
 
-def test_poll_mode_invalid_falls_back_to_lazy(tmp_path, monkeypatch):
-    """Invalid POLL_MODE value should default to lazy."""
+def test_poll_mode_invalid_falls_back_to_sse(tmp_path, monkeypatch):
+    """Invalid POLL_MODE value should fall back to sse (the default)."""
     monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(tmp_path / "nonexistent"))
     monkeypatch.setenv("POLL_MODE", "invalid-mode")
     monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
@@ -172,4 +172,4 @@ def test_poll_mode_invalid_falls_back_to_lazy(tmp_path, monkeypatch):
     monkeypatch.delenv("INSTANCE_NAME", raising=False)
 
     config = load_config()
-    assert config["poll_mode"] == "lazy"
+    assert config["poll_mode"] == "sse"

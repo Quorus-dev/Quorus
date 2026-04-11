@@ -28,7 +28,6 @@ RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
 API_KEY = _config["api_key"]
 INSTANCE_NAME = _config["instance_name"]
-ENABLE_BACKGROUND_POLLING = _config["enable_background_polling"]
 POLL_MODE = _config["poll_mode"]
 PUSH_NOTIFICATION_METHOD = _config["push_notification_method"]
 PUSH_NOTIFICATION_CHANNEL = _config["push_notification_channel"]
@@ -82,8 +81,6 @@ _pending_messages: list[dict[str, Any]] = []
 _pending_lock = asyncio.Lock()
 _active_session = None
 _active_session_lock = asyncio.Lock()
-_auto_poll_task: asyncio.Task | None = None
-_auto_poll_stop: asyncio.Event | None = None
 _heartbeat_task: asyncio.Task | None = None
 
 
@@ -97,12 +94,10 @@ def _get_http_client() -> httpx.AsyncClient:
 
 def _reset_runtime_state():
     """Reset in-memory MCP runtime state between tests."""
-    global _active_session, _http_client, _auto_poll_task, _auto_poll_stop, _heartbeat_task
+    global _active_session, _http_client, _heartbeat_task
     _pending_messages.clear()
     _active_session = None
     _http_client = None
-    _auto_poll_task = None
-    _auto_poll_stop = None
     _heartbeat_task = None
 
 
@@ -262,56 +257,6 @@ async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None]:
         return [], _relay_error_message(e)
 
 
-async def _background_poll(stop_event: asyncio.Event) -> None:
-    """Long-poll the relay and optionally forward results via client notifications."""
-    while not stop_event.is_set():
-        async with _active_session_lock:
-            has_session = _active_session is not None
-
-        if not has_session:
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=0.5)
-            except asyncio.TimeoutError:
-                continue
-            continue
-
-        messages, error = await _fetch_relay_messages(wait=30)
-        if error:
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=2)
-            except asyncio.TimeoutError:
-                continue
-            continue
-
-        if not messages:
-            continue
-
-        await _append_pending_messages(messages)
-        await _notify_active_session(messages)
-
-
-async def _auto_poll_loop(stop_event: asyncio.Event, interval: int = 10) -> None:
-    """Poll the relay every `interval` seconds and push new messages as notifications."""
-    logger.info("Auto-poll started (interval=%ds)", interval)
-    while not stop_event.is_set():
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=interval)
-            break  # stop_event was set
-        except asyncio.TimeoutError:
-            pass  # interval elapsed, time to poll
-
-        messages, error = await _fetch_relay_messages(wait=0)
-        if error:
-            logger.warning("Auto-poll fetch error: %s", error)
-            continue
-
-        if messages:
-            await _append_pending_messages(messages)
-            await _notify_active_session(messages)
-            logger.info("Auto-poll delivered %d message(s)", len(messages))
-
-    logger.info("Auto-poll stopped")
-
 
 async def _heartbeat_loop(stop_event: asyncio.Event, interval: int = 30) -> None:
     """Send periodic heartbeats to the relay to report this agent is alive."""
@@ -430,13 +375,14 @@ async def _mcp_lifespan(server: FastMCP):
             )
 
     stop_event = asyncio.Event()
-    poll_task = None
 
-    if POLL_MODE == "sse":
-        poll_task = asyncio.create_task(_sse_listener(stop_event))
-        logger.info("SSE background listener enabled (poll_mode=sse)")
-    elif POLL_MODE == "lazy":
-        logger.info("Lazy poll mode — no background polling, agent checks manually")
+    # SSE is the only delivery mode. Always open a persistent push connection.
+    sse_task = asyncio.create_task(_sse_listener(stop_event))
+    if POLL_MODE == "lazy":
+        # Lazy mode: SSE still runs (for push delivery) but we skip channel cap.
+        logger.info("Lazy poll mode — SSE running, channel notifications disabled")
+    else:
+        logger.info("SSE push listener started")
 
     # Always start heartbeat so the relay knows this agent is alive
     _heartbeat_task = asyncio.create_task(_heartbeat_loop(stop_event))
@@ -445,20 +391,13 @@ async def _mcp_lifespan(server: FastMCP):
         yield {"stop_event": stop_event}
     finally:
         stop_event.set()
-        if poll_task is not None:
-            poll_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await poll_task
+        sse_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await sse_task
         if _heartbeat_task is not None:
             _heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await _heartbeat_task
-        if _auto_poll_stop is not None:
-            _auto_poll_stop.set()
-        if _auto_poll_task is not None:
-            _auto_poll_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await _auto_poll_task
         if _http_client is not None:
             await _http_client.aclose()
         _reset_runtime_state()
@@ -507,7 +446,8 @@ def _declare_channel_capability() -> None:
     mcp._mcp_server.create_initialization_options = patched_create
 
 
-if POLL_MODE == "sse":
+# Always declare channel capability — SSE push is always active.
+if POLL_MODE != "lazy":
     _declare_channel_capability()
 
 
@@ -533,11 +473,11 @@ async def _check_messages(context: Context | None = None) -> str:
     """Internal: fetch unread messages from the local buffer or the relay."""
     await _remember_session(context)
 
+    # Drain the SSE-delivered buffer first. If empty, do a non-blocking
+    # relay fetch (wait=0) as a manual fallback — SSE handles live delivery.
     messages = await _drain_pending_messages()
     if not messages:
-        # lazy/sse = no blocking wait; poll = short wait for efficiency
-        wait = 0 if POLL_MODE in ("lazy", "sse") else 30
-        messages, error = await _fetch_relay_messages(wait=wait)
+        messages, error = await _fetch_relay_messages(wait=0)
         if error:
             return error
 
@@ -618,56 +558,6 @@ async def _list_rooms(context: Context | None = None) -> str:
         return "Rooms:\n" + "\n".join(lines)
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
         return _relay_error_message(e)
-
-
-async def _start_auto_poll(interval: int = 10, context: Context | None = None) -> str:
-    """Internal: start the auto-poll background loop."""
-    global _auto_poll_task, _auto_poll_stop
-    await _remember_session(context)
-
-    if _auto_poll_task is not None and not _auto_poll_task.done():
-        return f"Auto-poll already running (interval={interval}s). Call stop_auto_poll first."
-
-    interval = max(2, min(interval, 300))
-    _auto_poll_stop = asyncio.Event()
-    _auto_poll_task = asyncio.create_task(_auto_poll_loop(_auto_poll_stop, interval))
-    return f"Auto-poll started (every {interval}s). New messages arrive as notifications."
-
-
-async def _stop_auto_poll(context: Context | None = None) -> str:
-    """Internal: stop the auto-poll background loop."""
-    global _auto_poll_task, _auto_poll_stop
-    await _remember_session(context)
-
-    if _auto_poll_task is None or _auto_poll_task.done():
-        return "Auto-poll is not running."
-
-    _auto_poll_stop.set()
-    _auto_poll_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await _auto_poll_task
-    _auto_poll_task = None
-    _auto_poll_stop = None
-    return "Auto-poll stopped."
-
-
-@mcp.tool()
-async def start_auto_poll(interval: int = 10, context: Context = None) -> str:
-    """Start auto-polling for new messages every `interval` seconds.
-
-    Messages are delivered as push notifications without needing to call
-    check_messages manually. Call stop_auto_poll to stop.
-
-    Args:
-        interval: Seconds between polls (default 10, min 2, max 300)
-    """
-    return await _start_auto_poll(interval, context)
-
-
-@mcp.tool()
-async def stop_auto_poll(context: Context = None) -> str:
-    """Stop the auto-poll background loop started by start_auto_poll."""
-    return await _stop_auto_poll(context)
 
 
 @mcp.tool()
