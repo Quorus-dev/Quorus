@@ -2234,6 +2234,14 @@ def main():
     )
     p_watch_daemon.add_argument("name", help="Agent/participant name to watch")
 
+    p_watch_context = sub.add_parser(
+        "watch-context", help="Background watcher writing room context to .murmur/context.md"
+    )
+    p_watch_context.add_argument("room", help="Room name to watch")
+    p_watch_context.add_argument(
+        "--output", "-o", default=None, help="Context file path (default: .murmur/context.md)"
+    )
+
     p_hack = sub.add_parser(
         "hackathon", help="Set up hackathon: 2 rooms + agents with missions"
     )
