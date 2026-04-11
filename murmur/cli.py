@@ -2322,6 +2322,7 @@ def main():
         "quickstart": _cmd_quickstart,
         "hackathon": _cmd_hackathon,
         "watch-daemon": _cmd_watch_daemon,
+        "watch-context": _cmd_watch_context,
     }
     commands[args.command](args)
 
