@@ -1020,6 +1020,7 @@ font-size:.85rem;color:#e6edf3}
 </div>
 </div>
 <script>
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 const f=document.getElementById('f'),r=document.getElementById('result');
 f.onsubmit=async e=>{
 e.preventDefault();
@@ -1035,15 +1036,15 @@ headers:{'Content-Type':'application/json',
 body:JSON.stringify({participant:name})
 });
 if(res.ok){
-r.innerHTML='<div class="msg ok">Joined <b>$room_name</b> as <b>'
-+name+'</b>!</div>';
+r.innerHTML='<div class="msg ok">Joined <b>'+esc('$room_name')+'</b> as <b>'
++esc(name)+'</b>!</div>';
 }else{
 const d=await res.json();
-r.innerHTML='<div class="msg err">'+(d.detail||'Failed')+'</div>';
+r.innerHTML='<div class="msg err">'+esc(d.detail||'Failed')+'</div>';
 btn.disabled=false;btn.textContent='Join Room';
 }
 }catch(err){
-r.innerHTML='<div class="msg err">'+err.message+'</div>';
+r.innerHTML='<div class="msg err">'+esc(err.message)+'</div>';
 btn.disabled=false;btn.textContent='Join Room';
 }
 };
@@ -1156,6 +1157,7 @@ const TOKEN=P.get('token')||'';
 const NAME=P.get('name')||'web-user';
 const H={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
 let currentRoom=null,sse=null;
+function esc(s){const d=document.createElement('div');d.textContent=String(s);return d.innerHTML}
 
 async function loadRooms(){
   try{
@@ -1165,9 +1167,9 @@ async function loadRooms(){
     document.getElementById('status').textContent='connected';
     const el=document.getElementById('rooms');
     if(!rooms.length){el.innerHTML='<div class="empty">No rooms</div>';return}
-    el.innerHTML=rooms.map(rm=>'<div class="room-item" onclick="selectRoom(\\''+
-      rm.name+'\\')">'+rm.name+'<span class="count">'+
-      rm.members.length+'</span></div>').join('');
+    el.innerHTML=rooms.map(rm=>'<div class="room-item" onclick="selectRoom(\''+
+      esc(rm.name)+'\')">'+esc(rm.name)+'<span class="count">'+
+      esc(rm.members.length)+'</span></div>').join('');
     if(currentRoom)document.querySelectorAll('.room-item').forEach(e=>{
       if(e.textContent.startsWith(currentRoom))e.classList.add('active');
     });
@@ -1197,7 +1199,7 @@ async function selectRoom(name){
     document.getElementById('members').innerHTML='Members: '+
       room.members.map(m=>{
         const dot=onlineSet.has(m)?'dot-online':'dot-offline';
-        return '<span class="member"><span class="dot '+dot+'"></span>'+m+'</span>';
+        return '<span class="member"><span class="dot '+dot+'"></span>'+esc(m)+'</span>';
       }).join('');
   }catch(e){}
   connectSSE();
@@ -1219,13 +1221,14 @@ function connectSSE(){
 }
 
 function formatMsg(msg){
-  const ts=(msg.timestamp||'').substring(11,19);
+  const ts=esc((msg.timestamp||'').substring(11,19));
   const type=msg.message_type||'chat';
+  const safeType=['claim','status','request','alert','sync'].includes(type)?type:'chat';
   let tag='';
-  if(type!=='chat')tag='<span class="tag tag-'+type+'">'+type+'</span>';
+  if(safeType!=='chat')tag='<span class="tag tag-'+safeType+'">'+esc(type)+'</span>';
   return '<div class="msg"><span class="ts">'+ts+
-    '</span><span class="sender">'+(msg.from_name||'?')+
-    '</span>'+tag+(msg.content||'')+'</div>';
+    '</span><span class="sender">'+esc(msg.from_name||'?')+
+    '</span>'+tag+esc(msg.content||'')+'</div>';
 }
 
 async function sendMsg(){
@@ -1253,7 +1256,7 @@ async function refreshPresence(){
     document.getElementById('members').innerHTML='Members: '+
       room.members.map(m=>{
         const dot=onlineSet.has(m)?'dot-online':'dot-offline';
-        return '<span class="member"><span class="dot '+dot+'"></span>'+m+'</span>';
+        return '<span class="member"><span class="dot '+dot+'"></span>'+esc(m)+'</span>';
       }).join('');
   }catch(e){}
 }
