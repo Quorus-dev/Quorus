@@ -19,6 +19,14 @@ from murmur.auth.tokens import (
 
 
 class TestJWT:
+    @pytest.fixture(autouse=True)
+    def _pin_jwt_secret(self, monkeypatch):
+        """Ensure JWT_SECRET is deterministic regardless of test ordering."""
+        monkeypatch.setattr(
+            "murmur.auth.tokens.JWT_SECRET",
+            "test-jwt-secret-that-is-at-least-32-bytes-long",
+        )
+
     def test_create_and_decode(self):
         token = create_jwt(
             sub="agent-1",
@@ -82,8 +90,9 @@ class TestJWT:
             tenant_id="t-123",
             tenant_slug="acme",
         )
-        # Flip a character
-        tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+        # Corrupt the signature portion (after last dot)
+        parts = token.rsplit(".", 1)
+        tampered = parts[0] + ".AAAA_tampered_signature_AAAA"
         with pytest.raises(jwt.InvalidTokenError):
             decode_jwt(tampered)
 

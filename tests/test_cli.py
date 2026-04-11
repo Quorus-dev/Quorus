@@ -1,6 +1,14 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+def _close_coro(coro):
+    """Close a coroutine without awaiting it, preventing RuntimeWarning."""
+    if asyncio.iscoroutine(coro):
+        coro.close()
+    return None
 
 
 @pytest.fixture(autouse=True)
@@ -313,13 +321,18 @@ def test_add_agent_creates_workspace(tmp_path, monkeypatch):
     mock_rooms = [{"name": "dev", "id": "r1", "members": []}]
     _mock_client(200, {})
 
+    return_values = iter([mock_rooms, None])
+
+    def _close_coro_with_return(coro):
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        return next(return_values)
+
     with patch("murmur.cli.Prompt.ask", side_effect=mock_ask), \
          patch("murmur.cli.Confirm.ask", side_effect=mock_confirm), \
-         patch("murmur.cli.asyncio.run") as mock_run, \
+         patch("murmur.cli.asyncio.run", side_effect=_close_coro_with_return), \
          patch("murmur.cli.subprocess.run"), \
          patch("murmur.cli.sys.platform", "darwin"):
-        # First asyncio.run call is _list_rooms, second is _auto_join
-        mock_run.side_effect = [mock_rooms, None]
         _cmd_add_agent(MagicMock())
 
     workspace = tmp_path / "murmur-agents" / "test-bot"
@@ -349,7 +362,7 @@ def test_connect_codex(capsys):
 
     client = _mock_client(200, {})
     with patch("murmur.cli._get_client", return_value=client), \
-         patch("murmur.cli.asyncio.run"):
+         patch("murmur.cli.asyncio.run", side_effect=_close_coro):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
@@ -368,7 +381,7 @@ def test_connect_cursor(capsys):
 
     client = _mock_client(200, {})
     with patch("murmur.cli._get_client", return_value=client), \
-         patch("murmur.cli.asyncio.run"):
+         patch("murmur.cli.asyncio.run", side_effect=_close_coro):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
@@ -387,7 +400,7 @@ def test_connect_ollama(capsys):
 
     client = _mock_client(200, {})
     with patch("murmur.cli._get_client", return_value=client), \
-         patch("murmur.cli.asyncio.run"):
+         patch("murmur.cli.asyncio.run", side_effect=_close_coro):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
@@ -406,7 +419,7 @@ def test_connect_claude(capsys):
 
     client = _mock_client(200, {})
     with patch("murmur.cli._get_client", return_value=client), \
-         patch("murmur.cli.asyncio.run"):
+         patch("murmur.cli.asyncio.run", side_effect=_close_coro):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
@@ -621,9 +634,14 @@ def test_add_agent_cancelled(monkeypatch, capsys):
         # First confirm (Launch agent?) — say no
         return False
 
+    def _close_coro_return_empty(coro):
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        return []
+
     with patch("murmur.cli.Prompt.ask", side_effect=mock_ask), \
          patch("murmur.cli.Confirm.ask", side_effect=mock_confirm), \
-         patch("murmur.cli.asyncio.run", return_value=[]):
+         patch("murmur.cli.asyncio.run", side_effect=_close_coro_return_empty):
         _cmd_add_agent(MagicMock())
 
     captured = capsys.readouterr()

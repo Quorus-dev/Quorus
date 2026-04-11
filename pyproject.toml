@@ -61,6 +61,10 @@ select = ["E", "F", "I", "W"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    "error::RuntimeWarning",
+    "ignore::jwt.warnings.InsecureKeyLengthWarning",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["murmur"]
