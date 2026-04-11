@@ -1,4 +1,5 @@
 import asyncio
+import json as json_module
 import logging
 import os
 from contextlib import asynccontextmanager, suppress
@@ -233,6 +234,58 @@ async def _background_poll(stop_event: asyncio.Event) -> None:
         await _notify_active_session(messages)
 
 
+async def _process_sse_event(event_type: str, data: str) -> None:
+    if event_type != "message":
+        return
+    try:
+        msg = json_module.loads(data)
+        await _append_pending_messages([msg])
+        await _notify_active_session([msg])
+    except (json_module.JSONDecodeError, KeyError):
+        logger.warning("Failed to parse SSE event data: %s", data[:200])
+
+
+async def _sse_listener(stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            client = _get_http_client()
+            url = f"{RELAY_URL}/stream/{INSTANCE_NAME}"
+            params = {"token": RELAY_SECRET}
+            async with client.stream("GET", url, params=params, timeout=None) as resp:
+                if resp.status_code != 200:
+                    logger.warning("SSE stream returned %d, retrying", resp.status_code)
+                    await asyncio.sleep(2)
+                    continue
+
+                logger.info("SSE stream connected for %s", INSTANCE_NAME)
+                event_type = ""
+                event_data = ""
+
+                async for line in resp.aiter_lines():
+                    if stop_event.is_set():
+                        break
+                    line = line.strip()
+                    if line.startswith("event:"):
+                        event_type = line[6:].strip()
+                    elif line.startswith("data:"):
+                        event_data = line[5:].strip()
+                    elif line == "" and event_type:
+                        await _process_sse_event(event_type, event_data)
+                        event_type = ""
+                        event_data = ""
+
+        except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError):
+            logger.warning("SSE connection lost, reconnecting in 2s")
+        except Exception:
+            logger.warning("SSE listener error, reconnecting in 2s", exc_info=True)
+
+        if not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                pass
+
+
 @asynccontextmanager
 async def _mcp_lifespan(server: FastMCP):
     global _http_client
@@ -242,8 +295,8 @@ async def _mcp_lifespan(server: FastMCP):
     poll_task = None
 
     if ENABLE_BACKGROUND_POLLING:
-        poll_task = asyncio.create_task(_background_poll(stop_event))
-        logger.info("Background relay polling enabled")
+        poll_task = asyncio.create_task(_sse_listener(stop_event))
+        logger.info("SSE background listener enabled")
 
     try:
         yield {"stop_event": stop_event}
@@ -334,6 +387,60 @@ async def _list_participants(context: Context | None = None) -> str:
         return _relay_error_message(e)
 
 
+async def _send_room_message(
+    room_id: str, content: str, message_type: str = "chat", context: Context | None = None
+) -> str:
+    await _remember_session(context)
+    try:
+        client = _get_http_client()
+        resp = await client.post(
+            f"{RELAY_URL}/rooms/{room_id}/messages",
+            json={"from_name": INSTANCE_NAME, "content": content, "message_type": message_type},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info("Sent room message to %s (id: %s)", room_id, data["id"])
+        return f"Room message sent (id: {data['id']})"
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
+
+
+async def _join_room(room_id: str, context: Context | None = None) -> str:
+    await _remember_session(context)
+    try:
+        client = _get_http_client()
+        resp = await client.post(
+            f"{RELAY_URL}/rooms/{room_id}/join",
+            json={"participant": INSTANCE_NAME},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        logger.info("Joined room %s", room_id)
+        return f"Joined room {room_id}"
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
+
+
+async def _list_rooms(context: Context | None = None) -> str:
+    await _remember_session(context)
+    try:
+        client = _get_http_client()
+        resp = await client.get(f"{RELAY_URL}/rooms", headers=_auth_headers())
+        resp.raise_for_status()
+        rooms_list = resp.json()
+        logger.info("Listed %d rooms", len(rooms_list))
+        if not rooms_list:
+            return "No rooms yet."
+        lines = []
+        for r in rooms_list:
+            members = ", ".join(r["members"])
+            lines.append(f"  {r['name']} (id: {r['id']}) — members: {members}")
+        return "Rooms:\n" + "\n".join(lines)
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
+
+
 @mcp.tool()
 async def send_message(to: str, content: str, context: Context) -> str:
     """Send a message to another connected MCP client.
@@ -355,6 +462,36 @@ async def check_messages(context: Context) -> str:
 async def list_participants(context: Context) -> str:
     """List all known participants who have sent messages through the relay."""
     return await _list_participants(context)
+
+
+@mcp.tool()
+async def send_room_message(
+    room_id: str, content: str, message_type: str = "chat", context: Context = None
+) -> str:
+    """Send a message to a room. All room members will receive it.
+
+    Args:
+        room_id: The room ID to send to
+        content: The message content
+        message_type: Optional type: chat, claim, status, request, alert, sync
+    """
+    return await _send_room_message(room_id, content, message_type, context)
+
+
+@mcp.tool()
+async def join_room(room_id: str, context: Context = None) -> str:
+    """Join a room to start receiving messages from it.
+
+    Args:
+        room_id: The room ID to join
+    """
+    return await _join_room(room_id, context)
+
+
+@mcp.tool()
+async def list_rooms(context: Context = None) -> str:
+    """List all available rooms with their members."""
+    return await _list_rooms(context)
 
 
 if __name__ == "__main__":

@@ -186,3 +186,54 @@ def test_validate_relay_url_rejects_invalid_values(relay_url: str):
 )
 def test_validate_relay_url_accepts_http_urls(relay_url: str):
     assert mcp_server._validate_relay_url(relay_url) == relay_url
+
+
+async def test_send_room_message_posts_to_relay():
+    mock_client = _make_mock_client(
+        "post", {"id": "msg-1", "timestamp": "2026-04-11T00:00:00Z"}
+    )
+    with patch("mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server._send_room_message("room-123", "hello room")
+    assert "msg-1" in result
+    mock_client.post.assert_called_once()
+    call_args = mock_client.post.call_args
+    assert "/rooms/room-123/messages" in call_args[0][0]
+    assert call_args[1]["json"]["from_name"] == "alice"
+
+
+async def test_join_room_posts_to_relay():
+    mock_client = _make_mock_client("post", {"status": "joined"})
+    with patch("mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server._join_room("room-123")
+    assert "joined" in result.lower()
+
+
+async def test_list_rooms_gets_from_relay():
+    mock_rooms = [
+        {
+            "id": "r1",
+            "name": "yc-hack",
+            "members": ["alice", "bob"],
+            "created_at": "2026-04-11T00:00:00Z",
+        }
+    ]
+    mock_client = _make_mock_client("get", mock_rooms)
+    with patch("mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server._list_rooms()
+    assert "yc-hack" in result
+
+
+async def test_process_sse_message_event():
+    await mcp_server._process_sse_event(
+        "message",
+        '{"id": "m1", "from_name": "alice", "content": "hi", "timestamp": "2026-04-11T00:00:00Z"}',
+    )
+    messages = await mcp_server._drain_pending_messages()
+    assert len(messages) == 1
+    assert messages[0]["from_name"] == "alice"
+
+
+async def test_process_sse_ignores_connected_event():
+    await mcp_server._process_sse_event("connected", '{"participant": "bob"}')
+    messages = await mcp_server._drain_pending_messages()
+    assert len(messages) == 0
