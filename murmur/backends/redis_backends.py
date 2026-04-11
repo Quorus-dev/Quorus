@@ -129,6 +129,10 @@ class RedisMessageBackend:
                 cursor=cursor, match=f"t:{tenant_id}:dm:*", count=100
             )
             for key in keys:
+                # Skip inflight keys (contain :inflight:)
+                key_str = key if isinstance(key, str) else key.decode()
+                if ":inflight:" in key_str:
+                    continue
                 total += await self._r.llen(key)
             if cursor == 0 or cursor == "0":
                 break
@@ -142,6 +146,9 @@ class RedisMessageBackend:
                 cursor=cursor, match="t:*:dm:*", count=100
             )
             for key in keys:
+                key_str = key if isinstance(key, str) else key.decode()
+                if ":inflight:" in key_str:
+                    continue
                 total += await self._r.llen(key)
             if cursor == 0 or cursor == "0":
                 break

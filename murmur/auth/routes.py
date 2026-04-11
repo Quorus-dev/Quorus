@@ -68,6 +68,7 @@ async def exchange_api_key(req: TokenRequest):
             tenant_id=tenant.id,
             tenant_slug=tenant.slug,
             role=participant.role,
+            extra={"key_prefix": key_row.key_prefix},
         )
 
         logger.info(

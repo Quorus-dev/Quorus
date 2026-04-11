@@ -80,6 +80,24 @@ async def verify_auth(request: Request) -> AuthContext:
     # Try JWT first
     try:
         claims = decode_jwt(token)
+
+        # Check revocation cache if Postgres is available
+        key_prefix = claims.get("key_prefix")
+        if key_prefix and DATABASE_URL:
+            if _needs_revocation_refresh():
+                try:
+                    from murmur.storage.postgres import get_db_session
+
+                    async with get_db_session() as session:
+                        await refresh_revocation_cache(session)
+                except Exception:
+                    pass  # DB unavailable — use stale cache
+            if key_prefix in _revoked_prefixes:
+                raise HTTPException(
+                    status_code=401,
+                    detail="API key has been revoked",
+                )
+
         return AuthContext(
             sub=claims.get("sub"),
             tenant_id=claims.get("tenant_id"),
@@ -88,6 +106,8 @@ async def verify_auth(request: Request) -> AuthContext:
             is_legacy=False,
             claims=claims,
         )
+    except HTTPException:
+        raise  # Re-raise revocation 401
     except Exception:
         pass  # Not a valid JWT — try legacy fallback
 
