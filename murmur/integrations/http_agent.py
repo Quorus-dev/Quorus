@@ -25,12 +25,39 @@ class MurmurClient:
         name: str,
         timeout: float = 10.0,
         retries: int = 3,
+        api_key: str = "",
     ):
         self.relay_url = relay_url.rstrip("/")
         self.name = name
-        self._headers = {"Authorization": f"Bearer {secret}"}
+        self._secret = secret
+        self._api_key = api_key
+        self._jwt: str | None = None
         self._timeout = timeout
         self._retries = retries
+        # Exchange API key for JWT if provided
+        if api_key:
+            self._exchange_jwt()
+        self._headers = {"Authorization": f"Bearer {self._get_bearer()}"}
+
+    def _exchange_jwt(self) -> str | None:
+        """Exchange api_key for a JWT, caching the result."""
+        if not self._api_key:
+            return self._jwt
+        try:
+            resp = httpx.post(
+                f"{self.relay_url}/v1/auth/token",
+                json={"api_key": self._api_key},
+                timeout=self._timeout,
+            )
+            if resp.status_code == 200:
+                self._jwt = resp.json()["token"]
+        except Exception:
+            pass
+        return self._jwt
+
+    def _get_bearer(self) -> str:
+        """Return JWT if available, otherwise fall back to secret."""
+        return self._jwt or self._secret
 
     def _request(self, method: str, url: str, **kwargs):
         """Make HTTP request with retry on transient errors."""

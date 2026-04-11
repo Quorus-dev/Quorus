@@ -349,6 +349,24 @@ async def _process_sse_event(event_type: str, data: str) -> None:
         logger.warning("Failed to parse SSE event data: %s", data[:200])
 
 
+async def _get_sse_token() -> str:
+    """Get a short-lived SSE stream token, falling back to RELAY_SECRET."""
+    try:
+        bearer = await _get_bearer_token()
+        client = _get_http_client()
+        resp = await client.post(
+            f"{RELAY_URL}/stream/token",
+            json={"recipient": INSTANCE_NAME},
+            headers={"Authorization": f"Bearer {bearer}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json()["token"]
+    except Exception:
+        pass
+    return RELAY_SECRET
+
+
 async def _sse_listener(stop_event: asyncio.Event) -> None:
     backoff = 2
     max_backoff = 30
@@ -356,7 +374,8 @@ async def _sse_listener(stop_event: asyncio.Event) -> None:
         try:
             client = _get_http_client()
             url = f"{RELAY_URL}/stream/{INSTANCE_NAME}"
-            params = {"token": RELAY_SECRET}
+            token = await _get_sse_token()
+            params = {"token": token}
             async with client.stream("GET", url, params=params, timeout=None) as resp:
                 if resp.status_code != 200:
                     logger.warning("SSE stream returned %d, retrying", resp.status_code)
@@ -732,7 +751,7 @@ async def search_room(
         resp = await client.get(
             f"{RELAY_URL}/rooms/{room_id}/search",
             params=params,
-            headers={"Authorization": f"Bearer {RELAY_SECRET}"},
+            headers=_auth_headers(),
             timeout=10,
         )
         resp.raise_for_status()
@@ -761,7 +780,7 @@ async def room_metrics(room_id: str) -> str:
         resp = await client.get(
             f"{RELAY_URL}/rooms/{room_id}/history",
             params={"limit": 1000},
-            headers={"Authorization": f"Bearer {RELAY_SECRET}"},
+            headers=_auth_headers(),
             timeout=10,
         )
         resp.raise_for_status()

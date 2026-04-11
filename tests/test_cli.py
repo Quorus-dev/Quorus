@@ -15,6 +15,8 @@ def _close_coro(coro):
 def configure_cli(monkeypatch):
     monkeypatch.setattr("murmur.cli.RELAY_URL", "http://test-relay:8080")
     monkeypatch.setattr("murmur.cli.RELAY_SECRET", "test-secret")
+    monkeypatch.setattr("murmur.cli.API_KEY", "")
+    monkeypatch.setattr("murmur.cli._cached_jwt", None)
     monkeypatch.setattr("murmur.cli.INSTANCE_NAME", "test-user")
 
 

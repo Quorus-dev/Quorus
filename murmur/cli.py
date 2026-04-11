@@ -19,7 +19,11 @@ console = Console()
 _config = load_config()
 RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
+API_KEY = _config.get("api_key", "")
 INSTANCE_NAME = _config["instance_name"]
+
+# JWT cache for API key auth
+_cached_jwt: str | None = None
 
 
 def _relay_unreachable(url: str = "") -> None:
@@ -35,7 +39,39 @@ def _get_client() -> httpx.AsyncClient:
 
 
 def _auth_headers() -> dict[str, str]:
+    """Get auth headers — prefers JWT from API key, falls back to legacy."""
+    global _cached_jwt
+    if API_KEY and not _cached_jwt:
+        try:
+            resp = httpx.post(
+                f"{RELAY_URL}/v1/auth/token",
+                json={"api_key": API_KEY},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                _cached_jwt = resp.json()["token"]
+        except Exception:
+            pass  # Fall back to RELAY_SECRET
+    if _cached_jwt:
+        return {"Authorization": f"Bearer {_cached_jwt}"}
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
+
+
+def _get_sse_token(recipient: str) -> str:
+    """Get a short-lived SSE stream token, falling back to RELAY_SECRET."""
+    try:
+        headers = _auth_headers()
+        resp = httpx.post(
+            f"{RELAY_URL}/stream/token",
+            json={"recipient": recipient},
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json()["token"]
+    except Exception:
+        pass
+    return RELAY_SECRET
 
 
 async def _list_rooms() -> list[dict]:
@@ -147,8 +183,9 @@ async def _watch(room_name: str) -> None:
     client = httpx.AsyncClient()
     try:
         url = f"{RELAY_URL}/stream/{INSTANCE_NAME}"
+        sse_token = _get_sse_token(INSTANCE_NAME)
         async with client.stream(
-            "GET", url, params={"token": RELAY_SECRET}, timeout=None
+            "GET", url, params={"token": sse_token}, timeout=None
         ) as resp:
             event_type = ""
             event_data = ""
@@ -298,8 +335,9 @@ async def _chat(room_name: str) -> None:
         client = httpx.AsyncClient()
         try:
             url = f"{RELAY_URL}/stream/{INSTANCE_NAME}"
+            sse_token = _get_sse_token(INSTANCE_NAME)
             async with client.stream(
-                "GET", url, params={"token": RELAY_SECRET}, timeout=None,
+                "GET", url, params={"token": sse_token}, timeout=None,
             ) as resp:
                 event_type = ""
                 event_data = ""
@@ -1106,8 +1144,9 @@ async def _watch_daemon(name: str) -> None:
     client = httpx.AsyncClient()
     try:
         url = f"{RELAY_URL}/stream/{name}"
+        sse_token = _get_sse_token(name)
         async with client.stream(
-            "GET", url, params={"token": RELAY_SECRET}, timeout=None,
+            "GET", url, params={"token": sse_token}, timeout=None,
         ) as resp:
             event_type = ""
             event_data = ""
@@ -1293,7 +1332,7 @@ def _cmd_join(args):
             # Resolve room by name
             rooms_resp = await client.get(
                 f"{relay_url}/rooms",
-                headers={"Authorization": f"Bearer {secret}"},
+                headers=_auth_headers(),
             )
             rooms_resp.raise_for_status()
             rooms_list = rooms_resp.json()
@@ -1304,7 +1343,7 @@ def _cmd_join(args):
             resp = await client.post(
                 f"{relay_url}/rooms/{target['id']}/join",
                 json={"participant": name},
-                headers={"Authorization": f"Bearer {secret}"},
+                headers=_auth_headers(),
             )
             resp.raise_for_status()
             console.print(f"[green]Joined room '{room}' as '{name}'[/green]")
@@ -1752,7 +1791,7 @@ def _cmd_hackathon(args):
         {"name": args.room2, "mission": args.mission2 or "Build the product. Ship fast."},
     ]
 
-    headers = {"Authorization": f"Bearer {RELAY_SECRET}"}
+    headers = _auth_headers()
 
     console.print("[bold green]Murmur Hackathon Setup[/bold green]\n")
 
@@ -1885,7 +1924,7 @@ def _cmd_doctor(args):
         try:
             r = httpx.get(
                 f"{RELAY_URL}/rooms",
-                headers={"Authorization": f"Bearer {RELAY_SECRET}"},
+                headers=_auth_headers(),
                 timeout=5,
             )
             auth_ok = r.status_code == 200
@@ -1894,7 +1933,7 @@ def _cmd_doctor(args):
     check(
         "Authentication valid",
         auth_ok,
-        fix="Check RELAY_SECRET matches the relay's RELAY_SECRET env var",
+        fix="Check RELAY_SECRET or API_KEY matches the relay configuration",
     )
 
     # 7. MCP config
@@ -1913,7 +1952,7 @@ def _cmd_doctor(args):
         try:
             r = httpx.get(
                 f"{RELAY_URL}/rooms",
-                headers={"Authorization": f"Bearer {RELAY_SECRET}"},
+                headers=_auth_headers(),
                 timeout=5,
             )
             room_list = r.json()

@@ -35,16 +35,65 @@ class Room:
         *,
         relay: str = "http://localhost:8080",
         secret: str = "",
+        api_key: str = "",
         name: str = "sdk-agent",
     ):
         self.room = room
         self.relay = relay.rstrip("/")
         self.secret = secret
+        self.api_key = api_key
         self.name = name
-        self._client = MurmurClient(relay, secret, name)
+        self._jwt: str | None = None
+        # Exchange API key for JWT eagerly if provided
+        if api_key:
+            self._exchange_jwt()
+        self._client = MurmurClient(relay, secret, name, api_key=api_key)
         self._listeners: list[Callable] = []
         self._stream_task: threading.Thread | None = None
         self._stop_event = threading.Event()
+
+    def _exchange_jwt(self) -> str | None:
+        """Exchange api_key for a JWT, caching the result."""
+        if not self.api_key:
+            return self._jwt
+        try:
+            resp = httpx.post(
+                f"{self.relay}/v1/auth/token",
+                json={"api_key": self.api_key},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                self._jwt = resp.json()["token"]
+        except Exception:
+            pass
+        return self._jwt
+
+    def _get_bearer(self) -> str:
+        """Return JWT if available, otherwise fall back to secret."""
+        if self._jwt:
+            return self._jwt
+        if self.api_key:
+            self._exchange_jwt()
+        return self._jwt or self.secret
+
+    def _get_auth_headers(self) -> dict[str, str]:
+        """Get auth headers using JWT (preferred) or legacy secret."""
+        return {"Authorization": f"Bearer {self._get_bearer()}"}
+
+    def _get_sse_token(self) -> str:
+        """Get a short-lived SSE stream token."""
+        try:
+            resp = httpx.post(
+                f"{self.relay}/stream/token",
+                json={"recipient": self.name},
+                headers=self._get_auth_headers(),
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return resp.json()["token"]
+        except Exception:
+            pass
+        return self._get_bearer()
 
     def join(self) -> dict:
         """Join the room."""
@@ -144,7 +193,7 @@ class Room:
             r = await client.post(
                 f"{self.relay}/rooms/{self.room}/messages",
                 json={"from_name": self.name, "content": content, "message_type": type},
-                headers={"Authorization": f"Bearer {self.secret}"},
+                headers=self._get_auth_headers(),
             )
             r.raise_for_status()
             return r.json()
@@ -155,7 +204,7 @@ class Room:
             r = await client.get(
                 f"{self.relay}/messages/{self.name}",
                 params={"wait": wait},
-                headers={"Authorization": f"Bearer {self.secret}"},
+                headers=self._get_auth_headers(),
             )
             r.raise_for_status()
             return r.json()
@@ -167,11 +216,12 @@ class Room:
             async for msg in room.astream():
                 print(msg["from_name"], msg["content"])
         """
+        sse_token = self._get_sse_token()
         async with httpx.AsyncClient() as client:
             async with client.stream(
                 "GET",
                 f"{self.relay}/stream/{self.name}",
-                params={"token": self.secret},
+                params={"token": sse_token},
                 timeout=None,
             ) as resp:
                 event_type = ""
