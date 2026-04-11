@@ -2345,3 +2345,125 @@ async def test_claim_task_unknown_room_404(client: AsyncClient, auth_headers: di
         headers=auth_headers,
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Usage endpoint (/v1/usage) tests
+# ---------------------------------------------------------------------------
+
+
+async def test_v1_usage_basic(client: AsyncClient, auth_headers: dict):
+    """GET /v1/usage returns expected schema."""
+    resp = await client.get("/v1/usage", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "tenant_id" in data
+    assert "snapshot_at" in data
+    assert "total_sent" in data
+    assert "active_agents" in data
+    assert "rooms" in data
+    assert "per_agent" in data
+
+
+async def test_v1_usage_no_auth(client: AsyncClient):
+    """GET /v1/usage without auth returns 401."""
+    resp = await client.get("/v1/usage")
+    assert resp.status_code == 401
+
+
+async def test_v1_usage_room_detail(client: AsyncClient, auth_headers: dict):
+    """GET /v1/usage/rooms/{id} returns room-level stats."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "usage-test", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    resp = await client.get(f"/v1/usage/rooms/{rid}", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["room_id"] == rid
+    assert "message_count" in data
+    assert "active_agents" in data
+    assert "locked_files" in data
+
+
+async def test_v1_usage_room_not_found(client: AsyncClient, auth_headers: dict):
+    """GET /v1/usage/rooms/unknown returns 404."""
+    resp = await client.get("/v1/usage/rooms/no-such-room", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# State write endpoints tests
+# ---------------------------------------------------------------------------
+
+
+async def test_set_room_goal(client: AsyncClient, auth_headers: dict):
+    """PATCH /rooms/{id}/state/goal sets the active goal."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "goal-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    resp = await client.patch(
+        f"/rooms/{rid}/state/goal",
+        json={"goal": "Ship Primitive A by noon"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["active_goal"] == "Ship Primitive A by noon"
+
+    # Verify via GET /state
+    state = await client.get(f"/rooms/{rid}/state", headers=auth_headers)
+    assert state.json()["active_goal"] == "Ship Primitive A by noon"
+
+
+async def test_clear_room_goal(client: AsyncClient, auth_headers: dict):
+    """PATCH /rooms/{id}/state/goal with null clears the goal."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "goal-clear-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    await client.patch(
+        f"/rooms/{rid}/state/goal",
+        json={"goal": "temporary goal"},
+        headers=auth_headers,
+    )
+    resp = await client.patch(
+        f"/rooms/{rid}/state/goal",
+        json={"goal": None},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["active_goal"] is None
+
+
+async def test_add_room_decision(client: AsyncClient, auth_headers: dict):
+    """POST /rooms/{id}/state/decisions records a decision."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "decision-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    resp = await client.post(
+        f"/rooms/{rid}/state/decisions",
+        json={"decision": "Use SSE over polling", "rationale": "lower latency"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["decision"] == "Use SSE over polling"
+    assert d["rationale"] == "lower latency"
+    assert "id" in d
+    assert "decided_at" in d
+
+    # Verify via GET /state
+    state = await client.get(f"/rooms/{rid}/state", headers=auth_headers)
+    decisions = state.json()["resolved_decisions"]
+    assert len(decisions) == 1
+    assert decisions[0]["decision"] == "Use SSE over polling"

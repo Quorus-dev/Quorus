@@ -12,6 +12,7 @@ from murmur.routes.room_messages import router as room_messages_router
 from murmur.routes.room_state import router as room_state_router
 from murmur.routes.rooms import router as rooms_router
 from murmur.routes.sse import router as sse_router
+from murmur.routes.usage import router as usage_router
 from murmur.routes.webhooks import router as webhooks_router
 
 router = APIRouter()
@@ -26,3 +27,4 @@ router.include_router(sse_router)
 router.include_router(analytics_router)
 router.include_router(agents_router)
 router.include_router(invites_router)
+router.include_router(usage_router)

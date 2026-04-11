@@ -246,3 +246,126 @@ async def release_task(
     )
 
     return {"released": True, "file_path": file_path}
+
+
+# ---------------------------------------------------------------------------
+# State write endpoints (set goal, add decision)
+# ---------------------------------------------------------------------------
+
+
+class SetGoalRequest(BaseModel):
+    goal: str | None = None
+    set_by: str = ""
+
+
+class AddDecisionRequest(BaseModel):
+    decision: str
+    rationale: str | None = None
+
+
+def _broadcast_state_event(
+    request: Request,
+    tid: str,
+    rid: str,
+    room_name: str,
+    members: dict,
+    event_type: str,
+    payload: dict,
+) -> None:
+    """Fan-out a state change event to all room members via SSE."""
+    sse_svc = request.app.state.sse_service
+    ts = datetime.now(timezone.utc).isoformat()
+    for recipient in members:
+        msg = {
+            "id": str(uuid.uuid4()),
+            "from_name": "_system",
+            "to": recipient,
+            "room": room_name,
+            "content": str(payload),
+            "message_type": event_type,
+            "timestamp": ts,
+        }
+        sse_svc.push(tid, recipient, msg)
+
+
+@router.patch("/rooms/{room_id}/state/goal")
+async def set_room_goal(
+    room_id: str,
+    req: SetGoalRequest,
+    request: Request,
+    auth: AuthContext = Depends(verify_auth),
+):
+    """Set (or clear) the active goal for a room.
+
+    Pass ``null`` for goal to clear it.  Broadcasts ``GOAL_SET`` SSE event
+    to all room members.  Rate limited: 30/min.
+    """
+    room_svc = request.app.state.room_service
+    backends = request.app.state.backends
+    tid = _tid(auth)
+
+    # Rate limit: 30/min
+    rate_limit_svc = request.app.state.rate_limit_service
+    caller = auth.sub or "anon"
+    if not await rate_limit_svc.check(tid, f"goal:{caller}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    rid, room_data = await room_svc.get(tid, room_id)
+    room_name = room_data.get("name", rid)
+    members = room_data.get("members", {})
+
+    await backends.room_state.set_goal(tid, rid, req.goal)
+
+    set_by = req.set_by or auth.sub or _LEGACY_TENANT
+    _broadcast_state_event(
+        request, tid, rid, room_name, members,
+        "GOAL_SET",
+        {"goal": req.goal, "set_by": set_by},
+    )
+
+    return {"active_goal": req.goal}
+
+
+@router.post("/rooms/{room_id}/state/decisions")
+async def add_room_decision(
+    room_id: str,
+    req: AddDecisionRequest,
+    request: Request,
+    auth: AuthContext = Depends(verify_auth),
+):
+    """Record a resolved decision in the room's shared state.
+
+    Broadcasts ``DECISION_ADDED`` SSE event to all room members.
+    Rate limited: 30/min.
+    """
+    room_svc = request.app.state.room_service
+    backends = request.app.state.backends
+    tid = _tid(auth)
+
+    # Rate limit: 30/min
+    rate_limit_svc = request.app.state.rate_limit_service
+    caller = auth.sub or "anon"
+    if not await rate_limit_svc.check(tid, f"decision:{caller}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    rid, room_data = await room_svc.get(tid, room_id)
+    room_name = room_data.get("name", rid)
+    members = room_data.get("members", {})
+
+    decided_by = auth.sub or _LEGACY_TENANT
+    decision = {
+        "id": str(uuid.uuid4()),
+        "decision": req.decision,
+        "decided_by": decided_by,
+        "decided_at": datetime.now(timezone.utc).isoformat(),
+        "rationale": req.rationale,
+    }
+    await backends.room_state.add_decision(tid, rid, decision)
+
+    _broadcast_state_event(
+        request, tid, rid, room_name, members,
+        "DECISION_ADDED",
+        {"decision": req.decision, "decided_by": decided_by},
+    )
+
+    return decision

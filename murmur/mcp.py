@@ -810,5 +810,66 @@ async def release_task(
         return _relay_error_message(e)
 
 
+@mcp.tool()
+async def get_room_state(room_id: str) -> str:
+    """Get the Shared State Matrix for a room (Primitive A).
+
+    Returns: active goal, claimed tasks, locked files, resolved decisions,
+    active agents, message count, and last activity timestamp.
+
+    Args:
+        room_id: The room name or ID (e.g., "murmur-dev")
+    """
+    try:
+        client = _get_http_client()
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_id}/state",
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            new_token = await _refresh_jwt_on_401()
+            if new_token:
+                resp = await client.get(
+                    f"{RELAY_URL}/rooms/{room_id}/state",
+                    headers=_auth_headers(),
+                    timeout=10,
+                )
+        resp.raise_for_status()
+        data = resp.json()
+        lines = [
+            f"Room: {room_id} (snapshot: {data.get('snapshot_at', '')[:19]})",
+            f"Schema: {data.get('schema_version', '?')}",
+            f"Goal: {data.get('active_goal') or '(none)'}",
+            f"Active agents ({len(data.get('active_agents', []))}): "
+            + ", ".join(data.get("active_agents", [])),
+            f"Messages: {data.get('message_count', 0)} | "
+            f"Last activity: {(data.get('last_activity') or '')[:19]}",
+        ]
+        tasks = data.get("claimed_tasks", [])
+        if tasks:
+            lines.append(f"\nClaimed tasks ({len(tasks)}):")
+            for t in tasks:
+                lines.append(
+                    f"  [{t['claimed_by']}] {t['file_path']} "
+                    f"(expires {t.get('expires_at', '')[:19]})"
+                )
+        locks = data.get("locked_files", {})
+        if locks:
+            lines.append(f"\nLocked files ({len(locks)}):")
+            for fp, lock in locks.items():
+                lines.append(f"  {fp} → held by {lock['held_by']}")
+        decisions = data.get("resolved_decisions", [])
+        if decisions:
+            lines.append(f"\nDecisions ({len(decisions)}):")
+            for d in decisions[-5:]:
+                lines.append(
+                    f"  [{d.get('decided_by', '?')}] {d['decision']}"
+                )
+        return "\n".join(lines)
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
