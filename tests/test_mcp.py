@@ -66,7 +66,7 @@ async def test_check_messages_calls_relay():
 
         mock_client.get.assert_called_once_with(
             "http://relay:8080/messages/alice",
-            params={"wait": 30},
+            params={"wait": 30, "ack": "manual"},
             headers={"Authorization": "Bearer secret"},
             timeout=35,
         )
@@ -86,7 +86,7 @@ async def test_check_messages_uses_nonblocking_fetch_when_background_polling_ena
 
     mock_client.get.assert_called_once_with(
         "http://relay:8080/messages/alice",
-        params={"wait": 0},
+        params={"wait": 0, "ack": "manual"},
         headers={"Authorization": "Bearer secret"},
         timeout=10,
     )

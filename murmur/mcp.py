@@ -258,12 +258,30 @@ async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None]:
         client = _get_http_client()
         resp = await client.get(
             f"{RELAY_URL}/messages/{INSTANCE_NAME}",
-            params={"wait": wait},
+            params={"wait": wait, "ack": "manual"},
             headers=_auth_headers(),
             timeout=timeout,
         )
         resp.raise_for_status()
-        messages = resp.json()
+        data = resp.json()
+        # Handle both manual ACK (dict) and auto ACK (list) responses
+        if isinstance(data, list):
+            messages = data
+            ack_token = ""
+        else:
+            messages = data.get("messages", [])
+            ack_token = data.get("ack_token", "")
+        # Client-side ACK: confirm receipt after successful fetch
+        if ack_token and messages:
+            try:
+                await client.post(
+                    f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
+                    json={"ack_token": ack_token},
+                    headers=_auth_headers(),
+                    timeout=5,
+                )
+            except Exception:
+                logger.warning("Failed to ACK messages", exc_info=True)
         logger.info("Received %d messages from relay", len(messages))
         return messages, None
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:

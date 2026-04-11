@@ -226,15 +226,32 @@ class Room:
             return r.json()
 
     async def areceive(self, wait: int = 0) -> list[dict]:
-        """Async receive."""
+        """Async receive with client-side ACK."""
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 f"{self.relay}/messages/{self.name}",
-                params={"wait": wait},
+                params={"wait": wait, "ack": "manual"},
                 headers=self._get_auth_headers(),
             )
             r.raise_for_status()
-            return r.json()
+            data = r.json()
+            if isinstance(data, list):
+                messages = data
+                ack_token = ""
+            else:
+                messages = data.get("messages", [])
+                ack_token = data.get("ack_token", "")
+            if ack_token and messages:
+                try:
+                    await client.post(
+                        f"{self.relay}/messages/{self.name}/ack",
+                        json={"ack_token": ack_token},
+                        headers=self._get_auth_headers(),
+                        timeout=5,
+                    )
+                except Exception:
+                    pass
+            return messages
 
     async def astream(self):
         """Async generator that yields messages via SSE.

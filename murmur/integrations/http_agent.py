@@ -111,12 +111,27 @@ class MurmurClient:
         return r.json()
 
     def receive(self, wait: int = 0) -> list[dict]:
-        """Fetch pending messages for this agent."""
+        """Fetch pending messages with client-side ACK."""
         r = self._request(
             "GET", f"{self.relay_url}/messages/{self.name}",
-            params={"wait": wait},
+            params={"wait": wait, "ack": "manual"},
         )
-        return r.json()
+        data = r.json()
+        if isinstance(data, list):
+            messages = data
+            ack_token = ""
+        else:
+            messages = data.get("messages", [])
+            ack_token = data.get("ack_token", "")
+        if ack_token and messages:
+            try:
+                self._request(
+                    "POST", f"{self.relay_url}/messages/{self.name}/ack",
+                    json={"ack_token": ack_token},
+                )
+            except Exception:
+                logger.warning("Failed to ACK messages")
+        return messages
 
     def peek(self) -> dict:
         """Check pending message count without consuming them."""
