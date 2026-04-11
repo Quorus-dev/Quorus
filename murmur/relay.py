@@ -1115,6 +1115,10 @@ header .status{font-size:12px;color:#3fb950;margin-left:auto}
 .input-bar button:hover{background:#2ea043}
 .members{padding:8px 16px;border-top:1px solid #30363d;
   font-size:12px;color:#8b949e}
+.members .member{display:inline-flex;align-items:center;gap:4px;margin-right:10px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot-online{background:#3fb950}
+.dot-offline{background:#484f58}
 .empty{color:#484f58;text-align:center;padding:40px;font-size:14px}
 </style>
 </head>
@@ -1181,8 +1185,14 @@ async function selectRoom(name){
   try{
     const r=await fetch(API+'/rooms/'+name,{headers:H});
     const room=await r.json();
-    document.getElementById('members').textContent=
-      'Members: '+room.members.join(', ');
+    const pr=await fetch(API+'/presence',{headers:H});
+    const presence=await pr.json();
+    const onlineSet=new Set(presence.filter(p=>p.online).map(p=>p.name));
+    document.getElementById('members').innerHTML='Members: '+
+      room.members.map(m=>{
+        const dot=onlineSet.has(m)?'dot-online':'dot-offline';
+        return '<span class="member"><span class="dot '+dot+'"></span>'+m+'</span>';
+      }).join('');
   }catch(e){}
   connectSSE();
 }
@@ -1226,8 +1236,23 @@ async function sendMsg(){
 document.getElementById('msgInput').addEventListener('keydown',
   e=>{if(e.key==='Enter')sendMsg()});
 
+async function refreshPresence(){
+  if(!currentRoom)return;
+  try{
+    const r=await fetch(API+'/rooms/'+currentRoom,{headers:H});
+    const room=await r.json();
+    const pr=await fetch(API+'/presence',{headers:H});
+    const presence=await pr.json();
+    const onlineSet=new Set(presence.filter(p=>p.online).map(p=>p.name));
+    document.getElementById('members').innerHTML='Members: '+
+      room.members.map(m=>{
+        const dot=onlineSet.has(m)?'dot-online':'dot-offline';
+        return '<span class="member"><span class="dot '+dot+'"></span>'+m+'</span>';
+      }).join('');
+  }catch(e){}
+}
 loadRooms();
-setInterval(loadRooms,30000);
+setInterval(()=>{loadRooms();refreshPresence()},30000);
 </script>
 </body>
 </html>
