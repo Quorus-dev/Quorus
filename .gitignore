@@ -13,3 +13,4 @@ messages.json
 .claude/settings.local.json
 uv.lock
 .DS_Store
+ROADMAP.md
