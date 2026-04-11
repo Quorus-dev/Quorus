@@ -12,38 +12,49 @@ from murmur.auth.middleware import AuthContext, verify_auth
 
 router = APIRouter()
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+REDIS_URL = os.environ.get("REDIS_URL", "")
 HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))
+_LEGACY_TENANT = "_legacy"
 
 _start_time = time.time()
 
 
+def _tid(auth: AuthContext) -> str:
+    return auth.tenant_id or _LEGACY_TENANT
+
+
 @router.get("/health")
 async def health():
-    """Check relay health including Postgres connectivity."""
+    """Check relay health — returns 503 if required deps are down."""
+    from murmur.backends.redis_client import check_redis
     from murmur.storage.postgres import check_connection
 
     checks: dict = {"status": "ok"}
 
+    # Postgres check
     pg_ok = await check_connection()
     if pg_ok:
         checks["postgres"] = "connected"
+    elif DATABASE_URL:
+        # Postgres required in production — mark unhealthy
+        checks["status"] = "unhealthy"
+        checks["postgres"] = "disconnected"
     else:
+        # Dev mode: check file persistence
         persist_dir = os.path.dirname(os.path.abspath(MESSAGES_FILE)) or "."
-        if not os.access(persist_dir, os.W_OK):
+        if os.access(persist_dir, os.W_OK):
+            checks["persistence"] = "ok"
+        else:
             checks["status"] = "degraded"
             checks["persistence"] = "directory not writable"
-        else:
-            checks["persistence"] = "ok"
 
-    # Check Redis health if available
-    from murmur.backends.redis_client import check_redis
-
-    redis_url = os.environ.get("REDIS_URL", "")
+    # Redis check
     redis_ok = await check_redis()
     if redis_ok:
         checks["redis"] = "connected"
-    elif redis_url:
-        # Redis is required in production — mark unhealthy
+    elif REDIS_URL:
+        # Redis required in production — mark unhealthy
         checks["status"] = "unhealthy"
         checks["redis"] = "disconnected"
 
@@ -56,23 +67,17 @@ async def health_detailed(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
+    tid = _tid(auth)
     backends = request.app.state.backends
-    total_msgs = await backends.messages.count_all_global()
-
-    # Count rooms
-    rooms_count = await backends.rooms.count_global()
-
-    # Count participants
+    total_msgs = await backends.messages.count_all(tid)
+    rooms_count = await backends.rooms.count(tid)
     participants_count = await backends.participants.count_global()
 
-    # Count online agents
     presence_svc = request.app.state.presence_service
-    online = await presence_svc.list_all("_legacy", HEARTBEAT_TIMEOUT)
-    online_agents = len(online)
+    online = await presence_svc.list_all(tid, HEARTBEAT_TIMEOUT)
 
-    # Analytics stats
     analytics_svc = request.app.state.analytics_service
-    stats = await analytics_svc.get_stats("_legacy")
+    stats = await analytics_svc.get_stats(tid)
 
     return {
         "status": "ok",
@@ -80,7 +85,7 @@ async def health_detailed(
         "rooms": rooms_count,
         "participants": participants_count,
         "pending_messages": total_msgs,
-        "online_agents": online_agents,
+        "online_agents": len(online),
         "total_sent": stats.get("total_sent", 0),
         "total_delivered": stats.get("total_delivered", 0),
     }
