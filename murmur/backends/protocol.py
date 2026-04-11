@@ -106,9 +106,36 @@ class RoomBackend(Protocol):
     async def delete(self, tenant_id: str, room_id: str) -> None:
         ...
 
+    async def create_if_name_available(
+        self, tenant_id: str, room_id: str, room_data: dict
+    ) -> bool:
+        """Atomically create a room only if the name is not taken.
+
+        Returns True if created, False if name already exists.
+        """
+        ...
+
+    async def rename_if_available(
+        self, tenant_id: str, room_id: str, new_name: str
+    ) -> bool:
+        """Atomically rename a room only if the new name is not taken.
+
+        Returns True if renamed, False if name already exists.
+        """
+        ...
+
     async def add_member(
         self, tenant_id: str, room_id: str, name: str, role: str
     ) -> None:
+        ...
+
+    async def add_member_if_capacity(
+        self, tenant_id: str, room_id: str, name: str, role: str, max_members: int
+    ) -> bool:
+        """Atomically add a member only if the room is under capacity.
+
+        Returns True if added, False if at max capacity.
+        """
         ...
 
     async def remove_member(

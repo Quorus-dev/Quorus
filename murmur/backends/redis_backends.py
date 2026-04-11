@@ -35,6 +35,63 @@ redis.call('EXPIRE', key, window)
 return 1
 """
 
+# Lua: atomic room create (check name not taken, then create)
+# KEYS[1]=name_index, KEYS[2]=meta_key, KEYS[3]=members_key, KEYS[4]=room_index
+# ARGV[1]=room_name, ARGV[2]=room_id, ARGV[n...]=meta field/value pairs
+# Returns 1 if created, 0 if name taken
+_ROOM_CREATE_LUA = """
+local name_idx = KEYS[1]
+local meta_key = KEYS[2]
+local members_key = KEYS[3]
+local room_idx = KEYS[4]
+local room_name = ARGV[1]
+local room_id = ARGV[2]
+if redis.call('HEXISTS', name_idx, room_name) == 1 then return 0 end
+for i = 3, #ARGV, 2 do
+  redis.call('HSET', meta_key, ARGV[i], ARGV[i+1])
+end
+redis.call('HSET', name_idx, room_name, room_id)
+redis.call('SADD', room_idx, room_id)
+return 1
+"""
+
+# Lua: atomic room rename (check new name not taken by different room)
+# KEYS[1]=name_index, KEYS[2]=meta_key
+# ARGV[1]=old_name, ARGV[2]=new_name, ARGV[3]=room_id
+# Returns 1 if renamed, 0 if name taken
+_ROOM_RENAME_LUA = """
+local name_idx = KEYS[1]
+local meta_key = KEYS[2]
+local old_name = ARGV[1]
+local new_name = ARGV[2]
+local room_id = ARGV[3]
+local existing = redis.call('HGET', name_idx, new_name)
+if existing and existing ~= room_id then return 0 end
+if old_name ~= '' then redis.call('HDEL', name_idx, old_name) end
+redis.call('HSET', name_idx, new_name, room_id)
+redis.call('HSET', meta_key, 'name', new_name)
+return 1
+"""
+
+# Lua: atomic add member with capacity check
+# KEYS[1]=members_key
+# ARGV[1]=name, ARGV[2]=role, ARGV[3]=max_members
+# Returns 1 if added, 0 if at capacity
+_ROOM_ADD_MEMBER_LUA = """
+local members_key = KEYS[1]
+local name = ARGV[1]
+local role = ARGV[2]
+local max_members = tonumber(ARGV[3])
+if redis.call('HEXISTS', members_key, name) == 1 then
+  redis.call('HSET', members_key, name, role)
+  return 1
+end
+local count = redis.call('HLEN', members_key)
+if count >= max_members then return 0 end
+redis.call('HSET', members_key, name, role)
+return 1
+"""
+
 
 # -- Messages (DM inboxes) -------------------------------------------------
 
@@ -189,6 +246,55 @@ class RedisRoomBackend:
             pipe.sadd(self._room_index_key(tenant_id), room_id)
             await pipe.execute()
 
+    async def create_if_name_available(
+        self, tenant_id: str, room_id: str, room_data: dict
+    ) -> bool:
+        meta = {k: v for k, v in room_data.items() if k != "members"}
+        name = room_data.get("name", "")
+        if not name:
+            await self.create(tenant_id, room_id, room_data)
+            return True
+        # Flatten meta dict to alternating key/value args for Lua
+        meta_args: list[str] = []
+        for k, v in meta.items():
+            meta_args.extend([k, str(v)])
+        result = await self._r.eval(
+            _ROOM_CREATE_LUA,
+            4,
+            self._name_index_key(tenant_id),
+            self._meta_key(tenant_id, room_id),
+            self._members_key(tenant_id, room_id),
+            self._room_index_key(tenant_id),
+            name,
+            room_id,
+            *meta_args,
+        )
+        if result == 0:
+            return False
+        # Add members separately (pipeline is fine, already created atomically)
+        members = room_data.get("members", {})
+        if members:
+            await self._r.hset(
+                self._members_key(tenant_id, room_id), mapping=members
+            )
+        return True
+
+    async def rename_if_available(
+        self, tenant_id: str, room_id: str, new_name: str
+    ) -> bool:
+        meta_key = self._meta_key(tenant_id, room_id)
+        old_name = await self._r.hget(meta_key, "name") or ""
+        result = await self._r.eval(
+            _ROOM_RENAME_LUA,
+            2,
+            self._name_index_key(tenant_id),
+            meta_key,
+            old_name,
+            new_name,
+            room_id,
+        )
+        return result == 1
+
     async def get(self, tenant_id: str, room_id: str) -> dict | None:
         meta = await self._r.hgetall(self._meta_key(tenant_id, room_id))
         if not meta:
@@ -260,6 +366,19 @@ class RedisRoomBackend:
         if not await self._r.exists(self._meta_key(tenant_id, room_id)):
             return
         await self._r.hset(self._members_key(tenant_id, room_id), name, role)
+
+    async def add_member_if_capacity(
+        self, tenant_id: str, room_id: str, name: str, role: str, max_members: int
+    ) -> bool:
+        result = await self._r.eval(
+            _ROOM_ADD_MEMBER_LUA,
+            1,
+            self._members_key(tenant_id, room_id),
+            name,
+            role,
+            str(max_members),
+        )
+        return result == 1
 
     async def remove_member(self, tenant_id: str, room_id: str, name: str) -> None:
         if not await self._r.exists(self._meta_key(tenant_id, room_id)):

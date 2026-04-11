@@ -166,6 +166,36 @@ class InMemoryRoomBackend:
                 if name:
                     self._name_index.pop((tenant_id, name), None)
 
+    async def create_if_name_available(
+        self, tenant_id: str, room_id: str, room_data: dict
+    ) -> bool:
+        async with self._lock:
+            name = room_data.get("name")
+            if name and (tenant_id, name) in self._name_index:
+                return False
+            self._rooms[(tenant_id, room_id)] = room_data
+            if name:
+                self._name_index[(tenant_id, name)] = room_id
+            return True
+
+    async def rename_if_available(
+        self, tenant_id: str, room_id: str, new_name: str
+    ) -> bool:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            if key not in self._rooms:
+                return False
+            # Check if new name is taken by a different room
+            existing_id = self._name_index.get((tenant_id, new_name))
+            if existing_id is not None and existing_id != room_id:
+                return False
+            old_name = self._rooms[key].get("name")
+            if old_name:
+                self._name_index.pop((tenant_id, old_name), None)
+            self._rooms[key]["name"] = new_name
+            self._name_index[(tenant_id, new_name)] = room_id
+            return True
+
     async def add_member(
         self, tenant_id: str, room_id: str, name: str, role: str
     ) -> None:
@@ -175,6 +205,19 @@ class InMemoryRoomBackend:
                 return
             members = self._rooms[key].setdefault("members", {})
             members[name] = role
+
+    async def add_member_if_capacity(
+        self, tenant_id: str, room_id: str, name: str, role: str, max_members: int
+    ) -> bool:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            if key not in self._rooms:
+                return False
+            members = self._rooms[key].setdefault("members", {})
+            if name not in members and len(members) >= max_members:
+                return False
+            members[name] = role
+            return True
 
     async def remove_member(
         self, tenant_id: str, room_id: str, name: str

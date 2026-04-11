@@ -26,13 +26,7 @@ class RoomService:
     async def create(
         self, tenant_id: str, name: str, creator: str
     ) -> dict:
-        """Create a new room.  Raises 409 if name is taken."""
-        existing = await self._backend.get_by_name(tenant_id, name)
-        if existing is not None:
-            raise HTTPException(
-                status_code=409, detail="Room name already exists"
-            )
-
+        """Create a new room.  Raises 409 if name is taken (atomic check)."""
         room_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
         room_data = {
@@ -42,7 +36,13 @@ class RoomService:
             "created_at": created_at,
             "members": {creator: "builder"},
         }
-        await self._backend.create(tenant_id, room_id, room_data)
+        created = await self._backend.create_if_name_available(
+            tenant_id, room_id, room_data
+        )
+        if not created:
+            raise HTTPException(
+                status_code=409, detail="Room name already exists"
+            )
         await self._backend.add_member(tenant_id, room_id, creator, "builder")
 
         logger.info("Room created: %s (%s) by %s", name, room_id, creator)
@@ -129,14 +129,15 @@ class RoomService:
         role: str,
         max_members: int,
     ) -> None:
-        """Add *participant* to a room.  Raises 400 if at capacity."""
-        members = await self._backend.get_members(tenant_id, room_id)
-        if len(members) >= max_members:
+        """Add *participant* to a room.  Raises 400 if at capacity (atomic)."""
+        added = await self._backend.add_member_if_capacity(
+            tenant_id, room_id, participant, role, max_members
+        )
+        if not added:
             raise HTTPException(
                 status_code=400,
                 detail=f"Room is at maximum capacity ({max_members} members)",
             )
-        await self._backend.add_member(tenant_id, room_id, participant, role)
 
     async def leave(
         self, tenant_id: str, room_id: str, participant: str
@@ -236,13 +237,14 @@ class RoomService:
                 status_code=403,
                 detail="Only the room creator or admin can rename the room",
             )
-        existing = await self._backend.get_by_name(tenant_id, new_name)
-        if existing is not None:
+        old_name = data.get("name", "")
+        renamed = await self._backend.rename_if_available(
+            tenant_id, room_id, new_name
+        )
+        if not renamed:
             raise HTTPException(
                 status_code=409, detail="Room name already exists"
             )
-        old_name = data.get("name", "")
-        await self._backend.update(tenant_id, room_id, {"name": new_name})
         logger.info(
             "Room renamed: %s -> %s by %s", old_name, new_name, requester
         )
