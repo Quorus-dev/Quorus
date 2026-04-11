@@ -982,6 +982,73 @@ def _cmd_quickstart(args):
         console.print("\n[dim]Relay stopped. Quickstart finished.[/dim]")
 
 
+def _cmd_hackathon(args):
+    """Set up a complete hackathon workspace with rooms and agents."""
+    import httpx as httpx_mod
+
+    agents_per_room = args.agents
+    rooms_config = [
+        {"name": args.room1, "mission": args.mission1 or "Build the product. Ship fast."},
+        {"name": args.room2, "mission": args.mission2 or "Build the product. Ship fast."},
+    ]
+
+    headers = {"Authorization": f"Bearer {RELAY_SECRET}"}
+
+    console.print("[bold green]Murmur Hackathon Setup[/bold green]\n")
+
+    for room_cfg in rooms_config:
+        room_name = room_cfg["name"]
+        mission = room_cfg["mission"]
+
+        # Create room
+        r = httpx_mod.post(
+            f"{RELAY_URL}/rooms",
+            json={"name": room_name, "created_by": INSTANCE_NAME},
+            headers=headers,
+        )
+        if r.status_code == 200:
+            console.print(f"  [green]Room '{room_name}' created[/green]")
+        elif r.status_code == 409:
+            console.print(f"  [yellow]Room '{room_name}' already exists[/yellow]")
+        else:
+            console.print(f"  [red]Failed to create room: {r.text}[/red]")
+            continue
+
+        # Join human to room
+        httpx_mod.post(
+            f"{RELAY_URL}/rooms/{room_name}/join",
+            json={"participant": INSTANCE_NAME},
+            headers=headers,
+        )
+
+        # Spawn agents with mission-specific CLAUDE.md
+        for i in range(1, agents_per_room + 1):
+            agent_name = f"{room_name}-agent-{i}"
+            console.print(f"  Spawning {agent_name}...")
+            _spawn_agent(room_name, agent_name, RELAY_URL, RELAY_SECRET)
+
+        # Send mission briefing to room
+        httpx_mod.post(
+            f"{RELAY_URL}/rooms/{room_name}/messages",
+            json={
+                "from_name": INSTANCE_NAME,
+                "content": f"HACKATHON MISSION: {mission}\n\n"
+                f"Team: {agents_per_room} agents. Coordinate here. "
+                "Claim tasks, post status, don't duplicate work. Ship it.",
+                "message_type": "alert",
+            },
+            headers=headers,
+        )
+
+    console.print(f"\n[bold green]Hackathon ready![/bold green]")
+    console.print(f"  Rooms: {args.room1}, {args.room2}")
+    console.print(f"  Agents: {agents_per_room} per room ({agents_per_room * 2} total)")
+    console.print(f"  You: {INSTANCE_NAME} (in both rooms)")
+    console.print(f"\n  Watch room 1: murmur watch {args.room1}")
+    console.print(f"  Watch room 2: murmur watch {args.room2}")
+    console.print(f"  Chat in room: murmur chat {args.room1}")
+
+
 def _cmd_relay(args):
     """Start the relay server."""
     repo_dir = Path(__file__).resolve().parent.parent
@@ -1112,6 +1179,15 @@ def main():
     )
     p_watch_daemon.add_argument("name", help="Agent/participant name to watch")
 
+    p_hack = sub.add_parser(
+        "hackathon", help="Set up hackathon: 2 rooms + agents with missions"
+    )
+    p_hack.add_argument("--room1", default="yc-hack", help="First room (default: yc-hack)")
+    p_hack.add_argument("--room2", default="openai-hack", help="Second room (default: openai-hack)")
+    p_hack.add_argument("--agents", type=int, default=3, help="Agents per room (default: 3)")
+    p_hack.add_argument("--mission1", default=None, help="Mission for room 1")
+    p_hack.add_argument("--mission2", default=None, help="Mission for room 2")
+
     p_join = sub.add_parser("join", help="One-liner to join a room")
     p_join.add_argument("--name", required=True, help="Your participant name")
     p_join.add_argument("--relay", dest="relay_url", required=True, help="Relay URL")
@@ -1142,6 +1218,7 @@ def main():
         "spawn": _cmd_spawn,
         "spawn-multiple": _cmd_spawn_multiple,
         "quickstart": _cmd_quickstart,
+        "hackathon": _cmd_hackathon,
         "watch-daemon": _cmd_watch_daemon,
     }
     commands[args.command](args)
