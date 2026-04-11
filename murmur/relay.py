@@ -497,6 +497,30 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/health/detailed", dependencies=[Depends(verify_auth)])
+async def health_detailed():
+    """Detailed health: uptime, counts, active connections."""
+    total_msgs = sum(len(q) for q in message_queues.values())
+    total_sse = sum(len(q) for q in sse_queues.values())
+    online_agents = sum(
+        1 for p in presence.values()
+        if (datetime.now(timezone.utc)
+            - datetime.fromisoformat(p["last_heartbeat"])
+            ).total_seconds() < HEARTBEAT_TIMEOUT
+    )
+    return {
+        "status": "ok",
+        "uptime_seconds": round(time.time() - _start_time),
+        "rooms": len(rooms),
+        "participants": len(participants),
+        "pending_messages": total_msgs,
+        "active_sse_connections": total_sse,
+        "online_agents": online_agents,
+        "total_sent": analytics["total_sent"],
+        "total_delivered": analytics["total_delivered"],
+    }
+
+
 async def _notify_webhook(recipient: str, message: dict):
     """Fire webhook notification for recipient, if registered. Failures are logged and ignored."""
     callback_url = webhooks.get(recipient)

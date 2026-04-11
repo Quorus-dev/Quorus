@@ -16,10 +16,13 @@ import httpx
 class MurmurClient:
     """Lightweight HTTP client for Murmur relay. No MCP dependency."""
 
-    def __init__(self, relay_url: str, secret: str, name: str):
+    def __init__(
+        self, relay_url: str, secret: str, name: str, timeout: float = 10.0
+    ):
         self.relay_url = relay_url.rstrip("/")
         self.name = name
         self._headers = {"Authorization": f"Bearer {secret}"}
+        self._timeout = timeout
 
     def join(self, room: str) -> dict:
         """Join a room by name."""
@@ -27,6 +30,7 @@ class MurmurClient:
             f"{self.relay_url}/rooms/{room}/join",
             json={"participant": self.name},
             headers=self._headers,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return r.json()
@@ -37,6 +41,7 @@ class MurmurClient:
             f"{self.relay_url}/rooms/{room}/messages",
             json={"from_name": self.name, "content": content, "message_type": message_type},
             headers=self._headers,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return r.json()
@@ -47,6 +52,7 @@ class MurmurClient:
             f"{self.relay_url}/messages/{self.name}",
             params={"wait": wait},
             headers=self._headers,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return r.json()
@@ -56,6 +62,7 @@ class MurmurClient:
         r = httpx.get(
             f"{self.relay_url}/messages/{self.name}/peek",
             headers=self._headers,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return r.json()
@@ -66,6 +73,7 @@ class MurmurClient:
             f"{self.relay_url}/rooms/{room}/history",
             params={"limit": limit},
             headers=self._headers,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return r.json()
@@ -82,6 +90,7 @@ class MurmurClient:
             f"{self.relay_url}/messages",
             json={"from_name": self.name, "to": to, "content": content},
             headers=self._headers,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return r.json()
