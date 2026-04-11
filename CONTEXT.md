@@ -3,13 +3,15 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-11 03:40 EDT
+Last updated: 2026-04-11 22:00 EDT
 
 ---
 
 ## Current State
 
-Murmur (package: murmur-ai) is the universal communication layer for AI agents. Group chat for agents — any platform, any model, any machine.
+Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
+
+**Branch:** `dev` (700 tests passing) — ready to merge to main before April 16 demo.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -23,31 +25,36 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 **What's built:**
 
-| Module               | Lines | What                                                                                                                                              |
-| -------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| murmur/relay.py      | ~1200 | FastAPI relay: rooms, fan-out, SSE, history, presence, rate limiting, peek, premium web dashboard, invite pages, health/detailed, admin endpoints |
-| murmur/mcp.py        | ~650  | MCP server: 10+ tools, SSE listener, auto-poll, heartbeat, lazy poll mode                                                                         |
-| murmur/cli.py        | ~800  | 25+ CLI commands: init, relay, create, spawn, chat, watch, ps, doctor, hackathon, export, add-agent, kick, destroy, rename, version, logs, etc.   |
-| murmur/config.py     | ~80   | Config loading (env > file > defaults), poll mode support                                                                                         |
-| murmur/analytics.py  | ~90   | Terminal dashboard                                                                                                                                |
-| murmur/integrations/ | ~200  | Universal HTTP client (Python + TypeScript)                                                                                                       |
-| tests/               | ~5000 | 461 tests: relay, mcp, config, integration, rooms, stress, security, hackathon, CLI, edge cases                                                   |
+| Module                      | Lines  | What                                                                                     |
+| --------------------------- | ------ | ---------------------------------------------------------------------------------------- |
+| murmur/relay.py             | ~525   | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin       |
+| murmur/mcp.py               | ~820   | MCP server: 12 tools incl. claim_task, release_task, get_room_state, SSE push, heartbeat |
+| murmur/cli.py               | ~2500  | 28+ CLI commands incl. state, locks, usage, init, relay, create, spawn, hackathon, etc.  |
+| murmur/routes/room_state.py | ~250   | Primitive A+B: GET state, PATCH goal, POST decisions, POST/DELETE locks (mutex)          |
+| murmur/routes/usage.py      | ~157   | GET /v1/usage + /v1/usage/rooms/{room} — tenant-scoped metrics                           |
+| murmur/routes/agents.py     | ~57    | GET /agents/{name} — profile, rooms, last seen, message count, online status             |
+| murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing               |
+| murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                          |
+| murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                        |
+| tests/                      | ~7000  | 700 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
-**25+ CLI commands available via `murmur <command>`**
-
-**Key features:**
+**Key features (complete):**
 
 - Rooms with fan-out messaging (send once, all members receive)
-- SSE push delivery (real-time, replaces polling)
-- Message types: chat, claim, status, request, alert, sync
-- Room history (persistent, not cleared on read)
-- Agent presence/heartbeat system with murmur ps
-- Per-sender rate limiting
-- Universal HTTP API (any agent platform can connect)
-- Python + TypeScript client libraries
-- murmur spawn/spawn-multiple (auto-launch agents)
+- **SSE-only push delivery** — zero polling, instant delivery
+- **Primitive A: Shared State Matrix** — GET /rooms/{room}/state → goal, locked files, claimed tasks, decisions, active agents
+- **Primitive B: Distributed Mutex Locking** — POST/DELETE /rooms/{room}/lock, SSE broadcast LOCK_ACQUIRED/LOCK_RELEASED, TTL auto-expire
+- **Primitive C: Watcher Daemon** — writes .murmur/context.md for IDE indexing, event-driven via SSE
+- **MCP tools**: claim_task, release_task, get_room_state (12 tools total)
+- **Usage metrics**: GET /v1/usage — messages, active agents, per-room breakdown, top senders
+- **Agent identity**: GET /agents/{name} — profile card, rooms, last seen, message count
+- **CLI commands**: murmur state, murmur locks, murmur usage (+ 25 others)
+- **Dashboard**: live swarm panel — active goal, locked files countdown, agent presence, usage bar
+- JWT auth + API keys, per-sender rate limiting
+- Docker + Railway/Render deploy configs
+- Reply threading (reply_to field + Room.reply() SDK)
 - murmur add-agent (interactive setup wizard)
 - murmur quickstart (one-command demo)
 - murmur hackathon (two-room hackathon setup)
