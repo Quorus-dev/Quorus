@@ -99,9 +99,17 @@ class Room:
         """Join the room."""
         return self._client.join(self.room)
 
-    def send(self, content: str, *, type: str = "chat") -> dict:
+    def send(
+        self,
+        content: str,
+        *,
+        type: str = "chat",
+        reply_to: str | None = None,
+    ) -> dict:
         """Send a message to the room."""
-        return self._client.send(self.room, content, msg_type=type)
+        return self._client.send(
+            self.room, content, msg_type=type, reply_to=reply_to,
+        )
 
     def receive(self, wait: int = 0) -> list[dict]:
         """Get pending messages."""
@@ -147,6 +155,10 @@ class Room:
         """Post a request for help."""
         return self.send(f"REQUEST: {message}", type="request")
 
+    def reply(self, message_id: str, content: str) -> dict:
+        """Reply to a specific message."""
+        return self.send(content, reply_to=message_id)
+
     def on_message(self, callback: Callable[[dict], None]) -> None:
         """Register a callback for incoming messages.
 
@@ -187,12 +199,25 @@ class Room:
 
     # Async interface
 
-    async def asend(self, content: str, *, type: str = "chat") -> dict:
+    async def asend(
+        self,
+        content: str,
+        *,
+        type: str = "chat",
+        reply_to: str | None = None,
+    ) -> dict:
         """Async send."""
+        body: dict = {
+            "from_name": self.name,
+            "content": content,
+            "message_type": type,
+        }
+        if reply_to:
+            body["reply_to"] = reply_to
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{self.relay}/rooms/{self.room}/messages",
-                json={"from_name": self.name, "content": content, "message_type": type},
+                json=body,
                 headers=self._get_auth_headers(),
             )
             r.raise_for_status()

@@ -83,12 +83,24 @@ class MurmurClient:
         )
         return r.json()
 
-    def send(self, room: str, content: str, msg_type: str = "chat") -> dict:
+    def send(
+        self,
+        room: str,
+        content: str,
+        msg_type: str = "chat",
+        reply_to: str | None = None,
+    ) -> dict:
         """Send a message to a room."""
+        body: dict = {
+            "from_name": self.name,
+            "content": content,
+            "message_type": msg_type,
+        }
+        if reply_to:
+            body["reply_to"] = reply_to
         r = self._request(
             "POST", f"{self.relay_url}/rooms/{room}/messages",
-            json={"from_name": self.name, "content": content,
-                  "message_type": msg_type},
+            json=body,
         )
         return r.json()
 
