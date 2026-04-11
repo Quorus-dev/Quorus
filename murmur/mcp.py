@@ -73,6 +73,7 @@ _active_session = None
 _active_session_lock = asyncio.Lock()
 _auto_poll_task: asyncio.Task | None = None
 _auto_poll_stop: asyncio.Event | None = None
+_heartbeat_task: asyncio.Task | None = None
 
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -85,12 +86,13 @@ def _get_http_client() -> httpx.AsyncClient:
 
 def _reset_runtime_state():
     """Reset in-memory MCP runtime state between tests."""
-    global _active_session, _http_client, _auto_poll_task, _auto_poll_stop
+    global _active_session, _http_client, _auto_poll_task, _auto_poll_stop, _heartbeat_task
     _pending_messages.clear()
     _active_session = None
     _http_client = None
     _auto_poll_task = None
     _auto_poll_stop = None
+    _heartbeat_task = None
 
 
 def _auth_headers() -> dict[str, str]:
@@ -256,6 +258,31 @@ async def _auto_poll_loop(stop_event: asyncio.Event, interval: int = 10) -> None
     logger.info("Auto-poll stopped")
 
 
+async def _heartbeat_loop(stop_event: asyncio.Event, interval: int = 30) -> None:
+    """Send periodic heartbeats to the relay to report this agent is alive."""
+    logger.info("Heartbeat loop started (interval=%ds)", interval)
+    while not stop_event.is_set():
+        try:
+            client = _get_http_client()
+            resp = await client.post(
+                f"{RELAY_URL}/heartbeat",
+                json={"instance_name": INSTANCE_NAME, "status": "active"},
+                headers=_auth_headers(),
+                timeout=10,
+            )
+            resp.raise_for_status()
+            logger.debug("Heartbeat sent")
+        except Exception:
+            logger.warning("Heartbeat failed", exc_info=True)
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            break
+        except asyncio.TimeoutError:
+            pass
+    logger.info("Heartbeat loop stopped")
+
+
 async def _process_sse_event(event_type: str, data: str) -> None:
     if event_type != "message":
         return
@@ -310,7 +337,7 @@ async def _sse_listener(stop_event: asyncio.Event) -> None:
 
 @asynccontextmanager
 async def _mcp_lifespan(server: FastMCP):
-    global _http_client
+    global _http_client, _heartbeat_task
     _http_client = httpx.AsyncClient()
 
     stop_event = asyncio.Event()
@@ -320,6 +347,9 @@ async def _mcp_lifespan(server: FastMCP):
         poll_task = asyncio.create_task(_sse_listener(stop_event))
         logger.info("SSE background listener enabled")
 
+    # Always start heartbeat so the relay knows this agent is alive
+    _heartbeat_task = asyncio.create_task(_heartbeat_loop(stop_event))
+
     try:
         yield {"stop_event": stop_event}
     finally:
@@ -328,6 +358,10 @@ async def _mcp_lifespan(server: FastMCP):
             poll_task.cancel()
             with suppress(asyncio.CancelledError):
                 await poll_task
+        if _heartbeat_task is not None:
+            _heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _heartbeat_task
         if _auto_poll_stop is not None:
             _auto_poll_stop.set()
         if _auto_poll_task is not None:

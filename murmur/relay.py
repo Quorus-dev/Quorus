@@ -67,12 +67,14 @@ webhooks: dict[str, str] = {}  # instance_name -> callback_url
 rooms: dict[str, dict] = {}  # room_id -> {name, created_by, members, created_at}
 room_history: dict[str, list[dict]] = defaultdict(list)  # room_id -> last N messages
 sse_queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
+presence: dict[str, dict] = {}  # instance_name -> {last_heartbeat, status, room, uptime_start}
 
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 MESSAGE_TTL_SECONDS = int(os.environ.get("MESSAGE_TTL_SECONDS", str(24 * 60 * 60)))  # default 24h
 MAX_ROOM_HISTORY = int(os.environ.get("MAX_ROOM_HISTORY", "200"))
+HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))  # seconds before agent is offline
 
 # Rate limiting: per-sender sliding window
 RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))  # seconds
@@ -143,6 +145,7 @@ def _reset_state():
     rooms.clear()
     room_history.clear()
     sse_queues.clear()
+    presence.clear()
     _rate_buckets.clear()
     analytics["total_sent"] = 0
     analytics["total_delivered"] = 0
@@ -200,6 +203,7 @@ def _save_to_file():
             for rid, r in rooms.items()
         },
         "room_history": {rid: msgs for rid, msgs in room_history.items()},
+        "presence": presence,
     }
     try:
         with open(MESSAGES_FILE, "w") as f:
@@ -242,6 +246,8 @@ def _load_from_file():
         }
     for rid, msgs in data.get("room_history", {}).items():
         room_history[rid] = msgs
+    for name, pdata in data.get("presence", {}).items():
+        presence[name] = pdata
     logger.info("Loaded state from %s", MESSAGES_FILE)
 
 
@@ -431,6 +437,24 @@ class JoinLeaveRequest(BaseModel):
     @classmethod
     def check_name(cls, v: str) -> str:
         return _validate_name(v)
+
+
+class HeartbeatRequest(BaseModel):
+    instance_name: str
+    status: str = "active"
+    room: str = ""
+
+    @field_validator("instance_name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+    @field_validator("status")
+    @classmethod
+    def check_status(cls, v: str) -> str:
+        if v not in {"active", "idle", "busy"}:
+            raise ValueError("status must be one of: active, idle, busy")
+        return v
 
 
 def _find_room_by_name(name: str) -> Optional[str]:
@@ -827,6 +851,45 @@ async def get_room_history(room_id: str, limit: int = 50):
     limit = min(max(limit, 1), MAX_ROOM_HISTORY)
     msgs = room_history.get(rid, [])
     return msgs[-limit:]
+
+
+@app.post("/heartbeat", dependencies=[Depends(verify_auth)])
+async def heartbeat(req: HeartbeatRequest):
+    """Record an agent heartbeat to track online/offline presence."""
+    now = datetime.now(timezone.utc).isoformat()
+    name = req.instance_name
+    existing = presence.get(name)
+    uptime_start = existing["uptime_start"] if existing else now
+    presence[name] = {
+        "last_heartbeat": now,
+        "status": req.status,
+        "room": req.room,
+        "uptime_start": uptime_start,
+    }
+    participants.add(name)
+    await _persist_state()
+    logger.info("Heartbeat from %s (status=%s)", name, req.status)
+    return {"status": "ok", "timestamp": now}
+
+
+@app.get("/presence", dependencies=[Depends(verify_auth)])
+async def get_presence():
+    """Return all known agents with online/offline status based on heartbeat TTL."""
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(seconds=HEARTBEAT_TIMEOUT)).isoformat()
+    result = []
+    for name, p in presence.items():
+        online = p["last_heartbeat"] >= cutoff
+        result.append({
+            "name": name,
+            "online": online,
+            "status": p["status"] if online else "offline",
+            "room": p.get("room", ""),
+            "last_heartbeat": p["last_heartbeat"],
+            "uptime_start": p["uptime_start"],
+        })
+    result.sort(key=lambda x: (not x["online"], x["name"]))
+    return result
 
 
 @app.get("/analytics", dependencies=[Depends(verify_auth)])

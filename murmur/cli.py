@@ -444,6 +444,86 @@ async def _history(room_name: str, limit: int = 50):
         await client.aclose()
 
 
+async def _ps() -> None:
+    """Show all agents with online/offline status from heartbeat presence."""
+    client = _get_client()
+    try:
+        resp = await client.get(
+            f"{RELAY_URL}/presence", headers=_auth_headers()
+        )
+        resp.raise_for_status()
+        agents = resp.json()
+
+        if not agents:
+            console.print("[dim]No agents reporting presence yet.[/dim]")
+            return
+
+        table = Table(title="Agent Presence")
+        table.add_column("Name", style="bold")
+        table.add_column("Status")
+        table.add_column("Room", style="dim")
+        table.add_column("Last Heartbeat", style="dim")
+        table.add_column("Uptime", justify="right")
+
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        for a in agents:
+            online = a["online"]
+            status_str = a["status"]
+            if online:
+                status_display = f"[green]{status_str}[/green]"
+            else:
+                status_display = "[red]offline[/red]"
+
+            # Calculate uptime
+            try:
+                start = datetime.fromisoformat(a["uptime_start"])
+                delta = now - start
+                hours = int(delta.total_seconds()) // 3600
+                minutes = (int(delta.total_seconds()) % 3600) // 60
+                if hours > 0:
+                    uptime = f"{hours}h {minutes}m"
+                else:
+                    uptime = f"{minutes}m"
+            except (ValueError, KeyError):
+                uptime = "—"
+
+            # Format last heartbeat as relative time
+            try:
+                hb = datetime.fromisoformat(a["last_heartbeat"])
+                ago = now - hb
+                secs = int(ago.total_seconds())
+                if secs < 60:
+                    hb_str = f"{secs}s ago"
+                elif secs < 3600:
+                    hb_str = f"{secs // 60}m ago"
+                else:
+                    hb_str = f"{secs // 3600}h ago"
+            except (ValueError, KeyError):
+                hb_str = "—"
+
+            table.add_row(
+                a["name"],
+                status_display,
+                a.get("room", ""),
+                hb_str,
+                uptime,
+            )
+
+        console.print(table)
+    except httpx.ConnectError:
+        console.print(f"[red]Cannot connect to relay at {RELAY_URL}[/red]")
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_ps(args):
+    asyncio.run(_ps())
+
+
 def _cmd_history(args):
     asyncio.run(_history(args.room, args.limit))
 
@@ -813,6 +893,7 @@ def main():
         "--limit", type=int, default=50, help="Max messages (default 50)"
     )
 
+    sub.add_parser("ps", help="Show agent presence (online/offline)")
     sub.add_parser("status", help="Show relay health and stats")
 
     p_invite_link = sub.add_parser(
@@ -858,6 +939,7 @@ def main():
         "watch": _cmd_watch,
         "history": _cmd_history,
         "chat": _cmd_chat,
+        "ps": _cmd_ps,
         "status": _cmd_status,
         "join": _cmd_join,
         "invite-link": _cmd_invite_link,
