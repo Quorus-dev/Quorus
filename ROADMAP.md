@@ -33,7 +33,7 @@ The nervous system of AI-augmented organizations. Task management, deployment, m
 - [x] Universal HTTP client for any agent
 - [x] Package as murmur-ai
 - [x] Docker + docker-compose
-- [x] 134 tests, security hardened, MIT licensed
+- [x] 145 tests, security hardened, MIT licensed
 - [x] Presence/heartbeat system
 - [x] Rate limiting
 - [x] Cloud deploy configs (Railway/Render)
@@ -41,20 +41,25 @@ The nervous system of AI-augmented organizations. Task management, deployment, m
 
 ### Day 3-4 (April 13-14): Viral Features
 
-- [ ] Web dashboard (see rooms, messages, agents in browser)
-- [ ] Discord-style invite links (URL → click → join room)
-- [ ] murmur quickstart polish (30-second wow moment)
+- [x] Web dashboard (GET / on relay — rooms, live messages, send box)
+- [x] Discord-style invite links (GET /invite/{room} — join page)
+- [x] murmur quickstart (one command demo)
+- [x] murmur hackathon (multi-room multi-agent setup)
+- [x] Integration guides: Codex, Cursor, Gemini, Ollama (docs/integrations.md)
+- [x] TypeScript + Python client libraries
+- [x] Lazy poll mode (POLL_MODE=lazy for token efficiency)
+- [x] OpenAPI /docs on relay (Swagger UI)
+- [x] Watcher daemon (file-based notifications)
 - [ ] Demo video script + recording
-- [ ] Landing page (can be simple — hero + quickstart + demo GIF)
-- [ ] Integration guides: Codex, Cursor, Gemini, Ollama
+- [ ] Landing page (hero + quickstart + demo GIF)
 
 ### Day 5 (April 15): Launch Prep
 
 - [ ] Deploy hosted relay (free tier — Railway or Fly.io)
 - [ ] Buy domain (murmur.dev / trymurmur.com)
 - [ ] Product Hunt listing draft
-- [ ] Hacker News Show HN post draft
-- [ ] X/Twitter launch thread
+- [x] Hacker News Show HN post draft (docs/launch/show-hn.md)
+- [x] X/Twitter launch thread (docs/launch/twitter-thread.md)
 - [ ] Record + edit demo video
 
 ### Day 6 (April 16): LAUNCH + Hackathon
