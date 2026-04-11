@@ -366,6 +366,31 @@ def _install_session_capture() -> None:
 _install_session_capture()
 
 
+def _declare_channel_capability() -> None:
+    """Declare the experimental claude/channel capability.
+
+    This tells Claude Code that our server can push notifications via
+    the `notifications/claude/channel` method, enabling instant message
+    delivery without polling when launched with --channels.
+    """
+    original_create = mcp._mcp_server.create_initialization_options
+
+    def patched_create(**kwargs):
+        opts = original_create(**kwargs)
+        if opts.capabilities.experimental is None:
+            opts.capabilities.experimental = {}
+        opts.capabilities.experimental["claude/channel"] = {
+            "channel": PUSH_NOTIFICATION_CHANNEL,
+        }
+        return opts
+
+    mcp._mcp_server.create_initialization_options = patched_create
+
+
+if ENABLE_BACKGROUND_POLLING:
+    _declare_channel_capability()
+
+
 async def _send_message(to: str, content: str, context: Context | None = None) -> str:
     """Internal: send a message via the relay."""
     await _remember_session(context)

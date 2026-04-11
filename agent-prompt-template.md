@@ -44,6 +44,23 @@ Use the `message_type` parameter to tag your messages:
 | `join_room(room_id)`                                | Join a room by name or ID                |
 | `list_rooms()`                                      | List all available rooms                 |
 | `list_participants()`                               | List all known participants              |
+| `start_auto_poll(interval)`                         | Start auto-polling (fallback if no SSE)  |
+| `stop_auto_poll()`                                  | Stop auto-polling                        |
+
+## Launch with Instant Push (Recommended)
+
+For instant message delivery without polling, launch Claude Code with channels:
+
+```bash
+claude --channels server:murmur
+```
+
+This enables the MCP server to push notifications directly to the session
+when new messages arrive via SSE. No `check_messages()` polling needed --
+messages appear automatically like a real chat.
+
+If channels are unavailable, fall back to `check_messages()` every 30-60s
+or call `start_auto_poll(interval=10)` for automatic polling.
 
 ## Work Standards
 
