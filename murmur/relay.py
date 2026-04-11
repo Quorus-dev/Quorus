@@ -99,17 +99,25 @@ RATE_LIMIT_MAX = int(os.environ.get("RATE_LIMIT_MAX", "60"))  # messages per win
 _rate_buckets: dict[str, list[float]] = defaultdict(list)
 
 
-def _check_rate_limit(sender: str) -> bool:
-    """Return True if the sender is within the rate limit, False if exceeded."""
+def _check_rate_limit(key: str) -> bool:
+    """Return True if the key is within the rate limit, False if exceeded."""
     now = time.time()
     cutoff = now - RATE_LIMIT_WINDOW
-    bucket = _rate_buckets[sender]
+    bucket = _rate_buckets[key]
     # Prune old entries
-    _rate_buckets[sender] = [t for t in bucket if t > cutoff]
-    if len(_rate_buckets[sender]) >= RATE_LIMIT_MAX:
+    _rate_buckets[key] = [t for t in bucket if t > cutoff]
+    if len(_rate_buckets[key]) >= RATE_LIMIT_MAX:
         return False
-    _rate_buckets[sender].append(now)
+    _rate_buckets[key].append(now)
     return True
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP for rate limiting, respecting X-Forwarded-For behind proxies."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 # Analytics state
@@ -657,9 +665,9 @@ def _notify_webhook(recipient: str, message: dict) -> None:
 
 
 @app.post("/messages", dependencies=[Depends(verify_auth)])
-async def send_message(msg: SendMessageRequest):
+async def send_message(msg: SendMessageRequest, request: Request):
     """Send a direct message to another participant."""
-    if not _check_rate_limit(msg.from_name):
+    if not _check_rate_limit(_get_client_ip(request)):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     timestamp = datetime.now(timezone.utc).isoformat()
     content = msg.content
@@ -987,9 +995,9 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
 
 
 @app.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
-async def send_room_message(room_id: str, msg: RoomMessageRequest):
+async def send_room_message(room_id: str, msg: RoomMessageRequest, request: Request):
     """Send a message to all members of a room."""
-    if not _check_rate_limit(msg.from_name):
+    if not _check_rate_limit(_get_client_ip(request)):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     room_id, room = _resolve_room(room_id)
     if msg.from_name not in room["members"]:
