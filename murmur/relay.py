@@ -1083,7 +1083,11 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#c9
 header{background:#161b22;border-bottom:1px solid #30363d;padding:12px 24px;
   display:flex;align-items:center;gap:12px}
 header h1{font-size:18px;color:#58a6ff}
-header .status{font-size:12px;color:#3fb950;margin-left:auto}
+header .status{font-size:12px;margin-left:auto;display:flex;align-items:center;gap:6px}
+.conn-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.conn-ok{background:#3fb950}
+.conn-err{background:#da3633;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 .container{display:flex;height:calc(100vh - 49px)}
 .sidebar{width:240px;background:#161b22;border-right:1px solid #30363d;
   overflow-y:auto;flex-shrink:0}
@@ -1131,7 +1135,10 @@ header .status{font-size:12px;color:#3fb950;margin-left:auto}
 <body>
 <header>
   <h1>murmur</h1>
-  <span class="status" id="status">connecting...</span>
+  <span class="status" id="status">
+    <span class="conn-dot conn-err" id="connDot"></span>
+    <span id="connText">connecting...</span>
+  </span>
 </header>
 <div class="container">
   <div class="sidebar">
@@ -1160,9 +1167,9 @@ let currentRoom=null,sse=null;
 async function loadRooms(){
   try{
     const r=await fetch(API+'/rooms',{headers:H});
-    if(!r.ok){document.getElementById('status').textContent='auth failed';return}
+    if(!r.ok){setConn(false);return}
     const rooms=await r.json();
-    document.getElementById('status').textContent='connected';
+    setConn(true);
     const el=document.getElementById('rooms');
     if(!rooms.length){el.innerHTML='<div class="empty">No rooms</div>';return}
     el.innerHTML=rooms.map(rm=>'<div class="room-item" onclick="selectRoom(\\''+
@@ -1171,7 +1178,7 @@ async function loadRooms(){
     if(currentRoom)document.querySelectorAll('.room-item').forEach(e=>{
       if(e.textContent.startsWith(currentRoom))e.classList.add('active');
     });
-  }catch(e){document.getElementById('status').textContent='offline'}
+  }catch(e){setConn(false)}
 }
 
 async function selectRoom(name){
@@ -1186,7 +1193,7 @@ async function selectRoom(name){
     const msgs=await r.json();
     const el=document.getElementById('messages');
     el.innerHTML=msgs.map(formatMsg).join('');
-    el.scrollTop=el.scrollHeight;
+    scrollToBottom();
   }catch(e){}
   try{
     const r=await fetch(API+'/rooms/'+name,{headers:H});
@@ -1203,16 +1210,30 @@ async function selectRoom(name){
   connectSSE();
 }
 
+function setConn(ok){
+  const dot=document.getElementById('connDot');
+  const txt=document.getElementById('connText');
+  dot.className='conn-dot '+(ok?'conn-ok':'conn-err');
+  txt.textContent=ok?'connected':'disconnected';
+}
+
+function scrollToBottom(){
+  const el=document.getElementById('messages');
+  el.scrollTop=el.scrollHeight;
+}
+
 function connectSSE(){
   if(sse)sse.close();
   sse=new EventSource(API+'/stream/'+NAME+'?token='+TOKEN);
+  sse.onopen=()=>setConn(true);
+  sse.onerror=()=>setConn(false);
   sse.addEventListener('message',e=>{
     try{
       const msg=JSON.parse(e.data);
       if(msg.room===currentRoom){
         const el=document.getElementById('messages');
         el.innerHTML+=formatMsg(msg);
-        el.scrollTop=el.scrollHeight;
+        scrollToBottom();
       }
     }catch(e){}
   });
