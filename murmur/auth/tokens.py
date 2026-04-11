@@ -18,6 +18,8 @@ import jwt
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_TTL_SECONDS = int(os.environ.get("JWT_TTL_SECONDS", "86400"))
+JWT_ISSUER = "murmur"
+JWT_AUDIENCE = "murmur-relay"
 
 _VALID_ALGORITHMS = {"HS256", "HS384", "HS512"}
 
@@ -41,13 +43,16 @@ def create_jwt(
     ttl: int | None = None,
     extra: dict[str, Any] | None = None,
 ) -> str:
-    """Create a signed JWT with standard claims."""
+    """Create a signed JWT with standard claims (iss, aud, jti)."""
     now = datetime.now(timezone.utc)
     payload = {
         "sub": sub,
         "tenant_id": tenant_id,
         "tenant_slug": tenant_slug,
         "role": role,
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+        "jti": secrets.token_hex(16),
         "iat": now,
         "exp": now + timedelta(seconds=ttl or JWT_TTL_SECONDS),
     }
@@ -58,9 +63,15 @@ def create_jwt(
 
 
 def decode_jwt(token: str) -> dict[str, Any]:
-    """Decode and verify a JWT. Raises jwt.InvalidTokenError on failure."""
+    """Decode and verify a JWT (signature, exp, iss, aud)."""
     algorithm = JWT_ALGORITHM if JWT_ALGORITHM in _VALID_ALGORITHMS else "HS256"
-    return jwt.decode(token, _get_jwt_secret(), algorithms=[algorithm])
+    return jwt.decode(
+        token,
+        _get_jwt_secret(),
+        algorithms=[algorithm],
+        issuer=JWT_ISSUER,
+        audience=JWT_AUDIENCE,
+    )
 
 
 # ---------------------------------------------------------------------------

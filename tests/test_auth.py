@@ -96,6 +96,47 @@ class TestJWT:
         with pytest.raises(jwt.InvalidTokenError):
             decode_jwt(tampered)
 
+    def test_iss_aud_jti_present(self):
+        token = create_jwt(
+            sub="agent-1",
+            tenant_id="t-123",
+            tenant_slug="acme",
+        )
+        claims = decode_jwt(token)
+        assert claims["iss"] == "murmur"
+        assert claims["aud"] == "murmur-relay"
+        assert "jti" in claims
+        assert len(claims["jti"]) == 32  # hex(16 bytes)
+
+    def test_wrong_issuer_rejected(self):
+        import jwt as pyjwt
+
+        # Craft a token with wrong issuer
+        from murmur.auth.tokens import JWT_AUDIENCE, _get_jwt_secret
+
+        payload = {
+            "sub": "agent-1",
+            "iss": "not-murmur",
+            "aud": JWT_AUDIENCE,
+        }
+        token = pyjwt.encode(payload, _get_jwt_secret(), algorithm="HS256")
+        with pytest.raises(pyjwt.InvalidIssuerError):
+            decode_jwt(token)
+
+    def test_wrong_audience_rejected(self):
+        import jwt as pyjwt
+
+        from murmur.auth.tokens import JWT_ISSUER, _get_jwt_secret
+
+        payload = {
+            "sub": "agent-1",
+            "iss": JWT_ISSUER,
+            "aud": "wrong-audience",
+        }
+        token = pyjwt.encode(payload, _get_jwt_secret(), algorithm="HS256")
+        with pytest.raises(pyjwt.InvalidAudienceError):
+            decode_jwt(token)
+
     def test_garbage_token_fails(self):
         import jwt
 

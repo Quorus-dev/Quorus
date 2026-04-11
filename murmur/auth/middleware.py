@@ -91,7 +91,14 @@ async def verify_auth(request: Request) -> AuthContext:
                     async with get_db_session() as session:
                         await refresh_revocation_cache(session)
                 except Exception:
-                    pass  # DB unavailable — use stale cache
+                    # DB unavailable — fail-closed for admin routes,
+                    # allow stale cache for regular users
+                    if claims.get("role") == "admin" and _revoked_refreshed_at is None:
+                        raise HTTPException(
+                            status_code=503,
+                            detail="Cannot verify key revocation status — try again later",
+                        )
+                    logger.warning("Revocation cache refresh failed, using stale cache")
             if key_prefix in _revoked_prefixes:
                 raise HTTPException(
                     status_code=401,
