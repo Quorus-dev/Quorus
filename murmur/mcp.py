@@ -296,6 +296,8 @@ async def _process_sse_event(event_type: str, data: str) -> None:
 
 
 async def _sse_listener(stop_event: asyncio.Event) -> None:
+    backoff = 2
+    max_backoff = 30
     while not stop_event.is_set():
         try:
             client = _get_http_client()
@@ -304,10 +306,12 @@ async def _sse_listener(stop_event: asyncio.Event) -> None:
             async with client.stream("GET", url, params=params, timeout=None) as resp:
                 if resp.status_code != 200:
                     logger.warning("SSE stream returned %d, retrying", resp.status_code)
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, max_backoff)
                     continue
 
                 logger.info("SSE stream connected for %s", INSTANCE_NAME)
+                backoff = 2  # reset on successful connect
                 event_type = ""
                 event_data = ""
 
@@ -325,15 +329,16 @@ async def _sse_listener(stop_event: asyncio.Event) -> None:
                         event_data = ""
 
         except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError):
-            logger.warning("SSE connection lost, reconnecting in 2s")
+            logger.warning("SSE connection lost, retrying in %ds", backoff)
         except Exception:
-            logger.warning("SSE listener error, reconnecting in 2s", exc_info=True)
+            logger.warning("SSE listener error, retrying in %ds", backoff, exc_info=True)
 
         if not stop_event.is_set():
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=2)
+                await asyncio.wait_for(stop_event.wait(), timeout=backoff)
             except asyncio.TimeoutError:
                 pass
+            backoff = min(backoff * 2, max_backoff)
 
 
 @asynccontextmanager
