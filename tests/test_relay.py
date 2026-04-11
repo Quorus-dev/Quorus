@@ -2359,10 +2359,14 @@ async def test_v1_usage_basic(client: AsyncClient, auth_headers: dict):
     data = resp.json()
     assert "tenant_id" in data
     assert "snapshot_at" in data
-    assert "total_sent" in data
-    assert "active_agents" in data
+    assert "totals" in data
     assert "rooms" in data
-    assert "per_agent" in data
+    assert "top_senders" in data
+    totals = data["totals"]
+    assert "messages_sent" in totals
+    assert "messages_delivered" in totals
+    assert "active_rooms" in totals
+    assert "active_agents" in totals
 
 
 async def test_v1_usage_no_auth(client: AsyncClient):

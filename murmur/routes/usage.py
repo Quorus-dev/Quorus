@@ -6,7 +6,6 @@ GET /v1/usage/rooms/{room_id} — single room breakdown with locked files, goal,
 
 from __future__ import annotations
 
-import time
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -17,7 +16,6 @@ from murmur.auth.middleware import AuthContext, verify_auth
 router = APIRouter(prefix="/v1")
 _LEGACY_TENANT = "_legacy"
 _PRESENCE_TIMEOUT = 120  # agent is "active" if heartbeat within 2 min
-_start_time = time.time()
 
 
 def _tid(auth: AuthContext) -> str:
@@ -33,12 +31,10 @@ async def get_usage(
 
     Response:
     {
-        tenant_id, snapshot_at, uptime_seconds,
-        total_sent, total_delivered, messages_pending,
-        active_agents (int),
-        rooms: [{id, name, message_count, members, bytes_sent, active_agents}],
-        hourly_volume: [{hour, count}],
-        per_agent: {name: {sent, received}}
+        tenant_id, snapshot_at,
+        totals: {messages_sent, messages_delivered, active_rooms, active_agents},
+        rooms: [{room_id, room_name, message_count, active_agents(int), locked_files(int)}],
+        top_senders: [{name, count}]
     }
     """
     backends = request.app.state.backends
@@ -47,10 +43,9 @@ async def get_usage(
     tid = _tid(auth)
 
     stats = await analytics_svc.get_stats(tid)
-    pending = await backends.messages.count_all(tid)
 
     presence_entries = await backends.presence.list_all(tid, _PRESENCE_TIMEOUT)
-    active_agent_names: set[str] = {e["name"] for e in presence_entries}
+    total_active_agents: set[str] = {e["name"] for e in presence_entries}
     active_by_room: dict[str, list[str]] = {}
     for entry in presence_entries:
         room_ref = entry.get("room", "")
@@ -64,49 +59,36 @@ async def get_usage(
         room_name = room.get("name", rid)
         history = await backends.room_history.get_recent(tid, rid, limit=200)
         msg_count = len(history)
-        bytes_sent = sum(
-            len((m.get("content") or "").encode("utf-8")) for m in history
-        )
         room_agents = list(set(
             active_by_room.get(rid, []) + active_by_room.get(room_name, [])
         ))
-        members_dict = room.get("members", {})
-        member_count = len(members_dict) if isinstance(members_dict, dict) else len(members_dict)
+        await backends.room_state.expire_tasks(tid, rid)
+        state = await backends.room_state.get(tid, rid)
+        locked_count = len(state.get("locked_files", {}))
         rooms_data.append({
-            "id": rid,
-            "name": room_name,
+            "room_id": rid,
+            "room_name": room_name,
             "message_count": msg_count,
-            "members": member_count,
-            "bytes_sent": bytes_sent,
             "active_agents": len(room_agents),
+            "locked_files": locked_count,
         })
 
     rooms_data.sort(key=lambda r: r["message_count"], reverse=True)
 
-    hourly = [
-        {"hour": k, "count": v}
-        for k, v in sorted(stats.get("hourly_volume", {}).items())
-    ]
-
-    per_agent: dict[str, dict[str, int]] = {}
-    for sender, count in stats.get("per_sender", {}).items():
-        per_agent.setdefault(sender, {"sent": 0, "received": 0})
-        per_agent[sender]["sent"] = count
-    for recipient, count in stats.get("per_recipient", {}).items():
-        per_agent.setdefault(recipient, {"sent": 0, "received": 0})
-        per_agent[recipient]["received"] = count
+    per_sender = stats.get("per_sender", {})
+    top_senders = sorted(per_sender.items(), key=lambda x: x[1], reverse=True)[:10]
 
     return {
         "tenant_id": tid,
         "snapshot_at": datetime.now(timezone.utc).isoformat(),
-        "uptime_seconds": round(time.time() - _start_time),
-        "total_sent": stats.get("total_sent", 0),
-        "total_delivered": stats.get("total_delivered", 0),
-        "messages_pending": pending,
-        "active_agents": len(active_agent_names),
+        "totals": {
+            "messages_sent": stats.get("total_sent", 0),
+            "messages_delivered": stats.get("total_delivered", 0),
+            "active_rooms": len(all_rooms),
+            "active_agents": len(total_active_agents),
+        },
         "rooms": rooms_data,
-        "hourly_volume": hourly,
-        "per_agent": per_agent,
+        "top_senders": [{"name": n, "count": c} for n, c in top_senders],
     }
 
 
@@ -116,7 +98,7 @@ async def get_room_usage(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
-    """Return usage breakdown for a specific room."""
+    """Return usage breakdown for a specific room (includes state, agents, top senders)."""
     backends = request.app.state.backends
     room_svc = request.app.state.room_service
     tid = _tid(auth)
