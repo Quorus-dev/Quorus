@@ -99,6 +99,12 @@ class RoomService:
             )
         return results
 
+    async def get_members(
+        self, tenant_id: str, room_id: str
+    ) -> dict[str, str]:
+        """Return {name: role} for all members of a room."""
+        return await self._backend.get_members(tenant_id, room_id)
+
     # ------------------------------------------------------------------
     # Membership
     # ------------------------------------------------------------------

@@ -56,7 +56,7 @@ async def get_room(
 ):
     svc = request.app.state.room_service
     rid, data = await svc.get(_tid(auth), room_id)
-    members = await svc._backend.get_members(_tid(auth), rid)
+    members = await svc.get_members(_tid(auth), rid)
     return {
         "id": rid,
         "name": data.get("name", ""),

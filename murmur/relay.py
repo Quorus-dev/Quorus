@@ -99,10 +99,18 @@ def _write_atomic(path: str, data: bytes) -> None:
 
 
 def _snapshot_state() -> dict:
-    """Snapshot current backend state for persistence."""
+    """Snapshot in-memory backend state for JSON persistence.
+
+    Only used in dev/test mode (no Redis). Accesses InMemoryBackend
+    internals directly — this is intentional and will not run when
+    Redis is configured.
+    """
     if not hasattr(app.state, "backends"):
         return {}
     backends = app.state.backends
+    # Skip if using Redis backends (persistence is handled by Redis)
+    if not hasattr(backends.messages, "_queues"):
+        return {}
     # Messages: convert tuple keys to string keys for JSON
     messages = {}
     for (tid, name), msgs in backends.messages._queues.items():
@@ -314,10 +322,15 @@ def _init_services(app_instance, redis_conn=None):
     )
     presence = PresenceService(backends.presence)
 
-    invite_secret = os.environ.get("INVITE_SECRET", "") or RELAY_SECRET
+    invite_secret = os.environ.get("INVITE_SECRET", "") or JWT_SECRET or RELAY_SECRET
+    if DATABASE_URL and (not invite_secret or len(invite_secret) < 32):
+        raise SystemExit(
+            "INVITE_SECRET (or JWT_SECRET) must be set to a strong secret "
+            "(min 32 chars) in production mode."
+        )
     invite_ttl = int(os.environ.get("INVITE_TTL", str(24 * 60 * 60)))
     invite = InviteService(
-        secret=invite_secret or "fallback-dev-secret",
+        secret=invite_secret or "dev-only-insecure-secret",
         default_ttl=invite_ttl,
     )
 
