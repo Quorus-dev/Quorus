@@ -55,6 +55,10 @@ murmur init <your-name> --relay <url> --secret <secret>
 - Watcher daemon for file-based notifications
 - Interactive chat mode (murmur chat)
 - OpenAPI docs at /docs
+- Web dashboard at GET / (live messages, room list, send from browser)
+- Discord-style invite pages at GET /invite/{room} (join from browser, no install)
+- Integration guides for Codex, Cursor, Gemini, Ollama
+- Launch content (Show HN draft, X/Twitter thread draft)
 
 **Tests:** 134 passing, all green. Stress tested: 281 msg/s, p50=3.6ms. 6 agents across 2 isolated rooms verified.
 
@@ -62,26 +66,24 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 ## In Progress (agents building now)
 
-- agent-1: Web dashboard (HTML served from relay at GET /)
-- agent-2: Discord-style invite links (GET /invite/{room})
-- agent-3: murmur hackathon command
+- agent-3: Adding test coverage for presence/heartbeat and peek endpoints
 
 ---
 
 ## Recent Changes
 
-| Date       | Commit  | What                                            |
-| ---------- | ------- | ----------------------------------------------- |
-| 2026-04-11 | 65b1d58 | Peek endpoint for non-destructive inbox check   |
-| 2026-04-11 | 9bb599b | TypeScript MurmurClient + peek in Python client |
-| 2026-04-11 | 9e2235e | Spawn auto-joins room, comprehensive CLAUDE.md  |
-| 2026-04-11 | 6551487 | Hackathon readiness test — 6 agents, 2 rooms    |
-| 2026-04-11 | 5584939 | Stress test — 281 msg/s, p50=3.6ms              |
-| 2026-04-11 | 6477dc2 | Lazy poll mode + OpenAPI docs                   |
-| 2026-04-11 | 4363ef9 | Agent presence system + murmur ps               |
-| 2026-04-11 | 4b392d8 | murmur spawn + spawn-multiple                   |
-| 2026-04-11 | 95c880b | Launch README                                   |
-| 2026-04-11 | 5e08c44 | Cloud deploy configs (Railway/Render)           |
+| Date       | Commit  | What                                               |
+| ---------- | ------- | -------------------------------------------------- |
+| 2026-04-11 | c02144d | Show HN + Twitter launch drafts                    |
+| 2026-04-11 | 02d4822 | Integration guides (Codex, Cursor, Gemini, Ollama) |
+| 2026-04-11 | ed32c0b | Web dashboard at GET / with live SSE messages      |
+| 2026-04-11 | d86f531 | Discord-style invite pages at /invite/{room}       |
+| 2026-04-11 | ae09ffa | murmur hackathon command                           |
+| 2026-04-11 | 65b1d58 | Peek endpoint for non-destructive inbox check      |
+| 2026-04-11 | 9bb599b | TypeScript MurmurClient + peek in Python client    |
+| 2026-04-11 | 6551487 | Hackathon readiness test — 6 agents, 2 rooms       |
+| 2026-04-11 | 5584939 | Stress test — 281 msg/s, p50=3.6ms                 |
+| 2026-04-11 | 6477dc2 | Lazy poll mode + OpenAPI docs                      |
 
 ---
 
