@@ -3,7 +3,10 @@
 import argparse
 import asyncio
 import json
+import os
+import subprocess
 import sys
+from pathlib import Path
 
 import httpx
 from rich.console import Console
@@ -231,11 +234,116 @@ def _cmd_watch(args):
     asyncio.run(_watch(args.room))
 
 
+def _cmd_init(args):
+    """One-command setup: write config, register MCP server with Claude Code."""
+    name = args.name
+    relay_url = args.relay_url
+    secret = args.secret
+    murmur_dir = Path(__file__).resolve().parent
+
+    # 1. Write config
+    config_dir = Path.home() / "mcp-tunnel"
+    config_dir.mkdir(exist_ok=True)
+    config = {
+        "relay_url": relay_url,
+        "relay_secret": secret,
+        "instance_name": name,
+        "enable_background_polling": True,
+        "push_notification_method": "notifications/claude/channel",
+        "push_notification_channel": "mcp-tunnel",
+    }
+    config_path = config_dir / "config.json"
+    config_path.write_text(json.dumps(config, indent=2))
+    console.print(f"[green]Config written to {config_path}[/green]")
+
+    # 2. Register MCP server with Claude Code
+    claude_config_path = Path.home() / ".claude.json"
+    if claude_config_path.exists():
+        try:
+            claude_config = json.loads(claude_config_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            claude_config = {}
+    else:
+        claude_config = {}
+
+    if "mcpServers" not in claude_config:
+        claude_config["mcpServers"] = {}
+
+    claude_config["mcpServers"]["murmur"] = {
+        "type": "stdio",
+        "command": "uv",
+        "args": [
+            "run", "--directory", str(murmur_dir),
+            "python", str(murmur_dir / "mcp_server.py"),
+        ],
+        "env": {},
+    }
+    claude_config_path.write_text(json.dumps(claude_config, indent=2))
+    console.print("[green]MCP server registered in ~/.claude.json[/green]")
+
+    # 3. Summary
+    console.print("")
+    console.print(f"[bold]Murmur initialized for: {name}[/bold]")
+    console.print(f"  Relay: {relay_url}")
+    console.print(f"  Config: {config_path}")
+    console.print("  MCP server: registered as 'murmur'")
+    console.print("")
+    console.print("[yellow]Restart Claude Code to pick up the MCP server.[/yellow]")
+    console.print("")
+    console.print("Next steps:")
+    console.print("  murmur relay                    # Start the relay server")
+    console.print("  murmur create <room-name>       # Create a room")
+    console.print(f"  murmur invite <room> {name}     # Join yourself")
+
+
+def _cmd_relay(args):
+    """Start the relay server."""
+    murmur_dir = Path(__file__).resolve().parent
+    port = args.port
+    config_path = Path.home() / "mcp-tunnel" / "config.json"
+
+    # Read secret from config if it exists
+    secret = "murmur-hack"
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text())
+            secret = cfg.get("relay_secret", secret)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    console.print(f"[bold]Starting Murmur relay on port {port}[/bold]")
+    console.print("  Press Ctrl+C to stop")
+    console.print("")
+
+    env = os.environ.copy()
+    env["RELAY_SECRET"] = secret
+    env["PORT"] = str(port)
+
+    try:
+        subprocess.run(
+            [
+                "uv", "run", "--directory", str(murmur_dir),
+                "python", str(murmur_dir / "relay_server.py"),
+            ],
+            env=env,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim]Relay stopped.[/dim]")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="murmur", description="Murmur CLI"
     )
     sub = parser.add_subparsers(dest="command")
+
+    p_init = sub.add_parser("init", help="One-command setup")
+    p_init.add_argument("name", help="Your participant name")
+    p_init.add_argument("--relay-url", default="http://localhost:8080", help="Relay URL")
+    p_init.add_argument("--secret", default="murmur-hack", help="Shared secret")
+
+    p_relay = sub.add_parser("relay", help="Start the relay server")
+    p_relay.add_argument("--port", type=int, default=8080, help="Port")
 
     sub.add_parser("rooms", help="List all rooms")
 
@@ -270,6 +378,8 @@ def main():
         sys.exit(1)
 
     commands = {
+        "init": _cmd_init,
+        "relay": _cmd_relay,
         "rooms": _cmd_rooms,
         "create": _cmd_create,
         "invite": _cmd_invite,
