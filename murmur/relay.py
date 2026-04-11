@@ -1120,6 +1120,12 @@ header .status{font-size:12px;color:#3fb950;margin-left:auto}
 .dot-online{background:#3fb950}
 .dot-offline{background:#484f58}
 .empty{color:#484f58;text-align:center;padding:40px;font-size:14px}
+@media(max-width:640px){
+  .sidebar{display:none}
+  .container{flex-direction:column}
+  .msg{font-size:12px}
+  .input-bar input{font-size:16px}
+}
 </style>
 </head>
 <body>
