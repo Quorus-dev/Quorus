@@ -621,6 +621,103 @@ def _cmd_join(args):
     console.print(f"  murmur chat {room}")
 
 
+def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
+    """Create agent workspace and launch Claude Code in a new terminal tab."""
+    agents_dir = Path.home() / "murmur-agents"
+    workspace = agents_dir / name
+    murmur_dir = Path(__file__).resolve().parent
+
+    if workspace.exists():
+        console.print(f"[yellow]Workspace {workspace} already exists[/yellow]")
+    else:
+        workspace.mkdir(parents=True)
+
+    # .mcp.json — MCP server config for this agent
+    mcp_config = {
+        "mcpServers": {
+            "murmur": {
+                "type": "stdio",
+                "command": "uv",
+                "args": [
+                    "run", "--directory", str(murmur_dir.parent),
+                    "python", str(murmur_dir / "mcp.py"),
+                ],
+                "env": {
+                    "INSTANCE_NAME": name,
+                    "RELAY_URL": relay_url,
+                    "RELAY_SECRET": secret,
+                },
+            }
+        }
+    }
+    (workspace / ".mcp.json").write_text(json.dumps(mcp_config, indent=2))
+
+    # .claude/ directory with settings
+    claude_dir = workspace / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    settings = {
+        "permissions": {
+            "allow": [
+                "Bash(*)",
+                "Read(*)",
+                "Write(*)",
+                "Edit(*)",
+                "Glob(*)",
+                "Grep(*)",
+                "mcp__murmur__*",
+            ],
+            "deny": [],
+        }
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
+
+    # CLAUDE.md — auto-activates the agent
+    claude_md = f"""You are {name} in the {room} group chat. \
+ALL communication goes through the room:
+
+- check_messages() -- call this RIGHT NOW and every 30 seconds
+- send_room_message(room_id="{room}", content="...", \
+message_type="chat") -- talk here
+
+Do NOT reply in the terminal. ONLY talk through the room. \
+Start by calling check_messages() then send_room_message to check in.
+"""
+    (workspace / "CLAUDE.md").write_text(claude_md)
+
+    # Symlink to murmur source for imports
+    murmur_link = workspace / "murmur"
+    if not murmur_link.exists():
+        murmur_link.symlink_to(murmur_dir.parent)
+
+    console.print(f"[green]Workspace created: {workspace}[/green]")
+
+    # Open a new terminal tab (macOS)
+    if sys.platform == "darwin":
+        cmd = f"cd {workspace} && claude"
+        applescript = (
+            f'tell application "Terminal" to do script "{cmd}"'
+        )
+        subprocess.run(["osascript", "-e", applescript])
+        console.print(f"[green]Launched {name} in new Terminal tab[/green]")
+    else:
+        console.print(f"[yellow]Run manually: cd {workspace} && claude[/yellow]")
+
+
+def _cmd_spawn(args):
+    _spawn_agent(args.room, args.name, RELAY_URL, RELAY_SECRET)
+
+
+def _cmd_spawn_multiple(args):
+    room = args.room
+    count = args.count
+    prefix = args.prefix
+    for i in range(1, count + 1):
+        name = f"{prefix}-{i}"
+        console.print(f"\n[bold]Spawning {name}...[/bold]")
+        _spawn_agent(room, name, RELAY_URL, RELAY_SECRET)
+    console.print(f"\n[bold green]Spawned {count} agents.[/bold green]")
+
+
 def _cmd_relay(args):
     """Start the relay server."""
     repo_dir = Path(__file__).resolve().parent.parent
@@ -723,6 +820,21 @@ def main():
     )
     p_invite_link.add_argument("room", help="Room name")
 
+    p_spawn = sub.add_parser(
+        "spawn", help="Create agent workspace and launch Claude Code"
+    )
+    p_spawn.add_argument("room", help="Room name")
+    p_spawn.add_argument("name", help="Agent name")
+
+    p_spawn_multi = sub.add_parser(
+        "spawn-multiple", help="Spawn N agents at once"
+    )
+    p_spawn_multi.add_argument("room", help="Room name")
+    p_spawn_multi.add_argument("count", type=int, help="Number of agents")
+    p_spawn_multi.add_argument(
+        "--prefix", default="agent", help="Name prefix (default: agent)"
+    )
+
     p_join = sub.add_parser("join", help="One-liner to join a room")
     p_join.add_argument("--name", required=True, help="Your participant name")
     p_join.add_argument("--relay", dest="relay_url", required=True, help="Relay URL")
@@ -749,6 +861,8 @@ def main():
         "status": _cmd_status,
         "join": _cmd_join,
         "invite-link": _cmd_invite_link,
+        "spawn": _cmd_spawn,
+        "spawn-multiple": _cmd_spawn_multiple,
     }
     commands[args.command](args)
 
