@@ -1025,6 +1025,198 @@ class TestUnicodeEdgeCases:
 # 18. INVITE PAGE — token exposure check
 # ===========================================================================
 
+# ===========================================================================
+# 19. ROOM ADMIN — kick, destroy, rename
+# ===========================================================================
+
+class TestRoomAdmin:
+    @pytest.mark.anyio
+    async def test_kick_by_creator(self, client):
+        resp = await _create_room(client, name="admin-room", creator="boss")
+        rid = resp.json()["id"]
+        await _join_room(client, rid, "worker")
+        r = await client.post(
+            f"/rooms/{rid}/kick",
+            json={"participant": "worker", "requested_by": "boss"},
+            headers=AUTH,
+        )
+        assert r.status_code == 200
+        assert r.json()["status"] == "kicked"
+        # Verify worker is gone
+        room = await client.get(f"/rooms/{rid}", headers=AUTH)
+        assert "worker" not in room.json()["members"]
+
+    @pytest.mark.anyio
+    async def test_kick_by_non_creator_rejected(self, client):
+        resp = await _create_room(client, name="admin-room2", creator="boss")
+        rid = resp.json()["id"]
+        await _join_room(client, rid, "worker")
+        r = await client.post(
+            f"/rooms/{rid}/kick",
+            json={"participant": "worker", "requested_by": "worker"},
+            headers=AUTH,
+        )
+        assert r.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_kick_creator_rejected(self, client):
+        resp = await _create_room(client, name="admin-room3", creator="boss")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/kick",
+            json={"participant": "boss", "requested_by": "boss"},
+            headers=AUTH,
+        )
+        assert r.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_kick_nonmember_rejected(self, client):
+        resp = await _create_room(client, name="admin-room4", creator="boss")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/kick",
+            json={"participant": "ghost", "requested_by": "boss"},
+            headers=AUTH,
+        )
+        assert r.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_kick_no_auth(self, client):
+        resp = await _create_room(client, name="admin-room5", creator="boss")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/kick",
+            json={"participant": "boss", "requested_by": "boss"},
+        )
+        assert r.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_destroy_by_creator(self, client):
+        resp = await _create_room(client, name="doomed", creator="boss")
+        rid = resp.json()["id"]
+        r = await client.request(
+            "DELETE", f"/rooms/{rid}",
+            json={"requested_by": "boss"},
+            headers=AUTH,
+        )
+        assert r.status_code == 200
+        assert r.json()["status"] == "destroyed"
+        # Verify room is gone
+        r2 = await client.get(f"/rooms/{rid}", headers=AUTH)
+        assert r2.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_destroy_by_non_creator_rejected(self, client):
+        resp = await _create_room(client, name="safe", creator="boss")
+        rid = resp.json()["id"]
+        await _join_room(client, rid, "rando")
+        r = await client.request(
+            "DELETE", f"/rooms/{rid}",
+            json={"requested_by": "rando"},
+            headers=AUTH,
+        )
+        assert r.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_destroy_no_auth(self, client):
+        resp = await _create_room(client, name="locked", creator="boss")
+        rid = resp.json()["id"]
+        r = await client.request(
+            "DELETE", f"/rooms/{rid}",
+            json={"requested_by": "boss"},
+        )
+        assert r.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_destroy_nonexistent_room(self, client):
+        r = await client.request(
+            "DELETE", "/rooms/fake-id",
+            json={"requested_by": "boss"},
+            headers=AUTH,
+        )
+        assert r.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_rename_by_creator(self, client):
+        resp = await _create_room(client, name="old-name", creator="boss")
+        rid = resp.json()["id"]
+        r = await client.patch(
+            f"/rooms/{rid}",
+            json={"new_name": "new-name", "requested_by": "boss"},
+            headers=AUTH,
+        )
+        assert r.status_code == 200
+        assert r.json()["new_name"] == "new-name"
+        # Verify name changed
+        room = await client.get(f"/rooms/{rid}", headers=AUTH)
+        assert room.json()["name"] == "new-name"
+
+    @pytest.mark.anyio
+    async def test_rename_by_non_creator_rejected(self, client):
+        resp = await _create_room(client, name="stable", creator="boss")
+        rid = resp.json()["id"]
+        await _join_room(client, rid, "rando")
+        r = await client.patch(
+            f"/rooms/{rid}",
+            json={"new_name": "hijacked", "requested_by": "rando"},
+            headers=AUTH,
+        )
+        assert r.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_rename_duplicate_rejected(self, client):
+        await _create_room(client, name="taken")
+        resp = await _create_room(client, name="rename-me", creator="boss")
+        rid = resp.json()["id"]
+        r = await client.patch(
+            f"/rooms/{rid}",
+            json={"new_name": "taken", "requested_by": "boss"},
+            headers=AUTH,
+        )
+        assert r.status_code == 409
+
+    @pytest.mark.anyio
+    async def test_rename_no_auth(self, client):
+        resp = await _create_room(client, name="auth-test", creator="boss")
+        rid = resp.json()["id"]
+        r = await client.patch(
+            f"/rooms/{rid}",
+            json={"new_name": "renamed", "requested_by": "boss"},
+        )
+        assert r.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_rename_bad_name_rejected(self, client):
+        resp = await _create_room(client, name="valid-room", creator="boss")
+        rid = resp.json()["id"]
+        r = await client.patch(
+            f"/rooms/{rid}",
+            json={"new_name": "<script>alert(1)</script>", "requested_by": "boss"},
+            headers=AUTH,
+        )
+        assert r.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_destroy_clears_history(self, client):
+        resp = await _create_room(client, name="history-room", creator="boss")
+        rid = resp.json()["id"]
+        # Send a message
+        await client.post(
+            f"/rooms/{rid}/messages",
+            json={"from_name": "boss", "content": "hello"},
+            headers=AUTH,
+        )
+        # Destroy
+        await client.request(
+            "DELETE", f"/rooms/{rid}",
+            json={"requested_by": "boss"},
+            headers=AUTH,
+        )
+        # History should be gone
+        r = await client.get(f"/rooms/{rid}/history", headers=AUTH)
+        assert r.status_code == 404
+
+
 class TestInvitePageSecurity:
     @pytest.mark.anyio
     async def test_invite_page_does_not_leak_relay_secret(self, client):

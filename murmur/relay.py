@@ -63,7 +63,7 @@ if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[o.strip() for o in _cors_origins.split(",")],
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "DELETE", "PATCH"],
         allow_headers=["Authorization", "Content-Type"],
     )
 
@@ -444,6 +444,35 @@ class JoinLeaveRequest(BaseModel):
     participant: str
 
     @field_validator("participant")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+class KickRequest(BaseModel):
+    participant: str
+    requested_by: str
+
+    @field_validator("participant", "requested_by")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+class RenameRoomRequest(BaseModel):
+    new_name: str
+    requested_by: str
+
+    @field_validator("new_name", "requested_by")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+class DestroyRoomRequest(BaseModel):
+    requested_by: str
+
+    @field_validator("requested_by")
     @classmethod
     def check_name(cls, v: str) -> str:
         return _validate_name(v)
@@ -840,6 +869,54 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
     room["members"].discard(req.participant)
     await _persist_state()
     return {"status": "left"}
+
+
+@app.post("/rooms/{room_id}/kick", dependencies=[Depends(verify_auth)])
+async def kick_from_room(room_id: str, req: KickRequest):
+    """Remove a participant from a room (admin only — room creator)."""
+    room_id, room = _resolve_room(room_id)
+    if req.requested_by != room["created_by"]:
+        raise HTTPException(status_code=403, detail="Only the room creator can kick members")
+    if req.participant == room["created_by"]:
+        raise HTTPException(status_code=400, detail="Cannot kick the room creator")
+    if req.participant not in room["members"]:
+        raise HTTPException(status_code=404, detail="Participant not in room")
+    room["members"].discard(req.participant)
+    await _persist_state()
+    logger.info("Kicked %s from room %s by %s", req.participant, room["name"], req.requested_by)
+    return {"status": "kicked", "participant": req.participant}
+
+
+@app.delete("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
+async def destroy_room(room_id: str, req: DestroyRoomRequest):
+    """Delete a room and its history (admin only — room creator)."""
+    room_id, room = _resolve_room(room_id)
+    if req.requested_by != room["created_by"]:
+        raise HTTPException(status_code=403, detail="Only the room creator can destroy the room")
+    room_name = room["name"]
+    del rooms[room_id]
+    room_history.pop(room_id, None)
+    await _persist_state()
+    logger.info("Room %s (%s) destroyed by %s", room_name, room_id, req.requested_by)
+    return {"status": "destroyed", "room": room_name}
+
+
+@app.patch("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
+async def rename_room(room_id: str, req: RenameRoomRequest):
+    """Rename a room (admin only — room creator)."""
+    room_id, room = _resolve_room(room_id)
+    if req.requested_by != room["created_by"]:
+        raise HTTPException(status_code=403, detail="Only the room creator can rename the room")
+    if _find_room_by_name(req.new_name):
+        raise HTTPException(status_code=409, detail="Room name already exists")
+    old_name = room["name"]
+    room["name"] = req.new_name
+    # Update room name in history messages
+    for msg in room_history.get(room_id, []):
+        msg["room"] = req.new_name
+    await _persist_state()
+    logger.info("Room renamed: %s -> %s by %s", old_name, req.new_name, req.requested_by)
+    return {"status": "renamed", "old_name": old_name, "new_name": req.new_name}
 
 
 @app.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
