@@ -8,6 +8,7 @@ falls back to process-local ``asyncio.Event``.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from collections import defaultdict
@@ -313,17 +314,29 @@ class MessageService:
     ) -> tuple[list[dict], list[dict], str]:
         """Fetch messages, reassemble chunks, re-enqueue incomplete groups.
 
-        Returns (ready, held_back, ack_token). Caller must ACK after response.
+        Returns (ready, held_back, ack_token). The ack_token only covers
+        ready messages — held_back chunks are ACKed from the original fetch
+        and re-enqueued as fresh entries so they aren't double-delivered.
         """
         all_msgs, ack_token = await self._backend.fetch(tenant_id, recipient)
         self._events[ekey].clear()
         ready, held_back = _reassemble_chunks(all_msgs)
 
-        # Re-enqueue incomplete chunk groups so they survive
         if held_back:
+            # ACK everything from the original fetch first — this clears
+            # ALL entries from pending state (both ready and held_back)
+            if ack_token:
+                await self._backend.ack(tenant_id, recipient, ack_token)
+            # Re-enqueue incomplete chunks as fresh stream entries
             await self._backend.enqueue_batch(
                 tenant_id, recipient, held_back
             )
+            # Build a new ack_token from only the ready messages' delivery IDs
+            ready_ids = [
+                m["_delivery_id"] for m in ready if "_delivery_id" in m
+            ]
+            ack_token = json.dumps(ready_ids) if ready_ids else ""
+
         return ready, held_back, ack_token
 
     # ------------------------------------------------------------------
