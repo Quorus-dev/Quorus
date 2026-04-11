@@ -73,9 +73,28 @@ async def join_room(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
-    participant = auth.sub or req.participant
-    if auth.sub and req.participant != auth.sub:
-        raise HTTPException(status_code=403, detail="Cannot join room as another user")
+    participant = req.participant
+    # Who can add members:
+    # - Legacy auth: anyone (backward compat)
+    # - Admin role: can add anyone
+    # - Room creator: can add anyone
+    # - Self-join: blocked (use invite tokens instead)
+    if not auth.is_legacy and auth.role != "admin":
+        room_svc = request.app.state.room_service
+        rid, room_data = await room_svc.get(_tid(auth), room_id)
+        is_creator = room_data.get("created_by") == auth.sub
+        is_self_join = participant == auth.sub
+        if not is_creator and is_self_join:
+            raise HTTPException(
+                status_code=403,
+                detail="Self-join requires invite token. "
+                "Use POST /invite/{room}/join.",
+            )
+        if not is_creator and not is_self_join:
+            raise HTTPException(
+                status_code=403,
+                detail="Only room creator or admin can add members.",
+            )
     svc = request.app.state.room_service
     rid, _ = await svc.get(_tid(auth), room_id)
     await svc.join(_tid(auth), rid, participant, req.role, MAX_ROOM_MEMBERS)

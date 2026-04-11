@@ -135,10 +135,11 @@ class TestRoomAuth:
             headers=alice_headers,
         )
         room_id = resp.json()["id"]
+        # Alice (room creator) adds bob — direct join requires creator/admin
         await client.post(
             f"/rooms/{room_id}/join",
             json={"participant": "bob"},
-            headers=bob_headers,
+            headers=alice_headers,
         )
         return room_id
 

@@ -19,6 +19,21 @@ def _tid(auth: AuthContext) -> str:
     return auth.tenant_id or _LEGACY_TENANT
 
 
+async def _require_room_member(
+    request: Request, auth: AuthContext, tid: str, room_id: str,
+) -> None:
+    """Raise 403 if the caller is not a member of the room."""
+    if auth.is_legacy:
+        return
+    svc = request.app.state.room_service
+    rid, _ = await svc.get(tid, room_id)
+    members = await svc.get_members(tid, rid)
+    if auth.sub not in members:
+        raise HTTPException(
+            status_code=403, detail="Must be a room member",
+        )
+
+
 @router.post("/rooms/{room_id}/messages")
 async def send_room_message(
     room_id: str,
@@ -47,8 +62,10 @@ async def get_room_history(
     auth: AuthContext = Depends(verify_auth),
     limit: int = 50,
 ):
+    tid = _tid(auth)
+    await _require_room_member(request, auth, tid, room_id)
     svc = request.app.state.room_msg_service
-    return await svc.history(_tid(auth), room_id, limit)
+    return await svc.history(tid, room_id, limit)
 
 
 @router.get("/rooms/{room_id}/search")
@@ -61,8 +78,10 @@ async def search_room_history(
     message_type: str = "",
     limit: int = 50,
 ):
+    tid = _tid(auth)
+    await _require_room_member(request, auth, tid, room_id)
     svc = request.app.state.room_msg_service
     return await svc.search(
-        _tid(auth), room_id, q=q, sender=sender,
+        tid, room_id, q=q, sender=sender,
         message_type=message_type, limit=limit,
     )
