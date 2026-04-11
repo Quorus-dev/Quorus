@@ -1640,3 +1640,189 @@ async def test_health_detailed_returns_metrics(client: AsyncClient, auth_headers
 async def test_health_detailed_requires_auth(client: AsyncClient):
     resp = await client.get("/health/detailed")
     assert resp.status_code == 401
+
+
+# ── search endpoint tests ────────────────────────────────────────────────
+
+async def _setup_search_room(client: AsyncClient, auth_headers: dict):
+    """Create a room with varied messages for search testing."""
+    resp = await client.post(
+        "/rooms", json={"name": "search-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = resp.json()["id"]
+    await client.post(
+        "/rooms/search-room/join",
+        json={"participant": "alice"}, headers=auth_headers,
+    )
+    await client.post(
+        "/rooms/search-room/join",
+        json={"participant": "bob"}, headers=auth_headers,
+    )
+    msgs = [
+        {"from_name": "alice", "content": "hello world", "message_type": "chat"},
+        {"from_name": "bob", "content": "CLAIM: building auth", "message_type": "claim"},
+        {"from_name": "alice", "content": "STATUS: tests pass", "message_type": "status"},
+        {"from_name": "bob", "content": "hello from bob", "message_type": "chat"},
+    ]
+    for m in msgs:
+        await client.post(
+            f"/rooms/{room_id}/messages", json=m, headers=auth_headers,
+        )
+    return room_id
+
+
+async def test_search_by_keyword(client: AsyncClient, auth_headers: dict):
+    await _setup_search_room(client, auth_headers)
+    resp = await client.get(
+        "/rooms/search-room/search", params={"q": "hello"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 2
+    assert all("hello" in r["content"].lower() for r in results)
+
+
+async def test_search_by_sender(client: AsyncClient, auth_headers: dict):
+    await _setup_search_room(client, auth_headers)
+    resp = await client.get(
+        "/rooms/search-room/search", params={"sender": "bob"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 2
+    assert all(r["from_name"] == "bob" for r in results)
+
+
+async def test_search_by_message_type(client: AsyncClient, auth_headers: dict):
+    await _setup_search_room(client, auth_headers)
+    resp = await client.get(
+        "/rooms/search-room/search", params={"message_type": "claim"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 1
+    assert results[0]["message_type"] == "claim"
+
+
+async def test_search_combined_filters(client: AsyncClient, auth_headers: dict):
+    await _setup_search_room(client, auth_headers)
+    resp = await client.get(
+        "/rooms/search-room/search",
+        params={"q": "hello", "sender": "bob"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 1
+    assert results[0]["from_name"] == "bob"
+    assert "hello" in results[0]["content"].lower()
+
+
+async def test_search_no_results(client: AsyncClient, auth_headers: dict):
+    await _setup_search_room(client, auth_headers)
+    resp = await client.get(
+        "/rooms/search-room/search", params={"q": "nonexistent"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_search_nonexistent_room(client: AsyncClient, auth_headers: dict):
+    resp = await client.get(
+        "/rooms/no-such-room/search", params={"q": "test"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+async def test_search_requires_auth(client: AsyncClient):
+    resp = await client.get("/rooms/any-room/search", params={"q": "test"})
+    assert resp.status_code == 401
+
+
+async def test_search_no_filters_returns_all(client: AsyncClient, auth_headers: dict):
+    await _setup_search_room(client, auth_headers)
+    resp = await client.get(
+        "/rooms/search-room/search", headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 4
+
+
+async def test_dashboard_has_create_room_button(client: AsyncClient):
+    """Dashboard HTML should include a Create Room button."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "Create Room" in resp.text
+    assert "showCreate()" in resp.text
+
+
+async def test_dashboard_has_share_button(client: AsyncClient):
+    """Dashboard HTML should include a Share button."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "shareBtn" in resp.text
+    assert "showShare()" in resp.text
+
+
+async def test_dashboard_has_connection_status(client: AsyncClient):
+    """Dashboard should have connection status indicator."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "connDot" in resp.text
+    assert "conn-ok" in resp.text
+    assert "conn-err" in resp.text
+
+
+async def test_dashboard_has_modal_support(client: AsyncClient):
+    """Dashboard should include modal infrastructure."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "modalRoot" in resp.text
+    assert "closeModal()" in resp.text
+
+
+async def test_dashboard_has_auto_scroll(client: AsyncClient):
+    """Dashboard should auto-scroll messages."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "scrollToBottom" in resp.text
+    assert "requestAnimationFrame" in resp.text
+
+
+async def test_dashboard_has_unread_badges(client: AsyncClient):
+    """Dashboard should track and display unread counts."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "unread" in resp.text
+
+
+async def test_dashboard_has_message_type_tags(client: AsyncClient):
+    """Dashboard should color-code message types."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "tag-claim" in resp.text
+    assert "tag-status" in resp.text
+    assert "tag-alert" in resp.text
+    assert "tag-sync" in resp.text
+
+
+async def test_dashboard_mobile_responsive(client: AsyncClient):
+    """Dashboard should have mobile responsive styles."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "@media" in resp.text
+    assert "toggleSidebar" in resp.text
+
+
+async def test_dashboard_css_variables(client: AsyncClient):
+    """Dashboard should use CSS custom properties."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert ":root{" in resp.text or ":root {" in resp.text
+    assert "var(--" in resp.text

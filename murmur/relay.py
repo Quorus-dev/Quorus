@@ -116,7 +116,7 @@ if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[o.strip() for o in _cors_origins.split(",")],
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "DELETE", "PATCH"],
         allow_headers=["Authorization", "Content-Type"],
     )
 
@@ -128,6 +128,7 @@ persistence_lock = asyncio.Lock()
 rooms_lock = asyncio.Lock()  # global lock for room create/join/leave
 message_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
 webhooks: dict[str, str] = {}  # instance_name -> callback_url
+room_webhooks: dict[str, list[dict]] = defaultdict(list)  # room_id -> [{url, registered_by}]
 rooms: dict[str, dict] = {}  # room_id -> {name, created_by, members, created_at}
 room_history: dict[str, list[dict]] = defaultdict(list)  # room_id -> last N messages
 SSE_QUEUE_MAX = int(os.environ.get("SSE_QUEUE_MAX", "1000"))
@@ -218,6 +219,7 @@ def _reset_state():
     _webhook_http_client = None
     message_events.clear()
     webhooks.clear()
+    room_webhooks.clear()
     rooms.clear()
     room_history.clear()
     sse_queues.clear()
@@ -280,6 +282,7 @@ def _snapshot_state() -> dict:
             for rid, r in rooms.items()
         },
         "room_history": {rid: list(msgs) for rid, msgs in room_history.items()},
+        "room_webhooks": {rid: dict(hooks) for rid, hooks in room_webhooks.items()},
         "presence": dict(presence),
         "webhooks": dict(webhooks),
     }
@@ -352,6 +355,8 @@ def _apply_loaded_state(data: dict) -> None:
         }
     for rid, msgs in data.get("room_history", {}).items():
         room_history[rid] = msgs
+    for rid, hooks in data.get("room_webhooks", {}).items():
+        room_webhooks[rid] = hooks
     for name, pdata in data.get("presence", {}).items():
         presence[name] = pdata
     for name, url in data.get("webhooks", {}).items():
@@ -588,6 +593,45 @@ class JoinLeaveRequest(BaseModel):
     participant: str
 
     @field_validator("participant")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+class KickRequest(BaseModel):
+    participant: str
+    requested_by: str
+
+    @field_validator("participant", "requested_by")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+class RenameRoomRequest(BaseModel):
+    new_name: str
+    requested_by: str
+
+    @field_validator("new_name", "requested_by")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+class DestroyRoomRequest(BaseModel):
+    requested_by: str
+
+    @field_validator("requested_by")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+class RoomWebhookRequest(BaseModel):
+    callback_url: str
+    registered_by: str
+
+    @field_validator("registered_by")
     @classmethod
     def check_name(cls, v: str) -> str:
         return _validate_name(v)
@@ -1053,6 +1097,106 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
     return {"status": "left"}
 
 
+@app.post("/rooms/{room_id}/kick", dependencies=[Depends(verify_auth)])
+async def kick_from_room(room_id: str, req: KickRequest):
+    """Remove a participant from a room (admin only — room creator)."""
+    room_id, room = _resolve_room(room_id)
+    if req.requested_by != room["created_by"]:
+        raise HTTPException(status_code=403, detail="Only the room creator can kick members")
+    if req.participant == room["created_by"]:
+        raise HTTPException(status_code=400, detail="Cannot kick the room creator")
+    if req.participant not in room["members"]:
+        raise HTTPException(status_code=404, detail="Participant not in room")
+    room["members"].discard(req.participant)
+    await _persist_state()
+    logger.info("Kicked %s from room %s by %s", req.participant, room["name"], req.requested_by)
+    return {"status": "kicked", "participant": req.participant}
+
+
+@app.delete("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
+async def destroy_room(room_id: str, req: DestroyRoomRequest):
+    """Delete a room and its history (admin only — room creator)."""
+    room_id, room = _resolve_room(room_id)
+    if req.requested_by != room["created_by"]:
+        raise HTTPException(status_code=403, detail="Only the room creator can destroy the room")
+    room_name = room["name"]
+    del rooms[room_id]
+    room_history.pop(room_id, None)
+    room_webhooks.pop(room_id, None)
+    await _persist_state()
+    logger.info("Room %s (%s) destroyed by %s", room_name, room_id, req.requested_by)
+    return {"status": "destroyed", "room": room_name}
+
+
+@app.patch("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
+async def rename_room(room_id: str, req: RenameRoomRequest):
+    """Rename a room (admin only — room creator)."""
+    room_id, room = _resolve_room(room_id)
+    if req.requested_by != room["created_by"]:
+        raise HTTPException(status_code=403, detail="Only the room creator can rename the room")
+    if _find_room_by_name(req.new_name):
+        raise HTTPException(status_code=409, detail="Room name already exists")
+    old_name = room["name"]
+    room["name"] = req.new_name
+    # Update room name in history messages
+    for msg in room_history.get(room_id, []):
+        msg["room"] = req.new_name
+    await _persist_state()
+    logger.info("Room renamed: %s -> %s by %s", old_name, req.new_name, req.requested_by)
+    return {"status": "renamed", "old_name": old_name, "new_name": req.new_name}
+
+
+@app.post("/rooms/{room_id}/webhooks", dependencies=[Depends(verify_auth)])
+async def register_room_webhook(room_id: str, req: RoomWebhookRequest):
+    """Register a webhook URL called on every message in this room."""
+    room_id, room = _resolve_room(room_id)
+    callback_url = await _validate_webhook_callback_url(req.callback_url)
+    # Prevent duplicate URLs per room
+    existing_urls = {h["url"] for h in room_webhooks[room_id]}
+    if callback_url in existing_urls:
+        raise HTTPException(status_code=409, detail="Webhook URL already registered for this room")
+    room_webhooks[room_id].append({
+        "url": callback_url,
+        "registered_by": req.registered_by,
+    })
+    await _persist_state()
+    logger.info(
+        "Room webhook registered: %s -> %s by %s",
+        room["name"], callback_url, req.registered_by,
+    )
+    return {"status": "registered", "room": room["name"], "callback_url": callback_url}
+
+
+@app.get("/rooms/{room_id}/webhooks", dependencies=[Depends(verify_auth)])
+async def list_room_webhooks(room_id: str):
+    """List all webhooks registered for a room."""
+    room_id, room = _resolve_room(room_id)
+    return room_webhooks.get(room_id, [])
+
+
+@app.delete("/rooms/{room_id}/webhooks", dependencies=[Depends(verify_auth)])
+async def delete_room_webhook(room_id: str, req: RoomWebhookRequest):
+    """Remove a webhook from a room."""
+    room_id, room = _resolve_room(room_id)
+    hooks = room_webhooks.get(room_id, [])
+    before = len(hooks)
+    room_webhooks[room_id] = [h for h in hooks if h["url"] != req.callback_url]
+    if len(room_webhooks[room_id]) == before:
+        raise HTTPException(status_code=404, detail="Webhook URL not found for this room")
+    await _persist_state()
+    logger.info("Room webhook removed: %s -> %s", room["name"], req.callback_url)
+    return {"status": "removed", "room": room["name"], "callback_url": req.callback_url}
+
+
+def _notify_room_webhooks(room_id: str, message: dict) -> None:
+    """Schedule background delivery of all registered room webhooks."""
+    hooks = room_webhooks.get(room_id, [])
+    for hook in hooks:
+        asyncio.create_task(
+            _deliver_webhook(f"room:{room_id}", hook["url"], message)
+        )
+
+
 @app.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
 async def send_room_message(room_id: str, msg: RoomMessageRequest, request: Request):
     """Send a message to all members of a room."""
@@ -1107,6 +1251,9 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest, request: Requ
     _trim_messages()
     await _persist_state()
 
+    # Fire room webhooks
+    _notify_room_webhooks(room_id, history_msg)
+
     logger.info(
         "Room message %s in %s: %s -> %d recipients",
         message_id, room["name"], msg.from_name, len(recipients),
@@ -1121,6 +1268,31 @@ async def get_room_history(room_id: str, limit: int = 50):
     limit = min(max(limit, 1), MAX_ROOM_HISTORY)
     msgs = room_history.get(rid, [])
     return msgs[-limit:]
+
+
+@app.get("/rooms/{room_id}/search", dependencies=[Depends(verify_auth)])
+async def search_room_history(
+    room_id: str,
+    q: str = "",
+    sender: str = "",
+    message_type: str = "",
+    limit: int = 50,
+):
+    """Search room history by keyword, sender, or message type."""
+    rid, room = _resolve_room(room_id)
+    msgs = room_history.get(rid, [])
+    results = []
+    q_lower = q.lower()
+    for msg in msgs:
+        if q and q_lower not in msg.get("content", "").lower():
+            continue
+        if sender and msg.get("from_name", "") != sender:
+            continue
+        if message_type and msg.get("message_type", "") != message_type:
+            continue
+        results.append(msg)
+    limit = min(max(limit, 1), MAX_ROOM_HISTORY)
+    return results[-limit:]
 
 
 @app.post("/heartbeat", dependencies=[Depends(verify_auth)])
@@ -1354,132 +1526,449 @@ _DASHBOARD_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Murmur Dashboard</title>
+<title>Murmur</title>
 <style>
+:root{
+  --bg-0:#09090b;--bg-1:#111113;--bg-2:#18181b;
+  --bg-hover:#1e1e22;--border:#27272a;
+  --text:#fafafa;--text-2:#a1a1aa;--text-3:#52525b;
+  --accent:#3b82f6;--accent-h:#2563eb;
+  --accent-s:rgba(59,130,246,.1);
+  --green:#22c55e;--red:#ef4444;--orange:#f59e0b;
+  --purple:#a855f7;--emerald:#10b981;
+  --r:8px;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#c9d1d9}
-header{background:#161b22;border-bottom:1px solid #30363d;padding:12px 24px;
-  display:flex;align-items:center;gap:12px}
-header h1{font-size:18px;color:#58a6ff}
-header .status{font-size:12px;color:#3fb950;margin-left:auto}
-.container{display:flex;height:calc(100vh - 49px)}
-.sidebar{width:240px;background:#161b22;border-right:1px solid #30363d;
-  overflow-y:auto;flex-shrink:0}
-.sidebar h3{padding:12px 16px 8px;font-size:12px;color:#8b949e;
-  text-transform:uppercase}
-.room-item{padding:8px 16px;cursor:pointer;border-left:3px solid transparent;
-  font-size:14px;color:#c9d1d9}
-.room-item:hover{background:#1c2128}
-.room-item.active{background:#1c2128;border-left-color:#58a6ff;color:#58a6ff}
-.room-item .count{font-size:11px;color:#8b949e;float:right}
-.main{flex:1;display:flex;flex-direction:column}
-.messages{flex:1;overflow-y:auto;padding:16px;
-  display:flex;flex-direction:column;gap:4px}
-.msg{font-size:13px;line-height:1.5}
-.msg .ts{color:#484f58;font-size:11px;margin-right:6px}
-.msg .sender{font-weight:600;color:#58a6ff;margin-right:4px}
-.msg .tag{font-size:11px;padding:1px 5px;border-radius:3px;margin-right:4px}
-.tag-claim{background:#9e6a03;color:#fff}
-.tag-status{background:#1f6feb;color:#fff}
-.tag-request{background:#8957e5;color:#fff}
-.tag-alert{background:#da3633;color:#fff}
-.tag-sync{background:#238636;color:#fff}
-.input-bar{border-top:1px solid #30363d;padding:12px 16px;display:flex;gap:8px}
-.input-bar input{flex:1;background:#0d1117;border:1px solid #30363d;
-  border-radius:6px;padding:8px 12px;color:#c9d1d9;font-size:14px;outline:none}
-.input-bar input:focus{border-color:#58a6ff}
-.input-bar button{background:#238636;color:#fff;border:none;border-radius:6px;
-  padding:8px 16px;cursor:pointer;font-size:14px}
-.input-bar button:hover{background:#2ea043}
-.members{padding:8px 16px;border-top:1px solid #30363d;
-  font-size:12px;color:#8b949e}
-.members .member{display:inline-flex;align-items:center;gap:4px;margin-right:10px}
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.dot-online{background:#3fb950}
-.dot-offline{background:#484f58}
-.empty{color:#484f58;text-align:center;padding:40px;font-size:14px}
-@media(max-width:640px){
-  .sidebar{display:none}
-  .container{flex-direction:column}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',
+  'Inter',system-ui,sans-serif;
+  background:var(--bg-0);color:var(--text);
+  -webkit-font-smoothing:antialiased;
+}
+header{
+  background:var(--bg-1);
+  border-bottom:1px solid var(--border);
+  padding:0 20px;height:52px;
+  display:flex;align-items:center;gap:12px;
+}
+.logo{
+  font-size:15px;font-weight:600;
+  letter-spacing:-.02em;
+  display:flex;align-items:center;gap:8px;
+}
+.logo svg{width:20px;height:20px;opacity:.9}
+.conn{
+  margin-left:auto;display:flex;
+  align-items:center;gap:6px;
+  font-size:12px;color:var(--text-2);
+}
+.conn-dot{
+  width:7px;height:7px;border-radius:50%;
+  transition:background .3s;
+}
+.conn-ok{background:var(--green)}
+.conn-err{background:var(--red);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.container{display:flex;height:calc(100vh - 52px)}
+.sidebar{
+  width:260px;background:var(--bg-1);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;
+}
+.sidebar-hdr{
+  padding:16px 16px 12px;font-size:11px;
+  font-weight:600;color:var(--text-3);
+  text-transform:uppercase;letter-spacing:.05em;
+}
+.rooms-list{flex:1;overflow-y:auto;padding:0 8px}
+.room-item{
+  padding:10px 12px;cursor:pointer;
+  border-radius:var(--r);font-size:13px;
+  font-weight:500;color:var(--text-2);
+  display:flex;align-items:center;gap:8px;
+  transition:all .15s;margin-bottom:2px;
+}
+.room-item:hover{
+  background:var(--bg-hover);color:var(--text);
+}
+.room-item.active{
+  background:var(--accent-s);color:var(--accent);
+}
+.room-item .ri{opacity:.5;flex-shrink:0}
+.room-item .rn{
+  flex:1;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;
+}
+.room-item .cnt{
+  font-size:11px;color:var(--text-3);
+  background:var(--bg-2);
+  padding:2px 6px;border-radius:10px;
+}
+.room-item .unread{
+  background:var(--accent);color:#fff;
+  font-size:10px;font-weight:600;
+  padding:2px 7px;border-radius:10px;
+  min-width:18px;text-align:center;
+}
+.main{
+  flex:1;display:flex;flex-direction:column;
+  background:var(--bg-0);
+}
+.room-hdr{
+  padding:14px 20px;
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:12px;
+}
+.room-hdr .rt{font-size:14px;font-weight:600}
+.room-hdr .rm{
+  font-size:12px;color:var(--text-3);
+  margin-left:auto;
+}
+.messages{
+  flex:1;overflow-y:auto;padding:16px 20px;
+  display:flex;flex-direction:column;gap:2px;
+}
+.messages::-webkit-scrollbar{width:6px}
+.messages::-webkit-scrollbar-track{background:transparent}
+.messages::-webkit-scrollbar-thumb{
+  background:var(--border);border-radius:3px;
+}
+.msg{
+  font-size:13px;line-height:1.6;
+  padding:4px 8px;border-radius:var(--r);
+  transition:background .1s;
+}
+.msg:hover{background:var(--bg-hover)}
+.msg .ts{
+  color:var(--text-3);font-size:11px;
+  margin-right:8px;
+  font-variant-numeric:tabular-nums;
+}
+.msg .sender{
+  font-weight:600;color:var(--accent);
+  margin-right:6px;
+}
+.msg .tag{
+  font-size:10px;font-weight:600;
+  padding:2px 6px;border-radius:4px;
+  margin-right:6px;text-transform:uppercase;
+  letter-spacing:.03em;vertical-align:1px;
+}
+.tag-claim{
+  background:rgba(245,158,11,.15);color:var(--orange);
+}
+.tag-status{
+  background:rgba(59,130,246,.15);color:var(--accent);
+}
+.tag-request{
+  background:rgba(168,85,247,.15);color:var(--purple);
+}
+.tag-alert{
+  background:rgba(239,68,68,.15);color:var(--red);
+}
+.tag-sync{
+  background:rgba(16,185,129,.15);color:var(--emerald);
+}
+.members-bar{
+  padding:10px 20px;
+  border-top:1px solid var(--border);
+  background:var(--bg-1);
+  display:flex;align-items:center;gap:4px;
+  flex-wrap:wrap;
+}
+.members-bar .lbl{
+  font-size:11px;color:var(--text-3);
+  margin-right:8px;font-weight:500;
+}
+.member{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:12px;color:var(--text-2);
+  padding:3px 8px;border-radius:var(--r);
+  background:var(--bg-2);margin:2px;
+}
+.dot{width:6px;height:6px;border-radius:50%}
+.dot-online{background:var(--green)}
+.dot-offline{background:var(--text-3)}
+.input-bar{
+  padding:12px 20px 16px;display:flex;gap:8px;
+}
+.input-bar input{
+  flex:1;background:var(--bg-1);
+  border:1px solid var(--border);
+  border-radius:var(--r);padding:10px 14px;
+  color:var(--text);font-size:13px;outline:none;
+  transition:border-color .2s,box-shadow .2s;
+}
+.input-bar input:focus{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-s);
+}
+.input-bar input::placeholder{color:var(--text-3)}
+.input-bar button{
+  background:var(--accent);color:#fff;
+  border:none;border-radius:var(--r);
+  padding:10px 20px;cursor:pointer;
+  font-size:13px;font-weight:500;
+  transition:background .15s,transform .1s;
+}
+.input-bar button:hover{background:var(--accent-h)}
+.input-bar button:active{transform:scale(.97)}
+.input-bar button:disabled{
+  opacity:.4;cursor:not-allowed;transform:none;
+}
+.empty{
+  color:var(--text-3);text-align:center;
+  padding:60px 20px;font-size:13px;line-height:1.6;
+}
+.empty-icon{font-size:32px;margin-bottom:8px;opacity:.5}
+@media(max-width:700px){
+  .sidebar{
+    position:fixed;left:-280px;top:52px;
+    bottom:0;z-index:10;width:280px;
+    transition:left .2s ease;
+  }
+  .sidebar.open{left:0}
+  .menu-btn{display:block !important}
   .msg{font-size:12px}
   .input-bar input{font-size:16px}
 }
+.menu-btn{
+  display:none;background:none;border:none;
+  color:var(--text-2);cursor:pointer;
+  padding:4px;border-radius:4px;
+}
+.menu-btn:hover{background:var(--bg-hover)}
+.sidebar-actions{padding:8px;border-top:1px solid var(--border)}
+.btn-create{
+  width:100%;padding:8px 12px;
+  background:var(--bg-2);color:var(--text-2);
+  border:1px dashed var(--border);
+  border-radius:var(--r);cursor:pointer;
+  font-size:12px;font-weight:500;
+  transition:all .15s;
+}
+.btn-create:hover{
+  background:var(--bg-hover);color:var(--text);
+  border-color:var(--accent);
+}
+.btn-share{
+  background:none;border:1px solid var(--border);
+  color:var(--text-2);border-radius:var(--r);
+  padding:5px 10px;cursor:pointer;font-size:11px;
+  font-weight:500;transition:all .15s;
+}
+.btn-share:hover{
+  background:var(--accent-s);color:var(--accent);
+  border-color:var(--accent);
+}
+.modal-bg{
+  position:fixed;inset:0;background:rgba(0,0,0,.6);
+  display:flex;align-items:center;
+  justify-content:center;z-index:100;
+}
+.modal{
+  background:var(--bg-1);border:1px solid var(--border);
+  border-radius:12px;padding:24px;width:420px;
+  max-width:90vw;
+}
+.modal h3{font-size:15px;margin-bottom:16px}
+.modal input{
+  width:100%;background:var(--bg-0);
+  border:1px solid var(--border);
+  border-radius:var(--r);padding:10px 14px;
+  color:var(--text);font-size:13px;
+  outline:none;margin-bottom:12px;
+}
+.modal input:focus{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-s);
+}
+.modal pre{
+  background:var(--bg-0);border:1px solid var(--border);
+  border-radius:var(--r);padding:12px;
+  font-size:12px;color:var(--text-2);
+  overflow-x:auto;margin-bottom:12px;
+  white-space:pre-wrap;word-break:break-all;
+}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end}
+.modal-btns button{
+  padding:8px 16px;border-radius:var(--r);
+  font-size:13px;font-weight:500;cursor:pointer;
+  border:none;transition:all .15s;
+}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-h)}
+.btn-secondary{
+  background:var(--bg-2);color:var(--text-2);
+  border:1px solid var(--border) !important;
+}
+.btn-secondary:hover{background:var(--bg-hover)}
+.copied{color:var(--green) !important}
 </style>
 </head>
 <body>
 <header>
-  <h1>murmur</h1>
-  <span class="status" id="status">connecting...</span>
+  <button class="menu-btn" onclick="toggleSidebar()">
+    <svg width="18" height="18" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M3 12h18M3 6h18M3 18h18"/>
+    </svg>
+  </button>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" stroke-width="2">
+      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2
+        2 0 012-2h14a2 2 0 012 2z"/>
+    </svg>
+    murmur
+  </div>
+  <div class="conn" id="status">
+    <span class="conn-dot conn-err" id="connDot"></span>
+    <span id="connText">connecting</span>
+  </div>
 </header>
 <div class="container">
-  <div class="sidebar">
-    <h3>Rooms</h3>
-    <div id="rooms"><div class="empty">Loading...</div></div>
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-hdr">Rooms</div>
+    <div class="rooms-list" id="rooms">
+      <div class="empty">Loading...</div>
+    </div>
+    <div class="sidebar-actions">
+      <button class="btn-create" onclick="showCreate()">
+        + Create Room
+      </button>
+    </div>
   </div>
   <div class="main">
-    <div class="messages" id="messages">
-      <div class="empty">Select a room to view messages</div>
+    <div class="room-hdr" id="roomHdr" style="display:none">
+      <span class="rt" id="roomTitle"></span>
+      <button class="btn-share" id="shareBtn"
+        onclick="showShare()" style="display:none">
+        Share
+      </button>
+      <span class="rm" id="roomMeta"></span>
     </div>
-    <div class="members" id="members"></div>
+    <div class="messages" id="messages">
+      <div class="empty">
+        <div class="empty-icon">&#x1f4ac;</div>
+        Select a room to start
+      </div>
+    </div>
+    <div class="members-bar" id="members"
+      style="display:none"></div>
     <div class="input-bar">
-      <input id="msgInput" placeholder="Type a message..." disabled>
-      <button id="sendBtn" onclick="sendMsg()" disabled>Send</button>
+      <input id="msgInput"
+        placeholder="Type a message..." disabled>
+      <button id="sendBtn" onclick="sendMsg()"
+        disabled>Send</button>
     </div>
   </div>
 </div>
+<div id="modalRoot"></div>
 <script>
 const API=location.origin;
 const P=new URLSearchParams(location.search);
 const TOKEN=P.get('token')||'';
 const NAME=P.get('name')||'web-user';
-const H={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
+const H={
+  'Authorization':'Bearer '+TOKEN,
+  'Content-Type':'application/json'
+};
 let currentRoom=null,sse=null;
+const unread={};
 function esc(s){const d=document.createElement('div');d.textContent=String(s);return d.innerHTML}
+
+function toggleSidebar(){
+  document.getElementById('sidebar').classList.toggle('open');
+}
 
 async function loadRooms(){
   try{
     const r=await fetch(API+'/rooms',{headers:H});
-    if(!r.ok){document.getElementById('status').textContent='auth failed';return}
+    if(!r.ok){setConn(false);return}
     const rooms=await r.json();
-    document.getElementById('status').textContent='connected';
+    setConn(true);
     const el=document.getElementById('rooms');
-    if(!rooms.length){el.innerHTML='<div class="empty">No rooms</div>';return}
-    el.innerHTML=rooms.map(rm=>'<div class="room-item" onclick="selectRoom(\''+
-      esc(rm.name)+'\')">'+esc(rm.name)+'<span class="count">'+
-      esc(rm.members.length)+'</span></div>').join('');
-    if(currentRoom)document.querySelectorAll('.room-item').forEach(e=>{
-      if(e.textContent.startsWith(currentRoom))e.classList.add('active');
-    });
-  }catch(e){document.getElementById('status').textContent='offline'}
+    if(!rooms.length){
+      el.innerHTML='<div class="empty">No rooms yet</div>';
+      return;
+    }
+    el.innerHTML=rooms.map(rm=>{
+      const u=unread[rm.name]||0;
+      const badge=u
+        ?'<span class="unread">'+esc(u)+'</span>'
+        :'<span class="cnt">'+esc(rm.members.length)+'</span>';
+      const act=rm.name===currentRoom?' active':'';
+      return '<div class="room-item'+act
+        +'" onclick="selectRoom(\''+esc(rm.name)+'\')">'+
+        '<span class="ri">#</span>'+
+        '<span class="rn">'+esc(rm.name)+'</span>'+
+        badge+'</div>';
+    }).join('');
+  }catch(e){setConn(false)}
 }
 
 async function selectRoom(name){
   currentRoom=name;
-  document.querySelectorAll('.room-item').forEach(e=>{
-    e.classList.toggle('active',e.textContent.startsWith(name));
-  });
+  unread[name]=0;
+  document.getElementById('sidebar')
+    .classList.remove('open');
   document.getElementById('msgInput').disabled=false;
   document.getElementById('sendBtn').disabled=false;
+  loadRooms();
   try{
-    const r=await fetch(API+'/rooms/'+name+'/history?limit=100',{headers:H});
+    const r=await fetch(
+      API+'/rooms/'+name+'/history?limit=100',
+      {headers:H}
+    );
     const msgs=await r.json();
     const el=document.getElementById('messages');
     el.innerHTML=msgs.map(formatMsg).join('');
-    el.scrollTop=el.scrollHeight;
+    scrollToBottom();
   }catch(e){}
   try{
-    const r=await fetch(API+'/rooms/'+name,{headers:H});
+    const r=await fetch(
+      API+'/rooms/'+name,{headers:H}
+    );
     const room=await r.json();
+    const hdr=document.getElementById('roomHdr');
+    hdr.style.display='flex';
+    document.getElementById('roomTitle')
+      .textContent='# '+name;
+    document.getElementById('shareBtn')
+      .style.display='inline-block';
+    document.getElementById('roomMeta')
+      .textContent=room.members.length+' members';
     const pr=await fetch(API+'/presence',{headers:H});
     const presence=await pr.json();
-    const onlineSet=new Set(presence.filter(p=>p.online).map(p=>p.name));
-    document.getElementById('members').innerHTML='Members: '+
+    const online=new Set(
+      presence.filter(p=>p.online).map(p=>p.name)
+    );
+    const mb=document.getElementById('members');
+    mb.style.display='flex';
+    mb.innerHTML='<span class="lbl">Members</span>'+
       room.members.map(m=>{
-        const dot=onlineSet.has(m)?'dot-online':'dot-offline';
-        return '<span class="member"><span class="dot '+dot+'"></span>'+esc(m)+'</span>';
+        const d=online.has(m)?'dot-online':'dot-offline';
+        return '<span class="member">'+
+          '<span class="dot '+d+'"></span>'+
+          esc(m)+'</span>';
       }).join('');
   }catch(e){}
   connectSSE();
+}
+
+function setConn(ok){
+  document.getElementById('connDot').className=
+    'conn-dot '+(ok?'conn-ok':'conn-err');
+  document.getElementById('connText').textContent=
+    ok?'connected':'reconnecting';
+}
+
+function scrollToBottom(){
+  const el=document.getElementById('messages');
+  requestAnimationFrame(
+    ()=>{el.scrollTop=el.scrollHeight}
+  );
 }
 
 async function connectSSE(){
@@ -1490,14 +1979,21 @@ async function connectSSE(){
       body:JSON.stringify({recipient:NAME})});
     if(r.ok){const d=await r.json();sseToken=d.token;}
   }catch(e){}
-  sse=new EventSource(API+'/stream/'+NAME+'?token='+sseToken);
+  sse=new EventSource(
+    API+'/stream/'+NAME+'?token='+sseToken
+  );
+  sse.onopen=()=>setConn(true);
+  sse.onerror=()=>setConn(false);
   sse.addEventListener('message',e=>{
     try{
       const msg=JSON.parse(e.data);
       if(msg.room===currentRoom){
         const el=document.getElementById('messages');
         el.innerHTML+=formatMsg(msg);
-        el.scrollTop=el.scrollHeight;
+        scrollToBottom();
+      }else if(msg.room){
+        unread[msg.room]=(unread[msg.room]||0)+1;
+        loadRooms();
       }
     }catch(e){}
   });
@@ -1508,10 +2004,14 @@ function formatMsg(msg){
   const type=msg.message_type||'chat';
   const safeType=['claim','status','request','alert','sync'].includes(type)?type:'chat';
   let tag='';
-  if(safeType!=='chat')tag='<span class="tag tag-'+safeType+'">'+esc(type)+'</span>';
+  if(safeType!=='chat'){
+    tag='<span class="tag tag-'+safeType+'">'+
+      esc(type)+'</span>';
+  }
   return '<div class="msg"><span class="ts">'+ts+
-    '</span><span class="sender">'+esc(msg.from_name||'?')+
-    '</span>'+tag+esc(msg.content||'')+'</div>';
+    '</span><span class="sender">'+
+    esc(msg.from_name||'?')+'</span>'+
+    tag+esc(msg.content||'')+'</div>';
 }
 
 async function sendMsg(){
@@ -1519,37 +2019,118 @@ async function sendMsg(){
   const text=input.value.trim();
   if(!text||!currentRoom)return;
   input.value='';
-  try{await fetch(API+'/rooms/'+currentRoom+'/messages',{
-    method:'POST',headers:H,
-    body:JSON.stringify({from_name:NAME,content:text})
-  })}catch(e){}
+  try{await fetch(
+    API+'/rooms/'+currentRoom+'/messages',{
+      method:'POST',headers:H,
+      body:JSON.stringify({from_name:NAME,content:text})
+    }
+  )}catch(e){}
 }
 
-document.getElementById('msgInput').addEventListener('keydown',
-  e=>{if(e.key==='Enter')sendMsg()});
+document.getElementById('msgInput').addEventListener(
+  'keydown',e=>{if(e.key==='Enter')sendMsg()}
+);
 
 async function refreshPresence(){
   if(!currentRoom)return;
   try{
-    const r=await fetch(API+'/rooms/'+currentRoom,{headers:H});
+    const r=await fetch(
+      API+'/rooms/'+currentRoom,{headers:H}
+    );
     const room=await r.json();
     const pr=await fetch(API+'/presence',{headers:H});
     const presence=await pr.json();
-    const onlineSet=new Set(presence.filter(p=>p.online).map(p=>p.name));
-    document.getElementById('members').innerHTML='Members: '+
+    const online=new Set(
+      presence.filter(p=>p.online).map(p=>p.name)
+    );
+    const mb=document.getElementById('members');
+    mb.innerHTML='<span class="lbl">Members</span>'+
       room.members.map(m=>{
-        const dot=onlineSet.has(m)?'dot-online':'dot-offline';
-        return '<span class="member"><span class="dot '+dot+'"></span>'+esc(m)+'</span>';
+        const d=online.has(m)?'dot-online':'dot-offline';
+        return '<span class="member">'+
+          '<span class="dot '+d+'"></span>'+
+          esc(m)+'</span>';
       }).join('');
   }catch(e){}
 }
+function closeModal(){
+  document.getElementById('modalRoot').innerHTML='';
+}
+
+function showCreate(){
+  const m=document.getElementById('modalRoot');
+  m.innerHTML='<div class="modal-bg" onclick="'+
+    'if(event.target===this)closeModal()">'+
+    '<div class="modal"><h3>Create Room</h3>'+
+    '<input id="newRoomName" placeholder="room-name"'+
+    ' onkeydown="if(event.key===\\'Enter\\')createRoom()">'+
+    '<div class="modal-btns">'+
+    '<button class="btn-secondary" onclick="closeModal()">'+
+    'Cancel</button>'+
+    '<button class="btn-primary" onclick="createRoom()">'+
+    'Create</button></div></div></div>';
+  document.getElementById('newRoomName').focus();
+}
+
+async function createRoom(){
+  const input=document.getElementById('newRoomName');
+  const name=input.value.trim().toLowerCase()
+    .replace(/[^a-z0-9-]/g,'-');
+  if(!name)return;
+  try{
+    await fetch(API+'/rooms',{
+      method:'POST',headers:H,
+      body:JSON.stringify({name:name})
+    });
+    closeModal();
+    await loadRooms();
+    selectRoom(name);
+  }catch(e){}
+}
+
+function showShare(){
+  if(!currentRoom)return;
+  const cmd='murmur join --name <agent-name>'+
+    ' --relay '+location.origin+
+    ' --secret <your-secret>'+
+    ' --room '+currentRoom;
+  const m=document.getElementById('modalRoot');
+  m.innerHTML='<div class="modal-bg" onclick="'+
+    'if(event.target===this)closeModal()">'+
+    '<div class="modal"><h3>Share Room</h3>'+
+    '<p style="font-size:12px;color:var(--text-2);'+
+    'margin-bottom:12px">'+
+    'Copy this command to add an agent:</p>'+
+    '<pre id="shareCmd">'+cmd+'</pre>'+
+    '<div class="modal-btns">'+
+    '<button class="btn-secondary" onclick="closeModal()">'+
+    'Close</button>'+
+    '<button class="btn-primary" id="copyBtn"'+
+    ' onclick="copyShare()">'+
+    'Copy</button></div></div></div>';
+}
+
+async function copyShare(){
+  const cmd=document.getElementById('shareCmd')
+    .textContent;
+  try{
+    await navigator.clipboard.writeText(cmd);
+    const btn=document.getElementById('copyBtn');
+    btn.textContent='Copied!';
+    btn.classList.add('copied');
+    setTimeout(()=>{
+      btn.textContent='Copy';
+      btn.classList.remove('copied');
+    },2000);
+  }catch(e){}
+}
+
 loadRooms();
 setInterval(()=>{loadRooms();refreshPresence()},30000);
 </script>
 </body>
 </html>
 """
-
 
 def main() -> None:
     """Run the relay server as a CLI entrypoint."""

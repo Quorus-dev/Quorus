@@ -166,3 +166,365 @@ def test_cli_doctor_all_pass(capsys):
 
     captured = capsys.readouterr()
     assert "checks passed" in captured.out
+
+
+# ── export command tests ────────────────────────────────────────────────
+
+_SAMPLE_MSGS = [
+    {
+        "id": "m1",
+        "from_name": "alice",
+        "room": "dev",
+        "content": "hello world",
+        "message_type": "chat",
+        "timestamp": "2026-04-11T08:00:00Z",
+    },
+    {
+        "id": "m2",
+        "from_name": "bob",
+        "room": "dev",
+        "content": "claiming task",
+        "message_type": "claim",
+        "timestamp": "2026-04-11T08:01:00Z",
+    },
+]
+
+
+async def test_export_json_stdout(capsys):
+    from murmur.cli import _export
+
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="json")
+
+    captured = capsys.readouterr()
+    import json
+    data = json.loads(captured.out)
+    assert len(data) == 2
+    assert data[0]["from_name"] == "alice"
+
+
+async def test_export_md_stdout(capsys):
+    from murmur.cli import _export
+
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="md")
+
+    captured = capsys.readouterr()
+    assert "# Room: dev" in captured.out
+    assert "**alice**" in captured.out
+    assert "**[claim]**" in captured.out
+
+
+async def test_export_json_to_file(tmp_path):
+    from murmur.cli import _export
+
+    out_file = str(tmp_path / "export.json")
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="json", output=out_file)
+
+    import json
+    data = json.loads((tmp_path / "export.json").read_text())
+    assert len(data) == 2
+
+
+async def test_export_md_to_file(tmp_path):
+    from murmur.cli import _export
+
+    out_file = str(tmp_path / "export.md")
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="md", output=out_file)
+
+    content = (tmp_path / "export.md").read_text()
+    assert "# Room: dev" in content
+    assert "**bob**" in content
+
+
+async def test_export_empty_room(capsys):
+    from murmur.cli import _export
+
+    client = _mock_client(200, [])
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("empty-room", fmt="json")
+
+    captured = capsys.readouterr()
+    assert "No messages" in captured.out
+
+
+async def test_export_room_not_found(capsys):
+    import httpx
+    from murmur.cli import _export
+
+    resp = MagicMock()
+    resp.status_code = 404
+    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not Found", request=MagicMock(), response=resp
+    )
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    client.aclose = AsyncMock()
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("ghost-room", fmt="json")
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out
+
+
+async def test_export_unknown_format(capsys):
+    from murmur.cli import _export
+
+    client = _mock_client(200, _SAMPLE_MSGS)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _export("dev", fmt="csv")
+
+    captured = capsys.readouterr()
+    assert "Unknown format" in captured.out
+
+
+# ── add-agent wizard tests ──────────────────────────────────────────────
+
+def test_add_agent_creates_workspace(tmp_path, monkeypatch):
+    from murmur.cli import _cmd_add_agent
+
+    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://test:8080")
+    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "test-secret")
+
+    # Redirect workspace to tmp_path
+    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
+
+    # Mock rich prompts to provide answers
+    call_count = {"n": 0}
+    answers = ["test-bot", "dev", "sonnet", "high"]
+
+    def mock_ask(prompt, **kwargs):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        if idx < len(answers):
+            return answers[idx]
+        return kwargs.get("default", "")
+
+    def mock_confirm(prompt, **kwargs):
+        return True
+
+    # Mock _list_rooms and _auto_join
+    mock_rooms = [{"name": "dev", "id": "r1", "members": []}]
+    client = _mock_client(200, {})
+
+    with patch("murmur.cli.Prompt.ask", side_effect=mock_ask), \
+         patch("murmur.cli.Confirm.ask", side_effect=mock_confirm), \
+         patch("murmur.cli.asyncio.run") as mock_run, \
+         patch("murmur.cli.subprocess.run"), \
+         patch("murmur.cli.sys.platform", "darwin"):
+        # First asyncio.run call is _list_rooms, second is _auto_join
+        mock_run.side_effect = [mock_rooms, None]
+        _cmd_add_agent(MagicMock())
+
+    workspace = tmp_path / "murmur-agents" / "test-bot"
+    assert workspace.exists()
+    assert (workspace / ".mcp.json").exists()
+    assert (workspace / "CLAUDE.md").exists()
+    assert (workspace / ".claude" / "settings.json").exists()
+
+    import json
+    claude_md = (workspace / "CLAUDE.md").read_text()
+    assert "test-bot" in claude_md
+    assert "dev" in claude_md
+
+    mcp = json.loads((workspace / ".mcp.json").read_text())
+    assert mcp["mcpServers"]["murmur"]["env"]["INSTANCE_NAME"] == "test-bot"
+
+
+# ── connect command tests ────────────────────────────────────────────────
+
+def test_connect_codex(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "codex"
+    args.room = "dev"
+    args.name = "codex-bot"
+
+    client = _mock_client(200, {})
+    with patch("murmur.cli._get_client", return_value=client), \
+         patch("murmur.cli.asyncio.run"):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Codex Agent Setup" in captured.out
+    assert "codex-bot" in captured.out
+    assert "/messages/codex-bot" in captured.out
+
+
+def test_connect_cursor(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "cursor"
+    args.room = "dev"
+    args.name = "cursor-bot"
+
+    client = _mock_client(200, {})
+    with patch("murmur.cli._get_client", return_value=client), \
+         patch("murmur.cli.asyncio.run"):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Cursor Agent Setup" in captured.out
+    assert "mcpServers" in captured.out
+    assert "cursor-bot" in captured.out
+
+
+def test_connect_ollama(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "ollama"
+    args.room = "dev"
+    args.name = "llama-bot"
+
+    client = _mock_client(200, {})
+    with patch("murmur.cli._get_client", return_value=client), \
+         patch("murmur.cli.asyncio.run"):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Ollama Agent Setup" in captured.out
+    assert "llama-bot" in captured.out
+    assert "ollama_agent.py" in captured.out
+
+
+def test_connect_claude(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "claude"
+    args.room = "dev"
+    args.name = "claude-bot"
+
+    client = _mock_client(200, {})
+    with patch("murmur.cli._get_client", return_value=client), \
+         patch("murmur.cli.asyncio.run"):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Claude Code Agent Setup" in captured.out
+    assert "murmur add-agent" in captured.out
+
+
+# ── search command tests ─────────────────────────────────────────────────
+
+async def test_search_by_keyword(capsys):
+    from murmur.cli import _search
+
+    results = [_SAMPLE_MSGS[0]]  # only "hello world"
+    client = _mock_client(200, results)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("dev", query="hello")
+
+    captured = capsys.readouterr()
+    assert "alice" in captured.out
+    assert "1 matches" in captured.out
+
+
+async def test_search_by_sender(capsys):
+    from murmur.cli import _search
+
+    results = [_SAMPLE_MSGS[1]]  # only bob
+    client = _mock_client(200, results)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("dev", sender="bob")
+
+    captured = capsys.readouterr()
+    assert "bob" in captured.out
+
+
+async def test_search_by_message_type(capsys):
+    from murmur.cli import _search
+
+    results = [_SAMPLE_MSGS[1]]  # claim type
+    client = _mock_client(200, results)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("dev", message_type="claim")
+
+    captured = capsys.readouterr()
+    assert "claim" in captured.out
+
+
+async def test_search_no_results(capsys):
+    from murmur.cli import _search
+
+    client = _mock_client(200, [])
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("dev", query="nonexistent")
+
+    captured = capsys.readouterr()
+    assert "No matching" in captured.out
+
+
+async def test_search_room_not_found(capsys):
+    import httpx
+    from murmur.cli import _search
+
+    resp = MagicMock()
+    resp.status_code = 404
+    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not Found", request=MagicMock(), response=resp
+    )
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    client.aclose = AsyncMock()
+    with patch("murmur.cli._get_client", return_value=client):
+        await _search("ghost", query="test")
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out
+
+
+def test_connect_unknown_platform(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "gpt"
+    args.room = "dev"
+    args.name = "gpt-bot"
+
+    _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Unknown platform" in captured.out
+
+
+def test_add_agent_cancelled(monkeypatch, capsys):
+    from murmur.cli import _cmd_add_agent
+
+    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://test:8080")
+    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "test-secret")
+
+    answers = ["cancel-bot", "dev", "sonnet", "high"]
+    call_count = {"n": 0}
+
+    def mock_ask(prompt, **kwargs):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        if idx < len(answers):
+            return answers[idx]
+        return kwargs.get("default", "")
+
+    confirm_count = {"n": 0}
+
+    def mock_confirm(prompt, **kwargs):
+        idx = confirm_count["n"]
+        confirm_count["n"] += 1
+        # First confirm (Launch agent?) — say no
+        return False
+
+    with patch("murmur.cli.Prompt.ask", side_effect=mock_ask), \
+         patch("murmur.cli.Confirm.ask", side_effect=mock_confirm), \
+         patch("murmur.cli.asyncio.run", return_value=[]):
+        _cmd_add_agent(MagicMock())
+
+    captured = capsys.readouterr()
+    assert "Cancelled" in captured.out

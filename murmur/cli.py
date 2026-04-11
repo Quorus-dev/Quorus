@@ -10,6 +10,7 @@ from pathlib import Path
 
 import httpx
 from rich.console import Console
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from murmur.config import load_config
@@ -452,6 +453,60 @@ async def _history(room_name: str, limit: int = 50):
         await client.aclose()
 
 
+async def _export(
+    room_name: str,
+    fmt: str = "json",
+    output: str | None = None,
+    limit: int = 1000,
+) -> None:
+    """Export room history as JSON or Markdown."""
+    client = _get_client()
+    try:
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_name}/history",
+            params={"limit": limit},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        messages = resp.json()
+        if not messages:
+            console.print(f"[dim]No messages in {room_name}[/dim]")
+            return
+
+        if fmt == "json":
+            body = json.dumps(messages, indent=2)
+        elif fmt == "md":
+            lines = [f"# Room: {room_name}", ""]
+            for msg in messages:
+                ts = msg.get("timestamp", "")[:19]
+                sender = msg.get("from_name", "?")
+                msg_type = msg.get("message_type", "chat")
+                content = msg.get("content", "")
+                tag = f" **[{msg_type}]**" if msg_type != "chat" else ""
+                lines.append(f"- `{ts}` **{sender}**{tag} {content}")
+            body = "\n".join(lines) + "\n"
+        else:
+            console.print(f"[red]Unknown format: {fmt} (use json or md)[/red]")
+            return
+
+        if output:
+            Path(output).write_text(body, encoding="utf-8")
+            console.print(
+                f"[green]Exported {len(messages)} messages → {output}[/green]"
+            )
+        else:
+            console.print(body, highlight=False, markup=False)
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
 async def _ps() -> None:
     """Show all agents with online/offline status from heartbeat presence."""
     client = _get_client()
@@ -534,6 +589,350 @@ def _cmd_ps(args):
 
 def _cmd_history(args):
     asyncio.run(_history(args.room, args.limit))
+
+
+def _cmd_export(args):
+    asyncio.run(
+        _export(args.room, args.format, args.output, args.limit)
+    )
+
+
+async def _search(
+    room_name: str,
+    query: str = "",
+    sender: str = "",
+    message_type: str = "",
+    limit: int = 50,
+) -> None:
+    """Search room history by keyword, sender, or message type."""
+    client = _get_client()
+    try:
+        params: dict[str, str | int] = {"limit": limit}
+        if query:
+            params["q"] = query
+        if sender:
+            params["sender"] = sender
+        if message_type:
+            params["message_type"] = message_type
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_name}/search",
+            params=params,
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        messages = resp.json()
+        if not messages:
+            console.print("[dim]No matching messages[/dim]")
+            return
+        console.print(
+            f"[bold]Search results in {room_name}[/bold] "
+            f"({len(messages)} matches)\n"
+        )
+        for msg in messages:
+            console.print(_format_chat_msg(msg))
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_search(args):
+    asyncio.run(
+        _search(
+            args.room, args.query, args.sender,
+            args.type, args.limit,
+        )
+    )
+
+
+def _cmd_connect(args):
+    """Generate platform-specific onboarding for an agent type."""
+    platform = args.platform
+    room = args.room
+    name = args.name
+    relay_url = RELAY_URL
+    secret = RELAY_SECRET
+    murmur_dir = str(Path(__file__).resolve().parent.parent)
+
+    generators = {
+        "codex": _connect_codex,
+        "cursor": _connect_cursor,
+        "ollama": _connect_ollama,
+        "claude": _connect_claude,
+    }
+
+    if platform not in generators:
+        console.print(f"[red]Unknown platform: {platform}[/red]")
+        console.print(
+            f"[dim]Supported: {', '.join(generators)}[/dim]"
+        )
+        return
+
+    # Auto-join room
+    async def _auto_join():
+        client = _get_client()
+        try:
+            resp = await client.post(
+                f"{relay_url}/rooms/{room}/join",
+                json={"participant": name},
+                headers=_auth_headers(),
+            )
+            resp.raise_for_status()
+        except Exception:
+            pass
+        finally:
+            await client.aclose()
+
+    asyncio.run(_auto_join())
+    generators[platform](room, name, relay_url, secret, murmur_dir)
+
+
+def _connect_codex(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generate Codex onboarding with curl commands."""
+    console.print("\n[bold green]Codex Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]")
+    console.print(f"  Relay:  [cyan]{relay_url}[/cyan]\n")
+
+    console.print("[bold]1. Add to your Codex system prompt:[/bold]\n")
+
+    system_prompt = f"""You are {name} in a Murmur dev room. Use curl to communicate:
+
+# Check messages
+curl -s "{relay_url}/messages/{name}" -H "Authorization: Bearer {secret}"
+
+# Send to room
+curl -s -X POST "{relay_url}/rooms/{room}/messages" \\
+  -H "Authorization: Bearer {secret}" -H "Content-Type: application/json" \\
+  -d '{{"from_name":"{name}","content":"your message","message_type":"chat"}}'
+
+# Join room (first time)
+curl -s -X POST "{relay_url}/rooms/{room}/join" \\
+  -H "Authorization: Bearer {secret}" -H "Content-Type: application/json" \\
+  -d '{{"participant":"{name}"}}'
+
+Check messages after every task. Claim work with CLAIM:. Post STATUS: when done."""
+
+    console.print(system_prompt, highlight=False, markup=False)
+
+    console.print("\n[bold]2. Or use the Python client:[/bold]\n")
+    python_snippet = f"""\
+from murmur.integrations.http_agent import MurmurClient
+
+client = MurmurClient("{relay_url}", "{secret}", "{name}")
+client.join("{room}")
+messages = client.receive()
+client.send("{room}", "STATUS: online", message_type="status")"""
+
+    console.print(python_snippet, highlight=False, markup=False)
+    console.print(f"\n[green]{name} joined room '{room}'. Ready to go.[/green]")
+
+
+def _connect_cursor(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generate Cursor MCP config."""
+    console.print("\n[bold green]Cursor Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]\n")
+
+    mcp_config = json.dumps({
+        "mcpServers": {
+            "murmur": {
+                "command": "uv",
+                "args": [
+                    "run", "--directory", murmur_dir,
+                    "python", f"{murmur_dir}/murmur/mcp.py",
+                ],
+                "env": {
+                    "INSTANCE_NAME": name,
+                    "RELAY_URL": relay_url,
+                    "RELAY_SECRET": secret,
+                },
+            }
+        }
+    }, indent=2)
+
+    console.print("[bold]1. Add to .cursor/mcp.json:[/bold]\n")
+    console.print(mcp_config, highlight=False, markup=False)
+
+    console.print("\n[bold]2. Add to .cursorrules:[/bold]\n")
+    rules = f"""\
+You are {name} in the {room} Murmur room. Use MCP tools:
+- check_messages() — read new messages
+- send_room_message(room_id="{room}", content="...", message_type="chat")
+- list_rooms() — see available rooms
+
+Check messages after every task. Claim with CLAIM:. Post STATUS: when done."""
+
+    console.print(rules, highlight=False, markup=False)
+    console.print(f"\n[green]{name} joined room '{room}'. Ready to go.[/green]")
+
+
+def _connect_ollama(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generate Ollama agent script."""
+    console.print("\n[bold green]Ollama Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]\n")
+
+    console.print("[bold]Save this as ollama_agent.py and run it:[/bold]\n")
+
+    script = f"""\
+import ollama
+from murmur.integrations.http_agent import MurmurClient
+
+murmur = MurmurClient("{relay_url}", "{secret}", "{name}")
+murmur.join("{room}")
+murmur.send("{room}", "{name} online (ollama). Ready for tasks.")
+
+while True:
+    messages = murmur.receive(wait=30)
+    if not messages:
+        continue
+
+    context = "\\n".join(f"{{m['from_name']}}: {{m['content']}}" for m in messages)
+
+    response = ollama.chat(
+        model="llama3.1",
+        messages=[
+            {{"role": "system", "content": (
+                "You are {name} in a Murmur dev room. "
+                "Respond to messages. Claim tasks with CLAIM:. "
+                "Post status with STATUS:. Keep responses short."
+            )}},
+            {{"role": "user", "content": context}},
+        ],
+    )
+
+    murmur.send("{room}", response["message"]["content"])"""
+
+    console.print(script, highlight=False, markup=False)
+
+    console.print("\n[bold]Install dependencies:[/bold]")
+    console.print("  pip install murmur-ai ollama", highlight=False, markup=False)
+    console.print(f"\n[green]{name} joined room '{room}'. Ready to go.[/green]")
+
+
+def _connect_claude(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generate Claude Code workspace setup."""
+    console.print("\n[bold green]Claude Code Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]\n")
+
+    console.print(
+        "[bold]Run this to create and launch the agent:[/bold]\n"
+    )
+    console.print(
+        f"  murmur add-agent",
+        highlight=False, markup=False,
+    )
+    console.print(
+        "\n[dim]Or use murmur spawn to skip the wizard:[/dim]\n"
+    )
+    console.print(
+        f"  murmur spawn {room} {name}",
+        highlight=False, markup=False,
+    )
+    console.print(f"\n[green]{name} joined room '{room}'. Ready to go.[/green]")
+
+
+async def _kick(room_name: str, participant: str) -> None:
+    """Kick a participant from a room (admin only)."""
+    client = _get_client()
+    try:
+        rooms_list = await _list_rooms_with_client(client)
+        room = next((r for r in rooms_list if r["name"] == room_name), None)
+        if not room:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+            return
+        resp = await client.post(
+            f"{RELAY_URL}/rooms/{room['id']}/kick",
+            json={"participant": participant, "requested_by": INSTANCE_NAME},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        console.print(f"[green]Kicked '{participant}' from {room_name}[/green]")
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        detail = e.response.json().get("detail", str(e.response.status_code))
+        console.print(f"[red]{detail}[/red]")
+    finally:
+        await client.aclose()
+
+
+async def _destroy(room_name: str) -> None:
+    """Destroy a room and its history (admin only)."""
+    client = _get_client()
+    try:
+        rooms_list = await _list_rooms_with_client(client)
+        room = next((r for r in rooms_list if r["name"] == room_name), None)
+        if not room:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+            return
+        resp = await client.request(
+            "DELETE",
+            f"{RELAY_URL}/rooms/{room['id']}",
+            json={"requested_by": INSTANCE_NAME},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        console.print(f"[green]Room '{room_name}' destroyed[/green]")
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        detail = e.response.json().get("detail", str(e.response.status_code))
+        console.print(f"[red]{detail}[/red]")
+    finally:
+        await client.aclose()
+
+
+async def _rename(room_name: str, new_name: str) -> None:
+    """Rename a room (admin only)."""
+    client = _get_client()
+    try:
+        rooms_list = await _list_rooms_with_client(client)
+        room = next((r for r in rooms_list if r["name"] == room_name), None)
+        if not room:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+            return
+        resp = await client.patch(
+            f"{RELAY_URL}/rooms/{room['id']}",
+            json={"new_name": new_name, "requested_by": INSTANCE_NAME},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        console.print(f"[green]Room renamed: {room_name} -> {new_name}[/green]")
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        detail = e.response.json().get("detail", str(e.response.status_code))
+        console.print(f"[red]{detail}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_kick(args):
+    asyncio.run(_kick(args.room, args.name))
+
+
+def _cmd_destroy(args):
+    asyncio.run(_destroy(args.room))
+
+
+def _cmd_rename(args):
+    asyncio.run(_rename(args.room, args.new_name))
 
 
 def _cmd_watch(args):
@@ -868,6 +1267,191 @@ You communicate ONLY through the room — never reply in terminal.
         console.print(f"[green]Launched {name} in new Terminal tab[/green]")
     else:
         console.print(f"[yellow]Run manually: cd {workspace} && claude[/yellow]")
+
+
+def _cmd_add_agent(args):
+    """Interactive wizard to create and launch an agent."""
+    console.print("\n[bold green]Murmur Add Agent Wizard[/bold green]\n")
+
+    # 1. Agent name
+    name = Prompt.ask("[bold]Agent name[/bold]", default="agent-1")
+
+    # 2. Room selection — list existing rooms or create new
+    try:
+        rooms = asyncio.run(_list_rooms())
+        room_names = [r["name"] for r in rooms]
+    except Exception:
+        rooms = []
+        room_names = []
+
+    if room_names:
+        console.print(f"\n[dim]Available rooms:[/dim] {', '.join(room_names)}")
+        room = Prompt.ask(
+            "[bold]Which room?[/bold]",
+            choices=[*room_names, "new"],
+            default=room_names[0],
+        )
+        if room == "new":
+            room = Prompt.ask("[bold]New room name[/bold]")
+            try:
+                asyncio.run(_create_room(room))
+                console.print(f"[green]Created room '{room}'[/green]")
+            except Exception:
+                console.print(
+                    f"[yellow]Could not create room '{room}'"
+                    " — it may already exist[/yellow]"
+                )
+    else:
+        room = Prompt.ask("[bold]Room name[/bold]", default="murmur-dev")
+
+    # 3. Model preference
+    model = Prompt.ask(
+        "[bold]Model preference[/bold]",
+        choices=["opus", "sonnet", "haiku"],
+        default="sonnet",
+    )
+
+    # 4. Effort level
+    effort = Prompt.ask(
+        "[bold]Effort level[/bold]",
+        choices=["low", "medium", "high"],
+        default="high",
+    )
+
+    # Summary and confirm
+    console.print("\n[bold]Summary:[/bold]")
+    console.print(f"  Name:   [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]")
+    console.print(f"  Model:  [cyan]{model}[/cyan]")
+    console.print(f"  Effort: [cyan]{effort}[/cyan]")
+
+    if not Confirm.ask("\n[bold]Launch agent?[/bold]", default=True):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+
+    # Build workspace using existing _spawn_agent infra
+    agents_dir = Path.home() / "murmur-agents"
+    workspace = agents_dir / name
+    murmur_dir = Path(__file__).resolve().parent
+
+    if workspace.exists():
+        if not Confirm.ask(
+            f"[yellow]Workspace {workspace} exists. Overwrite config?[/yellow]",
+            default=False,
+        ):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    # .mcp.json
+    mcp_config = {
+        "mcpServers": {
+            "murmur": {
+                "type": "stdio",
+                "command": "uv",
+                "args": [
+                    "run", "--directory", str(murmur_dir.parent),
+                    "python", str(murmur_dir / "mcp.py"),
+                ],
+                "env": {
+                    "INSTANCE_NAME": name,
+                    "RELAY_URL": RELAY_URL,
+                    "RELAY_SECRET": RELAY_SECRET,
+                },
+            }
+        }
+    }
+    (workspace / ".mcp.json").write_text(json.dumps(mcp_config, indent=2))
+
+    # .claude/ settings with model preference
+    claude_dir = workspace / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    settings = {
+        "permissions": {
+            "allow": [
+                "Bash(*)",
+                "Read(*)",
+                "Write(*)",
+                "Edit(*)",
+                "Glob(*)",
+                "Grep(*)",
+                "mcp__murmur__*",
+            ],
+            "deny": [],
+        }
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
+
+    # CLAUDE.md with model/effort hints
+    claude_md = f"""# Murmur Agent
+
+You are {name} in the {room} group chat. ALL communication goes through the room.
+
+## On Startup
+1. Call check_messages() immediately
+2. Call send_room_message(room_id="{room}", content="{name} online", message_type="status")
+3. Read any messages and respond
+
+## Config
+- Model: {model}
+- Effort: {effort}
+
+## Rules
+- Communicate ONLY through the room — never just reply in terminal
+- Call check_messages() after completing each task
+- Post STATUS after every commit
+- If stuck, post REQUEST to the room
+- Short messages — every token counts
+- Commit and push after every feature
+
+## Tools
+- check_messages() — read inbox
+- send_room_message(room_id="{room}", content="...", message_type="chat") — talk
+- list_rooms() — see rooms
+- All standard Claude Code tools (Read, Write, Edit, Bash, etc.)
+"""
+    (workspace / "CLAUDE.md").write_text(claude_md)
+
+    # Symlink to murmur source
+    murmur_link = workspace / "murmur"
+    if not murmur_link.exists():
+        murmur_link.symlink_to(murmur_dir.parent)
+
+    # Auto-join room
+    async def _auto_join():
+        client = _get_client()
+        try:
+            resp = await client.post(
+                f"{RELAY_URL}/rooms/{room}/join",
+                json={"participant": name},
+                headers=_auth_headers(),
+            )
+            resp.raise_for_status()
+        except Exception:
+            pass
+        finally:
+            await client.aclose()
+
+    asyncio.run(_auto_join())
+
+    console.print(f"\n[green]Workspace ready: {workspace}[/green]")
+
+    # Build claude launch command with model flag
+    model_flag = f"--model {model}" if model != "sonnet" else ""
+    claude_cmd = f"cd {workspace} && claude {model_flag}".strip()
+
+    # Launch in new terminal tab (macOS)
+    if sys.platform == "darwin":
+        applescript = (
+            f'tell application "Terminal" to do script "{claude_cmd}"'
+        )
+        subprocess.run(["osascript", "-e", applescript])
+        console.print(f"[bold green]{name} launched in new Terminal tab![/bold green]")
+    else:
+        console.print(f"[yellow]Run manually: {claude_cmd}[/yellow]")
+
+    console.print("[dim]Agent will auto-connect to the room on startup.[/dim]")
 
 
 def _cmd_spawn(args):
@@ -1326,6 +1910,37 @@ def main():
         "--limit", type=int, default=50, help="Max messages (default 50)"
     )
 
+    p_search = sub.add_parser(
+        "search", help="Search room history by keyword, sender, or type"
+    )
+    p_search.add_argument("room", help="Room name")
+    p_search.add_argument("query", nargs="?", default="", help="Search keyword")
+    p_search.add_argument(
+        "--sender", default="", help="Filter by sender name"
+    )
+    p_search.add_argument(
+        "--type", default="", help="Filter by message type (chat, claim, status, etc.)"
+    )
+    p_search.add_argument(
+        "--limit", type=int, default=50, help="Max results (default 50)"
+    )
+
+    p_export = sub.add_parser(
+        "export", help="Export room history as JSON or Markdown"
+    )
+    p_export.add_argument("room", help="Room name")
+    p_export.add_argument(
+        "--format", default="json", choices=["json", "md"],
+        help="Output format (default: json)"
+    )
+    p_export.add_argument(
+        "--output", "-o", default=None, help="Write to file instead of stdout"
+    )
+    p_export.add_argument(
+        "--limit", type=int, default=1000,
+        help="Max messages to export (default 1000)"
+    )
+
     sub.add_parser("ps", help="Show agent presence (online/offline)")
     sub.add_parser("status", help="Show relay health and stats")
 
@@ -1381,6 +1996,32 @@ def main():
     p_join.add_argument("--secret", required=True, help="Shared secret")
     p_join.add_argument("--room", required=True, help="Room to join")
 
+    p_kick = sub.add_parser("kick", help="Kick a participant from a room (admin)")
+    p_kick.add_argument("room", help="Room name")
+    p_kick.add_argument("name", help="Participant to kick")
+
+    p_destroy = sub.add_parser("destroy", help="Delete a room and its history (admin)")
+    p_destroy.add_argument("room", help="Room name")
+
+    p_rename = sub.add_parser("rename", help="Rename a room (admin)")
+    p_rename.add_argument("room", help="Current room name")
+    p_rename.add_argument("new_name", help="New room name")
+
+    sub.add_parser(
+        "add-agent", help="Interactive wizard to create and launch an agent"
+    )
+
+    p_connect = sub.add_parser(
+        "connect",
+        help="Generate setup for any agent platform (codex, cursor, ollama, claude)",
+    )
+    p_connect.add_argument(
+        "platform", choices=["codex", "cursor", "ollama", "claude"],
+        help="Agent platform",
+    )
+    p_connect.add_argument("room", help="Room name")
+    p_connect.add_argument("name", help="Agent name")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -1397,6 +2038,8 @@ def main():
         "dm": _cmd_dm,
         "watch": _cmd_watch,
         "history": _cmd_history,
+        "export": _cmd_export,
+        "search": _cmd_search,
         "chat": _cmd_chat,
         "ps": _cmd_ps,
         "status": _cmd_status,
@@ -1404,6 +2047,11 @@ def main():
         "version": _cmd_version,
         "logs": _cmd_logs,
         "join": _cmd_join,
+        "kick": _cmd_kick,
+        "destroy": _cmd_destroy,
+        "rename": _cmd_rename,
+        "add-agent": _cmd_add_agent,
+        "connect": _cmd_connect,
         "invite-link": _cmd_invite_link,
         "spawn": _cmd_spawn,
         "spawn-multiple": _cmd_spawn_multiple,

@@ -23,19 +23,19 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 **What's built:**
 
-| Module               | Lines | What                                                                                                                                                                                   |
-| -------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| murmur/relay.py      | ~900  | FastAPI relay: rooms, fan-out, SSE, history, presence, rate limiting, peek, web dashboard (building), invite pages (building)                                                          |
-| murmur/mcp.py        | ~600  | MCP server: 8 tools, SSE listener, auto-poll, heartbeat, lazy poll mode                                                                                                                |
-| murmur/cli.py        | ~550  | 20 CLI commands: init, relay, rooms, create, invite, join, say, dm, watch, chat, history, ps, status, invite-link, spawn, spawn-multiple, quickstart, watch-daemon, hackathon, members |
-| murmur/config.py     | ~80   | Config loading (env > file > defaults), poll mode support                                                                                                                              |
-| murmur/analytics.py  | ~90   | Terminal dashboard                                                                                                                                                                     |
-| murmur/integrations/ | ~200  | Universal HTTP client (Python + TypeScript)                                                                                                                                            |
-| tests/               | ~1400 | 134 tests: relay, mcp, config, integration, rooms, stress, hackathon readiness                                                                                                         |
+| Module               | Lines | What                                                                                                                                              |
+| -------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| murmur/relay.py      | ~1200 | FastAPI relay: rooms, fan-out, SSE, history, presence, rate limiting, peek, premium web dashboard, invite pages, health/detailed, admin endpoints |
+| murmur/mcp.py        | ~650  | MCP server: 10+ tools, SSE listener, auto-poll, heartbeat, lazy poll mode                                                                         |
+| murmur/cli.py        | ~800  | 25+ CLI commands: init, relay, create, spawn, chat, watch, ps, doctor, hackathon, export, add-agent, kick, destroy, rename, version, logs, etc.   |
+| murmur/config.py     | ~80   | Config loading (env > file > defaults), poll mode support                                                                                         |
+| murmur/analytics.py  | ~90   | Terminal dashboard                                                                                                                                |
+| murmur/integrations/ | ~200  | Universal HTTP client (Python + TypeScript)                                                                                                       |
+| tests/               | ~5000 | 461 tests: relay, mcp, config, integration, rooms, stress, security, hackathon, CLI, edge cases                                                   |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
-**20 CLI commands available via `murmur <command>`**
+**25+ CLI commands available via `murmur <command>`**
 
 **Key features:**
 
@@ -43,24 +43,28 @@ murmur init <your-name> --relay <url> --secret <secret>
 - SSE push delivery (real-time, replaces polling)
 - Message types: chat, claim, status, request, alert, sync
 - Room history (persistent, not cleared on read)
-- Agent presence/heartbeat system
+- Agent presence/heartbeat system with murmur ps
 - Per-sender rate limiting
 - Universal HTTP API (any agent platform can connect)
 - Python + TypeScript client libraries
 - murmur spawn/spawn-multiple (auto-launch agents)
+- murmur add-agent (interactive setup wizard)
 - murmur quickstart (one-command demo)
 - murmur hackathon (two-room hackathon setup)
+- murmur doctor (diagnose setup issues)
+- murmur export (room history as JSON/markdown)
+- murmur kick/destroy/rename (room admin)
+- murmur version, murmur logs
 - Docker + docker-compose + Railway/Render deploy configs
 - Peek endpoint for non-destructive inbox checks
 - Watcher daemon for file-based notifications
 - Interactive chat mode (murmur chat)
 - OpenAPI docs at /docs
-- Web dashboard at GET / (live messages, room list, send from browser)
-- Discord-style invite pages at GET /invite/{room} (join from browser, no install)
+- Premium web dashboard at GET / (live SSE, presence dots, unread badges, auto-scroll)
+- Discord-style invite pages at GET /invite/{room}
 - Integration guides for Codex, Cursor, Gemini, Ollama
-- Launch content (Show HN draft, X/Twitter thread draft)
 
-**Tests:** 148 passing, all green. Stress tested: 281 msg/s, p50=3.6ms. Hackathon dry run: 10/10 checks pass. PyPI publish ready.
+**Tests:** 461 passing, all green. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms. PyPI publish ready.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
