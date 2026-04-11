@@ -380,6 +380,10 @@ async def lifespan(app):
     if hasattr(app.state, "notification_service"):
         await app.state.notification_service.start()
 
+    # Start webhook delivery worker
+    if hasattr(app.state, "webhook_service"):
+        app.state.webhook_service.start()
+
     yield
 
     logger.info("Relay server shutting down")

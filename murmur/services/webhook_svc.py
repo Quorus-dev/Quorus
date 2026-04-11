@@ -1,10 +1,20 @@
-"""Webhook service — registration, SSRF-safe validation, and async delivery."""
+"""Webhook service — registration, SSRF-safe validation, and reliable delivery.
+
+Delivery uses a background worker with retry + exponential backoff + DLQ.
+Payloads are signed with HMAC-SHA256 for verification by receivers.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import ipaddress
+import json
+import os
 import socket
+import time
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 import httpx
@@ -16,6 +26,22 @@ from murmur.backends.protocol import WebhookBackend
 logger = structlog.get_logger("murmur.services.webhook")
 
 _DEFAULT_CONCURRENCY = 10
+_MAX_RETRIES = int(os.environ.get("WEBHOOK_MAX_RETRIES", "3"))
+_BACKOFF_BASE = 2  # seconds — retries at 2s, 4s, 8s
+_DLQ_MAX_SIZE = 1000
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+
+
+@dataclass
+class WebhookJob:
+    """A webhook delivery job with retry tracking."""
+
+    target: str
+    callback_url: str
+    payload: dict
+    attempt: int = 0
+    created_at: float = field(default_factory=time.time)
+    last_error: str = ""
 
 
 class WebhookService:
@@ -29,18 +55,52 @@ class WebhookService:
         self._backend = backend
         self._semaphore = asyncio.Semaphore(concurrency)
         self._client: httpx.AsyncClient | None = None
+        self._queue: asyncio.Queue[WebhookJob] = asyncio.Queue(maxsize=10000)
+        self._dlq: list[WebhookJob] = []
+        self._worker_task: asyncio.Task | None = None
+        self._stop_event = asyncio.Event()
+        # Delivery stats
+        self._stats = {
+            "total_enqueued": 0,
+            "total_delivered": 0,
+            "total_failed": 0,
+            "total_retried": 0,
+        }
+
+    def start(self) -> None:
+        """Start the background delivery worker."""
+        if self._worker_task is None or self._worker_task.done():
+            self._stop_event.clear()
+            self._worker_task = asyncio.create_task(self._worker_loop())
+            logger.info("Webhook delivery worker started")
+
+    async def close(self) -> None:
+        """Stop the worker and close the HTTP client."""
+        self._stop_event.set()
+        if self._worker_task and not self._worker_task.done():
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
 
     # -- HTTP client ----------------------------------------------------------
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=5)
+            self._client = httpx.AsyncClient(timeout=10)
         return self._client
 
-    async def close(self) -> None:
-        """Close the HTTP client. Called on shutdown."""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+    # -- Payload signing -------------------------------------------------------
+
+    @staticmethod
+    def sign_payload(payload: dict, secret: str = "") -> str:
+        """Compute HMAC-SHA256 signature for a webhook payload."""
+        key = (secret or WEBHOOK_SECRET).encode()
+        body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hmac.new(key, body.encode(), hashlib.sha256).hexdigest()
 
     # -- URL validation (SSRF protection) -------------------------------------
 
@@ -104,7 +164,6 @@ class WebhookService:
         url = cls._validate_url_sync(callback_url)
         parsed = urlparse(url)
         host = parsed.hostname.rstrip(".").lower()
-        # If it's already an IP literal we validated above, skip DNS.
         try:
             ipaddress.ip_address(host)
             return url
@@ -173,42 +232,137 @@ class WebhookService:
     ) -> bool:
         return await self._backend.delete_room(tenant_id, room_id, url)
 
-    # -- Delivery -------------------------------------------------------------
+    # -- Delivery queue -------------------------------------------------------
 
-    async def _deliver(
-        self, target: str, callback_url: str, message: dict
-    ) -> None:
-        async with self._semaphore:
-            try:
-                client = self._get_client()
-                resp = await client.post(callback_url, json=message)
-                resp.raise_for_status()
-                logger.info(
-                    "Webhook delivered to %s for %s", callback_url, target
-                )
-            except Exception:
-                logger.warning(
-                    "Webhook delivery failed for %s at %s",
-                    target,
-                    callback_url,
-                    exc_info=True,
-                )
+    def _enqueue_job(self, target: str, url: str, payload: dict) -> None:
+        """Add a delivery job to the queue (non-blocking, drops if full)."""
+        job = WebhookJob(target=target, callback_url=url, payload=payload)
+        try:
+            self._queue.put_nowait(job)
+            self._stats["total_enqueued"] += 1
+        except asyncio.QueueFull:
+            logger.warning("Webhook queue full, dropping job for %s", target)
+            self._stats["total_failed"] += 1
 
     async def notify_dm(
         self, tenant_id: str, recipient: str, message: dict
     ) -> None:
-        """Fire-and-forget DM webhook if registered."""
+        """Queue DM webhook delivery if registered."""
         url = await self._backend.get_dm(tenant_id, recipient)
         if not url:
             return
-        asyncio.create_task(self._deliver(recipient, url, message))
+        self._enqueue_job(recipient, url, message)
 
     async def notify_room(
         self, tenant_id: str, room_id: str, message: dict
     ) -> None:
-        """Fire-and-forget room webhooks for all registered URLs."""
+        """Queue room webhook deliveries for all registered URLs."""
         hooks = await self._backend.list_room(tenant_id, room_id)
         for hook in hooks:
-            asyncio.create_task(
-                self._deliver(f"room:{room_id}", hook["url"], message)
+            self._enqueue_job(f"room:{room_id}", hook["url"], message)
+
+    # -- Background worker ----------------------------------------------------
+
+    async def _worker_loop(self) -> None:
+        """Process webhook jobs with retry and exponential backoff."""
+        while not self._stop_event.is_set():
+            try:
+                job = await asyncio.wait_for(
+                    self._queue.get(), timeout=1.0
+                )
+            except asyncio.TimeoutError:
+                continue
+
+            await self._process_job(job)
+
+    async def _process_job(self, job: WebhookJob) -> None:
+        """Attempt delivery with retry on failure."""
+        async with self._semaphore:
+            try:
+                client = self._get_client()
+                headers: dict[str, str] = {
+                    "Content-Type": "application/json",
+                    "X-Webhook-Attempt": str(job.attempt + 1),
+                }
+                if WEBHOOK_SECRET:
+                    sig = self.sign_payload(job.payload)
+                    headers["X-Webhook-Signature"] = f"sha256={sig}"
+
+                resp = await client.post(
+                    job.callback_url, json=job.payload, headers=headers
+                )
+                resp.raise_for_status()
+                self._stats["total_delivered"] += 1
+                logger.info(
+                    "Webhook delivered to %s for %s (attempt %d)",
+                    job.callback_url,
+                    job.target,
+                    job.attempt + 1,
+                )
+            except Exception as exc:
+                job.attempt += 1
+                job.last_error = str(exc)
+
+                if job.attempt < _MAX_RETRIES:
+                    # Retry with exponential backoff
+                    delay = _BACKOFF_BASE ** job.attempt
+                    self._stats["total_retried"] += 1
+                    logger.warning(
+                        "Webhook delivery failed for %s (attempt %d/%d), "
+                        "retrying in %ds: %s",
+                        job.target,
+                        job.attempt,
+                        _MAX_RETRIES,
+                        delay,
+                        exc,
+                    )
+                    asyncio.get_running_loop().call_later(
+                        delay, self._requeue_job, job
+                    )
+                else:
+                    # Dead letter — max retries exhausted
+                    self._stats["total_failed"] += 1
+                    if len(self._dlq) < _DLQ_MAX_SIZE:
+                        self._dlq.append(job)
+                    logger.error(
+                        "Webhook delivery permanently failed for %s at %s "
+                        "after %d attempts: %s",
+                        job.target,
+                        job.callback_url,
+                        job.attempt,
+                        job.last_error,
+                    )
+
+    def _requeue_job(self, job: WebhookJob) -> None:
+        """Re-add a job to the queue after backoff delay."""
+        try:
+            self._queue.put_nowait(job)
+        except asyncio.QueueFull:
+            self._stats["total_failed"] += 1
+            logger.warning(
+                "Webhook queue full during retry, dropping job for %s",
+                job.target,
             )
+
+    # -- Monitoring -----------------------------------------------------------
+
+    def get_stats(self) -> dict:
+        """Return delivery statistics."""
+        return {
+            **self._stats,
+            "queue_size": self._queue.qsize(),
+            "dlq_size": len(self._dlq),
+        }
+
+    def get_dlq(self, limit: int = 50) -> list[dict]:
+        """Return recent DLQ entries for monitoring."""
+        return [
+            {
+                "target": j.target,
+                "url": j.callback_url,
+                "attempts": j.attempt,
+                "last_error": j.last_error,
+                "created_at": j.created_at,
+            }
+            for j in self._dlq[-limit:]
+        ]

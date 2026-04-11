@@ -591,13 +591,18 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
     mock_http_client.is_closed = False
 
     with mock_patch.object(webhook_svc, "_client", mock_http_client):
+        # Ensure the worker is running
+        webhook_svc.start()
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "push this"},
             headers=auth_headers,
         )
-        # Allow background webhook task to complete
-        await asyncio.sleep(0.1)
+        # Allow background worker to process the queued job
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            if mock_http_client.post.call_count > 0:
+                break
 
     mock_http_client.post.assert_called_once()
     call_args = mock_http_client.post.call_args
