@@ -6,15 +6,13 @@ import json
 import os
 import subprocess
 import sys
-import threading
-from datetime import datetime
 from pathlib import Path
 
 import httpx
 from rich.console import Console
 from rich.table import Table
 
-from tunnel_config import load_config
+from murmur.config import load_config
 
 console = Console()
 _config = load_config()
@@ -200,7 +198,7 @@ async def _status() -> None:
         participants = parts_resp.json()
 
         # Display
-        console.print(f"[bold green]Murmur Relay Status[/bold green]")
+        console.print("[bold green]Murmur Relay Status[/bold green]")
         console.print(f"  URL: {RELAY_URL}")
         console.print(f"  Health: [green]{health['status']}[/green]")
         uptime_s = stats.get("uptime_seconds", 0)
@@ -280,7 +278,7 @@ async def _chat(room_name: str) -> None:
     console.print(f"[bold green]Murmur Chat — {room_name}[/bold green]")
     console.print(f"[dim]Members: {', '.join(room['members'])}[/dim]")
     console.print(f"[dim]You are: {INSTANCE_NAME}[/dim]")
-    console.print(f"[dim]Type a message and press Enter to send. Ctrl+C to quit.[/dim]")
+    console.print("[dim]Type a message and press Enter to send. Ctrl+C to quit.[/dim]")
     console.print("─" * 60)
 
     stop_event = asyncio.Event()
@@ -428,6 +426,7 @@ def _cmd_init(args):
     name = args.name
     relay_url = args.relay_url
     secret = args.secret
+    repo_dir = Path(__file__).resolve().parent.parent
     murmur_dir = Path(__file__).resolve().parent
 
     # 1. Write config
@@ -462,8 +461,8 @@ def _cmd_init(args):
         "type": "stdio",
         "command": "uv",
         "args": [
-            "run", "--directory", str(murmur_dir),
-            "python", str(murmur_dir / "mcp_server.py"),
+            "run", "--directory", str(repo_dir),
+            "python", str(murmur_dir / "mcp.py"),
         ],
         "env": {},
     }
@@ -487,18 +486,25 @@ def _cmd_init(args):
 
 def _cmd_relay(args):
     """Start the relay server."""
-    murmur_dir = Path(__file__).resolve().parent
+    repo_dir = Path(__file__).resolve().parent.parent
     port = args.port
     config_path = Path.home() / "mcp-tunnel" / "config.json"
 
     # Read secret from config if it exists
-    secret = "murmur-hack"
+    secret = ""
     if config_path.exists():
         try:
             cfg = json.loads(config_path.read_text())
-            secret = cfg.get("relay_secret", secret)
+            secret = cfg.get("relay_secret", "")
         except (json.JSONDecodeError, ValueError):
             pass
+
+    if not secret:
+        secret = os.environ.get("RELAY_SECRET", "")
+    if not secret:
+        console.print("[red]Error: No relay_secret configured.[/red]")
+        console.print("Run: murmur init <name> --secret <your-secret>")
+        sys.exit(1)
 
     console.print(f"[bold]Starting Murmur relay on port {port}[/bold]")
     console.print("  Press Ctrl+C to stop")
@@ -511,8 +517,9 @@ def _cmd_relay(args):
     try:
         subprocess.run(
             [
-                "uv", "run", "--directory", str(murmur_dir),
-                "python", str(murmur_dir / "relay_server.py"),
+                "uv", "run", "--directory", str(repo_dir),
+                "python", "-m", "uvicorn", "murmur.relay:app",
+                "--host", "0.0.0.0", "--port", str(port),
             ],
             env=env,
         )
@@ -529,7 +536,7 @@ def main():
     p_init = sub.add_parser("init", help="One-command setup")
     p_init.add_argument("name", help="Your participant name")
     p_init.add_argument("--relay-url", default="http://localhost:8080", help="Relay URL")
-    p_init.add_argument("--secret", default="murmur-hack", help="Shared secret")
+    p_init.add_argument("--secret", required=True, help="Shared secret")
 
     p_relay = sub.add_parser("relay", help="Start the relay server")
     p_relay.add_argument("--port", type=int, default=8080, help="Port")

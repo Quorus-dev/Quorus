@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from tunnel_config import as_bool, load_config, resolve_config_file
+from murmur.config import as_bool, load_config, resolve_config_file
 
 
 def test_load_config_applies_env_overrides(tmp_path, monkeypatch):
@@ -44,8 +44,8 @@ def test_load_config_missing_file_uses_defaults(tmp_path, monkeypatch):
 def test_resolve_config_file_legacy_fallback(tmp_path, monkeypatch):
     """Should fall back to legacy dir when default doesn't exist."""
     monkeypatch.delenv("MCP_TUNNEL_CONFIG_DIR", raising=False)
-    monkeypatch.setattr("tunnel_config.DEFAULT_CONFIG_DIR", tmp_path / "mcp-tunnel")
-    monkeypatch.setattr("tunnel_config.LEGACY_CONFIG_DIR", tmp_path / "claude-tunnel")
+    monkeypatch.setattr("murmur.config.DEFAULT_CONFIG_DIR", tmp_path / "mcp-tunnel")
+    monkeypatch.setattr("murmur.config.LEGACY_CONFIG_DIR", tmp_path / "claude-tunnel")
 
     legacy_dir = tmp_path / "claude-tunnel"
     legacy_dir.mkdir()
@@ -58,8 +58,8 @@ def test_resolve_config_file_legacy_fallback(tmp_path, monkeypatch):
 def test_resolve_config_file_prefers_default_over_legacy(tmp_path, monkeypatch):
     """Default dir should take priority when both exist."""
     monkeypatch.delenv("MCP_TUNNEL_CONFIG_DIR", raising=False)
-    monkeypatch.setattr("tunnel_config.DEFAULT_CONFIG_DIR", tmp_path / "mcp-tunnel")
-    monkeypatch.setattr("tunnel_config.LEGACY_CONFIG_DIR", tmp_path / "claude-tunnel")
+    monkeypatch.setattr("murmur.config.DEFAULT_CONFIG_DIR", tmp_path / "mcp-tunnel")
+    monkeypatch.setattr("murmur.config.LEGACY_CONFIG_DIR", tmp_path / "claude-tunnel")
 
     for name in ("mcp-tunnel", "claude-tunnel"):
         d = tmp_path / name

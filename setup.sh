@@ -37,7 +37,7 @@ echo ""
 echo "Add this to your Claude Code MCP settings:"
 echo ""
 echo "  Name: murmur"
-echo "  Command: uv run --directory $SCRIPT_DIR python $SCRIPT_DIR/mcp_server.py"
+echo "  Command: uv run --directory $SCRIPT_DIR python $SCRIPT_DIR/murmur/mcp.py"
 echo ""
 echo "Or add to ~/.claude/claude_desktop_config.json:"
 echo ""
@@ -46,7 +46,7 @@ cat <<EOF
   "mcpServers": {
     "murmur": {
       "command": "uv",
-      "args": ["run", "--directory", "$SCRIPT_DIR", "python", "$SCRIPT_DIR/mcp_server.py"]
+      "args": ["run", "--directory", "$SCRIPT_DIR", "python", "$SCRIPT_DIR/murmur/mcp.py"]
     }
   }
 }
@@ -54,7 +54,7 @@ EOF
 
 echo ""
 echo "Done! Start the relay with:"
-echo "  cd $SCRIPT_DIR && RELAY_SECRET=$SECRET uv run python relay_server.py"
+echo "  cd $SCRIPT_DIR && RELAY_SECRET=$SECRET uv run murmur-relay"
 echo ""
 echo "Launch Claude Code with instant push (recommended):"
 echo "  claude --channels server:murmur"
@@ -65,7 +65,7 @@ echo "  send_room_message, join_room, list_rooms"
 echo "  start_auto_poll, stop_auto_poll"
 echo ""
 echo "CLI commands:"
-echo "  cd $SCRIPT_DIR && uv run python cli.py create <room-name>"
-echo "  cd $SCRIPT_DIR && uv run python cli.py invite <room> <name1> <name2> ..."
-echo "  cd $SCRIPT_DIR && uv run python cli.py watch <room>"
-echo "  cd $SCRIPT_DIR && uv run python cli.py say <room> \"message\""
+echo "  murmur create <room-name>"
+echo "  murmur invite <room> <name1> <name2> ..."
+echo "  murmur watch <room>"
+echo "  murmur say <room> \"message\""

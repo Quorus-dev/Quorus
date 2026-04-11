@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from relay_server import _load_from_file, _reset_state, _save_to_file, app
+from murmur.relay import _load_from_file, _reset_state, _save_to_file, app
 
 
 @pytest.fixture(autouse=True)
@@ -129,7 +129,7 @@ async def test_file_persistence_save_and_load(
 ):
     filepath = str(tmp_path / "messages.json")
 
-    with patch("relay_server.MESSAGES_FILE", filepath):
+    with patch("murmur.relay.MESSAGES_FILE", filepath):
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "persist me"},
@@ -151,7 +151,7 @@ async def test_delivered_messages_do_not_reappear_after_reload(
 ):
     filepath = str(tmp_path / "messages.json")
 
-    with patch("relay_server.MESSAGES_FILE", filepath):
+    with patch("murmur.relay.MESSAGES_FILE", filepath):
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "deliver once"},
@@ -169,7 +169,7 @@ async def test_delivered_messages_do_not_reappear_after_reload(
 
 
 async def test_message_cap_trims_oldest(client: AsyncClient, auth_headers: dict):
-    with patch("relay_server.MAX_MESSAGES", 5):
+    with patch("murmur.relay.MAX_MESSAGES", 5):
         for i in range(7):
             await client.post(
                 "/messages",
@@ -219,7 +219,7 @@ async def test_large_message_is_chunked_and_reassembled(client: AsyncClient, aut
     """A message exceeding MAX_MESSAGE_SIZE should be chunked on send and reassembled on fetch."""
     large_content = "x" * 200
 
-    with patch("relay_server.MAX_MESSAGE_SIZE", 100):
+    with patch("murmur.relay.MAX_MESSAGE_SIZE", 100):
         resp = await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": large_content},
@@ -240,7 +240,7 @@ async def test_large_unicode_message_is_chunked_without_corruption(
     """Chunking should preserve UTF-8 content across chunk boundaries."""
     large_content = "🙂" * 60
 
-    with patch("relay_server.MAX_MESSAGE_SIZE", 101):
+    with patch("murmur.relay.MAX_MESSAGE_SIZE", 101):
         resp = await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": large_content},
@@ -258,7 +258,7 @@ async def test_chunked_message_too_large_for_storage_cap_returns_413(
     client: AsyncClient, auth_headers: dict
 ):
     """Reject chunked messages that cannot fit within the configured global cap."""
-    with patch("relay_server.MAX_MESSAGE_SIZE", 4), patch("relay_server.MAX_MESSAGES", 2):
+    with patch("murmur.relay.MAX_MESSAGE_SIZE", 4), patch("murmur.relay.MAX_MESSAGES", 2):
         resp = await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "abcdefghij"},
@@ -270,7 +270,7 @@ async def test_chunked_message_too_large_for_storage_cap_returns_413(
 
 async def test_message_cap_does_not_split_chunk_groups(client: AsyncClient, auth_headers: dict):
     """When trimming is needed, whole chunked messages should be kept or removed together."""
-    with patch("relay_server.MAX_MESSAGE_SIZE", 4), patch("relay_server.MAX_MESSAGES", 4):
+    with patch("murmur.relay.MAX_MESSAGE_SIZE", 4), patch("murmur.relay.MAX_MESSAGES", 4):
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "one"},
@@ -357,7 +357,7 @@ async def test_analytics_requires_auth(client: AsyncClient):
 
 async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: dict):
     """If not all chunks have arrived, they should not be returned."""
-    from relay_server import locks, message_queues
+    from murmur.relay import locks, message_queues
     base_time = datetime.now(timezone.utc)
 
     async with locks["bob"]:
@@ -408,7 +408,7 @@ async def test_long_poll_returns_immediately_with_messages(client: AsyncClient, 
 
 async def test_message_event_is_rearmed_by_consumer(client: AsyncClient, auth_headers: dict):
     """Senders set the event; consumers clear it after observing the queue state."""
-    from relay_server import message_events
+    from murmur.relay import message_events
 
     await client.post(
         "/messages",
@@ -526,7 +526,7 @@ async def test_delete_nonexistent_webhook(client: AsyncClient, auth_headers: dic
 
 def test_main_runs_uvicorn(monkeypatch):
     """CLI entrypoint should invoke uvicorn with the configured port."""
-    from relay_server import main
+    from murmur.relay import main
 
     calls = []
 
@@ -560,7 +560,7 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
     mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
     mock_client_instance.__aexit__ = AsyncMock(return_value=None)
 
-    with mock_patch("relay_server.httpx.AsyncClient", return_value=mock_client_instance):
+    with mock_patch("murmur.relay.httpx.AsyncClient", return_value=mock_client_instance):
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "push this"},
@@ -615,7 +615,7 @@ async def test_send_accepts_valid_names(client: AsyncClient, auth_headers: dict)
 
 async def test_message_ttl_expires_old_messages(client: AsyncClient, auth_headers: dict):
     """Messages older than MESSAGE_TTL_SECONDS should be removed on next trim."""
-    from relay_server import locks, message_queues
+    from murmur.relay import locks, message_queues
 
     old_timestamp = "2020-01-01T00:00:00+00:00"
     async with locks["bob"]:
@@ -645,7 +645,7 @@ async def test_message_ttl_is_enforced_on_read_without_new_send(
     client: AsyncClient, auth_headers: dict
 ):
     """Expired messages should not be returned even if no later send triggers trim."""
-    from relay_server import locks, message_queues
+    from murmur.relay import locks, message_queues
 
     async with locks["bob"]:
         message_queues["bob"].append({
@@ -662,7 +662,7 @@ async def test_message_ttl_is_enforced_on_read_without_new_send(
 
 async def test_analytics_excludes_expired_messages(client: AsyncClient, auth_headers: dict):
     """Expired messages should not contribute to pending analytics totals."""
-    from relay_server import locks, message_queues
+    from murmur.relay import locks, message_queues
 
     async with locks["bob"]:
         message_queues["bob"].append({
@@ -895,7 +895,7 @@ async def test_room_persistence_save_and_load(
     client: AsyncClient, auth_headers: dict, tmp_path
 ):
     filepath = str(tmp_path / "messages.json")
-    with patch("relay_server.MESSAGES_FILE", filepath):
+    with patch("murmur.relay.MESSAGES_FILE", filepath):
         await client.post(
             "/rooms",
             json={"name": "test-room", "created_by": "alice"},
@@ -913,7 +913,7 @@ async def test_room_persistence_save_and_load(
 
 async def test_sse_queue_receives_dm(client: AsyncClient, auth_headers: dict):
     """SSE queue should receive DMs pushed after subscription."""
-    from relay_server import sse_queues
+    from murmur.relay import sse_queues
 
     q: asyncio.Queue = asyncio.Queue()
     sse_queues["bob"].append(q)
@@ -935,7 +935,7 @@ async def test_sse_queue_receives_room_messages(
     client: AsyncClient, auth_headers: dict
 ):
     """SSE queue should receive room fan-out messages."""
-    from relay_server import sse_queues
+    from murmur.relay import sse_queues
 
     q: asyncio.Queue = asyncio.Queue()
     sse_queues["bob"].append(q)
@@ -969,7 +969,7 @@ async def test_sse_endpoint_registers_and_cleans_up_queue(
     client: AsyncClient, auth_headers: dict
 ):
     """SSE stream endpoint should register a queue for the recipient and clean up on disconnect."""
-    from relay_server import sse_queues, stream_messages
+    from murmur.relay import sse_queues, stream_messages
 
     # Directly invoke the endpoint handler and iterate its generator
     resp = await stream_messages(recipient="bob", token="test-secret")
@@ -1114,7 +1114,7 @@ async def test_room_history_requires_auth(client: AsyncClient):
 async def test_room_history_persists(client: AsyncClient, auth_headers: dict, tmp_path):
     """Room history should survive save/load cycle."""
     filepath = str(tmp_path / "messages.json")
-    with patch("relay_server.MESSAGES_FILE", filepath):
+    with patch("murmur.relay.MESSAGES_FILE", filepath):
         create_resp = await client.post(
             "/rooms", json={"name": "save-room", "created_by": "alice"},
             headers=auth_headers,
@@ -1131,14 +1131,14 @@ async def test_room_history_persists(client: AsyncClient, auth_headers: dict, tm
         _reset_state()
         _load_from_file()
 
-        from relay_server import room_history
+        from murmur.relay import room_history
         assert len(room_history[room_id]) == 1
         assert room_history[room_id][0]["content"] == "persisted"
 
 
 async def test_rate_limit_dm(client: AsyncClient, auth_headers):
     """DM endpoint should return 429 when rate limit exceeded."""
-    with patch("relay_server.RATE_LIMIT_MAX", 3):
+    with patch("murmur.relay.RATE_LIMIT_MAX", 3):
         for i in range(3):
             resp = await client.post(
                 "/messages",
@@ -1163,7 +1163,7 @@ async def test_rate_limit_room_message(client: AsyncClient, auth_headers):
     )
     room_id = resp.json()["id"]
 
-    with patch("relay_server.RATE_LIMIT_MAX", 2):
+    with patch("murmur.relay.RATE_LIMIT_MAX", 2):
         for i in range(2):
             resp = await client.post(
                 f"/rooms/{room_id}/messages",
@@ -1182,7 +1182,7 @@ async def test_rate_limit_room_message(client: AsyncClient, auth_headers):
 
 async def test_rate_limit_per_sender(client: AsyncClient, auth_headers):
     """Rate limits should be per-sender, not global."""
-    with patch("relay_server.RATE_LIMIT_MAX", 1):
+    with patch("murmur.relay.RATE_LIMIT_MAX", 1):
         resp = await client.post(
             "/messages",
             json={"from_name": "alice", "to": "charlie", "content": "a"},

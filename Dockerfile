@@ -7,7 +7,7 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir .
 
 # Copy application code
-COPY relay_server.py tunnel_config.py analytics.py ./
+COPY murmur/ murmur/
 
 # Non-root user for security
 RUN useradd --create-home --shell /bin/bash murmur
@@ -23,4 +23,4 @@ ENV PORT=8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
 
-CMD ["python", "-m", "uvicorn", "relay_server:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "uvicorn", "murmur.relay:app", "--host", "0.0.0.0", "--port", "8080"]

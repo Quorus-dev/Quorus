@@ -12,7 +12,7 @@ from mcp import types
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.message import SessionMessage
 
-from tunnel_config import load_config
+from murmur.config import load_config
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(

@@ -6,7 +6,7 @@ import time
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from relay_server import _reset_state, app, sse_queues
+from murmur.relay import _reset_state, app, sse_queues
 
 HEADERS = {"Authorization": "Bearer test-secret"}
 

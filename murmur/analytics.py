@@ -6,7 +6,7 @@ import httpx
 from rich.console import Console
 from rich.table import Table
 
-from tunnel_config import load_config
+from murmur.config import load_config
 
 
 def fetch_analytics(relay_url: str, relay_secret: str) -> dict:

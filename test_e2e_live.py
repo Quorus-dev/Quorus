@@ -358,7 +358,7 @@ async def run_tests() -> None:
     # Start relay server
     _log("Starting relay server on port 18080...")
     relay_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "relay_server:app",
+        [sys.executable, "-m", "uvicorn", "murmur.relay:app",
          "--host", "127.0.0.1", "--port", "18080"],
         env={
             **__import__("os").environ,
