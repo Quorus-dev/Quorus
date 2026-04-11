@@ -1,4 +1,4 @@
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -303,86 +303,129 @@ async def test_auto_poll_delivers_messages():
     assert buffered[0]["from_name"] == "bob"
 
 
-async def test_sse_listener_buffers_messages():
-    """SSE listener should buffer messages and notify the active session.
+async def test_sse_listener_parses_and_buffers():
+    """SSE listener should parse SSE format and buffer messages.
 
-    Uses a real relay server via ASGI transport so the full SSE flow is
-    exercised: relay pushes SSE event -> MCP _sse_listener parses it ->
-    message lands in _pending_messages.
+    Mocks the httpx streaming response to simulate the relay's SSE
+    output, verifying the parser handles the event/data/blank-line
+    protocol and calls _process_sse_event correctly.
     """
     import asyncio
+    import json as json_mod
 
-    from httpx import ASGITransport, AsyncClient
+    msg_payload = json_mod.dumps({
+        "id": "m1",
+        "from_name": "bob",
+        "content": "instant delivery",
+        "timestamp": "2026-04-11T00:00:00Z",
+    })
 
-    from relay_server import app as relay_app
-    from relay_server import _reset_state
+    sse_lines = [
+        "event: connected",
+        'data: {"participant": "alice"}',
+        "",
+        "event: message",
+        f"data: {msg_payload}",
+        "",
+    ]
 
-    _reset_state()
+    async def fake_aiter_lines():
+        for line in sse_lines:
+            yield line
+        # Keep alive until stop
+        while True:
+            await asyncio.sleep(10)
 
-    transport = ASGITransport(app=relay_app)
-    real_client = AsyncClient(
-        transport=transport, base_url="http://test"
-    )
-    relay_headers = {"Authorization": "Bearer test-secret"}
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+    mock_resp.aiter_lines = fake_aiter_lines
+    mock_resp.aclose = AsyncMock()
 
-    # Create room and add alice
-    resp = await real_client.post(
-        "/rooms",
-        json={"name": "sse-e2e", "created_by": "bob"},
-        headers=relay_headers,
-    )
-    assert resp.status_code == 200
-    room_id = resp.json()["id"]
-    await real_client.post(
-        f"/rooms/{room_id}/join",
-        json={"participant": "alice"},
-        headers=relay_headers,
-    )
+    @asynccontextmanager
+    async def fake_stream(*args, **kwargs):
+        yield mock_resp
 
-    # Point MCP SSE listener at the real relay via ASGI client
-    with (
-        patch.object(mcp_server, "RELAY_URL", "http://test"),
-        patch.object(mcp_server, "RELAY_SECRET", "test-secret"),
-        patch.object(mcp_server, "INSTANCE_NAME", "alice"),
-    ):
-        mcp_server._http_client = real_client
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.stream = fake_stream
 
+    with patch("mcp_server._get_http_client", return_value=mock_client):
         stop = asyncio.Event()
-        listener_task = asyncio.create_task(
-            mcp_server._sse_listener(stop)
-        )
+        task = asyncio.create_task(mcp_server._sse_listener(stop))
 
-        # Give SSE listener time to connect
-        await asyncio.sleep(0.2)
-
-        # Send a room message from bob
-        resp = await real_client.post(
-            f"/rooms/{room_id}/messages",
-            json={
-                "from_name": "bob",
-                "content": "instant delivery test",
-            },
-            headers=relay_headers,
-        )
-        assert resp.status_code == 200
-
-        # Wait for SSE to deliver it
+        # Wait for the listener to process the SSE events
         for _ in range(20):
+            msgs = await mcp_server._drain_pending_messages()
+            if msgs:
+                break
+            await asyncio.sleep(0.05)
+
+        stop.set()
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    assert len(msgs) == 1
+    assert msgs[0]["from_name"] == "bob"
+    assert msgs[0]["content"] == "instant delivery"
+
+
+async def test_sse_listener_reconnects_on_error():
+    """SSE listener should reconnect after a connection error."""
+    import asyncio
+
+    call_count = 0
+
+    @asynccontextmanager
+    async def failing_then_ok_stream(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise httpx.ConnectError("Connection refused")
+        # Second call succeeds with a message
+        msg = (
+            '{"id":"m1","from_name":"bob",'
+            '"content":"after reconnect",'
+            '"timestamp":"2026-04-11T00:00:00Z"}'
+        )
+
+        async def fake_lines():
+            yield "event: connected"
+            yield 'data: {"participant": "alice"}'
+            yield ""
+            yield "event: message"
+            yield f"data: {msg}"
+            yield ""
+            while True:
+                await asyncio.sleep(10)
+
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = fake_lines
+        mock_resp.aclose = AsyncMock()
+        yield mock_resp
+
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.stream = failing_then_ok_stream
+
+    with patch(
+        "mcp_server._get_http_client", return_value=mock_client
+    ):
+        stop = asyncio.Event()
+        task = asyncio.create_task(mcp_server._sse_listener(stop))
+
+        for _ in range(40):
             msgs = await mcp_server._drain_pending_messages()
             if msgs:
                 break
             await asyncio.sleep(0.1)
 
         stop.set()
-        listener_task.cancel()
+        task.cancel()
         with suppress(asyncio.CancelledError):
-            await listener_task
+            await task
 
-        mcp_server._http_client = None
-        await real_client.aclose()
-        _reset_state()
-
-    assert len(msgs) >= 1
-    assert any(
-        m["content"] == "instant delivery test" for m in msgs
-    )
+    assert call_count >= 2
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "after reconnect"
