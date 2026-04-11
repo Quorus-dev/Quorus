@@ -21,6 +21,14 @@ RELAY_SECRET = _config["relay_secret"]
 INSTANCE_NAME = _config["instance_name"]
 
 
+def _relay_unreachable(url: str = "") -> None:
+    """Print a helpful error when the relay is not reachable."""
+    target = url or RELAY_URL
+    console.print(f"[red]Cannot connect to relay at {target}[/red]")
+    console.print("[dim]  Is the relay running? Try: murmur relay[/dim]")
+    console.print(f"[dim]  Check config: murmur doctor[/dim]")
+
+
 def _get_client() -> httpx.AsyncClient:
     return httpx.AsyncClient()
 
@@ -244,7 +252,7 @@ async def _status() -> None:
             console.print("[dim]No participants.[/dim]")
 
     except httpx.ConnectError:
-        console.print(f"[red]Cannot connect to relay at {RELAY_URL}[/red]")
+        _relay_unreachable()
     finally:
         await client.aclose()
 
@@ -434,7 +442,7 @@ async def _history(room_name: str, limit: int = 50):
         for msg in messages:
             console.print(_format_chat_msg(msg))
     except httpx.ConnectError:
-        console.print(f"[red]Cannot connect to relay at {RELAY_URL}[/red]")
+        _relay_unreachable()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             console.print(f"[red]Room '{room_name}' not found[/red]")
@@ -513,7 +521,7 @@ async def _ps() -> None:
 
         console.print(table)
     except httpx.ConnectError:
-        console.print(f"[red]Cannot connect to relay at {RELAY_URL}[/red]")
+        _relay_unreachable()
     except httpx.HTTPStatusError as e:
         console.print(f"[red]Error: {e.response.status_code}[/red]")
     finally:
