@@ -51,6 +51,15 @@ class MurmurClient:
         r.raise_for_status()
         return r.json()
 
+    def peek(self) -> dict:
+        """Check pending message count without consuming them."""
+        r = httpx.get(
+            f"{self.relay_url}/messages/{self.name}/peek",
+            headers=self._headers,
+        )
+        r.raise_for_status()
+        return r.json()
+
     def history(self, room: str, limit: int = 50) -> list[dict]:
         """Get room message history."""
         r = httpx.get(
