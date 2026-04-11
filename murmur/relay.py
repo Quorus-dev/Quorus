@@ -705,6 +705,13 @@ async def get_messages(recipient: str, wait: int = 0):
     return ready
 
 
+@app.get("/messages/{recipient}/peek", dependencies=[Depends(verify_auth)])
+async def peek_messages(recipient: str):
+    """Return count of pending messages without consuming them."""
+    count = len(message_queues.get(recipient, []))
+    return {"count": count, "recipient": recipient}
+
+
 @app.get("/participants", dependencies=[Depends(verify_auth)])
 async def list_participants_endpoint():
     """List all known participant names."""
