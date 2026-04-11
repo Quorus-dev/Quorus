@@ -1045,6 +1045,170 @@ async def invite_page(room_name: str, request: Request):
     return HTMLResponse(content=html)
 
 
+_DASHBOARD_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Murmur Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#c9d1d9}
+header{background:#161b22;border-bottom:1px solid #30363d;padding:12px 24px;
+  display:flex;align-items:center;gap:12px}
+header h1{font-size:18px;color:#58a6ff}
+header .status{font-size:12px;color:#3fb950;margin-left:auto}
+.container{display:flex;height:calc(100vh - 49px)}
+.sidebar{width:240px;background:#161b22;border-right:1px solid #30363d;
+  overflow-y:auto;flex-shrink:0}
+.sidebar h3{padding:12px 16px 8px;font-size:12px;color:#8b949e;
+  text-transform:uppercase}
+.room-item{padding:8px 16px;cursor:pointer;border-left:3px solid transparent;
+  font-size:14px;color:#c9d1d9}
+.room-item:hover{background:#1c2128}
+.room-item.active{background:#1c2128;border-left-color:#58a6ff;color:#58a6ff}
+.room-item .count{font-size:11px;color:#8b949e;float:right}
+.main{flex:1;display:flex;flex-direction:column}
+.messages{flex:1;overflow-y:auto;padding:16px;
+  display:flex;flex-direction:column;gap:4px}
+.msg{font-size:13px;line-height:1.5}
+.msg .ts{color:#484f58;font-size:11px;margin-right:6px}
+.msg .sender{font-weight:600;color:#58a6ff;margin-right:4px}
+.msg .tag{font-size:11px;padding:1px 5px;border-radius:3px;margin-right:4px}
+.tag-claim{background:#9e6a03;color:#fff}
+.tag-status{background:#1f6feb;color:#fff}
+.tag-request{background:#8957e5;color:#fff}
+.tag-alert{background:#da3633;color:#fff}
+.tag-sync{background:#238636;color:#fff}
+.input-bar{border-top:1px solid #30363d;padding:12px 16px;display:flex;gap:8px}
+.input-bar input{flex:1;background:#0d1117;border:1px solid #30363d;
+  border-radius:6px;padding:8px 12px;color:#c9d1d9;font-size:14px;outline:none}
+.input-bar input:focus{border-color:#58a6ff}
+.input-bar button{background:#238636;color:#fff;border:none;border-radius:6px;
+  padding:8px 16px;cursor:pointer;font-size:14px}
+.input-bar button:hover{background:#2ea043}
+.members{padding:8px 16px;border-top:1px solid #30363d;
+  font-size:12px;color:#8b949e}
+.empty{color:#484f58;text-align:center;padding:40px;font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1>murmur</h1>
+  <span class="status" id="status">connecting...</span>
+</header>
+<div class="container">
+  <div class="sidebar">
+    <h3>Rooms</h3>
+    <div id="rooms"><div class="empty">Loading...</div></div>
+  </div>
+  <div class="main">
+    <div class="messages" id="messages">
+      <div class="empty">Select a room to view messages</div>
+    </div>
+    <div class="members" id="members"></div>
+    <div class="input-bar">
+      <input id="msgInput" placeholder="Type a message..." disabled>
+      <button id="sendBtn" onclick="sendMsg()" disabled>Send</button>
+    </div>
+  </div>
+</div>
+<script>
+const API=location.origin;
+const P=new URLSearchParams(location.search);
+const TOKEN=P.get('token')||'';
+const NAME=P.get('name')||'web-user';
+const H={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
+let currentRoom=null,sse=null;
+
+async function loadRooms(){
+  try{
+    const r=await fetch(API+'/rooms',{headers:H});
+    if(!r.ok){document.getElementById('status').textContent='auth failed';return}
+    const rooms=await r.json();
+    document.getElementById('status').textContent='connected';
+    const el=document.getElementById('rooms');
+    if(!rooms.length){el.innerHTML='<div class="empty">No rooms</div>';return}
+    el.innerHTML=rooms.map(rm=>'<div class="room-item" onclick="selectRoom(\\''+
+      rm.name+'\\')">'+rm.name+'<span class="count">'+
+      rm.members.length+'</span></div>').join('');
+    if(currentRoom)document.querySelectorAll('.room-item').forEach(e=>{
+      if(e.textContent.startsWith(currentRoom))e.classList.add('active');
+    });
+  }catch(e){document.getElementById('status').textContent='offline'}
+}
+
+async function selectRoom(name){
+  currentRoom=name;
+  document.querySelectorAll('.room-item').forEach(e=>{
+    e.classList.toggle('active',e.textContent.startsWith(name));
+  });
+  document.getElementById('msgInput').disabled=false;
+  document.getElementById('sendBtn').disabled=false;
+  try{
+    const r=await fetch(API+'/rooms/'+name+'/history?limit=100',{headers:H});
+    const msgs=await r.json();
+    const el=document.getElementById('messages');
+    el.innerHTML=msgs.map(formatMsg).join('');
+    el.scrollTop=el.scrollHeight;
+  }catch(e){}
+  try{
+    const r=await fetch(API+'/rooms/'+name,{headers:H});
+    const room=await r.json();
+    document.getElementById('members').textContent=
+      'Members: '+room.members.join(', ');
+  }catch(e){}
+  connectSSE();
+}
+
+function connectSSE(){
+  if(sse)sse.close();
+  sse=new EventSource(API+'/stream/'+NAME+'?token='+TOKEN);
+  sse.addEventListener('message',e=>{
+    try{
+      const msg=JSON.parse(e.data);
+      if(msg.room===currentRoom){
+        const el=document.getElementById('messages');
+        el.innerHTML+=formatMsg(msg);
+        el.scrollTop=el.scrollHeight;
+      }
+    }catch(e){}
+  });
+}
+
+function formatMsg(msg){
+  const ts=(msg.timestamp||'').substring(11,19);
+  const type=msg.message_type||'chat';
+  let tag='';
+  if(type!=='chat')tag='<span class="tag tag-'+type+'">'+type+'</span>';
+  return '<div class="msg"><span class="ts">'+ts+
+    '</span><span class="sender">'+(msg.from_name||'?')+
+    '</span>'+tag+(msg.content||'')+'</div>';
+}
+
+async function sendMsg(){
+  const input=document.getElementById('msgInput');
+  const text=input.value.trim();
+  if(!text||!currentRoom)return;
+  input.value='';
+  try{await fetch(API+'/rooms/'+currentRoom+'/messages',{
+    method:'POST',headers:H,
+    body:JSON.stringify({from_name:NAME,content:text})
+  })}catch(e){}
+}
+
+document.getElementById('msgInput').addEventListener('keydown',
+  e=>{if(e.key==='Enter')sendMsg()});
+
+loadRooms();
+setInterval(loadRooms,30000);
+</script>
+</body>
+</html>
+"""
+
+
 def main() -> None:
     """Run the relay server as a CLI entrypoint."""
     import uvicorn
