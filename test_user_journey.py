@@ -7,11 +7,8 @@ watch-daemon → invite-link → peek → health/detailed.
 """
 
 import asyncio
-import json
 import subprocess
 import sys
-import time
-from pathlib import Path
 
 import httpx
 
@@ -187,7 +184,6 @@ async def run():
         _pass("auth rejection (no token)")
 
         # 21. Rate limiting
-        from unittest.mock import patch
         # Send many messages rapidly
         limited = False
         for i in range(100):

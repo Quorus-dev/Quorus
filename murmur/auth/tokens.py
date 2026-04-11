@@ -79,8 +79,8 @@ def generate_api_key() -> tuple[str, str, str]:
     - prefix: first portion for fast DB lookup
     - key_hash: bcrypt(sha256(raw_key)) for storage
     """
-    prefix = secrets.token_urlsafe(_KEY_PREFIX_LEN)[:_KEY_PREFIX_LEN]
-    secret_part = secrets.token_urlsafe(_KEY_SECRET_LEN)[:_KEY_SECRET_LEN]
+    prefix = secrets.token_hex(_KEY_PREFIX_LEN)[:_KEY_PREFIX_LEN]
+    secret_part = secrets.token_hex(_KEY_SECRET_LEN)[:_KEY_SECRET_LEN]
     raw_key = f"mct_{prefix}_{secret_part}"
     key_hash = hash_api_key(raw_key)
     return raw_key, prefix, key_hash
