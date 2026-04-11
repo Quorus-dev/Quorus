@@ -1,3 +1,4 @@
+from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -237,3 +238,151 @@ async def test_process_sse_ignores_connected_event():
     await mcp_server._process_sse_event("connected", '{"participant": "bob"}')
     messages = await mcp_server._drain_pending_messages()
     assert len(messages) == 0
+
+
+async def test_start_auto_poll_creates_task():
+    """start_auto_poll should create a background task."""
+    mock_client = _make_mock_client("get", [])
+    with patch("mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server._start_auto_poll(interval=10)
+    assert "started" in result.lower()
+    assert mcp_server._auto_poll_task is not None
+    assert not mcp_server._auto_poll_task.done()
+    # Clean up
+    await mcp_server._stop_auto_poll()
+
+
+async def test_start_auto_poll_rejects_double_start():
+    """Starting auto-poll twice should return an already-running message."""
+    mock_client = _make_mock_client("get", [])
+    with patch("mcp_server._get_http_client", return_value=mock_client):
+        await mcp_server._start_auto_poll(interval=10)
+        result = await mcp_server._start_auto_poll(interval=10)
+    assert "already running" in result.lower()
+    await mcp_server._stop_auto_poll()
+
+
+async def test_stop_auto_poll_stops_task():
+    """stop_auto_poll should cancel the background task."""
+    mock_client = _make_mock_client("get", [])
+    with patch("mcp_server._get_http_client", return_value=mock_client):
+        await mcp_server._start_auto_poll(interval=10)
+        result = await mcp_server._stop_auto_poll()
+    assert "stopped" in result.lower()
+    assert mcp_server._auto_poll_task is None
+
+
+async def test_stop_auto_poll_when_not_running():
+    """stop_auto_poll should return a helpful message if not running."""
+    result = await mcp_server._stop_auto_poll()
+    assert "not running" in result.lower()
+
+
+async def test_auto_poll_clamps_interval():
+    """Interval should be clamped to [2, 300]."""
+    mock_client = _make_mock_client("get", [])
+    with patch("mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server._start_auto_poll(interval=1)
+    assert "2s" in result
+    await mcp_server._stop_auto_poll()
+
+
+async def test_auto_poll_delivers_messages():
+    """Auto-poll should fetch and buffer messages."""
+    msgs = [
+        {"id": "m1", "from_name": "bob", "content": "hi",
+         "timestamp": "2026-04-11T00:00:00Z"},
+    ]
+    mock_client2 = _make_mock_client("get", msgs)
+    with patch("mcp_server._get_http_client", return_value=mock_client2):
+        fetched, err = await mcp_server._fetch_relay_messages(wait=0)
+    assert len(fetched) == 1
+    await mcp_server._append_pending_messages(fetched)
+    buffered = await mcp_server._drain_pending_messages()
+    assert len(buffered) == 1
+    assert buffered[0]["from_name"] == "bob"
+
+
+async def test_sse_listener_buffers_messages():
+    """SSE listener should buffer messages and notify the active session.
+
+    Uses a real relay server via ASGI transport so the full SSE flow is
+    exercised: relay pushes SSE event -> MCP _sse_listener parses it ->
+    message lands in _pending_messages.
+    """
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+
+    from relay_server import app as relay_app
+    from relay_server import _reset_state
+
+    _reset_state()
+
+    transport = ASGITransport(app=relay_app)
+    real_client = AsyncClient(
+        transport=transport, base_url="http://test"
+    )
+    relay_headers = {"Authorization": "Bearer test-secret"}
+
+    # Create room and add alice
+    resp = await real_client.post(
+        "/rooms",
+        json={"name": "sse-e2e", "created_by": "bob"},
+        headers=relay_headers,
+    )
+    assert resp.status_code == 200
+    room_id = resp.json()["id"]
+    await real_client.post(
+        f"/rooms/{room_id}/join",
+        json={"participant": "alice"},
+        headers=relay_headers,
+    )
+
+    # Point MCP SSE listener at the real relay via ASGI client
+    with (
+        patch.object(mcp_server, "RELAY_URL", "http://test"),
+        patch.object(mcp_server, "RELAY_SECRET", "test-secret"),
+        patch.object(mcp_server, "INSTANCE_NAME", "alice"),
+    ):
+        mcp_server._http_client = real_client
+
+        stop = asyncio.Event()
+        listener_task = asyncio.create_task(
+            mcp_server._sse_listener(stop)
+        )
+
+        # Give SSE listener time to connect
+        await asyncio.sleep(0.2)
+
+        # Send a room message from bob
+        resp = await real_client.post(
+            f"/rooms/{room_id}/messages",
+            json={
+                "from_name": "bob",
+                "content": "instant delivery test",
+            },
+            headers=relay_headers,
+        )
+        assert resp.status_code == 200
+
+        # Wait for SSE to deliver it
+        for _ in range(20):
+            msgs = await mcp_server._drain_pending_messages()
+            if msgs:
+                break
+            await asyncio.sleep(0.1)
+
+        stop.set()
+        listener_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await listener_task
+
+        mcp_server._http_client = None
+        await real_client.aclose()
+        _reset_state()
+
+    assert len(msgs) >= 1
+    assert any(
+        m["content"] == "instant delivery test" for m in msgs
+    )

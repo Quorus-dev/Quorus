@@ -6,6 +6,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -182,6 +184,124 @@ async def _watch(room_name: str) -> None:
         console.print("\n[dim]Stopped watching.[/dim]")
     finally:
         await client.aclose()
+
+
+def _format_chat_msg(msg: dict) -> str:
+    """Format a single chat message for display."""
+    msg_type = msg.get("message_type", "chat")
+    sender = msg.get("from_name", "?")
+    content = msg.get("content", "")
+    ts = msg.get("timestamp", "")[:19]
+    type_color = {
+        "claim": "yellow",
+        "status": "cyan",
+        "request": "magenta",
+        "alert": "red",
+        "sync": "green",
+    }.get(msg_type, "white")
+    tag = f" [{type_color}][{msg_type}][/{type_color}]" if msg_type != "chat" else ""
+    return f"[dim]{ts}[/dim] [bold]{sender}[/bold]{tag} {content}"
+
+
+async def _chat(room_name: str) -> None:
+    """Interactive chat mode: SSE messages stream in, user types to send."""
+    rooms = await _list_rooms()
+    room = next((r for r in rooms if r["name"] == room_name), None)
+    if not room:
+        console.print(f"[red]Room '{room_name}' not found[/red]")
+        return
+
+    room_id = room["id"]
+    console.print(f"[bold green]Murmur Chat — {room_name}[/bold green]")
+    console.print(f"[dim]Members: {', '.join(room['members'])}[/dim]")
+    console.print(f"[dim]You are: {INSTANCE_NAME}[/dim]")
+    console.print(f"[dim]Type a message and press Enter to send. Ctrl+C to quit.[/dim]")
+    console.print("─" * 60)
+
+    stop_event = asyncio.Event()
+    chat_console = Console()
+
+    async def _stream_messages():
+        """Background task: stream SSE messages and print them."""
+        client = httpx.AsyncClient()
+        try:
+            url = f"{RELAY_URL}/stream/{INSTANCE_NAME}"
+            async with client.stream(
+                "GET", url, params={"token": RELAY_SECRET}, timeout=None,
+            ) as resp:
+                event_type = ""
+                event_data = ""
+                async for line in resp.aiter_lines():
+                    if stop_event.is_set():
+                        break
+                    line = line.strip()
+                    if line.startswith("event:"):
+                        event_type = line[6:].strip()
+                    elif line.startswith("data:"):
+                        event_data = line[5:].strip()
+                    elif line == "" and event_type:
+                        if event_type == "message":
+                            try:
+                                msg = json.loads(event_data)
+                                if msg.get("room") == room_name:
+                                    chat_console.print(
+                                        _format_chat_msg(msg)
+                                    )
+                            except json.JSONDecodeError:
+                                pass
+                        event_type = ""
+                        event_data = ""
+        except (httpx.RemoteProtocolError, httpx.ReadError):
+            if not stop_event.is_set():
+                chat_console.print("[red]Connection lost. Reconnecting...[/red]")
+        finally:
+            await client.aclose()
+
+    async def _send_message(text: str):
+        """Send a message to the room."""
+        client = _get_client()
+        try:
+            await client.post(
+                f"{RELAY_URL}/rooms/{room_id}/messages",
+                json={"from_name": INSTANCE_NAME, "content": text},
+                headers=_auth_headers(),
+            )
+        finally:
+            await client.aclose()
+
+    async def _input_loop():
+        """Read user input in a thread, send messages async."""
+        loop = asyncio.get_event_loop()
+        while not stop_event.is_set():
+            try:
+                text = await loop.run_in_executor(None, sys.stdin.readline)
+                text = text.strip()
+                if not text:
+                    continue
+                await _send_message(text)
+            except (EOFError, KeyboardInterrupt):
+                stop_event.set()
+                break
+
+    stream_task = asyncio.create_task(_stream_messages())
+    input_task = asyncio.create_task(_input_loop())
+
+    try:
+        await asyncio.gather(stream_task, input_task)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        stop_event.set()
+        stream_task.cancel()
+        input_task.cancel()
+        console.print("\n[dim]Left chat.[/dim]")
+
+
+def _cmd_chat(args):
+    try:
+        asyncio.run(_chat(args.room))
+    except KeyboardInterrupt:
+        console.print("\n[dim]Left chat.[/dim]")
 
 
 def _cmd_rooms(args):
@@ -372,6 +492,11 @@ def main():
     p_watch = sub.add_parser("watch", help="Watch a room live")
     p_watch.add_argument("room", help="Room name")
 
+    p_chat = sub.add_parser(
+        "chat", help="Interactive chat in a room"
+    )
+    p_chat.add_argument("room", help="Room name")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -387,6 +512,7 @@ def main():
         "say": _cmd_say,
         "dm": _cmd_dm,
         "watch": _cmd_watch,
+        "chat": _cmd_chat,
     }
     commands[args.command](args)
 

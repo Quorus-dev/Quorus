@@ -71,7 +71,7 @@ def load_config() -> dict[str, Any]:
         "relay_url": get("RELAY_URL", "relay_url", "http://localhost:8080"),
         "relay_secret": get("RELAY_SECRET", "relay_secret", "test-secret"),
         "instance_name": get("INSTANCE_NAME", "instance_name", "default"),
-        "enable_background_polling": as_bool(enable_background_polling, default=False),
+        "enable_background_polling": as_bool(enable_background_polling, default=True),
         "push_notification_method": notification_method,
         "push_notification_channel": notification_channel,
     }

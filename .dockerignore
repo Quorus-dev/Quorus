@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.git
+.gitignore
+tests/
+*.md
+.claude/
+.mcp.json
+messages.json
+uv.lock

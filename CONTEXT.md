@@ -14,11 +14,11 @@ Murmur (package: mcp-tunnel) is a relay-based system for inter-agent communicati
 **What's built:**
 
 - `relay_server.py` (~780L) — FastAPI relay with rooms, fan-out messaging, SSE streaming, per-recipient queues, file persistence, chunking, analytics, TTL, webhooks, long-polling
-- `mcp_server.py` (~500L) — Stdio MCP server with send_message, check_messages, list_participants, send_room_message, join_room, list_rooms + SSE background listener
+- `mcp_server.py` (~550L) — Stdio MCP server with send_message, check_messages, list_participants, send_room_message, join_room, list_rooms, start_auto_poll, stop_auto_poll + SSE background listener
 - `cli.py` (~285L) — Human CLI: `murmur watch/say/dm/rooms/create/invite/members`
 - `tunnel_config.py` (77L) — Config loading (env > file > legacy fallback)
 - `analytics.py` (91L) — CLI dashboard with rich tables
-- Tests: 116 passing across 5 test files (relay, mcp, config, integration, rooms integration)
+- Tests: 122 passing across 5 test files (relay, mcp, config, integration, rooms integration)
 
 **Key features added (2026-04-11):**
 
@@ -44,16 +44,17 @@ Preparing for YC + OpenAI hackathons on April 16, 2026. Need to deploy relay and
 
 ## Recent Changes
 
-| Date       | Commit   | What                                           |
-| ---------- | -------- | ---------------------------------------------- |
-| 2026-04-11 | 6246aa5  | Merged rooms integration tests                 |
-| 2026-04-11 | (merged) | CLI tool with watch/say/dm/rooms/create/invite |
-| 2026-04-11 | (merged) | MCP room tools + SSE push client               |
-| 2026-04-11 | f3698e2  | SSE stream endpoint for real-time push         |
-| 2026-04-11 | f070b2f  | Room message fan-out endpoint                  |
-| 2026-04-11 | 8bdcd93  | Room state, persistence, CRUD endpoints        |
-| 2026-04-11 | b777fd0  | Rooms implementation plan (9 tasks)            |
-| 2026-04-11 | 12c6bc4  | Design spec + shared context + CLAUDE.md       |
+| Date       | Commit   | What                                             |
+| ---------- | -------- | ------------------------------------------------ |
+| 2026-04-11 | (wip)    | Auto-poll tools: start_auto_poll, stop_auto_poll |
+| 2026-04-11 | 6246aa5  | Merged rooms integration tests                   |
+| 2026-04-11 | (merged) | CLI tool with watch/say/dm/rooms/create/invite   |
+| 2026-04-11 | (merged) | MCP room tools + SSE push client                 |
+| 2026-04-11 | f3698e2  | SSE stream endpoint for real-time push           |
+| 2026-04-11 | f070b2f  | Room message fan-out endpoint                    |
+| 2026-04-11 | 8bdcd93  | Room state, persistence, CRUD endpoints          |
+| 2026-04-11 | b777fd0  | Rooms implementation plan (9 tasks)              |
+| 2026-04-11 | 12c6bc4  | Design spec + shared context + CLAUDE.md         |
 
 ---
 
