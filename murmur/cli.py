@@ -1224,6 +1224,56 @@ def _cmd_relay(args):
         console.print("\n[dim]Relay stopped.[/dim]")
 
 
+def _cmd_version(args):
+    from murmur import __version__
+    console.print(f"murmur-ai {__version__}")
+
+
+def _cmd_logs(args):
+    """Tail relay analytics and recent activity."""
+    import httpx as httpx_mod
+
+    try:
+        r = httpx_mod.get(
+            f"{RELAY_URL}/analytics",
+            headers=_auth_headers(),
+            timeout=5,
+        )
+        r.raise_for_status()
+        stats = r.json()
+
+        console.print("[bold]Murmur Relay Logs[/bold]\n")
+        console.print(f"  Uptime: {stats['uptime_seconds'] // 60}m {stats['uptime_seconds'] % 60}s")
+        console.print(f"  Messages sent: {stats['total_messages_sent']}")
+        console.print(f"  Messages delivered: {stats['total_messages_delivered']}")
+        console.print(f"  Messages pending: {stats['messages_pending']}")
+
+        per_participant = stats.get("participants", {})
+        if per_participant:
+            console.print("\n[bold]Per Participant[/bold]")
+            table = Table()
+            table.add_column("Name", style="bold")
+            table.add_column("Sent", justify="right")
+            table.add_column("Received", justify="right")
+            for name, data in sorted(per_participant.items()):
+                table.add_row(name, str(data["sent"]), str(data["received"]))
+            console.print(table)
+
+        hourly = stats.get("hourly_volume", [])
+        if hourly:
+            console.print("\n[bold]Hourly Volume[/bold]")
+            for entry in hourly[-12:]:  # last 12 hours
+                hour = entry["hour"][:16]
+                count = entry["count"]
+                bar = "[green]" + "#" * min(count, 50) + "[/green]"
+                console.print(f"  {hour}  {bar} {count}")
+
+    except httpx_mod.ConnectError:
+        _relay_unreachable()
+    except httpx_mod.HTTPStatusError as e:
+        console.print(f"[red]Error: {e.response.status_code}[/red]")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="murmur", description="Murmur CLI"
@@ -1281,6 +1331,8 @@ def main():
 
     p_doctor = sub.add_parser("doctor", help="Diagnose setup issues")
     p_doctor.add_argument("--verbose", "-v", action="store_true", help="Show extra details")
+    sub.add_parser("version", help="Show murmur-ai version")
+    sub.add_parser("logs", help="Show relay activity and per-participant stats")
 
     p_invite_link = sub.add_parser(
         "invite-link", help="Generate a join command to share"
@@ -1349,6 +1401,8 @@ def main():
         "ps": _cmd_ps,
         "status": _cmd_status,
         "doctor": _cmd_doctor,
+        "version": _cmd_version,
+        "logs": _cmd_logs,
         "join": _cmd_join,
         "invite-link": _cmd_invite_link,
         "spawn": _cmd_spawn,
