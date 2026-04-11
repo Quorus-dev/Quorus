@@ -1186,7 +1186,7 @@ def _cmd_watch_daemon(args):
 
 
 async def _watch_context(room_name: str, context_path: Path | None = None) -> None:
-    """Background watcher: write room context to .murmur/context.md every 10s."""
+    """Background watcher: write room context to .murmur/context.md via SSE events."""
     from murmur.watcher import Watcher
 
     if context_path is None:
@@ -1194,14 +1194,18 @@ async def _watch_context(room_name: str, context_path: Path | None = None) -> No
 
     console.print(f"[bold]Watching room context: {room_name}[/bold]")
     console.print(f"  Context file: {context_path}")
+    console.print("  SSE event-driven (push, not poll)")
     console.print("  Ctrl+C to stop\n")
+
+    # Get SSE token for this agent
+    sse_token = _get_sse_token(INSTANCE_NAME)
 
     watcher = Watcher(
         relay_url=RELAY_URL,
         auth_headers=_auth_headers(),
         room_name=room_name,
         agent_name=INSTANCE_NAME,
-        interval_seconds=10,
+        sse_token=sse_token,
         context_path=context_path,
     )
 

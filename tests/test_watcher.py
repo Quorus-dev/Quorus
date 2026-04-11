@@ -26,7 +26,7 @@ async def test_watcher_init(temp_context_dir: Path):
       auth_headers={"Authorization": "Bearer test"},
       room_name="test-room",
       agent_name="test-agent",
-      interval_seconds=1,
+      sse_token="test-token",
       context_path=context_path,
   )
   assert watcher.room_name == "test-room"
@@ -42,6 +42,7 @@ async def test_watcher_format_context_md():
       auth_headers={},
       room_name="dev-room",
       agent_name="alice",
+      sse_token="test-token",
       context_path=context_path,
   )
 
@@ -106,6 +107,7 @@ async def test_watcher_write_context(temp_context_dir: Path):
       auth_headers={},
       room_name="test-room",
       agent_name="test-agent",
+      sse_token="test-token",
       context_path=context_path,
   )
 
@@ -139,6 +141,7 @@ async def test_watcher_creates_murmur_dir(temp_context_dir: Path):
       auth_headers={},
       room_name="test-room",
       agent_name="test-agent",
+      sse_token="test-token",
       context_path=context_path,
   )
 
@@ -165,6 +168,7 @@ async def test_watcher_format_no_room_state():
       auth_headers={},
       room_name="test-room",
       agent_name="test-agent",
+      sse_token="test-token",
       context_path=context_path,
   )
 

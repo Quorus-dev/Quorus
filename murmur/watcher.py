@@ -5,7 +5,9 @@ Context includes:
 - Last N messages in the room
 - Snapshot timestamp and metadata
 
-The watcher writes atomically every 10s (or event-driven via SSE).
+The watcher is event-driven via SSE — writes context.md when messages arrive,
+locks are acquired/released, or other room events occur.
+
 Each agent maintains its own local .murmur/context.md (repo-scoped, not shared).
 """
 
@@ -23,7 +25,7 @@ logger = structlog.get_logger("murmur.watcher")
 
 
 class Watcher:
-  """Background task that writes room context to .murmur/context.md every N seconds."""
+  """Event-driven background task that updates .murmur/context.md via SSE."""
 
   def __init__(
       self,
@@ -31,20 +33,22 @@ class Watcher:
       auth_headers: dict[str, str],
       room_name: str,
       agent_name: str,
-      interval_seconds: int = 10,
+      sse_token: str,
       context_path: Path | None = None,
   ) -> None:
     self.relay_url = relay_url
     self.auth_headers = auth_headers
     self.room_name = room_name
     self.agent_name = agent_name
-    self.interval_seconds = interval_seconds
+    self.sse_token = sse_token
     self.context_path = context_path or Path.cwd() / ".murmur" / "context.md"
     self._running = False
     self._task: asyncio.Task | None = None
+    self._backoff_delay = 1  # Initial backoff in seconds
+    self._max_backoff = 32  # Max backoff in seconds
 
   async def start(self) -> None:
-    """Start the watcher background task."""
+    """Start the watcher background task (SSE event listener)."""
     if self._running:
       return
     self._running = True
@@ -65,20 +69,61 @@ class Watcher:
     logger.info(f"Watcher stopped for room={self.room_name}")
 
   async def _run(self) -> None:
-    """Main watcher loop: fetch state and write context.md every N seconds."""
+    """Main watcher loop: listen to SSE and write context.md on events."""
     client = httpx.AsyncClient()
     try:
       while self._running:
         try:
-          context = await self._fetch_context(client)
-          await self._write_context(context)
+          await self._listen_and_update(client)
+        except asyncio.CancelledError:
+          break
         except Exception as e:
-          logger.error("Watcher update failed", error=str(e))
-
-        # Sleep before next update
-        await asyncio.sleep(self.interval_seconds)
+          logger.error("SSE connection error", error=str(e), backoff=self._backoff_delay)
+          await asyncio.sleep(self._backoff_delay)
+          self._backoff_delay = min(self._backoff_delay * 2, self._max_backoff)
+        else:
+          # Reset backoff on successful connection
+          self._backoff_delay = 1
     finally:
       await client.aclose()
+
+  async def _listen_and_update(self, client: httpx.AsyncClient) -> None:
+    """Listen to SSE stream and update context.md on room events."""
+    url = f"{self.relay_url}/stream/{self.agent_name}"
+    async with client.stream(
+        "GET", url, params={"token": self.sse_token}, timeout=None
+    ) as resp:
+      if resp.status_code != 200:
+        raise RuntimeError(f"SSE stream failed with {resp.status_code}")
+
+      event_type = ""
+      event_data = ""
+      async for line in resp.aiter_lines():
+        if not self._running:
+          break
+
+        line = line.strip()
+        if line.startswith("event:"):
+          event_type = line[6:].strip()
+        elif line.startswith("data:"):
+          event_data = line[5:].strip()
+        elif line == "" and event_type:
+          # End of event, process it if it's for our room
+          try:
+            if event_type == "message":
+              msg = json.loads(event_data)
+              if msg.get("room") == self.room_name:
+                context = await self._fetch_context(client)
+                await self._write_context(context)
+            elif event_type in ("lock_acquired", "lock_released"):
+              # Primitive B events — update context to show new lock state
+              context = await self._fetch_context(client)
+              await self._write_context(context)
+          except Exception as e:
+            logger.warning("Failed to process SSE event", error=str(e), event=event_type)
+          finally:
+            event_type = ""
+            event_data = ""
 
   async def _fetch_context(self, client: httpx.AsyncClient) -> dict:
     """Fetch room state and message history."""
