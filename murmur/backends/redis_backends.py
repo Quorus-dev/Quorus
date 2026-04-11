@@ -585,6 +585,127 @@ class RedisParticipantBackend:
         return total
 
 
+# -- Room state (goal, locks, decisions) -----------------------------------
+
+class RedisRoomStateBackend:
+    """Per-room coordination state backed by a single Redis JSON blob.
+
+    Key schema: ``t:{tenant_id}:room:{room_id}:state``
+    The value is a JSON object with keys: active_goal, claimed_tasks,
+    locked_files, resolved_decisions.
+    """
+
+    def __init__(self, r: Redis) -> None:
+        self._r = r
+
+    def _key(self, tid: str, rid: str) -> str:
+        return f"t:{tid}:room:{rid}:state"
+
+    def _empty(self) -> dict:
+        return {
+            "active_goal": None,
+            "claimed_tasks": [],
+            "locked_files": {},
+            "resolved_decisions": [],
+        }
+
+    async def _read(self, tid: str, rid: str) -> dict:
+        raw = await self._r.get(self._key(tid, rid))
+        if raw is None:
+            return self._empty()
+        return json.loads(raw)
+
+    async def _write(self, tid: str, rid: str, state: dict) -> None:
+        await self._r.set(self._key(tid, rid), json.dumps(state))
+
+    async def get(self, tenant_id: str, room_id: str) -> dict:
+        return await self._read(tenant_id, room_id)
+
+    async def set_goal(
+        self, tenant_id: str, room_id: str, goal: str | None
+    ) -> None:
+        state = await self._read(tenant_id, room_id)
+        state["active_goal"] = goal
+        await self._write(tenant_id, room_id, state)
+
+    async def add_claimed_task(
+        self, tenant_id: str, room_id: str, task: dict
+    ) -> None:
+        state = await self._read(tenant_id, room_id)
+        state["claimed_tasks"].append(task)
+        fp = task.get("file_path")
+        if fp:
+            state["locked_files"][fp] = {
+                "held_by": task["claimed_by"],
+                "lock_token": task["lock_token"],
+                "expires_at": task["expires_at"],
+            }
+        await self._write(tenant_id, room_id, state)
+
+    async def remove_claimed_task(
+        self, tenant_id: str, room_id: str, task_id: str
+    ) -> None:
+        state = await self._read(tenant_id, room_id)
+        removed = None
+        live = []
+        for t in state.get("claimed_tasks", []):
+            if t.get("id") == task_id:
+                removed = t
+            else:
+                live.append(t)
+        state["claimed_tasks"] = live
+        if removed:
+            fp = removed.get("file_path")
+            if fp:
+                state["locked_files"].pop(fp, None)
+        await self._write(tenant_id, room_id, state)
+
+    async def set_lock(
+        self, tenant_id: str, room_id: str, file_path: str, lock_data: dict
+    ) -> None:
+        state = await self._read(tenant_id, room_id)
+        state["locked_files"][file_path] = lock_data
+        await self._write(tenant_id, room_id, state)
+
+    async def release_lock(
+        self, tenant_id: str, room_id: str, file_path: str
+    ) -> None:
+        state = await self._read(tenant_id, room_id)
+        state["locked_files"].pop(file_path, None)
+        await self._write(tenant_id, room_id, state)
+
+    async def add_decision(
+        self, tenant_id: str, room_id: str, decision: dict
+    ) -> None:
+        state = await self._read(tenant_id, room_id)
+        state["resolved_decisions"].append(decision)
+        await self._write(tenant_id, room_id, state)
+
+    async def expire_tasks(
+        self, tenant_id: str, room_id: str
+    ) -> list[str]:
+        now = time.time()
+        state = await self._read(tenant_id, room_id)
+        expired_ids: list[str] = []
+        live_tasks: list[dict] = []
+        for task in state.get("claimed_tasks", []):
+            try:
+                exp = datetime.fromisoformat(task["expires_at"]).timestamp()
+                if exp < now:
+                    expired_ids.append(task["id"])
+                    fp = task.get("file_path")
+                    if fp:
+                        state["locked_files"].pop(fp, None)
+                else:
+                    live_tasks.append(task)
+            except (KeyError, ValueError):
+                live_tasks.append(task)
+        if expired_ids:
+            state["claimed_tasks"] = live_tasks
+            await self._write(tenant_id, room_id, state)
+        return expired_ids
+
+
 # -- Convenience bundle -----------------------------------------------------
 
 @dataclass
@@ -600,6 +721,7 @@ class RedisBackends:
     webhooks: RedisWebhookBackend
     analytics: RedisAnalyticsBackend
     participants: RedisParticipantBackend = None  # type: ignore[assignment]
+    room_state: RedisRoomStateBackend = None  # type: ignore[assignment]
 
     @classmethod
     def create(cls, r: Redis, max_room_history: int = 200) -> RedisBackends:
@@ -614,4 +736,5 @@ class RedisBackends:
             webhooks=RedisWebhookBackend(r),
             analytics=RedisAnalyticsBackend(r),
             participants=RedisParticipantBackend(r),
+            room_state=RedisRoomStateBackend(r),
         )
