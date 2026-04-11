@@ -361,6 +361,17 @@ class CreateRoomRequest(BaseModel):
         return _validate_name(v)
 
 
+class RoomMessageRequest(BaseModel):
+    from_name: str
+    content: str
+    message_type: str = "chat"
+
+    @field_validator("from_name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
 class JoinLeaveRequest(BaseModel):
     participant: str
 
@@ -422,6 +433,7 @@ async def send_message(msg: SendMessageRequest):
                 "id": str(uuid.uuid4()),
                 "from_name": msg.from_name,
                 "to": msg.to,
+                "room": None,
                 "content": chunk_content,
                 "timestamp": timestamp,
                 "chunk_group": chunk_group,
@@ -456,6 +468,7 @@ async def send_message(msg: SendMessageRequest):
             "id": str(uuid.uuid4()),
             "from_name": msg.from_name,
             "to": msg.to,
+            "room": None,
             "content": content,
             "timestamp": timestamp,
         }
@@ -637,6 +650,47 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
     room["members"].discard(req.participant)
     await _persist_state()
     return {"status": "left"}
+
+
+@app.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
+async def send_room_message(room_id: str, msg: RoomMessageRequest):
+    room = rooms.get(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if msg.from_name not in room["members"]:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+    message_id = str(uuid.uuid4())
+    recipients = room["members"] - {msg.from_name}
+
+    for recipient in recipients:
+        fan_out_msg = {
+            "id": str(uuid.uuid4()),
+            "from_name": msg.from_name,
+            "to": recipient,
+            "room": room["name"],
+            "content": msg.content,
+            "message_type": msg.message_type,
+            "timestamp": timestamp,
+        }
+        async with locks[recipient]:
+            message_queues[recipient].append(fan_out_msg)
+        message_events[recipient].set()
+        for q in sse_queues.get(recipient, []):
+            await q.put(fan_out_msg)
+        await _notify_webhook(recipient, fan_out_msg)
+
+    participants.add(msg.from_name)
+    _track_send(msg.from_name)
+    _trim_messages()
+    await _persist_state()
+
+    logger.info(
+        "Room message %s in %s: %s -> %d recipients",
+        message_id, room["name"], msg.from_name, len(recipients),
+    )
+    return {"id": message_id, "timestamp": timestamp}
 
 
 @app.get("/analytics", dependencies=[Depends(verify_auth)])

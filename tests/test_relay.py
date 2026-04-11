@@ -795,6 +795,100 @@ async def test_room_endpoints_require_auth(client: AsyncClient):
     assert resp.status_code == 401
 
 
+async def test_send_room_message_fans_out(client: AsyncClient, auth_headers: dict):
+    """Message sent to room should appear in all members' inboxes except sender."""
+    create_resp = await client.post(
+        "/rooms", json={"name": "team", "created_by": "alice"}, headers=auth_headers
+    )
+    room_id = create_resp.json()["id"]
+    await client.post(f"/rooms/{room_id}/join", json={"participant": "bob"}, headers=auth_headers)
+    await client.post(
+        f"/rooms/{room_id}/join", json={"participant": "charlie"}, headers=auth_headers
+    )
+
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "alice", "content": "hello team"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+
+    # Bob gets it
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    msgs = resp.json()
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "hello team"
+    assert msgs[0]["from_name"] == "alice"
+    assert msgs[0]["room"] == "team"
+
+    # Charlie gets it
+    resp = await client.get("/messages/charlie", headers=auth_headers)
+    msgs = resp.json()
+    assert len(msgs) == 1
+    assert msgs[0]["room"] == "team"
+
+    # Alice does NOT get her own message
+    resp = await client.get("/messages/alice", headers=auth_headers)
+    assert resp.json() == []
+
+
+async def test_room_message_with_type(client: AsyncClient, auth_headers: dict):
+    """Room message should preserve custom message_type."""
+    create_resp = await client.post(
+        "/rooms", json={"name": "team", "created_by": "alice"}, headers=auth_headers
+    )
+    room_id = create_resp.json()["id"]
+    await client.post(f"/rooms/{room_id}/join", json={"participant": "bob"}, headers=auth_headers)
+
+    await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "alice", "content": "CLAIMING: auth module", "message_type": "claim"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    assert resp.json()[0]["message_type"] == "claim"
+
+
+async def test_room_message_nonmember_rejected(client: AsyncClient, auth_headers: dict):
+    """Non-members should be rejected with 403."""
+    create_resp = await client.post(
+        "/rooms", json={"name": "private", "created_by": "alice"}, headers=auth_headers
+    )
+    room_id = create_resp.json()["id"]
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "eve", "content": "let me in"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+
+
+async def test_room_message_nonexistent_room_returns_404(
+    client: AsyncClient, auth_headers: dict
+):
+    """Sending to a nonexistent room should return 404."""
+    resp = await client.post(
+        "/rooms/fake-room/messages",
+        json={"from_name": "alice", "content": "hello"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+async def test_dm_still_works_after_rooms_added(client: AsyncClient, auth_headers: dict):
+    """Direct messages should still work and have room=None."""
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "direct msg"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/messages/bob", headers=auth_headers)
+    msgs = resp.json()
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "direct msg"
+    assert msgs[0].get("room") is None
+
+
 async def test_room_persistence_save_and_load(
     client: AsyncClient, auth_headers: dict, tmp_path
 ):
