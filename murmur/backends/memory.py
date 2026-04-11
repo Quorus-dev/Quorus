@@ -560,6 +560,128 @@ class InMemoryParticipantBackend:
         self._participants.clear()
 
 
+# -- Room state (Shared State Matrix — Primitive A) -------------------------
+
+
+class InMemoryRoomStateBackend:
+    """Per-room coordination state: goal, claimed tasks, file locks, decisions."""
+
+    def __init__(self) -> None:
+        # (tenant_id, room_id) -> state dict
+        self._state: dict[tuple[str, str], dict] = {}
+        self._lock = asyncio.Lock()
+
+    def _empty(self) -> dict:
+        return {
+            "active_goal": None,
+            "claimed_tasks": [],
+            "locked_files": {},
+            "resolved_decisions": [],
+        }
+
+    async def get(self, tenant_id: str, room_id: str) -> dict:
+        async with self._lock:
+            return dict(self._state.get((tenant_id, room_id), self._empty()))
+
+    async def set_goal(
+        self, tenant_id: str, room_id: str, goal: str | None
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            self._state.setdefault(key, self._empty())
+            self._state[key]["active_goal"] = goal
+
+    async def add_claimed_task(
+        self, tenant_id: str, room_id: str, task: dict
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            self._state.setdefault(key, self._empty())
+            self._state[key]["claimed_tasks"].append(task)
+            # Also write the file lock entry
+            fp = task.get("file_path")
+            if fp:
+                self._state[key]["locked_files"][fp] = {
+                    "held_by": task["claimed_by"],
+                    "lock_token": task["lock_token"],
+                    "expires_at": task["expires_at"],
+                }
+
+    async def remove_claimed_task(
+        self, tenant_id: str, room_id: str, task_id: str
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            if key not in self._state:
+                return
+            tasks = self._state[key]["claimed_tasks"]
+            removed = None
+            self._state[key]["claimed_tasks"] = [
+                t for t in tasks if t.get("id") != task_id
+                or (removed := t) is None  # capture and drop
+            ]
+            if removed:
+                fp = removed.get("file_path")
+                if fp:
+                    self._state[key]["locked_files"].pop(fp, None)
+
+    async def set_lock(
+        self, tenant_id: str, room_id: str, file_path: str, lock_data: dict
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            self._state.setdefault(key, self._empty())
+            self._state[key]["locked_files"][file_path] = lock_data
+
+    async def release_lock(
+        self, tenant_id: str, room_id: str, file_path: str
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            if key in self._state:
+                self._state[key]["locked_files"].pop(file_path, None)
+
+    async def add_decision(
+        self, tenant_id: str, room_id: str, decision: dict
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            self._state.setdefault(key, self._empty())
+            self._state[key]["resolved_decisions"].append(decision)
+
+    async def expire_tasks(
+        self, tenant_id: str, room_id: str
+    ) -> list[str]:
+        now = time.time()
+        async with self._lock:
+            key = (tenant_id, room_id)
+            if key not in self._state:
+                return []
+            expired_ids: list[str] = []
+            live_tasks: list[dict] = []
+            for task in self._state[key]["claimed_tasks"]:
+                # expires_at is ISO8601; parse to epoch for comparison
+                try:
+                    from datetime import datetime, timezone
+                    exp = datetime.fromisoformat(
+                        task["expires_at"]
+                    ).timestamp()
+                    if exp < now:
+                        expired_ids.append(task["id"])
+                        fp = task.get("file_path")
+                        if fp:
+                            self._state[key]["locked_files"].pop(fp, None)
+                    else:
+                        live_tasks.append(task)
+                except (KeyError, ValueError):
+                    live_tasks.append(task)
+            self._state[key]["claimed_tasks"] = live_tasks
+            return expired_ids
+
+    def clear(self) -> None:
+        self._state.clear()
+
+
 # -- Convenience bundle -----------------------------------------------------
 
 
@@ -578,6 +700,9 @@ class InMemoryBackends:
     participants: InMemoryParticipantBackend = field(
         default_factory=InMemoryParticipantBackend
     )
+    room_state: InMemoryRoomStateBackend = field(
+        default_factory=InMemoryRoomStateBackend
+    )
 
     @classmethod
     def create(cls, max_room_history: int = 200) -> InMemoryBackends:
@@ -594,6 +719,7 @@ class InMemoryBackends:
             webhooks=InMemoryWebhookBackend(),
             analytics=InMemoryAnalyticsBackend(),
             participants=InMemoryParticipantBackend(),
+            room_state=InMemoryRoomStateBackend(),
         )
 
     def clear_all(self) -> None:
@@ -607,3 +733,4 @@ class InMemoryBackends:
         self.webhooks.clear()
         self.analytics.clear()
         self.participants.clear()
+        self.room_state.clear()

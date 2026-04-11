@@ -298,3 +298,63 @@ class AnalyticsBackend(Protocol):
 
     async def get_stats(self, tenant_id: str) -> dict:
         ...
+
+
+# ---------------------------------------------------------------------------
+# Room state (Shared State Matrix — Primitive A)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class RoomStateBackend(Protocol):
+    """Mutable room-level coordination state (goal, locks, decisions)."""
+
+    async def get(self, tenant_id: str, room_id: str) -> dict:
+        """Return stored state for the room.
+
+        Keys: active_goal, claimed_tasks, locked_files, resolved_decisions.
+        Returns empty defaults if no state has been written yet.
+        """
+        ...
+
+    async def set_goal(
+        self, tenant_id: str, room_id: str, goal: str | None
+    ) -> None:
+        """Set (or clear) the active goal for the room."""
+        ...
+
+    async def add_claimed_task(
+        self, tenant_id: str, room_id: str, task: dict
+    ) -> None:
+        """Append a claimed task entry."""
+        ...
+
+    async def remove_claimed_task(
+        self, tenant_id: str, room_id: str, task_id: str
+    ) -> None:
+        """Remove a claimed task by its id (also releases its lock)."""
+        ...
+
+    async def set_lock(
+        self, tenant_id: str, room_id: str, file_path: str, lock_data: dict
+    ) -> None:
+        """Acquire or refresh a file lock."""
+        ...
+
+    async def release_lock(
+        self, tenant_id: str, room_id: str, file_path: str
+    ) -> None:
+        """Release a file lock."""
+        ...
+
+    async def add_decision(
+        self, tenant_id: str, room_id: str, decision: dict
+    ) -> None:
+        """Record a resolved decision."""
+        ...
+
+    async def expire_tasks(
+        self, tenant_id: str, room_id: str
+    ) -> list[str]:
+        """Remove tasks/locks whose TTL has expired.  Returns expired task ids."""
+        ...

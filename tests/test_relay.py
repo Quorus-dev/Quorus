@@ -2069,3 +2069,86 @@ async def test_fan_out_preserves_reply_to(client: AsyncClient, auth_headers: dic
     reply = next((m for m in msgs if m.get("reply_to") == root_id), None)
     assert reply is not None
     assert reply["from_name"] == "bob"
+
+
+# ---------------------------------------------------------------------------
+# Room state (Primitive A) tests
+# ---------------------------------------------------------------------------
+
+
+async def _setup_state_room(client: AsyncClient, auth_headers: dict):
+    """Helper: create a room with two members, return room_id."""
+    resp = await client.post(
+        "/rooms",
+        json={"name": "state-test-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    room_id = resp.json()["id"]
+    # Add bob as member
+    await client.post(
+        f"/rooms/{room_id}/join",
+        json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    return room_id
+
+
+async def test_room_state_basic(client: AsyncClient, auth_headers: dict):
+    """GET /rooms/{id}/state returns correct schema for an empty room."""
+    room_id = await _setup_state_room(client, auth_headers)
+    resp = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["room_id"] == room_id
+    assert data["schema_version"] == "1.0"
+    assert "snapshot_at" in data
+    assert data["active_goal"] is None
+    assert data["claimed_tasks"] == []
+    assert data["locked_files"] == {}
+    assert data["resolved_decisions"] == []
+    assert isinstance(data["active_agents"], list)
+    assert isinstance(data["message_count"], int)
+
+
+async def test_room_state_by_name(client: AsyncClient, auth_headers: dict):
+    """GET /rooms/{name}/state resolves by name, not just UUID."""
+    await _setup_state_room(client, auth_headers)
+    resp = await client.get("/rooms/state-test-room/state", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["schema_version"] == "1.0"
+
+
+async def test_room_state_404_for_unknown_room(client: AsyncClient, auth_headers: dict):
+    """Unknown room returns 404."""
+    resp = await client.get("/rooms/nonexistent-xyz/state", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+async def test_room_state_no_auth_returns_401(client: AsyncClient):
+    """No auth returns 401."""
+    resp = await client.get("/rooms/anything/state")
+    assert resp.status_code == 401
+
+
+async def test_room_state_message_count(client: AsyncClient, auth_headers: dict):
+    """message_count reflects actual messages posted to the room."""
+    room_id = await _setup_state_room(client, auth_headers)
+    # Post two messages
+    for content in ("hello", "world"):
+        await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "alice", "content": content},
+            headers=auth_headers,
+        )
+    resp = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    assert resp.json()["message_count"] == 2
+
+
+async def test_room_state_active_agents_from_members(client: AsyncClient, auth_headers: dict):
+    """active_agents falls back to room members when no presence data."""
+    room_id = await _setup_state_room(client, auth_headers)
+    resp = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    agents = resp.json()["active_agents"]
+    assert "alice" in agents
+    assert "bob" in agents
