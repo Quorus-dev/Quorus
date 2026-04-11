@@ -2152,3 +2152,196 @@ async def test_room_state_active_agents_from_members(client: AsyncClient, auth_h
     agents = resp.json()["active_agents"]
     assert "alice" in agents
     assert "bob" in agents
+
+
+# ---------------------------------------------------------------------------
+# Room state Primitive B (distributed mutex / claim_task) tests
+# ---------------------------------------------------------------------------
+
+
+async def _setup_lock_room(client: AsyncClient, auth_headers: dict, name: str = "lock-test-room"):
+    """Helper: create a room with two members, return room_id."""
+    resp = await client.post(
+        "/rooms",
+        json={"name": name, "created_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    room_id = resp.json()["id"]
+    await client.post(
+        f"/rooms/{room_id}/join",
+        json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    return room_id
+
+
+async def test_claim_task_grants_lock(client: AsyncClient, auth_headers: dict):
+    """POST /rooms/{id}/lock returns locked=false with token when available."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-grant-room")
+    resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": "src/auth.py", "claimed_by": "alice", "ttl_seconds": 60},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["locked"] is False
+    assert "lock_token" in data
+    assert "expires_at" in data
+    assert data["lock_token"]  # non-empty UUID
+
+
+async def test_claim_task_shows_taken(client: AsyncClient, auth_headers: dict):
+    """Second claim on same path returns locked=true with held_by."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-taken-room")
+    path = "src/models.py"
+
+    # Alice grabs the lock
+    resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    assert resp.json()["locked"] is False
+
+    # Bob tries to claim the same file
+    resp2 = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "bob", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["locked"] is True
+    assert data2["held_by"] == "alice"
+    assert "expires_at" in data2
+
+
+async def test_claim_task_appears_in_state(client: AsyncClient, auth_headers: dict):
+    """Claimed task appears in GET /rooms/{id}/state locked_files."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-state-room")
+    path = "murmur/relay.py"
+
+    resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    assert resp.json()["locked"] is False
+
+    state = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    locked = state.json()["locked_files"]
+    assert path in locked
+    assert locked[path]["held_by"] == "alice"
+
+
+async def test_release_task_removes_lock(client: AsyncClient, auth_headers: dict):
+    """DELETE /rooms/{id}/lock/{path} releases the lock and removes it from state."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-release-room")
+    path = "src/routes.py"
+
+    # Claim
+    claim_resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    token = claim_resp.json()["lock_token"]
+
+    # Release
+    rel_resp = await client.request(
+        "DELETE",
+        f"/rooms/{room_id}/lock/{path}",
+        json={"lock_token": token},
+        headers=auth_headers,
+    )
+    assert rel_resp.status_code == 200
+    assert rel_resp.json()["released"] is True
+
+    # Verify gone from state
+    state = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    assert path not in state.json()["locked_files"]
+
+
+async def test_release_task_wrong_token_403(client: AsyncClient, auth_headers: dict):
+    """Wrong token returns 403."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-403-room")
+    path = "src/service.py"
+
+    await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+
+    resp = await client.request(
+        "DELETE",
+        f"/rooms/{room_id}/lock/{path}",
+        json={"lock_token": "invalid-token-xyz"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+
+
+async def test_release_task_no_lock_404(client: AsyncClient, auth_headers: dict):
+    """Releasing a non-existent lock returns 404."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-404-room")
+
+    resp = await client.request(
+        "DELETE",
+        f"/rooms/{room_id}/lock/nonexistent/path.py",
+        json={"lock_token": "any-token"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+async def test_claim_task_re_lock_after_release(client: AsyncClient, auth_headers: dict):
+    """After releasing, a new agent can claim the same path."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-relock-room")
+    path = "src/db.py"
+
+    # Alice claims
+    c1 = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    token = c1.json()["lock_token"]
+
+    # Alice releases
+    await client.request(
+        "DELETE",
+        f"/rooms/{room_id}/lock/{path}",
+        json={"lock_token": token},
+        headers=auth_headers,
+    )
+
+    # Bob can now claim
+    c2 = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "bob", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    assert c2.json()["locked"] is False
+    assert c2.json()["lock_token"] != token
+
+
+async def test_claim_task_no_auth_401(client: AsyncClient):
+    """No auth returns 401."""
+    resp = await client.post(
+        "/rooms/any-room/lock",
+        json={"file_path": "x.py", "claimed_by": "alice"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_claim_task_unknown_room_404(client: AsyncClient, auth_headers: dict):
+    """Unknown room returns 404."""
+    resp = await client.post(
+        "/rooms/unknown-room-xyz/lock",
+        json={"file_path": "x.py", "claimed_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404

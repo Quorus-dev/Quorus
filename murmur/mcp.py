@@ -709,5 +709,106 @@ async def room_metrics(room_id: str) -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+async def claim_task(
+    room_id: str,
+    file_path: str,
+    description: str = "",
+    ttl_seconds: int = 300,
+) -> str:
+    """Acquire an optimistic lock on a file path in a room (Primitive B).
+
+    Returns granted (with lock_token) or locked (with held_by) status.
+    On grant, SSE-broadcasts LOCK_ACQUIRED to all room members.
+
+    Args:
+        room_id: The room name or ID
+        file_path: The file path to lock (e.g. "src/auth.py")
+        description: Optional description of the work being done
+        ttl_seconds: Lock TTL in seconds (default 300)
+    """
+    try:
+        client = _get_http_client()
+        resp = await client.post(
+            f"{RELAY_URL}/rooms/{room_id}/lock",
+            json={
+                "file_path": file_path,
+                "claimed_by": INSTANCE_NAME,
+                "description": description,
+                "ttl_seconds": ttl_seconds,
+            },
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            new_token = await _refresh_jwt_on_401()
+            if new_token:
+                resp = await client.post(
+                    f"{RELAY_URL}/rooms/{room_id}/lock",
+                    json={
+                        "file_path": file_path,
+                        "claimed_by": INSTANCE_NAME,
+                        "description": description,
+                        "ttl_seconds": ttl_seconds,
+                    },
+                    headers=_auth_headers(),
+                    timeout=10,
+                )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("locked"):
+            return (
+                f"LOCKED: {file_path} is held by {data['held_by']}, "
+                f"expires {data['expires_at']}"
+            )
+        return (
+            f"GRANTED: lock_token={data['lock_token']} "
+            f"expires={data['expires_at']}"
+        )
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
+
+
+@mcp.tool()
+async def release_task(
+    room_id: str,
+    file_path: str,
+    lock_token: str,
+) -> str:
+    """Release a previously acquired file lock (Primitive B).
+
+    Validates lock_token ownership. SSE-broadcasts LOCK_RELEASED on success.
+
+    Args:
+        room_id: The room name or ID
+        file_path: The file path to unlock (must match what was locked)
+        lock_token: The token returned by claim_task when lock was granted
+    """
+    try:
+        client = _get_http_client()
+        url = f"{RELAY_URL}/rooms/{room_id}/lock/{file_path}"
+        resp = await client.request(
+            "DELETE",
+            url,
+            json={"lock_token": lock_token},
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            new_token = await _refresh_jwt_on_401()
+            if new_token:
+                resp = await client.request(
+                    "DELETE",
+                    url,
+                    json={"lock_token": lock_token},
+                    headers=_auth_headers(),
+                    timeout=10,
+                )
+        resp.raise_for_status()
+        return f"RELEASED: {file_path}"
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
