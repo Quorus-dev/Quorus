@@ -1370,6 +1370,147 @@ class TestRoomWebhooks:
         assert r.status_code == 422
 
 
+# ===========================================================================
+# 21. AGENT ROLES
+# ===========================================================================
+
+class TestAgentRoles:
+    @pytest.mark.anyio
+    async def test_join_with_default_role(self, client):
+        resp = await _create_room(client, name="role-room", creator="admin")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/join",
+            json={"participant": "agent-1"},
+            headers=AUTH,
+        )
+        assert r.status_code == 200
+        assert r.json()["role"] == "member"
+
+    @pytest.mark.anyio
+    async def test_join_with_specific_role(self, client):
+        resp = await _create_room(client, name="role-room2", creator="admin")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/join",
+            json={"participant": "reviewer-1", "role": "reviewer"},
+            headers=AUTH,
+        )
+        assert r.status_code == 200
+        assert r.json()["role"] == "reviewer"
+
+    @pytest.mark.anyio
+    async def test_join_invalid_role_rejected(self, client):
+        resp = await _create_room(client, name="role-room3", creator="admin")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/join",
+            json={"participant": "agent-1", "role": "hacker"},
+            headers=AUTH,
+        )
+        assert r.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_all_valid_roles(self, client):
+        resp = await _create_room(client, name="all-roles", creator="admin")
+        rid = resp.json()["id"]
+        for role in ["builder", "reviewer", "researcher", "pm", "qa", "member"]:
+            r = await client.post(
+                f"/rooms/{rid}/join",
+                json={"participant": f"agent-{role}", "role": role},
+                headers=AUTH,
+            )
+            assert r.status_code == 200, f"Role {role} rejected"
+
+    @pytest.mark.anyio
+    async def test_room_shows_member_roles(self, client):
+        resp = await _create_room(client, name="roles-visible", creator="admin")
+        rid = resp.json()["id"]
+        await client.post(
+            f"/rooms/{rid}/join",
+            json={"participant": "dev-1", "role": "builder"},
+            headers=AUTH,
+        )
+        await client.post(
+            f"/rooms/{rid}/join",
+            json={"participant": "rev-1", "role": "reviewer"},
+            headers=AUTH,
+        )
+        r = await client.get(f"/rooms/{rid}", headers=AUTH)
+        assert r.status_code == 200
+        roles = r.json()["member_roles"]
+        assert roles["dev-1"] == "builder"
+        assert roles["rev-1"] == "reviewer"
+        assert roles["admin"] == "builder"  # creator default
+
+    @pytest.mark.anyio
+    async def test_kick_removes_role(self, client):
+        resp = await _create_room(client, name="kick-role", creator="boss")
+        rid = resp.json()["id"]
+        await client.post(
+            f"/rooms/{rid}/join",
+            json={"participant": "worker", "role": "qa"},
+            headers=AUTH,
+        )
+        await client.post(
+            f"/rooms/{rid}/kick",
+            json={"participant": "worker", "requested_by": "boss"},
+            headers=AUTH,
+        )
+        r = await client.get(f"/rooms/{rid}", headers=AUTH)
+        assert "worker" not in r.json()["member_roles"]
+
+    @pytest.mark.anyio
+    async def test_leave_removes_role(self, client):
+        resp = await _create_room(client, name="leave-role", creator="admin")
+        rid = resp.json()["id"]
+        await client.post(
+            f"/rooms/{rid}/join",
+            json={"participant": "temp", "role": "researcher"},
+            headers=AUTH,
+        )
+        await client.post(
+            f"/rooms/{rid}/leave",
+            json={"participant": "temp"},
+            headers=AUTH,
+        )
+        r = await client.get(f"/rooms/{rid}", headers=AUTH)
+        assert "temp" not in r.json()["member_roles"]
+
+    @pytest.mark.anyio
+    async def test_list_rooms_includes_roles(self, client):
+        await _create_room(client, name="listed-roles", creator="admin")
+        r = await client.get("/rooms", headers=AUTH)
+        assert r.status_code == 200
+        room = next(rm for rm in r.json() if rm["name"] == "listed-roles")
+        assert "member_roles" in room
+        assert room["member_roles"]["admin"] == "builder"
+
+    @pytest.mark.anyio
+    async def test_create_room_includes_roles(self, client):
+        r = await _create_room(client, name="created-roles", creator="founder")
+        assert r.status_code == 200
+        assert r.json()["member_roles"]["founder"] == "builder"
+
+    @pytest.mark.anyio
+    async def test_role_update_on_rejoin(self, client):
+        """Re-joining with a different role should update the role."""
+        resp = await _create_room(client, name="rejoin-role", creator="admin")
+        rid = resp.json()["id"]
+        await client.post(
+            f"/rooms/{rid}/join",
+            json={"participant": "flex", "role": "builder"},
+            headers=AUTH,
+        )
+        await client.post(
+            f"/rooms/{rid}/join",
+            json={"participant": "flex", "role": "reviewer"},
+            headers=AUTH,
+        )
+        r = await client.get(f"/rooms/{rid}", headers=AUTH)
+        assert r.json()["member_roles"]["flex"] == "reviewer"
+
+
 class TestInvitePageSecurity:
     @pytest.mark.anyio
     async def test_invite_page_does_not_leak_relay_secret(self, client):
