@@ -80,18 +80,18 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 ## Recent Changes
 
-| Date       | Commit  | What                                               |
-| ---------- | ------- | -------------------------------------------------- |
-| 2026-04-11 | c02144d | Show HN + Twitter launch drafts                    |
-| 2026-04-11 | 02d4822 | Integration guides (Codex, Cursor, Gemini, Ollama) |
-| 2026-04-11 | ed32c0b | Web dashboard at GET / with live SSE messages      |
-| 2026-04-11 | d86f531 | Discord-style invite pages at /invite/{room}       |
-| 2026-04-11 | ae09ffa | murmur hackathon command                           |
-| 2026-04-11 | 65b1d58 | Peek endpoint for non-destructive inbox check      |
-| 2026-04-11 | 9bb599b | TypeScript MurmurClient + peek in Python client    |
-| 2026-04-11 | 6551487 | Hackathon readiness test — 6 agents, 2 rooms       |
-| 2026-04-11 | 5584939 | Stress test — 281 msg/s, p50=3.6ms                 |
-| 2026-04-11 | 6477dc2 | Lazy poll mode + OpenAPI docs                      |
+| Date       | Commit  | What                                                          |
+| ---------- | ------- | ------------------------------------------------------------- |
+| 2026-04-11 | 9b40539 | SSE-only push: removed polling, lazy default, auto_poll tools |
+| 2026-04-11 | 6cec027 | Relay-side reply threading with validation (agent-2)          |
+| 2026-04-11 | 9379c0e | Watcher daemon foundation — Primitive C (agent-3)             |
+| 2026-04-11 | 03a6927 | Merge reply threading with Aarya's JWT auth (12 commits)      |
+| 2026-04-11 | c02144d | Show HN + Twitter launch drafts                               |
+| 2026-04-11 | 02d4822 | Integration guides (Codex, Cursor, Gemini, Ollama)            |
+| 2026-04-11 | ed32c0b | Web dashboard at GET / with live SSE messages                 |
+| 2026-04-11 | d86f531 | Discord-style invite pages at /invite/{room}                  |
+| 2026-04-11 | ae09ffa | murmur hackathon command                                      |
+| 2026-04-11 | 65b1d58 | Peek endpoint for non-destructive inbox check                 |
 
 ---
 
