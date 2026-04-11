@@ -17,7 +17,11 @@ logger = logging.getLogger("murmur.auth")
 
 RELAY_SECRET = os.environ.get("RELAY_SECRET", "")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-ALLOW_LEGACY_AUTH = os.environ.get("ALLOW_LEGACY_AUTH", "true").lower() in (
+
+# Default ALLOW_LEGACY_AUTH to false when DATABASE_URL is set (production),
+# true otherwise (dev/test).
+_legacy_default = "false" if DATABASE_URL else "true"
+ALLOW_LEGACY_AUTH = os.environ.get("ALLOW_LEGACY_AUTH", _legacy_default).lower() in (
     "1",
     "true",
     "yes",

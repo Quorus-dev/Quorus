@@ -37,6 +37,11 @@ class WebhookService:
             self._client = httpx.AsyncClient(timeout=5)
         return self._client
 
+    async def close(self) -> None:
+        """Close the HTTP client. Called on shutdown."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+
     # -- URL validation (SSRF protection) -------------------------------------
 
     @staticmethod

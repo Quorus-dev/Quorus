@@ -47,12 +47,20 @@ BOOTSTRAP_SECRET = os.environ.get("BOOTSTRAP_SECRET", "")
 # Startup validation
 # ---------------------------------------------------------------------------
 
+REDIS_URL = os.environ.get("REDIS_URL", "")
+
 # When Postgres is configured, JWT auth is the primary mechanism.
 if DATABASE_URL:
     if not JWT_SECRET or len(JWT_SECRET) < 32:
         raise SystemExit(
             "JWT_SECRET must be set (min 32 chars) when DATABASE_URL is configured. "
             "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        )
+    if not REDIS_URL:
+        raise SystemExit(
+            "REDIS_URL must be set when DATABASE_URL is configured. "
+            "Redis is required for session state, rate limiting, and presence "
+            "in production mode. Example: REDIS_URL=redis://localhost:6379/0"
         )
     if not BOOTSTRAP_SECRET:
         logger.warning(

@@ -12,7 +12,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from murmur.auth.middleware import AuthContext, verify_auth
+from murmur.auth.middleware import ALLOW_LEGACY_AUTH, AuthContext, verify_auth
 
 router = APIRouter()
 logger = structlog.get_logger("murmur.routes.sse")
@@ -51,7 +51,13 @@ async def stream_messages(
 ):
     svc = request.app.state.sse_service
     valid, tid = await svc.verify_token(token, recipient)
-    if not (valid or hmac_mod.compare_digest(token, RELAY_SECRET)):
+    # Allow RELAY_SECRET as fallback only when legacy auth is enabled
+    legacy_ok = (
+        ALLOW_LEGACY_AUTH
+        and RELAY_SECRET
+        and hmac_mod.compare_digest(token, RELAY_SECRET)
+    )
+    if not (valid or legacy_ok):
         raise HTTPException(status_code=401, detail="Invalid token")
     if not valid:
         tid = _LEGACY_TENANT
