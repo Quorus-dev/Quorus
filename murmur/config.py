@@ -66,12 +66,25 @@ def load_config() -> dict[str, Any]:
     if notification_method is None and as_bool(enable_background_polling, default=False):
         notification_method = "notifications/claude/channel"
 
+    # Poll mode: "lazy" (manual only), "sse" (realtime), "poll" (interval)
+    poll_mode = os.environ.get("POLL_MODE") or file_config.get("poll_mode")
+    if poll_mode is None:
+        # Backward compat: if background polling was explicitly enabled, use sse
+        if as_bool(enable_background_polling, default=False):
+            poll_mode = "sse"
+        else:
+            poll_mode = "lazy"
+    poll_mode = poll_mode.strip().lower()
+    if poll_mode not in {"lazy", "sse", "poll"}:
+        poll_mode = "lazy"
+
     return {
         "config_file": str(config_file),
         "relay_url": get("RELAY_URL", "relay_url", "http://localhost:8080"),
         "relay_secret": get("RELAY_SECRET", "relay_secret", ""),
         "instance_name": get("INSTANCE_NAME", "instance_name", "default"),
         "enable_background_polling": as_bool(enable_background_polling, default=True),
+        "poll_mode": poll_mode,
         "push_notification_method": notification_method,
         "push_notification_channel": notification_channel,
     }

@@ -43,7 +43,16 @@ async def lifespan(app):
     logger.info("Relay server shutting down — saving state")
     await _persist_state()
 
-app = FastAPI(title="MCP Tunnel Relay", lifespan=lifespan)
+app = FastAPI(
+    title="Murmur Relay",
+    description=(
+        "Real-time messaging relay for AI agent coordination. "
+        "Any agent that speaks HTTP can join rooms, send messages, "
+        "and coordinate work through this API."
+    ),
+    version="0.3.0",
+    lifespan=lifespan,
+)
 
 # CORS — configurable via CORS_ORIGINS env var (comma-separated)
 _cors_origins = os.environ.get("CORS_ORIGINS", "")
@@ -477,6 +486,7 @@ def _resolve_room(room_id_or_name: str) -> tuple[str, dict]:
 
 @app.get("/health")
 async def health():
+    """Check if the relay is running."""
     return {"status": "ok"}
 
 
@@ -501,6 +511,7 @@ async def _notify_webhook(recipient: str, message: dict):
 
 @app.post("/messages", dependencies=[Depends(verify_auth)])
 async def send_message(msg: SendMessageRequest):
+    """Send a direct message to another participant."""
     if not _check_rate_limit(msg.from_name):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -655,6 +666,7 @@ def _reassemble_chunks(messages: list[dict]) -> tuple[list[dict], list[dict]]:
 
 @app.get("/messages/{recipient}", dependencies=[Depends(verify_auth)])
 async def get_messages(recipient: str, wait: int = 0):
+    """Fetch pending messages for a recipient. Use wait=N for long-polling (up to 60s)."""
     wait = min(max(wait, 0), 60)  # Clamp to 0-60
 
     async with locks[recipient]:
@@ -695,11 +707,13 @@ async def get_messages(recipient: str, wait: int = 0):
 
 @app.get("/participants", dependencies=[Depends(verify_auth)])
 async def list_participants_endpoint():
+    """List all known participant names."""
     return sorted(participants)
 
 
 @app.post("/webhooks", dependencies=[Depends(verify_auth)])
 async def register_webhook(req: RegisterWebhookRequest):
+    """Register a webhook URL for push notifications when messages arrive."""
     callback_url = _validate_webhook_callback_url(req.callback_url)
     webhooks[req.instance_name] = callback_url
     participants.add(req.instance_name)
@@ -710,6 +724,7 @@ async def register_webhook(req: RegisterWebhookRequest):
 
 @app.delete("/webhooks/{instance_name}", dependencies=[Depends(verify_auth)])
 async def delete_webhook(instance_name: str):
+    """Remove a previously registered webhook."""
     webhooks.pop(instance_name, None)
     logger.info("Webhook removed: %s", instance_name)
     return {"status": "removed"}
@@ -717,6 +732,7 @@ async def delete_webhook(instance_name: str):
 
 @app.post("/rooms", dependencies=[Depends(verify_auth)])
 async def create_room(req: CreateRoomRequest):
+    """Create a new room. The creator is auto-added as a member."""
     if _find_room_by_name(req.name):
         raise HTTPException(status_code=409, detail="Room name already exists")
     room_id = str(uuid.uuid4())
@@ -740,6 +756,7 @@ async def create_room(req: CreateRoomRequest):
 
 @app.get("/rooms", dependencies=[Depends(verify_auth)])
 async def list_rooms():
+    """List all rooms with their members."""
     return [
         {
             "id": rid,
@@ -753,6 +770,7 @@ async def list_rooms():
 
 @app.get("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
 async def get_room(room_id: str):
+    """Get a room by ID or name."""
     rid, room = _resolve_room(room_id)
     return {
         "id": rid,
@@ -764,6 +782,7 @@ async def get_room(room_id: str):
 
 @app.post("/rooms/{room_id}/join", dependencies=[Depends(verify_auth)])
 async def join_room(room_id: str, req: JoinLeaveRequest):
+    """Add a participant to a room."""
     room_id, room = _resolve_room(room_id)
     if len(room["members"]) >= MAX_ROOM_MEMBERS:
         raise HTTPException(
@@ -778,6 +797,7 @@ async def join_room(room_id: str, req: JoinLeaveRequest):
 
 @app.post("/rooms/{room_id}/leave", dependencies=[Depends(verify_auth)])
 async def leave_room(room_id: str, req: JoinLeaveRequest):
+    """Remove a participant from a room."""
     room_id, room = _resolve_room(room_id)
     room["members"].discard(req.participant)
     await _persist_state()
@@ -786,6 +806,7 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
 
 @app.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
 async def send_room_message(room_id: str, msg: RoomMessageRequest):
+    """Send a message to all members of a room."""
     if not _check_rate_limit(msg.from_name):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     room_id, room = _resolve_room(room_id)
@@ -894,6 +915,7 @@ async def get_presence():
 
 @app.get("/analytics", dependencies=[Depends(verify_auth)])
 async def get_analytics():
+    """Relay statistics: message counts, per-participant stats, hourly volume."""
     if _expire_stale_messages():
         await _persist_state()
     _prune_hourly_volume()

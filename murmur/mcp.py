@@ -28,6 +28,7 @@ RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
 INSTANCE_NAME = _config["instance_name"]
 ENABLE_BACKGROUND_POLLING = _config["enable_background_polling"]
+POLL_MODE = _config["poll_mode"]
 PUSH_NOTIFICATION_METHOD = _config["push_notification_method"]
 PUSH_NOTIFICATION_CHANNEL = _config["push_notification_channel"]
 
@@ -56,12 +57,12 @@ masked_secret = RELAY_SECRET[:4] + "***" if len(RELAY_SECRET) > 4 else "***"
 logger.info(
     (
         "Config loaded: path=%s relay_url=%s instance=%s "
-        "background_polling=%s push_method=%s secret=%s"
+        "poll_mode=%s push_method=%s secret=%s"
     ),
     CONFIG_FILE,
     RELAY_URL,
     INSTANCE_NAME,
-    ENABLE_BACKGROUND_POLLING,
+    POLL_MODE,
     PUSH_NOTIFICATION_METHOD or "disabled",
     masked_secret,
 )
@@ -343,9 +344,11 @@ async def _mcp_lifespan(server: FastMCP):
     stop_event = asyncio.Event()
     poll_task = None
 
-    if ENABLE_BACKGROUND_POLLING:
+    if POLL_MODE == "sse":
         poll_task = asyncio.create_task(_sse_listener(stop_event))
-        logger.info("SSE background listener enabled")
+        logger.info("SSE background listener enabled (poll_mode=sse)")
+    elif POLL_MODE == "lazy":
+        logger.info("Lazy poll mode — no background polling, agent checks manually")
 
     # Always start heartbeat so the relay knows this agent is alive
     _heartbeat_task = asyncio.create_task(_heartbeat_loop(stop_event))
@@ -416,7 +419,7 @@ def _declare_channel_capability() -> None:
     mcp._mcp_server.create_initialization_options = patched_create
 
 
-if ENABLE_BACKGROUND_POLLING:
+if POLL_MODE == "sse":
     _declare_channel_capability()
 
 
@@ -444,7 +447,8 @@ async def _check_messages(context: Context | None = None) -> str:
 
     messages = await _drain_pending_messages()
     if not messages:
-        wait = 0 if ENABLE_BACKGROUND_POLLING else 30
+        # lazy/sse = no blocking wait; poll = short wait for efficiency
+        wait = 0 if POLL_MODE in ("lazy", "sse") else 30
         messages, error = await _fetch_relay_messages(wait=wait)
         if error:
             return error
