@@ -73,15 +73,17 @@ redis.call('HSET', meta_key, 'name', new_name)
 return 1
 """
 
-# Lua: atomic add member with capacity check
-# KEYS[1]=members_key
-# ARGV[1]=name, ARGV[2]=role, ARGV[3]=max_members
+# Lua: atomic add member with capacity check + reverse index
+# KEYS[1]=members_key, KEYS[2]=member_rooms_key
+# ARGV[1]=name, ARGV[2]=role, ARGV[3]=max_members, ARGV[4]=room_id
 # Returns 1 if added, 0 if at capacity
 _ROOM_ADD_MEMBER_LUA = """
 local members_key = KEYS[1]
+local member_rooms = KEYS[2]
 local name = ARGV[1]
 local role = ARGV[2]
 local max_members = tonumber(ARGV[3])
+local room_id = ARGV[4]
 if redis.call('HEXISTS', members_key, name) == 1 then
   redis.call('HSET', members_key, name, role)
   return 1
@@ -89,6 +91,7 @@ end
 local count = redis.call('HLEN', members_key)
 if count >= max_members then return 0 end
 redis.call('HSET', members_key, name, role)
+redis.call('SADD', member_rooms, room_id)
 return 1
 """
 
@@ -293,6 +296,9 @@ class RedisRoomBackend:
     def _room_index_key(self, tid: str) -> str:
         return f"t:{tid}:room:_index"
 
+    def _member_rooms_key(self, tid: str, name: str) -> str:
+        return f"t:{tid}:member:{name}:rooms"
+
     async def create(self, tenant_id: str, room_id: str, room_data: dict) -> None:
         meta = {k: v for k, v in room_data.items() if k != "members"}
         members = room_data.get("members", {})
@@ -301,6 +307,9 @@ class RedisRoomBackend:
                 pipe.hset(self._meta_key(tenant_id, room_id), mapping=meta)
             if members:
                 pipe.hset(self._members_key(tenant_id, room_id), mapping=members)
+                # Maintain reverse index: member -> rooms
+                for member_name in members:
+                    pipe.sadd(self._member_rooms_key(tenant_id, member_name), room_id)
             name = room_data.get("name")
             if name:
                 pipe.hset(self._name_index_key(tenant_id), name, room_id)
@@ -382,17 +391,15 @@ class RedisRoomBackend:
     async def list_by_member(
         self, tenant_id: str, member_name: str
     ) -> list[tuple[str, dict]]:
-        """Return rooms where member_name is a member (O(rooms) in tenant)."""
-        room_ids = await self._r.smembers(self._room_index_key(tenant_id))
+        """Return rooms where member_name is a member via reverse index."""
+        room_ids = await self._r.smembers(
+            self._member_rooms_key(tenant_id, member_name)
+        )
         results: list[tuple[str, dict]] = []
         for rid in room_ids:
-            is_member = await self._r.hexists(
-                self._members_key(tenant_id, rid), member_name
-            )
-            if is_member:
-                data = await self.get(tenant_id, rid)
-                if data is not None:
-                    results.append((rid, data))
+            data = await self.get(tenant_id, rid)
+            if data is not None:
+                results.append((rid, data))
         return results
 
     async def update(self, tenant_id: str, room_id: str, updates: dict) -> None:
@@ -412,13 +419,19 @@ class RedisRoomBackend:
 
     async def delete(self, tenant_id: str, room_id: str) -> None:
         meta_key = self._meta_key(tenant_id, room_id)
+        members_key = self._members_key(tenant_id, room_id)
         name = await self._r.hget(meta_key, "name")
+        # Get all members to clean up reverse index
+        members = await self._r.hkeys(members_key)
         async with self._r.pipeline(transaction=True) as pipe:
             pipe.delete(meta_key)
-            pipe.delete(self._members_key(tenant_id, room_id))
+            pipe.delete(members_key)
             if name:
                 pipe.hdel(self._name_index_key(tenant_id), name)
             pipe.srem(self._room_index_key(tenant_id), room_id)
+            # Clean up reverse index for all members
+            for member_name in members:
+                pipe.srem(self._member_rooms_key(tenant_id, member_name), room_id)
             await pipe.execute()
 
     async def add_member(
@@ -426,25 +439,33 @@ class RedisRoomBackend:
     ) -> None:
         if not await self._r.exists(self._meta_key(tenant_id, room_id)):
             return
-        await self._r.hset(self._members_key(tenant_id, room_id), name, role)
+        async with self._r.pipeline(transaction=True) as pipe:
+            pipe.hset(self._members_key(tenant_id, room_id), name, role)
+            pipe.sadd(self._member_rooms_key(tenant_id, name), room_id)
+            await pipe.execute()
 
     async def add_member_if_capacity(
         self, tenant_id: str, room_id: str, name: str, role: str, max_members: int
     ) -> bool:
         result = await self._r.eval(
             _ROOM_ADD_MEMBER_LUA,
-            1,
+            2,
             self._members_key(tenant_id, room_id),
+            self._member_rooms_key(tenant_id, name),
             name,
             role,
             str(max_members),
+            room_id,
         )
         return result == 1
 
     async def remove_member(self, tenant_id: str, room_id: str, name: str) -> None:
         if not await self._r.exists(self._meta_key(tenant_id, room_id)):
             return
-        await self._r.hdel(self._members_key(tenant_id, room_id), name)
+        async with self._r.pipeline(transaction=True) as pipe:
+            pipe.hdel(self._members_key(tenant_id, room_id), name)
+            pipe.srem(self._member_rooms_key(tenant_id, name), room_id)
+            await pipe.execute()
 
     async def get_members(self, tenant_id: str, room_id: str) -> dict[str, str]:
         return await self._r.hgetall(self._members_key(tenant_id, room_id))
