@@ -282,3 +282,89 @@ async def test_export_unknown_format(capsys):
 
     captured = capsys.readouterr()
     assert "Unknown format" in captured.out
+
+
+# ── add-agent wizard tests ──────────────────────────────────────────────
+
+def test_add_agent_creates_workspace(tmp_path, monkeypatch):
+    from murmur.cli import _cmd_add_agent
+
+    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://test:8080")
+    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "test-secret")
+
+    # Redirect workspace to tmp_path
+    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
+
+    # Mock rich prompts to provide answers
+    call_count = {"n": 0}
+    answers = ["test-bot", "dev", "sonnet", "high"]
+
+    def mock_ask(prompt, **kwargs):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        if idx < len(answers):
+            return answers[idx]
+        return kwargs.get("default", "")
+
+    def mock_confirm(prompt, **kwargs):
+        return True
+
+    # Mock _list_rooms and _auto_join
+    mock_rooms = [{"name": "dev", "id": "r1", "members": []}]
+    client = _mock_client(200, {})
+
+    with patch("murmur.cli.Prompt.ask", side_effect=mock_ask), \
+         patch("murmur.cli.Confirm.ask", side_effect=mock_confirm), \
+         patch("murmur.cli.asyncio.run") as mock_run, \
+         patch("murmur.cli.subprocess.run"), \
+         patch("murmur.cli.sys.platform", "darwin"):
+        # First asyncio.run call is _list_rooms, second is _auto_join
+        mock_run.side_effect = [mock_rooms, None]
+        _cmd_add_agent(MagicMock())
+
+    workspace = tmp_path / "murmur-agents" / "test-bot"
+    assert workspace.exists()
+    assert (workspace / ".mcp.json").exists()
+    assert (workspace / "CLAUDE.md").exists()
+    assert (workspace / ".claude" / "settings.json").exists()
+
+    import json
+    claude_md = (workspace / "CLAUDE.md").read_text()
+    assert "test-bot" in claude_md
+    assert "dev" in claude_md
+
+    mcp = json.loads((workspace / ".mcp.json").read_text())
+    assert mcp["mcpServers"]["murmur"]["env"]["INSTANCE_NAME"] == "test-bot"
+
+
+def test_add_agent_cancelled(monkeypatch, capsys):
+    from murmur.cli import _cmd_add_agent
+
+    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://test:8080")
+    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "test-secret")
+
+    answers = ["cancel-bot", "dev", "sonnet", "high"]
+    call_count = {"n": 0}
+
+    def mock_ask(prompt, **kwargs):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        if idx < len(answers):
+            return answers[idx]
+        return kwargs.get("default", "")
+
+    confirm_count = {"n": 0}
+
+    def mock_confirm(prompt, **kwargs):
+        idx = confirm_count["n"]
+        confirm_count["n"] += 1
+        # First confirm (Launch agent?) — say no
+        return False
+
+    with patch("murmur.cli.Prompt.ask", side_effect=mock_ask), \
+         patch("murmur.cli.Confirm.ask", side_effect=mock_confirm), \
+         patch("murmur.cli.asyncio.run", return_value=[]):
+        _cmd_add_agent(MagicMock())
+
+    captured = capsys.readouterr()
+    assert "Cancelled" in captured.out

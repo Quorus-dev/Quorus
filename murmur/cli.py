@@ -10,6 +10,7 @@ from pathlib import Path
 
 import httpx
 from rich.console import Console
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from murmur.config import load_config
@@ -596,6 +597,94 @@ def _cmd_export(args):
     )
 
 
+async def _kick(room_name: str, participant: str) -> None:
+    """Kick a participant from a room (admin only)."""
+    client = _get_client()
+    try:
+        rooms_list = await _list_rooms_with_client(client)
+        room = next((r for r in rooms_list if r["name"] == room_name), None)
+        if not room:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+            return
+        resp = await client.post(
+            f"{RELAY_URL}/rooms/{room['id']}/kick",
+            json={"participant": participant, "requested_by": INSTANCE_NAME},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        console.print(f"[green]Kicked '{participant}' from {room_name}[/green]")
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        detail = e.response.json().get("detail", str(e.response.status_code))
+        console.print(f"[red]{detail}[/red]")
+    finally:
+        await client.aclose()
+
+
+async def _destroy(room_name: str) -> None:
+    """Destroy a room and its history (admin only)."""
+    client = _get_client()
+    try:
+        rooms_list = await _list_rooms_with_client(client)
+        room = next((r for r in rooms_list if r["name"] == room_name), None)
+        if not room:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+            return
+        resp = await client.request(
+            "DELETE",
+            f"{RELAY_URL}/rooms/{room['id']}",
+            json={"requested_by": INSTANCE_NAME},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        console.print(f"[green]Room '{room_name}' destroyed[/green]")
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        detail = e.response.json().get("detail", str(e.response.status_code))
+        console.print(f"[red]{detail}[/red]")
+    finally:
+        await client.aclose()
+
+
+async def _rename(room_name: str, new_name: str) -> None:
+    """Rename a room (admin only)."""
+    client = _get_client()
+    try:
+        rooms_list = await _list_rooms_with_client(client)
+        room = next((r for r in rooms_list if r["name"] == room_name), None)
+        if not room:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+            return
+        resp = await client.patch(
+            f"{RELAY_URL}/rooms/{room['id']}",
+            json={"new_name": new_name, "requested_by": INSTANCE_NAME},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        console.print(f"[green]Room renamed: {room_name} -> {new_name}[/green]")
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        detail = e.response.json().get("detail", str(e.response.status_code))
+        console.print(f"[red]{detail}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_kick(args):
+    asyncio.run(_kick(args.room, args.name))
+
+
+def _cmd_destroy(args):
+    asyncio.run(_destroy(args.room))
+
+
+def _cmd_rename(args):
+    asyncio.run(_rename(args.room, args.new_name))
+
+
 def _cmd_watch(args):
     asyncio.run(_watch(args.room))
 
@@ -928,6 +1017,191 @@ You communicate ONLY through the room — never reply in terminal.
         console.print(f"[green]Launched {name} in new Terminal tab[/green]")
     else:
         console.print(f"[yellow]Run manually: cd {workspace} && claude[/yellow]")
+
+
+def _cmd_add_agent(args):
+    """Interactive wizard to create and launch an agent."""
+    console.print("\n[bold green]Murmur Add Agent Wizard[/bold green]\n")
+
+    # 1. Agent name
+    name = Prompt.ask("[bold]Agent name[/bold]", default="agent-1")
+
+    # 2. Room selection — list existing rooms or create new
+    try:
+        rooms = asyncio.run(_list_rooms())
+        room_names = [r["name"] for r in rooms]
+    except Exception:
+        rooms = []
+        room_names = []
+
+    if room_names:
+        console.print(f"\n[dim]Available rooms:[/dim] {', '.join(room_names)}")
+        room = Prompt.ask(
+            "[bold]Which room?[/bold]",
+            choices=[*room_names, "new"],
+            default=room_names[0],
+        )
+        if room == "new":
+            room = Prompt.ask("[bold]New room name[/bold]")
+            try:
+                asyncio.run(_create_room(room))
+                console.print(f"[green]Created room '{room}'[/green]")
+            except Exception:
+                console.print(
+                    f"[yellow]Could not create room '{room}'"
+                    " — it may already exist[/yellow]"
+                )
+    else:
+        room = Prompt.ask("[bold]Room name[/bold]", default="murmur-dev")
+
+    # 3. Model preference
+    model = Prompt.ask(
+        "[bold]Model preference[/bold]",
+        choices=["opus", "sonnet", "haiku"],
+        default="sonnet",
+    )
+
+    # 4. Effort level
+    effort = Prompt.ask(
+        "[bold]Effort level[/bold]",
+        choices=["low", "medium", "high"],
+        default="high",
+    )
+
+    # Summary and confirm
+    console.print("\n[bold]Summary:[/bold]")
+    console.print(f"  Name:   [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]")
+    console.print(f"  Model:  [cyan]{model}[/cyan]")
+    console.print(f"  Effort: [cyan]{effort}[/cyan]")
+
+    if not Confirm.ask("\n[bold]Launch agent?[/bold]", default=True):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+
+    # Build workspace using existing _spawn_agent infra
+    agents_dir = Path.home() / "murmur-agents"
+    workspace = agents_dir / name
+    murmur_dir = Path(__file__).resolve().parent
+
+    if workspace.exists():
+        if not Confirm.ask(
+            f"[yellow]Workspace {workspace} exists. Overwrite config?[/yellow]",
+            default=False,
+        ):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    # .mcp.json
+    mcp_config = {
+        "mcpServers": {
+            "murmur": {
+                "type": "stdio",
+                "command": "uv",
+                "args": [
+                    "run", "--directory", str(murmur_dir.parent),
+                    "python", str(murmur_dir / "mcp.py"),
+                ],
+                "env": {
+                    "INSTANCE_NAME": name,
+                    "RELAY_URL": RELAY_URL,
+                    "RELAY_SECRET": RELAY_SECRET,
+                },
+            }
+        }
+    }
+    (workspace / ".mcp.json").write_text(json.dumps(mcp_config, indent=2))
+
+    # .claude/ settings with model preference
+    claude_dir = workspace / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    settings = {
+        "permissions": {
+            "allow": [
+                "Bash(*)",
+                "Read(*)",
+                "Write(*)",
+                "Edit(*)",
+                "Glob(*)",
+                "Grep(*)",
+                "mcp__murmur__*",
+            ],
+            "deny": [],
+        }
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
+
+    # CLAUDE.md with model/effort hints
+    claude_md = f"""# Murmur Agent
+
+You are {name} in the {room} group chat. ALL communication goes through the room.
+
+## On Startup
+1. Call check_messages() immediately
+2. Call send_room_message(room_id="{room}", content="{name} online", message_type="status")
+3. Read any messages and respond
+
+## Config
+- Model: {model}
+- Effort: {effort}
+
+## Rules
+- Communicate ONLY through the room — never just reply in terminal
+- Call check_messages() after completing each task
+- Post STATUS after every commit
+- If stuck, post REQUEST to the room
+- Short messages — every token counts
+- Commit and push after every feature
+
+## Tools
+- check_messages() — read inbox
+- send_room_message(room_id="{room}", content="...", message_type="chat") — talk
+- list_rooms() — see rooms
+- All standard Claude Code tools (Read, Write, Edit, Bash, etc.)
+"""
+    (workspace / "CLAUDE.md").write_text(claude_md)
+
+    # Symlink to murmur source
+    murmur_link = workspace / "murmur"
+    if not murmur_link.exists():
+        murmur_link.symlink_to(murmur_dir.parent)
+
+    # Auto-join room
+    async def _auto_join():
+        client = _get_client()
+        try:
+            resp = await client.post(
+                f"{RELAY_URL}/rooms/{room}/join",
+                json={"participant": name},
+                headers=_auth_headers(),
+            )
+            resp.raise_for_status()
+        except Exception:
+            pass
+        finally:
+            await client.aclose()
+
+    asyncio.run(_auto_join())
+
+    console.print(f"\n[green]Workspace ready: {workspace}[/green]")
+
+    # Build claude launch command with model flag
+    model_flag = f"--model {model}" if model != "sonnet" else ""
+    claude_cmd = f"cd {workspace} && claude {model_flag}".strip()
+
+    # Launch in new terminal tab (macOS)
+    if sys.platform == "darwin":
+        applescript = (
+            f'tell application "Terminal" to do script "{claude_cmd}"'
+        )
+        subprocess.run(["osascript", "-e", applescript])
+        console.print(f"[bold green]{name} launched in new Terminal tab![/bold green]")
+    else:
+        console.print(f"[yellow]Run manually: {claude_cmd}[/yellow]")
+
+    console.print("[dim]Agent will auto-connect to the room on startup.[/dim]")
 
 
 def _cmd_spawn(args):
@@ -1457,6 +1731,21 @@ def main():
     p_join.add_argument("--secret", required=True, help="Shared secret")
     p_join.add_argument("--room", required=True, help="Room to join")
 
+    p_kick = sub.add_parser("kick", help="Kick a participant from a room (admin)")
+    p_kick.add_argument("room", help="Room name")
+    p_kick.add_argument("name", help="Participant to kick")
+
+    p_destroy = sub.add_parser("destroy", help="Delete a room and its history (admin)")
+    p_destroy.add_argument("room", help="Room name")
+
+    p_rename = sub.add_parser("rename", help="Rename a room (admin)")
+    p_rename.add_argument("room", help="Current room name")
+    p_rename.add_argument("new_name", help="New room name")
+
+    sub.add_parser(
+        "add-agent", help="Interactive wizard to create and launch an agent"
+    )
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -1481,6 +1770,10 @@ def main():
         "version": _cmd_version,
         "logs": _cmd_logs,
         "join": _cmd_join,
+        "kick": _cmd_kick,
+        "destroy": _cmd_destroy,
+        "rename": _cmd_rename,
+        "add-agent": _cmd_add_agent,
         "invite-link": _cmd_invite_link,
         "spawn": _cmd_spawn,
         "spawn-multiple": _cmd_spawn_multiple,
