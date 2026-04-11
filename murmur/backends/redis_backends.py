@@ -125,7 +125,10 @@ class RedisMessageBackend:
     async def enqueue(self, tenant_id: str, to_name: str, message: dict) -> None:
         key = self._key(tenant_id, to_name)
         await self._ensure_group(key)
-        await self._r.xadd(key, {"data": json.dumps(message)}, maxlen=10000)
+        # No MAXLEN trim — acked entries are deleted via XDEL in ack().
+        # Stream growth is bounded by delivery rate, not blind trimming
+        # that could drop unacked pending entries.
+        await self._r.xadd(key, {"data": json.dumps(message)})
 
     async def enqueue_batch(
         self, tenant_id: str, to_name: str, messages: list[dict]
@@ -136,7 +139,7 @@ class RedisMessageBackend:
         await self._ensure_group(key)
         async with self._r.pipeline(transaction=False) as pipe:
             for m in messages:
-                pipe.xadd(key, {"data": json.dumps(m)}, maxlen=10000)
+                pipe.xadd(key, {"data": json.dumps(m)})
             await pipe.execute()
 
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
