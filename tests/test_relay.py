@@ -1452,6 +1452,7 @@ async def test_invite_join_rejects_expired_token(client: AsyncClient, auth_heade
     # Forge an expired token
     import hashlib
     import hmac as _hmac
+
     from murmur.relay import INVITE_SECRET
 
     expires = int(time.time()) - 10  # already expired
