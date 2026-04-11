@@ -210,6 +210,7 @@ def _save_to_file():
                 "name": r["name"],
                 "created_by": r["created_by"],
                 "members": sorted(r["members"]),
+                "member_roles": r.get("member_roles", {}),
                 "created_at": r["created_at"],
             }
             for rid, r in rooms.items()
@@ -255,6 +256,7 @@ def _load_from_file():
             "name": rdata["name"],
             "created_by": rdata["created_by"],
             "members": set(rdata.get("members", [])),
+            "member_roles": rdata.get("member_roles", {}),
             "created_at": rdata["created_at"],
         }
     for rid, msgs in data.get("room_history", {}).items():
@@ -430,6 +432,7 @@ class RoomMessageRequest(BaseModel):
     from_name: str
     content: str
     message_type: str = "chat"
+    reply_to: str | None = None
 
     @field_validator("from_name")
     @classmethod
@@ -445,13 +448,25 @@ class RoomMessageRequest(BaseModel):
         return v
 
 
+VALID_ROLES = {"builder", "reviewer", "researcher", "pm", "qa", "member"}
+
+
 class JoinLeaveRequest(BaseModel):
     participant: str
+    role: str = "member"
 
     @field_validator("participant")
     @classmethod
     def check_name(cls, v: str) -> str:
         return _validate_name(v)
+
+    @field_validator("role")
+    @classmethod
+    def check_role(cls, v: str) -> str:
+        if v not in VALID_ROLES:
+            allowed = ", ".join(sorted(VALID_ROLES))
+            raise ValueError(f"role must be one of: {allowed}")
+        return v
 
 
 class KickRequest(BaseModel):
@@ -822,6 +837,7 @@ async def create_room(req: CreateRoomRequest):
         "name": req.name,
         "created_by": req.created_by,
         "members": {req.created_by},
+        "member_roles": {req.created_by: "builder"},
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     rooms[room_id] = room
@@ -832,6 +848,7 @@ async def create_room(req: CreateRoomRequest):
         "id": room_id,
         "name": room["name"],
         "members": sorted(room["members"]),
+        "member_roles": room.get("member_roles", {}),
         "created_at": room["created_at"],
     }
 
@@ -844,6 +861,7 @@ async def list_rooms():
             "id": rid,
             "name": room["name"],
             "members": sorted(room["members"]),
+            "member_roles": room.get("member_roles", {}),
             "created_at": room["created_at"],
         }
         for rid, room in rooms.items()
@@ -858,13 +876,14 @@ async def get_room(room_id: str):
         "id": rid,
         "name": room["name"],
         "members": sorted(room["members"]),
+        "member_roles": room.get("member_roles", {}),
         "created_at": room["created_at"],
     }
 
 
 @app.post("/rooms/{room_id}/join", dependencies=[Depends(verify_auth)])
 async def join_room(room_id: str, req: JoinLeaveRequest):
-    """Add a participant to a room."""
+    """Add a participant to a room with an optional role."""
     room_id, room = _resolve_room(room_id)
     if len(room["members"]) >= MAX_ROOM_MEMBERS:
         raise HTTPException(
@@ -872,9 +891,12 @@ async def join_room(room_id: str, req: JoinLeaveRequest):
             detail=f"Room is at maximum capacity ({MAX_ROOM_MEMBERS} members)",
         )
     room["members"].add(req.participant)
+    if "member_roles" not in room:
+        room["member_roles"] = {}
+    room["member_roles"][req.participant] = req.role
     participants.add(req.participant)
     await _persist_state()
-    return {"status": "joined"}
+    return {"status": "joined", "role": req.role}
 
 
 @app.post("/rooms/{room_id}/leave", dependencies=[Depends(verify_auth)])
@@ -882,6 +904,7 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
     """Remove a participant from a room."""
     room_id, room = _resolve_room(room_id)
     room["members"].discard(req.participant)
+    room.get("member_roles", {}).pop(req.participant, None)
     await _persist_state()
     return {"status": "left"}
 
@@ -897,6 +920,7 @@ async def kick_from_room(room_id: str, req: KickRequest):
     if req.participant not in room["members"]:
         raise HTTPException(status_code=404, detail="Participant not in room")
     room["members"].discard(req.participant)
+    room.get("member_roles", {}).pop(req.participant, None)
     await _persist_state()
     logger.info("Kicked %s from room %s by %s", req.participant, room["name"], req.requested_by)
     return {"status": "kicked", "participant": req.participant}
@@ -949,7 +973,10 @@ async def register_room_webhook(room_id: str, req: RoomWebhookRequest):
         "registered_by": req.registered_by,
     })
     await _persist_state()
-    logger.info("Room webhook registered: %s -> %s by %s", room["name"], callback_url, req.registered_by)
+    logger.info(
+        "Room webhook registered: %s -> %s by %s",
+        room["name"], callback_url, req.registered_by,
+    )
     return {"status": "registered", "room": room["name"], "callback_url": callback_url}
 
 
@@ -1017,6 +1044,7 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
             "content": msg.content,
             "message_type": msg.message_type,
             "timestamp": timestamp,
+            "reply_to": msg.reply_to,
         }
         async with locks[recipient]:
             message_queues[recipient].append(fan_out_msg)
@@ -1033,6 +1061,7 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
         "content": msg.content,
         "message_type": msg.message_type,
         "timestamp": timestamp,
+        "reply_to": msg.reply_to,
     }
     room_history[room_id].append(history_msg)
     if len(room_history[room_id]) > MAX_ROOM_HISTORY:
@@ -1364,6 +1393,23 @@ header{
   transition:background .1s;
 }
 .msg:hover{background:var(--bg-hover)}
+.msg[data-reply]{
+  margin-left:24px;
+  border-left:2px solid var(--border);
+  padding-left:10px;
+}
+.msg .reply-ref{
+  font-size:10px;color:var(--text-3);
+  margin-right:6px;cursor:pointer;
+}
+.msg .reply-ref:hover{color:var(--accent)}
+.msg .reply-btn{
+  opacity:0;font-size:10px;color:var(--text-3);
+  margin-left:4px;cursor:pointer;
+  transition:opacity .15s;
+}
+.msg:hover .reply-btn{opacity:1}
+.msg .reply-btn:hover{color:var(--accent)}
 .msg .ts{
   color:var(--text-3);font-size:11px;
   margin-right:8px;
@@ -1717,18 +1763,46 @@ function connectSSE(){
   });
 }
 
+let replyTo=null;
+
 function formatMsg(msg){
   const ts=(msg.timestamp||'').substring(11,19);
   const type=msg.message_type||'chat';
+  const mid=msg.id||'';
   let tag='';
   if(type!=='chat'){
     tag='<span class="tag tag-'+type+'">'+
       type+'</span>';
   }
-  return '<div class="msg"><span class="ts">'+ts+
+  const ra=msg.reply_to
+    ?' data-reply="'+msg.reply_to+'"':'';
+  const rr=msg.reply_to
+    ?'<span class="reply-ref" onclick="scrollToMsg(\''+
+      msg.reply_to+'\')">&#8627;</span>':'';
+  const rb='<span class="reply-btn" onclick="setReply(\''+
+    mid+'\',\''+(msg.from_name||'')+
+    '\')">reply</span>';
+  return '<div class="msg" id="msg-'+mid+'"'+ra+
+    '><span class="ts">'+ts+
     '</span><span class="sender">'+
     (msg.from_name||'?')+'</span>'+
-    tag+(msg.content||'')+'</div>';
+    rr+tag+(msg.content||'')+rb+'</div>';
+}
+
+function setReply(id,name){
+  replyTo=id;
+  const input=document.getElementById('msgInput');
+  input.placeholder='Replying to '+name+'...';
+  input.focus();
+}
+
+function scrollToMsg(id){
+  const el=document.getElementById('msg-'+id);
+  if(el){
+    el.style.background='var(--accent-s)';
+    el.scrollIntoView({behavior:'smooth',block:'center'});
+    setTimeout(()=>{el.style.background=''},1500);
+  }
 }
 
 async function sendMsg(){
@@ -1736,10 +1810,14 @@ async function sendMsg(){
   const text=input.value.trim();
   if(!text||!currentRoom)return;
   input.value='';
+  const body={from_name:NAME,content:text};
+  if(replyTo)body.reply_to=replyTo;
+  replyTo=null;
+  input.placeholder='Type a message...';
   try{await fetch(
     API+'/rooms/'+currentRoom+'/messages',{
       method:'POST',headers:H,
-      body:JSON.stringify({from_name:NAME,content:text})
+      body:JSON.stringify(body)
     }
   )}catch(e){}
 }
