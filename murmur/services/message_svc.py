@@ -55,6 +55,10 @@ class MessageService:
     ) -> tuple[str, str]:
         return (tenant_id, recipient)
 
+    def notify_new_message(self, tenant_id: str, recipient: str) -> None:
+        """Signal that a new message is available for long-poll wakeup."""
+        self._events[self._event_key(tenant_id, recipient)].set()
+
     # ------------------------------------------------------------------
     # Send
     # ------------------------------------------------------------------

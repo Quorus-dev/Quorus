@@ -6,7 +6,7 @@ import time
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from murmur.relay import _reset_state, app, sse_queues
+from murmur.relay import _reset_state, app
 
 HEADERS = {"Authorization": "Bearer test-secret"}
 
@@ -112,8 +112,8 @@ async def test_multi_agent_room_conversation(client: AsyncClient):
 
 async def test_sse_receives_room_fanout(client: AsyncClient):
     """SSE subscribers should receive room fan-out messages."""
-    q: asyncio.Queue = asyncio.Queue()
-    sse_queues["_legacy:bob"].append(q)
+    sse_svc = app.state.sse_service
+    q = sse_svc.register_queue("_legacy", "bob")
 
     resp = await client.post(
         "/rooms", json={"name": "sse-test", "created_by": "alice"}, headers=HEADERS
@@ -135,7 +135,7 @@ async def test_sse_receives_room_fanout(client: AsyncClient):
     assert msg["content"] == "realtime test"
     assert msg["room"] == "sse-test"
 
-    sse_queues["_legacy:bob"].remove(q)
+    sse_svc.unregister_queue("_legacy", "bob", q)
 
 
 async def test_two_rooms_isolation(client: AsyncClient):

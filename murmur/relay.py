@@ -91,21 +91,136 @@ def _write_atomic(path: str, data: bytes) -> None:
             pass
 
 
+def _snapshot_state() -> dict:
+    """Snapshot current backend state for persistence."""
+    if not hasattr(app.state, "backends"):
+        return {}
+    backends = app.state.backends
+    # Messages: convert tuple keys to string keys for JSON
+    messages = {}
+    for (tid, name), msgs in backends.messages._queues.items():
+        key = f"{tid}:{name}"
+        messages[key] = list(msgs)
+    # Rooms
+    rooms_data = {}
+    for (tid, rid), rdata in backends.rooms._rooms.items():
+        members = rdata.get("members", {})
+        rooms_data[rid] = {
+            "name": rdata.get("name", ""),
+            "created_by": rdata.get("created_by", ""),
+            "members": sorted(members.keys()) if isinstance(members, dict) else sorted(members),
+            "member_roles": members if isinstance(members, dict) else {},
+            "tenant_id": rdata.get("tenant_id", "_legacy"),
+            "created_at": rdata.get("created_at", ""),
+        }
+    # Room history
+    history = {}
+    for (tid, rid), msgs in backends.room_history._history.items():
+        history[rid] = list(msgs)
+    # Room webhooks
+    room_webhooks = {}
+    for (tid, rid), hooks in backends.webhooks._room_hooks.items():
+        room_webhooks[rid] = list(hooks)
+    # Presence
+    presence_data = {}
+    for (tid, name), entry in backends.presence._entries.items():
+        key = f"{tid}:{name}"
+        presence_data[key] = dict(entry)
+    # DM webhooks
+    dm_webhooks = {}
+    for (tid, name), url in backends.webhooks._dm_hooks.items():
+        dm_webhooks[name] = url
+    return {
+        "messages": messages,
+        "participants": [],
+        "analytics": {
+            "total_sent": 0,
+            "total_delivered": 0,
+            "per_participant": {},
+            "hourly_volume": {},
+        },
+        "rooms": rooms_data,
+        "room_history": history,
+        "room_webhooks": room_webhooks,
+        "presence": presence_data,
+        "webhooks": dm_webhooks,
+    }
+
+
+def _apply_loaded_state(data: dict) -> None:
+    """Load persisted state into backends."""
+    if not hasattr(app.state, "backends"):
+        return
+    backends = app.state.backends
+    _LEGACY_TENANT = "_legacy"
+    # Messages
+    for key, msgs in data.get("messages", {}).items():
+        parts = key.split(":", 1)
+        tid = parts[0] if len(parts) == 2 else _LEGACY_TENANT
+        name = parts[1] if len(parts) == 2 else parts[0]
+        backends.messages._queues[(tid, name)] = msgs
+    # Rooms
+    for rid, rdata in data.get("rooms", {}).items():
+        tid = rdata.get("tenant_id", _LEGACY_TENANT)
+        members_list = rdata.get("members", [])
+        member_roles = rdata.get("member_roles", {})
+        # Build members dict from list + roles
+        members = {}
+        for m in members_list:
+            members[m] = member_roles.get(m, "member")
+        room_data = {
+            "name": rdata["name"],
+            "created_by": rdata["created_by"],
+            "members": members,
+            "tenant_id": tid,
+            "created_at": rdata["created_at"],
+        }
+        backends.rooms._rooms[(tid, rid)] = room_data
+        if rdata["name"]:
+            backends.rooms._name_index[(tid, rdata["name"])] = rid
+    # Room history
+    for rid, msgs in data.get("room_history", {}).items():
+        # Find the tenant_id for this room
+        tid = _LEGACY_TENANT
+        for (t, r), _ in backends.rooms._rooms.items():
+            if r == rid:
+                tid = t
+                break
+        backends.room_history._history[(tid, rid)] = msgs
+    # Room webhooks
+    for rid, hooks in data.get("room_webhooks", {}).items():
+        tid = _LEGACY_TENANT
+        for (t, r), _ in backends.rooms._rooms.items():
+            if r == rid:
+                tid = t
+                break
+        backends.webhooks._room_hooks[(tid, rid)] = hooks
+    # Presence
+    for key, pdata in data.get("presence", {}).items():
+        parts = key.split(":", 1)
+        tid = parts[0] if len(parts) == 2 else _LEGACY_TENANT
+        name = parts[1] if len(parts) == 2 else parts[0]
+        backends.presence._entries[(tid, name)] = pdata
+    # DM webhooks
+    for name, url in data.get("webhooks", {}).items():
+        backends.webhooks._dm_hooks[(_LEGACY_TENANT, name)] = url
+
+
 def _save_to_file():
-    from murmur.relay_routes import snapshot_state
-    data = snapshot_state()
+    data = _snapshot_state()
     encoded = json.dumps(data, indent=2).encode("utf-8")
     _write_atomic(MESSAGES_FILE, encoded)
 
 
+_persistence_lock = asyncio.Lock()
+
+
 async def _persist_state():
-    from murmur.relay_routes import persistence_lock
-    async with persistence_lock:
+    async with _persistence_lock:
         await asyncio.to_thread(_save_to_file)
 
 
 def _load_from_file():
-    from murmur.relay_routes import apply_loaded_state
     if not os.path.exists(MESSAGES_FILE):
         return
     try:
@@ -114,7 +229,7 @@ def _load_from_file():
     except (json.JSONDecodeError, ValueError, OSError):
         logger.warning("Corrupt persistence file %s, starting fresh", MESSAGES_FILE)
         return
-    apply_loaded_state(data)
+    _apply_loaded_state(data)
     logger.info("Loaded state from %s", MESSAGES_FILE)
 
 
@@ -136,14 +251,64 @@ async def _run_migrations():
 
 
 # ---------------------------------------------------------------------------
+# Service initialization
+# ---------------------------------------------------------------------------
+
+
+def _init_services(app_instance):
+    """Create backends and services, store on app.state.
+
+    Called by the lifespan on startup and by reset_state() in tests.
+    """
+    from murmur.backends.memory import InMemoryBackends
+    from murmur.services.analytics_svc import AnalyticsService
+    from murmur.services.message_svc import MessageService
+    from murmur.services.presence_svc import PresenceService
+    from murmur.services.rate_limit_svc import RateLimitService
+    from murmur.services.room_msg_svc import RoomMessageService
+    from murmur.services.room_svc import RoomService
+    from murmur.services.sse_svc import SSEService
+    from murmur.services.webhook_svc import WebhookService
+
+    max_room_history = int(os.environ.get("MAX_ROOM_HISTORY", "200"))
+    rate_limit_window = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))
+    rate_limit_max = int(os.environ.get("RATE_LIMIT_MAX", "60"))
+
+    backends = InMemoryBackends.create(max_room_history=max_room_history)
+
+    rate_limit = RateLimitService(backends.rate_limit, rate_limit_window, rate_limit_max)
+    analytics = AnalyticsService(backends.analytics)
+    sse = SSEService(backends.sse_tokens)
+    webhook = WebhookService(backends.webhooks)
+    message = MessageService(
+        backends.messages, sse, webhook, analytics, rate_limit,
+    )
+    room = RoomService(backends.rooms)
+    room_msg = RoomMessageService(
+        room, backends.room_history, backends.messages,
+        sse, webhook, analytics, rate_limit,
+        on_enqueue=message.notify_new_message,
+    )
+    presence = PresenceService(backends.presence)
+
+    app_instance.state.message_service = message
+    app_instance.state.room_service = room
+    app_instance.state.room_msg_service = room_msg
+    app_instance.state.presence_service = presence
+    app_instance.state.webhook_service = webhook
+    app_instance.state.sse_service = sse
+    app_instance.state.analytics_service = analytics
+    app_instance.state.rate_limit_service = rate_limit
+    app_instance.state.backends = backends
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def lifespan(app):
-    from murmur.relay_routes import set_persistence_hooks, snapshot_state
-
     logger.info("Relay server starting up")
 
     # Initialize Postgres if configured
@@ -153,26 +318,21 @@ async def lifespan(app):
         await _run_migrations()
         logger.info("Postgres initialized")
 
-    # Set up persistence hooks for relay_routes
-    set_persistence_hooks(_persist_state, snapshot_state)
-
-    # Load JSON state (works alongside Postgres for in-memory caches)
-    await asyncio.to_thread(_load_from_file)
-    if _expire_stale_messages():
-        await _persist_state()
+    # Create backends and services
+    _init_services(app)
 
     yield
 
-    logger.info("Relay server shutting down — saving state")
-    await _persist_state()
+    logger.info("Relay server shutting down")
 
     # Close Postgres if it was initialized
     if DATABASE_URL:
         from murmur.storage.postgres import close_engine
         await close_engine()
 
-    if _webhook_http_client and not _webhook_http_client.is_closed:
-        await _webhook_http_client.aclose()
+    # Close webhook HTTP client
+    if hasattr(app.state, "webhook_service"):
+        await app.state.webhook_service.close()
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +349,10 @@ app = FastAPI(
     version="0.3.0",
     lifespan=lifespan,
 )
+
+# Initialize services eagerly so tests (which skip the lifespan) have
+# access to app.state.backends etc. from the moment the module is imported.
+_init_services(app)
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
@@ -254,7 +418,7 @@ if _cors_origins:
 
 from murmur.admin.routes import router as admin_router  # noqa: E402
 from murmur.auth.routes import router as auth_router  # noqa: E402
-from murmur.relay_routes import router as relay_router  # noqa: E402
+from murmur.routes import router as relay_router  # noqa: E402
 
 app.include_router(relay_router)
 app.include_router(auth_router)
@@ -956,24 +1120,11 @@ from murmur.relay_routes import (  # noqa: E402, I001
     MAX_MESSAGES as MAX_MESSAGES,  # noqa: F401
     RATE_LIMIT_MAX as RATE_LIMIT_MAX,  # noqa: F401
     RATE_LIMIT_WINDOW as RATE_LIMIT_WINDOW,  # noqa: F401
-    _expire_stale_messages as _expire_stale_messages,  # noqa: F401
     _make_invite_token as _make_invite_token,  # noqa: F401
     _verify_invite_token as _verify_invite_token,  # noqa: F401
-    _webhook_http_client as _webhook_http_client,  # noqa: F401
-    apply_loaded_state as _apply_loaded_state,  # noqa: F401
-    locks as locks,  # noqa: F401
-    message_events as message_events,  # noqa: F401
-    message_queues as message_queues,  # noqa: F401
-    participants as participants,  # noqa: F401
-    presence as presence,  # noqa: F401
     reset_state as _reset_state,  # noqa: F401
-    room_history as room_history,  # noqa: F401
-    rooms as rooms,  # noqa: F401
-    snapshot_state as _snapshot_state,  # noqa: F401
-    sse_queues as sse_queues,  # noqa: F401
-    stream_messages as stream_messages,  # noqa: F401
-    webhooks as webhooks,  # noqa: F401
 )
+from murmur.routes.sse import stream_messages as stream_messages  # noqa: E402, F401
 
 if __name__ == "__main__":
     main()

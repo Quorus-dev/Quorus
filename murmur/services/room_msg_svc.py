@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Callable
 
 import structlog
 from fastapi import HTTPException
@@ -30,6 +31,7 @@ class RoomMessageService:
         webhook: WebhookService,
         analytics: AnalyticsService,
         rate_limit: RateLimitService,
+        on_enqueue: Callable[[str, str], None] | None = None,
     ) -> None:
         self._room = room
         self._history = history
@@ -38,6 +40,8 @@ class RoomMessageService:
         self._webhook = webhook
         self._analytics = analytics
         self._rate_limit = rate_limit
+        # Callback to signal long-poll wakeup: on_enqueue(tenant_id, recipient)
+        self._on_enqueue = on_enqueue
 
     # ------------------------------------------------------------------
     # Send (fan-out to member DM queues)
@@ -90,6 +94,8 @@ class RoomMessageService:
                 "reply_to": reply_to,
             }
             await self._msg_backend.enqueue(tenant_id, recipient, fan_out_msg)
+            if self._on_enqueue:
+                self._on_enqueue(tenant_id, recipient)
             self._sse.push(tenant_id, recipient, fan_out_msg)
 
         # Append to room history
