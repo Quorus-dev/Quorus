@@ -565,6 +565,7 @@ async def test_metrics_empty_room(capsys):
 
 async def test_metrics_room_not_found(capsys):
     import httpx
+
     from murmur.cli import _metrics
 
     resp = MagicMock()
