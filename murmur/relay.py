@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -7,6 +8,7 @@ import os
 import re
 import socket
 import string
+import tempfile
 import time
 import uuid
 from collections import defaultdict
@@ -193,16 +195,16 @@ def _prune_hourly_volume():
     }
 
 
-def _save_to_file():
-    """Save current state to JSON file."""
-    data = {
+def _snapshot_state() -> dict:
+    """Capture a consistent snapshot of in-memory state for serialization."""
+    return {
         "messages": {k: list(v) for k, v in message_queues.items()},
         "participants": sorted(participants),
         "analytics": {
             "total_sent": analytics["total_sent"],
             "total_delivered": analytics["total_delivered"],
-            "per_participant": analytics["per_participant"],
-            "hourly_volume": analytics["hourly_volume"],
+            "per_participant": dict(analytics["per_participant"]),
+            "hourly_volume": dict(analytics["hourly_volume"]),
         },
         "rooms": {
             rid: {
@@ -213,14 +215,37 @@ def _save_to_file():
             }
             for rid, r in rooms.items()
         },
-        "room_history": {rid: msgs for rid, msgs in room_history.items()},
-        "presence": presence,
+        "room_history": {rid: list(msgs) for rid, msgs in room_history.items()},
+        "presence": dict(presence),
+        "webhooks": dict(webhooks),
     }
+
+
+def _write_atomic(path: str, data: bytes) -> None:
+    """Write data to path atomically via temp-file + fsync + rename."""
+    dir_name = os.path.dirname(os.path.abspath(path))
     try:
-        with open(MESSAGES_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp_path, path)
     except OSError:
-        logger.error("Failed to save state to %s", MESSAGES_FILE)
+        logger.error("Failed to save state to %s", path)
+        # Clean up temp file on failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def _save_to_file():
+    """Save current state to JSON file atomically."""
+    data = _snapshot_state()
+    encoded = json.dumps(data, indent=2).encode("utf-8")
+    _write_atomic(MESSAGES_FILE, encoded)
 
 
 async def _persist_state():
@@ -236,9 +261,15 @@ def _load_from_file():
     try:
         with open(MESSAGES_FILE) as f:
             data = json.load(f)
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError, OSError):
         logger.warning("Corrupt persistence file %s, starting fresh", MESSAGES_FILE)
         return
+    _apply_loaded_state(data)
+    logger.info("Loaded state from %s", MESSAGES_FILE)
+
+
+def _apply_loaded_state(data: dict) -> None:
+    """Apply a loaded state dict to in-memory globals."""
     for recipient, msgs in data.get("messages", {}).items():
         message_queues[recipient] = msgs
     for p in data.get("participants", []):
@@ -259,7 +290,8 @@ def _load_from_file():
         room_history[rid] = msgs
     for name, pdata in data.get("presence", {}).items():
         presence[name] = pdata
-    logger.info("Loaded state from %s", MESSAGES_FILE)
+    for name, url in data.get("webhooks", {}).items():
+        webhooks[name] = url
 
 
 def _expire_stale_messages() -> int:
