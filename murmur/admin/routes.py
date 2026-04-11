@@ -160,7 +160,8 @@ async def create_tenant(req: CreateTenantRequest, request: Request):
 
 @router.get("/tenants/{slug}", response_model=TenantResponse)
 async def get_tenant(slug: str, auth: AuthContext = Depends(verify_auth)):
-    """Get tenant details by slug."""
+    """Get tenant details by slug. Requires matching tenant or admin."""
+    _enforce_tenant_isolation(auth, slug)
     async with get_db_session() as session:
         result = await session.execute(
             select(Tenant).where(Tenant.slug == slug)
@@ -238,7 +239,8 @@ async def list_participants(
     slug: str,
     auth: AuthContext = Depends(verify_auth),
 ):
-    """List all participants in a tenant."""
+    """List all participants in a tenant. Requires admin role."""
+    require_role(auth, "admin")
     _enforce_tenant_isolation(auth, slug)
 
     async with get_db_session() as session:

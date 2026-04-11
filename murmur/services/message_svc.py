@@ -28,10 +28,15 @@ from murmur.services.webhook_svc import WebhookService
 
 @dataclass
 class FetchResult:
-    """Per-request fetch result with deferred ACK.
+    """Per-request fetch result with server-side ACK.
 
-    Caller must call ``await result.ack()`` after the HTTP response is
-    sent.  Each FetchResult is independent — no shared mutable state.
+    Caller calls ``await result.ack()`` after building the response.
+    This is server-side ACK only — it confirms the server processed
+    the messages, NOT that the client received them. For true client
+    ACK semantics, use a separate POST /messages/{recipient}/ack
+    endpoint (future milestone: Redis Streams with XACK).
+
+    Each FetchResult is independent — no shared mutable state.
     """
 
     messages: list[dict]

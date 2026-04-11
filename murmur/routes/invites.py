@@ -156,6 +156,13 @@ async def invite_join(
         rid, _ = await room_svc.get(tenant_id, room_id)
     except HTTPException:
         raise HTTPException(status_code=404, detail="Room not found")
+    # Validate participant name format
+    from murmur.routes.helpers import _validate_name
+
+    try:
+        _validate_name(req.participant)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     await room_svc.join(tenant_id, rid, req.participant, role, MAX_ROOM_MEMBERS)
     await request.app.state.backends.participants.add(tenant_id, req.participant)
     return {"status": "joined"}

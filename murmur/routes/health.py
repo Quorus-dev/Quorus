@@ -67,11 +67,17 @@ async def health_detailed(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
+    from murmur.auth.middleware import require_role
+
+    # Admin-only — prevents leaking operational details to regular users
+    require_role(auth, "admin")
     tid = _tid(auth)
     backends = request.app.state.backends
     total_msgs = await backends.messages.count_all(tid)
     rooms_count = await backends.rooms.count(tid)
-    participants_count = await backends.participants.count_global()
+    # Tenant-scoped participant count (not global)
+    all_participants = await backends.participants.list_all(tid)
+    participants_count = len(all_participants)
 
     presence_svc = request.app.state.presence_service
     online = await presence_svc.list_all(tid, HEARTBEAT_TIMEOUT)
