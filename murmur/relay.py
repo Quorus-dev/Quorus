@@ -18,16 +18,31 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import httpx
+import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
+from starlette.middleware.base import BaseHTTPMiddleware
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+
+# Configure structlog for structured JSON logging in production
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.dev.ConsoleRenderer() if LOG_LEVEL == "DEBUG" else structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(
+        getattr(logging, LOG_LEVEL, logging.INFO)
+    ),
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+    cache_logger_on_first_use=True,
 )
-logger = logging.getLogger("mcp_tunnel.relay")
+
+logger = structlog.get_logger("murmur.relay")
 
 RELAY_SECRET = os.environ.get("RELAY_SECRET", "")
 if not RELAY_SECRET:
@@ -59,6 +74,24 @@ app = FastAPI(
     version="0.3.0",
     lifespan=lifespan,
 )
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Inject request_id, method, and path into structlog context for every request."""
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+        )
+        response = await call_next(request)
+        response.headers["x-request-id"] = request_id
+        return response
+
+
+app.add_middleware(RequestContextMiddleware)
 
 # CORS — configurable via CORS_ORIGINS env var (comma-separated)
 _cors_origins = os.environ.get("CORS_ORIGINS", "")
