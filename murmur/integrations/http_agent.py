@@ -3,16 +3,19 @@
 Usage:
     from murmur.integrations.http_agent import MurmurClient
 
-    client = MurmurClient("https://your-relay.example.com", "secret", "my-agent")
+    client = MurmurClient("https://your-relay.example.com", name="my-agent", api_key="mct_...")
     client.join("dev-room")
     client.send("dev-room", "Hello from any agent!")
     messages = client.receive()
     history = client.history("dev-room", limit=20)
 """
 
+import logging
 import time
 
 import httpx
+
+logger = logging.getLogger("murmur.http_agent")
 
 
 class MurmurClient:
@@ -21,8 +24,8 @@ class MurmurClient:
     def __init__(
         self,
         relay_url: str,
-        secret: str,
-        name: str,
+        secret: str = "",
+        name: str = "",
         timeout: float = 10.0,
         retries: int = 3,
         api_key: str = "",
@@ -34,30 +37,33 @@ class MurmurClient:
         self._jwt: str | None = None
         self._timeout = timeout
         self._retries = retries
-        # Exchange API key for JWT if provided
         if api_key:
             self._exchange_jwt()
+        elif secret:
+            logger.warning(
+                "Using RELAY_SECRET for auth is deprecated. "
+                "Use api_key for production deployments."
+            )
         self._headers = {"Authorization": f"Bearer {self._get_bearer()}"}
 
-    def _exchange_jwt(self) -> str | None:
+    def _exchange_jwt(self) -> str:
         """Exchange api_key for a JWT, caching the result."""
-        if not self._api_key:
-            return self._jwt
-        try:
-            resp = httpx.post(
-                f"{self.relay_url}/v1/auth/token",
-                json={"api_key": self._api_key},
-                timeout=self._timeout,
-            )
-            if resp.status_code == 200:
-                self._jwt = resp.json()["token"]
-        except Exception:
-            pass
+        resp = httpx.post(
+            f"{self.relay_url}/v1/auth/token",
+            json={"api_key": self._api_key},
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        self._jwt = resp.json()["token"]
         return self._jwt
 
     def _get_bearer(self) -> str:
-        """Return JWT if available, otherwise fall back to secret."""
-        return self._jwt or self._secret
+        """Return JWT if using api_key auth, otherwise secret."""
+        if self._api_key:
+            if not self._jwt:
+                self._exchange_jwt()
+            return self._jwt  # type: ignore[return-value]
+        return self._secret
 
     def _request(self, method: str, url: str, **kwargs):
         """Make HTTP request with retry on transient errors."""

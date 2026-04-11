@@ -3,7 +3,7 @@
 Usage:
     from murmur import Room
 
-    room = Room("dev-room", relay="https://relay.example.com", secret="xxx", name="my-agent")
+    room = Room("dev-room", relay="https://relay.example.com", api_key="mct_...", name="my-agent")
     room.send("CLAIM: auth module", type="claim")
     messages = room.receive()
 
@@ -15,12 +15,15 @@ Async usage:
 """
 
 import json
+import logging
 import threading
 from typing import Callable
 
 import httpx
 
 from murmur.integrations.http_agent import MurmurClient
+
+logger = logging.getLogger("murmur.sdk")
 
 
 class Room:
@@ -44,40 +47,39 @@ class Room:
         self.api_key = api_key
         self.name = name
         self._jwt: str | None = None
-        # Exchange API key for JWT eagerly if provided
         if api_key:
             self._exchange_jwt()
+        elif secret:
+            logger.warning(
+                "Using secret= for auth is deprecated. "
+                "Use api_key= for production deployments."
+            )
         self._client = MurmurClient(relay, secret, name, api_key=api_key)
         self._listeners: list[Callable] = []
         self._stream_task: threading.Thread | None = None
         self._stop_event = threading.Event()
 
-    def _exchange_jwt(self) -> str | None:
+    def _exchange_jwt(self) -> str:
         """Exchange api_key for a JWT, caching the result."""
-        if not self.api_key:
-            return self._jwt
-        try:
-            resp = httpx.post(
-                f"{self.relay}/v1/auth/token",
-                json={"api_key": self.api_key},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                self._jwt = resp.json()["token"]
-        except Exception:
-            pass
+        resp = httpx.post(
+            f"{self.relay}/v1/auth/token",
+            json={"api_key": self.api_key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        self._jwt = resp.json()["token"]
         return self._jwt
 
     def _get_bearer(self) -> str:
-        """Return JWT if available, otherwise fall back to secret."""
-        if self._jwt:
-            return self._jwt
+        """Return JWT if using api_key auth, otherwise secret."""
         if self.api_key:
-            self._exchange_jwt()
-        return self._jwt or self.secret
+            if not self._jwt:
+                self._exchange_jwt()
+            return self._jwt  # type: ignore[return-value]
+        return self.secret
 
     def _get_auth_headers(self) -> dict[str, str]:
-        """Get auth headers using JWT (preferred) or legacy secret."""
+        """Get auth headers."""
         return {"Authorization": f"Bearer {self._get_bearer()}"}
 
     def _get_sse_token(self) -> str:

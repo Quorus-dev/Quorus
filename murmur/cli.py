@@ -39,28 +39,25 @@ def _get_client() -> httpx.AsyncClient:
 
 
 def _auth_headers() -> dict[str, str]:
-    """Get auth headers — prefers JWT from API key, falls back to legacy."""
+    """Get auth headers — JWT from API key, or legacy secret for local dev."""
     global _cached_jwt
-    if API_KEY and not _cached_jwt:
-        try:
+    if API_KEY:
+        if not _cached_jwt:
             resp = httpx.post(
                 f"{RELAY_URL}/v1/auth/token",
                 json={"api_key": API_KEY},
                 timeout=10,
             )
-            if resp.status_code == 200:
-                _cached_jwt = resp.json()["token"]
-        except Exception:
-            pass  # Fall back to RELAY_SECRET
-    if _cached_jwt:
+            resp.raise_for_status()
+            _cached_jwt = resp.json()["token"]
         return {"Authorization": f"Bearer {_cached_jwt}"}
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
 
 
 def _get_sse_token(recipient: str) -> str:
-    """Get a short-lived SSE stream token, falling back to RELAY_SECRET."""
+    """Get a short-lived SSE stream token."""
+    headers = _auth_headers()
     try:
-        headers = _auth_headers()
         resp = httpx.post(
             f"{RELAY_URL}/stream/token",
             json={"recipient": recipient},
@@ -71,7 +68,8 @@ def _get_sse_token(recipient: str) -> str:
             return resp.json()["token"]
     except Exception:
         pass
-    return RELAY_SECRET
+    # Fallback: use the bearer token directly
+    return headers["Authorization"][7:]  # strip "Bearer "
 
 
 async def _list_rooms() -> list[dict]:

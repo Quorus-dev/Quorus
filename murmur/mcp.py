@@ -57,8 +57,14 @@ def _validate_relay_url(value: str) -> str:
 _validate_relay_url(RELAY_URL)
 if not RELAY_SECRET and not API_KEY:
     raise SystemExit(
-        "Neither relay_secret nor api_key is set. "
-        "Set RELAY_SECRET or API_KEY env var or config file value."
+        "No auth credentials configured. "
+        "Set API_KEY (recommended) or RELAY_SECRET (deprecated, local dev only)."
+    )
+
+if RELAY_SECRET and not API_KEY:
+    logger.warning(
+        "Using RELAY_SECRET for auth is deprecated. "
+        "Use API_KEY for production deployments."
     )
 
 _auth_mode = "api_key" if API_KEY else "legacy"
@@ -125,12 +131,12 @@ async def _exchange_api_key_for_jwt() -> str:
 async def _get_bearer_token() -> str:
     """Get the Bearer token — cached JWT if using API key auth, else relay secret."""
     global _cached_jwt
-    if not API_KEY:
-        return RELAY_SECRET
-    async with _jwt_lock:
-        if _cached_jwt:
-            return _cached_jwt
-        return await _exchange_api_key_for_jwt()
+    if API_KEY:
+        async with _jwt_lock:
+            if _cached_jwt:
+                return _cached_jwt
+            return await _exchange_api_key_for_jwt()
+    return RELAY_SECRET
 
 
 async def _refresh_jwt_on_401() -> str | None:
@@ -148,8 +154,10 @@ async def _refresh_jwt_on_401() -> str | None:
 
 
 def _auth_headers() -> dict[str, str]:
-    """Sync auth headers — uses cached JWT or relay secret."""
-    if _cached_jwt:
+    """Sync auth headers — uses cached JWT (api_key mode) or relay secret (legacy)."""
+    if API_KEY:
+        if not _cached_jwt:
+            raise RuntimeError("JWT not available — API key exchange has not completed yet")
         return {"Authorization": f"Bearer {_cached_jwt}"}
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
 
@@ -350,21 +358,19 @@ async def _process_sse_event(event_type: str, data: str) -> None:
 
 
 async def _get_sse_token() -> str:
-    """Get a short-lived SSE stream token, falling back to RELAY_SECRET."""
-    try:
-        bearer = await _get_bearer_token()
-        client = _get_http_client()
-        resp = await client.post(
-            f"{RELAY_URL}/stream/token",
-            json={"recipient": INSTANCE_NAME},
-            headers={"Authorization": f"Bearer {bearer}"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return resp.json()["token"]
-    except Exception:
-        pass
-    return RELAY_SECRET
+    """Get a short-lived SSE stream token."""
+    bearer = await _get_bearer_token()
+    client = _get_http_client()
+    resp = await client.post(
+        f"{RELAY_URL}/stream/token",
+        json={"recipient": INSTANCE_NAME},
+        headers={"Authorization": f"Bearer {bearer}"},
+        timeout=10,
+    )
+    if resp.status_code == 200:
+        return resp.json()["token"]
+    # Fallback: use the bearer token directly (works for legacy mode)
+    return bearer
 
 
 async def _sse_listener(stop_event: asyncio.Event) -> None:
