@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
 
-from murmur.auth.middleware import verify_auth
+from murmur.auth.middleware import AuthContext, require_identity, verify_auth
 
 logger = structlog.get_logger("murmur.relay_routes")
 
@@ -455,7 +455,7 @@ def snapshot_state() -> dict:
             for rid, r in rooms.items()
         },
         "room_history": {rid: list(msgs) for rid, msgs in room_history.items()},
-        "room_webhooks": {rid: dict(hooks) for rid, hooks in room_webhooks.items()},
+        "room_webhooks": {rid: list(hooks) for rid, hooks in room_webhooks.items()},
         "presence": dict(presence),
         "webhooks": dict(webhooks),
     }
@@ -662,8 +662,8 @@ async def health():
     return JSONResponse(checks, status_code=status_code)
 
 
-@router.get("/health/detailed", dependencies=[Depends(verify_auth)])
-async def health_detailed():
+@router.get("/health/detailed")
+async def health_detailed(auth: AuthContext = Depends(verify_auth)):
     total_msgs = sum(len(q) for q in message_queues.values())
     total_sse = sum(len(q) for q in sse_queues.values())
     online_agents = sum(
@@ -685,8 +685,13 @@ async def health_detailed():
     }
 
 
-@router.post("/messages", dependencies=[Depends(verify_auth)])
-async def send_message(msg: SendMessageRequest):
+@router.post("/messages")
+async def send_message(msg: SendMessageRequest, auth: AuthContext = Depends(verify_auth)):
+    # Server-side identity: use JWT sub, fall back to client-supplied for legacy
+    sender = auth.sub or msg.from_name
+    if auth.sub and msg.from_name != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot send as another user")
+    msg.from_name = sender
     if not _check_rate_limit(msg.from_name):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -757,12 +762,17 @@ async def send_message(msg: SendMessageRequest):
         return {"id": message["id"], "timestamp": message["timestamp"]}
 
 
-@router.post("/stream/token", dependencies=[Depends(verify_auth)])
-async def create_sse_token(request: Request):
+@router.post("/stream/token")
+async def create_sse_token(request: Request, auth: AuthContext = Depends(verify_auth)):
     body = await request.json()
     recipient = body.get("recipient", "")
     if not recipient:
         raise HTTPException(status_code=400, detail="recipient is required")
+    # JWT users can only create tokens for themselves
+    if auth.sub and recipient != auth.sub:
+        raise HTTPException(
+            status_code=403, detail="Cannot create SSE token for another user",
+        )
     token = str(uuid.uuid4())
     _sse_tokens[token] = {
         "recipient": recipient,
@@ -821,8 +831,9 @@ async def stream_messages(recipient: str, token: str = ""):
     )
 
 
-@router.get("/messages/{recipient}", dependencies=[Depends(verify_auth)])
-async def get_messages(recipient: str, wait: int = 0):
+@router.get("/messages/{recipient}")
+async def get_messages(recipient: str, auth: AuthContext = Depends(verify_auth), wait: int = 0):
+    require_identity(auth, recipient)
     wait = min(max(wait, 0), 60)
     async with locks[recipient]:
         expired = _expire_stale_messages()
@@ -855,19 +866,25 @@ async def get_messages(recipient: str, wait: int = 0):
     return ready
 
 
-@router.get("/messages/{recipient}/peek", dependencies=[Depends(verify_auth)])
-async def peek_messages(recipient: str):
+@router.get("/messages/{recipient}/peek")
+async def peek_messages(recipient: str, auth: AuthContext = Depends(verify_auth)):
+    require_identity(auth, recipient)
     count = len(message_queues.get(recipient, []))
     return {"count": count, "recipient": recipient}
 
 
-@router.get("/participants", dependencies=[Depends(verify_auth)])
-async def list_participants_endpoint():
+@router.get("/participants")
+async def list_participants_endpoint(auth: AuthContext = Depends(verify_auth)):
     return sorted(participants)
 
 
-@router.post("/webhooks", dependencies=[Depends(verify_auth)])
-async def register_webhook(req: RegisterWebhookRequest):
+@router.post("/webhooks")
+async def register_webhook(req: RegisterWebhookRequest, auth: AuthContext = Depends(verify_auth)):
+    # JWT users can only register webhooks for themselves
+    if auth.sub and req.instance_name != auth.sub:
+        raise HTTPException(
+            status_code=403, detail="Cannot register webhook for another user",
+        )
     callback_url = await _validate_webhook_callback_url(req.callback_url)
     webhooks[req.instance_name] = callback_url
     participants.add(req.instance_name)
@@ -876,15 +893,26 @@ async def register_webhook(req: RegisterWebhookRequest):
     return {"status": "registered"}
 
 
-@router.delete("/webhooks/{instance_name}", dependencies=[Depends(verify_auth)])
-async def delete_webhook(instance_name: str):
+@router.delete("/webhooks/{instance_name}")
+async def delete_webhook(instance_name: str, auth: AuthContext = Depends(verify_auth)):
+    # JWT users can only delete their own webhooks
+    if auth.sub and instance_name != auth.sub:
+        raise HTTPException(
+            status_code=403, detail="Cannot delete webhook for another user",
+        )
     webhooks.pop(instance_name, None)
+    await _persist()
     logger.info("Webhook removed: %s", instance_name)
     return {"status": "removed"}
 
 
-@router.post("/rooms", dependencies=[Depends(verify_auth)])
-async def create_room(req: CreateRoomRequest):
+@router.post("/rooms")
+async def create_room(req: CreateRoomRequest, auth: AuthContext = Depends(verify_auth)):
+    # Server-side identity: derive created_by from JWT, fall back to client-supplied
+    creator = auth.sub or req.created_by
+    if auth.sub and req.created_by != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot create room as another user")
+    req.created_by = creator
     async with rooms_lock:
         if _find_room_by_name(req.name):
             raise HTTPException(status_code=409, detail="Room name already exists")
@@ -909,8 +937,8 @@ async def create_room(req: CreateRoomRequest):
     }
 
 
-@router.get("/rooms", dependencies=[Depends(verify_auth)])
-async def list_rooms():
+@router.get("/rooms")
+async def list_rooms(auth: AuthContext = Depends(verify_auth)):
     return [
         {
             "id": rid,
@@ -923,8 +951,8 @@ async def list_rooms():
     ]
 
 
-@router.get("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
-async def get_room(room_id: str):
+@router.get("/rooms/{room_id}")
+async def get_room(room_id: str, auth: AuthContext = Depends(verify_auth)):
     rid, room = _resolve_room(room_id)
     return {
         "id": rid,
@@ -935,9 +963,14 @@ async def get_room(room_id: str):
     }
 
 
-@router.post("/rooms/{room_id}/join", dependencies=[Depends(verify_auth)])
-async def join_room(room_id: str, req: JoinLeaveRequest):
+@router.post("/rooms/{room_id}/join")
+async def join_room(room_id: str, req: JoinLeaveRequest, auth: AuthContext = Depends(verify_auth)):
     """Add a participant to a room with an optional role."""
+    # JWT users can only join as themselves
+    participant = auth.sub or req.participant
+    if auth.sub and req.participant != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot join room as another user")
+    req.participant = participant
     async with rooms_lock:
         room_id, room = _resolve_room(room_id)
         if len(room["members"]) >= MAX_ROOM_MEMBERS:
@@ -954,8 +987,13 @@ async def join_room(room_id: str, req: JoinLeaveRequest):
     return {"status": "joined", "role": req.role}
 
 
-@router.post("/rooms/{room_id}/leave", dependencies=[Depends(verify_auth)])
-async def leave_room(room_id: str, req: JoinLeaveRequest):
+@router.post("/rooms/{room_id}/leave")
+async def leave_room(room_id: str, req: JoinLeaveRequest, auth: AuthContext = Depends(verify_auth)):
+    # JWT users can only leave as themselves
+    participant = auth.sub or req.participant
+    if auth.sub and req.participant != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot leave room as another user")
+    req.participant = participant
     async with rooms_lock:
         room_id, room = _resolve_room(room_id)
         room["members"].discard(req.participant)
@@ -964,11 +1002,20 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
     return {"status": "left"}
 
 
-@router.post("/rooms/{room_id}/kick", dependencies=[Depends(verify_auth)])
-async def kick_from_room(room_id: str, req: KickRequest):
+@router.post("/rooms/{room_id}/kick")
+async def kick_from_room(room_id: str, req: KickRequest, auth: AuthContext = Depends(verify_auth)):
+    # Derive requested_by from JWT
+    requested_by = auth.sub or req.requested_by
+    if auth.sub and req.requested_by != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot kick as another user")
+    req.requested_by = requested_by
     room_id, room = _resolve_room(room_id)
-    if req.requested_by != room["created_by"]:
-        raise HTTPException(status_code=403, detail="Only the room creator can kick members")
+    # JWT admins bypass creator check; legacy and JWT users must be creator
+    is_admin = not auth.is_legacy and auth.role == "admin"
+    if not is_admin and req.requested_by != room["created_by"]:
+        raise HTTPException(
+            status_code=403, detail="Only the room creator or admin can kick members",
+        )
     if req.participant == room["created_by"]:
         raise HTTPException(status_code=400, detail="Cannot kick the room creator")
     if req.participant not in room["members"]:
@@ -980,11 +1027,22 @@ async def kick_from_room(room_id: str, req: KickRequest):
     return {"status": "kicked", "participant": req.participant}
 
 
-@router.delete("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
-async def destroy_room(room_id: str, req: DestroyRoomRequest):
+@router.delete("/rooms/{room_id}")
+async def destroy_room(
+    room_id: str, req: DestroyRoomRequest, auth: AuthContext = Depends(verify_auth),
+):
+    # Derive requested_by from JWT
+    requested_by = auth.sub or req.requested_by
+    if auth.sub and req.requested_by != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot destroy room as another user")
+    req.requested_by = requested_by
     room_id, room = _resolve_room(room_id)
-    if req.requested_by != room["created_by"]:
-        raise HTTPException(status_code=403, detail="Only the room creator can destroy the room")
+    is_admin = not auth.is_legacy and auth.role == "admin"
+    if not is_admin and req.requested_by != room["created_by"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the room creator or admin can destroy the room",
+        )
     room_name = room["name"]
     del rooms[room_id]
     room_history.pop(room_id, None)
@@ -994,11 +1052,22 @@ async def destroy_room(room_id: str, req: DestroyRoomRequest):
     return {"status": "destroyed", "room": room_name}
 
 
-@router.patch("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
-async def rename_room(room_id: str, req: RenameRoomRequest):
+@router.patch("/rooms/{room_id}")
+async def rename_room(
+    room_id: str, req: RenameRoomRequest, auth: AuthContext = Depends(verify_auth),
+):
+    # Derive requested_by from JWT
+    requested_by = auth.sub or req.requested_by
+    if auth.sub and req.requested_by != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot rename room as another user")
+    req.requested_by = requested_by
     room_id, room = _resolve_room(room_id)
-    if req.requested_by != room["created_by"]:
-        raise HTTPException(status_code=403, detail="Only the room creator can rename the room")
+    is_admin = not auth.is_legacy and auth.role == "admin"
+    if not is_admin and req.requested_by != room["created_by"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the room creator or admin can rename the room",
+        )
     if _find_room_by_name(req.new_name):
         raise HTTPException(status_code=409, detail="Room name already exists")
     old_name = room["name"]
@@ -1010,8 +1079,15 @@ async def rename_room(room_id: str, req: RenameRoomRequest):
     return {"status": "renamed", "old_name": old_name, "new_name": req.new_name}
 
 
-@router.post("/rooms/{room_id}/webhooks", dependencies=[Depends(verify_auth)])
-async def register_room_webhook(room_id: str, req: RoomWebhookRequest):
+@router.post("/rooms/{room_id}/webhooks")
+async def register_room_webhook(
+    room_id: str, req: RoomWebhookRequest, auth: AuthContext = Depends(verify_auth),
+):
+    # Derive registered_by from JWT
+    registered_by = auth.sub or req.registered_by
+    if auth.sub and req.registered_by != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot register webhook as another user")
+    req.registered_by = registered_by
     room_id, room = _resolve_room(room_id)
     callback_url = await _validate_webhook_callback_url(req.callback_url)
     existing_urls = {h["url"] for h in room_webhooks[room_id]}
@@ -1025,14 +1101,21 @@ async def register_room_webhook(room_id: str, req: RoomWebhookRequest):
     return {"status": "registered", "room": room["name"], "callback_url": callback_url}
 
 
-@router.get("/rooms/{room_id}/webhooks", dependencies=[Depends(verify_auth)])
-async def list_room_webhooks(room_id: str):
+@router.get("/rooms/{room_id}/webhooks")
+async def list_room_webhooks(room_id: str, auth: AuthContext = Depends(verify_auth)):
     room_id, room = _resolve_room(room_id)
     return room_webhooks.get(room_id, [])
 
 
-@router.delete("/rooms/{room_id}/webhooks", dependencies=[Depends(verify_auth)])
-async def delete_room_webhook(room_id: str, req: RoomWebhookRequest):
+@router.delete("/rooms/{room_id}/webhooks")
+async def delete_room_webhook(
+    room_id: str, req: RoomWebhookRequest, auth: AuthContext = Depends(verify_auth),
+):
+    # Derive registered_by from JWT
+    registered_by = auth.sub or req.registered_by
+    if auth.sub and req.registered_by != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot delete webhook as another user")
+    req.registered_by = registered_by
     room_id, room = _resolve_room(room_id)
     hooks = room_webhooks.get(room_id, [])
     before = len(hooks)
@@ -1044,8 +1127,15 @@ async def delete_room_webhook(room_id: str, req: RoomWebhookRequest):
     return {"status": "removed", "room": room["name"], "callback_url": req.callback_url}
 
 
-@router.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
-async def send_room_message(room_id: str, msg: RoomMessageRequest):
+@router.post("/rooms/{room_id}/messages")
+async def send_room_message(
+    room_id: str, msg: RoomMessageRequest, auth: AuthContext = Depends(verify_auth),
+):
+    # Server-side identity: derive from_name from JWT
+    sender = auth.sub or msg.from_name
+    if auth.sub and msg.from_name != auth.sub:
+        raise HTTPException(status_code=403, detail="Cannot send as another user")
+    msg.from_name = sender
     if not _check_rate_limit(msg.from_name):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     room_id, room = _resolve_room(room_id)
@@ -1101,17 +1191,18 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
     return {"id": message_id, "timestamp": timestamp}
 
 
-@router.get("/rooms/{room_id}/history", dependencies=[Depends(verify_auth)])
-async def get_room_history(room_id: str, limit: int = 50):
+@router.get("/rooms/{room_id}/history")
+async def get_room_history(room_id: str, auth: AuthContext = Depends(verify_auth), limit: int = 50):
     rid, room = _resolve_room(room_id)
     limit = min(max(limit, 1), MAX_ROOM_HISTORY)
     msgs = room_history.get(rid, [])
     return msgs[-limit:]
 
 
-@router.get("/rooms/{room_id}/search", dependencies=[Depends(verify_auth)])
+@router.get("/rooms/{room_id}/search")
 async def search_room_history(
-    room_id: str, q: str = "", sender: str = "", message_type: str = "", limit: int = 50,
+    room_id: str, auth: AuthContext = Depends(verify_auth),
+    q: str = "", sender: str = "", message_type: str = "", limit: int = 50,
 ):
     rid, room = _resolve_room(room_id)
     msgs = room_history.get(rid, [])
@@ -1129,8 +1220,9 @@ async def search_room_history(
     return results[-limit:]
 
 
-@router.post("/heartbeat", dependencies=[Depends(verify_auth)])
-async def heartbeat(req: HeartbeatRequest):
+@router.post("/heartbeat")
+async def heartbeat(req: HeartbeatRequest, auth: AuthContext = Depends(verify_auth)):
+    require_identity(auth, req.instance_name)
     now = datetime.now(timezone.utc).isoformat()
     name = req.instance_name
     existing = presence.get(name)
@@ -1147,8 +1239,8 @@ async def heartbeat(req: HeartbeatRequest):
     return {"status": "ok", "timestamp": now}
 
 
-@router.get("/presence", dependencies=[Depends(verify_auth)])
-async def get_presence():
+@router.get("/presence")
+async def get_presence(auth: AuthContext = Depends(verify_auth)):
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(seconds=HEARTBEAT_TIMEOUT)).isoformat()
     result = []
@@ -1166,8 +1258,8 @@ async def get_presence():
     return result
 
 
-@router.get("/analytics", dependencies=[Depends(verify_auth)])
-async def get_analytics():
+@router.get("/analytics")
+async def get_analytics(auth: AuthContext = Depends(verify_auth)):
     if _expire_stale_messages():
         await _persist()
     _prune_hourly_volume()
@@ -1269,7 +1361,7 @@ btn.disabled=false;btn.textContent='Join Room';
 
 
 @router.get("/invite/{room_name}", response_class=HTMLResponse)
-async def invite_page(room_name: str, request: Request):
+async def invite_page(room_name: str, request: Request, auth: AuthContext = Depends(verify_auth)):
     rid = _find_room_by_name(room_name)
     if not rid and room_name not in rooms:
         raise HTTPException(status_code=404, detail="Room not found")
