@@ -134,8 +134,8 @@ async def _watch(room_name: str) -> None:
         return
 
     console.print(f"[bold]Watching room: {room_name}[/bold]")
-    console.print(f"Members: {', '.join(room['members'])}")
-    console.print("---")
+    console.print(f"[dim]Members: {', '.join(room['members'])}[/dim]")
+    console.print("─" * 60)
 
     client = httpx.AsyncClient()
     try:
@@ -156,32 +156,97 @@ async def _watch(room_name: str) -> None:
                         try:
                             msg = json.loads(event_data)
                             if msg.get("room") == room_name:
-                                msg_type = msg.get(
-                                    "message_type", "chat"
-                                )
-                                sender = msg.get("from_name", "?")
-                                content = msg.get("content", "")
-                                ts = msg.get("timestamp", "")[:19]
-                                type_color = {
-                                    "claim": "yellow",
-                                    "status": "cyan",
-                                    "request": "magenta",
-                                    "alert": "red",
-                                    "sync": "green",
-                                }.get(msg_type, "white")
-                                console.print(
-                                    f"[dim]{ts}[/dim] "
-                                    f"[bold]{sender}[/bold] "
-                                    f"[{type_color}][{msg_type}]"
-                                    f"[/{type_color}] "
-                                    f"{content}"
-                                )
+                                console.print(_format_chat_msg(msg))
                         except json.JSONDecodeError:
                             pass
                     event_type = ""
                     event_data = ""
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped watching.[/dim]")
+    finally:
+        await client.aclose()
+
+
+async def _status() -> None:
+    """Show relay health, room stats, and participant info."""
+    client = _get_client()
+    try:
+        # Fetch health
+        health_resp = await client.get(
+            f"{RELAY_URL}/health", headers=_auth_headers()
+        )
+        health_resp.raise_for_status()
+        health = health_resp.json()
+
+        # Fetch analytics
+        analytics_resp = await client.get(
+            f"{RELAY_URL}/analytics", headers=_auth_headers()
+        )
+        analytics_resp.raise_for_status()
+        stats = analytics_resp.json()
+
+        # Fetch rooms
+        rooms_resp = await client.get(
+            f"{RELAY_URL}/rooms", headers=_auth_headers()
+        )
+        rooms_resp.raise_for_status()
+        room_list = rooms_resp.json()
+
+        # Fetch participants
+        parts_resp = await client.get(
+            f"{RELAY_URL}/participants", headers=_auth_headers()
+        )
+        parts_resp.raise_for_status()
+        participants = parts_resp.json()
+
+        # Display
+        console.print(f"[bold green]Murmur Relay Status[/bold green]")
+        console.print(f"  URL: {RELAY_URL}")
+        console.print(f"  Health: [green]{health['status']}[/green]")
+        uptime_s = stats.get("uptime_seconds", 0)
+        uptime_m = uptime_s // 60
+        uptime_h = uptime_m // 60
+        if uptime_h > 0:
+            console.print(f"  Uptime: {uptime_h}h {uptime_m % 60}m")
+        else:
+            console.print(f"  Uptime: {uptime_m}m {uptime_s % 60}s")
+        console.print()
+
+        # Messages stats
+        console.print("[bold]Messages[/bold]")
+        console.print(f"  Sent: {stats['total_messages_sent']}")
+        console.print(f"  Delivered: {stats['total_messages_delivered']}")
+        console.print(f"  Pending: {stats['messages_pending']}")
+        console.print()
+
+        # Rooms table
+        if room_list:
+            table = Table(title="Rooms")
+            table.add_column("Name", style="bold")
+            table.add_column("Members", style="cyan")
+            table.add_column("Count", justify="right")
+            for r in room_list:
+                table.add_row(
+                    r["name"],
+                    ", ".join(r["members"]),
+                    str(len(r["members"])),
+                )
+            console.print(table)
+        else:
+            console.print("[dim]No rooms.[/dim]")
+
+        console.print()
+
+        # Participants
+        if participants:
+            console.print(f"[bold]Participants[/bold] ({len(participants)})")
+            for p in participants:
+                console.print(f"  {p}")
+        else:
+            console.print("[dim]No participants.[/dim]")
+
+    except httpx.ConnectError:
+        console.print(f"[red]Cannot connect to relay at {RELAY_URL}[/red]")
     finally:
         await client.aclose()
 
@@ -354,6 +419,10 @@ def _cmd_watch(args):
     asyncio.run(_watch(args.room))
 
 
+def _cmd_status(args):
+    asyncio.run(_status())
+
+
 def _cmd_init(args):
     """One-command setup: write config, register MCP server with Claude Code."""
     name = args.name
@@ -497,6 +566,8 @@ def main():
     )
     p_chat.add_argument("room", help="Room name")
 
+    sub.add_parser("status", help="Show relay health and stats")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -513,6 +584,7 @@ def main():
         "dm": _cmd_dm,
         "watch": _cmd_watch,
         "chat": _cmd_chat,
+        "status": _cmd_status,
     }
     commands[args.command](args)
 
