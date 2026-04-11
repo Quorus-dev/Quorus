@@ -1365,6 +1365,72 @@ header{
   padding:4px;border-radius:4px;
 }
 .menu-btn:hover{background:var(--bg-hover)}
+.sidebar-actions{padding:8px;border-top:1px solid var(--border)}
+.btn-create{
+  width:100%;padding:8px 12px;
+  background:var(--bg-2);color:var(--text-2);
+  border:1px dashed var(--border);
+  border-radius:var(--r);cursor:pointer;
+  font-size:12px;font-weight:500;
+  transition:all .15s;
+}
+.btn-create:hover{
+  background:var(--bg-hover);color:var(--text);
+  border-color:var(--accent);
+}
+.btn-share{
+  background:none;border:1px solid var(--border);
+  color:var(--text-2);border-radius:var(--r);
+  padding:5px 10px;cursor:pointer;font-size:11px;
+  font-weight:500;transition:all .15s;
+}
+.btn-share:hover{
+  background:var(--accent-s);color:var(--accent);
+  border-color:var(--accent);
+}
+.modal-bg{
+  position:fixed;inset:0;background:rgba(0,0,0,.6);
+  display:flex;align-items:center;
+  justify-content:center;z-index:100;
+}
+.modal{
+  background:var(--bg-1);border:1px solid var(--border);
+  border-radius:12px;padding:24px;width:420px;
+  max-width:90vw;
+}
+.modal h3{font-size:15px;margin-bottom:16px}
+.modal input{
+  width:100%;background:var(--bg-0);
+  border:1px solid var(--border);
+  border-radius:var(--r);padding:10px 14px;
+  color:var(--text);font-size:13px;
+  outline:none;margin-bottom:12px;
+}
+.modal input:focus{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-s);
+}
+.modal pre{
+  background:var(--bg-0);border:1px solid var(--border);
+  border-radius:var(--r);padding:12px;
+  font-size:12px;color:var(--text-2);
+  overflow-x:auto;margin-bottom:12px;
+  white-space:pre-wrap;word-break:break-all;
+}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end}
+.modal-btns button{
+  padding:8px 16px;border-radius:var(--r);
+  font-size:13px;font-weight:500;cursor:pointer;
+  border:none;transition:all .15s;
+}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-h)}
+.btn-secondary{
+  background:var(--bg-2);color:var(--text-2);
+  border:1px solid var(--border) !important;
+}
+.btn-secondary:hover{background:var(--bg-hover)}
+.copied{color:var(--green) !important}
 </style>
 </head>
 <body>
@@ -1394,10 +1460,19 @@ header{
     <div class="rooms-list" id="rooms">
       <div class="empty">Loading...</div>
     </div>
+    <div class="sidebar-actions">
+      <button class="btn-create" onclick="showCreate()">
+        + Create Room
+      </button>
+    </div>
   </div>
   <div class="main">
     <div class="room-hdr" id="roomHdr" style="display:none">
       <span class="rt" id="roomTitle"></span>
+      <button class="btn-share" id="shareBtn"
+        onclick="showShare()" style="display:none">
+        Share
+      </button>
       <span class="rm" id="roomMeta"></span>
     </div>
     <div class="messages" id="messages">
@@ -1416,6 +1491,7 @@ header{
     </div>
   </div>
 </div>
+<div id="modalRoot"></div>
 <script>
 const API=location.origin;
 const P=new URLSearchParams(location.search);
@@ -1485,6 +1561,8 @@ async function selectRoom(name){
     hdr.style.display='flex';
     document.getElementById('roomTitle')
       .textContent='# '+name;
+    document.getElementById('shareBtn')
+      .style.display='inline-block';
     document.getElementById('roomMeta')
       .textContent=room.members.length+' members';
     const pr=await fetch(API+'/presence',{headers:H});
@@ -1594,6 +1672,78 @@ async function refreshPresence(){
       }).join('');
   }catch(e){}
 }
+function closeModal(){
+  document.getElementById('modalRoot').innerHTML='';
+}
+
+function showCreate(){
+  const m=document.getElementById('modalRoot');
+  m.innerHTML='<div class="modal-bg" onclick="'+
+    'if(event.target===this)closeModal()">'+
+    '<div class="modal"><h3>Create Room</h3>'+
+    '<input id="newRoomName" placeholder="room-name"'+
+    ' onkeydown="if(event.key===\\'Enter\\')createRoom()">'+
+    '<div class="modal-btns">'+
+    '<button class="btn-secondary" onclick="closeModal()">'+
+    'Cancel</button>'+
+    '<button class="btn-primary" onclick="createRoom()">'+
+    'Create</button></div></div></div>';
+  document.getElementById('newRoomName').focus();
+}
+
+async function createRoom(){
+  const input=document.getElementById('newRoomName');
+  const name=input.value.trim().toLowerCase()
+    .replace(/[^a-z0-9-]/g,'-');
+  if(!name)return;
+  try{
+    await fetch(API+'/rooms',{
+      method:'POST',headers:H,
+      body:JSON.stringify({name:name})
+    });
+    closeModal();
+    await loadRooms();
+    selectRoom(name);
+  }catch(e){}
+}
+
+function showShare(){
+  if(!currentRoom)return;
+  const cmd='murmur join --name <agent-name>'+
+    ' --relay '+location.origin+
+    ' --secret <your-secret>'+
+    ' --room '+currentRoom;
+  const m=document.getElementById('modalRoot');
+  m.innerHTML='<div class="modal-bg" onclick="'+
+    'if(event.target===this)closeModal()">'+
+    '<div class="modal"><h3>Share Room</h3>'+
+    '<p style="font-size:12px;color:var(--text-2);'+
+    'margin-bottom:12px">'+
+    'Copy this command to add an agent:</p>'+
+    '<pre id="shareCmd">'+cmd+'</pre>'+
+    '<div class="modal-btns">'+
+    '<button class="btn-secondary" onclick="closeModal()">'+
+    'Close</button>'+
+    '<button class="btn-primary" id="copyBtn"'+
+    ' onclick="copyShare()">'+
+    'Copy</button></div></div></div>';
+}
+
+async function copyShare(){
+  const cmd=document.getElementById('shareCmd')
+    .textContent;
+  try{
+    await navigator.clipboard.writeText(cmd);
+    const btn=document.getElementById('copyBtn');
+    btn.textContent='Copied!';
+    btn.classList.add('copied');
+    setTimeout(()=>{
+      btn.textContent='Copy';
+      btn.classList.remove('copied');
+    },2000);
+  }catch(e){}
+}
+
 loadRooms();
 setInterval(()=>{loadRooms();refreshPresence()},30000);
 </script>
