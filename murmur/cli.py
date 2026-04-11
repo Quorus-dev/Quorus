@@ -532,6 +532,56 @@ def _cmd_watch(args):
     asyncio.run(_watch(args.room))
 
 
+async def _watch_daemon(name: str) -> None:
+    """SSE listener that writes new messages to a file for agent pickup."""
+    inbox_path = Path(f"/tmp/murmur-{name}-inbox.txt")
+    console.print(f"[bold]Watch daemon for: {name}[/bold]")
+    console.print(f"  Inbox: {inbox_path}")
+    console.print("  Ctrl+C to stop\n")
+
+    client = httpx.AsyncClient()
+    try:
+        url = f"{RELAY_URL}/stream/{name}"
+        async with client.stream(
+            "GET", url, params={"token": RELAY_SECRET}, timeout=None,
+        ) as resp:
+            event_type = ""
+            event_data = ""
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if line.startswith("event:"):
+                    event_type = line[6:].strip()
+                elif line.startswith("data:"):
+                    event_data = line[5:].strip()
+                elif line == "" and event_type:
+                    if event_type == "message":
+                        try:
+                            msg = json.loads(event_data)
+                            sender = msg.get("from_name", "?")
+                            room = msg.get("room", "dm")
+                            content = msg.get("content", "")
+                            ts = msg.get("timestamp", "")[:19]
+                            line_out = f"[{ts}] {sender} ({room}): {content}\n"
+                            with open(inbox_path, "a") as f:
+                                f.write(line_out)
+                            console.print(f"[dim]{line_out.strip()}[/dim]")
+                        except json.JSONDecodeError:
+                            pass
+                    event_type = ""
+                    event_data = ""
+    except KeyboardInterrupt:
+        console.print("\n[dim]Daemon stopped.[/dim]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_watch_daemon(args):
+    try:
+        asyncio.run(_watch_daemon(args.name))
+    except KeyboardInterrupt:
+        console.print("\n[dim]Daemon stopped.[/dim]")
+
+
 def _cmd_status(args):
     asyncio.run(_status())
 
@@ -763,14 +813,18 @@ def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
             resp.raise_for_status()
             console.print(f"[green]{name} joined room '{room}'[/green]")
         except Exception:
-            console.print(f"[yellow]Could not auto-join room (agent will join on first message)[/yellow]")
+            console.print(
+                "[yellow]Could not auto-join room"
+                " (agent will join on first message)[/yellow]"
+            )
         finally:
             await client.aclose()
 
     asyncio.run(_auto_join())
 
     # CLAUDE.md — auto-activates the agent with full protocol
-    claude_md = f""" You are {name} in the {room} group chat. You communicate ONLY through the room — never reply in terminal.
+    claude_md = f"""You are {name} in the {room} group chat. \
+You communicate ONLY through the room — never reply in terminal.
 
   Tools:
   - check_messages() — read messages NOW and every 30 seconds
@@ -1053,6 +1107,11 @@ def main():
         "--agents", type=int, default=2, help="Number of agents (default 2)"
     )
 
+    p_watch_daemon = sub.add_parser(
+        "watch-daemon", help="Background SSE listener writing to inbox file"
+    )
+    p_watch_daemon.add_argument("name", help="Agent/participant name to watch")
+
     p_join = sub.add_parser("join", help="One-liner to join a room")
     p_join.add_argument("--name", required=True, help="Your participant name")
     p_join.add_argument("--relay", dest="relay_url", required=True, help="Relay URL")
@@ -1083,6 +1142,7 @@ def main():
         "spawn": _cmd_spawn,
         "spawn-multiple": _cmd_spawn_multiple,
         "quickstart": _cmd_quickstart,
+        "watch-daemon": _cmd_watch_daemon,
     }
     commands[args.command](args)
 

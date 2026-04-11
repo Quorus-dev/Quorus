@@ -46,7 +46,7 @@ def _fail(label: str, detail: str = "") -> None:
 
 async def test_hackathon():
     print("\n=== Murmur Hackathon Readiness Test ===")
-    print(f"  6 agents, 2 rooms, isolation + stress\n")
+    print("  6 agents, 2 rooms, isolation + stress\n")
 
     # Start relay
     _log("Starting relay on port 18081...")
