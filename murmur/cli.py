@@ -1271,6 +1271,9 @@ def main():
     sub.add_parser("ps", help="Show agent presence (online/offline)")
     sub.add_parser("status", help="Show relay health and stats")
 
+    p_doctor = sub.add_parser("doctor", help="Diagnose setup issues")
+    p_doctor.add_argument("--verbose", "-v", action="store_true", help="Show extra details")
+
     p_invite_link = sub.add_parser(
         "invite-link", help="Generate a join command to share"
     )
@@ -1337,6 +1340,7 @@ def main():
         "chat": _cmd_chat,
         "ps": _cmd_ps,
         "status": _cmd_status,
+        "doctor": _cmd_doctor,
         "join": _cmd_join,
         "invite-link": _cmd_invite_link,
         "spawn": _cmd_spawn,
