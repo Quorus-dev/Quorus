@@ -1,12 +1,12 @@
-"""Invite route handlers — HTML invite page and join-via-invite endpoint."""
+"""Invite route handlers — HTML invite page and join-via-invite endpoint.
+
+Uses JWT-based invite tokens via InviteService (replaces legacy HMAC tokens).
+"""
 
 from __future__ import annotations
 
-import hashlib
-import hmac as hmac_mod
 import os
 import string
-import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -17,42 +17,10 @@ from murmur.routes.models import InviteJoinRequest
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
 MAX_ROOM_MEMBERS = int(os.environ.get("MAX_ROOM_MEMBERS", "50"))
-RELAY_SECRET = os.environ.get("RELAY_SECRET", "")
-INVITE_SECRET = os.environ.get("INVITE_SECRET", "") or RELAY_SECRET
-INVITE_TTL = int(os.environ.get("INVITE_TTL", str(24 * 60 * 60)))
 
 
 def _tid(auth: AuthContext) -> str:
     return auth.tenant_id or _LEGACY_TENANT
-
-
-def _make_invite_token(room_name: str) -> str:
-    expires = int(time.time()) + INVITE_TTL
-    payload = f"{room_name}:{expires}"
-    sig = hmac_mod.new(
-        INVITE_SECRET.encode(), payload.encode(), hashlib.sha256,
-    ).hexdigest()
-    return f"{payload}:{sig}"
-
-
-def _verify_invite_token(token: str, room_name: str) -> bool:
-    parts = token.rsplit(":", 2)
-    if len(parts) != 3:
-        return False
-    claimed_room, expires_str, sig = parts
-    if claimed_room != room_name:
-        return False
-    try:
-        expires = int(expires_str)
-    except ValueError:
-        return False
-    if time.time() > expires:
-        return False
-    expected_payload = f"{claimed_room}:{expires_str}"
-    expected_sig = hmac_mod.new(
-        INVITE_SECRET.encode(), expected_payload.encode(), hashlib.sha256,
-    ).hexdigest()
-    return hmac_mod.compare_digest(sig, expected_sig)
 
 
 _INVITE_TMPL = string.Template("""<!DOCTYPE html>
@@ -141,14 +109,18 @@ async def invite_page(
     auth: AuthContext = Depends(verify_auth),
 ):
     room_svc = request.app.state.room_service
+    invite_svc = request.app.state.invite_service
     tid = _tid(auth)
-    # Verify room exists (by name or ID)
+    # Resolve room by name within the caller's tenant
     try:
-        await room_svc.get(tid, room_name)
+        room_id, _ = await room_svc.get(tid, room_name)
     except HTTPException:
         raise HTTPException(status_code=404, detail="Room not found")
     relay_url = str(request.base_url).rstrip("/")
-    invite_token = _make_invite_token(room_name)
+    issuer = auth.sub or "legacy"
+    invite_token = invite_svc.create_token(
+        tenant_id=tid, room_id=room_id, issuer=issuer, role="member",
+    )
     html = _INVITE_TMPL.substitute(
         room_name=room_name, relay_url=relay_url, token=invite_token,
     )
@@ -161,16 +133,19 @@ async def invite_join(
     req: InviteJoinRequest,
     request: Request,
 ):
-    if not _verify_invite_token(req.token, room_name):
-        raise HTTPException(
-            status_code=403, detail="Invalid or expired invite token",
-        )
+    invite_svc = request.app.state.invite_service
+    # Verify the JWT invite token — raises HTTPException(403) on failure
+    claims = invite_svc.verify_token(req.token)
+    tenant_id = claims["tenant_id"]
+    room_id = claims["room_id"]
+    role = claims.get("role", "member")
+
     room_svc = request.app.state.room_service
-    # Find the room by name — use _LEGACY_TENANT since invites are unauthenticated
+    # Resolve room by ID (not name) to prevent cross-tenant collision
     try:
-        rid, _ = await room_svc.get(_LEGACY_TENANT, room_name)
+        rid, _ = await room_svc.get(tenant_id, room_id)
     except HTTPException:
         raise HTTPException(status_code=404, detail="Room not found")
-    await room_svc.join(_LEGACY_TENANT, rid, req.participant, "member", MAX_ROOM_MEMBERS)
+    await room_svc.join(tenant_id, rid, req.participant, role, MAX_ROOM_MEMBERS)
     request.app.state.backends.participants.add(req.participant)
     return {"status": "joined"}

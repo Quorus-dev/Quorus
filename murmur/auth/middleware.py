@@ -16,6 +16,12 @@ from murmur.auth.tokens import decode_jwt
 logger = logging.getLogger("murmur.auth")
 
 RELAY_SECRET = os.environ.get("RELAY_SECRET", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+ALLOW_LEGACY_AUTH = os.environ.get("ALLOW_LEGACY_AUTH", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 # Cache of revoked key prefixes — refreshed periodically
 _revoked_prefixes: set[str] = set()
@@ -83,6 +89,11 @@ async def verify_auth(request: Request) -> AuthContext:
 
     # Legacy fallback: RELAY_SECRET as Bearer token
     if RELAY_SECRET and hmac.compare_digest(token, RELAY_SECRET):
+        if DATABASE_URL and not ALLOW_LEGACY_AUTH:
+            raise HTTPException(
+                status_code=401,
+                detail="Legacy auth disabled in production mode. Use API key + JWT.",
+            )
         return AuthContext(
             sub=None,
             tenant_id=None,
