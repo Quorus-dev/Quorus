@@ -1,182 +1,112 @@
-# MCP Tunnel
+# Murmur
 
-A relay-based MCP system that lets multiple MCP-capable clients on different laptops communicate through a shared relay.
+Group chat for AI agents. Multiple agents and humans in one room, coordinating in real-time.
+
+## 30-Second Setup
+
+```bash
+# 1. Setup (once per machine)
+./setup.sh your-name
+
+# 2. Start relay (one terminal tab)
+RELAY_SECRET=murmur-hack uv run python relay_server.py
+
+# 3. Add MCP server to Claude Code
+#    The setup script prints the exact command to paste.
+
+# 4. Create a room and invite agents
+uv run python cli.py create my-project
+uv run python cli.py invite my-project agent-1 agent-2 agent-3
+
+# 5. Watch the room
+uv run python cli.py watch my-project
+```
+
+Your agents now have these tools: `send_message`, `check_messages`, `send_room_message`, `join_room`, `list_rooms`, `list_participants`.
+
+## Multi-Machine Setup (hackathon mode)
+
+```bash
+# Host: start relay + expose via ngrok
+RELAY_SECRET=my-secret uv run python relay_server.py
+ngrok http 8080  # gives https://xxx.ngrok.io
+
+# Everyone else: setup with the ngrok URL
+./setup.sh aarya https://xxx.ngrok.io my-secret
+./setup.sh arav-agent-1 https://xxx.ngrok.io my-secret
+```
 
 ## How It Works
 
-1. A central **relay server** (FastAPI) stores messages in per-recipient queues
-2. Each laptop runs a local **MCP server** that exposes messaging tools to its harness
-3. The MCP server makes HTTP calls to the relay
-4. Messages are persisted to a JSON file on disk
-5. Optional client-specific push notifications can surface new messages instantly, with standard tool polling as the portable fallback
+```
+Agent A ──► MCP Server (stdio) ──► HTTP ──► [Relay Server] ◄── HTTP ◄── MCP Server (stdio) ◄── Agent B
+                                                ▲
+                                                │ SSE (real-time push)
+                                                │
+                                            Agent C
+```
 
-## Quick Start
+- **Rooms**: Named groups. Send once, all members receive.
+- **SSE Push**: Real-time delivery. No polling loops. No wasted context.
+- **DMs**: Point-to-point messaging still works alongside rooms.
+- **CLI**: `murmur watch/say/dm/create/invite/rooms/members` for human participation.
 
-### 1. Install dependencies
+## CLI Commands
 
 ```bash
-pip install -r requirements.txt
+uv run python cli.py create <room>                    # Create a room
+uv run python cli.py invite <room> <name1> <name2>    # Add members
+uv run python cli.py watch <room>                     # Stream messages live
+uv run python cli.py say <room> "message"             # Send to room
+uv run python cli.py dm <name> "message"               # Direct message
+uv run python cli.py rooms                             # List all rooms
+uv run python cli.py members <room>                    # List room members
 ```
 
-### 2. Start the relay server (on the host's laptop)
+## Message Types
 
-```bash
-RELAY_SECRET=my-shared-secret python relay_server.py
-```
+Agents use typed messages to coordinate:
 
-### 3. Expose via ngrok (on the host's laptop)
-
-```bash
-ngrok http 8080
-```
-
-Note the public URL (e.g., `https://abc123.ngrok.io`).
-
-### 4. Configure Your MCP Client (all users)
-
-Each user needs `mcp_server.py` and the `mcp` + `httpx` packages installed (`pip install mcp httpx`).
-
-**Step 1: Write config file (`~/mcp-tunnel/config.json`):**
-
-```bash
-mkdir -p ~/mcp-tunnel
-echo '{"relay_url": "https://your-tunnel-url", "relay_secret": "my-shared-secret", "instance_name": "alice"}' > ~/mcp-tunnel/config.json
-```
-
-Replace `instance_name` with a unique name for each user (e.g., `"alice"` and `"bob"`).
-
-The old `~/claude-tunnel/config.json` path is still accepted for backward compatibility.
-
-If your harness supports a custom notification method and you want automatic push delivery, add notification settings:
-
-```bash
-echo '{"relay_url": "https://your-tunnel-url", "relay_secret": "my-shared-secret", "instance_name": "alice", "enable_background_polling": true, "push_notification_method": "notifications/claude/channel", "push_notification_channel": "mcp-tunnel"}' > ~/mcp-tunnel/config.json
-```
-
-If your harness does not support custom notifications, omit those fields. The standard MCP tools still work everywhere.
-
-**Step 2: Register the stdio MCP server in your harness**
-
-The server is a plain stdio MCP server:
-
-```bash
-python /absolute/path/to/mcp_server.py
-```
-
-How you register that command depends on the client:
-
-- Claude Code: add it as an MCP server, optionally with `--channels` if you use `notifications/claude/channel`
-- Codex, Cursor, or other MCP hosts: add the same stdio command in that client's MCP/server configuration
-- Any client that only supports standard MCP tools can use `send_message`, `check_messages`, and `list_participants` without any push-specific setup
-
-**Update the tunnel URL later** (e.g., when tunnel restarts):
-
-```bash
-echo '{"relay_url": "https://new-url", "relay_secret": "my-shared-secret", "instance_name": "alice"}' > ~/mcp-tunnel/config.json
-```
-
-No need to re-add the MCP server. It reads the config file on startup.
-
-Config is loaded with this priority: **env vars > `~/mcp-tunnel/config.json` > legacy `~/claude-tunnel/config.json` > defaults**.
-
-### 5. Use In Your Client
-
-Your MCP client now has these tools:
-
-- **send_message(to, content)** -- Send a message to another instance (large messages are auto-chunked)
-- **check_messages()** -- Fetch unread messages (uses long-polling with 30s wait)
-- **list_participants()** -- See known participant names
-
-If you configured background polling plus a client-specific notification method, messages can be surfaced automatically. Otherwise, poll manually:
-
-```
-/loop 10s check_messages
-```
-
-## Compatibility
-
-MCP Tunnel supports two modes:
-
-### Standard MCP Tools
-
-This is the portable mode and should work across Codex, Cursor, Claude Code, and any other MCP-capable harness. The client invokes the standard tools:
-
-- `send_message`
-- `check_messages`
-- `list_participants`
-
-### Optional Push Notifications
-
-If a harness supports custom server-to-client notifications, you can configure:
-
-- `enable_background_polling: true`
-- `push_notification_method`
-- `push_notification_channel` (optional)
-
-For Claude Code, the compatible method today is `notifications/claude/channel` plus `--channels`.
-
-This setup still works behind NAT and standard home networks because only the relay needs to be publicly reachable. Client laptops do not need inbound tunnels or webhook endpoints.
-
-`check_messages` always remains the portable fallback. The raw API supports `GET /messages/{recipient}?wait=N` with `N` up to 60 seconds.
-
-## Analytics
-
-View relay usage stats in the terminal:
-
-```bash
-python analytics.py
-```
-
-`analytics.py` reads the same shared config and env vars as `mcp_server.py`.
-
-This shows:
-- Total sent/delivered/pending message counts
-- Per-participant sent/received breakdown
-- Hourly message volume bar chart (last 72h)
-
-The relay also exposes `GET /analytics` (requires auth) for programmatic access.
+| Type      | Purpose                         |
+| --------- | ------------------------------- |
+| `chat`    | General discussion              |
+| `claim`   | Claim a task to prevent overlap |
+| `status`  | Progress update                 |
+| `request` | Ask for help                    |
+| `alert`   | Something broke                 |
+| `sync`    | Git push/pull coordination      |
 
 ## Configuration
 
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `RELAY_SECRET` | `test-secret` | Shared auth token |
-| `PORT` | `8080` | Relay server port |
-| `MESSAGES_FILE` | `messages.json` | Persistence file path |
-| `MAX_MESSAGES` | `1000` | Max messages before trimming |
-| `MAX_MESSAGE_SIZE` | `51200` | Max message size in bytes (larger messages are auto-chunked) |
-| `LOG_LEVEL` | `INFO` | Logging level |
-| `RELAY_URL` | `http://localhost:8080` | Relay URL (MCP server) |
-| `INSTANCE_NAME` | `default` | This instance's name (MCP server) |
-| `MCP_TUNNEL_CONFIG_DIR` | unset | Override config directory |
-| `ENABLE_BACKGROUND_POLLING` | `false` | Enable background relay polling in the MCP server |
-| `ENABLE_CHANNELS` | `false` | Legacy alias for `ENABLE_BACKGROUND_POLLING` |
-| `PUSH_NOTIFICATION_METHOD` | unset | Optional client-specific notification method |
-| `PUSH_NOTIFICATION_CHANNEL` | `mcp-tunnel` | Optional notification channel name |
+Config file: `~/mcp-tunnel/config.json`
 
-## Project Structure
+```json
+{
+  "relay_url": "https://xxx.ngrok.io",
+  "relay_secret": "my-secret",
+  "instance_name": "arav-agent-1",
+  "enable_background_polling": true,
+  "push_notification_method": "notifications/claude/channel",
+  "push_notification_channel": "mcp-tunnel"
+}
+```
 
-```
-claude_tunnel/
-├── relay_server.py         # FastAPI relay with analytics, optional webhooks, long-polling
-├── mcp_server.py           # MCP server with standard tools + optional push notifications
-├── tunnel_config.py        # Shared config loading + env override logic
-├── analytics.py            # CLI tool for terminal analytics charts
-├── requirements.txt
-├── requirements-dev.txt
-├── tests/
-│   ├── test_relay.py
-│   ├── test_mcp.py
-│   ├── test_integration.py
-│   └── test_config.py
-├── pyproject.toml
-└── README.md
-```
+Env vars override config file. Priority: **env vars > config file > defaults**.
+
+## Relay Environment Variables
+
+| Var                   | Default       | Description           |
+| --------------------- | ------------- | --------------------- |
+| `RELAY_SECRET`        | `test-secret` | Auth token            |
+| `PORT`                | `8080`        | Listen port           |
+| `MAX_MESSAGES`        | `1000`        | Message cap           |
+| `MAX_MESSAGE_SIZE`    | `51200`       | Max message bytes     |
+| `MESSAGE_TTL_SECONDS` | `86400`       | Auto-expire after 24h |
+| `MAX_ROOM_MEMBERS`    | `50`          | Members per room      |
 
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt
-pytest -v
-ruff check .
+uv run python -m pytest -v       # Run tests (116 passing)
+uv run ruff check .               # Lint
 ```
