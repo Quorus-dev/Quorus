@@ -484,6 +484,95 @@ def _cmd_init(args):
     console.print(f"  murmur invite <room> {name}     # Join yourself")
 
 
+def _cmd_join(args):
+    """One-liner to join a room: writes config, registers MCP, joins the room."""
+    name = args.name
+    relay_url = args.relay_url
+    secret = args.secret
+    room = args.room
+    repo_dir = Path(__file__).resolve().parent.parent
+    murmur_dir = Path(__file__).resolve().parent
+
+    # 1. Write config
+    config_dir = Path.home() / "mcp-tunnel"
+    config_dir.mkdir(exist_ok=True)
+    config = {
+        "relay_url": relay_url,
+        "relay_secret": secret,
+        "instance_name": name,
+        "enable_background_polling": True,
+        "push_notification_method": "notifications/claude/channel",
+        "push_notification_channel": "mcp-tunnel",
+    }
+    config_path = config_dir / "config.json"
+    config_path.write_text(json.dumps(config, indent=2))
+    console.print(f"[green]Config written to {config_path}[/green]")
+
+    # 2. Register MCP server with Claude Code
+    claude_config_path = Path.home() / ".claude.json"
+    if claude_config_path.exists():
+        try:
+            claude_config = json.loads(claude_config_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            claude_config = {}
+    else:
+        claude_config = {}
+
+    if "mcpServers" not in claude_config:
+        claude_config["mcpServers"] = {}
+
+    claude_config["mcpServers"]["murmur"] = {
+        "type": "stdio",
+        "command": "uv",
+        "args": [
+            "run", "--directory", str(repo_dir),
+            "python", str(murmur_dir / "mcp.py"),
+        ],
+        "env": {},
+    }
+    claude_config_path.write_text(json.dumps(claude_config, indent=2))
+    console.print("[green]MCP server registered in ~/.claude.json[/green]")
+
+    # 3. Join the room
+    async def _do_join():
+        client = _get_client()
+        try:
+            # Resolve room by name
+            rooms_resp = await client.get(
+                f"{relay_url}/rooms",
+                headers={"Authorization": f"Bearer {secret}"},
+            )
+            rooms_resp.raise_for_status()
+            rooms_list = rooms_resp.json()
+            target = next((r for r in rooms_list if r["name"] == room), None)
+            if not target:
+                console.print(f"[red]Room '{room}' not found on relay.[/red]")
+                return
+            resp = await client.post(
+                f"{relay_url}/rooms/{target['id']}/join",
+                json={"participant": name},
+                headers={"Authorization": f"Bearer {secret}"},
+            )
+            resp.raise_for_status()
+            console.print(f"[green]Joined room '{room}' as '{name}'[/green]")
+        except httpx.ConnectError:
+            console.print(f"[red]Cannot connect to relay at {relay_url}[/red]")
+        finally:
+            await client.aclose()
+
+    asyncio.run(_do_join())
+
+    console.print("")
+    console.print(f"[bold]Setup complete for: {name}[/bold]")
+    console.print(f"  Relay: {relay_url}")
+    console.print(f"  Room: {room}")
+    console.print("")
+    console.print("[yellow]Restart Claude Code to pick up the MCP server.[/yellow]")
+    console.print("")
+    console.print("Start chatting:")
+    console.print(f"  murmur chat {room}")
+
+
 def _cmd_relay(args):
     """Start the relay server."""
     repo_dir = Path(__file__).resolve().parent.parent
@@ -575,6 +664,12 @@ def main():
 
     sub.add_parser("status", help="Show relay health and stats")
 
+    p_join = sub.add_parser("join", help="One-liner to join a room")
+    p_join.add_argument("--name", required=True, help="Your participant name")
+    p_join.add_argument("--relay", dest="relay_url", required=True, help="Relay URL")
+    p_join.add_argument("--secret", required=True, help="Shared secret")
+    p_join.add_argument("--room", required=True, help="Room to join")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -592,6 +687,7 @@ def main():
         "watch": _cmd_watch,
         "chat": _cmd_chat,
         "status": _cmd_status,
+        "join": _cmd_join,
     }
     commands[args.command](args)
 
