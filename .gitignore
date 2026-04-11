@@ -1,8 +1,15 @@
 __pycache__/
 *.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.env
 messages.json
 .claude/settings.local.json
 uv.lock
+.DS_Store
