@@ -2,16 +2,23 @@
 
 SSE queues are process-local (connection-scoped), while token storage is
 delegated to an SSETokenBackend that may be in-memory or Redis-backed.
+
+Cross-replica push is handled by publishing to :class:`NotificationService`
+so that SSE clients connected to *any* replica receive the message.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 import structlog
 
 from murmur.backends.protocol import SSETokenBackend
+
+if TYPE_CHECKING:
+    from murmur.services.notification_svc import NotificationService
 
 logger = structlog.get_logger("murmur.services.sse")
 
@@ -23,9 +30,11 @@ class SSEService:
         self,
         backend: SSETokenBackend,
         max_queue_size: int = 1000,
+        notification: NotificationService | None = None,
     ) -> None:
         self._backend = backend
         self._max_queue_size = max_queue_size
+        self._notification = notification
         # Process-local: (tenant_id, recipient) -> list of asyncio.Queue
         self._queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
@@ -51,7 +60,28 @@ class SSEService:
     def push(
         self, tenant_id: str, recipient: str, message: dict
     ) -> None:
-        """Push *message* to all active SSE connections for *recipient*."""
+        """Push *message* to all active SSE connections for *recipient*.
+
+        Also publishes via NotificationService so other replicas can
+        deliver to their local SSE queues.
+        """
+        self._push_local(tenant_id, recipient, message)
+
+        if self._notification:
+            from murmur.services.notification_svc import NotificationService
+
+            channel = NotificationService.dm_channel(tenant_id, recipient)
+            # Fire-and-forget — schedule the coroutine on the running loop.
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._notification.publish(channel, message))
+            except RuntimeError:
+                pass  # no loop — tests without async context
+
+    def _push_local(
+        self, tenant_id: str, recipient: str, message: dict
+    ) -> None:
+        """Push to process-local SSE queues only (called on Pub/Sub receive)."""
         key = self._queue_key(tenant_id, recipient)
         for q in self._queues.get(key, []):
             try:
@@ -64,10 +94,32 @@ class SSEService:
     def register_queue(
         self, tenant_id: str, recipient: str
     ) -> asyncio.Queue:
-        """Create and register a new SSE queue for a connection."""
+        """Create and register a new SSE queue for a connection.
+
+        If a NotificationService is available, the queue will also receive
+        messages published by other replicas via Redis Pub/Sub.
+        """
         key = self._queue_key(tenant_id, recipient)
         q: asyncio.Queue = asyncio.Queue(maxsize=self._max_queue_size)
         self._queues[key].append(q)
+
+        # Subscribe to cross-replica notifications for this recipient
+        if self._notification:
+            from murmur.services.notification_svc import NotificationService
+
+            channel = NotificationService.dm_channel(tenant_id, recipient)
+
+            def _on_remote(msg: dict, _q: asyncio.Queue = q) -> None:
+                try:
+                    _q.put_nowait(msg)
+                except asyncio.QueueFull:
+                    pass
+
+            # Store handler reference so we can unsubscribe later
+            q._remote_handler = _on_remote  # type: ignore[attr-defined]
+            q._remote_channel = channel  # type: ignore[attr-defined]
+            self._notification.subscribe(channel, _on_remote)
+
         return q
 
     def unregister_queue(
@@ -78,3 +130,10 @@ class SSEService:
         queues = self._queues.get(key, [])
         if q in queues:
             queues.remove(q)
+
+        # Unsubscribe from cross-replica notifications
+        if self._notification:
+            handler = getattr(q, "_remote_handler", None)
+            channel = getattr(q, "_remote_channel", None)
+            if handler and channel:
+                self._notification.unsubscribe(channel, handler)

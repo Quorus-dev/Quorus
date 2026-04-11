@@ -272,6 +272,7 @@ def _init_services(app_instance, redis_conn=None):
     from murmur.services.analytics_svc import AnalyticsService
     from murmur.services.invite_svc import InviteService
     from murmur.services.message_svc import MessageService
+    from murmur.services.notification_svc import NotificationService
     from murmur.services.presence_svc import PresenceService
     from murmur.services.rate_limit_svc import RateLimitService
     from murmur.services.room_msg_svc import RoomMessageService
@@ -294,12 +295,16 @@ def _init_services(app_instance, redis_conn=None):
 
         backends = InMemoryBackends.create(max_room_history=max_room_history)
 
+    # Notification bus — Redis-backed when available, local-only otherwise
+    notification = NotificationService(redis_conn=redis_conn)
+
     rate_limit = RateLimitService(backends.rate_limit, rate_limit_window, rate_limit_max)
     analytics = AnalyticsService(backends.analytics)
-    sse = SSEService(backends.sse_tokens)
+    sse = SSEService(backends.sse_tokens, notification=notification)
     webhook = WebhookService(backends.webhooks)
     message = MessageService(
         backends.messages, sse, webhook, analytics, rate_limit,
+        notification=notification,
     )
     room = RoomService(backends.rooms)
     room_msg = RoomMessageService(
@@ -316,6 +321,7 @@ def _init_services(app_instance, redis_conn=None):
         default_ttl=invite_ttl,
     )
 
+    app_instance.state.notification_service = notification
     app_instance.state.message_service = message
     app_instance.state.room_service = room
     app_instance.state.room_msg_service = room_msg
@@ -355,9 +361,17 @@ async def lifespan(app):
     # Create backends and services
     _init_services(app, redis_conn=redis_conn)
 
+    # Start cross-replica notification listener
+    if hasattr(app.state, "notification_service"):
+        await app.state.notification_service.start()
+
     yield
 
     logger.info("Relay server shutting down")
+
+    # Stop notification listener
+    if hasattr(app.state, "notification_service"):
+        await app.state.notification_service.stop()
 
     # Close Redis if it was initialized
     if redis_url:
