@@ -160,6 +160,7 @@ def _reset_state():
     sse_queues.clear()
     presence.clear()
     _rate_buckets.clear()
+    _sse_tokens.clear()
     analytics["total_sent"] = 0
     analytics["total_delivered"] = 0
     analytics["per_participant"].clear()
@@ -697,10 +698,37 @@ async def send_message(msg: SendMessageRequest):
         return {"id": message["id"], "timestamp": message["timestamp"]}
 
 
+@app.post("/stream/token", dependencies=[Depends(verify_auth)])
+async def create_sse_token(request: Request):
+    """Exchange relay auth for a short-lived SSE token (avoids secret in URL)."""
+    body = await request.json()
+    recipient = body.get("recipient", "")
+    if not recipient:
+        raise HTTPException(status_code=400, detail="recipient is required")
+    token = str(uuid.uuid4())
+    _sse_tokens[token] = {
+        "recipient": recipient,
+        "expires": time.time() + SSE_TOKEN_TTL,
+    }
+    return {"token": token, "expires_in": SSE_TOKEN_TTL}
+
+
+def _verify_sse_token(token: str, recipient: str) -> bool:
+    """Validate an SSE token for the given recipient."""
+    entry = _sse_tokens.get(token)
+    if not entry:
+        return False
+    if time.time() > entry["expires"]:
+        _sse_tokens.pop(token, None)
+        return False
+    return entry["recipient"] == recipient
+
+
 @app.get("/stream/{recipient}")
 async def stream_messages(recipient: str, token: str = ""):
     """SSE endpoint for real-time message delivery."""
-    if not hmac.compare_digest(token, RELAY_SECRET):
+    # Accept either a short-lived SSE token or the relay secret (backward compat)
+    if not (_verify_sse_token(token, recipient) or hmac.compare_digest(token, RELAY_SECRET)):
         raise HTTPException(status_code=401, detail="Invalid token")
 
     q: asyncio.Queue = asyncio.Queue()
@@ -1130,6 +1158,9 @@ btn.disabled=false;btn.textContent='Join Room';
 </script>
 </body></html>""")
 
+SSE_TOKEN_TTL = int(os.environ.get("SSE_TOKEN_TTL", "300"))  # 5 minutes
+_sse_tokens: dict[str, dict] = {}  # token -> {recipient, expires}
+
 INVITE_SECRET = os.environ.get("INVITE_SECRET", RELAY_SECRET)
 INVITE_TTL = int(os.environ.get("INVITE_TTL", str(24 * 60 * 60)))  # 24h default
 
@@ -1347,9 +1378,15 @@ async function selectRoom(name){
   connectSSE();
 }
 
-function connectSSE(){
+async function connectSSE(){
   if(sse)sse.close();
-  sse=new EventSource(API+'/stream/'+NAME+'?token='+TOKEN);
+  let sseToken=TOKEN;
+  try{
+    const r=await fetch(API+'/stream/token',{method:'POST',headers:H,
+      body:JSON.stringify({recipient:NAME})});
+    if(r.ok){const d=await r.json();sseToken=d.token;}
+  }catch(e){}
+  sse=new EventSource(API+'/stream/'+NAME+'?token='+sseToken);
   sse.addEventListener('message',e=>{
     try{
       const msg=JSON.parse(e.data);
