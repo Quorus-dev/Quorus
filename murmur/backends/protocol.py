@@ -29,7 +29,29 @@ class MessageBackend(Protocol):
         ...
 
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
-        """Pop and return all messages, clearing the inbox."""
+        """Pop and return all messages, clearing the inbox.
+
+        .. deprecated:: Use :meth:`fetch` + :meth:`ack` for crash-safe delivery.
+        """
+        ...
+
+    async def fetch(
+        self, tenant_id: str, to_name: str
+    ) -> tuple[list[dict], str]:
+        """Fetch pending messages with visibility-timeout semantics.
+
+        Returns ``(messages, ack_token)``.  Messages are held in an inflight
+        set until :meth:`ack` is called.  If not acked within the visibility
+        timeout the inflight key expires (messages are considered delivered
+        and dropped — acceptable for ephemeral DM delivery).
+        """
+        ...
+
+    async def ack(
+        self, tenant_id: str, to_name: str, ack_token: str
+    ) -> None:
+        """Acknowledge receipt of a previous :meth:`fetch`, permanently
+        removing the inflight messages."""
         ...
 
     async def peek(self, tenant_id: str, to_name: str) -> int:

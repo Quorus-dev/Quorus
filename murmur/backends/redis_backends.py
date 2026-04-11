@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from redis.asyncio import Redis
 
 MESSAGE_TTL = 86400  # 24 h
+VISIBILITY_TIMEOUT = 60  # seconds — inflight key expiry
 SSE_TOKEN_TTL = 60  # 1 min
 HEARTBEAT_TIMEOUT = 120  # 2 min
 
@@ -64,6 +65,9 @@ class RedisMessageBackend:
             pipe.expire(key, MESSAGE_TTL)
             await pipe.execute()
 
+    def _inflight_key(self, tid: str, name: str, token: str) -> str:
+        return f"t:{tid}:dm:{name}:inflight:{token}"
+
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
         key = self._key(tenant_id, to_name)
         async with self._r.pipeline(transaction=True) as pipe:
@@ -71,6 +75,41 @@ class RedisMessageBackend:
             pipe.delete(key)
             results = await pipe.execute()
         return [json.loads(m) for m in results[0]]
+
+    async def fetch(
+        self, tenant_id: str, to_name: str
+    ) -> tuple[list[dict], str]:
+        key = self._key(tenant_id, to_name)
+        token = uuid.uuid4().hex
+        inflight = self._inflight_key(tenant_id, to_name, token)
+
+        # Atomic: read all messages then rename inbox to inflight key.
+        # RENAME fails if source key does not exist, so we check first.
+        msgs_raw = await self._r.lrange(key, 0, -1)
+        if not msgs_raw:
+            return [], ""
+
+        # RENAME is atomic — moves the entire list in O(1).
+        try:
+            async with self._r.pipeline(transaction=True) as pipe:
+                pipe.rename(key, inflight)
+                pipe.expire(inflight, VISIBILITY_TIMEOUT)
+                await pipe.execute()
+        except Exception:
+            # Key disappeared between LRANGE and RENAME (concurrent fetch) —
+            # treat as empty.
+            return [], ""
+
+        messages = [json.loads(m) for m in msgs_raw]
+        return messages, token
+
+    async def ack(
+        self, tenant_id: str, to_name: str, ack_token: str
+    ) -> None:
+        if not ack_token:
+            return
+        inflight = self._inflight_key(tenant_id, to_name, ack_token)
+        await self._r.delete(inflight)
 
     async def peek(self, tenant_id: str, to_name: str) -> int:
         return await self._r.llen(self._key(tenant_id, to_name))

@@ -1,6 +1,8 @@
 """Direct-message service — send, fetch (with long-poll), and peek.
 
-Owns the asyncio.Event dict for long-poll wakeup signaling.
+Long-poll wakeup is signaled via :class:`NotificationService` for cross-replica
+delivery.  When no NotificationService is configured (tests / single-process),
+falls back to process-local ``asyncio.Event``.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ import os
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import structlog
 from fastapi import HTTPException
@@ -20,6 +23,9 @@ from murmur.services.analytics_svc import AnalyticsService
 from murmur.services.rate_limit_svc import RateLimitService
 from murmur.services.sse_svc import SSEService
 from murmur.services.webhook_svc import WebhookService
+
+if TYPE_CHECKING:
+    from murmur.services.notification_svc import NotificationService
 
 logger = structlog.get_logger("murmur.services.message")
 
@@ -38,6 +44,7 @@ class MessageService:
         analytics: AnalyticsService,
         rate_limit: RateLimitService,
         max_message_size: int = MAX_MESSAGE_SIZE,
+        notification: NotificationService | None = None,
     ) -> None:
         self._backend = backend
         self._sse = sse
@@ -45,6 +52,7 @@ class MessageService:
         self._analytics = analytics
         self._rate_limit = rate_limit
         self._max_message_size = max_message_size
+        self._notification = notification
         # Long-poll wakeup events keyed by (tenant_id, recipient)
         self._events: dict[tuple[str, str], asyncio.Event] = defaultdict(
             asyncio.Event
@@ -56,8 +64,57 @@ class MessageService:
         return (tenant_id, recipient)
 
     def notify_new_message(self, tenant_id: str, recipient: str) -> None:
-        """Signal that a new message is available for long-poll wakeup."""
+        """Signal that a new message is available for long-poll wakeup.
+
+        Sets the local asyncio.Event and, if available, publishes via
+        NotificationService so other replicas wake their long-pollers.
+        """
         self._events[self._event_key(tenant_id, recipient)].set()
+        if self._notification:
+            from murmur.services.notification_svc import NotificationService as NS
+
+            channel = NS.dm_channel(tenant_id, recipient)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self._notification.publish(channel, {"wake": True})
+                )
+            except RuntimeError:
+                pass
+
+    def _subscribe_wakeup(self, tenant_id: str, recipient: str) -> None:
+        """Subscribe to cross-replica notifications for long-poll wakeup."""
+        if not self._notification:
+            return
+        from murmur.services.notification_svc import NotificationService as NS
+
+        channel = NS.dm_channel(tenant_id, recipient)
+        ekey = self._event_key(tenant_id, recipient)
+
+        def _on_notify(msg: dict) -> None:
+            self._events[ekey].set()
+
+        # Store on the event so we can unsubscribe
+        event = self._events[ekey]
+        if not hasattr(event, "_notify_handler"):
+            event._notify_handler = _on_notify  # type: ignore[attr-defined]
+            event._notify_channel = channel  # type: ignore[attr-defined]
+            self._notification.subscribe(channel, _on_notify)
+
+    def _unsubscribe_wakeup(self, tenant_id: str, recipient: str) -> None:
+        """Unsubscribe cross-replica notification handler."""
+        if not self._notification:
+            return
+        ekey = self._event_key(tenant_id, recipient)
+        event = self._events.get(ekey)
+        if event is None:
+            return
+        handler = getattr(event, "_notify_handler", None)
+        channel = getattr(event, "_notify_channel", None)
+        if handler and channel:
+            self._notification.unsubscribe(channel, handler)
+            del event._notify_handler  # type: ignore[attr-defined]
+            del event._notify_channel  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
     # Send
@@ -97,7 +154,7 @@ class MessageService:
             "timestamp": timestamp,
         }
         await self._backend.enqueue(tenant_id, recipient, message)
-        self._events[ekey].set()
+        self.notify_new_message(tenant_id, recipient)
         self._sse.push(tenant_id, recipient, message)
         await self._webhook.notify_dm(tenant_id, recipient, message)
         await self._analytics.track_send(tenant_id, sender)
@@ -140,7 +197,7 @@ class MessageService:
         ]
 
         await self._backend.enqueue_batch(tenant_id, recipient, messages)
-        self._events[ekey].set()
+        self.notify_new_message(tenant_id, recipient)
 
         # Push the reassembled message over SSE / webhook
         reassembled = {
@@ -180,18 +237,22 @@ class MessageService:
         wait = min(max(wait, 0), 60)
         ekey = self._event_key(tenant_id, recipient)
 
-        ready, held_back = await self._dequeue_and_reassemble(
+        ready, held_back = await self._fetch_and_reassemble(
             tenant_id, recipient, ekey
         )
 
         if not ready and wait > 0:
+            # Subscribe to cross-replica notifications for this wait period
+            self._subscribe_wakeup(tenant_id, recipient)
             try:
                 await asyncio.wait_for(
                     self._events[ekey].wait(), timeout=wait
                 )
             except asyncio.TimeoutError:
                 pass
-            ready, held_back = await self._dequeue_and_reassemble(
+            finally:
+                self._unsubscribe_wakeup(tenant_id, recipient)
+            ready, held_back = await self._fetch_and_reassemble(
                 tenant_id, recipient, ekey
             )
 
@@ -208,16 +269,22 @@ class MessageService:
         )
         return ready
 
-    async def _dequeue_and_reassemble(
+    async def _fetch_and_reassemble(
         self,
         tenant_id: str,
         recipient: str,
         ekey: tuple[str, str],
     ) -> tuple[list[dict], list[dict]]:
-        """Dequeue all, reassemble chunks, re-enqueue incomplete groups."""
-        all_msgs = await self._backend.dequeue_all(tenant_id, recipient)
+        """Fetch with ack semantics, reassemble chunks, re-enqueue incomplete groups."""
+        all_msgs, ack_token = await self._backend.fetch(tenant_id, recipient)
         self._events[ekey].clear()
         ready, held_back = _reassemble_chunks(all_msgs)
+
+        # ACK the inflight batch -- messages are now safe with us
+        if ack_token:
+            await self._backend.ack(tenant_id, recipient, ack_token)
+
+        # Re-enqueue any incomplete chunk groups so they survive
         if held_back:
             await self._backend.enqueue_batch(
                 tenant_id, recipient, held_back

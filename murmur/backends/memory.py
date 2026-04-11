@@ -20,6 +20,8 @@ class InMemoryMessageBackend:
 
     def __init__(self) -> None:
         self._queues: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        # Inflight messages keyed by (tenant_id, to_name, ack_token)
+        self._inflight: dict[tuple[str, str, str], list[dict]] = {}
         self._lock = asyncio.Lock()
 
     async def enqueue(
@@ -41,6 +43,25 @@ class InMemoryMessageBackend:
             self._queues[key].clear()
             return msgs
 
+    async def fetch(
+        self, tenant_id: str, to_name: str
+    ) -> tuple[list[dict], str]:
+        async with self._lock:
+            key = (tenant_id, to_name)
+            msgs = list(self._queues[key])
+            if not msgs:
+                return [], ""
+            self._queues[key].clear()
+            token = uuid.uuid4().hex
+            self._inflight[(tenant_id, to_name, token)] = msgs
+            return msgs, token
+
+    async def ack(
+        self, tenant_id: str, to_name: str, ack_token: str
+    ) -> None:
+        async with self._lock:
+            self._inflight.pop((tenant_id, to_name, ack_token), None)
+
     async def peek(self, tenant_id: str, to_name: str) -> int:
         async with self._lock:
             return len(self._queues[(tenant_id, to_name)])
@@ -59,6 +80,7 @@ class InMemoryMessageBackend:
 
     def clear(self) -> None:
         self._queues.clear()
+        self._inflight.clear()
 
 
 # -- Rooms ------------------------------------------------------------------

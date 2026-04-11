@@ -25,6 +25,21 @@ class QueueBackend(Protocol):
         """Return count of pending messages without consuming them."""
         ...
 
+    async def fetch(
+        self, tenant_id: str, to_name: str
+    ) -> tuple[list[dict], str]:
+        """Fetch pending messages with visibility-timeout semantics.
+
+        Returns ``(messages, ack_token)``.
+        """
+        ...
+
+    async def ack(
+        self, tenant_id: str, to_name: str, ack_token: str
+    ) -> None:
+        """Acknowledge receipt, permanently removing inflight messages."""
+        ...
+
     async def enqueue_batch(self, tenant_id: str, to_name: str, messages: list[dict]) -> None:
         """Store multiple messages for a recipient (used for chunked messages)."""
         ...
