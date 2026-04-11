@@ -33,8 +33,11 @@ from murmur.auth.middleware import AuthContext, require_identity, verify_auth
 logger = structlog.get_logger("murmur.relay_routes")
 
 # ---------------------------------------------------------------------------
-# In-memory state (shared with relay.py via imports)
+# In-memory state — keys are tenant-scoped via _tkey()
 # ---------------------------------------------------------------------------
+
+# Default tenant for legacy RELAY_SECRET auth (no JWT tenant_id)
+_LEGACY_TENANT = "_legacy"
 
 message_queues: dict[str, list[dict]] = defaultdict(list)
 participants: set[str] = set()
@@ -44,11 +47,21 @@ rooms_lock = asyncio.Lock()
 message_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
 webhooks: dict[str, str] = {}
 room_webhooks: dict[str, list[dict]] = defaultdict(list)
-rooms: dict[str, dict] = {}
+rooms: dict[str, dict] = {}  # room_id -> {name, created_by, members, tenant_id, ...}
 room_history: dict[str, list[dict]] = defaultdict(list)
 SSE_QUEUE_MAX = int(os.environ.get("SSE_QUEUE_MAX", "1000"))
 sse_queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
 presence: dict[str, dict] = {}
+
+
+def _tid(auth: AuthContext) -> str:
+    """Extract tenant ID from auth context. Legacy auth uses _LEGACY_TENANT."""
+    return auth.tenant_id or _LEGACY_TENANT
+
+
+def _tkey(tenant_id: str, name: str) -> str:
+    """Create a tenant-scoped composite key for state dicts."""
+    return f"{tenant_id}:{name}"
 
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
@@ -105,15 +118,16 @@ def _validate_name(value: str) -> str:
     return value
 
 
-def _check_rate_limit(sender: str) -> bool:
+def _check_rate_limit(sender: str, tenant_id: str = "") -> bool:
     """Return True if the sender is within the rate limit, False if exceeded."""
+    key = _tkey(tenant_id or _LEGACY_TENANT, sender)
     now = time.time()
     cutoff = now - RATE_LIMIT_WINDOW
-    bucket = _rate_buckets[sender]
-    _rate_buckets[sender] = [t for t in bucket if t > cutoff]
-    if len(_rate_buckets[sender]) >= RATE_LIMIT_MAX:
+    bucket = _rate_buckets[key]
+    _rate_buckets[key] = [t for t in bucket if t > cutoff]
+    if len(_rate_buckets[key]) >= RATE_LIMIT_MAX:
         return False
-    _rate_buckets[sender].append(now)
+    _rate_buckets[key].append(now)
     return True
 
 
@@ -317,18 +331,26 @@ async def _validate_webhook_callback_url(callback_url: str) -> str:
     return url
 
 
-def _find_room_by_name(name: str) -> Optional[str]:
+def _find_room_by_name(
+    name: str, tenant_id: str | None = None
+) -> Optional[str]:
     for rid, room in rooms.items():
         if room["name"] == name:
+            if tenant_id and room.get("tenant_id") and room["tenant_id"] != tenant_id:
+                continue
             return rid
     return None
 
 
-def _resolve_room(room_id_or_name: str) -> tuple[str, dict]:
+def _resolve_room(
+    room_id_or_name: str, tenant_id: str | None = None
+) -> tuple[str, dict]:
     room = rooms.get(room_id_or_name)
     if room:
+        if tenant_id and room.get("tenant_id") and room["tenant_id"] != tenant_id:
+            raise HTTPException(status_code=404, detail="Room not found")
         return room_id_or_name, room
-    rid = _find_room_by_name(room_id_or_name)
+    rid = _find_room_by_name(room_id_or_name, tenant_id)
     if rid:
         return rid, rooms[rid]
     raise HTTPException(status_code=404, detail="Room not found")
@@ -450,6 +472,7 @@ def snapshot_state() -> dict:
                 "created_by": r["created_by"],
                 "members": sorted(r["members"]),
                 "member_roles": r.get("member_roles", {}),
+                "tenant_id": r.get("tenant_id", _LEGACY_TENANT),
                 "created_at": r["created_at"],
             }
             for rid, r in rooms.items()
@@ -477,6 +500,7 @@ def apply_loaded_state(data: dict) -> None:
             "created_by": rdata["created_by"],
             "members": set(rdata.get("members", [])),
             "member_roles": rdata.get("member_roles", {}),
+            "tenant_id": rdata.get("tenant_id", _LEGACY_TENANT),
             "created_at": rdata["created_at"],
         }
     for rid, msgs in data.get("room_history", {}).items():
@@ -692,10 +716,12 @@ async def send_message(msg: SendMessageRequest, auth: AuthContext = Depends(veri
     if auth.sub and msg.from_name != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot send as another user")
     msg.from_name = sender
-    if not _check_rate_limit(msg.from_name):
+    tid = _tid(auth)
+    if not _check_rate_limit(msg.from_name, tid):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     timestamp = datetime.now(timezone.utc).isoformat()
     content = msg.content
+    rkey = _tkey(tid, msg.to)
 
     if len(content.encode("utf-8")) > MAX_MESSAGE_SIZE:
         chunk_group = str(uuid.uuid4())
@@ -719,13 +745,13 @@ async def send_message(msg: SendMessageRequest, auth: AuthContext = Depends(veri
                 "chunk_index": idx,
                 "chunk_total": chunk_total,
             })
-        async with locks[msg.to]:
-            message_queues[msg.to].extend(messages)
+        async with locks[rkey]:
+            message_queues[rkey].extend(messages)
             participants.update({msg.from_name, msg.to})
             _track_send(msg.from_name)
             _trim_messages()
             await _persist()
-        message_events[msg.to].set()
+        message_events[rkey].set()
         reassembled = {
             "id": messages[0]["id"],
             "from_name": msg.from_name,
@@ -733,7 +759,7 @@ async def send_message(msg: SendMessageRequest, auth: AuthContext = Depends(veri
             "content": content,
             "timestamp": timestamp,
         }
-        _sse_push(msg.to, reassembled)
+        _sse_push(rkey, reassembled)
         logger.info(
             "Message chunked into %d parts (%s -> %s, group %s)",
             chunk_total, msg.from_name, msg.to, chunk_group,
@@ -749,14 +775,14 @@ async def send_message(msg: SendMessageRequest, auth: AuthContext = Depends(veri
             "content": content,
             "timestamp": timestamp,
         }
-        async with locks[msg.to]:
-            message_queues[msg.to].append(message)
+        async with locks[rkey]:
+            message_queues[rkey].append(message)
             participants.update({msg.from_name, msg.to})
             _track_send(msg.from_name)
             _trim_messages()
             await _persist()
-        message_events[msg.to].set()
-        _sse_push(msg.to, message)
+        message_events[rkey].set()
+        _sse_push(rkey, message)
         logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
         _notify_webhook(msg.to, message)
         return {"id": message["id"], "timestamp": message["timestamp"]}
@@ -773,31 +799,40 @@ async def create_sse_token(request: Request, auth: AuthContext = Depends(verify_
         raise HTTPException(
             status_code=403, detail="Cannot create SSE token for another user",
         )
+    tid = _tid(auth)
     token = str(uuid.uuid4())
     _sse_tokens[token] = {
         "recipient": recipient,
+        "tenant_id": tid,
         "expires": time.time() + SSE_TOKEN_TTL,
     }
     return {"token": token, "expires_in": SSE_TOKEN_TTL}
 
 
-def _verify_sse_token(token: str, recipient: str) -> bool:
+def _verify_sse_token(token: str, recipient: str) -> tuple[bool, str]:
+    """Verify SSE token. Returns (valid, tenant_id)."""
     entry = _sse_tokens.get(token)
     if not entry:
-        return False
+        return False, _LEGACY_TENANT
     if time.time() > entry["expires"]:
         _sse_tokens.pop(token, None)
-        return False
-    return entry["recipient"] == recipient
+        return False, _LEGACY_TENANT
+    if entry["recipient"] != recipient:
+        return False, _LEGACY_TENANT
+    return True, entry.get("tenant_id", _LEGACY_TENANT)
 
 
 @router.get("/stream/{recipient}")
 async def stream_messages(recipient: str, token: str = ""):
-    if not (_verify_sse_token(token, recipient) or hmac_mod.compare_digest(token, RELAY_SECRET)):
+    valid, tid = _verify_sse_token(token, recipient)
+    if not (valid or hmac_mod.compare_digest(token, RELAY_SECRET)):
         raise HTTPException(status_code=401, detail="Invalid token")
+    if not valid:
+        tid = _LEGACY_TENANT  # Legacy RELAY_SECRET auth
 
+    skey = _tkey(tid, recipient)
     q: asyncio.Queue = asyncio.Queue(maxsize=SSE_QUEUE_MAX)
-    sse_queues[recipient].append(q)
+    sse_queues[skey].append(q)
     logger.info("SSE client connected for %s", recipient)
 
     async def event_generator():
@@ -816,8 +851,8 @@ async def stream_messages(recipient: str, token: str = ""):
         except asyncio.CancelledError:
             pass
         finally:
-            if q in sse_queues[recipient]:
-                sse_queues[recipient].remove(q)
+            if q in sse_queues[skey]:
+                sse_queues[skey].remove(q)
             logger.info("SSE client disconnected for %s", recipient)
 
     return StreamingResponse(
@@ -834,28 +869,30 @@ async def stream_messages(recipient: str, token: str = ""):
 @router.get("/messages/{recipient}")
 async def get_messages(recipient: str, auth: AuthContext = Depends(verify_auth), wait: int = 0):
     require_identity(auth, recipient)
+    tid = _tid(auth)
+    rkey = _tkey(tid, recipient)
     wait = min(max(wait, 0), 60)
-    async with locks[recipient]:
+    async with locks[rkey]:
         expired = _expire_stale_messages()
-        all_msgs = list(message_queues[recipient])
+        all_msgs = list(message_queues[rkey])
         ready, held_back = _reassemble_chunks(all_msgs)
-        message_queues[recipient] = held_back
-        message_events[recipient].clear()
+        message_queues[rkey] = held_back
+        message_events[rkey].clear()
         if ready:
             _track_delivery(recipient, len(ready))
         if ready or expired:
             await _persist()
     if not ready and wait > 0:
         try:
-            await asyncio.wait_for(message_events[recipient].wait(), timeout=wait)
+            await asyncio.wait_for(message_events[rkey].wait(), timeout=wait)
         except asyncio.TimeoutError:
             pass
-        async with locks[recipient]:
+        async with locks[rkey]:
             expired = _expire_stale_messages()
-            all_msgs = list(message_queues[recipient])
+            all_msgs = list(message_queues[rkey])
             ready, held_back = _reassemble_chunks(all_msgs)
-            message_queues[recipient] = held_back
-            message_events[recipient].clear()
+            message_queues[rkey] = held_back
+            message_events[rkey].clear()
             if ready:
                 _track_delivery(recipient, len(ready))
             if ready or expired:
@@ -869,7 +906,9 @@ async def get_messages(recipient: str, auth: AuthContext = Depends(verify_auth),
 @router.get("/messages/{recipient}/peek")
 async def peek_messages(recipient: str, auth: AuthContext = Depends(verify_auth)):
     require_identity(auth, recipient)
-    count = len(message_queues.get(recipient, []))
+    tid = _tid(auth)
+    rkey = _tkey(tid, recipient)
+    count = len(message_queues.get(rkey, []))
     return {"count": count, "recipient": recipient}
 
 
@@ -913,8 +952,9 @@ async def create_room(req: CreateRoomRequest, auth: AuthContext = Depends(verify
     if auth.sub and req.created_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot create room as another user")
     req.created_by = creator
+    tid = _tid(auth)
     async with rooms_lock:
-        if _find_room_by_name(req.name):
+        if _find_room_by_name(req.name, tid):
             raise HTTPException(status_code=409, detail="Room name already exists")
         room_id = str(uuid.uuid4())
         room = {
@@ -922,6 +962,7 @@ async def create_room(req: CreateRoomRequest, auth: AuthContext = Depends(verify
             "created_by": req.created_by,
             "members": {req.created_by},
             "member_roles": {req.created_by: "builder"},
+            "tenant_id": tid,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         rooms[room_id] = room
@@ -939,6 +980,7 @@ async def create_room(req: CreateRoomRequest, auth: AuthContext = Depends(verify
 
 @router.get("/rooms")
 async def list_rooms(auth: AuthContext = Depends(verify_auth)):
+    tid = _tid(auth)
     return [
         {
             "id": rid,
@@ -948,12 +990,13 @@ async def list_rooms(auth: AuthContext = Depends(verify_auth)):
             "created_at": room["created_at"],
         }
         for rid, room in rooms.items()
+        if not room.get("tenant_id") or room["tenant_id"] == tid
     ]
 
 
 @router.get("/rooms/{room_id}")
 async def get_room(room_id: str, auth: AuthContext = Depends(verify_auth)):
-    rid, room = _resolve_room(room_id)
+    rid, room = _resolve_room(room_id, _tid(auth))
     return {
         "id": rid,
         "name": room["name"],
@@ -972,7 +1015,7 @@ async def join_room(room_id: str, req: JoinLeaveRequest, auth: AuthContext = Dep
         raise HTTPException(status_code=403, detail="Cannot join room as another user")
     req.participant = participant
     async with rooms_lock:
-        room_id, room = _resolve_room(room_id)
+        room_id, room = _resolve_room(room_id, _tid(auth))
         if len(room["members"]) >= MAX_ROOM_MEMBERS:
             raise HTTPException(
                 status_code=400,
@@ -995,7 +1038,7 @@ async def leave_room(room_id: str, req: JoinLeaveRequest, auth: AuthContext = De
         raise HTTPException(status_code=403, detail="Cannot leave room as another user")
     req.participant = participant
     async with rooms_lock:
-        room_id, room = _resolve_room(room_id)
+        room_id, room = _resolve_room(room_id, _tid(auth))
         room["members"].discard(req.participant)
         room.get("member_roles", {}).pop(req.participant, None)
     await _persist()
@@ -1009,7 +1052,7 @@ async def kick_from_room(room_id: str, req: KickRequest, auth: AuthContext = Dep
     if auth.sub and req.requested_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot kick as another user")
     req.requested_by = requested_by
-    room_id, room = _resolve_room(room_id)
+    room_id, room = _resolve_room(room_id, _tid(auth))
     # JWT admins bypass creator check; legacy and JWT users must be creator
     is_admin = not auth.is_legacy and auth.role == "admin"
     if not is_admin and req.requested_by != room["created_by"]:
@@ -1036,7 +1079,7 @@ async def destroy_room(
     if auth.sub and req.requested_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot destroy room as another user")
     req.requested_by = requested_by
-    room_id, room = _resolve_room(room_id)
+    room_id, room = _resolve_room(room_id, _tid(auth))
     is_admin = not auth.is_legacy and auth.role == "admin"
     if not is_admin and req.requested_by != room["created_by"]:
         raise HTTPException(
@@ -1061,7 +1104,7 @@ async def rename_room(
     if auth.sub and req.requested_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot rename room as another user")
     req.requested_by = requested_by
-    room_id, room = _resolve_room(room_id)
+    room_id, room = _resolve_room(room_id, _tid(auth))
     is_admin = not auth.is_legacy and auth.role == "admin"
     if not is_admin and req.requested_by != room["created_by"]:
         raise HTTPException(
@@ -1088,7 +1131,7 @@ async def register_room_webhook(
     if auth.sub and req.registered_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot register webhook as another user")
     req.registered_by = registered_by
-    room_id, room = _resolve_room(room_id)
+    room_id, room = _resolve_room(room_id, _tid(auth))
     callback_url = await _validate_webhook_callback_url(req.callback_url)
     existing_urls = {h["url"] for h in room_webhooks[room_id]}
     if callback_url in existing_urls:
@@ -1103,7 +1146,7 @@ async def register_room_webhook(
 
 @router.get("/rooms/{room_id}/webhooks")
 async def list_room_webhooks(room_id: str, auth: AuthContext = Depends(verify_auth)):
-    room_id, room = _resolve_room(room_id)
+    room_id, room = _resolve_room(room_id, _tid(auth))
     return room_webhooks.get(room_id, [])
 
 
@@ -1116,7 +1159,7 @@ async def delete_room_webhook(
     if auth.sub and req.registered_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot delete webhook as another user")
     req.registered_by = registered_by
-    room_id, room = _resolve_room(room_id)
+    room_id, room = _resolve_room(room_id, _tid(auth))
     hooks = room_webhooks.get(room_id, [])
     before = len(hooks)
     room_webhooks[room_id] = [h for h in hooks if h["url"] != req.callback_url]
@@ -1136,9 +1179,10 @@ async def send_room_message(
     if auth.sub and msg.from_name != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot send as another user")
     msg.from_name = sender
-    if not _check_rate_limit(msg.from_name):
+    tid = _tid(auth)
+    if not _check_rate_limit(msg.from_name, tid):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-    room_id, room = _resolve_room(room_id)
+    room_id, room = _resolve_room(room_id, tid)
     if msg.from_name not in room["members"]:
         raise HTTPException(status_code=403, detail="Not a member of this room")
     if len(msg.content.encode("utf-8")) > MAX_MESSAGE_SIZE:
@@ -1149,6 +1193,7 @@ async def send_room_message(
     recipients = set(room["members"])
 
     for recipient in recipients:
+        rkey = _tkey(tid, recipient)
         fan_out_msg = {
             "id": str(uuid.uuid4()),
             "from_name": msg.from_name,
@@ -1159,10 +1204,10 @@ async def send_room_message(
             "timestamp": timestamp,
             "reply_to": msg.reply_to,
         }
-        async with locks[recipient]:
-            message_queues[recipient].append(fan_out_msg)
-        message_events[recipient].set()
-        _sse_push(recipient, fan_out_msg)
+        async with locks[rkey]:
+            message_queues[rkey].append(fan_out_msg)
+        message_events[rkey].set()
+        _sse_push(rkey, fan_out_msg)
         _notify_webhook(recipient, fan_out_msg)
 
     history_msg = {
@@ -1193,7 +1238,7 @@ async def send_room_message(
 
 @router.get("/rooms/{room_id}/history")
 async def get_room_history(room_id: str, auth: AuthContext = Depends(verify_auth), limit: int = 50):
-    rid, room = _resolve_room(room_id)
+    rid, room = _resolve_room(room_id, _tid(auth))
     limit = min(max(limit, 1), MAX_ROOM_HISTORY)
     msgs = room_history.get(rid, [])
     return msgs[-limit:]
@@ -1204,7 +1249,7 @@ async def search_room_history(
     room_id: str, auth: AuthContext = Depends(verify_auth),
     q: str = "", sender: str = "", message_type: str = "", limit: int = 50,
 ):
-    rid, room = _resolve_room(room_id)
+    rid, room = _resolve_room(room_id, _tid(auth))
     msgs = room_history.get(rid, [])
     results = []
     q_lower = q.lower()
@@ -1223,15 +1268,19 @@ async def search_room_history(
 @router.post("/heartbeat")
 async def heartbeat(req: HeartbeatRequest, auth: AuthContext = Depends(verify_auth)):
     require_identity(auth, req.instance_name)
+    tid = _tid(auth)
+    pkey = _tkey(tid, req.instance_name)
     now = datetime.now(timezone.utc).isoformat()
     name = req.instance_name
-    existing = presence.get(name)
+    existing = presence.get(pkey)
     uptime_start = existing["uptime_start"] if existing else now
-    presence[name] = {
+    presence[pkey] = {
         "last_heartbeat": now,
         "status": req.status,
         "room": req.room,
         "uptime_start": uptime_start,
+        "name": name,
+        "tenant_id": tid,
     }
     participants.add(name)
     await _persist()
@@ -1241,10 +1290,15 @@ async def heartbeat(req: HeartbeatRequest, auth: AuthContext = Depends(verify_au
 
 @router.get("/presence")
 async def get_presence(auth: AuthContext = Depends(verify_auth)):
+    tid = _tid(auth)
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(seconds=HEARTBEAT_TIMEOUT)).isoformat()
     result = []
-    for name, p in presence.items():
+    for pkey, p in presence.items():
+        # Filter by tenant
+        if p.get("tenant_id") and p["tenant_id"] != tid:
+            continue
+        name = p.get("name", pkey)
         online = p["last_heartbeat"] >= cutoff
         result.append({
             "name": name,
