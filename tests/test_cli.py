@@ -337,6 +337,97 @@ def test_add_agent_creates_workspace(tmp_path, monkeypatch):
     assert mcp["mcpServers"]["murmur"]["env"]["INSTANCE_NAME"] == "test-bot"
 
 
+# ── connect command tests ────────────────────────────────────────────────
+
+def test_connect_codex(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "codex"
+    args.room = "dev"
+    args.name = "codex-bot"
+
+    client = _mock_client(200, {})
+    with patch("murmur.cli._get_client", return_value=client), \
+         patch("murmur.cli.asyncio.run"):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Codex Agent Setup" in captured.out
+    assert "codex-bot" in captured.out
+    assert "/messages/codex-bot" in captured.out
+
+
+def test_connect_cursor(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "cursor"
+    args.room = "dev"
+    args.name = "cursor-bot"
+
+    client = _mock_client(200, {})
+    with patch("murmur.cli._get_client", return_value=client), \
+         patch("murmur.cli.asyncio.run"):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Cursor Agent Setup" in captured.out
+    assert "mcpServers" in captured.out
+    assert "cursor-bot" in captured.out
+
+
+def test_connect_ollama(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "ollama"
+    args.room = "dev"
+    args.name = "llama-bot"
+
+    client = _mock_client(200, {})
+    with patch("murmur.cli._get_client", return_value=client), \
+         patch("murmur.cli.asyncio.run"):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Ollama Agent Setup" in captured.out
+    assert "llama-bot" in captured.out
+    assert "ollama_agent.py" in captured.out
+
+
+def test_connect_claude(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "claude"
+    args.room = "dev"
+    args.name = "claude-bot"
+
+    client = _mock_client(200, {})
+    with patch("murmur.cli._get_client", return_value=client), \
+         patch("murmur.cli.asyncio.run"):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Claude Code Agent Setup" in captured.out
+    assert "murmur add-agent" in captured.out
+
+
+def test_connect_unknown_platform(capsys):
+    from murmur.cli import _cmd_connect
+
+    args = MagicMock()
+    args.platform = "gpt"
+    args.room = "dev"
+    args.name = "gpt-bot"
+
+    _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Unknown platform" in captured.out
+
+
 def test_add_agent_cancelled(monkeypatch, capsys):
     from murmur.cli import _cmd_add_agent
 

@@ -597,6 +597,203 @@ def _cmd_export(args):
     )
 
 
+def _cmd_connect(args):
+    """Generate platform-specific onboarding for an agent type."""
+    platform = args.platform
+    room = args.room
+    name = args.name
+    relay_url = RELAY_URL
+    secret = RELAY_SECRET
+    murmur_dir = str(Path(__file__).resolve().parent.parent)
+
+    generators = {
+        "codex": _connect_codex,
+        "cursor": _connect_cursor,
+        "ollama": _connect_ollama,
+        "claude": _connect_claude,
+    }
+
+    if platform not in generators:
+        console.print(f"[red]Unknown platform: {platform}[/red]")
+        console.print(
+            f"[dim]Supported: {', '.join(generators)}[/dim]"
+        )
+        return
+
+    # Auto-join room
+    async def _auto_join():
+        client = _get_client()
+        try:
+            resp = await client.post(
+                f"{relay_url}/rooms/{room}/join",
+                json={"participant": name},
+                headers=_auth_headers(),
+            )
+            resp.raise_for_status()
+        except Exception:
+            pass
+        finally:
+            await client.aclose()
+
+    asyncio.run(_auto_join())
+    generators[platform](room, name, relay_url, secret, murmur_dir)
+
+
+def _connect_codex(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generate Codex onboarding with curl commands."""
+    console.print("\n[bold green]Codex Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]")
+    console.print(f"  Relay:  [cyan]{relay_url}[/cyan]\n")
+
+    console.print("[bold]1. Add to your Codex system prompt:[/bold]\n")
+
+    system_prompt = f"""You are {name} in a Murmur dev room. Use curl to communicate:
+
+# Check messages
+curl -s "{relay_url}/messages/{name}" -H "Authorization: Bearer {secret}"
+
+# Send to room
+curl -s -X POST "{relay_url}/rooms/{room}/messages" \\
+  -H "Authorization: Bearer {secret}" -H "Content-Type: application/json" \\
+  -d '{{"from_name":"{name}","content":"your message","message_type":"chat"}}'
+
+# Join room (first time)
+curl -s -X POST "{relay_url}/rooms/{room}/join" \\
+  -H "Authorization: Bearer {secret}" -H "Content-Type: application/json" \\
+  -d '{{"participant":"{name}"}}'
+
+Check messages after every task. Claim work with CLAIM:. Post STATUS: when done."""
+
+    console.print(system_prompt, highlight=False, markup=False)
+
+    console.print("\n[bold]2. Or use the Python client:[/bold]\n")
+    python_snippet = f"""\
+from murmur.integrations.http_agent import MurmurClient
+
+client = MurmurClient("{relay_url}", "{secret}", "{name}")
+client.join("{room}")
+messages = client.receive()
+client.send("{room}", "STATUS: online", message_type="status")"""
+
+    console.print(python_snippet, highlight=False, markup=False)
+    console.print(f"\n[green]{name} joined room '{room}'. Ready to go.[/green]")
+
+
+def _connect_cursor(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generate Cursor MCP config."""
+    console.print("\n[bold green]Cursor Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]\n")
+
+    mcp_config = json.dumps({
+        "mcpServers": {
+            "murmur": {
+                "command": "uv",
+                "args": [
+                    "run", "--directory", murmur_dir,
+                    "python", f"{murmur_dir}/murmur/mcp.py",
+                ],
+                "env": {
+                    "INSTANCE_NAME": name,
+                    "RELAY_URL": relay_url,
+                    "RELAY_SECRET": secret,
+                },
+            }
+        }
+    }, indent=2)
+
+    console.print("[bold]1. Add to .cursor/mcp.json:[/bold]\n")
+    console.print(mcp_config, highlight=False, markup=False)
+
+    console.print("\n[bold]2. Add to .cursorrules:[/bold]\n")
+    rules = f"""\
+You are {name} in the {room} Murmur room. Use MCP tools:
+- check_messages() — read new messages
+- send_room_message(room_id="{room}", content="...", message_type="chat")
+- list_rooms() — see available rooms
+
+Check messages after every task. Claim with CLAIM:. Post STATUS: when done."""
+
+    console.print(rules, highlight=False, markup=False)
+    console.print(f"\n[green]{name} joined room '{room}'. Ready to go.[/green]")
+
+
+def _connect_ollama(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generate Ollama agent script."""
+    console.print("\n[bold green]Ollama Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]\n")
+
+    console.print("[bold]Save this as ollama_agent.py and run it:[/bold]\n")
+
+    script = f"""\
+import ollama
+from murmur.integrations.http_agent import MurmurClient
+
+murmur = MurmurClient("{relay_url}", "{secret}", "{name}")
+murmur.join("{room}")
+murmur.send("{room}", "{name} online (ollama). Ready for tasks.")
+
+while True:
+    messages = murmur.receive(wait=30)
+    if not messages:
+        continue
+
+    context = "\\n".join(f"{{m['from_name']}}: {{m['content']}}" for m in messages)
+
+    response = ollama.chat(
+        model="llama3.1",
+        messages=[
+            {{"role": "system", "content": (
+                "You are {name} in a Murmur dev room. "
+                "Respond to messages. Claim tasks with CLAIM:. "
+                "Post status with STATUS:. Keep responses short."
+            )}},
+            {{"role": "user", "content": context}},
+        ],
+    )
+
+    murmur.send("{room}", response["message"]["content"])"""
+
+    console.print(script, highlight=False, markup=False)
+
+    console.print("\n[bold]Install dependencies:[/bold]")
+    console.print("  pip install murmur-ai ollama", highlight=False, markup=False)
+    console.print(f"\n[green]{name} joined room '{room}'. Ready to go.[/green]")
+
+
+def _connect_claude(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generate Claude Code workspace setup."""
+    console.print("\n[bold green]Claude Code Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]\n")
+
+    console.print(
+        "[bold]Run this to create and launch the agent:[/bold]\n"
+    )
+    console.print(
+        f"  murmur add-agent",
+        highlight=False, markup=False,
+    )
+    console.print(
+        "\n[dim]Or use murmur spawn to skip the wizard:[/dim]\n"
+    )
+    console.print(
+        f"  murmur spawn {room} {name}",
+        highlight=False, markup=False,
+    )
+    console.print(f"\n[green]{name} joined room '{room}'. Ready to go.[/green]")
+
+
 async def _kick(room_name: str, participant: str) -> None:
     """Kick a participant from a room (admin only)."""
     client = _get_client()
@@ -1746,6 +1943,17 @@ def main():
         "add-agent", help="Interactive wizard to create and launch an agent"
     )
 
+    p_connect = sub.add_parser(
+        "connect",
+        help="Generate setup for any agent platform (codex, cursor, ollama, claude)",
+    )
+    p_connect.add_argument(
+        "platform", choices=["codex", "cursor", "ollama", "claude"],
+        help="Agent platform",
+    )
+    p_connect.add_argument("room", help="Room name")
+    p_connect.add_argument("name", help="Agent name")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -1774,6 +1982,7 @@ def main():
         "destroy": _cmd_destroy,
         "rename": _cmd_rename,
         "add-agent": _cmd_add_agent,
+        "connect": _cmd_connect,
         "invite-link": _cmd_invite_link,
         "spawn": _cmd_spawn,
         "spawn-multiple": _cmd_spawn_multiple,
