@@ -12,7 +12,6 @@ import hmac as hmac_mod
 import ipaddress
 import json
 import os
-import re
 import socket
 import string
 import time
@@ -26,9 +25,22 @@ import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, field_validator
 
 from murmur.auth.middleware import AuthContext, require_identity, verify_auth
+from murmur.routes.helpers import _chunk_content, _reassemble_chunks
+from murmur.routes.models import (
+    CreateRoomRequest,
+    DestroyRoomRequest,
+    HeartbeatRequest,
+    InviteJoinRequest,
+    JoinLeaveRequest,
+    KickRequest,
+    RegisterWebhookRequest,
+    RenameRoomRequest,
+    RoomMessageRequest,
+    RoomWebhookRequest,
+    SendMessageRequest,
+)
 
 logger = structlog.get_logger("murmur.relay_routes")
 
@@ -105,17 +117,6 @@ router = APIRouter()
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-MAX_NAME_LENGTH = 64
-VALID_MESSAGE_TYPES = {"chat", "claim", "status", "request", "alert", "sync"}
-
-
-def _validate_name(value: str) -> str:
-    if not value or len(value) > MAX_NAME_LENGTH:
-        raise ValueError(f"Name must be 1-{MAX_NAME_LENGTH} characters")
-    if not _NAME_RE.match(value):
-        raise ValueError("Name must contain only alphanumeric characters, hyphens, and underscores")
-    return value
 
 
 def _check_rate_limit(sender: str, tenant_id: str = "") -> bool:
@@ -220,22 +221,6 @@ def _trim_messages():
         ]
 
 
-def _chunk_content(content: str) -> list[str]:
-    chunks = []
-    current = []
-    current_size = 0
-    for char in content:
-        char_size = len(char.encode("utf-8"))
-        if current and current_size + char_size > MAX_MESSAGE_SIZE:
-            chunks.append("".join(current))
-            current = [char]
-            current_size = char_size
-        else:
-            current.append(char)
-            current_size += char_size
-    if current:
-        chunks.append("".join(current))
-    return chunks
 
 
 def _sse_push(recipient: str, message: dict) -> None:
@@ -356,32 +341,6 @@ def _resolve_room(
     raise HTTPException(status_code=404, detail="Room not found")
 
 
-def _reassemble_chunks(messages: list[dict]) -> tuple[list[dict], list[dict]]:
-    non_chunked = []
-    chunk_groups: dict[str, list[dict]] = defaultdict(list)
-    for msg in messages:
-        if "chunk_group" in msg:
-            chunk_groups[msg["chunk_group"]].append(msg)
-        else:
-            non_chunked.append(msg)
-    ready = list(non_chunked)
-    held_back = []
-    for group_id, chunks in chunk_groups.items():
-        expected = chunks[0]["chunk_total"]
-        if len(chunks) == expected:
-            chunks.sort(key=lambda c: c["chunk_index"])
-            reassembled = {
-                "id": chunks[0]["id"],
-                "from_name": chunks[0]["from_name"],
-                "to": chunks[0]["to"],
-                "content": "".join(c["content"] for c in chunks),
-                "timestamp": chunks[0]["timestamp"],
-            }
-            ready.append(reassembled)
-        else:
-            held_back.extend(chunks)
-    ready.sort(key=lambda m: m["timestamp"])
-    return ready, held_back
 
 
 # Persistence helpers — imported from relay.py at runtime to avoid circular imports
@@ -514,150 +473,6 @@ def apply_loaded_state(data: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
-
-
-class SendMessageRequest(BaseModel):
-    from_name: str
-    to: str
-    content: str
-
-    @field_validator("from_name", "to")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-
-class RegisterWebhookRequest(BaseModel):
-    instance_name: str
-    callback_url: str
-
-    @field_validator("instance_name")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-
-class CreateRoomRequest(BaseModel):
-    name: str
-    created_by: str
-
-    @field_validator("name", "created_by")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-
-class RoomMessageRequest(BaseModel):
-    from_name: str
-    content: str
-    message_type: str = "chat"
-    reply_to: str | None = None
-
-    @field_validator("from_name")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-    @field_validator("message_type")
-    @classmethod
-    def check_message_type(cls, v: str) -> str:
-        if v not in VALID_MESSAGE_TYPES:
-            allowed = ", ".join(sorted(VALID_MESSAGE_TYPES))
-            raise ValueError(f"message_type must be one of: {allowed}")
-        return v
-
-
-VALID_ROLES = {"builder", "reviewer", "researcher", "pm", "qa", "member"}
-
-
-class JoinLeaveRequest(BaseModel):
-    participant: str
-    role: str = "member"
-
-    @field_validator("participant")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-    @field_validator("role")
-    @classmethod
-    def check_role(cls, v: str) -> str:
-        if v not in VALID_ROLES:
-            allowed = ", ".join(sorted(VALID_ROLES))
-            raise ValueError(f"role must be one of: {allowed}")
-        return v
-
-
-class KickRequest(BaseModel):
-    participant: str
-    requested_by: str
-
-    @field_validator("participant", "requested_by")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-
-class RenameRoomRequest(BaseModel):
-    new_name: str
-    requested_by: str
-
-    @field_validator("new_name", "requested_by")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-
-class DestroyRoomRequest(BaseModel):
-    requested_by: str
-
-    @field_validator("requested_by")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-
-class RoomWebhookRequest(BaseModel):
-    callback_url: str
-    registered_by: str
-
-    @field_validator("registered_by")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-
-class HeartbeatRequest(BaseModel):
-    instance_name: str
-    status: str = "active"
-    room: str = ""
-
-    @field_validator("instance_name")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-    @field_validator("status")
-    @classmethod
-    def check_status(cls, v: str) -> str:
-        if v not in {"active", "idle", "busy"}:
-            raise ValueError("status must be one of: active, idle, busy")
-        return v
-
-
-class InviteJoinRequest(BaseModel):
-    participant: str
-    token: str
-
-    @field_validator("participant")
-    @classmethod
-    def check_name(cls, v: str) -> str:
-        return _validate_name(v)
-
-
-# ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
 
@@ -725,7 +540,7 @@ async def send_message(msg: SendMessageRequest, auth: AuthContext = Depends(veri
 
     if len(content.encode("utf-8")) > MAX_MESSAGE_SIZE:
         chunk_group = str(uuid.uuid4())
-        chunks = _chunk_content(content)
+        chunks = _chunk_content(content, MAX_MESSAGE_SIZE)
         chunk_total = len(chunks)
         if chunk_total > MAX_MESSAGES:
             raise HTTPException(
