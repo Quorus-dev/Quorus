@@ -704,5 +704,101 @@ async def list_rooms(context: Context = None) -> str:
     return await _list_rooms(context)
 
 
+@mcp.tool()
+async def search_room(
+    room_id: str,
+    q: str = "",
+    sender: str = "",
+    message_type: str = "",
+    limit: int = 50,
+) -> str:
+    """Search room history by keyword, sender, or message type.
+
+    Args:
+        room_id: The room name or ID
+        q: Search keyword (case-insensitive, matches content)
+        sender: Filter by sender name
+        message_type: Filter by type (chat, claim, status, request, alert, sync)
+        limit: Max results (default 50)
+    """
+    params: dict[str, str | int] = {"limit": limit}
+    if q:
+        params["q"] = q
+    if sender:
+        params["sender"] = sender
+    if message_type:
+        params["message_type"] = message_type
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_id}/search",
+            params=params,
+            headers={"Authorization": f"Bearer {RELAY_SECRET}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        results = resp.json()
+    if not results:
+        return "No matching messages."
+    lines = []
+    for msg in results:
+        ts = msg.get("timestamp", "")[:19]
+        name = msg.get("from_name", "?")
+        mtype = msg.get("message_type", "chat")
+        content = msg.get("content", "")
+        tag = f" [{mtype}]" if mtype != "chat" else ""
+        lines.append(f"[{ts}] {name}{tag}: {content}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def room_metrics(room_id: str) -> str:
+    """Get activity metrics for a room: messages per agent, type breakdown, task completion.
+
+    Args:
+        room_id: The room name or ID
+    """
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_id}/history",
+            params={"limit": 1000},
+            headers={"Authorization": f"Bearer {RELAY_SECRET}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        messages = resp.json()
+
+    if not messages:
+        return f"No messages in {room_id}."
+
+    agent_counts: dict[str, int] = {}
+    type_counts: dict[str, int] = {}
+    claims = 0
+    completions = 0
+
+    for msg in messages:
+        sender = msg.get("from_name", "?")
+        mtype = msg.get("message_type", "chat")
+        agent_counts[sender] = agent_counts.get(sender, 0) + 1
+        type_counts[mtype] = type_counts.get(mtype, 0) + 1
+        if mtype == "claim":
+            claims += 1
+        elif mtype == "status" and "complete" in msg.get("content", "").lower():
+            completions += 1
+
+    lines = [f"Metrics for {room_id} ({len(messages)} messages):", ""]
+    lines.append("Agents:")
+    for name, count in sorted(agent_counts.items(), key=lambda x: x[1], reverse=True):
+        lines.append(f"  {name}: {count}")
+    lines.append("")
+    lines.append("Message types:")
+    for mtype, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
+        lines.append(f"  {mtype}: {count}")
+    if claims > 0:
+        rate = min(completions / claims * 100, 100)
+        lines.append(f"\nTask completion: {completions}/{claims} ({rate:.0f}%)")
+
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

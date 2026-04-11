@@ -650,6 +650,163 @@ def _cmd_search(args):
     )
 
 
+async def _metrics(room_name: str) -> None:
+    """Show rich activity metrics for a room."""
+    client = _get_client()
+    try:
+        # Fetch room history and analytics in parallel
+        hist_resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_name}/history",
+            params={"limit": 1000},
+            headers=_auth_headers(),
+        )
+        hist_resp.raise_for_status()
+        messages = hist_resp.json()
+
+        analytics_resp = await client.get(
+            f"{RELAY_URL}/analytics",
+            headers=_auth_headers(),
+        )
+        analytics_resp.raise_for_status()
+        analytics_data = analytics_resp.json()
+
+        if not messages:
+            console.print(f"[dim]No messages in {room_name}[/dim]")
+            return
+
+        # Compute per-agent stats
+        agent_stats: dict[str, dict[str, int]] = {}
+        type_counts: dict[str, int] = {}
+        hour_counts: dict[str, int] = {}
+        claims: set[str] = set()
+        completions: set[str] = set()
+
+        for msg in messages:
+            sender = msg.get("from_name", "?")
+            msg_type = msg.get("message_type", "chat")
+            content = msg.get("content", "")
+            ts = msg.get("timestamp", "")
+
+            if sender not in agent_stats:
+                agent_stats[sender] = {"total": 0, "chat": 0, "claim": 0, "status": 0, "other": 0}
+            agent_stats[sender]["total"] += 1
+            if msg_type in ("chat", "claim", "status"):
+                agent_stats[sender][msg_type] += 1
+            else:
+                agent_stats[sender]["other"] += 1
+
+            type_counts[msg_type] = type_counts.get(msg_type, 0) + 1
+
+            if len(ts) >= 13:
+                hour_counts[ts[:13]] = hour_counts.get(ts[:13], 0) + 1
+
+            if msg_type == "claim":
+                claims.add(content.lower())
+            elif msg_type == "status" and "complete" in content.lower():
+                completions.add(content.lower())
+
+        # Header
+        console.print(
+            f"\n[bold]Metrics for {room_name}[/bold] "
+            f"({len(messages)} messages)\n"
+        )
+
+        # Agent activity table
+        table = Table(title="Agent Activity")
+        table.add_column("Agent", style="bold")
+        table.add_column("Total", justify="right")
+        table.add_column("Chat", justify="right", style="white")
+        table.add_column("Claims", justify="right", style="yellow")
+        table.add_column("Status", justify="right", style="cyan")
+        table.add_column("Other", justify="right", style="dim")
+
+        for name, stats in sorted(
+            agent_stats.items(), key=lambda x: x[1]["total"], reverse=True
+        ):
+            table.add_row(
+                name,
+                str(stats["total"]),
+                str(stats["chat"]),
+                str(stats["claim"]),
+                str(stats["status"]),
+                str(stats["other"]),
+            )
+        console.print(table)
+        console.print()
+
+        # Message types breakdown
+        type_table = Table(title="Message Types")
+        type_table.add_column("Type", style="bold")
+        type_table.add_column("Count", justify="right")
+        type_table.add_column("Share", justify="right")
+
+        total = len(messages)
+        for mtype, count in sorted(
+            type_counts.items(), key=lambda x: x[1], reverse=True
+        ):
+            pct = f"{count / total * 100:.0f}%"
+            bar = "█" * int(count / total * 20)
+            type_table.add_row(mtype, str(count), f"{bar} {pct}")
+        console.print(type_table)
+        console.print()
+
+        # Task completion rate
+        claim_count = len(claims)
+        completion_count = len(completions)
+        if claim_count > 0:
+            rate = min(completion_count / claim_count * 100, 100)
+            console.print(
+                f"[bold]Task Completion:[/bold] "
+                f"{completion_count}/{claim_count} "
+                f"({rate:.0f}%)\n"
+            )
+
+        # Hourly activity
+        if hour_counts:
+            max_count = max(hour_counts.values())
+            console.print("[bold]Activity Timeline[/bold]")
+            for hour, count in sorted(hour_counts.items())[-12:]:
+                bar_len = int(count / max_count * 30) if max_count > 0 else 0
+                bar = "█" * bar_len
+                label = hour[5:13] if len(hour) >= 13 else hour
+                console.print(f"  {label} │ {bar} {count}")
+            console.print()
+
+        # Global stats from analytics
+        console.print("[bold]Relay Summary[/bold]")
+        console.print(
+            f"  Total sent:      {analytics_data.get('total_messages_sent', 0)}"
+        )
+        console.print(
+            f"  Total delivered:  {analytics_data.get('total_messages_delivered', 0)}"
+        )
+        console.print(
+            f"  Pending:         {analytics_data.get('messages_pending', 0)}"
+        )
+        uptime = analytics_data.get("uptime_seconds", 0)
+        hours, remainder = divmod(uptime, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            console.print(f"  Uptime:          {hours}h {minutes}m")
+        else:
+            console.print(f"  Uptime:          {minutes}m {secs}s")
+        console.print()
+
+    except httpx.ConnectError:
+        _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_metrics(args):
+    asyncio.run(_metrics(args.room))
+
+
 def _cmd_connect(args):
     """Generate platform-specific onboarding for an agent type."""
     platform = args.platform
@@ -1938,6 +2095,11 @@ def main():
         "--limit", type=int, default=50, help="Max results (default 50)"
     )
 
+    p_metrics = sub.add_parser(
+        "metrics", help="Show room activity stats and analytics"
+    )
+    p_metrics.add_argument("room", help="Room name")
+
     p_export = sub.add_parser(
         "export", help="Export room history as JSON or Markdown"
     )
@@ -2055,6 +2217,7 @@ def main():
         "history": _cmd_history,
         "export": _cmd_export,
         "search": _cmd_search,
+        "metrics": _cmd_metrics,
         "chat": _cmd_chat,
         "ps": _cmd_ps,
         "status": _cmd_status,

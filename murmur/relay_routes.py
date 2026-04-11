@@ -105,22 +105,16 @@ def _validate_name(value: str) -> str:
     return value
 
 
-def _check_rate_limit(key: str) -> bool:
+def _check_rate_limit(sender: str) -> bool:
+    """Return True if the sender is within the rate limit, False if exceeded."""
     now = time.time()
     cutoff = now - RATE_LIMIT_WINDOW
-    bucket = _rate_buckets[key]
-    _rate_buckets[key] = [t for t in bucket if t > cutoff]
-    if len(_rate_buckets[key]) >= RATE_LIMIT_MAX:
+    bucket = _rate_buckets[sender]
+    _rate_buckets[sender] = [t for t in bucket if t > cutoff]
+    if len(_rate_buckets[sender]) >= RATE_LIMIT_MAX:
         return False
-    _rate_buckets[key].append(now)
+    _rate_buckets[sender].append(now)
     return True
-
-
-def _get_client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
 
 
 def _track_send(sender: str):
@@ -455,6 +449,7 @@ def snapshot_state() -> dict:
                 "name": r["name"],
                 "created_by": r["created_by"],
                 "members": sorted(r["members"]),
+                "member_roles": r.get("member_roles", {}),
                 "created_at": r["created_at"],
             }
             for rid, r in rooms.items()
@@ -481,6 +476,7 @@ def apply_loaded_state(data: dict) -> None:
             "name": rdata["name"],
             "created_by": rdata["created_by"],
             "members": set(rdata.get("members", [])),
+            "member_roles": rdata.get("member_roles", {}),
             "created_at": rdata["created_at"],
         }
     for rid, msgs in data.get("room_history", {}).items():
@@ -533,6 +529,7 @@ class RoomMessageRequest(BaseModel):
     from_name: str
     content: str
     message_type: str = "chat"
+    reply_to: str | None = None
 
     @field_validator("from_name")
     @classmethod
@@ -548,13 +545,25 @@ class RoomMessageRequest(BaseModel):
         return v
 
 
+VALID_ROLES = {"builder", "reviewer", "researcher", "pm", "qa", "member"}
+
+
 class JoinLeaveRequest(BaseModel):
     participant: str
+    role: str = "member"
 
     @field_validator("participant")
     @classmethod
     def check_name(cls, v: str) -> str:
         return _validate_name(v)
+
+    @field_validator("role")
+    @classmethod
+    def check_role(cls, v: str) -> str:
+        if v not in VALID_ROLES:
+            allowed = ", ".join(sorted(VALID_ROLES))
+            raise ValueError(f"role must be one of: {allowed}")
+        return v
 
 
 class KickRequest(BaseModel):
@@ -677,8 +686,8 @@ async def health_detailed():
 
 
 @router.post("/messages", dependencies=[Depends(verify_auth)])
-async def send_message(msg: SendMessageRequest, request: Request):
-    if not _check_rate_limit(_get_client_ip(request)):
+async def send_message(msg: SendMessageRequest):
+    if not _check_rate_limit(msg.from_name):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     timestamp = datetime.now(timezone.utc).isoformat()
     content = msg.content
@@ -884,6 +893,7 @@ async def create_room(req: CreateRoomRequest):
             "name": req.name,
             "created_by": req.created_by,
             "members": {req.created_by},
+            "member_roles": {req.created_by: "builder"},
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         rooms[room_id] = room
@@ -894,6 +904,7 @@ async def create_room(req: CreateRoomRequest):
         "id": room_id,
         "name": room["name"],
         "members": sorted(room["members"]),
+        "member_roles": room.get("member_roles", {}),
         "created_at": room["created_at"],
     }
 
@@ -905,6 +916,7 @@ async def list_rooms():
             "id": rid,
             "name": room["name"],
             "members": sorted(room["members"]),
+            "member_roles": room.get("member_roles", {}),
             "created_at": room["created_at"],
         }
         for rid, room in rooms.items()
@@ -918,12 +930,14 @@ async def get_room(room_id: str):
         "id": rid,
         "name": room["name"],
         "members": sorted(room["members"]),
+        "member_roles": room.get("member_roles", {}),
         "created_at": room["created_at"],
     }
 
 
 @router.post("/rooms/{room_id}/join", dependencies=[Depends(verify_auth)])
 async def join_room(room_id: str, req: JoinLeaveRequest):
+    """Add a participant to a room with an optional role."""
     async with rooms_lock:
         room_id, room = _resolve_room(room_id)
         if len(room["members"]) >= MAX_ROOM_MEMBERS:
@@ -932,9 +946,12 @@ async def join_room(room_id: str, req: JoinLeaveRequest):
                 detail=f"Room is at maximum capacity ({MAX_ROOM_MEMBERS} members)",
             )
         room["members"].add(req.participant)
+        if "member_roles" not in room:
+            room["member_roles"] = {}
+        room["member_roles"][req.participant] = req.role
         participants.add(req.participant)
     await _persist()
-    return {"status": "joined"}
+    return {"status": "joined", "role": req.role}
 
 
 @router.post("/rooms/{room_id}/leave", dependencies=[Depends(verify_auth)])
@@ -942,6 +959,7 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
     async with rooms_lock:
         room_id, room = _resolve_room(room_id)
         room["members"].discard(req.participant)
+        room.get("member_roles", {}).pop(req.participant, None)
     await _persist()
     return {"status": "left"}
 
@@ -956,6 +974,7 @@ async def kick_from_room(room_id: str, req: KickRequest):
     if req.participant not in room["members"]:
         raise HTTPException(status_code=404, detail="Participant not in room")
     room["members"].discard(req.participant)
+    room.get("member_roles", {}).pop(req.participant, None)
     await _persist()
     logger.info("Kicked %s from room %s by %s", req.participant, room["name"], req.requested_by)
     return {"status": "kicked", "participant": req.participant}
@@ -1026,8 +1045,8 @@ async def delete_room_webhook(room_id: str, req: RoomWebhookRequest):
 
 
 @router.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
-async def send_room_message(room_id: str, msg: RoomMessageRequest, request: Request):
-    if not _check_rate_limit(_get_client_ip(request)):
+async def send_room_message(room_id: str, msg: RoomMessageRequest):
+    if not _check_rate_limit(msg.from_name):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     room_id, room = _resolve_room(room_id)
     if msg.from_name not in room["members"]:
@@ -1048,6 +1067,7 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest, request: Requ
             "content": msg.content,
             "message_type": msg.message_type,
             "timestamp": timestamp,
+            "reply_to": msg.reply_to,
         }
         async with locks[recipient]:
             message_queues[recipient].append(fan_out_msg)
@@ -1062,6 +1082,7 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest, request: Requ
         "content": msg.content,
         "message_type": msg.message_type,
         "timestamp": timestamp,
+        "reply_to": msg.reply_to,
     }
     room_history[room_id].append(history_msg)
     if len(room_history[room_id]) > MAX_ROOM_HISTORY:

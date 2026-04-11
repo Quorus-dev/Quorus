@@ -350,6 +350,23 @@ header{
   transition:background .1s;
 }
 .msg:hover{background:var(--bg-hover)}
+.msg[data-reply]{
+  margin-left:24px;
+  border-left:2px solid var(--border);
+  padding-left:10px;
+}
+.msg .reply-ref{
+  font-size:10px;color:var(--text-3);
+  margin-right:6px;cursor:pointer;
+}
+.msg .reply-ref:hover{color:var(--accent)}
+.msg .reply-btn{
+  opacity:0;font-size:10px;color:var(--text-3);
+  margin-left:4px;cursor:pointer;
+  transition:opacity .15s;
+}
+.msg:hover .reply-btn{opacity:1}
+.msg .reply-btn:hover{color:var(--accent)}
 .msg .ts{
   color:var(--text-3);font-size:11px;
   margin-right:8px;
@@ -710,19 +727,47 @@ async function connectSSE(){
   });
 }
 
+let replyTo=null;
+
 function formatMsg(msg){
   const ts=esc((msg.timestamp||'').substring(11,19));
   const type=msg.message_type||'chat';
+  const mid=msg.id||'';
   const safeType=['claim','status','request','alert','sync'].includes(type)?type:'chat';
   let tag='';
   if(safeType!=='chat'){
     tag='<span class="tag tag-'+safeType+'">'+
       esc(type)+'</span>';
   }
-  return '<div class="msg"><span class="ts">'+ts+
+  const ra=msg.reply_to
+    ?' data-reply="'+msg.reply_to+'"':'';
+  const rr=msg.reply_to
+    ?'<span class="reply-ref" onclick="scrollToMsg(\''+
+      msg.reply_to+'\')">&#8627;</span>':'';
+  const rb='<span class="reply-btn" onclick="setReply(\''+
+    mid+'\',\''+esc(msg.from_name||'')+
+    '\')">reply</span>';
+  return '<div class="msg" id="msg-'+mid+'"'+ra+
+    '><span class="ts">'+ts+
     '</span><span class="sender">'+
     esc(msg.from_name||'?')+'</span>'+
-    tag+esc(msg.content||'')+'</div>';
+    rr+tag+esc(msg.content||'')+rb+'</div>';
+}
+
+function setReply(id,name){
+  replyTo=id;
+  const input=document.getElementById('msgInput');
+  input.placeholder='Replying to '+name+'...';
+  input.focus();
+}
+
+function scrollToMsg(id){
+  const el=document.getElementById('msg-'+id);
+  if(el){
+    el.style.background='var(--accent-s)';
+    el.scrollIntoView({behavior:'smooth',block:'center'});
+    setTimeout(()=>{el.style.background=''},1500);
+  }
 }
 
 async function sendMsg(){
@@ -730,10 +775,14 @@ async function sendMsg(){
   const text=input.value.trim();
   if(!text||!currentRoom)return;
   input.value='';
+  const body={from_name:NAME,content:text};
+  if(replyTo)body.reply_to=replyTo;
+  replyTo=null;
+  input.placeholder='Type a message...';
   try{await fetch(
     API+'/rooms/'+currentRoom+'/messages',{
       method:'POST',headers:H,
-      body:JSON.stringify({from_name:NAME,content:text})
+      body:JSON.stringify(body)
     }
   )}catch(e){}
 }

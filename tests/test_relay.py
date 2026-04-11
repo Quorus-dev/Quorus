@@ -1217,8 +1217,8 @@ async def test_rate_limit_room_message(client: AsyncClient, auth_headers):
         assert resp.status_code == 429
 
 
-async def test_rate_limit_per_ip(client: AsyncClient, auth_headers):
-    """Rate limits are per-IP — different senders from the same IP share a bucket."""
+async def test_rate_limit_per_sender(client: AsyncClient, auth_headers):
+    """Rate limits are per-sender — different senders have independent buckets."""
     with patch("murmur.relay_routes.RATE_LIMIT_MAX", 1):
         resp = await client.post(
             "/messages",
@@ -1227,13 +1227,21 @@ async def test_rate_limit_per_ip(client: AsyncClient, auth_headers):
         )
         assert resp.status_code == 200
 
-        # Same IP, different sender — should still be rate-limited
+        # Same sender — should be rate-limited
         resp = await client.post(
             "/messages",
-            json={"from_name": "bob", "to": "charlie", "content": "b"},
+            json={"from_name": "alice", "to": "charlie", "content": "b"},
             headers=auth_headers,
         )
         assert resp.status_code == 429
+
+        # Different sender — should NOT be rate-limited
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "bob", "to": "charlie", "content": "c"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
 
 
 # --- Heartbeat / Presence tests ---
