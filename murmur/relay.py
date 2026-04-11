@@ -77,7 +77,7 @@ app = FastAPI(
 )
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
-    """Inject request_id, method, and path into structlog context for every request."""
+    """Inject request_id, security headers, and structlog context for every request."""
 
     async def dispatch(self, request: Request, call_next):
         request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
@@ -89,6 +89,17 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         )
         response = await call_next(request)
         response.headers["x-request-id"] = request_id
+        response.headers["x-content-type-options"] = "nosniff"
+        response.headers["x-frame-options"] = "DENY"
+        # CSP for HTML pages (dashboard, invite) — inline styles/scripts needed
+        if "text/html" in response.headers.get("content-type", ""):
+            response.headers["content-security-policy"] = (
+                "default-src 'self'; "
+                "script-src 'unsafe-inline'; "
+                "style-src 'unsafe-inline'; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'"
+            )
         return response
 
 

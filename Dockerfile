@@ -11,7 +11,10 @@ RUN pip install --no-cache-dir hatchling && pip install --no-cache-dir .
 COPY murmur/ murmur/
 
 # Non-root user for security
-RUN useradd --create-home --shell /bin/bash murmur
+RUN useradd --create-home --shell /bin/bash murmur \
+    && mkdir -p /app/data \
+    && chown -R murmur:murmur /app/data
+
 USER murmur
 
 # Persist messages across restarts
