@@ -7,8 +7,9 @@ COPY pyproject.toml README.md ./
 COPY murmur/__init__.py murmur/__init__.py
 RUN pip install --no-cache-dir hatchling && pip install --no-cache-dir .
 
-# Copy application code
+# Copy application code (including migrations)
 COPY murmur/ murmur/
+COPY alembic.ini ./
 
 # Non-root user for security
 RUN useradd --create-home --shell /bin/bash murmur \
@@ -17,7 +18,7 @@ RUN useradd --create-home --shell /bin/bash murmur \
 
 USER murmur
 
-# Persist messages across restarts
+# Persist messages across restarts (fallback when Postgres unavailable)
 VOLUME ["/app/data"]
 ENV MESSAGES_FILE=/app/data/messages.json
 
