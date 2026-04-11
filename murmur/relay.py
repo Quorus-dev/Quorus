@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import socket
 import string
 import time
 import uuid
@@ -336,7 +337,19 @@ def _count_pending_messages() -> int:
     return len(_logical_message_units())
 
 
-def _validate_webhook_callback_url(callback_url: str) -> str:
+def _is_private_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _validate_webhook_url_sync(callback_url: str) -> str:
+    """Validate structure of a webhook URL (no I/O). Raises HTTPException."""
     parsed = urlparse(callback_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(status_code=400, detail="callback_url must be an http(s) URL")
@@ -347,24 +360,59 @@ def _validate_webhook_callback_url(callback_url: str) -> str:
     if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
         raise HTTPException(status_code=400, detail="callback_url must target a public host")
 
+    # Check literal IP addresses
     try:
         ip = ipaddress.ip_address(host)
-    except ValueError:
-        if "." not in host:
+        if _is_private_ip(ip):
             raise HTTPException(status_code=400, detail="callback_url must target a public host")
         return callback_url
+    except ValueError:
+        pass
 
-    if (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    ):
+    if "." not in host:
         raise HTTPException(status_code=400, detail="callback_url must target a public host")
 
     return callback_url
+
+
+async def _validate_webhook_callback_url(callback_url: str) -> str:
+    """Validate webhook URL structure and resolve hostname to check for SSRF."""
+    url = _validate_webhook_url_sync(callback_url)
+
+    parsed = urlparse(url)
+    host = parsed.hostname.rstrip(".").lower()
+
+    # Skip DNS check for literal IPs (already validated above)
+    try:
+        ipaddress.ip_address(host)
+        return url
+    except ValueError:
+        pass
+
+    # Resolve hostname and check all A/AAAA records against private ranges
+    try:
+        addrinfo = await asyncio.to_thread(
+            socket.getaddrinfo, host, None, 0, socket.SOCK_STREAM
+        )
+    except socket.gaierror:
+        raise HTTPException(
+            status_code=400, detail="callback_url hostname could not be resolved"
+        )
+
+    if not addrinfo:
+        raise HTTPException(
+            status_code=400, detail="callback_url hostname could not be resolved"
+        )
+
+    for family, _, _, _, sockaddr in addrinfo:
+        resolved_ip = ipaddress.ip_address(sockaddr[0])
+        if _is_private_ip(resolved_ip):
+            raise HTTPException(
+                status_code=400,
+                detail="callback_url must not resolve to a private address",
+            )
+
+    return url
 
 
 async def verify_auth(request: Request) -> None:
@@ -752,7 +800,7 @@ async def list_participants_endpoint():
 @app.post("/webhooks", dependencies=[Depends(verify_auth)])
 async def register_webhook(req: RegisterWebhookRequest):
     """Register a webhook URL for push notifications when messages arrive."""
-    callback_url = _validate_webhook_callback_url(req.callback_url)
+    callback_url = await _validate_webhook_callback_url(req.callback_url)
     webhooks[req.instance_name] = callback_url
     participants.add(req.instance_name)
     await _persist_state()

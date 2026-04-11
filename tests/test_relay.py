@@ -1,4 +1,5 @@
 import asyncio
+import socket
 import sys
 import time
 import types
@@ -9,6 +10,16 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from murmur.relay import _load_from_file, _reset_state, _save_to_file, app
+
+
+def _fake_getaddrinfo_public(host, port, family=0, type_=0, proto=0, flags=0):
+    """Return a public IP for any hostname, so webhook tests don't depend on real DNS."""
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+
+def _fake_getaddrinfo_private(host, port, family=0, type_=0, proto=0, flags=0):
+    """Return a private IP to test SSRF rejection."""
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
 
 
 @pytest.fixture(autouse=True)
@@ -476,11 +487,12 @@ async def test_no_wait_param_returns_immediately(client: AsyncClient, auth_heade
 
 async def test_register_webhook(client: AsyncClient, auth_headers: dict):
     """Should register a webhook for an instance."""
-    resp = await client.post(
-        "/webhooks",
-        json={"instance_name": "bob", "callback_url": "https://example.com/incoming"},
-        headers=auth_headers,
-    )
+    with patch("socket.getaddrinfo", _fake_getaddrinfo_public):
+        resp = await client.post(
+            "/webhooks",
+            json={"instance_name": "bob", "callback_url": "https://example.com/incoming"},
+            headers=auth_headers,
+        )
     assert resp.status_code == 200
     assert resp.json()["status"] == "registered"
 
@@ -506,13 +518,26 @@ async def test_register_webhook_rejects_localhost(client: AsyncClient, auth_head
     assert resp.status_code == 400
 
 
+async def test_register_webhook_rejects_dns_to_private(client: AsyncClient, auth_headers: dict):
+    """Webhook hostname that resolves to private IP should be rejected (SSRF)."""
+    with patch("socket.getaddrinfo", _fake_getaddrinfo_private):
+        resp = await client.post(
+            "/webhooks",
+            json={"instance_name": "bob", "callback_url": "https://evil.attacker.com/hook"},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 400
+    assert "private" in resp.json()["detail"].lower()
+
+
 async def test_delete_webhook(client: AsyncClient, auth_headers: dict):
     """Should deregister a webhook."""
-    await client.post(
-        "/webhooks",
-        json={"instance_name": "bob", "callback_url": "https://example.com/incoming"},
-        headers=auth_headers,
-    )
+    with patch("socket.getaddrinfo", _fake_getaddrinfo_public):
+        await client.post(
+            "/webhooks",
+            json={"instance_name": "bob", "callback_url": "https://example.com/incoming"},
+            headers=auth_headers,
+        )
     resp = await client.delete("/webhooks/bob", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["status"] == "removed"
@@ -547,11 +572,12 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
     from unittest.mock import patch as mock_patch
 
     # Register webhook
-    await client.post(
-        "/webhooks",
-        json={"instance_name": "bob", "callback_url": "https://example.com/incoming"},
-        headers=auth_headers,
-    )
+    with patch("socket.getaddrinfo", _fake_getaddrinfo_public):
+        await client.post(
+            "/webhooks",
+            json={"instance_name": "bob", "callback_url": "https://example.com/incoming"},
+            headers=auth_headers,
+        )
 
     mock_response = AsyncMock()
     mock_response.raise_for_status = lambda: None
