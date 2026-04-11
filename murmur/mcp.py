@@ -26,11 +26,16 @@ _config = load_config()
 CONFIG_FILE = Path(_config["config_file"])
 RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
+API_KEY = _config["api_key"]
 INSTANCE_NAME = _config["instance_name"]
 ENABLE_BACKGROUND_POLLING = _config["enable_background_polling"]
 POLL_MODE = _config["poll_mode"]
 PUSH_NOTIFICATION_METHOD = _config["push_notification_method"]
 PUSH_NOTIFICATION_CHANNEL = _config["push_notification_channel"]
+
+# JWT cache for API key auth
+_cached_jwt: str | None = None
+_jwt_lock = asyncio.Lock()
 
 
 def _validate_relay_url(value: str) -> str:
@@ -50,21 +55,26 @@ def _validate_relay_url(value: str) -> str:
 
 
 _validate_relay_url(RELAY_URL)
-if not RELAY_SECRET:
-    raise SystemExit("relay_secret is empty. Set RELAY_SECRET env var or config file value.")
+if not RELAY_SECRET and not API_KEY:
+    raise SystemExit(
+        "Neither relay_secret nor api_key is set. "
+        "Set RELAY_SECRET or API_KEY env var or config file value."
+    )
 
+_auth_mode = "api_key" if API_KEY else "legacy"
 masked_secret = RELAY_SECRET[:4] + "***" if len(RELAY_SECRET) > 4 else "***"
+masked_api_key = API_KEY[:8] + "***" if len(API_KEY) > 8 else "***"
 logger.info(
     (
         "Config loaded: path=%s relay_url=%s instance=%s "
-        "poll_mode=%s push_method=%s secret=%s"
+        "poll_mode=%s push_method=%s auth_mode=%s"
     ),
     CONFIG_FILE,
     RELAY_URL,
     INSTANCE_NAME,
     POLL_MODE,
     PUSH_NOTIFICATION_METHOD or "disabled",
-    masked_secret,
+    _auth_mode,
 )
 
 _http_client: httpx.AsyncClient | None = None
@@ -96,7 +106,51 @@ def _reset_runtime_state():
     _heartbeat_task = None
 
 
+async def _exchange_api_key_for_jwt() -> str:
+    """Exchange the API key for a JWT via the relay's /v1/auth/token endpoint."""
+    global _cached_jwt
+    client = _get_http_client()
+    resp = await client.post(
+        f"{RELAY_URL}/v1/auth/token",
+        json={"api_key": API_KEY},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    _cached_jwt = data["token"]
+    logger.info("JWT obtained via API key exchange")
+    return _cached_jwt
+
+
+async def _get_bearer_token() -> str:
+    """Get the Bearer token — cached JWT if using API key auth, else relay secret."""
+    global _cached_jwt
+    if not API_KEY:
+        return RELAY_SECRET
+    async with _jwt_lock:
+        if _cached_jwt:
+            return _cached_jwt
+        return await _exchange_api_key_for_jwt()
+
+
+async def _refresh_jwt_on_401() -> str | None:
+    """Re-exchange API key for a new JWT after a 401. Returns new token or None."""
+    global _cached_jwt
+    if not API_KEY:
+        return None
+    async with _jwt_lock:
+        _cached_jwt = None
+        try:
+            return await _exchange_api_key_for_jwt()
+        except Exception:
+            logger.warning("Failed to refresh JWT", exc_info=True)
+            return None
+
+
 def _auth_headers() -> dict[str, str]:
+    """Sync auth headers — uses cached JWT or relay secret."""
+    if _cached_jwt:
+        return {"Authorization": f"Bearer {_cached_jwt}"}
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
 
 
@@ -345,6 +399,16 @@ async def _sse_listener(stop_event: asyncio.Event) -> None:
 async def _mcp_lifespan(server: FastMCP):
     global _http_client, _heartbeat_task
     _http_client = httpx.AsyncClient()
+
+    # If using API key auth, exchange for JWT on startup
+    if API_KEY:
+        try:
+            await _exchange_api_key_for_jwt()
+        except Exception:
+            logger.warning(
+                "Initial JWT exchange failed — will retry on first request",
+                exc_info=True,
+            )
 
     stop_event = asyncio.Event()
     poll_task = None

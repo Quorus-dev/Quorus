@@ -27,7 +27,7 @@ def _relay_unreachable(url: str = "") -> None:
     target = url or RELAY_URL
     console.print(f"[red]Cannot connect to relay at {target}[/red]")
     console.print("[dim]  Is the relay running? Try: murmur relay[/dim]")
-    console.print(f"[dim]  Check config: murmur doctor[/dim]")
+    console.print("[dim]  Check config: murmur doctor[/dim]")
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -834,7 +834,7 @@ def _connect_claude(
         "[bold]Run this to create and launch the agent:[/bold]\n"
     )
     console.print(
-        f"  murmur add-agent",
+        "  murmur add-agent",
         highlight=False, markup=False,
     )
     console.print(
@@ -997,7 +997,8 @@ def _cmd_init(args):
     """One-command setup: write config, register MCP server with Claude Code."""
     name = args.name
     relay_url = args.relay_url
-    secret = args.secret
+    secret = getattr(args, "secret", None) or ""
+    api_key = getattr(args, "api_key", None) or ""
     repo_dir = Path(__file__).resolve().parent.parent
     murmur_dir = Path(__file__).resolve().parent
 
@@ -1006,15 +1007,20 @@ def _cmd_init(args):
     config_dir.mkdir(exist_ok=True)
     config = {
         "relay_url": relay_url,
-        "relay_secret": secret,
         "instance_name": name,
         "enable_background_polling": True,
         "push_notification_method": "notifications/claude/channel",
         "push_notification_channel": "mcp-tunnel",
     }
+    if api_key:
+        config["api_key"] = api_key
+    else:
+        config["relay_secret"] = secret
     config_path = config_dir / "config.json"
     config_path.write_text(json.dumps(config, indent=2))
-    console.print(f"[green]Config written to {config_path}[/green]")
+    # Set 0600 permissions — API keys are sensitive
+    config_path.chmod(0o600)
+    console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
     # 2. Register MCP server with Claude Code
     claude_config_path = Path.home() / ".claude.json"
@@ -1073,7 +1079,8 @@ def _cmd_join(args):
     """One-liner to join a room: writes config, registers MCP, joins the room."""
     name = args.name
     relay_url = args.relay_url
-    secret = args.secret
+    secret = getattr(args, "secret", None) or ""
+    api_key = getattr(args, "api_key", None) or ""
     room = args.room
     repo_dir = Path(__file__).resolve().parent.parent
     murmur_dir = Path(__file__).resolve().parent
@@ -1083,15 +1090,19 @@ def _cmd_join(args):
     config_dir.mkdir(exist_ok=True)
     config = {
         "relay_url": relay_url,
-        "relay_secret": secret,
         "instance_name": name,
         "enable_background_polling": True,
         "push_notification_method": "notifications/claude/channel",
         "push_notification_channel": "mcp-tunnel",
     }
+    if api_key:
+        config["api_key"] = api_key
+    else:
+        config["relay_secret"] = secret
     config_path = config_dir / "config.json"
     config_path.write_text(json.dumps(config, indent=2))
-    console.print(f"[green]Config written to {config_path}[/green]")
+    config_path.chmod(0o600)
+    console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
     # 2. Register MCP server with Claude Code
     claude_config_path = Path.home() / ".claude.json"
@@ -1867,7 +1878,9 @@ def main():
     p_init = sub.add_parser("init", help="One-command setup")
     p_init.add_argument("name", help="Your participant name")
     p_init.add_argument("--relay-url", default="http://localhost:8080", help="Relay URL")
-    p_init.add_argument("--secret", required=True, help="Shared secret")
+    p_init_auth = p_init.add_mutually_exclusive_group(required=True)
+    p_init_auth.add_argument("--secret", help="Shared secret (legacy auth)")
+    p_init_auth.add_argument("--api-key", help="API key (production auth)")
 
     p_relay = sub.add_parser("relay", help="Start the relay server")
     p_relay.add_argument("--port", type=int, default=8080, help="Port")
@@ -1993,7 +2006,9 @@ def main():
     p_join = sub.add_parser("join", help="One-liner to join a room")
     p_join.add_argument("--name", required=True, help="Your participant name")
     p_join.add_argument("--relay", dest="relay_url", required=True, help="Relay URL")
-    p_join.add_argument("--secret", required=True, help="Shared secret")
+    p_join_auth = p_join.add_mutually_exclusive_group(required=True)
+    p_join_auth.add_argument("--secret", help="Shared secret (legacy auth)")
+    p_join_auth.add_argument("--api-key", help="API key (production auth)")
     p_join.add_argument("--room", required=True, help="Room to join")
 
     p_kick = sub.add_parser("kick", help="Kick a participant from a room (admin)")

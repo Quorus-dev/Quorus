@@ -78,10 +78,14 @@ def load_config() -> dict[str, Any]:
     if poll_mode not in {"lazy", "sse", "poll"}:
         poll_mode = "lazy"
 
+    # API key for production auth (exchanges for JWT)
+    api_key = os.environ.get("API_KEY") or file_config.get("api_key", "")
+
     return {
         "config_file": str(config_file),
         "relay_url": get("RELAY_URL", "relay_url", "http://localhost:8080"),
         "relay_secret": get("RELAY_SECRET", "relay_secret", ""),
+        "api_key": api_key,
         "instance_name": get("INSTANCE_NAME", "instance_name", "default"),
         "enable_background_polling": as_bool(enable_background_polling, default=True),
         "poll_mode": poll_mode,
