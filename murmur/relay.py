@@ -46,6 +46,8 @@ async def lifespan(app):
     yield
     logger.info("Relay server shutting down — saving state")
     await _persist_state()
+    if _webhook_http_client and not _webhook_http_client.is_closed:
+        await _webhook_http_client.aclose()
 
 app = FastAPI(
     title="Murmur Relay",
@@ -150,12 +152,14 @@ def _logical_message_units() -> list[dict]:
 
 def _reset_state():
     """Reset state between tests."""
-    global _start_time, persistence_lock, rooms_lock
+    global _start_time, persistence_lock, rooms_lock, _webhook_semaphore, _webhook_http_client
     message_queues.clear()
     participants.clear()
     locks.clear()
     persistence_lock = asyncio.Lock()
     rooms_lock = asyncio.Lock()
+    _webhook_semaphore = asyncio.Semaphore(WEBHOOK_CONCURRENCY)
+    _webhook_http_client = None
     message_events.clear()
     webhooks.clear()
     rooms.clear()
@@ -614,23 +618,42 @@ def _sse_push(recipient: str, message: dict) -> None:
             logger.warning("SSE queue full for %s, dropping message", recipient)
 
 
-async def _notify_webhook(recipient: str, message: dict):
-    """Fire webhook notification for recipient, if registered. Failures are logged and ignored."""
+WEBHOOK_CONCURRENCY = int(os.environ.get("WEBHOOK_CONCURRENCY", "10"))
+_webhook_semaphore = asyncio.Semaphore(WEBHOOK_CONCURRENCY)
+_webhook_http_client: httpx.AsyncClient | None = None
+
+
+def _get_webhook_client() -> httpx.AsyncClient:
+    """Lazy-init a shared httpx client for webhook delivery."""
+    global _webhook_http_client
+    if _webhook_http_client is None or _webhook_http_client.is_closed:
+        _webhook_http_client = httpx.AsyncClient(timeout=5)
+    return _webhook_http_client
+
+
+async def _deliver_webhook(recipient: str, callback_url: str, message: dict) -> None:
+    """Deliver a single webhook with concurrency limiting."""
+    async with _webhook_semaphore:
+        try:
+            client = _get_webhook_client()
+            resp = await client.post(callback_url, json=message)
+            resp.raise_for_status()
+            logger.info("Webhook delivered to %s for %s", callback_url, recipient)
+        except Exception:
+            logger.warning(
+                "Webhook delivery failed for %s at %s",
+                recipient,
+                callback_url,
+                exc_info=True,
+            )
+
+
+def _notify_webhook(recipient: str, message: dict) -> None:
+    """Schedule webhook delivery in the background (non-blocking)."""
     callback_url = webhooks.get(recipient)
     if not callback_url:
         return
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(callback_url, json=message, timeout=5)
-            resp.raise_for_status()
-            logger.info("Webhook delivered to %s for %s", callback_url, recipient)
-    except Exception:
-        logger.warning(
-            "Webhook delivery failed for %s at %s",
-            recipient,
-            callback_url,
-            exc_info=True,
-        )
+    asyncio.create_task(_deliver_webhook(recipient, callback_url, message))
 
 
 @app.post("/messages", dependencies=[Depends(verify_auth)])
@@ -684,7 +707,7 @@ async def send_message(msg: SendMessageRequest):
             "Message chunked into %d parts (%s -> %s, group %s)",
             chunk_total, msg.from_name, msg.to, chunk_group,
         )
-        await _notify_webhook(msg.to, reassembled)
+        _notify_webhook(msg.to, reassembled)
         return {"id": messages[0]["id"], "timestamp": timestamp}
     else:
         message = {
@@ -704,7 +727,7 @@ async def send_message(msg: SendMessageRequest):
         message_events[msg.to].set()
         _sse_push(msg.to, message)
         logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
-        await _notify_webhook(msg.to, message)
+        _notify_webhook(msg.to, message)
         return {"id": message["id"], "timestamp": message["timestamp"]}
 
 
@@ -997,7 +1020,7 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
             message_queues[recipient].append(fan_out_msg)
         message_events[recipient].set()
         _sse_push(recipient, fan_out_msg)
-        await _notify_webhook(recipient, fan_out_msg)
+        _notify_webhook(recipient, fan_out_msg)
 
     # Store in room history (not cleared on read)
     history_msg = {

@@ -571,6 +571,8 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
     from unittest.mock import AsyncMock
     from unittest.mock import patch as mock_patch
 
+    import murmur.relay as relay_mod
+
     # Register webhook
     with patch("socket.getaddrinfo", _fake_getaddrinfo_public):
         await client.post(
@@ -581,20 +583,21 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
 
     mock_response = AsyncMock()
     mock_response.raise_for_status = lambda: None
-    mock_client_instance = AsyncMock()
-    mock_client_instance.post = AsyncMock(return_value=mock_response)
-    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+    mock_http_client = AsyncMock()
+    mock_http_client.post = AsyncMock(return_value=mock_response)
+    mock_http_client.is_closed = False
 
-    with mock_patch("murmur.relay.httpx.AsyncClient", return_value=mock_client_instance):
+    with mock_patch.object(relay_mod, "_webhook_http_client", mock_http_client):
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "push this"},
             headers=auth_headers,
         )
+        # Allow background webhook task to complete
+        await asyncio.sleep(0.1)
 
-    mock_client_instance.post.assert_called_once()
-    call_args = mock_client_instance.post.call_args
+    mock_http_client.post.assert_called_once()
+    call_args = mock_http_client.post.call_args
     assert call_args[0][0] == "https://example.com/incoming"
     assert call_args[1]["json"]["content"] == "push this"
 
