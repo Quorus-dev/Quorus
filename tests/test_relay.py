@@ -907,3 +907,96 @@ async def test_room_persistence_save_and_load(
         assert len(room_list) == 1
         assert room_list[0]["name"] == "test-room"
         assert "alice" in room_list[0]["members"]
+
+
+async def test_sse_queue_receives_dm(client: AsyncClient, auth_headers: dict):
+    """SSE queue should receive DMs pushed after subscription."""
+    from relay_server import sse_queues
+
+    q: asyncio.Queue = asyncio.Queue()
+    sse_queues["bob"].append(q)
+
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "sse test"},
+        headers=auth_headers,
+    )
+
+    msg = await asyncio.wait_for(q.get(), timeout=2)
+    assert msg["content"] == "sse test"
+    assert msg["from_name"] == "alice"
+
+    sse_queues["bob"].remove(q)
+
+
+async def test_sse_queue_receives_room_messages(
+    client: AsyncClient, auth_headers: dict
+):
+    """SSE queue should receive room fan-out messages."""
+    from relay_server import sse_queues
+
+    q: asyncio.Queue = asyncio.Queue()
+    sse_queues["bob"].append(q)
+
+    create_resp = await client.post(
+        "/rooms",
+        json={"name": "sse-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = create_resp.json()["id"]
+    await client.post(
+        f"/rooms/{room_id}/join",
+        json={"participant": "bob"},
+        headers=auth_headers,
+    )
+
+    await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "alice", "content": "room sse test"},
+        headers=auth_headers,
+    )
+
+    msg = await asyncio.wait_for(q.get(), timeout=2)
+    assert msg["content"] == "room sse test"
+    assert msg["room"] == "sse-room"
+
+    sse_queues["bob"].remove(q)
+
+
+async def test_sse_endpoint_registers_and_cleans_up_queue(
+    client: AsyncClient, auth_headers: dict
+):
+    """SSE stream endpoint should register a queue for the recipient and clean up on disconnect."""
+    from relay_server import sse_queues, stream_messages
+
+    # Directly invoke the endpoint handler and iterate its generator
+    resp = await stream_messages(recipient="bob", token="test-secret")
+    assert resp.media_type == "text/event-stream"
+    assert resp.headers["Cache-Control"] == "no-cache"
+
+    # The queue should now be registered
+    assert len(sse_queues["bob"]) == 1
+    q = sse_queues["bob"][0]
+
+    # Iterate the generator to get the connected event
+    gen = resp.body_iterator
+    first_chunk = await gen.__anext__()
+    assert "event: connected" in first_chunk
+    assert "bob" in first_chunk
+
+    # Push a message and verify the generator yields it
+    test_msg = {"from_name": "alice", "content": "hello"}
+    await q.put(test_msg)
+    second_chunk = await gen.__anext__()
+    assert "event: message" in second_chunk
+    assert "hello" in second_chunk
+
+    # Close the generator to trigger cleanup
+    await gen.aclose()
+    assert q not in sse_queues.get("bob", [])
+
+
+async def test_sse_endpoint_rejects_bad_token(client: AsyncClient):
+    """SSE endpoint should reject invalid tokens."""
+    resp = await client.get("/stream/bob", params={"token": "wrong"})
+    assert resp.status_code == 401

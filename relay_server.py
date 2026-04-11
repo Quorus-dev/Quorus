@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -448,20 +449,20 @@ async def send_message(msg: SendMessageRequest):
             _trim_messages()
             await _persist_state()
         message_events[msg.to].set()
+        reassembled = {
+            "id": messages[0]["id"],
+            "from_name": msg.from_name,
+            "to": msg.to,
+            "content": content,
+            "timestamp": timestamp,
+        }
+        for q in sse_queues.get(msg.to, []):
+            await q.put(reassembled)
         logger.info(
             "Message chunked into %d parts (%s -> %s, group %s)",
             chunk_total, msg.from_name, msg.to, chunk_group,
         )
-        await _notify_webhook(
-            msg.to,
-            {
-                "id": messages[0]["id"],
-                "from_name": msg.from_name,
-                "to": msg.to,
-                "content": content,
-                "timestamp": timestamp,
-            },
-        )
+        await _notify_webhook(msg.to, reassembled)
         return {"id": messages[0]["id"], "timestamp": timestamp}
     else:
         message = {
@@ -479,9 +480,53 @@ async def send_message(msg: SendMessageRequest):
             _trim_messages()
             await _persist_state()
         message_events[msg.to].set()
+        for q in sse_queues.get(msg.to, []):
+            await q.put(message)
         logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
         await _notify_webhook(msg.to, message)
         return {"id": message["id"], "timestamp": message["timestamp"]}
+
+
+@app.get("/stream/{recipient}")
+async def stream_messages(recipient: str, token: str = ""):
+    """SSE endpoint for real-time message delivery."""
+    if token != RELAY_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    q: asyncio.Queue = asyncio.Queue()
+    sse_queues[recipient].append(q)
+    logger.info("SSE client connected for %s", recipient)
+
+    async def event_generator():
+        try:
+            connected = json.dumps({
+                "participant": recipient,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            yield f"event: connected\ndata: {connected}\n\n"
+
+            while True:
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=30)
+                    yield f"event: message\ndata: {json.dumps(msg)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if q in sse_queues[recipient]:
+                sse_queues[recipient].remove(q)
+            logger.info("SSE client disconnected for %s", recipient)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _reassemble_chunks(messages: list[dict]) -> tuple[list[dict], list[dict]]:
