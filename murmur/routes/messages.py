@@ -74,7 +74,8 @@ async def ack_messages(
     """Acknowledge receipt of messages (client-side ACK).
 
     Provide either ``ack_token`` (from a ``?ack=manual`` fetch) or
-    specific ``message_ids`` to acknowledge individual messages.
+    specific ``delivery_ids`` (from the ``_delivery_id`` field in
+    each message) to acknowledge individual messages.
     Unacknowledged messages are redelivered after the visibility timeout.
     """
     require_identity(auth, recipient)
@@ -84,11 +85,11 @@ async def ack_messages(
     if req.ack_token:
         await svc.ack_by_token(tid, recipient, req.ack_token)
         return {"status": "acked"}
-    if req.message_ids:
-        count = await svc.ack_by_ids(tid, recipient, req.message_ids)
+    if req.delivery_ids:
+        count = await svc.ack_by_ids(tid, recipient, req.delivery_ids)
         return {"status": "acked", "count": count}
     raise HTTPException(
-        status_code=400, detail="Provide ack_token or message_ids"
+        status_code=400, detail="Provide ack_token or delivery_ids"
     )
 
 

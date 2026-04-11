@@ -1375,6 +1375,85 @@ async def test_peek_requires_auth(client: AsyncClient):
     assert resp.status_code == 401
 
 
+# --- Manual ACK tests ---
+
+
+async def test_manual_ack_returns_token_and_delivery_ids(client: AsyncClient, auth_headers):
+    """Manual ACK mode returns messages with _delivery_id and an ack_token."""
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "ack-test"},
+        headers=auth_headers,
+    )
+    resp = await client.get(
+        "/messages/bob", params={"ack": "manual"}, headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "ack_token" in data
+    assert "messages" in data
+    assert len(data["messages"]) == 1
+    msg = data["messages"][0]
+    assert "_delivery_id" in msg
+    assert msg["content"] == "ack-test"
+
+
+async def test_manual_ack_token_acknowledges(client: AsyncClient, auth_headers):
+    """ACK by token confirms receipt and prevents redelivery."""
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "token-ack"},
+        headers=auth_headers,
+    )
+    resp = await client.get(
+        "/messages/bob", params={"ack": "manual"}, headers=auth_headers,
+    )
+    data = resp.json()
+    ack_token = data["ack_token"]
+
+    # ACK via token
+    ack_resp = await client.post(
+        "/messages/bob/ack",
+        json={"ack_token": ack_token},
+        headers=auth_headers,
+    )
+    assert ack_resp.status_code == 200
+    assert ack_resp.json()["status"] == "acked"
+
+
+async def test_manual_ack_by_delivery_id(client: AsyncClient, auth_headers):
+    """ACK specific messages by their _delivery_id."""
+    await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "id-ack"},
+        headers=auth_headers,
+    )
+    resp = await client.get(
+        "/messages/bob", params={"ack": "manual"}, headers=auth_headers,
+    )
+    data = resp.json()
+    delivery_id = data["messages"][0]["_delivery_id"]
+
+    ack_resp = await client.post(
+        "/messages/bob/ack",
+        json={"delivery_ids": [delivery_id]},
+        headers=auth_headers,
+    )
+    assert ack_resp.status_code == 200
+    assert ack_resp.json()["status"] == "acked"
+    assert ack_resp.json()["count"] == 1
+
+
+async def test_ack_endpoint_requires_payload(client: AsyncClient, auth_headers):
+    """ACK endpoint rejects requests without ack_token or delivery_ids."""
+    resp = await client.post(
+        "/messages/bob/ack",
+        json={},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+
+
 # --- Invite page tests ---
 
 

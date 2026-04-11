@@ -147,7 +147,12 @@ class InviteJoinRequest(BaseModel):
 
 
 class AckRequest(BaseModel):
-    """Client-side message acknowledgment."""
+    """Client-side message acknowledgment.
+
+    Use ``ack_token`` to ACK all messages from a fetch at once,
+    or ``delivery_ids`` to ACK specific messages (using the
+    ``_delivery_id`` field returned in each message).
+    """
 
     ack_token: str | None = None
-    message_ids: list[str] | None = None
+    delivery_ids: list[str] | None = None

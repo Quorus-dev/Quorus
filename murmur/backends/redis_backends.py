@@ -179,7 +179,9 @@ class RedisMessageBackend:
             if claimed and len(claimed) >= 2:
                 for entry_id, fields in claimed[1]:
                     all_ids.append(entry_id)
-                    messages.append(json.loads(fields["data"]))
+                    msg = json.loads(fields["data"])
+                    msg["_delivery_id"] = entry_id
+                    messages.append(msg)
         except Exception:
             pass  # XAUTOCLAIM not supported or no pending
 
@@ -191,7 +193,9 @@ class RedisMessageBackend:
             for stream_key, stream_entries in entries:
                 for entry_id, fields in stream_entries:
                     all_ids.append(entry_id)
-                    messages.append(json.loads(fields["data"]))
+                    msg = json.loads(fields["data"])
+                    msg["_delivery_id"] = entry_id
+                    messages.append(msg)
 
         if not messages:
             return [], ""

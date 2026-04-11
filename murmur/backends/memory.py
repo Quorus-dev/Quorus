@@ -80,6 +80,11 @@ class InMemoryMessageBackend:
                 return [], ""
             self._queues[key].clear()
             token = uuid.uuid4().hex
+            # Inject _delivery_id for client-side per-message ACK
+            for m in msgs:
+                mid = m.get("id", "")
+                if mid:
+                    m["_delivery_id"] = mid
             self._pending[(tenant_id, to_name, token)] = (msgs, time.time())
             for m in msgs:
                 mid = m.get("id", "")
