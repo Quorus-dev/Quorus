@@ -1,0 +1,29 @@
+services:
+  relay:
+    build: .
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - RELAY_SECRET=${RELAY_SECRET:?Set RELAY_SECRET in .env or environment}
+      - PORT=8080
+      - MESSAGES_FILE=/app/data/messages.json
+      - MAX_MESSAGES=${MAX_MESSAGES:-1000}
+      - MESSAGE_TTL_SECONDS=${MESSAGE_TTL_SECONDS:-86400}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - murmur-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  murmur-data:
