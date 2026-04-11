@@ -82,6 +82,7 @@ elif not RELAY_SECRET:
 
 def _write_atomic(path: str, data: bytes) -> None:
     dir_name = os.path.dirname(os.path.abspath(path))
+    tmp_path = None
     try:
         fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
         try:
@@ -92,10 +93,11 @@ def _write_atomic(path: str, data: bytes) -> None:
         os.replace(tmp_path, path)
     except OSError:
         logger.error("Failed to save state to %s", path)
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def _snapshot_state() -> dict:
