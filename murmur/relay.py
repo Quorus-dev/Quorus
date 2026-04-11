@@ -74,6 +74,7 @@ locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 persistence_lock = asyncio.Lock()
 message_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
 webhooks: dict[str, str] = {}  # instance_name -> callback_url
+room_webhooks: dict[str, list[dict]] = defaultdict(list)  # room_id -> [{url, registered_by}]
 rooms: dict[str, dict] = {}  # room_id -> {name, created_by, members, created_at}
 room_history: dict[str, list[dict]] = defaultdict(list)  # room_id -> last N messages
 sse_queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
@@ -152,6 +153,7 @@ def _reset_state():
     persistence_lock = asyncio.Lock()
     message_events.clear()
     webhooks.clear()
+    room_webhooks.clear()
     rooms.clear()
     room_history.clear()
     sse_queues.clear()
@@ -213,6 +215,7 @@ def _save_to_file():
             for rid, r in rooms.items()
         },
         "room_history": {rid: msgs for rid, msgs in room_history.items()},
+        "room_webhooks": {rid: hooks for rid, hooks in room_webhooks.items()},
         "presence": presence,
     }
     try:
@@ -256,6 +259,8 @@ def _load_from_file():
         }
     for rid, msgs in data.get("room_history", {}).items():
         room_history[rid] = msgs
+    for rid, hooks in data.get("room_webhooks", {}).items():
+        room_webhooks[rid] = hooks
     for name, pdata in data.get("presence", {}).items():
         presence[name] = pdata
     logger.info("Loaded state from %s", MESSAGES_FILE)
@@ -473,6 +478,16 @@ class DestroyRoomRequest(BaseModel):
     requested_by: str
 
     @field_validator("requested_by")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+class RoomWebhookRequest(BaseModel):
+    callback_url: str
+    registered_by: str
+
+    @field_validator("registered_by")
     @classmethod
     def check_name(cls, v: str) -> str:
         return _validate_name(v)
@@ -896,6 +911,7 @@ async def destroy_room(room_id: str, req: DestroyRoomRequest):
     room_name = room["name"]
     del rooms[room_id]
     room_history.pop(room_id, None)
+    room_webhooks.pop(room_id, None)
     await _persist_state()
     logger.info("Room %s (%s) destroyed by %s", room_name, room_id, req.requested_by)
     return {"status": "destroyed", "room": room_name}
@@ -917,6 +933,60 @@ async def rename_room(room_id: str, req: RenameRoomRequest):
     await _persist_state()
     logger.info("Room renamed: %s -> %s by %s", old_name, req.new_name, req.requested_by)
     return {"status": "renamed", "old_name": old_name, "new_name": req.new_name}
+
+
+@app.post("/rooms/{room_id}/webhooks", dependencies=[Depends(verify_auth)])
+async def register_room_webhook(room_id: str, req: RoomWebhookRequest):
+    """Register a webhook URL called on every message in this room."""
+    room_id, room = _resolve_room(room_id)
+    callback_url = _validate_webhook_callback_url(req.callback_url)
+    # Prevent duplicate URLs per room
+    existing_urls = {h["url"] for h in room_webhooks[room_id]}
+    if callback_url in existing_urls:
+        raise HTTPException(status_code=409, detail="Webhook URL already registered for this room")
+    room_webhooks[room_id].append({
+        "url": callback_url,
+        "registered_by": req.registered_by,
+    })
+    await _persist_state()
+    logger.info("Room webhook registered: %s -> %s by %s", room["name"], callback_url, req.registered_by)
+    return {"status": "registered", "room": room["name"], "callback_url": callback_url}
+
+
+@app.get("/rooms/{room_id}/webhooks", dependencies=[Depends(verify_auth)])
+async def list_room_webhooks(room_id: str):
+    """List all webhooks registered for a room."""
+    room_id, room = _resolve_room(room_id)
+    return room_webhooks.get(room_id, [])
+
+
+@app.delete("/rooms/{room_id}/webhooks", dependencies=[Depends(verify_auth)])
+async def delete_room_webhook(room_id: str, req: RoomWebhookRequest):
+    """Remove a webhook from a room."""
+    room_id, room = _resolve_room(room_id)
+    hooks = room_webhooks.get(room_id, [])
+    before = len(hooks)
+    room_webhooks[room_id] = [h for h in hooks if h["url"] != req.callback_url]
+    if len(room_webhooks[room_id]) == before:
+        raise HTTPException(status_code=404, detail="Webhook URL not found for this room")
+    await _persist_state()
+    logger.info("Room webhook removed: %s -> %s", room["name"], req.callback_url)
+    return {"status": "removed", "room": room["name"], "callback_url": req.callback_url}
+
+
+async def _notify_room_webhooks(room_id: str, message: dict):
+    """Fire all registered webhooks for a room. Failures are logged and ignored."""
+    hooks = room_webhooks.get(room_id, [])
+    if not hooks:
+        return
+    for hook in hooks:
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(hook["url"], json=message, timeout=5)
+                resp.raise_for_status()
+                logger.info("Room webhook delivered to %s", hook["url"])
+        except Exception:
+            logger.warning("Room webhook delivery failed for %s", hook["url"], exc_info=True)
 
 
 @app.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
@@ -973,6 +1043,9 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
     _trim_messages()
     await _persist_state()
 
+    # Fire room webhooks
+    await _notify_room_webhooks(room_id, history_msg)
+
     logger.info(
         "Room message %s in %s: %s -> %d recipients",
         message_id, room["name"], msg.from_name, len(recipients),
@@ -987,6 +1060,31 @@ async def get_room_history(room_id: str, limit: int = 50):
     limit = min(max(limit, 1), MAX_ROOM_HISTORY)
     msgs = room_history.get(rid, [])
     return msgs[-limit:]
+
+
+@app.get("/rooms/{room_id}/search", dependencies=[Depends(verify_auth)])
+async def search_room_history(
+    room_id: str,
+    q: str = "",
+    sender: str = "",
+    message_type: str = "",
+    limit: int = 50,
+):
+    """Search room history by keyword, sender, or message type."""
+    rid, room = _resolve_room(room_id)
+    msgs = room_history.get(rid, [])
+    results = []
+    q_lower = q.lower()
+    for msg in msgs:
+        if q and q_lower not in msg.get("content", "").lower():
+            continue
+        if sender and msg.get("from_name", "") != sender:
+            continue
+        if message_type and msg.get("message_type", "") != message_type:
+            continue
+        results.append(msg)
+    limit = min(max(limit, 1), MAX_ROOM_HISTORY)
+    return results[-limit:]
 
 
 @app.post("/heartbeat", dependencies=[Depends(verify_auth)])

@@ -1217,6 +1217,159 @@ class TestRoomAdmin:
         assert r.status_code == 404
 
 
+# ===========================================================================
+# 20. ROOM WEBHOOKS
+# ===========================================================================
+
+class TestRoomWebhooks:
+    @pytest.mark.anyio
+    async def test_register_room_webhook(self, client):
+        resp = await _create_room(client, name="hook-room", creator="admin")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/hook", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        assert r.status_code == 200
+        assert r.json()["status"] == "registered"
+
+    @pytest.mark.anyio
+    async def test_list_room_webhooks(self, client):
+        resp = await _create_room(client, name="hook-list", creator="admin")
+        rid = resp.json()["id"]
+        await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/a", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/b", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        r = await client.get(f"/rooms/{rid}/webhooks", headers=AUTH)
+        assert r.status_code == 200
+        assert len(r.json()) == 2
+
+    @pytest.mark.anyio
+    async def test_delete_room_webhook(self, client):
+        resp = await _create_room(client, name="hook-del", creator="admin")
+        rid = resp.json()["id"]
+        await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/del", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        r = await client.request(
+            "DELETE", f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/del", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        assert r.status_code == 200
+        assert r.json()["status"] == "removed"
+        # Verify gone
+        r2 = await client.get(f"/rooms/{rid}/webhooks", headers=AUTH)
+        assert len(r2.json()) == 0
+
+    @pytest.mark.anyio
+    async def test_delete_nonexistent_webhook(self, client):
+        resp = await _create_room(client, name="hook-miss", creator="admin")
+        rid = resp.json()["id"]
+        r = await client.request(
+            "DELETE", f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/nope", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        assert r.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_duplicate_webhook_rejected(self, client):
+        resp = await _create_room(client, name="hook-dup", creator="admin")
+        rid = resp.json()["id"]
+        await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/dup", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        r = await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/dup", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        assert r.status_code == 409
+
+    @pytest.mark.anyio
+    async def test_room_webhook_rejects_localhost(self, client):
+        resp = await _create_room(client, name="hook-sec", creator="admin")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "http://localhost/bad", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        assert r.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_room_webhook_rejects_private_ip(self, client):
+        resp = await _create_room(client, name="hook-ip", creator="admin")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "http://192.168.1.1/bad", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        assert r.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_room_webhook_no_auth(self, client):
+        resp = await _create_room(client, name="hook-auth", creator="admin")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/x", "registered_by": "admin"},
+        )
+        assert r.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_room_webhook_nonexistent_room(self, client):
+        r = await client.post(
+            "/rooms/fake-id/webhooks",
+            json={"callback_url": "https://example.com/x", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        assert r.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_destroy_room_clears_webhooks(self, client):
+        resp = await _create_room(client, name="hook-destroy", creator="admin")
+        rid = resp.json()["id"]
+        await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/gone", "registered_by": "admin"},
+            headers=AUTH,
+        )
+        await client.request(
+            "DELETE", f"/rooms/{rid}",
+            json={"requested_by": "admin"},
+            headers=AUTH,
+        )
+        # Room is gone, webhooks should be too
+        r = await client.get(f"/rooms/{rid}/webhooks", headers=AUTH)
+        assert r.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_room_webhook_bad_name_rejected(self, client):
+        resp = await _create_room(client, name="hook-badname", creator="admin")
+        rid = resp.json()["id"]
+        r = await client.post(
+            f"/rooms/{rid}/webhooks",
+            json={"callback_url": "https://example.com/x", "registered_by": "<script>"},
+            headers=AUTH,
+        )
+        assert r.status_code == 422
+
+
 class TestInvitePageSecurity:
     @pytest.mark.anyio
     async def test_invite_page_does_not_leak_relay_secret(self, client):
