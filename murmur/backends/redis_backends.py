@@ -8,6 +8,7 @@ All keys are tenant-scoped with the prefix ``t:{tenant_id}:``.
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -15,10 +16,10 @@ from datetime import datetime, timedelta, timezone
 
 from redis.asyncio import Redis
 
-MESSAGE_TTL = 86400  # 24 h
-VISIBILITY_TIMEOUT = 60  # seconds — inflight key expiry
-SSE_TOKEN_TTL = 60  # 1 min
-HEARTBEAT_TIMEOUT = 120  # 2 min
+MESSAGE_TTL = int(os.environ.get("MESSAGE_TTL_SECONDS", "86400"))
+VISIBILITY_TIMEOUT = int(os.environ.get("VISIBILITY_TIMEOUT_SECONDS", "60"))
+SSE_TOKEN_TTL = int(os.environ.get("SSE_TOKEN_TTL", "300"))
+HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))
 
 # Lua script for atomic sliding-window rate limiting
 _RATE_LIMIT_LUA = """
@@ -76,6 +77,22 @@ class RedisMessageBackend:
             results = await pipe.execute()
         return [json.loads(m) for m in results[0]]
 
+    # Lua script: atomically read all messages, move to inflight, set TTL.
+    # Returns the messages that were moved — no race with concurrent enqueue.
+    _FETCH_SCRIPT = """
+    local inbox = KEYS[1]
+    local inflight = KEYS[2]
+    local ttl = tonumber(ARGV[1])
+    local msgs = redis.call('LRANGE', inbox, 0, -1)
+    if #msgs == 0 then return {} end
+    redis.call('DEL', inbox)
+    for i, m in ipairs(msgs) do
+        redis.call('RPUSH', inflight, m)
+    end
+    redis.call('EXPIRE', inflight, ttl)
+    return msgs
+    """
+
     async def fetch(
         self, tenant_id: str, to_name: str
     ) -> tuple[list[dict], str]:
@@ -83,21 +100,11 @@ class RedisMessageBackend:
         token = uuid.uuid4().hex
         inflight = self._inflight_key(tenant_id, to_name, token)
 
-        # Atomic: read all messages then rename inbox to inflight key.
-        # RENAME fails if source key does not exist, so we check first.
-        msgs_raw = await self._r.lrange(key, 0, -1)
+        # Atomic Lua: read + delete inbox + copy to inflight in one call.
+        msgs_raw = await self._r.eval(
+            self._FETCH_SCRIPT, 2, key, inflight, VISIBILITY_TIMEOUT,
+        )
         if not msgs_raw:
-            return [], ""
-
-        # RENAME is atomic — moves the entire list in O(1).
-        try:
-            async with self._r.pipeline(transaction=True) as pipe:
-                pipe.rename(key, inflight)
-                pipe.expire(inflight, VISIBILITY_TIMEOUT)
-                await pipe.execute()
-        except Exception:
-            # Key disappeared between LRANGE and RENAME (concurrent fetch) —
-            # treat as empty.
             return [], ""
 
         messages = [json.loads(m) for m in msgs_raw]

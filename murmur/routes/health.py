@@ -38,9 +38,14 @@ async def health():
     # Check Redis health if available
     from murmur.backends.redis_client import check_redis
 
+    redis_url = os.environ.get("REDIS_URL", "")
     redis_ok = await check_redis()
     if redis_ok:
         checks["redis"] = "connected"
+    elif redis_url:
+        # Redis is required in production — mark unhealthy
+        checks["status"] = "unhealthy"
+        checks["redis"] = "disconnected"
 
     status_code = 200 if checks["status"] == "ok" else 503
     return JSONResponse(checks, status_code=status_code)

@@ -60,23 +60,37 @@ class SSEService:
     def push(
         self, tenant_id: str, recipient: str, message: dict
     ) -> None:
-        """Push *message* to all active SSE connections for *recipient*.
+        """Push *message* to all local SSE connections for *recipient*.
 
-        Also publishes via NotificationService so other replicas can
-        deliver to their local SSE queues.
+        Always delivers locally (synchronous). When Redis is available,
+        also publishes for other replicas (async, fire-and-forget).
+        Other replicas receive via Pub/Sub listener which calls their
+        _push_local (self-echo filtered by replica_id).
         """
+        # Always push to local queues immediately (synchronous)
         self._push_local(tenant_id, recipient, message)
 
-        if self._notification:
+        # Publish to Redis for other replicas if available
+        if self._notification and self._notification._redis:
+            import json
+
             from murmur.services.notification_svc import NotificationService
 
             channel = NotificationService.dm_channel(tenant_id, recipient)
-            # Fire-and-forget — schedule the coroutine on the running loop.
+            envelope = {
+                "_origin": self._notification._replica_id,
+                "channel": channel,
+                "data": message,
+            }
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._notification.publish(channel, message))
+                loop.create_task(
+                    self._notification._redis.publish(
+                        channel, json.dumps(envelope)
+                    )
+                )
             except RuntimeError:
-                pass  # no loop — tests without async context
+                pass  # No event loop
 
     def _push_local(
         self, tenant_id: str, recipient: str, message: dict

@@ -2,10 +2,14 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-# Install dependencies only (cached layer)
+# Install pinned dependencies from lockfile (reproducible builds)
+COPY requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
+
+# Install the package itself
 COPY pyproject.toml README.md ./
 COPY murmur/__init__.py murmur/__init__.py
-RUN pip install --no-cache-dir hatchling && pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 # Copy application code (including migrations)
 COPY murmur/ murmur/

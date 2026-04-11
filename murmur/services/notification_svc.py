@@ -27,7 +27,10 @@ class NotificationService:
     """Pub/Sub notification bus — Redis-backed or local-only."""
 
     def __init__(self, redis_conn: Any | None = None) -> None:
+        import uuid
+
         self._redis = redis_conn
+        self._replica_id = uuid.uuid4().hex  # Unique per process instance
         # channel -> list of local handler callables
         self._local_handlers: dict[str, list[Handler]] = defaultdict(list)
         self._listener_task: asyncio.Task | None = None
@@ -50,15 +53,24 @@ class NotificationService:
         """Publish *message* to *channel*.
 
         If Redis is available the message is published there (the background
-        listener dispatches to local handlers).  Otherwise we dispatch
-        directly to local handlers.
+        listener dispatches to local handlers on OTHER replicas).  The
+        publishing replica dispatches locally immediately to avoid the
+        round-trip, and the listener skips self-originated messages via
+        replica_id to prevent duplicates.
         """
         if self._redis:
+            # Dispatch locally first (immediate, no round-trip)
+            self._dispatch_local(channel, message)
+            # Publish to Redis for other replicas (include replica_id)
+            envelope = {
+                "_origin": self._replica_id,
+                "channel": channel,
+                "data": message,
+            }
             try:
-                await self._redis.publish(channel, json.dumps(message))
+                await self._redis.publish(channel, json.dumps(envelope))
             except Exception:
-                logger.warning("Redis publish failed, falling back to local")
-                self._dispatch_local(channel, message)
+                logger.warning("Redis publish failed (local dispatch already done)")
         else:
             self._dispatch_local(channel, message)
 
@@ -130,10 +142,15 @@ class NotificationService:
                     continue
                 channel = msg.get("channel", "")
                 try:
-                    data = json.loads(msg["data"])
+                    envelope = json.loads(msg["data"])
                 except (json.JSONDecodeError, TypeError):
                     continue
-                self._dispatch_local(channel, data)
+                # Skip messages we published ourselves (prevent self-echo)
+                if envelope.get("_origin") == self._replica_id:
+                    continue
+                data = envelope.get("data", envelope)
+                actual_channel = envelope.get("channel", channel)
+                self._dispatch_local(actual_channel, data)
         except asyncio.CancelledError:
             return
         except Exception:
