@@ -233,16 +233,16 @@ class MessageService:
         """Dequeue and reassemble messages for *recipient*.
 
         If *wait* > 0 and no messages are ready, long-poll up to *wait* seconds.
+        ACK is deferred — call ack_last_fetch() after the response is sent.
         """
         wait = min(max(wait, 0), 60)
         ekey = self._event_key(tenant_id, recipient)
 
-        ready, held_back = await self._fetch_and_reassemble(
+        ready, held_back, ack_token = await self._fetch_and_reassemble(
             tenant_id, recipient, ekey
         )
 
         if not ready and wait > 0:
-            # Subscribe to cross-replica notifications for this wait period
             self._subscribe_wakeup(tenant_id, recipient)
             try:
                 await asyncio.wait_for(
@@ -252,7 +252,7 @@ class MessageService:
                 pass
             finally:
                 self._unsubscribe_wakeup(tenant_id, recipient)
-            ready, held_back = await self._fetch_and_reassemble(
+            ready, held_back, ack_token = await self._fetch_and_reassemble(
                 tenant_id, recipient, ekey
             )
 
@@ -260,6 +260,9 @@ class MessageService:
             await self._analytics.track_delivery(
                 tenant_id, recipient, len(ready)
             )
+
+        # Store ack_token for deferred ACK by the route handler
+        self._pending_ack = (tenant_id, recipient, ack_token)
 
         logger.info(
             "Fetched %d messages for %s (%d chunks held back)",
@@ -269,27 +272,40 @@ class MessageService:
         )
         return ready
 
+    async def ack_last_fetch(self) -> None:
+        """ACK the most recent fetch — call after the HTTP response is built.
+
+        This ensures messages are only permanently removed after the client
+        has received them. If the server crashes before ACK, messages remain
+        in the inflight state and expire back to availability.
+        """
+        if not hasattr(self, "_pending_ack") or not self._pending_ack:
+            return
+        tenant_id, recipient, ack_token = self._pending_ack
+        self._pending_ack = None
+        if ack_token:
+            await self._backend.ack(tenant_id, recipient, ack_token)
+
     async def _fetch_and_reassemble(
         self,
         tenant_id: str,
         recipient: str,
         ekey: tuple[str, str],
-    ) -> tuple[list[dict], list[dict]]:
-        """Fetch with ack semantics, reassemble chunks, re-enqueue incomplete groups."""
+    ) -> tuple[list[dict], list[dict], str]:
+        """Fetch messages, reassemble chunks, re-enqueue incomplete groups.
+
+        Returns (ready, held_back, ack_token). Caller must ACK after response.
+        """
         all_msgs, ack_token = await self._backend.fetch(tenant_id, recipient)
         self._events[ekey].clear()
         ready, held_back = _reassemble_chunks(all_msgs)
 
-        # ACK the inflight batch -- messages are now safe with us
-        if ack_token:
-            await self._backend.ack(tenant_id, recipient, ack_token)
-
-        # Re-enqueue any incomplete chunk groups so they survive
+        # Re-enqueue incomplete chunk groups so they survive
         if held_back:
             await self._backend.enqueue_batch(
                 tenant_id, recipient, held_back
             )
-        return ready, held_back
+        return ready, held_back, ack_token
 
     # ------------------------------------------------------------------
     # Peek
