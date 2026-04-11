@@ -379,8 +379,8 @@ async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: di
     from murmur.relay import locks, message_queues
     base_time = datetime.now(timezone.utc)
 
-    async with locks["bob"]:
-        message_queues["bob"].append({
+    async with locks["_legacy:bob"]:
+        message_queues["_legacy:bob"].append({
             "id": "chunk-1",
             "from_name": "alice",
             "to": "bob",
@@ -395,8 +395,8 @@ async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: di
     messages = resp.json()
     assert len(messages) == 0
 
-    async with locks["bob"]:
-        message_queues["bob"].append({
+    async with locks["_legacy:bob"]:
+        message_queues["_legacy:bob"].append({
             "id": "chunk-2",
             "from_name": "alice",
             "to": "bob",
@@ -434,11 +434,11 @@ async def test_message_event_is_rearmed_by_consumer(client: AsyncClient, auth_he
         json={"from_name": "alice", "to": "bob", "content": "hi"},
         headers=auth_headers,
     )
-    assert message_events["bob"].is_set()
+    assert message_events["_legacy:bob"].is_set()
 
     resp = await client.get("/messages/bob", headers=auth_headers)
     assert resp.status_code == 200
-    assert not message_events["bob"].is_set()
+    assert not message_events["_legacy:bob"].is_set()
 
 
 async def test_long_poll_returns_empty_on_timeout(client: AsyncClient, auth_headers: dict):
@@ -655,8 +655,8 @@ async def test_message_ttl_expires_old_messages(client: AsyncClient, auth_header
     from murmur.relay import locks, message_queues
 
     old_timestamp = "2020-01-01T00:00:00+00:00"
-    async with locks["bob"]:
-        message_queues["bob"].append({
+    async with locks["_legacy:bob"]:
+        message_queues["_legacy:bob"].append({
             "id": "old-msg",
             "from_name": "alice",
             "to": "bob",
@@ -684,8 +684,8 @@ async def test_message_ttl_is_enforced_on_read_without_new_send(
     """Expired messages should not be returned even if no later send triggers trim."""
     from murmur.relay import locks, message_queues
 
-    async with locks["bob"]:
-        message_queues["bob"].append({
+    async with locks["_legacy:bob"]:
+        message_queues["_legacy:bob"].append({
             "id": "old-msg",
             "from_name": "alice",
             "to": "bob",
@@ -701,8 +701,8 @@ async def test_analytics_excludes_expired_messages(client: AsyncClient, auth_hea
     """Expired messages should not contribute to pending analytics totals."""
     from murmur.relay import locks, message_queues
 
-    async with locks["bob"]:
-        message_queues["bob"].append({
+    async with locks["_legacy:bob"]:
+        message_queues["_legacy:bob"].append({
             "id": "old-msg",
             "from_name": "alice",
             "to": "bob",
@@ -953,7 +953,7 @@ async def test_sse_queue_receives_dm(client: AsyncClient, auth_headers: dict):
     from murmur.relay import sse_queues
 
     q: asyncio.Queue = asyncio.Queue()
-    sse_queues["bob"].append(q)
+    sse_queues["_legacy:bob"].append(q)
 
     await client.post(
         "/messages",
@@ -965,7 +965,7 @@ async def test_sse_queue_receives_dm(client: AsyncClient, auth_headers: dict):
     assert msg["content"] == "sse test"
     assert msg["from_name"] == "alice"
 
-    sse_queues["bob"].remove(q)
+    sse_queues["_legacy:bob"].remove(q)
 
 
 async def test_sse_queue_receives_room_messages(
@@ -975,7 +975,7 @@ async def test_sse_queue_receives_room_messages(
     from murmur.relay import sse_queues
 
     q: asyncio.Queue = asyncio.Queue()
-    sse_queues["bob"].append(q)
+    sse_queues["_legacy:bob"].append(q)
 
     create_resp = await client.post(
         "/rooms",
@@ -999,7 +999,7 @@ async def test_sse_queue_receives_room_messages(
     assert msg["content"] == "room sse test"
     assert msg["room"] == "sse-room"
 
-    sse_queues["bob"].remove(q)
+    sse_queues["_legacy:bob"].remove(q)
 
 
 async def test_sse_endpoint_registers_and_cleans_up_queue(
@@ -1014,8 +1014,8 @@ async def test_sse_endpoint_registers_and_cleans_up_queue(
     assert resp.headers["Cache-Control"] == "no-cache"
 
     # The queue should now be registered
-    assert len(sse_queues["bob"]) == 1
-    q = sse_queues["bob"][0]
+    assert len(sse_queues["_legacy:bob"]) == 1
+    q = sse_queues["_legacy:bob"][0]
 
     # Iterate the generator to get the connected event
     gen = resp.body_iterator
@@ -1300,7 +1300,7 @@ async def test_presence_shows_offline_after_timeout(client: AsyncClient, auth_he
         headers=auth_headers,
     )
     # Manually backdate the heartbeat
-    relay.presence["old-agent"]["last_heartbeat"] = "2000-01-01T00:00:00+00:00"
+    relay.presence["_legacy:old-agent"]["last_heartbeat"] = "2000-01-01T00:00:00+00:00"
 
     resp = await client.get("/presence", headers=auth_headers)
     agents = resp.json()
@@ -1328,7 +1328,7 @@ async def test_presence_sorted_online_first(client: AsyncClient, auth_headers):
         headers=auth_headers,
     )
     # Backdate beta
-    relay.presence["beta"]["last_heartbeat"] = "2000-01-01T00:00:00+00:00"
+    relay.presence["_legacy:beta"]["last_heartbeat"] = "2000-01-01T00:00:00+00:00"
 
     resp = await client.get("/presence", headers=auth_headers)
     agents = resp.json()

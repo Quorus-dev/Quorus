@@ -113,7 +113,7 @@ async def test_multi_agent_room_conversation(client: AsyncClient):
 async def test_sse_receives_room_fanout(client: AsyncClient):
     """SSE subscribers should receive room fan-out messages."""
     q: asyncio.Queue = asyncio.Queue()
-    sse_queues["bob"].append(q)
+    sse_queues["_legacy:bob"].append(q)
 
     resp = await client.post(
         "/rooms", json={"name": "sse-test", "created_by": "alice"}, headers=HEADERS
@@ -135,7 +135,7 @@ async def test_sse_receives_room_fanout(client: AsyncClient):
     assert msg["content"] == "realtime test"
     assert msg["room"] == "sse-test"
 
-    sse_queues["bob"].remove(q)
+    sse_queues["_legacy:bob"].remove(q)
 
 
 async def test_two_rooms_isolation(client: AsyncClient):

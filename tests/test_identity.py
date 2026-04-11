@@ -128,22 +128,24 @@ class TestJWTAuth:
 class TestRoomAuth:
     """Room operations should enforce membership and admin rules."""
 
-    async def _create_room_and_join(self, client, legacy_headers):
+    async def _create_room_and_join(self, client, alice_headers, bob_headers):
         resp = await client.post(
             "/rooms",
             json={"name": "dev-room", "created_by": "alice"},
-            headers=legacy_headers,
+            headers=alice_headers,
         )
         room_id = resp.json()["id"]
         await client.post(
             f"/rooms/{room_id}/join",
             json={"participant": "bob"},
-            headers=legacy_headers,
+            headers=bob_headers,
         )
         return room_id
 
-    async def test_room_message_from_member(self, client, legacy_headers, alice_headers):
-        room_id = await self._create_room_and_join(client, legacy_headers)
+    async def test_room_message_from_member(
+        self, client, legacy_headers, alice_headers, bob_headers,
+    ):
+        room_id = await self._create_room_and_join(client, alice_headers, bob_headers)
         resp = await client.post(
             f"/rooms/{room_id}/messages",
             json={"from_name": "alice", "content": "hello room"},
@@ -151,11 +153,11 @@ class TestRoomAuth:
         )
         assert resp.status_code == 200
 
-    async def test_room_message_from_non_member_rejected(self, client, legacy_headers):
+    async def test_room_message_from_non_member_rejected(self, client, alice_headers):
         resp = await client.post(
             "/rooms",
             json={"name": "private-room", "created_by": "alice"},
-            headers=legacy_headers,
+            headers=alice_headers,
         )
         room_id = resp.json()["id"]
         charlie_jwt = create_jwt(
@@ -168,12 +170,12 @@ class TestRoomAuth:
         )
         assert resp.status_code == 403
 
-    async def test_room_history_accessible(self, client, legacy_headers, bob_headers):
-        room_id = await self._create_room_and_join(client, legacy_headers)
+    async def test_room_history_accessible(self, client, alice_headers, bob_headers):
+        room_id = await self._create_room_and_join(client, alice_headers, bob_headers)
         await client.post(
             f"/rooms/{room_id}/messages",
             json={"from_name": "alice", "content": "msg 1"},
-            headers=legacy_headers,
+            headers=alice_headers,
         )
         resp = await client.get(
             f"/rooms/{room_id}/history",
