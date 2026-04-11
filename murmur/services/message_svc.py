@@ -28,13 +28,15 @@ from murmur.services.webhook_svc import WebhookService
 
 @dataclass
 class FetchResult:
-    """Per-request fetch result with server-side ACK.
+    """Per-request fetch result with at-least-once delivery.
 
-    Caller calls ``await result.ack()`` after building the response.
-    This is server-side ACK only — it confirms the server processed
-    the messages, NOT that the client received them. For true client
-    ACK semantics, use a separate POST /messages/{recipient}/ack
-    endpoint (future milestone: Redis Streams with XACK).
+    Two ACK modes:
+
+    1. **Server-side ACK** (default, backward compat): caller calls
+       ``await result.ack()`` after building the response.
+    2. **Client-side ACK**: caller returns messages with their IDs,
+       client calls ``POST /messages/{recipient}/ack`` with those IDs.
+       Unacked messages are redelivered after the visibility timeout.
 
     Each FetchResult is independent — no shared mutable state.
     """
@@ -43,13 +45,13 @@ class FetchResult:
     _backend: MessageBackend = field(repr=False)
     _tenant_id: str = field(repr=False)
     _recipient: str = field(repr=False)
-    _ack_token: str = field(default="", repr=False)
+    ack_token: str = ""
 
     async def ack(self) -> None:
-        """Permanently remove fetched messages from inflight state."""
-        if self._ack_token:
+        """Server-side ACK: permanently remove fetched messages."""
+        if self.ack_token:
             await self._backend.ack(
-                self._tenant_id, self._recipient, self._ack_token
+                self._tenant_id, self._recipient, self.ack_token
             )
 
 if TYPE_CHECKING:
@@ -297,10 +299,10 @@ class MessageService:
         )
         return FetchResult(
             messages=ready,
+            ack_token=ack_token,
             _backend=self._backend,
             _tenant_id=tenant_id,
             _recipient=recipient,
-            _ack_token=ack_token,
         )
 
     async def _fetch_and_reassemble(
@@ -325,9 +327,29 @@ class MessageService:
         return ready, held_back, ack_token
 
     # ------------------------------------------------------------------
+    # Client ACK
+    # ------------------------------------------------------------------
+
+    async def ack_by_token(
+        self, tenant_id: str, recipient: str, ack_token: str
+    ) -> None:
+        """Acknowledge all messages from a previous fetch (by token)."""
+        await self._backend.ack(tenant_id, recipient, ack_token)
+
+    async def ack_by_ids(
+        self, tenant_id: str, recipient: str, message_ids: list[str]
+    ) -> int:
+        """Acknowledge specific message IDs. Returns count of newly acked."""
+        return await self._backend.ack_ids(tenant_id, recipient, message_ids)
+
+    # ------------------------------------------------------------------
     # Peek
     # ------------------------------------------------------------------
 
     async def peek(self, tenant_id: str, recipient: str) -> int:
         """Return the number of pending messages without consuming them."""
         return await self._backend.peek(tenant_id, recipient)
+
+    async def pending(self, tenant_id: str, recipient: str) -> int:
+        """Return the number of delivered-but-unacked messages."""
+        return await self._backend.pending_count(tenant_id, recipient)

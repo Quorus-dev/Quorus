@@ -1345,7 +1345,9 @@ async def test_heartbeat_preserves_uptime_start(client: AsyncClient, auth_header
 async def test_peek_empty(client: AsyncClient, auth_headers):
     resp = await client.get("/messages/nobody/peek", headers=auth_headers)
     assert resp.status_code == 200
-    assert resp.json() == {"count": 0, "recipient": "nobody"}
+    data = resp.json()
+    assert data["count"] == 0
+    assert data["recipient"] == "nobody"
 
 
 async def test_peek_with_messages(client: AsyncClient, auth_headers):

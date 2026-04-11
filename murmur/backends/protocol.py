@@ -38,12 +38,14 @@ class MessageBackend(Protocol):
     async def fetch(
         self, tenant_id: str, to_name: str
     ) -> tuple[list[dict], str]:
-        """Fetch pending messages with visibility-timeout semantics.
+        """Fetch pending messages with at-least-once delivery semantics.
 
-        Returns ``(messages, ack_token)``.  Messages are held in an inflight
-        set until :meth:`ack` is called.  If not acked within the visibility
-        timeout the inflight key expires (messages are considered delivered
-        and dropped — acceptable for ephemeral DM delivery).
+        Returns ``(messages, ack_token)``.  Messages become *pending* until
+        :meth:`ack` is called.  Unacknowledged messages are redelivered
+        on the next fetch after the visibility timeout expires.
+
+        The ack_token is opaque — it may be a single ID, a JSON-encoded
+        list of stream entry IDs, or any backend-specific token.
         """
         ...
 
@@ -51,7 +53,23 @@ class MessageBackend(Protocol):
         self, tenant_id: str, to_name: str, ack_token: str
     ) -> None:
         """Acknowledge receipt of a previous :meth:`fetch`, permanently
-        removing the inflight messages."""
+        removing the pending messages.  Unacked messages are redelivered."""
+        ...
+
+    async def ack_ids(
+        self, tenant_id: str, to_name: str, message_ids: list[str]
+    ) -> int:
+        """Acknowledge specific message IDs.  Returns the count of newly acked.
+
+        This enables client-side ACK where the client confirms individual
+        messages after processing them.
+        """
+        ...
+
+    async def pending_count(
+        self, tenant_id: str, to_name: str
+    ) -> int:
+        """Count messages that have been delivered but not yet acknowledged."""
         ...
 
     async def peek(self, tenant_id: str, to_name: str) -> int:

@@ -93,10 +93,21 @@ return 1
 """
 
 
-# -- Messages (DM inboxes) -------------------------------------------------
+# -- Messages (DM inboxes via Redis Streams) --------------------------------
+
+_CONSUMER_GROUP = "murmur_cg"
+_CONSUMER_NAME = "relay"
+
 
 class RedisMessageBackend:
-    """Per-recipient DM inbox backed by Redis Lists."""
+    """Per-recipient DM inbox backed by Redis Streams.
+
+    Uses XADD/XREADGROUP/XACK for at-least-once delivery:
+    - enqueue → XADD to the recipient's stream
+    - fetch → XREADGROUP (new msgs) + XAUTOCLAIM (stale pending)
+    - ack → XACK to confirm receipt
+    - Unacked messages are automatically redelivered after VISIBILITY_TIMEOUT
+    """
 
     def __init__(self, r: Redis) -> None:
         self._r = r
@@ -104,12 +115,17 @@ class RedisMessageBackend:
     def _key(self, tid: str, name: str) -> str:
         return f"t:{tid}:dm:{name}"
 
+    async def _ensure_group(self, key: str) -> None:
+        """Create consumer group if it doesn't exist."""
+        try:
+            await self._r.xgroup_create(key, _CONSUMER_GROUP, id="0", mkstream=True)
+        except Exception:
+            pass  # Group already exists
+
     async def enqueue(self, tenant_id: str, to_name: str, message: dict) -> None:
         key = self._key(tenant_id, to_name)
-        async with self._r.pipeline(transaction=True) as pipe:
-            pipe.rpush(key, json.dumps(message))
-            pipe.expire(key, MESSAGE_TTL)
-            await pipe.execute()
+        await self._ensure_group(key)
+        await self._r.xadd(key, {"data": json.dumps(message)}, maxlen=10000)
 
     async def enqueue_batch(
         self, tenant_id: str, to_name: str, messages: list[dict]
@@ -117,96 +133,134 @@ class RedisMessageBackend:
         if not messages:
             return
         key = self._key(tenant_id, to_name)
-        encoded = [json.dumps(m) for m in messages]
-        async with self._r.pipeline(transaction=True) as pipe:
-            pipe.rpush(key, *encoded)
-            pipe.expire(key, MESSAGE_TTL)
+        await self._ensure_group(key)
+        async with self._r.pipeline(transaction=False) as pipe:
+            for m in messages:
+                pipe.xadd(key, {"data": json.dumps(m)}, maxlen=10000)
             await pipe.execute()
 
-    def _inflight_key(self, tid: str, name: str, token: str) -> str:
-        return f"t:{tid}:dm:{name}:inflight:{token}"
-
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
+        """Read and acknowledge all messages (destructive read)."""
         key = self._key(tenant_id, to_name)
-        async with self._r.pipeline(transaction=True) as pipe:
-            pipe.lrange(key, 0, -1)
-            pipe.delete(key)
-            results = await pipe.execute()
-        return [json.loads(m) for m in results[0]]
-
-    # Lua script: atomically read all messages, move to inflight, set TTL.
-    # Returns the messages that were moved — no race with concurrent enqueue.
-    _FETCH_SCRIPT = """
-    local inbox = KEYS[1]
-    local inflight = KEYS[2]
-    local ttl = tonumber(ARGV[1])
-    local msgs = redis.call('LRANGE', inbox, 0, -1)
-    if #msgs == 0 then return {} end
-    redis.call('DEL', inbox)
-    for i, m in ipairs(msgs) do
-        redis.call('RPUSH', inflight, m)
-    end
-    redis.call('EXPIRE', inflight, ttl)
-    return msgs
-    """
+        await self._ensure_group(key)
+        entries = await self._r.xreadgroup(
+            _CONSUMER_GROUP, _CONSUMER_NAME, {key: ">"}, count=10000
+        )
+        if not entries:
+            return []
+        messages = []
+        ids = []
+        for stream_key, stream_entries in entries:
+            for entry_id, fields in stream_entries:
+                ids.append(entry_id)
+                messages.append(json.loads(fields["data"]))
+        if ids:
+            await self._r.xack(key, _CONSUMER_GROUP, *ids)
+            await self._r.xdel(key, *ids)
+        return messages
 
     async def fetch(
         self, tenant_id: str, to_name: str
     ) -> tuple[list[dict], str]:
         key = self._key(tenant_id, to_name)
-        token = uuid.uuid4().hex
-        inflight = self._inflight_key(tenant_id, to_name, token)
+        await self._ensure_group(key)
 
-        # Atomic Lua: read + delete inbox + copy to inflight in one call.
-        msgs_raw = await self._r.eval(
-            self._FETCH_SCRIPT, 2, key, inflight, VISIBILITY_TIMEOUT,
+        messages = []
+        all_ids = []
+
+        # 1. Reclaim stale pending messages (unacked past visibility timeout)
+        visibility_ms = VISIBILITY_TIMEOUT * 1000
+        try:
+            claimed = await self._r.xautoclaim(
+                key, _CONSUMER_GROUP, _CONSUMER_NAME,
+                min_idle_time=visibility_ms, start_id="0-0", count=1000
+            )
+            # xautoclaim returns (next_start_id, claimed_entries, deleted_ids)
+            if claimed and len(claimed) >= 2:
+                for entry_id, fields in claimed[1]:
+                    all_ids.append(entry_id)
+                    messages.append(json.loads(fields["data"]))
+        except Exception:
+            pass  # XAUTOCLAIM not supported or no pending
+
+        # 2. Read new messages
+        entries = await self._r.xreadgroup(
+            _CONSUMER_GROUP, _CONSUMER_NAME, {key: ">"}, count=10000
         )
-        if not msgs_raw:
+        if entries:
+            for stream_key, stream_entries in entries:
+                for entry_id, fields in stream_entries:
+                    all_ids.append(entry_id)
+                    messages.append(json.loads(fields["data"]))
+
+        if not messages:
             return [], ""
 
-        messages = [json.loads(m) for m in msgs_raw]
-        return messages, token
+        # ack_token = JSON list of stream entry IDs
+        ack_token = json.dumps(all_ids)
+        return messages, ack_token
 
     async def ack(
         self, tenant_id: str, to_name: str, ack_token: str
     ) -> None:
         if not ack_token:
             return
-        inflight = self._inflight_key(tenant_id, to_name, ack_token)
-        await self._r.delete(inflight)
+        key = self._key(tenant_id, to_name)
+        try:
+            ids = json.loads(ack_token)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if ids:
+            await self._r.xack(key, _CONSUMER_GROUP, *ids)
+            # Trim acked entries from the stream
+            await self._r.xdel(key, *ids)
+
+    async def ack_ids(
+        self, tenant_id: str, to_name: str, message_ids: list[str]
+    ) -> int:
+        if not message_ids:
+            return 0
+        key = self._key(tenant_id, to_name)
+        acked = await self._r.xack(key, _CONSUMER_GROUP, *message_ids)
+        if message_ids:
+            await self._r.xdel(key, *message_ids)
+        return acked
+
+    async def pending_count(
+        self, tenant_id: str, to_name: str
+    ) -> int:
+        key = self._key(tenant_id, to_name)
+        try:
+            info = await self._r.xpending(key, _CONSUMER_GROUP)
+            return info["pending"] if info else 0
+        except Exception:
+            return 0
 
     async def peek(self, tenant_id: str, to_name: str) -> int:
-        return await self._r.llen(self._key(tenant_id, to_name))
+        return await self._r.xlen(self._key(tenant_id, to_name))
 
     async def count_all(self, tenant_id: str) -> int:
-        """Count total pending messages across all recipients for a tenant."""
+        """Count total messages across all recipient streams for a tenant."""
         cursor, total = "0", 0
         while True:
             cursor, keys = await self._r.scan(
                 cursor=cursor, match=f"t:{tenant_id}:dm:*", count=100
             )
             for key in keys:
-                # Skip inflight keys (contain :inflight:)
-                key_str = key if isinstance(key, str) else key.decode()
-                if ":inflight:" in key_str:
-                    continue
-                total += await self._r.llen(key)
+                total += await self._r.xlen(key)
             if cursor == 0 or cursor == "0":
                 break
         return total
 
     async def count_all_global(self) -> int:
-        """Count total pending messages globally."""
+        """Count total messages globally across all streams."""
         cursor, total = "0", 0
         while True:
             cursor, keys = await self._r.scan(
                 cursor=cursor, match="t:*:dm:*", count=100
             )
             for key in keys:
-                key_str = key if isinstance(key, str) else key.decode()
-                if ":inflight:" in key_str:
-                    continue
-                total += await self._r.llen(key)
+                total += await self._r.xlen(key)
             if cursor == 0 or cursor == "0":
                 break
         return total

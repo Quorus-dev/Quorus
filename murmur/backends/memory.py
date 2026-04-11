@@ -16,13 +16,38 @@ from dataclasses import dataclass, field
 
 
 class InMemoryMessageBackend:
-    """Per-recipient DM inbox backed by a plain dict."""
+    """Per-recipient DM inbox with at-least-once delivery semantics.
+
+    Messages move through three states:
+    1. Queued — waiting in the inbox
+    2. Pending — fetched but not yet acknowledged (redelivered after timeout)
+    3. Acknowledged — removed permanently
+    """
+
+    VISIBILITY_TIMEOUT = 60  # seconds before unacked messages are redelivered
 
     def __init__(self) -> None:
         self._queues: dict[tuple[str, str], list[dict]] = defaultdict(list)
-        # Inflight messages keyed by (tenant_id, to_name, ack_token)
-        self._inflight: dict[tuple[str, str, str], list[dict]] = {}
+        # Pending messages: (tenant_id, to_name, ack_token) -> (messages, fetch_time)
+        self._pending: dict[tuple[str, str, str], tuple[list[dict], float]] = {}
+        # Per-message ID -> (tenant_id, to_name, ack_token) for ack_ids
+        self._msg_id_index: dict[str, tuple[str, str, str]] = {}
         self._lock = asyncio.Lock()
+
+    def _redeliver_stale(self, tenant_id: str, to_name: str) -> None:
+        """Move timed-out pending messages back to the queue (call under lock)."""
+        now = time.time()
+        stale_keys = []
+        for (tid, name, token), (msgs, fetch_time) in self._pending.items():
+            if tid == tenant_id and name == to_name:
+                if now - fetch_time > self.VISIBILITY_TIMEOUT:
+                    stale_keys.append((tid, name, token))
+        for key in stale_keys:
+            msgs, _ = self._pending.pop(key)
+            self._queues[(tenant_id, to_name)].extend(msgs)
+            for m in msgs:
+                mid = m.get("id", "")
+                self._msg_id_index.pop(mid, None)
 
     async def enqueue(
         self, tenant_id: str, to_name: str, message: dict
@@ -47,20 +72,61 @@ class InMemoryMessageBackend:
         self, tenant_id: str, to_name: str
     ) -> tuple[list[dict], str]:
         async with self._lock:
+            # Redeliver stale pending messages first
+            self._redeliver_stale(tenant_id, to_name)
             key = (tenant_id, to_name)
             msgs = list(self._queues[key])
             if not msgs:
                 return [], ""
             self._queues[key].clear()
             token = uuid.uuid4().hex
-            self._inflight[(tenant_id, to_name, token)] = msgs
+            self._pending[(tenant_id, to_name, token)] = (msgs, time.time())
+            for m in msgs:
+                mid = m.get("id", "")
+                if mid:
+                    self._msg_id_index[mid] = (tenant_id, to_name, token)
             return msgs, token
 
     async def ack(
         self, tenant_id: str, to_name: str, ack_token: str
     ) -> None:
         async with self._lock:
-            self._inflight.pop((tenant_id, to_name, ack_token), None)
+            entry = self._pending.pop((tenant_id, to_name, ack_token), None)
+            if entry:
+                msgs, _ = entry
+                for m in msgs:
+                    self._msg_id_index.pop(m.get("id", ""), None)
+
+    async def ack_ids(
+        self, tenant_id: str, to_name: str, message_ids: list[str]
+    ) -> int:
+        async with self._lock:
+            acked = 0
+            for mid in message_ids:
+                key = self._msg_id_index.pop(mid, None)
+                if key is None:
+                    continue
+                tid, name, token = key
+                if tid != tenant_id or name != to_name:
+                    continue
+                entry = self._pending.get(key)
+                if entry:
+                    msgs, fetch_time = entry
+                    msgs[:] = [m for m in msgs if m.get("id") != mid]
+                    if not msgs:
+                        self._pending.pop(key, None)
+                    acked += 1
+            return acked
+
+    async def pending_count(
+        self, tenant_id: str, to_name: str
+    ) -> int:
+        async with self._lock:
+            total = 0
+            for (tid, name, _), (msgs, _) in self._pending.items():
+                if tid == tenant_id and name == to_name:
+                    total += len(msgs)
+            return total
 
     async def peek(self, tenant_id: str, to_name: str) -> int:
         async with self._lock:
@@ -80,7 +146,8 @@ class InMemoryMessageBackend:
 
     def clear(self) -> None:
         self._queues.clear()
-        self._inflight.clear()
+        self._pending.clear()
+        self._msg_id_index.clear()
 
 
 # -- Rooms ------------------------------------------------------------------

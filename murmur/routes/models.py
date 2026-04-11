@@ -144,3 +144,10 @@ class InviteJoinRequest(BaseModel):
     @classmethod
     def check_name(cls, v: str) -> str:
         return _validate_name(v)
+
+
+class AckRequest(BaseModel):
+    """Client-side message acknowledgment."""
+
+    ack_token: str | None = None
+    message_ids: list[str] | None = None
