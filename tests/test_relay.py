@@ -1408,6 +1408,67 @@ async def test_invite_page_no_auth_required(client: AsyncClient, auth_headers):
     assert resp.status_code == 200
 
 
+async def test_invite_join_with_scoped_token(client: AsyncClient, auth_headers):
+    """Invite join endpoint should accept valid scoped tokens without relay auth."""
+    from murmur.relay import _make_invite_token
+
+    await client.post(
+        "/rooms", json={"name": "scoped-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    token = _make_invite_token("scoped-room")
+    # No auth headers — only the scoped token
+    resp = await client.post(
+        "/invite/scoped-room/join",
+        json={"participant": "bob", "token": token},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "joined"
+
+
+async def test_invite_join_rejects_wrong_room_token(client: AsyncClient, auth_headers):
+    """Invite token for room A should not work for room B."""
+    from murmur.relay import _make_invite_token
+
+    await client.post(
+        "/rooms", json={"name": "room-a", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    await client.post(
+        "/rooms", json={"name": "room-b", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    token_for_a = _make_invite_token("room-a")
+    resp = await client.post(
+        "/invite/room-b/join",
+        json={"participant": "bob", "token": token_for_a},
+    )
+    assert resp.status_code == 403
+
+
+async def test_invite_join_rejects_expired_token(client: AsyncClient, auth_headers):
+    """Expired invite tokens should be rejected."""
+    await client.post(
+        "/rooms", json={"name": "expire-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    # Forge an expired token
+    import hashlib
+    import hmac as _hmac
+    from murmur.relay import INVITE_SECRET
+
+    expires = int(time.time()) - 10  # already expired
+    payload = f"expire-room:{expires}"
+    sig = _hmac.new(INVITE_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    expired_token = f"{payload}:{sig}"
+
+    resp = await client.post(
+        "/invite/expire-room/join",
+        json={"participant": "bob", "token": expired_token},
+    )
+    assert resp.status_code == 403
+
+
 # --- Edge case tests for hackathon hardening ---
 
 

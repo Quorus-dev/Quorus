@@ -1109,11 +1109,10 @@ if(!name)return;
 const btn=f.querySelector('button');
 btn.disabled=true;btn.textContent='Joining...';
 try{
-const res=await fetch('/rooms/$room_name/join',{
+const res=await fetch('/invite/$room_name/join',{
 method:'POST',
-headers:{'Content-Type':'application/json',
-'Authorization':'Bearer $token'},
-body:JSON.stringify({participant:name})
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({participant:name,token:'$token'}
 });
 if(res.ok){
 r.innerHTML='<div class="msg ok">Joined <b>'+esc('$room_name')+'</b> as <b>'
@@ -1131,7 +1130,37 @@ btn.disabled=false;btn.textContent='Join Room';
 </script>
 </body></html>""")
 
-INVITE_TOKEN = os.environ.get("INVITE_TOKEN", RELAY_SECRET)
+INVITE_SECRET = os.environ.get("INVITE_SECRET", RELAY_SECRET)
+INVITE_TTL = int(os.environ.get("INVITE_TTL", str(24 * 60 * 60)))  # 24h default
+
+
+def _make_invite_token(room_name: str) -> str:
+    """Generate an HMAC-based, room-scoped, time-limited invite token."""
+    expires = int(time.time()) + INVITE_TTL
+    payload = f"{room_name}:{expires}"
+    sig = hmac.new(INVITE_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}"
+
+
+def _verify_invite_token(token: str, room_name: str) -> bool:
+    """Verify an invite token is valid for the given room and not expired."""
+    parts = token.rsplit(":", 2)
+    if len(parts) != 3:
+        return False
+    claimed_room, expires_str, sig = parts
+    if claimed_room != room_name:
+        return False
+    try:
+        expires = int(expires_str)
+    except ValueError:
+        return False
+    if time.time() > expires:
+        return False
+    expected_payload = f"{claimed_room}:{expires_str}"
+    expected_sig = hmac.new(
+        INVITE_SECRET.encode(), expected_payload.encode(), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(sig, expected_sig)
 
 
 @app.get("/invite/{room_name}", response_class=HTMLResponse)
@@ -1143,12 +1172,45 @@ async def invite_page(room_name: str, request: Request):
         raise HTTPException(status_code=404, detail="Room not found")
 
     relay_url = str(request.base_url).rstrip("/")
+    invite_token = _make_invite_token(room_name)
     html = _INVITE_TMPL.substitute(
         room_name=room_name,
         relay_url=relay_url,
-        token=INVITE_TOKEN,
+        token=invite_token,
     )
     return HTMLResponse(content=html)
+
+
+class InviteJoinRequest(BaseModel):
+    participant: str
+    token: str
+
+    @field_validator("participant")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+@app.post("/invite/{room_name}/join")
+async def invite_join(room_name: str, req: InviteJoinRequest):
+    """Join a room using a scoped invite token (no RELAY_SECRET needed)."""
+    if not _verify_invite_token(req.token, room_name):
+        raise HTTPException(status_code=403, detail="Invalid or expired invite token")
+
+    rid = _find_room_by_name(room_name)
+    if not rid:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    room = rooms[rid]
+    if len(room["members"]) >= MAX_ROOM_MEMBERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Room is at maximum capacity ({MAX_ROOM_MEMBERS} members)",
+        )
+    room["members"].add(req.participant)
+    participants.add(req.participant)
+    await _persist_state()
+    return {"status": "joined"}
 
 
 _DASHBOARD_HTML = """\
