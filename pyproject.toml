@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 mcp-tunnel-relay = "relay_server:main"
 mcp-tunnel-analytics = "analytics:main"
+murmur = "cli:main"
 
 [tool.ruff]
 target-version = "py310"
