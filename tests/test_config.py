@@ -116,3 +116,60 @@ def test_load_config_corrupt_file_uses_defaults(tmp_path, monkeypatch):
 
     assert config["relay_url"] == "http://localhost:8080"
     assert config["instance_name"] == "default"
+
+
+def test_poll_mode_defaults_to_lazy(tmp_path, monkeypatch):
+    """With no background polling config, poll_mode should be lazy."""
+    monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(tmp_path / "nonexistent"))
+    monkeypatch.delenv("POLL_MODE", raising=False)
+    monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
+    monkeypatch.delenv("RELAY_URL", raising=False)
+    monkeypatch.delenv("RELAY_SECRET", raising=False)
+    monkeypatch.delenv("INSTANCE_NAME", raising=False)
+
+    config = load_config()
+    assert config["poll_mode"] == "lazy"
+
+
+def test_poll_mode_env_override(tmp_path, monkeypatch):
+    """POLL_MODE env var should override everything."""
+    monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(tmp_path / "nonexistent"))
+    monkeypatch.setenv("POLL_MODE", "sse")
+    monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
+    monkeypatch.delenv("RELAY_URL", raising=False)
+    monkeypatch.delenv("RELAY_SECRET", raising=False)
+    monkeypatch.delenv("INSTANCE_NAME", raising=False)
+
+    config = load_config()
+    assert config["poll_mode"] == "sse"
+
+
+def test_poll_mode_backward_compat(tmp_path, monkeypatch):
+    """enable_background_polling=true should map to sse mode."""
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(json.dumps({
+        "enable_background_polling": True,
+    }))
+    monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(config_dir))
+    monkeypatch.delenv("POLL_MODE", raising=False)
+    monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
+    monkeypatch.delenv("RELAY_URL", raising=False)
+    monkeypatch.delenv("RELAY_SECRET", raising=False)
+    monkeypatch.delenv("INSTANCE_NAME", raising=False)
+
+    config = load_config()
+    assert config["poll_mode"] == "sse"
+
+
+def test_poll_mode_invalid_falls_back_to_lazy(tmp_path, monkeypatch):
+    """Invalid POLL_MODE value should default to lazy."""
+    monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(tmp_path / "nonexistent"))
+    monkeypatch.setenv("POLL_MODE", "invalid-mode")
+    monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
+    monkeypatch.delenv("RELAY_URL", raising=False)
+    monkeypatch.delenv("RELAY_SECRET", raising=False)
+    monkeypatch.delenv("INSTANCE_NAME", raising=False)
+
+    config = load_config()
+    assert config["poll_mode"] == "lazy"
