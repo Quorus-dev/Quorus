@@ -182,7 +182,7 @@ async def test_delivered_messages_do_not_reappear_after_reload(
 
 
 async def test_message_cap_trims_oldest(client: AsyncClient, auth_headers: dict):
-    with patch("murmur.relay.MAX_MESSAGES", 5):
+    with patch("murmur.relay_routes.MAX_MESSAGES", 5):
         for i in range(7):
             await client.post(
                 "/messages",
@@ -232,7 +232,7 @@ async def test_large_message_is_chunked_and_reassembled(client: AsyncClient, aut
     """A message exceeding MAX_MESSAGE_SIZE should be chunked on send and reassembled on fetch."""
     large_content = "x" * 200
 
-    with patch("murmur.relay.MAX_MESSAGE_SIZE", 100):
+    with patch("murmur.relay_routes.MAX_MESSAGE_SIZE", 100):
         resp = await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": large_content},
@@ -253,7 +253,7 @@ async def test_large_unicode_message_is_chunked_without_corruption(
     """Chunking should preserve UTF-8 content across chunk boundaries."""
     large_content = "🙂" * 60
 
-    with patch("murmur.relay.MAX_MESSAGE_SIZE", 101):
+    with patch("murmur.relay_routes.MAX_MESSAGE_SIZE", 101):
         resp = await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": large_content},
@@ -271,7 +271,10 @@ async def test_chunked_message_too_large_for_storage_cap_returns_413(
     client: AsyncClient, auth_headers: dict
 ):
     """Reject chunked messages that cannot fit within the configured global cap."""
-    with patch("murmur.relay.MAX_MESSAGE_SIZE", 4), patch("murmur.relay.MAX_MESSAGES", 2):
+    with (
+        patch("murmur.relay_routes.MAX_MESSAGE_SIZE", 4),
+        patch("murmur.relay_routes.MAX_MESSAGES", 2),
+    ):
         resp = await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "abcdefghij"},
@@ -283,7 +286,10 @@ async def test_chunked_message_too_large_for_storage_cap_returns_413(
 
 async def test_message_cap_does_not_split_chunk_groups(client: AsyncClient, auth_headers: dict):
     """When trimming is needed, whole chunked messages should be kept or removed together."""
-    with patch("murmur.relay.MAX_MESSAGE_SIZE", 4), patch("murmur.relay.MAX_MESSAGES", 4):
+    with (
+        patch("murmur.relay_routes.MAX_MESSAGE_SIZE", 4),
+        patch("murmur.relay_routes.MAX_MESSAGES", 4),
+    ):
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "one"},
@@ -573,7 +579,7 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
     from unittest.mock import AsyncMock
     from unittest.mock import patch as mock_patch
 
-    import murmur.relay as relay_mod
+    import murmur.relay_routes as relay_routes_mod
 
     # Register webhook
     with patch("socket.getaddrinfo", _fake_getaddrinfo_public):
@@ -589,7 +595,7 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
     mock_http_client.post = AsyncMock(return_value=mock_response)
     mock_http_client.is_closed = False
 
-    with mock_patch.object(relay_mod, "_webhook_http_client", mock_http_client):
+    with mock_patch.object(relay_routes_mod, "_webhook_http_client", mock_http_client):
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "push this"},
@@ -1169,7 +1175,7 @@ async def test_room_history_persists(client: AsyncClient, auth_headers: dict, tm
 
 async def test_rate_limit_dm(client: AsyncClient, auth_headers):
     """DM endpoint should return 429 when rate limit exceeded."""
-    with patch("murmur.relay.RATE_LIMIT_MAX", 3):
+    with patch("murmur.relay_routes.RATE_LIMIT_MAX", 3):
         for i in range(3):
             resp = await client.post(
                 "/messages",
@@ -1194,7 +1200,7 @@ async def test_rate_limit_room_message(client: AsyncClient, auth_headers):
     )
     room_id = resp.json()["id"]
 
-    with patch("murmur.relay.RATE_LIMIT_MAX", 2):
+    with patch("murmur.relay_routes.RATE_LIMIT_MAX", 2):
         for i in range(2):
             resp = await client.post(
                 f"/rooms/{room_id}/messages",
@@ -1213,7 +1219,7 @@ async def test_rate_limit_room_message(client: AsyncClient, auth_headers):
 
 async def test_rate_limit_per_ip(client: AsyncClient, auth_headers):
     """Rate limits are per-IP — different senders from the same IP share a bucket."""
-    with patch("murmur.relay.RATE_LIMIT_MAX", 1):
+    with patch("murmur.relay_routes.RATE_LIMIT_MAX", 1):
         resp = await client.post(
             "/messages",
             json={"from_name": "alice", "to": "charlie", "content": "a"},

@@ -97,7 +97,6 @@ def test_cli_version(capsys):
 
 
 def test_cli_logs(capsys):
-    import httpx
     from murmur.cli import _cmd_logs
 
     mock_stats = {
@@ -126,6 +125,7 @@ def test_cli_logs(capsys):
 
 def test_cli_logs_relay_down(capsys):
     import httpx
+
     from murmur.cli import _cmd_logs
 
     with patch("httpx.get", side_effect=httpx.ConnectError("refused")):
@@ -137,7 +137,6 @@ def test_cli_logs_relay_down(capsys):
 
 
 def test_cli_doctor_all_pass(capsys):
-    import httpx
     from murmur.cli import _cmd_doctor
 
     mock_health = MagicMock()
@@ -256,6 +255,7 @@ async def test_export_empty_room(capsys):
 
 async def test_export_room_not_found(capsys):
     import httpx
+
     from murmur.cli import _export
 
     resp = MagicMock()
@@ -311,7 +311,7 @@ def test_add_agent_creates_workspace(tmp_path, monkeypatch):
 
     # Mock _list_rooms and _auto_join
     mock_rooms = [{"name": "dev", "id": "r1", "members": []}]
-    client = _mock_client(200, {})
+    _mock_client(200, {})
 
     with patch("murmur.cli.Prompt.ask", side_effect=mock_ask), \
          patch("murmur.cli.Confirm.ask", side_effect=mock_confirm), \
@@ -466,6 +466,7 @@ async def test_search_no_results(capsys):
 
 async def test_search_room_not_found(capsys):
     import httpx
+
     from murmur.cli import _search
 
     resp = MagicMock()
@@ -516,7 +517,6 @@ def test_add_agent_cancelled(monkeypatch, capsys):
     confirm_count = {"n": 0}
 
     def mock_confirm(prompt, **kwargs):
-        idx = confirm_count["n"]
         confirm_count["n"] += 1
         # First confirm (Launch agent?) — say no
         return False
