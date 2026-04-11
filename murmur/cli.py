@@ -413,6 +413,41 @@ def _cmd_dm(args):
     console.print(f"[green]DM sent to {args.to}[/green]")
 
 
+async def _history(room_name: str, limit: int = 50):
+    """Fetch and display room message history."""
+    client = httpx.AsyncClient()
+    try:
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_name}/history",
+            params={"limit": limit},
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        messages = resp.json()
+        if not messages:
+            console.print(f"[dim]No messages in {room_name}[/dim]")
+            return
+        console.print(
+            f"[bold]History for {room_name}[/bold] "
+            f"({len(messages)} messages)\n"
+        )
+        for msg in messages:
+            console.print(_format_chat_msg(msg))
+    except httpx.ConnectError:
+        console.print(f"[red]Cannot connect to relay at {RELAY_URL}[/red]")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room_name}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_history(args):
+    asyncio.run(_history(args.room, args.limit))
+
+
 def _cmd_watch(args):
     asyncio.run(_watch(args.room))
 
@@ -675,6 +710,12 @@ def main():
     )
     p_chat.add_argument("room", help="Room name")
 
+    p_history = sub.add_parser("history", help="Show room message history")
+    p_history.add_argument("room", help="Room name")
+    p_history.add_argument(
+        "--limit", type=int, default=50, help="Max messages (default 50)"
+    )
+
     sub.add_parser("status", help="Show relay health and stats")
 
     p_invite_link = sub.add_parser(
@@ -703,6 +744,7 @@ def main():
         "say": _cmd_say,
         "dm": _cmd_dm,
         "watch": _cmd_watch,
+        "history": _cmd_history,
         "chat": _cmd_chat,
         "status": _cmd_status,
         "join": _cmd_join,
