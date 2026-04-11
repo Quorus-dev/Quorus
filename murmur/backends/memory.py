@@ -130,6 +130,16 @@ class InMemoryRoomBackend:
                 if tid == tenant_id
             ]
 
+    async def list_by_member(
+        self, tenant_id: str, member_name: str
+    ) -> list[tuple[str, dict]]:
+        async with self._lock:
+            return [
+                (rid, dict(data))
+                for (tid, rid), data in self._rooms.items()
+                if tid == tenant_id and member_name in data.get("members", {})
+            ]
+
     async def update(
         self, tenant_id: str, room_id: str, updates: dict
     ) -> None:

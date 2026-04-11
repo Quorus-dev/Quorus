@@ -212,6 +212,22 @@ class RedisRoomBackend:
                 results.append((rid, data))
         return results
 
+    async def list_by_member(
+        self, tenant_id: str, member_name: str
+    ) -> list[tuple[str, dict]]:
+        """Return rooms where member_name is a member (O(rooms) in tenant)."""
+        room_ids = await self._r.smembers(self._room_index_key(tenant_id))
+        results: list[tuple[str, dict]] = []
+        for rid in room_ids:
+            is_member = await self._r.hexists(
+                self._members_key(tenant_id, rid), member_name
+            )
+            if is_member:
+                data = await self.get(tenant_id, rid)
+                if data is not None:
+                    results.append((rid, data))
+        return results
+
     async def update(self, tenant_id: str, room_id: str, updates: dict) -> None:
         meta_key = self._meta_key(tenant_id, room_id)
         if not await self._r.exists(meta_key):

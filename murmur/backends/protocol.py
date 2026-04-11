@@ -92,6 +92,12 @@ class RoomBackend(Protocol):
         """Return all rooms for a tenant as (room_id, data) pairs."""
         ...
 
+    async def list_by_member(
+        self, tenant_id: str, member_name: str
+    ) -> list[tuple[str, dict]]:
+        """Return rooms where *member_name* is a member, as (room_id, data) pairs."""
+        ...
+
     async def update(
         self, tenant_id: str, room_id: str, updates: dict
     ) -> None:

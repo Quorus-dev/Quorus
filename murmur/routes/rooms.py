@@ -46,16 +46,10 @@ async def list_rooms(
 ):
     svc = request.app.state.room_service
     tid = _tid(auth)
-    all_rooms = await svc.list_all(tid)
-    # Non-legacy users only see rooms they belong to
+    # Admins/legacy see all rooms; regular users see only their rooms
     if auth.is_legacy or auth.role == "admin":
-        return all_rooms
-    result = []
-    for room in all_rooms:
-        members = await svc.get_members(tid, room["id"])
-        if auth.sub in members:
-            result.append(room)
-    return result
+        return await svc.list_all(tid)
+    return await svc.list_for_member(tid, auth.sub)
 
 
 @router.get("/rooms/{room_id}")

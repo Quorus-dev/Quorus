@@ -85,6 +85,18 @@ class RoomService:
     async def list_all(self, tenant_id: str) -> list[dict]:
         """Return all rooms for a tenant."""
         pairs = await self._backend.list_all(tenant_id)
+        return await self._format_room_list(tenant_id, pairs)
+
+    async def list_for_member(
+        self, tenant_id: str, member_name: str
+    ) -> list[dict]:
+        """Return rooms where member_name is a member (backend-optimized)."""
+        pairs = await self._backend.list_by_member(tenant_id, member_name)
+        return await self._format_room_list(tenant_id, pairs)
+
+    async def _format_room_list(
+        self, tenant_id: str, pairs: list[tuple[str, dict]]
+    ) -> list[dict]:
         results = []
         for room_id, data in pairs:
             members = await self._backend.get_members(tenant_id, room_id)
