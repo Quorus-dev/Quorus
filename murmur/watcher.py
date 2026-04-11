@@ -175,8 +175,8 @@ class Watcher:
     md = self._format_context_md(context)
 
     # Atomic write (write to temp file, then rename)
-    import tempfile
     import os
+    import tempfile
 
     try:
       fd, tmp_path = tempfile.mkstemp(dir=self.context_path.parent, suffix=".tmp")

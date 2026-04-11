@@ -662,7 +662,7 @@ class InMemoryRoomStateBackend:
             for task in self._state[key]["claimed_tasks"]:
                 # expires_at is ISO8601; parse to epoch for comparison
                 try:
-                    from datetime import datetime, timezone
+                    from datetime import datetime
                     exp = datetime.fromisoformat(
                         task["expires_at"]
                     ).timestamp()
