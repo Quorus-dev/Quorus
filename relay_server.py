@@ -25,11 +25,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp_tunnel.relay")
 
-RELAY_SECRET = os.environ.get("RELAY_SECRET", "test-secret")
-if RELAY_SECRET == "test-secret":
-    logger.warning(
-        "RELAY_SECRET is set to the default 'test-secret'. "
-        "Set RELAY_SECRET env var to a strong secret before deploying."
+RELAY_SECRET = os.environ.get("RELAY_SECRET", "")
+if not RELAY_SECRET:
+    raise SystemExit(
+        "RELAY_SECRET is not set. "
+        "Set the RELAY_SECRET environment variable to a strong secret."
     )
 
 

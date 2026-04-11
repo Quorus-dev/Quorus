@@ -73,7 +73,10 @@ def render(data: dict) -> None:
 def main():
     config = load_config()
     relay_url = config.get("relay_url", "http://localhost:8080")
-    relay_secret = config.get("relay_secret", "test-secret")
+    relay_secret = config.get("relay_secret", "")
+    if not relay_secret:
+        print("Error: relay_secret not configured. Run: murmur init <name>", file=sys.stderr)
+        sys.exit(1)
 
     try:
         data = fetch_analytics(relay_url, relay_secret)

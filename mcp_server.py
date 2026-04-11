@@ -51,11 +51,6 @@ def _validate_relay_url(value: str) -> str:
 _validate_relay_url(RELAY_URL)
 if not RELAY_SECRET:
     raise SystemExit("relay_secret is empty. Set RELAY_SECRET env var or config file value.")
-if RELAY_SECRET == "test-secret":
-    logger.warning(
-        "relay_secret is set to the default 'test-secret'. "
-        "Set RELAY_SECRET env var to a strong secret before deploying."
-    )
 
 masked_secret = RELAY_SECRET[:4] + "***" if len(RELAY_SECRET) > 4 else "***"
 logger.info(

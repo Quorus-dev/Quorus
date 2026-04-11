@@ -37,7 +37,7 @@ def test_load_config_missing_file_uses_defaults(tmp_path, monkeypatch):
     config = load_config()
 
     assert config["relay_url"] == "http://localhost:8080"
-    assert config["relay_secret"] == "test-secret"
+    assert config["relay_secret"] == ""
     assert config["instance_name"] == "default"
 
 
