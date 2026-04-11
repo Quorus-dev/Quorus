@@ -60,9 +60,11 @@ async def test_multi_agent_room_conversation(client: AsyncClient):
         assert msgs[0]["room"] == "yc-hack"
         assert msgs[0]["from_name"] == "arav-agent-1"
 
-    # Sender should NOT have the message
+    # Sender also sees their own message (room shows all traffic)
     resp = await client.get("/messages/arav-agent-1", headers=HEADERS)
-    assert resp.json() == []
+    msgs = resp.json()
+    assert len(msgs) == 1
+    assert msgs[0]["from_name"] == "arav-agent-1"
 
     # aarya-agent-1 sends status update
     resp = await client.post(

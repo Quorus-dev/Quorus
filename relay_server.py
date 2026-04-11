@@ -733,7 +733,7 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
 
     timestamp = datetime.now(timezone.utc).isoformat()
     message_id = str(uuid.uuid4())
-    recipients = room["members"] - {msg.from_name}
+    recipients = room["members"]
 
     for recipient in recipients:
         fan_out_msg = {

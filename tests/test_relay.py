@@ -827,9 +827,11 @@ async def test_send_room_message_fans_out(client: AsyncClient, auth_headers: dic
     assert len(msgs) == 1
     assert msgs[0]["room"] == "team"
 
-    # Alice does NOT get her own message
+    # Alice also sees her own message (room shows all traffic)
     resp = await client.get("/messages/alice", headers=auth_headers)
-    assert resp.json() == []
+    msgs = resp.json()
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "hello team"
 
 
 async def test_room_message_with_type(client: AsyncClient, auth_headers: dict):
