@@ -751,16 +751,41 @@ def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
 
-    # CLAUDE.md — auto-activates the agent
-    claude_md = f"""You are {name} in the {room} group chat. \
-ALL communication goes through the room:
+    # Auto-join the room so agent is a member on startup
+    async def _auto_join():
+        client = _get_client()
+        try:
+            resp = await client.post(
+                f"{relay_url}/rooms/{room}/join",
+                json={"participant": name},
+                headers={"Authorization": f"Bearer {secret}"},
+            )
+            resp.raise_for_status()
+            console.print(f"[green]{name} joined room '{room}'[/green]")
+        except Exception:
+            console.print(f"[yellow]Could not auto-join room (agent will join on first message)[/yellow]")
+        finally:
+            await client.aclose()
 
-- check_messages() -- call this RIGHT NOW and every 30 seconds
-- send_room_message(room_id="{room}", content="...", \
-message_type="chat") -- talk here
+    asyncio.run(_auto_join())
 
-Do NOT reply in the terminal. ONLY talk through the room. \
-Start by calling check_messages() then send_room_message to check in.
+    # CLAUDE.md — auto-activates the agent with full protocol
+    claude_md = f""" You are {name} in the {room} group chat. You communicate ONLY through the room — never reply in terminal.
+
+  Tools:
+  - check_messages() — read messages NOW and every 30 seconds
+  - send_room_message(room_id="{room}", content="...", message_type="chat") — talk
+  - list_rooms() — see rooms
+
+  Rules:
+  1. Check messages immediately, then introduce yourself to the room
+  2. Read the room history to understand what's been built so far
+  3. Pick up tasks from the room — don't wait to be assigned
+  4. Commit and push after every change
+  5. Post STATUS updates to the room constantly
+  6. If stuck, ask the room — don't guess
+
+  Start now: check_messages(), then send_room_message to check in.
 """
     (workspace / "CLAUDE.md").write_text(claude_md)
 
