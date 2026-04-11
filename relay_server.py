@@ -3,14 +3,14 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from urllib.parse import urlparse
-
-import re
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -50,6 +50,8 @@ locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 persistence_lock = asyncio.Lock()
 message_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
 webhooks: dict[str, str] = {}  # instance_name -> callback_url
+rooms: dict[str, dict] = {}  # room_id -> {name, created_by, members, created_at}
+sse_queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
@@ -103,6 +105,8 @@ def _reset_state():
     persistence_lock = asyncio.Lock()
     message_events.clear()
     webhooks.clear()
+    rooms.clear()
+    sse_queues.clear()
     analytics["total_sent"] = 0
     analytics["total_delivered"] = 0
     analytics["per_participant"].clear()
@@ -149,6 +153,15 @@ def _save_to_file():
             "per_participant": analytics["per_participant"],
             "hourly_volume": analytics["hourly_volume"],
         },
+        "rooms": {
+            rid: {
+                "name": r["name"],
+                "created_by": r["created_by"],
+                "members": sorted(r["members"]),
+                "created_at": r["created_at"],
+            }
+            for rid, r in rooms.items()
+        },
     }
     try:
         with open(MESSAGES_FILE, "w") as f:
@@ -182,6 +195,13 @@ def _load_from_file():
     analytics["total_delivered"] = saved_analytics.get("total_delivered", 0)
     analytics["per_participant"] = saved_analytics.get("per_participant", {})
     analytics["hourly_volume"] = saved_analytics.get("hourly_volume", {})
+    for rid, rdata in data.get("rooms", {}).items():
+        rooms[rid] = {
+            "name": rdata["name"],
+            "created_by": rdata["created_by"],
+            "members": set(rdata.get("members", [])),
+            "created_at": rdata["created_at"],
+        }
     logger.info("Loaded state from %s", MESSAGES_FILE)
 
 
@@ -329,6 +349,32 @@ class RegisterWebhookRequest(BaseModel):
     @classmethod
     def check_name(cls, v: str) -> str:
         return _validate_name(v)
+
+
+class CreateRoomRequest(BaseModel):
+    name: str
+    created_by: str
+
+    @field_validator("name", "created_by")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+class JoinLeaveRequest(BaseModel):
+    participant: str
+
+    @field_validator("participant")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _validate_name(v)
+
+
+def _find_room_by_name(name: str) -> Optional[str]:
+    for rid, room in rooms.items():
+        if room["name"] == name:
+            return rid
+    return None
 
 
 @app.get("/health")
@@ -521,6 +567,76 @@ async def delete_webhook(instance_name: str):
     webhooks.pop(instance_name, None)
     logger.info("Webhook removed: %s", instance_name)
     return {"status": "removed"}
+
+
+@app.post("/rooms", dependencies=[Depends(verify_auth)])
+async def create_room(req: CreateRoomRequest):
+    if _find_room_by_name(req.name):
+        raise HTTPException(status_code=409, detail="Room name already exists")
+    room_id = str(uuid.uuid4())
+    room = {
+        "name": req.name,
+        "created_by": req.created_by,
+        "members": {req.created_by},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    rooms[room_id] = room
+    participants.add(req.created_by)
+    await _persist_state()
+    logger.info("Room created: %s (%s) by %s", req.name, room_id, req.created_by)
+    return {
+        "id": room_id,
+        "name": room["name"],
+        "members": sorted(room["members"]),
+        "created_at": room["created_at"],
+    }
+
+
+@app.get("/rooms", dependencies=[Depends(verify_auth)])
+async def list_rooms():
+    return [
+        {
+            "id": rid,
+            "name": room["name"],
+            "members": sorted(room["members"]),
+            "created_at": room["created_at"],
+        }
+        for rid, room in rooms.items()
+    ]
+
+
+@app.get("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
+async def get_room(room_id: str):
+    room = rooms.get(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    return {
+        "id": room_id,
+        "name": room["name"],
+        "members": sorted(room["members"]),
+        "created_at": room["created_at"],
+    }
+
+
+@app.post("/rooms/{room_id}/join", dependencies=[Depends(verify_auth)])
+async def join_room(room_id: str, req: JoinLeaveRequest):
+    room = rooms.get(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    room["members"].add(req.participant)
+    participants.add(req.participant)
+    await _persist_state()
+    return {"status": "joined"}
+
+
+@app.post("/rooms/{room_id}/leave", dependencies=[Depends(verify_auth)])
+async def leave_room(room_id: str, req: JoinLeaveRequest):
+    room = rooms.get(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    room["members"].discard(req.participant)
+    await _persist_state()
+    return {"status": "left"}
 
 
 @app.get("/analytics", dependencies=[Depends(verify_auth)])

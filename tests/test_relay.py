@@ -676,3 +676,140 @@ async def test_analytics_excludes_expired_messages(client: AsyncClient, auth_hea
     resp = await client.get("/analytics", headers=auth_headers)
     data = resp.json()
     assert data["messages_pending"] == 0
+
+
+async def test_create_room(client: AsyncClient, auth_headers: dict):
+    resp = await client.post(
+        "/rooms",
+        json={"name": "dev-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "dev-room"
+    assert "alice" in data["members"]
+    assert "id" in data
+    assert "created_at" in data
+
+
+async def test_create_room_duplicate_name_rejected(
+    client: AsyncClient, auth_headers: dict
+):
+    await client.post(
+        "/rooms",
+        json={"name": "dev-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    resp = await client.post(
+        "/rooms",
+        json={"name": "dev-room", "created_by": "bob"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 409
+
+
+async def test_list_rooms(client: AsyncClient, auth_headers: dict):
+    await client.post(
+        "/rooms",
+        json={"name": "room-a", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    await client.post(
+        "/rooms",
+        json={"name": "room-b", "created_by": "bob"},
+        headers=auth_headers,
+    )
+    resp = await client.get("/rooms", headers=auth_headers)
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+    names = {r["name"] for r in resp.json()}
+    assert names == {"room-a", "room-b"}
+
+
+async def test_get_room_by_id(client: AsyncClient, auth_headers: dict):
+    create_resp = await client.post(
+        "/rooms",
+        json={"name": "my-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = create_resp.json()["id"]
+    resp = await client.get(f"/rooms/{room_id}", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "my-room"
+
+
+async def test_get_nonexistent_room_returns_404(
+    client: AsyncClient, auth_headers: dict
+):
+    resp = await client.get("/rooms/nonexistent-id", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+async def test_join_room(client: AsyncClient, auth_headers: dict):
+    create_resp = await client.post(
+        "/rooms",
+        json={"name": "my-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = create_resp.json()["id"]
+    resp = await client.post(
+        f"/rooms/{room_id}/join",
+        json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "joined"
+    resp = await client.get(f"/rooms/{room_id}", headers=auth_headers)
+    assert "bob" in resp.json()["members"]
+
+
+async def test_leave_room(client: AsyncClient, auth_headers: dict):
+    create_resp = await client.post(
+        "/rooms",
+        json={"name": "my-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = create_resp.json()["id"]
+    await client.post(
+        f"/rooms/{room_id}/join",
+        json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    resp = await client.post(
+        f"/rooms/{room_id}/leave",
+        json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "left"
+    resp = await client.get(f"/rooms/{room_id}", headers=auth_headers)
+    assert "bob" not in resp.json()["members"]
+
+
+async def test_room_endpoints_require_auth(client: AsyncClient):
+    resp = await client.post(
+        "/rooms", json={"name": "x", "created_by": "y"}
+    )
+    assert resp.status_code == 401
+    resp = await client.get("/rooms")
+    assert resp.status_code == 401
+
+
+async def test_room_persistence_save_and_load(
+    client: AsyncClient, auth_headers: dict, tmp_path
+):
+    filepath = str(tmp_path / "messages.json")
+    with patch("relay_server.MESSAGES_FILE", filepath):
+        await client.post(
+            "/rooms",
+            json={"name": "test-room", "created_by": "alice"},
+            headers=auth_headers,
+        )
+        _save_to_file()
+        _reset_state()
+        _load_from_file()
+        resp = await client.get("/rooms", headers=auth_headers)
+        room_list = resp.json()
+        assert len(room_list) == 1
+        assert room_list[0]["name"] == "test-room"
+        assert "alice" in room_list[0]["members"]
