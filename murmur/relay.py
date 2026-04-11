@@ -1153,85 +1153,266 @@ _DASHBOARD_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Murmur Dashboard</title>
+<title>Murmur</title>
 <style>
+:root{
+  --bg-0:#09090b;--bg-1:#111113;--bg-2:#18181b;
+  --bg-hover:#1e1e22;--border:#27272a;
+  --text:#fafafa;--text-2:#a1a1aa;--text-3:#52525b;
+  --accent:#3b82f6;--accent-h:#2563eb;
+  --accent-s:rgba(59,130,246,.1);
+  --green:#22c55e;--red:#ef4444;--orange:#f59e0b;
+  --purple:#a855f7;--emerald:#10b981;
+  --r:8px;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#c9d1d9}
-header{background:#161b22;border-bottom:1px solid #30363d;padding:12px 24px;
-  display:flex;align-items:center;gap:12px}
-header h1{font-size:18px;color:#58a6ff}
-header .status{font-size:12px;margin-left:auto;display:flex;align-items:center;gap:6px}
-.conn-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.conn-ok{background:#3fb950}
-.conn-err{background:#da3633;animation:pulse 1.5s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.container{display:flex;height:calc(100vh - 49px)}
-.sidebar{width:240px;background:#161b22;border-right:1px solid #30363d;
-  overflow-y:auto;flex-shrink:0}
-.sidebar h3{padding:12px 16px 8px;font-size:12px;color:#8b949e;
-  text-transform:uppercase}
-.room-item{padding:8px 16px;cursor:pointer;border-left:3px solid transparent;
-  font-size:14px;color:#c9d1d9}
-.room-item:hover{background:#1c2128}
-.room-item.active{background:#1c2128;border-left-color:#58a6ff;color:#58a6ff}
-.room-item .count{font-size:11px;color:#8b949e;float:right}
-.room-item .unread{background:#da3633;color:#fff;font-size:10px;
-  padding:1px 6px;border-radius:10px;float:right;margin-left:4px}
-.main{flex:1;display:flex;flex-direction:column}
-.messages{flex:1;overflow-y:auto;padding:16px;
-  display:flex;flex-direction:column;gap:4px}
-.msg{font-size:13px;line-height:1.5}
-.msg .ts{color:#484f58;font-size:11px;margin-right:6px}
-.msg .sender{font-weight:600;color:#58a6ff;margin-right:4px}
-.msg .tag{font-size:11px;padding:1px 5px;border-radius:3px;margin-right:4px}
-.tag-claim{background:#9e6a03;color:#fff}
-.tag-status{background:#1f6feb;color:#fff}
-.tag-request{background:#8957e5;color:#fff}
-.tag-alert{background:#da3633;color:#fff}
-.tag-sync{background:#238636;color:#fff}
-.input-bar{border-top:1px solid #30363d;padding:12px 16px;display:flex;gap:8px}
-.input-bar input{flex:1;background:#0d1117;border:1px solid #30363d;
-  border-radius:6px;padding:8px 12px;color:#c9d1d9;font-size:14px;outline:none}
-.input-bar input:focus{border-color:#58a6ff}
-.input-bar button{background:#238636;color:#fff;border:none;border-radius:6px;
-  padding:8px 16px;cursor:pointer;font-size:14px}
-.input-bar button:hover{background:#2ea043}
-.members{padding:8px 16px;border-top:1px solid #30363d;
-  font-size:12px;color:#8b949e}
-.members .member{display:inline-flex;align-items:center;gap:4px;margin-right:10px}
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.dot-online{background:#3fb950}
-.dot-offline{background:#484f58}
-.empty{color:#484f58;text-align:center;padding:40px;font-size:14px}
-@media(max-width:640px){
-  .sidebar{display:none}
-  .container{flex-direction:column}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',
+  'Inter',system-ui,sans-serif;
+  background:var(--bg-0);color:var(--text);
+  -webkit-font-smoothing:antialiased;
+}
+header{
+  background:var(--bg-1);
+  border-bottom:1px solid var(--border);
+  padding:0 20px;height:52px;
+  display:flex;align-items:center;gap:12px;
+}
+.logo{
+  font-size:15px;font-weight:600;
+  letter-spacing:-.02em;
+  display:flex;align-items:center;gap:8px;
+}
+.logo svg{width:20px;height:20px;opacity:.9}
+.conn{
+  margin-left:auto;display:flex;
+  align-items:center;gap:6px;
+  font-size:12px;color:var(--text-2);
+}
+.conn-dot{
+  width:7px;height:7px;border-radius:50%;
+  transition:background .3s;
+}
+.conn-ok{background:var(--green)}
+.conn-err{background:var(--red);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.container{display:flex;height:calc(100vh - 52px)}
+.sidebar{
+  width:260px;background:var(--bg-1);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;
+}
+.sidebar-hdr{
+  padding:16px 16px 12px;font-size:11px;
+  font-weight:600;color:var(--text-3);
+  text-transform:uppercase;letter-spacing:.05em;
+}
+.rooms-list{flex:1;overflow-y:auto;padding:0 8px}
+.room-item{
+  padding:10px 12px;cursor:pointer;
+  border-radius:var(--r);font-size:13px;
+  font-weight:500;color:var(--text-2);
+  display:flex;align-items:center;gap:8px;
+  transition:all .15s;margin-bottom:2px;
+}
+.room-item:hover{
+  background:var(--bg-hover);color:var(--text);
+}
+.room-item.active{
+  background:var(--accent-s);color:var(--accent);
+}
+.room-item .ri{opacity:.5;flex-shrink:0}
+.room-item .rn{
+  flex:1;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;
+}
+.room-item .cnt{
+  font-size:11px;color:var(--text-3);
+  background:var(--bg-2);
+  padding:2px 6px;border-radius:10px;
+}
+.room-item .unread{
+  background:var(--accent);color:#fff;
+  font-size:10px;font-weight:600;
+  padding:2px 7px;border-radius:10px;
+  min-width:18px;text-align:center;
+}
+.main{
+  flex:1;display:flex;flex-direction:column;
+  background:var(--bg-0);
+}
+.room-hdr{
+  padding:14px 20px;
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:12px;
+}
+.room-hdr .rt{font-size:14px;font-weight:600}
+.room-hdr .rm{
+  font-size:12px;color:var(--text-3);
+  margin-left:auto;
+}
+.messages{
+  flex:1;overflow-y:auto;padding:16px 20px;
+  display:flex;flex-direction:column;gap:2px;
+}
+.messages::-webkit-scrollbar{width:6px}
+.messages::-webkit-scrollbar-track{background:transparent}
+.messages::-webkit-scrollbar-thumb{
+  background:var(--border);border-radius:3px;
+}
+.msg{
+  font-size:13px;line-height:1.6;
+  padding:4px 8px;border-radius:var(--r);
+  transition:background .1s;
+}
+.msg:hover{background:var(--bg-hover)}
+.msg .ts{
+  color:var(--text-3);font-size:11px;
+  margin-right:8px;
+  font-variant-numeric:tabular-nums;
+}
+.msg .sender{
+  font-weight:600;color:var(--accent);
+  margin-right:6px;
+}
+.msg .tag{
+  font-size:10px;font-weight:600;
+  padding:2px 6px;border-radius:4px;
+  margin-right:6px;text-transform:uppercase;
+  letter-spacing:.03em;vertical-align:1px;
+}
+.tag-claim{
+  background:rgba(245,158,11,.15);color:var(--orange);
+}
+.tag-status{
+  background:rgba(59,130,246,.15);color:var(--accent);
+}
+.tag-request{
+  background:rgba(168,85,247,.15);color:var(--purple);
+}
+.tag-alert{
+  background:rgba(239,68,68,.15);color:var(--red);
+}
+.tag-sync{
+  background:rgba(16,185,129,.15);color:var(--emerald);
+}
+.members-bar{
+  padding:10px 20px;
+  border-top:1px solid var(--border);
+  background:var(--bg-1);
+  display:flex;align-items:center;gap:4px;
+  flex-wrap:wrap;
+}
+.members-bar .lbl{
+  font-size:11px;color:var(--text-3);
+  margin-right:8px;font-weight:500;
+}
+.member{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:12px;color:var(--text-2);
+  padding:3px 8px;border-radius:var(--r);
+  background:var(--bg-2);margin:2px;
+}
+.dot{width:6px;height:6px;border-radius:50%}
+.dot-online{background:var(--green)}
+.dot-offline{background:var(--text-3)}
+.input-bar{
+  padding:12px 20px 16px;display:flex;gap:8px;
+}
+.input-bar input{
+  flex:1;background:var(--bg-1);
+  border:1px solid var(--border);
+  border-radius:var(--r);padding:10px 14px;
+  color:var(--text);font-size:13px;outline:none;
+  transition:border-color .2s,box-shadow .2s;
+}
+.input-bar input:focus{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-s);
+}
+.input-bar input::placeholder{color:var(--text-3)}
+.input-bar button{
+  background:var(--accent);color:#fff;
+  border:none;border-radius:var(--r);
+  padding:10px 20px;cursor:pointer;
+  font-size:13px;font-weight:500;
+  transition:background .15s,transform .1s;
+}
+.input-bar button:hover{background:var(--accent-h)}
+.input-bar button:active{transform:scale(.97)}
+.input-bar button:disabled{
+  opacity:.4;cursor:not-allowed;transform:none;
+}
+.empty{
+  color:var(--text-3);text-align:center;
+  padding:60px 20px;font-size:13px;line-height:1.6;
+}
+.empty-icon{font-size:32px;margin-bottom:8px;opacity:.5}
+@media(max-width:700px){
+  .sidebar{
+    position:fixed;left:-280px;top:52px;
+    bottom:0;z-index:10;width:280px;
+    transition:left .2s ease;
+  }
+  .sidebar.open{left:0}
+  .menu-btn{display:block !important}
   .msg{font-size:12px}
   .input-bar input{font-size:16px}
 }
+.menu-btn{
+  display:none;background:none;border:none;
+  color:var(--text-2);cursor:pointer;
+  padding:4px;border-radius:4px;
+}
+.menu-btn:hover{background:var(--bg-hover)}
 </style>
 </head>
 <body>
 <header>
-  <h1>murmur</h1>
-  <span class="status" id="status">
+  <button class="menu-btn" onclick="toggleSidebar()">
+    <svg width="18" height="18" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M3 12h18M3 6h18M3 18h18"/>
+    </svg>
+  </button>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" stroke-width="2">
+      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2
+        2 0 012-2h14a2 2 0 012 2z"/>
+    </svg>
+    murmur
+  </div>
+  <div class="conn" id="status">
     <span class="conn-dot conn-err" id="connDot"></span>
-    <span id="connText">connecting...</span>
-  </span>
+    <span id="connText">connecting</span>
+  </div>
 </header>
 <div class="container">
-  <div class="sidebar">
-    <h3>Rooms</h3>
-    <div id="rooms"><div class="empty">Loading...</div></div>
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-hdr">Rooms</div>
+    <div class="rooms-list" id="rooms">
+      <div class="empty">Loading...</div>
+    </div>
   </div>
   <div class="main">
-    <div class="messages" id="messages">
-      <div class="empty">Select a room to view messages</div>
+    <div class="room-hdr" id="roomHdr" style="display:none">
+      <span class="rt" id="roomTitle"></span>
+      <span class="rm" id="roomMeta"></span>
     </div>
-    <div class="members" id="members"></div>
+    <div class="messages" id="messages">
+      <div class="empty">
+        <div class="empty-icon">&#x1f4ac;</div>
+        Select a room to start
+      </div>
+    </div>
+    <div class="members-bar" id="members"
+      style="display:none"></div>
     <div class="input-bar">
-      <input id="msgInput" placeholder="Type a message..." disabled>
-      <button id="sendBtn" onclick="sendMsg()" disabled>Send</button>
+      <input id="msgInput"
+        placeholder="Type a message..." disabled>
+      <button id="sendBtn" onclick="sendMsg()"
+        disabled>Send</button>
     </div>
   </div>
 </div>
@@ -1240,9 +1421,16 @@ const API=location.origin;
 const P=new URLSearchParams(location.search);
 const TOKEN=P.get('token')||'';
 const NAME=P.get('name')||'web-user';
-const H={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
+const H={
+  'Authorization':'Bearer '+TOKEN,
+  'Content-Type':'application/json'
+};
 let currentRoom=null,sse=null;
 const unread={};
+
+function toggleSidebar(){
+  document.getElementById('sidebar').classList.toggle('open');
+}
 
 async function loadRooms(){
   try{
@@ -1251,65 +1439,91 @@ async function loadRooms(){
     const rooms=await r.json();
     setConn(true);
     const el=document.getElementById('rooms');
-    if(!rooms.length){el.innerHTML='<div class="empty">No rooms</div>';return}
+    if(!rooms.length){
+      el.innerHTML='<div class="empty">No rooms yet</div>';
+      return;
+    }
     el.innerHTML=rooms.map(rm=>{
       const u=unread[rm.name]||0;
-      const badge=u?'<span class="unread">'+u+'</span>':'';
-      return '<div class="room-item" onclick="selectRoom(\\''+
-        rm.name+'\\')">'+rm.name+badge+'<span class="count">'+
-        rm.members.length+'</span></div>';
+      const badge=u
+        ?'<span class="unread">'+u+'</span>'
+        :'<span class="cnt">'+rm.members.length+'</span>';
+      const act=rm.name===currentRoom?' active':'';
+      return '<div class="room-item'+act
+        +'" onclick="selectRoom(\''+rm.name+'\')">'+
+        '<span class="ri">#</span>'+
+        '<span class="rn">'+rm.name+'</span>'+
+        badge+'</div>';
     }).join('');
-    if(currentRoom)document.querySelectorAll('.room-item').forEach(e=>{
-      if(e.textContent.startsWith(currentRoom))e.classList.add('active');
-    });
   }catch(e){setConn(false)}
 }
 
 async function selectRoom(name){
   currentRoom=name;
   unread[name]=0;
-  document.querySelectorAll('.room-item').forEach(e=>{
-    e.classList.toggle('active',e.textContent.startsWith(name));
-  });
+  document.getElementById('sidebar')
+    .classList.remove('open');
   document.getElementById('msgInput').disabled=false;
   document.getElementById('sendBtn').disabled=false;
+  loadRooms();
   try{
-    const r=await fetch(API+'/rooms/'+name+'/history?limit=100',{headers:H});
+    const r=await fetch(
+      API+'/rooms/'+name+'/history?limit=100',
+      {headers:H}
+    );
     const msgs=await r.json();
     const el=document.getElementById('messages');
     el.innerHTML=msgs.map(formatMsg).join('');
     scrollToBottom();
   }catch(e){}
   try{
-    const r=await fetch(API+'/rooms/'+name,{headers:H});
+    const r=await fetch(
+      API+'/rooms/'+name,{headers:H}
+    );
     const room=await r.json();
+    const hdr=document.getElementById('roomHdr');
+    hdr.style.display='flex';
+    document.getElementById('roomTitle')
+      .textContent='# '+name;
+    document.getElementById('roomMeta')
+      .textContent=room.members.length+' members';
     const pr=await fetch(API+'/presence',{headers:H});
     const presence=await pr.json();
-    const onlineSet=new Set(presence.filter(p=>p.online).map(p=>p.name));
-    document.getElementById('members').innerHTML='Members: '+
+    const online=new Set(
+      presence.filter(p=>p.online).map(p=>p.name)
+    );
+    const mb=document.getElementById('members');
+    mb.style.display='flex';
+    mb.innerHTML='<span class="lbl">Members</span>'+
       room.members.map(m=>{
-        const dot=onlineSet.has(m)?'dot-online':'dot-offline';
-        return '<span class="member"><span class="dot '+dot+'"></span>'+m+'</span>';
+        const d=online.has(m)?'dot-online':'dot-offline';
+        return '<span class="member">'+
+          '<span class="dot '+d+'"></span>'+
+          m+'</span>';
       }).join('');
   }catch(e){}
   connectSSE();
 }
 
 function setConn(ok){
-  const dot=document.getElementById('connDot');
-  const txt=document.getElementById('connText');
-  dot.className='conn-dot '+(ok?'conn-ok':'conn-err');
-  txt.textContent=ok?'connected':'disconnected';
+  document.getElementById('connDot').className=
+    'conn-dot '+(ok?'conn-ok':'conn-err');
+  document.getElementById('connText').textContent=
+    ok?'connected':'reconnecting';
 }
 
 function scrollToBottom(){
   const el=document.getElementById('messages');
-  el.scrollTop=el.scrollHeight;
+  requestAnimationFrame(
+    ()=>{el.scrollTop=el.scrollHeight}
+  );
 }
 
 function connectSSE(){
   if(sse)sse.close();
-  sse=new EventSource(API+'/stream/'+NAME+'?token='+TOKEN);
+  sse=new EventSource(
+    API+'/stream/'+NAME+'?token='+TOKEN
+  );
   sse.onopen=()=>setConn(true);
   sse.onerror=()=>setConn(false);
   sse.addEventListener('message',e=>{
@@ -1331,10 +1545,14 @@ function formatMsg(msg){
   const ts=(msg.timestamp||'').substring(11,19);
   const type=msg.message_type||'chat';
   let tag='';
-  if(type!=='chat')tag='<span class="tag tag-'+type+'">'+type+'</span>';
+  if(type!=='chat'){
+    tag='<span class="tag tag-'+type+'">'+
+      type+'</span>';
+  }
   return '<div class="msg"><span class="ts">'+ts+
-    '</span><span class="sender">'+(msg.from_name||'?')+
-    '</span>'+tag+(msg.content||'')+'</div>';
+    '</span><span class="sender">'+
+    (msg.from_name||'?')+'</span>'+
+    tag+(msg.content||'')+'</div>';
 }
 
 async function sendMsg(){
@@ -1342,27 +1560,37 @@ async function sendMsg(){
   const text=input.value.trim();
   if(!text||!currentRoom)return;
   input.value='';
-  try{await fetch(API+'/rooms/'+currentRoom+'/messages',{
-    method:'POST',headers:H,
-    body:JSON.stringify({from_name:NAME,content:text})
-  })}catch(e){}
+  try{await fetch(
+    API+'/rooms/'+currentRoom+'/messages',{
+      method:'POST',headers:H,
+      body:JSON.stringify({from_name:NAME,content:text})
+    }
+  )}catch(e){}
 }
 
-document.getElementById('msgInput').addEventListener('keydown',
-  e=>{if(e.key==='Enter')sendMsg()});
+document.getElementById('msgInput').addEventListener(
+  'keydown',e=>{if(e.key==='Enter')sendMsg()}
+);
 
 async function refreshPresence(){
   if(!currentRoom)return;
   try{
-    const r=await fetch(API+'/rooms/'+currentRoom,{headers:H});
+    const r=await fetch(
+      API+'/rooms/'+currentRoom,{headers:H}
+    );
     const room=await r.json();
     const pr=await fetch(API+'/presence',{headers:H});
     const presence=await pr.json();
-    const onlineSet=new Set(presence.filter(p=>p.online).map(p=>p.name));
-    document.getElementById('members').innerHTML='Members: '+
+    const online=new Set(
+      presence.filter(p=>p.online).map(p=>p.name)
+    );
+    const mb=document.getElementById('members');
+    mb.innerHTML='<span class="lbl">Members</span>'+
       room.members.map(m=>{
-        const dot=onlineSet.has(m)?'dot-online':'dot-offline';
-        return '<span class="member"><span class="dot '+dot+'"></span>'+m+'</span>';
+        const d=online.has(m)?'dot-online':'dot-offline';
+        return '<span class="member">'+
+          '<span class="dot '+d+'"></span>'+
+          m+'</span>';
       }).join('');
   }catch(e){}
 }
@@ -1372,7 +1600,6 @@ setInterval(()=>{loadRooms();refreshPresence()},30000);
 </body>
 </html>
 """
-
 
 def main() -> None:
     """Run the relay server as a CLI entrypoint."""
