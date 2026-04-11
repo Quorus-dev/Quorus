@@ -75,10 +75,12 @@ message_queues: dict[str, list[dict]] = defaultdict(list)
 participants: set[str] = set()
 locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 persistence_lock = asyncio.Lock()
+rooms_lock = asyncio.Lock()  # global lock for room create/join/leave
 message_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
 webhooks: dict[str, str] = {}  # instance_name -> callback_url
 rooms: dict[str, dict] = {}  # room_id -> {name, created_by, members, created_at}
 room_history: dict[str, list[dict]] = defaultdict(list)  # room_id -> last N messages
+SSE_QUEUE_MAX = int(os.environ.get("SSE_QUEUE_MAX", "1000"))
 sse_queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
 presence: dict[str, dict] = {}  # instance_name -> {last_heartbeat, status, room, uptime_start}
 
@@ -148,11 +150,12 @@ def _logical_message_units() -> list[dict]:
 
 def _reset_state():
     """Reset state between tests."""
-    global _start_time, persistence_lock
+    global _start_time, persistence_lock, rooms_lock
     message_queues.clear()
     participants.clear()
     locks.clear()
     persistence_lock = asyncio.Lock()
+    rooms_lock = asyncio.Lock()
     message_events.clear()
     webhooks.clear()
     rooms.clear()
@@ -602,6 +605,15 @@ async def health_detailed():
     }
 
 
+def _sse_push(recipient: str, message: dict) -> None:
+    """Push a message to all SSE queues for a recipient, dropping if full."""
+    for q in sse_queues.get(recipient, []):
+        try:
+            q.put_nowait(message)
+        except asyncio.QueueFull:
+            logger.warning("SSE queue full for %s, dropping message", recipient)
+
+
 async def _notify_webhook(recipient: str, message: dict):
     """Fire webhook notification for recipient, if registered. Failures are logged and ignored."""
     callback_url = webhooks.get(recipient)
@@ -667,8 +679,7 @@ async def send_message(msg: SendMessageRequest):
             "content": content,
             "timestamp": timestamp,
         }
-        for q in sse_queues.get(msg.to, []):
-            await q.put(reassembled)
+        _sse_push(msg.to, reassembled)
         logger.info(
             "Message chunked into %d parts (%s -> %s, group %s)",
             chunk_total, msg.from_name, msg.to, chunk_group,
@@ -691,8 +702,7 @@ async def send_message(msg: SendMessageRequest):
             _trim_messages()
             await _persist_state()
         message_events[msg.to].set()
-        for q in sse_queues.get(msg.to, []):
-            await q.put(message)
+        _sse_push(msg.to, message)
         logger.info("Message %s: %s -> %s", message["id"], msg.from_name, msg.to)
         await _notify_webhook(msg.to, message)
         return {"id": message["id"], "timestamp": message["timestamp"]}
@@ -731,7 +741,7 @@ async def stream_messages(recipient: str, token: str = ""):
     if not (_verify_sse_token(token, recipient) or hmac.compare_digest(token, RELAY_SECRET)):
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    q: asyncio.Queue = asyncio.Queue()
+    q: asyncio.Queue = asyncio.Queue(maxsize=SSE_QUEUE_MAX)
     sse_queues[recipient].append(q)
     logger.info("SSE client connected for %s", recipient)
 
@@ -879,17 +889,18 @@ async def delete_webhook(instance_name: str):
 @app.post("/rooms", dependencies=[Depends(verify_auth)])
 async def create_room(req: CreateRoomRequest):
     """Create a new room. The creator is auto-added as a member."""
-    if _find_room_by_name(req.name):
-        raise HTTPException(status_code=409, detail="Room name already exists")
-    room_id = str(uuid.uuid4())
-    room = {
-        "name": req.name,
-        "created_by": req.created_by,
-        "members": {req.created_by},
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    rooms[room_id] = room
-    participants.add(req.created_by)
+    async with rooms_lock:
+        if _find_room_by_name(req.name):
+            raise HTTPException(status_code=409, detail="Room name already exists")
+        room_id = str(uuid.uuid4())
+        room = {
+            "name": req.name,
+            "created_by": req.created_by,
+            "members": {req.created_by},
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        rooms[room_id] = room
+        participants.add(req.created_by)
     await _persist_state()
     logger.info("Room created: %s (%s) by %s", req.name, room_id, req.created_by)
     return {
@@ -929,14 +940,15 @@ async def get_room(room_id: str):
 @app.post("/rooms/{room_id}/join", dependencies=[Depends(verify_auth)])
 async def join_room(room_id: str, req: JoinLeaveRequest):
     """Add a participant to a room."""
-    room_id, room = _resolve_room(room_id)
-    if len(room["members"]) >= MAX_ROOM_MEMBERS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Room is at maximum capacity ({MAX_ROOM_MEMBERS} members)",
-        )
-    room["members"].add(req.participant)
-    participants.add(req.participant)
+    async with rooms_lock:
+        room_id, room = _resolve_room(room_id)
+        if len(room["members"]) >= MAX_ROOM_MEMBERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Room is at maximum capacity ({MAX_ROOM_MEMBERS} members)",
+            )
+        room["members"].add(req.participant)
+        participants.add(req.participant)
     await _persist_state()
     return {"status": "joined"}
 
@@ -944,8 +956,9 @@ async def join_room(room_id: str, req: JoinLeaveRequest):
 @app.post("/rooms/{room_id}/leave", dependencies=[Depends(verify_auth)])
 async def leave_room(room_id: str, req: JoinLeaveRequest):
     """Remove a participant from a room."""
-    room_id, room = _resolve_room(room_id)
-    room["members"].discard(req.participant)
+    async with rooms_lock:
+        room_id, room = _resolve_room(room_id)
+        room["members"].discard(req.participant)
     await _persist_state()
     return {"status": "left"}
 
@@ -967,7 +980,8 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
 
     timestamp = datetime.now(timezone.utc).isoformat()
     message_id = str(uuid.uuid4())
-    recipients = room["members"]
+    # Snapshot members to avoid RuntimeError from concurrent join/leave
+    recipients = set(room["members"])
 
     for recipient in recipients:
         fan_out_msg = {
@@ -982,8 +996,7 @@ async def send_room_message(room_id: str, msg: RoomMessageRequest):
         async with locks[recipient]:
             message_queues[recipient].append(fan_out_msg)
         message_events[recipient].set()
-        for q in sse_queues.get(recipient, []):
-            await q.put(fan_out_msg)
+        _sse_push(recipient, fan_out_msg)
         await _notify_webhook(recipient, fan_out_msg)
 
     # Store in room history (not cleared on read)
@@ -1228,18 +1241,19 @@ async def invite_join(room_name: str, req: InviteJoinRequest):
     if not _verify_invite_token(req.token, room_name):
         raise HTTPException(status_code=403, detail="Invalid or expired invite token")
 
-    rid = _find_room_by_name(room_name)
-    if not rid:
-        raise HTTPException(status_code=404, detail="Room not found")
+    async with rooms_lock:
+        rid = _find_room_by_name(room_name)
+        if not rid:
+            raise HTTPException(status_code=404, detail="Room not found")
 
-    room = rooms[rid]
-    if len(room["members"]) >= MAX_ROOM_MEMBERS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Room is at maximum capacity ({MAX_ROOM_MEMBERS} members)",
-        )
-    room["members"].add(req.participant)
-    participants.add(req.participant)
+        room = rooms[rid]
+        if len(room["members"]) >= MAX_ROOM_MEMBERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Room is at maximum capacity ({MAX_ROOM_MEMBERS} members)",
+            )
+        room["members"].add(req.participant)
+        participants.add(req.participant)
     await _persist_state()
     return {"status": "joined"}
 
