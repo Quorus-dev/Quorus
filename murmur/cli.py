@@ -484,6 +484,19 @@ def _cmd_init(args):
     console.print(f"  murmur invite <room> {name}     # Join yourself")
 
 
+def _cmd_invite_link(args):
+    """Generate a one-liner join command to share with others."""
+    room = args.room
+    console.print(f"[bold]Share this command to invite someone to '{room}':[/bold]")
+    console.print("")
+    console.print(
+        f"  murmur join --name YOUR_NAME "
+        f"--relay {RELAY_URL} --secret {RELAY_SECRET} --room {room}"
+    )
+    console.print("")
+    console.print("[dim]Replace YOUR_NAME with the agent/user's name.[/dim]")
+
+
 def _cmd_join(args):
     """One-liner to join a room: writes config, registers MCP, joins the room."""
     name = args.name
@@ -664,6 +677,11 @@ def main():
 
     sub.add_parser("status", help="Show relay health and stats")
 
+    p_invite_link = sub.add_parser(
+        "invite-link", help="Generate a join command to share"
+    )
+    p_invite_link.add_argument("room", help="Room name")
+
     p_join = sub.add_parser("join", help="One-liner to join a room")
     p_join.add_argument("--name", required=True, help="Your participant name")
     p_join.add_argument("--relay", dest="relay_url", required=True, help="Relay URL")
@@ -688,6 +706,7 @@ def main():
         "chat": _cmd_chat,
         "status": _cmd_status,
         "join": _cmd_join,
+        "invite-link": _cmd_invite_link,
     }
     commands[args.command](args)
 
