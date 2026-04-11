@@ -1098,6 +1098,8 @@ header .status{font-size:12px;margin-left:auto;display:flex;align-items:center;g
 .room-item:hover{background:#1c2128}
 .room-item.active{background:#1c2128;border-left-color:#58a6ff;color:#58a6ff}
 .room-item .count{font-size:11px;color:#8b949e;float:right}
+.room-item .unread{background:#da3633;color:#fff;font-size:10px;
+  padding:1px 6px;border-radius:10px;float:right;margin-left:4px}
 .main{flex:1;display:flex;flex-direction:column}
 .messages{flex:1;overflow-y:auto;padding:16px;
   display:flex;flex-direction:column;gap:4px}
@@ -1163,6 +1165,7 @@ const TOKEN=P.get('token')||'';
 const NAME=P.get('name')||'web-user';
 const H={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
 let currentRoom=null,sse=null;
+const unread={};
 
 async function loadRooms(){
   try{
@@ -1172,9 +1175,13 @@ async function loadRooms(){
     setConn(true);
     const el=document.getElementById('rooms');
     if(!rooms.length){el.innerHTML='<div class="empty">No rooms</div>';return}
-    el.innerHTML=rooms.map(rm=>'<div class="room-item" onclick="selectRoom(\\''+
-      rm.name+'\\')">'+rm.name+'<span class="count">'+
-      rm.members.length+'</span></div>').join('');
+    el.innerHTML=rooms.map(rm=>{
+      const u=unread[rm.name]||0;
+      const badge=u?'<span class="unread">'+u+'</span>':'';
+      return '<div class="room-item" onclick="selectRoom(\\''+
+        rm.name+'\\')">'+rm.name+badge+'<span class="count">'+
+        rm.members.length+'</span></div>';
+    }).join('');
     if(currentRoom)document.querySelectorAll('.room-item').forEach(e=>{
       if(e.textContent.startsWith(currentRoom))e.classList.add('active');
     });
@@ -1183,6 +1190,7 @@ async function loadRooms(){
 
 async function selectRoom(name){
   currentRoom=name;
+  unread[name]=0;
   document.querySelectorAll('.room-item').forEach(e=>{
     e.classList.toggle('active',e.textContent.startsWith(name));
   });
@@ -1234,6 +1242,9 @@ function connectSSE(){
         const el=document.getElementById('messages');
         el.innerHTML+=formatMsg(msg);
         scrollToBottom();
+      }else if(msg.room){
+        unread[msg.room]=(unread[msg.room]||0)+1;
+        loadRooms();
       }
     }catch(e){}
   });
