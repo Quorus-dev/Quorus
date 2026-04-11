@@ -20,7 +20,8 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -92,6 +93,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestContextMiddleware)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 # CORS — configurable via CORS_ORIGINS env var (comma-separated)
 _cors_origins = os.environ.get("CORS_ORIGINS", "")
@@ -622,8 +624,19 @@ async def dashboard():
 
 @app.get("/health")
 async def health():
-    """Check if the relay is running."""
-    return {"status": "ok"}
+    """Check relay health including persistence writability."""
+    checks: dict = {"status": "ok"}
+
+    # Verify persistence directory is writable
+    persist_dir = os.path.dirname(os.path.abspath(MESSAGES_FILE)) or "."
+    if not os.access(persist_dir, os.W_OK):
+        checks["status"] = "degraded"
+        checks["persistence"] = "directory not writable"
+    else:
+        checks["persistence"] = "ok"
+
+    status_code = 200 if checks["status"] == "ok" else 503
+    return JSONResponse(checks, status_code=status_code)
 
 
 @app.get("/health/detailed", dependencies=[Depends(verify_auth)])

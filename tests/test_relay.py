@@ -44,7 +44,9 @@ async def client():
 async def test_health_check(client: AsyncClient):
     resp = await client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["persistence"] == "ok"
 
 
 async def test_no_auth_returns_401(client: AsyncClient):
