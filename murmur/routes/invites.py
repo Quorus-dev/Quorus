@@ -147,5 +147,5 @@ async def invite_join(
     except HTTPException:
         raise HTTPException(status_code=404, detail="Room not found")
     await room_svc.join(tenant_id, rid, req.participant, role, MAX_ROOM_MEMBERS)
-    request.app.state.backends.participants.add(req.participant)
+    await request.app.state.backends.participants.add(tenant_id, req.participant)
     return {"status": "joined"}

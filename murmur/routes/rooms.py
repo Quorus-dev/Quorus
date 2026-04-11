@@ -35,7 +35,7 @@ async def create_room(
         raise HTTPException(status_code=403, detail="Cannot create room as another user")
     svc = request.app.state.room_service
     result = await svc.create(_tid(auth), req.name, creator)
-    request.app.state.backends.participants.add(creator)
+    await request.app.state.backends.participants.add(_tid(auth), creator)
     return result
 
 
@@ -79,7 +79,7 @@ async def join_room(
     svc = request.app.state.room_service
     rid, _ = await svc.get(_tid(auth), room_id)
     await svc.join(_tid(auth), rid, participant, req.role, MAX_ROOM_MEMBERS)
-    request.app.state.backends.participants.add(participant)
+    await request.app.state.backends.participants.add(_tid(auth), participant)
     return {"status": "joined", "role": req.role}
 
 
@@ -130,9 +130,9 @@ async def destroy_room(
     rid, _ = await svc.get(_tid(auth), room_id)
     is_admin = not auth.is_legacy and auth.role == "admin"
     room_name = await svc.destroy(_tid(auth), rid, requested_by, is_admin)
-    # Also clean up room history and webhooks
+    # Also clean up room history
     backends = request.app.state.backends
-    backends.room_history._history.pop((_tid(auth), rid), None)
+    await backends.room_history.delete(_tid(auth), rid)
     return {"status": "destroyed", "room": room_name}
 
 
@@ -154,7 +154,5 @@ async def rename_room(
     )
     # Update room name in history messages
     backends = request.app.state.backends
-    history_key = (_tid(auth), rid)
-    for msg in backends.room_history._history.get(history_key, []):
-        msg["room"] = new_name
+    await backends.room_history.rename_room_in_history(_tid(auth), rid, new_name)
     return {"status": "renamed", "old_name": old_name, "new_name": new_name}

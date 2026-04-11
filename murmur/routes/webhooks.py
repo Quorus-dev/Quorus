@@ -27,7 +27,7 @@ async def register_webhook(
         )
     svc = request.app.state.webhook_service
     await svc.register_dm(_tid(auth), req.instance_name, req.callback_url)
-    request.app.state.backends.participants.add(req.instance_name)
+    await request.app.state.backends.participants.add(_tid(auth), req.instance_name)
     return {"status": "registered"}
 
 

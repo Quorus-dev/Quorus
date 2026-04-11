@@ -27,7 +27,7 @@ async def heartbeat(
     require_identity(auth, req.instance_name)
     svc = request.app.state.presence_service
     entry = await svc.heartbeat(_tid(auth), req.instance_name, req.status, req.room)
-    request.app.state.backends.participants.add(req.instance_name)
+    await request.app.state.backends.participants.add(_tid(auth), req.instance_name)
     return {"status": "ok", "timestamp": entry.get("last_heartbeat", "")}
 
 

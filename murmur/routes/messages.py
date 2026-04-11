@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from murmur.auth.middleware import AuthContext, require_identity, verify_auth
-from murmur.routes.analytics import track_delivery, track_send
 from murmur.routes.models import SendMessageRequest
 
 router = APIRouter()
@@ -27,9 +26,8 @@ async def send_message(
         raise HTTPException(status_code=403, detail="Cannot send as another user")
     svc = request.app.state.message_service
     result = await svc.send_dm(_tid(auth), sender, msg.to, msg.content)
-    # Track participants and analytics
-    request.app.state.backends.participants.update({sender, msg.to})
-    track_send(sender)
+    # Track participants via backend
+    await request.app.state.backends.participants.add(_tid(auth), sender, msg.to)
     return result
 
 
@@ -43,8 +41,6 @@ async def get_messages(
     require_identity(auth, recipient)
     svc = request.app.state.message_service
     messages = await svc.fetch(_tid(auth), recipient, wait)
-    if messages:
-        track_delivery(recipient, len(messages))
     return messages
 
 
@@ -65,4 +61,4 @@ async def list_participants_endpoint(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
-    return sorted(request.app.state.backends.participants)
+    return await request.app.state.backends.participants.list_all(_tid(auth))

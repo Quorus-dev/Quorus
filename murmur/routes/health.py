@@ -9,11 +9,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from murmur.auth.middleware import AuthContext, verify_auth
-from murmur.routes.analytics import _analytics, _start_time
 
 router = APIRouter()
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))
+
+_start_time = time.time()
 
 
 @router.get("/health")
@@ -34,6 +35,13 @@ async def health():
         else:
             checks["persistence"] = "ok"
 
+    # Check Redis health if available
+    from murmur.backends.redis_client import check_redis
+
+    redis_ok = await check_redis()
+    if redis_ok:
+        checks["redis"] = "connected"
+
     status_code = 200 if checks["status"] == "ok" else 503
     return JSONResponse(checks, status_code=status_code)
 
@@ -44,26 +52,30 @@ async def health_detailed(
     auth: AuthContext = Depends(verify_auth),
 ):
     backends = request.app.state.backends
-    total_msgs = sum(len(msgs) for msgs in backends.messages._queues.values())
-    sse_svc = request.app.state.sse_service
-    total_sse = sum(len(qs) for qs in sse_svc._queues.values())
+    total_msgs = await backends.messages.count_all_global()
 
     # Count rooms
-    rooms_count = len(backends.rooms._rooms)
+    rooms_count = await backends.rooms.count_global()
+
+    # Count participants
+    participants_count = await backends.participants.count_global()
 
     # Count online agents
     presence_svc = request.app.state.presence_service
     online = await presence_svc.list_all("_legacy", HEARTBEAT_TIMEOUT)
     online_agents = len(online)
 
+    # Analytics stats
+    analytics_svc = request.app.state.analytics_service
+    stats = await analytics_svc.get_stats("_legacy")
+
     return {
         "status": "ok",
         "uptime_seconds": round(time.time() - _start_time),
         "rooms": rooms_count,
-        "participants": len(backends.participants),
+        "participants": participants_count,
         "pending_messages": total_msgs,
-        "active_sse_connections": total_sse,
         "online_agents": online_agents,
-        "total_sent": _analytics["total_sent"],
-        "total_delivered": _analytics["total_delivered"],
+        "total_sent": stats.get("total_sent", 0),
+        "total_delivered": stats.get("total_delivered", 0),
     }

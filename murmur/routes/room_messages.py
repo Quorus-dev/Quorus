@@ -7,7 +7,6 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from murmur.auth.middleware import AuthContext, verify_auth
-from murmur.routes.analytics import track_send
 from murmur.routes.models import RoomMessageRequest
 
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
@@ -37,8 +36,7 @@ async def send_room_message(
         _tid(auth), room_id, sender, msg.content,
         message_type=msg.message_type, reply_to=msg.reply_to,
     )
-    request.app.state.backends.participants.add(sender)
-    track_send(sender)
+    await request.app.state.backends.participants.add(_tid(auth), sender)
     return result
 
 
