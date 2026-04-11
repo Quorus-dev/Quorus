@@ -401,6 +401,17 @@ def _find_room_by_name(name: str) -> Optional[str]:
     return None
 
 
+def _resolve_room(room_id_or_name: str) -> tuple[str, dict]:
+    """Resolve a room by ID or name. Raises HTTPException if not found."""
+    room = rooms.get(room_id_or_name)
+    if room:
+        return room_id_or_name, room
+    rid = _find_room_by_name(room_id_or_name)
+    if rid:
+        return rid, rooms[rid]
+    raise HTTPException(status_code=404, detail="Room not found")
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -677,11 +688,9 @@ async def list_rooms():
 
 @app.get("/rooms/{room_id}", dependencies=[Depends(verify_auth)])
 async def get_room(room_id: str):
-    room = rooms.get(room_id)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    rid, room = _resolve_room(room_id)
     return {
-        "id": room_id,
+        "id": rid,
         "name": room["name"],
         "members": sorted(room["members"]),
         "created_at": room["created_at"],
@@ -690,9 +699,7 @@ async def get_room(room_id: str):
 
 @app.post("/rooms/{room_id}/join", dependencies=[Depends(verify_auth)])
 async def join_room(room_id: str, req: JoinLeaveRequest):
-    room = rooms.get(room_id)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room_id, room = _resolve_room(room_id)
     if len(room["members"]) >= MAX_ROOM_MEMBERS:
         raise HTTPException(
             status_code=400,
@@ -706,9 +713,7 @@ async def join_room(room_id: str, req: JoinLeaveRequest):
 
 @app.post("/rooms/{room_id}/leave", dependencies=[Depends(verify_auth)])
 async def leave_room(room_id: str, req: JoinLeaveRequest):
-    room = rooms.get(room_id)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room_id, room = _resolve_room(room_id)
     room["members"].discard(req.participant)
     await _persist_state()
     return {"status": "left"}
@@ -716,9 +721,7 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
 
 @app.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
 async def send_room_message(room_id: str, msg: RoomMessageRequest):
-    room = rooms.get(room_id)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room_id, room = _resolve_room(room_id)
     if msg.from_name not in room["members"]:
         raise HTTPException(status_code=403, detail="Not a member of this room")
 

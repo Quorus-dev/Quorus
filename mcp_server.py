@@ -471,7 +471,7 @@ async def send_room_message(
     """Send a message to a room. All room members will receive it.
 
     Args:
-        room_id: The room ID to send to
+        room_id: The room name or ID (e.g., "murmur-dev" or a UUID)
         content: The message content
         message_type: Optional type: chat, claim, status, request, alert, sync
     """
@@ -483,7 +483,7 @@ async def join_room(room_id: str, context: Context = None) -> str:
     """Join a room to start receiving messages from it.
 
     Args:
-        room_id: The room ID to join
+        room_id: The room name or ID (e.g., "murmur-dev" or a UUID)
     """
     return await _join_room(room_id, context)
 
