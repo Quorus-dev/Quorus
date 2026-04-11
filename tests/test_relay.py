@@ -1134,3 +1134,74 @@ async def test_room_history_persists(client: AsyncClient, auth_headers: dict, tm
         from relay_server import room_history
         assert len(room_history[room_id]) == 1
         assert room_history[room_id][0]["content"] == "persisted"
+
+
+async def test_rate_limit_dm(client: AsyncClient, auth_headers):
+    """DM endpoint should return 429 when rate limit exceeded."""
+    with patch("relay_server.RATE_LIMIT_MAX", 3):
+        for i in range(3):
+            resp = await client.post(
+                "/messages",
+                json={"from_name": "alice", "to": "bob", "content": f"msg-{i}"},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200
+
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "over limit"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 429
+
+
+async def test_rate_limit_room_message(client: AsyncClient, auth_headers):
+    """Room message endpoint should return 429 when rate limit exceeded."""
+    resp = await client.post(
+        "/rooms", json={"name": "rl-test", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = resp.json()["id"]
+
+    with patch("relay_server.RATE_LIMIT_MAX", 2):
+        for i in range(2):
+            resp = await client.post(
+                f"/rooms/{room_id}/messages",
+                json={"from_name": "alice", "content": f"msg-{i}"},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200
+
+        resp = await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "alice", "content": "over limit"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 429
+
+
+async def test_rate_limit_per_sender(client: AsyncClient, auth_headers):
+    """Rate limits should be per-sender, not global."""
+    with patch("relay_server.RATE_LIMIT_MAX", 1):
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "charlie", "content": "a"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        # alice is now rate-limited
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "charlie", "content": "b"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 429
+
+        # bob should still be allowed
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "bob", "to": "charlie", "content": "c"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200

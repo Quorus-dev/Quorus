@@ -62,6 +62,25 @@ MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 MESSAGE_TTL_SECONDS = int(os.environ.get("MESSAGE_TTL_SECONDS", str(24 * 60 * 60)))  # default 24h
 MAX_ROOM_HISTORY = int(os.environ.get("MAX_ROOM_HISTORY", "200"))
 
+# Rate limiting: per-sender sliding window
+RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))  # seconds
+RATE_LIMIT_MAX = int(os.environ.get("RATE_LIMIT_MAX", "60"))  # messages per window
+_rate_buckets: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(sender: str) -> bool:
+    """Return True if the sender is within the rate limit, False if exceeded."""
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW
+    bucket = _rate_buckets[sender]
+    # Prune old entries
+    _rate_buckets[sender] = [t for t in bucket if t > cutoff]
+    if len(_rate_buckets[sender]) >= RATE_LIMIT_MAX:
+        return False
+    _rate_buckets[sender].append(now)
+    return True
+
+
 # Analytics state
 analytics: dict = {
     "total_sent": 0,
@@ -112,6 +131,7 @@ def _reset_state():
     rooms.clear()
     room_history.clear()
     sse_queues.clear()
+    _rate_buckets.clear()
     analytics["total_sent"] = 0
     analytics["total_delivered"] = 0
     analytics["per_participant"].clear()
@@ -387,7 +407,8 @@ class RoomMessageRequest(BaseModel):
     @classmethod
     def check_message_type(cls, v: str) -> str:
         if v not in VALID_MESSAGE_TYPES:
-            raise ValueError(f"message_type must be one of: {', '.join(sorted(VALID_MESSAGE_TYPES))}")
+            allowed = ", ".join(sorted(VALID_MESSAGE_TYPES))
+            raise ValueError(f"message_type must be one of: {allowed}")
         return v
 
 
@@ -444,6 +465,8 @@ async def _notify_webhook(recipient: str, message: dict):
 
 @app.post("/messages", dependencies=[Depends(verify_auth)])
 async def send_message(msg: SendMessageRequest):
+    if not _check_rate_limit(msg.from_name):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     timestamp = datetime.now(timezone.utc).isoformat()
     content = msg.content
 
@@ -727,6 +750,8 @@ async def leave_room(room_id: str, req: JoinLeaveRequest):
 
 @app.post("/rooms/{room_id}/messages", dependencies=[Depends(verify_auth)])
 async def send_room_message(room_id: str, msg: RoomMessageRequest):
+    if not _check_rate_limit(msg.from_name):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     room_id, room = _resolve_room(room_id)
     if msg.from_name not in room["members"]:
         raise HTTPException(status_code=403, detail="Not a member of this room")
