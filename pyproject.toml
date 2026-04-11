@@ -54,6 +54,8 @@ target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
+# Dashboard contains inline HTML/CSS/JS in Python strings
+per-file-ignores = {"murmur/dashboard.py" = ["E501"]}
 select = ["E", "F", "I", "W"]
 
 [tool.pytest.ini_options]

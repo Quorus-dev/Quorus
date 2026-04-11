@@ -9,18 +9,6 @@ from __future__ import annotations
 import os
 
 from murmur.routes import router  # noqa: F401
-from murmur.routes.invites import (
-    INVITE_SECRET as INVITE_SECRET,
-)
-from murmur.routes.invites import (
-    INVITE_TTL as INVITE_TTL,
-)
-from murmur.routes.invites import (
-    _make_invite_token as _make_invite_token,
-)
-from murmur.routes.invites import (
-    _verify_invite_token as _verify_invite_token,
-)
 
 # Config constants re-exported for tests that patch them
 MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
