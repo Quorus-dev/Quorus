@@ -205,12 +205,16 @@ class TestNoAuth:
         resp = await client.get("/health")
         assert resp.status_code == 200
 
-    async def test_invite_no_auth_required(self, client, legacy_headers):
+    async def test_invite_requires_auth(self, client, legacy_headers):
         # Create a room first
         await client.post(
             "/rooms",
             json={"name": "invite-test", "created_by": "alice"},
             headers=legacy_headers,
         )
+        # Without auth — should be rejected
         resp = await client.get("/invite/invite-test")
+        assert resp.status_code == 401
+        # With auth — should succeed
+        resp = await client.get("/invite/invite-test", headers=legacy_headers)
         assert resp.status_code == 200

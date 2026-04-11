@@ -213,14 +213,18 @@ class TestPublicEndpoints:
         assert r.status_code == 200
 
     @pytest.mark.anyio
-    async def test_invite_page_existing_room(self, client):
+    async def test_invite_page_requires_auth(self, client):
         await _create_room(client, name="pub-room")
+        # Without auth — should be rejected
         r = await client.get("/invite/pub-room")
+        assert r.status_code == 401
+        # With auth — should succeed
+        r = await client.get("/invite/pub-room", headers=AUTH)
         assert r.status_code == 200
 
     @pytest.mark.anyio
     async def test_invite_page_missing_room(self, client):
-        r = await client.get("/invite/nonexistent")
+        r = await client.get("/invite/nonexistent", headers=AUTH)
         assert r.status_code == 404
 
 
@@ -1522,7 +1526,7 @@ class TestInvitePageSecurity:
         if they differ. When they're the same (default), verify it's present
         but in a controlled context (bearer header in JS)."""
         await _create_room(client, name="invite-test")
-        r = await client.get("/invite/invite-test")
+        r = await client.get("/invite/invite-test", headers=AUTH)
         assert r.status_code == 200
         # Token is in the page — this is by design for the invite flow.
         # Verify the page at least returns HTML (not raw JSON or error).
@@ -1532,5 +1536,5 @@ class TestInvitePageSecurity:
     async def test_invite_special_chars_in_room_name(self, client):
         """Room names are validated, so XSS via room name shouldn't be possible."""
         # Attempt to access a room with XSS in the name — should 404
-        r = await client.get("/invite/<script>alert(1)</script>")
+        r = await client.get("/invite/<script>alert(1)</script>", headers=AUTH)
         assert r.status_code == 404
