@@ -1,7 +1,89 @@
 "use client";
+import { useRef, useEffect, useState } from "react";
+import { motion, useInView } from "framer-motion";
 import FadeUp from "./FadeUp";
 
+/* ─────────────────────────────────────────────
+   Animated count-up counter
+───────────────────────────────────────────── */
+function Counter({
+  value,
+  suffix = "",
+  decimals = 0,
+}: {
+  value: number;
+  suffix?: string;
+  decimals?: number;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const inView = useInView(ref, { once: true });
+  const [display, setDisplay] = useState(0);
+
+  useEffect(() => {
+    if (!inView) return;
+    const duration = 1500;
+    const start = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+      const current = eased * value;
+      setDisplay(current);
+      if (progress < 1) requestAnimationFrame(tick);
+      else setDisplay(value);
+    };
+    requestAnimationFrame(tick);
+  }, [inView, value]);
+
+  const formatted =
+    decimals > 0 ? display.toFixed(decimals) : Math.floor(display).toString();
+
+  return (
+    <span ref={ref}>
+      {formatted}
+      {suffix}
+    </span>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   Travelling dot along a horizontal connector
+───────────────────────────────────────────── */
+function FlowPulse({
+  color,
+  delay,
+  reverse = false,
+}: {
+  color: "violet" | "cyan";
+  delay: number;
+  reverse?: boolean;
+}) {
+  const bg = color === "violet" ? "bg-violet-400" : "bg-cyan-400";
+  const from = reverse ? 80 : 0;
+  const to = reverse ? 0 : 80;
+
+  return (
+    <motion.div
+      className={`absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full ${bg}`}
+      style={{ left: 0 }}
+      animate={{ x: [from, to], opacity: [0, 1, 1, 0] }}
+      transition={{
+        duration: 1.5,
+        repeat: Infinity,
+        ease: "linear",
+        delay,
+      }}
+    />
+  );
+}
+
+/* ─────────────────────────────────────────────
+   Main section
+───────────────────────────────────────────── */
 export default function Architecture() {
+  const agents = ["Claude Code", "Cursor / Codex", "Gemini / Ollama"];
+  const inboxes = ["agent-1 inbox", "agent-2 inbox", "agent-3 inbox"];
+
   return (
     <section className="py-32 px-6 relative overflow-hidden">
       {/* Background */}
@@ -26,32 +108,43 @@ export default function Architecture() {
         {/* Diagram */}
         <div className="rounded-2xl border border-white/8 bg-[#0d0d0d] p-8 md:p-12">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            {/* Agents */}
+            {/* ── Agents column ── */}
             <div className="flex flex-col gap-3">
-              {["Claude Code", "Cursor / Codex", "Gemini / Ollama"].map(
-                (name) => (
-                  <div
-                    key={name}
-                    className="px-4 py-3 rounded-xl border border-violet-500/20 bg-violet-500/5 text-sm font-mono text-violet-300 text-center min-w-[140px]"
-                  >
-                    {name}
-                  </div>
-                ),
-              )}
+              {agents.map((name, i) => (
+                <motion.div
+                  key={name}
+                  initial={{ opacity: 0, x: -20 }}
+                  whileInView={{ opacity: 1, x: 0 }}
+                  viewport={{ once: true }}
+                  transition={{
+                    duration: 0.4,
+                    delay: i * 0.12,
+                    ease: "easeOut",
+                  }}
+                  className="px-4 py-3 rounded-xl border border-violet-500/20 bg-violet-500/5 text-sm font-mono text-violet-300 text-center min-w-[140px]"
+                >
+                  {name}
+                </motion.div>
+              ))}
               <div className="text-center text-white/20 text-xs font-mono mt-1">
                 agents
               </div>
             </div>
 
-            {/* Arrow */}
+            {/* ── Connector: agents → relay ── */}
             <div className="flex flex-col items-center gap-2 text-white/20">
               <div className="hidden md:block text-xs font-mono">
                 HTTP / MCP
               </div>
               <div className="flex items-center gap-2">
-                <div className="hidden md:block w-16 h-px bg-gradient-to-r from-white/10 to-violet-500/40" />
+                {/* Animated line with travelling dots */}
+                <div className="hidden md:block relative w-16 h-px bg-gradient-to-r from-white/10 to-violet-500/40">
+                  {[0, 0.5, 1.0].map((delay, i) => (
+                    <FlowPulse key={i} color="violet" delay={delay} />
+                  ))}
+                </div>
                 <svg
-                  className="w-4 h-4 text-violet-400 rotate-0 md:rotate-0 rotate-90"
+                  className="w-4 h-4 text-violet-400 md:rotate-0 rotate-90"
                   fill="currentColor"
                   viewBox="0 0 20 20"
                 >
@@ -64,9 +157,23 @@ export default function Architecture() {
               </div>
             </div>
 
-            {/* Relay */}
+            {/* ── Relay box ── */}
             <div className="flex flex-col items-center gap-3">
-              <div className="relative px-6 py-5 rounded-2xl border border-violet-500/30 bg-violet-500/10 glow-purple">
+              <motion.div
+                animate={{
+                  boxShadow: [
+                    "0 0 20px rgba(124,58,237,0.2)",
+                    "0 0 40px rgba(124,58,237,0.4)",
+                    "0 0 20px rgba(124,58,237,0.2)",
+                  ],
+                }}
+                transition={{
+                  duration: 2,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                }}
+                className="relative px-6 py-5 rounded-2xl border border-violet-500/30 bg-violet-500/10"
+              >
                 <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-400 pulse-dot" />
                 <div className="text-center">
                   <div className="text-lg font-bold text-white font-mono mb-1">
@@ -84,13 +191,13 @@ export default function Architecture() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </motion.div>
               <div className="text-center text-white/20 text-xs font-mono">
                 relay server
               </div>
             </div>
 
-            {/* Arrow */}
+            {/* ── Connector: relay → inboxes ── */}
             <div className="flex flex-col items-center gap-2 text-white/20">
               <div className="hidden md:block text-xs font-mono">fan-out</div>
               <div className="flex items-center gap-2">
@@ -105,46 +212,71 @@ export default function Architecture() {
                     clipRule="evenodd"
                   />
                 </svg>
-                <div className="hidden md:block w-16 h-px bg-gradient-to-r from-cyan-500/40 to-white/10" />
+                {/* Animated line with travelling dots */}
+                <div className="hidden md:block relative w-16 h-px bg-gradient-to-r from-cyan-500/40 to-white/10">
+                  {[0.25, 0.75, 1.25].map((delay, i) => (
+                    <FlowPulse key={i} color="cyan" delay={delay} />
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* Recipients */}
+            {/* ── Inboxes column ── */}
             <div className="flex flex-col gap-3">
-              {["agent-1 inbox", "agent-2 inbox", "agent-3 inbox"].map(
-                (name) => (
-                  <div
-                    key={name}
-                    className="px-4 py-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm font-mono text-cyan-300 text-center min-w-[130px]"
-                  >
-                    {name}
-                  </div>
-                ),
-              )}
+              {inboxes.map((name, i) => (
+                <motion.div
+                  key={name}
+                  initial={{ opacity: 0, x: 20 }}
+                  whileInView={{ opacity: 1, x: 0 }}
+                  viewport={{ once: true }}
+                  transition={{
+                    duration: 0.4,
+                    delay: i * 0.12,
+                    ease: "easeOut",
+                  }}
+                  className="px-4 py-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm font-mono text-cyan-300 text-center min-w-[130px]"
+                >
+                  {name}
+                </motion.div>
+              ))}
               <div className="text-center text-white/20 text-xs font-mono mt-1">
                 inboxes
               </div>
             </div>
           </div>
 
-          {/* Stats bar */}
+          {/* ── Stats bar ── */}
           <div className="mt-8 pt-6 border-t border-white/5 grid grid-cols-3 gap-4">
-            {[
-              { label: "p50 latency", value: "3.6ms" },
-              { label: "throughput", value: "281 msg/s" },
-              { label: "tests passing", value: "780+" },
-            ].map((stat, i) => (
-              <FadeUp key={stat.label} delay={i * 0.1}>
-                <div className="text-center">
-                  <div className="text-2xl font-bold gradient-text-subtle">
-                    {stat.value}
-                  </div>
-                  <div className="text-xs text-white/30 mt-1 font-mono">
-                    {stat.label}
-                  </div>
+            <FadeUp delay={0}>
+              <div className="text-center">
+                <div className="text-2xl font-bold gradient-text-subtle">
+                  <Counter value={3.6} suffix="ms" decimals={1} />
                 </div>
-              </FadeUp>
-            ))}
+                <div className="text-xs text-white/30 mt-1 font-mono">
+                  p50 latency
+                </div>
+              </div>
+            </FadeUp>
+            <FadeUp delay={0.1}>
+              <div className="text-center">
+                <div className="text-2xl font-bold gradient-text-subtle">
+                  <Counter value={281} suffix=" msg/s" />
+                </div>
+                <div className="text-xs text-white/30 mt-1 font-mono">
+                  throughput
+                </div>
+              </div>
+            </FadeUp>
+            <FadeUp delay={0.2}>
+              <div className="text-center">
+                <div className="text-2xl font-bold gradient-text-subtle">
+                  <Counter value={780} suffix="+" />
+                </div>
+                <div className="text-xs text-white/30 mt-1 font-mono">
+                  tests passing
+                </div>
+              </div>
+            </FadeUp>
           </div>
         </div>
       </div>
