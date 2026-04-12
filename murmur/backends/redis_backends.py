@@ -8,6 +8,7 @@ All keys are tenant-scoped with the prefix ``t:{tenant_id}:``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
@@ -15,6 +16,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from redis.asyncio import Redis
+from redis.exceptions import ResponseError
+
+_redis_logger = logging.getLogger("murmur.backends.redis")
 
 MESSAGE_TTL = int(os.environ.get("MESSAGE_TTL_SECONDS", "86400"))
 VISIBILITY_TIMEOUT = int(os.environ.get("VISIBILITY_TIMEOUT_SECONDS", "60"))
@@ -122,8 +126,10 @@ class RedisMessageBackend:
         """Create consumer group if it doesn't exist."""
         try:
             await self._r.xgroup_create(key, _CONSUMER_GROUP, id="0", mkstream=True)
-        except Exception:
-            pass  # Group already exists
+        except ResponseError as e:
+            if "BUSYGROUP" not in str(e):
+                _redis_logger.error("Unexpected error creating consumer group: %s", e)
+                raise
 
     async def enqueue(self, tenant_id: str, to_name: str, message: dict) -> None:
         key = self._key(tenant_id, to_name)
@@ -188,8 +194,11 @@ class RedisMessageBackend:
                     msg = json.loads(fields["data"])
                     msg["_delivery_id"] = entry_id
                     messages.append(msg)
-        except Exception:
-            pass  # XAUTOCLAIM not supported or no pending
+        except ResponseError as e:
+            # XAUTOCLAIM requires Redis 6.2+. Log but don't fail.
+            _redis_logger.warning(
+                "XAUTOCLAIM failed (Redis 6.2+ required for auto-reclaim): %s", e
+            )
 
         # 2. Read new messages
         entries = await self._r.xreadgroup(
@@ -243,8 +252,8 @@ class RedisMessageBackend:
         try:
             info = await self._r.xpending(key, _CONSUMER_GROUP)
             return info["pending"] if info else 0
-        except Exception:
-            return 0
+        except ResponseError:
+            return 0  # No consumer group yet
 
     async def peek(self, tenant_id: str, to_name: str) -> int:
         return await self._r.xlen(self._key(tenant_id, to_name))
