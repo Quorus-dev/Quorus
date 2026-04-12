@@ -23,3 +23,11 @@ class RateLimitService:
         return await self._backend.check_and_increment(
             tenant_id, sender, self._window, self._max_count
         )
+
+    async def check_with_limit(
+        self, tenant_id: str, sender: str, max_count: int
+    ) -> bool:
+        """Like ``check`` but with a caller-specified per-endpoint max_count."""
+        return await self._backend.check_and_increment(
+            tenant_id, sender, self._window, max_count
+        )

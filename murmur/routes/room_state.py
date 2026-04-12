@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from murmur.auth.middleware import AuthContext, verify_auth
 
@@ -94,10 +94,17 @@ async def get_room_state(
 
 
 class ClaimTaskRequest(BaseModel):
-    file_path: str
+    file_path: str = Field(min_length=1, max_length=500)
     claimed_by: str
     description: str = ""
     ttl_seconds: int = 300
+
+    @field_validator("file_path")
+    @classmethod
+    def no_path_traversal(cls, v: str) -> str:
+        if ".." in v.split("/") or ".." in v.split("\\"):
+            raise ValueError("file_path must not contain directory traversal sequences")
+        return v
 
 
 class ReleaseTaskRequest(BaseModel):
@@ -150,6 +157,12 @@ async def claim_task(
     room_svc = request.app.state.room_service
     backends = request.app.state.backends
     tid = _tid(auth)
+
+    # Rate limit: 30/min
+    rate_limit_svc = request.app.state.rate_limit_service
+    caller = auth.sub or "anon"
+    if not await rate_limit_svc.check_with_limit(tid, f"lock_acquire:{caller}", 30):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     rid, room_data = await room_svc.get(tid, room_id)
     room_name = room_data.get("name", rid)
@@ -217,6 +230,12 @@ async def release_task(
     backends = request.app.state.backends
     tid = _tid(auth)
 
+    # Rate limit: 30/min
+    rate_limit_svc = request.app.state.rate_limit_service
+    caller = auth.sub or "anon"
+    if not await rate_limit_svc.check_with_limit(tid, f"lock_release:{caller}", 30):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
     rid, room_data = await room_svc.get(tid, room_id)
     room_name = room_data.get("name", rid)
     members = room_data.get("members", {})
@@ -254,12 +273,12 @@ async def release_task(
 
 
 class SetGoalRequest(BaseModel):
-    goal: str | None = None
+    goal: str | None = Field(default=None, max_length=1000)
     set_by: str = ""
 
 
 class AddDecisionRequest(BaseModel):
-    decision: str
+    decision: str = Field(min_length=1, max_length=2000)
     rationale: str | None = None
 
 
@@ -304,10 +323,10 @@ async def set_room_goal(
     backends = request.app.state.backends
     tid = _tid(auth)
 
-    # Rate limit: 30/min
+    # Rate limit: 10/min
     rate_limit_svc = request.app.state.rate_limit_service
     caller = auth.sub or "anon"
-    if not await rate_limit_svc.check(tid, f"goal:{caller}"):
+    if not await rate_limit_svc.check_with_limit(tid, f"goal:{caller}", 10):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     rid, room_data = await room_svc.get(tid, room_id)
@@ -342,10 +361,10 @@ async def add_room_decision(
     backends = request.app.state.backends
     tid = _tid(auth)
 
-    # Rate limit: 30/min
+    # Rate limit: 20/min
     rate_limit_svc = request.app.state.rate_limit_service
     caller = auth.sub or "anon"
-    if not await rate_limit_svc.check(tid, f"decision:{caller}"):
+    if not await rate_limit_svc.check_with_limit(tid, f"decision:{caller}", 20):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     rid, room_data = await room_svc.get(tid, room_id)

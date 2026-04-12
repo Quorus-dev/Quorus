@@ -533,8 +533,8 @@ MURMUR_HOOK_CONFIG = {
     "hooks": [
         {
             "type": "command",
-            "command": "murmur inbox",
-            "timeout": 5,
+            "command": "murmur inbox --quiet && murmur context --quiet",
+            "timeout": 10,
         }
     ],
 }
@@ -2487,6 +2487,19 @@ def _cmd_brief(args):
 
     room = args.room
     task = " ".join(args.task) if isinstance(args.task, list) else args.task
+
+    if not task or not task.strip():
+        console.print("[red]Error: task text cannot be empty[/red]")
+        sys.exit(1)
+
+    _MAX_BRIEF_LEN = 4000
+    if len(task) > _MAX_BRIEF_LEN:
+        console.print(
+            f"[yellow]Warning: task text exceeds {_MAX_BRIEF_LEN} chars "
+            f"({len(task)} chars) — truncating[/yellow]"
+        )
+        task = task[:_MAX_BRIEF_LEN]
+
     brief_id = str(uuid.uuid4())
     headers = _auth_headers()
 
@@ -2573,7 +2586,10 @@ def _decompose_brief(task: str, brief_id: str) -> list[str]:
                 ),
             }],
         )
-        raw = response.content[0].text.strip()
+        raw = response.content[0].text.strip() if response.content else ""
+        if not raw:
+            console.print("[yellow]Claude returned an empty response — skipping decomposition[/yellow]")
+            return []
         subtasks = []
         for line in raw.splitlines():
             line = line.strip()
@@ -2582,7 +2598,8 @@ def _decompose_brief(task: str, brief_id: str) -> list[str]:
             # Strip leading "1. " / "1) " / "- " prefixes
             import re
             cleaned = re.sub(r"^[\d]+[.)]\s*|-\s*", "", line).strip()
-            if cleaned:
+            # Require at least 10 chars to filter out garbled/fragment output
+            if cleaned and len(cleaned) >= 10:
                 subtasks.append(cleaned)
         return subtasks
     except Exception as exc:
@@ -2915,6 +2932,277 @@ def _cmd_resolve(args):
             console.print("[dim]Skipped.[/dim]")
 
 
+# ---------------------------------------------------------------------------
+# murmur context [--room <room>] [--limit N] [--quiet] [--json]
+# Summary Cascade v1 — inject a briefing of everything relevant in a room
+# ---------------------------------------------------------------------------
+
+_HIGH_SIGNAL_TYPES = {"brief", "subtask", "claim", "status", "alert", "sync", "decision"}
+
+
+def _relative_time(iso_ts: str) -> str:
+    """Return a human-readable relative time string (e.g. '2h ago')."""
+    import datetime as _dt
+    try:
+        ts = _dt.datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+        diff = round((_dt.datetime.now(_dt.timezone.utc) - ts).total_seconds())
+        if diff < 60:
+            return f"{diff}s ago"
+        elif diff < 3600:
+            return f"{diff // 60}m ago"
+        elif diff < 86400:
+            return f"{diff // 3600}h ago"
+        else:
+            return f"{diff // 86400}d ago"
+    except (ValueError, TypeError):
+        return iso_ts[:16] if iso_ts else ""
+
+
+async def _context(
+    room_name: str | None,
+    limit: int = 200,
+    quiet: bool = False,
+    json_output: bool = False,
+) -> None:
+    """Fetch and display a Summary Cascade briefing for a room."""
+    import datetime as _dt
+
+    # Resolve room: use provided name, fall back to first room the agent is in
+    target_room = room_name
+    client = _get_client()
+    try:
+        if not target_room:
+            rooms_resp = await client.get(
+                f"{RELAY_URL}/rooms", headers=_auth_headers()
+            )
+            rooms_resp.raise_for_status()
+            all_rooms = rooms_resp.json()
+            # Pick the first room this instance is a member of
+            for r in all_rooms:
+                if INSTANCE_NAME in r.get("members", []):
+                    target_room = r["name"]
+                    break
+            if not target_room and all_rooms:
+                target_room = all_rooms[0]["name"]
+            if not target_room:
+                if not quiet:
+                    console.print("[red]No rooms found.[/red]")
+                return
+
+        # Fetch state and history in parallel
+        state_resp, hist_resp = await asyncio.gather(
+            client.get(
+                f"{RELAY_URL}/rooms/{target_room}/state",
+                headers=_auth_headers(),
+            ),
+            client.get(
+                f"{RELAY_URL}/rooms/{target_room}/history",
+                params={"limit": limit},
+                headers=_auth_headers(),
+            ),
+        )
+        state_resp.raise_for_status()
+        hist_resp.raise_for_status()
+
+        state = state_resp.json()
+        history = hist_resp.json()
+
+        # Filter history to high-signal message types only
+        seen_content: set[str] = set()
+        high_signal: list[dict] = []
+        for msg in history:
+            mtype = msg.get("message_type", "chat")
+            if mtype not in _HIGH_SIGNAL_TYPES:
+                continue
+            content_key = f"{mtype}:{msg.get('content', '')}"
+            if content_key in seen_content:
+                continue
+            seen_content.add(content_key)
+            high_signal.append(msg)
+
+        # Bucket filtered messages by type
+        briefs = [m for m in high_signal if m.get("message_type") == "brief"]
+        decisions = [m for m in high_signal if m.get("message_type") == "decision"]
+        status_updates = [m for m in high_signal if m.get("message_type") == "status"]
+        # subtasks and claims are surfaced through room state claimed_tasks
+
+        if json_output:
+            output = {
+                "room": target_room,
+                "active_goal": state.get("active_goal"),
+                "claimed_tasks": state.get("claimed_tasks", []),
+                "locked_files": state.get("locked_files", {}),
+                "resolved_decisions": state.get("resolved_decisions", []),
+                "recent_briefs": briefs[-10:],
+                "recent_decisions": decisions[-10:],
+                "recent_status_updates": status_updates[-10:],
+            }
+            print(json.dumps(output, indent=2))
+            return
+
+        # Build the context block as plain text (for piping / injection)
+        lines: list[str] = []
+
+        if not quiet:
+            lines.append(f"=== Room Context: {target_room} ===")
+            lines.append("")
+
+        # Active goal
+        goal = state.get("active_goal") or "(none set)"
+        lines.append(f"Active Goal: {goal}")
+        lines.append("")
+
+        # Recent briefs
+        if briefs:
+            lines.append("Recent Briefs:")
+            for b in briefs[-5:]:
+                bid = b.get("brief_id") or b.get("id", "")
+                bid_short = bid[:8] if bid else "?"
+                content = b.get("content", "")[:80]
+                age = _relative_time(b.get("timestamp", ""))
+                lines.append(f"  - [{bid_short}] {content} ({age})")
+            lines.append("")
+
+        # Claimed tasks (from room state)
+        claimed = state.get("claimed_tasks", [])
+        if claimed:
+            lines.append("Claimed Tasks:")
+            for task in claimed:
+                agent = task.get("claimed_by") or task.get("agent") or "?"
+                desc = task.get("description") or task.get("content") or task.get("task") or ""
+                if not desc:
+                    desc = task.get("file_path", "")
+                lines.append(f"  - [{agent}] {desc}")
+            lines.append("")
+
+        # Recent decisions (from resolved_decisions in state + decision messages)
+        resolved = state.get("resolved_decisions", [])
+        all_decisions = resolved[-5:] + [
+            {"decision": d.get("content", ""), "decided_at": d.get("timestamp", "")}
+            for d in decisions[-5:]
+            if d.get("content", "")
+            not in {r.get("decision", "") for r in resolved[-5:]}
+        ]
+        if all_decisions:
+            lines.append("Recent Decisions:")
+            for dec in all_decisions[-5:]:
+                text = dec.get("decision") or dec.get("content") or ""
+                ts = dec.get("decided_at") or dec.get("timestamp") or ""
+                age = _relative_time(ts) if ts else ""
+                suffix = f" ({age})" if age else ""
+                lines.append(f"  - {text}{suffix}")
+            lines.append("")
+
+        # Recent status updates
+        if status_updates:
+            lines.append("Recent Status Updates:")
+            for su in status_updates[-5:]:
+                sender = su.get("from_name", "?")
+                content = su.get("content", "")[:100]
+                age = _relative_time(su.get("timestamp", ""))
+                lines.append(f"  - [{sender}] {content} ({age})")
+            lines.append("")
+
+        # Locked files
+        locked = state.get("locked_files", {})
+        if locked:
+            lines.append("Locked Files:")
+            now = _dt.datetime.now(_dt.timezone.utc)
+            for fp, info in locked.items():
+                holder = info.get("held_by") or info.get("claimed_by") or "?"
+                exp = info.get("expires_at", "")
+                ttl_str = ""
+                if exp:
+                    try:
+                        diff = max(
+                            0,
+                            round(
+                                (
+                                    _dt.datetime.fromisoformat(exp.replace("Z", "+00:00"))
+                                    - now
+                                ).total_seconds()
+                            ),
+                        )
+                        m, s = divmod(diff, 60)
+                        ttl_str = f" (expires in {m}m {s:02d}s)"
+                    except ValueError:
+                        pass
+                lines.append(f"  - {fp} -> {holder}{ttl_str}")
+            lines.append("")
+
+        block = "\n".join(lines)
+        # Strip trailing blank lines for clean injection
+        block = block.rstrip()
+
+        if block:
+            print(block)
+
+    except httpx.ConnectError:
+        if not quiet:
+            _relay_unreachable()
+    except httpx.HTTPStatusError as e:
+        if not quiet:
+            if e.response.status_code == 404:
+                console.print(f"[red]Room '{target_room}' not found[/red]")
+            else:
+                console.print(f"[red]Error: {e.response.status_code}[/red]")
+    finally:
+        await client.aclose()
+
+
+def _cmd_context(args):
+    asyncio.run(
+        _context(
+            room_name=getattr(args, "room", None),
+            limit=getattr(args, "limit", 200),
+            quiet=getattr(args, "quiet", False),
+            json_output=getattr(args, "json_output", False),
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# murmur decision <room> <decision...>
+# Record an architectural/coordination decision into the room
+# ---------------------------------------------------------------------------
+
+
+def _cmd_decision(args):
+    """Record a decision into the room via the state decisions endpoint."""
+    room = args.room
+    decision_text = " ".join(args.decision) if isinstance(args.decision, list) else args.decision
+
+    if not decision_text.strip():
+        console.print("[red]Decision text cannot be empty.[/red]")
+        return
+
+    headers = _auth_headers()
+    try:
+        resp = httpx.post(
+            f"{RELAY_URL}/rooms/{room}/state/decisions",
+            json={"decision": decision_text},
+            headers=headers,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+    except httpx.ConnectError:
+        _relay_unreachable()
+        return
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code} {e.response.text}[/red]")
+        return
+
+    did = result.get("id", "")
+    did_short = did[:8] if did else "?"
+    console.print(f"[bold green]Decision recorded in '{room}'[/bold green]")
+    console.print(f"  id:       [dim]{did_short}[/dim]")
+    console.print(f"  decision: {decision_text}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="murmur", description="Murmur CLI"
@@ -3143,6 +3431,31 @@ def main():
         "--model", default="claude-sonnet-4-6", help="Claude model (default: claude-sonnet-4-6)"
     )
 
+    p_context = sub.add_parser(
+        "context",
+        help="Show swarm context for current room (Summary Cascade v1)",
+    )
+    p_context.add_argument(
+        "--room", default=None, help="Room name (default: auto-detect from membership)"
+    )
+    p_context.add_argument(
+        "--limit", type=int, default=200, help="Max history messages to scan (default: 200)"
+    )
+    p_context.add_argument(
+        "--quiet", action="store_true", help="Suppress header, output raw context block only"
+    )
+    p_context.add_argument(
+        "--json", action="store_true", dest="json_output", help="Machine-readable JSON output"
+    )
+
+    p_decision = sub.add_parser(
+        "decision", help="Record an architectural decision into a room"
+    )
+    p_decision.add_argument("room", help="Room name")
+    p_decision.add_argument(
+        "decision", nargs=argparse.REMAINDER, help="Decision text"
+    )
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -3190,6 +3503,8 @@ def main():
         "board": _cmd_board,
         "setup-swarm": _cmd_setup_swarm,
         "resolve": _cmd_resolve,
+        "context": _cmd_context,
+        "decision": _cmd_decision,
     }
     commands[args.command](args)
 
