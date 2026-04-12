@@ -100,8 +100,27 @@ class RoomMessageService:
         timestamp = datetime.now(timezone.utc).isoformat()
         message_id = str(uuid.uuid4())
 
-        # Fan-out to each member's DM queue (with backpressure)
-        # Build batch of messages for all eligible recipients
+        # Build history message (canonical record)
+        history_msg = {
+            "id": message_id,
+            "from": sender,
+            "from_name": sender,
+            "room": room_name,
+            "content": content,
+            "message_type": message_type,
+            "timestamp": timestamp,
+            "reply_to": reply_to,
+        }
+
+        # STEP 1: Persist to history FIRST (Postgres is source of truth)
+        # If this fails, we haven't touched Redis — clean rollback via idempotency
+        await self._history.append(tenant_id, room_id, history_msg)
+
+        # STEP 2: Fan-out to each member's DM queue (with backpressure)
+        # If this fails after Postgres commit, message is in history but
+        # recipients may miss real-time delivery — they can poll history.
+        # This is better than the reverse (recipients get message, history fails,
+        # retry duplicates fan-out).
         skipped_recipients: list[str] = []
         fanout_messages: dict[str, dict] = {}
 
@@ -131,27 +150,18 @@ class RoomMessageService:
             fanout_messages[recipient] = fan_out_msg
 
         # Batch enqueue all messages in a single operation (pipelined for Redis)
+        # Pass maxlen to enforce atomic backpressure — even if concurrent sends
+        # all pass the advisory depth check, MAXLEN prevents overshooting
         if fanout_messages:
-            await self._msg_backend.enqueue_fanout(tenant_id, fanout_messages)
+            await self._msg_backend.enqueue_fanout(
+                tenant_id, fanout_messages, maxlen=MAX_RECIPIENT_DEPTH
+            )
 
             # Notify via SSE and callbacks
             for recipient, fan_out_msg in fanout_messages.items():
                 if self._on_enqueue:
                     self._on_enqueue(tenant_id, recipient)
                 self._sse.push(tenant_id, recipient, fan_out_msg)
-
-        # Append to room history
-        history_msg = {
-            "id": message_id,
-            "from": sender,
-            "from_name": sender,
-            "room": room_name,
-            "content": content,
-            "message_type": message_type,
-            "timestamp": timestamp,
-            "reply_to": reply_to,
-        }
-        await self._history.append(tenant_id, room_id, history_msg)
 
         # Analytics and webhook notification
         await self._analytics.track_send(tenant_id, sender)
