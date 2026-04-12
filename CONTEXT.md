@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 06:12 UTC
+Last updated: 2026-04-12 09:15 UTC
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-04-12 06:12 UTC
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (871 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (869 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -78,8 +78,9 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - **Decision recording**: `murmur decision <room> "<text>"` — writes to room state decisions via POST /rooms/{room}/state/decisions; surfaced in `murmur context`
 - **Hook auto-injection**: `murmur hook enable` now runs `murmur inbox --quiet && murmur context --quiet` on every UserPromptSubmit
 - **Portable join tokens**: `murmur share <room>` generates portable token; `murmur quickjoin <token> --name <name>` joins with zero config
-- **TUI Hub**: `murmur begin` opens full-screen interactive terminal UI with rooms, agents, live chat
-- **Doctor diagnostics**: `murmur doctor` runs 13 checks incl. MCP server registration, relay version, hook status
+- **TUI Hub**: `murmur begin` opens full-screen interactive terminal UI with rooms, agents, live chat; warm first-run wizard with auto-detect relay
+- **Doctor diagnostics**: `murmur doctor` runs 13 checks incl. MCP server registration, relay version, hook status; shows web console link
+- **Web Console**: Browser-based dashboard at murmur-ai.dev/console for monitoring swarms without CLI
 
 **Tests:** 869 passing + 23 Redis integration tests (require Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
@@ -148,18 +149,16 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
-| 2026-04-12 | (next)  | fix: Lua XLEN quota-check + reject (true backpressure, no message loss)   |
-| 2026-04-12 | (next)  | fix: expires_at_epoch for accurate lock expiry in Lua scripts             |
-| 2026-04-12 | (next)  | fix: denormalize room_name in Postgres history (migration 005)            |
+| 2026-04-12 | 01618a8 | feat: warm first-run wizard for murmur begin (conversational, auto-detect)|
+| 2026-04-12 | f4c2673 | feat: add /console link to doctor output and README                       |
+| 2026-04-12 | cc71538 | docs: update CONTEXT.md with critical fixes                               |
+| 2026-04-12 | fe398ce | fix: denormalize room_name in Postgres history (migration 005)            |
+| 2026-04-12 | af83ffd | fix: Lua XLEN quota-check + reject (true backpressure, no message loss)   |
+| 2026-04-12 | 3eac852 | fix: expires_at_epoch for accurate lock expiry in Lua scripts             |
 | 2026-04-12 | 0970b92 | test: Redis integration tests for locks, expiry, backpressure (867 total) |
 | 2026-04-12 | b03edd6 | fix: Postgres-first room send + atomic MAXLEN backpressure                |
 | 2026-04-12 | 71983c6 | fix: atomic task expiry + ORM FK mismatch                                 |
 | 2026-04-12 | e422b09 | fix: atomic distributed locks + idempotency 409 on body mismatch          |
-| 2026-04-12 | 082cd18 | fix: SSE wakeup filter, idempotency body fingerprint, dashboard token     |
-| 2026-04-12 | 6764411 | fix: scope usage/participant endpoints by auth level + invite JS fix      |
-| 2026-04-12 | f0f3139 | feat: RedisRoomStateBackend for distributed mutex (cross-replica locks)   |
-| 2026-04-12 | a56479a | fix: require room membership for state/lock endpoints (critical auth fix) |
-| 2026-04-12 | f98c16b | refactor: replace SQLite with Postgres for room history + migration 003   |
 
 ---
 
