@@ -19,6 +19,7 @@ from redis.asyncio import Redis
 from murmur.backends.redis_backends import (
     RedisIdempotencyBackend,
     RedisMessageBackend,
+    RedisRoomStateBackend,
     RedisWebhookQueueBackend,
 )
 
@@ -385,3 +386,183 @@ class TestRedisWebhookQueue:
 
         stats = await backend.get_stats()
         assert stats["queue_length"] == 1
+
+
+class TestRedisRoomStateLocking:
+    """Test distributed lock operations with Redis."""
+
+    async def test_concurrent_lock_acquire_only_one_wins(self, redis_client):
+        """When two agents try to acquire the same lock, only one succeeds."""
+        backend = RedisRoomStateBackend(redis_client)
+
+        lock_data = {
+            "held_by": "agent-1",
+            "lock_token": "token-1",
+            "expires_at": "2099-12-31T23:59:59+00:00",
+        }
+        task_data = {
+            "id": "task-1",
+            "file_path": "/src/main.py",
+            "claimed_by": "agent-1",
+            "lock_token": "token-1",
+            "expires_at": "2099-12-31T23:59:59+00:00",
+        }
+
+        # First acquire should succeed
+        acquired1, existing1 = await backend.try_acquire_lock(
+            "tenant1", "room1", "/src/main.py", lock_data, task_data
+        )
+        assert acquired1 is True
+        assert existing1 is None
+
+        # Second acquire should fail
+        lock_data2 = {**lock_data, "held_by": "agent-2", "lock_token": "token-2"}
+        task_data2 = {**task_data, "id": "task-2", "claimed_by": "agent-2", "lock_token": "token-2"}
+
+        acquired2, existing2 = await backend.try_acquire_lock(
+            "tenant1", "room1", "/src/main.py", lock_data2, task_data2
+        )
+        assert acquired2 is False
+        assert existing2 is not None
+        assert existing2["held_by"] == "agent-1"
+
+    async def test_lock_release_with_wrong_token_fails(self, redis_client):
+        """Releasing a lock with the wrong token should fail."""
+        backend = RedisRoomStateBackend(redis_client)
+
+        lock_data = {
+            "held_by": "agent-1",
+            "lock_token": "correct-token",
+            "expires_at": "2099-12-31T23:59:59+00:00",
+        }
+        task_data = {
+            "id": "task-1",
+            "file_path": "/src/auth.py",
+            "claimed_by": "agent-1",
+            "lock_token": "correct-token",
+            "expires_at": "2099-12-31T23:59:59+00:00",
+        }
+
+        await backend.try_acquire_lock(
+            "tenant1", "room2", "/src/auth.py", lock_data, task_data
+        )
+
+        # Try to release with wrong token
+        status, _ = await backend.release_lock_atomic(
+            "tenant1", "room2", "/src/auth.py", "wrong-token"
+        )
+        assert status == "token_mismatch"
+
+        # Lock should still be held
+        state = await backend.get("tenant1", "room2")
+        assert "/src/auth.py" in state["locked_files"]
+
+    async def test_lock_release_with_correct_token_succeeds(self, redis_client):
+        """Releasing a lock with the correct token should succeed."""
+        backend = RedisRoomStateBackend(redis_client)
+
+        lock_data = {
+            "held_by": "agent-1",
+            "lock_token": "my-token",
+            "expires_at": "2099-12-31T23:59:59+00:00",
+        }
+        task_data = {
+            "id": "task-1",
+            "file_path": "/src/db.py",
+            "claimed_by": "agent-1",
+            "lock_token": "my-token",
+            "expires_at": "2099-12-31T23:59:59+00:00",
+        }
+
+        await backend.try_acquire_lock(
+            "tenant1", "room3", "/src/db.py", lock_data, task_data
+        )
+
+        # Release with correct token
+        status, _ = await backend.release_lock_atomic(
+            "tenant1", "room3", "/src/db.py", "my-token"
+        )
+        assert status == "released"
+
+        # Lock should be gone
+        state = await backend.get("tenant1", "room3")
+        assert "/src/db.py" not in state["locked_files"]
+
+    async def test_expiry_does_not_remove_newly_acquired_lock(self, redis_client):
+        """Expiry should only remove locks whose token matches the expired task."""
+        backend = RedisRoomStateBackend(redis_client)
+
+        # Create an expired lock
+        past_ts = "2020-01-01T00:00:00+00:00"
+        old_lock = {
+            "held_by": "agent-old",
+            "lock_token": "old-token",
+            "expires_at": past_ts,
+        }
+        old_task = {
+            "id": "old-task",
+            "file_path": "/src/utils.py",
+            "claimed_by": "agent-old",
+            "lock_token": "old-token",
+            "expires_at": past_ts,
+        }
+
+        # Manually insert the old task/lock (simulating it was acquired earlier)
+        tasks_key = "t:tenant1:room_state:room4:tasks"
+        locks_key = "t:tenant1:room_state:room4:locks"
+        await redis_client.rpush(tasks_key, json.dumps(old_task))
+        await redis_client.hset(locks_key, "/src/utils.py", json.dumps(old_lock))
+
+        # Now a new agent acquires the same path (before expiry runs)
+        new_lock = {
+            "held_by": "agent-new",
+            "lock_token": "new-token",
+            "expires_at": "2099-12-31T23:59:59+00:00",
+        }
+        # Directly set the new lock (simulating race where new lock acquired)
+        await redis_client.hset(locks_key, "/src/utils.py", json.dumps(new_lock))
+
+        # Run expiry - should NOT delete the new lock because token doesn't match
+        expired = await backend.expire_tasks("tenant1", "room4")
+        assert "old-task" in expired
+
+        # The new lock should still exist
+        state = await backend.get("tenant1", "room4")
+        lock = state["locked_files"].get("/src/utils.py")
+        assert lock is not None
+        assert lock["lock_token"] == "new-token"
+        assert lock["held_by"] == "agent-new"
+
+
+class TestRedisMessageBackpressure:
+    """Test atomic backpressure via MAXLEN."""
+
+    async def test_maxlen_parameter_accepted(self, redis_client):
+        """enqueue_fanout should accept maxlen parameter without error."""
+        backend = RedisMessageBackend(redis_client)
+
+        # Use a unique recipient to avoid state from other tests
+        recipient = f"recipient-maxlen-{id(self)}"
+
+        # Verify that calling with maxlen doesn't raise an error
+        messages = {recipient: {"id": "msg-1", "content": "message 1"}}
+        await backend.enqueue_fanout("tenant1", messages, maxlen=5)
+
+        # Message should be enqueued
+        depth = await backend.recipient_depth("tenant1", recipient)
+        assert depth >= 1
+
+    async def test_fanout_without_maxlen_keeps_all(self, redis_client):
+        """Without maxlen, all messages should be kept."""
+        backend = RedisMessageBackend(redis_client)
+
+        # Use unique recipient
+        recipient = f"recipient-no-maxlen-{id(self)}"
+
+        # Enqueue 10 separate messages to one recipient
+        for i in range(10):
+            messages = {recipient: {"id": f"msg-{i}", "content": f"message {i}"}}
+            await backend.enqueue_fanout("tenant1", messages, maxlen=None)
+
+        depth = await backend.recipient_depth("tenant1", recipient)
+        assert depth == 10
