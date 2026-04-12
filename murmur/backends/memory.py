@@ -175,6 +175,16 @@ class InMemoryMessageBackend:
         async with self._lock:
             return sum(len(msgs) for msgs in self._queues.values())
 
+    async def recipient_depth(self, tenant_id: str, to_name: str) -> int:
+        async with self._lock:
+            key = (tenant_id, to_name)
+            queued = len(self._queues.get(key, []))
+            pending = 0
+            for (tid, name, _), (msgs, _) in self._pending.items():
+                if tid == tenant_id and name == to_name:
+                    pending += len(msgs)
+            return queued + pending
+
     def clear(self) -> None:
         self._queues.clear()
         self._pending.clear()
@@ -538,26 +548,33 @@ class InMemorySSETokenBackend:
 
 
 class InMemoryWebhookBackend:
-    """DM and room webhook registrations."""
+    """DM and room webhook registrations with per-webhook secrets."""
 
     def __init__(self) -> None:
-        # (tenant_id, instance_name) -> callback_url
-        self._dm_hooks: dict[tuple[str, str], str] = {}
-        # (tenant_id, room_id) -> [{url, registered_by}]
+        # (tenant_id, instance_name) -> {"url": ..., "secret": ...}
+        self._dm_hooks: dict[tuple[str, str], dict] = {}
+        # (tenant_id, room_id) -> [{"url", "secret", "registered_by"}]
         self._room_hooks: dict[tuple[str, str], list[dict]] = defaultdict(
             list
         )
         self._lock = asyncio.Lock()
 
     async def register_dm(
-        self, tenant_id: str, instance_name: str, callback_url: str
+        self,
+        tenant_id: str,
+        instance_name: str,
+        callback_url: str,
+        secret: str = "",
     ) -> None:
         async with self._lock:
-            self._dm_hooks[(tenant_id, instance_name)] = callback_url
+            self._dm_hooks[(tenant_id, instance_name)] = {
+                "url": callback_url,
+                "secret": secret,
+            }
 
     async def get_dm(
         self, tenant_id: str, instance_name: str
-    ) -> str | None:
+    ) -> dict | None:
         async with self._lock:
             return self._dm_hooks.get((tenant_id, instance_name))
 
@@ -573,6 +590,7 @@ class InMemoryWebhookBackend:
         room_id: str,
         callback_url: str,
         registered_by: str,
+        secret: str = "",
     ) -> None:
         async with self._lock:
             key = (tenant_id, room_id)
@@ -580,9 +598,10 @@ class InMemoryWebhookBackend:
             for hook in self._room_hooks[key]:
                 if hook["url"] == callback_url:
                     hook["registered_by"] = registered_by
+                    hook["secret"] = secret
                     return
             self._room_hooks[key].append(
-                {"url": callback_url, "registered_by": registered_by}
+                {"url": callback_url, "registered_by": registered_by, "secret": secret}
             )
 
     async def list_room(
@@ -690,6 +709,44 @@ class InMemoryParticipantBackend:
         self._participants.clear()
 
 
+# -- Idempotency ------------------------------------------------------------
+
+
+class InMemoryIdempotencyBackend:
+    """Idempotency key storage with TTL-based expiration."""
+
+    def __init__(self) -> None:
+        # (tenant_id, key) -> (result, expiry_time)
+        self._store: dict[tuple[str, str], tuple[dict, float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def get(self, tenant_id: str, key: str) -> dict | None:
+        async with self._lock:
+            now = time.time()
+            cache_key = (tenant_id, key)
+            if cache_key in self._store:
+                cached_result, expiry = self._store[cache_key]
+                if now < expiry:
+                    return cached_result
+                # Expired, remove
+                del self._store[cache_key]
+            return None
+
+    async def set(
+        self, tenant_id: str, key: str, result: dict, ttl: int
+    ) -> None:
+        async with self._lock:
+            now = time.time()
+            self._store[(tenant_id, key)] = (result, now + ttl)
+            # Lazy cleanup of expired entries
+            expired = [k for k, (_, exp) in self._store.items() if now >= exp]
+            for k in expired:
+                del self._store[k]
+
+    def clear(self) -> None:
+        self._store.clear()
+
+
 # -- Convenience bundle -----------------------------------------------------
 
 
@@ -708,6 +765,9 @@ class InMemoryBackends:
     participants: InMemoryParticipantBackend = field(
         default_factory=InMemoryParticipantBackend
     )
+    idempotency: InMemoryIdempotencyBackend = field(
+        default_factory=InMemoryIdempotencyBackend
+    )
 
     @classmethod
     def create(cls, max_room_history: int = 200) -> InMemoryBackends:
@@ -724,6 +784,7 @@ class InMemoryBackends:
             webhooks=InMemoryWebhookBackend(),
             analytics=InMemoryAnalyticsBackend(),
             participants=InMemoryParticipantBackend(),
+            idempotency=InMemoryIdempotencyBackend(),
         )
 
     def clear_all(self) -> None:

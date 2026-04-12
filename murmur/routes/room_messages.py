@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from murmur.auth.middleware import AuthContext, verify_auth
 from murmur.routes.models import RoomMessageRequest
 
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
+_IDEMPOTENCY_TTL = int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "300"))
 
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
@@ -40,18 +41,44 @@ async def send_room_message(
     msg: RoomMessageRequest,
     request: Request,
     auth: AuthContext = Depends(verify_auth),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
+    """Send a message to a room.
+
+    Headers:
+    - ``Idempotency-Key``: optional key to deduplicate retried requests.
+      If provided, repeated sends with the same key within the TTL window
+      (default 5 minutes) return the original response without re-sending.
+    """
     sender = auth.sub or msg.from_name
     if auth.sub and msg.from_name != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot send as another user")
     if len(msg.content.encode("utf-8")) > MAX_MESSAGE_SIZE:
         raise HTTPException(status_code=413, detail="Message content exceeds maximum size")
+
+    tid = _tid(auth)
+    backends = request.app.state.backends
+    idempotency_cache_key = f"room:{room_id}:{idempotency_key}" if idempotency_key else None
+
+    # Check idempotency key for cached result
+    if idempotency_cache_key:
+        cached = await backends.idempotency.get(tid, idempotency_cache_key)
+        if cached:
+            return cached
+
     svc = request.app.state.room_msg_service
     result = await svc.send(
-        _tid(auth), room_id, sender, msg.content,
+        tid, room_id, sender, msg.content,
         message_type=msg.message_type, reply_to=msg.reply_to,
     )
-    await request.app.state.backends.participants.add(_tid(auth), sender)
+
+    # Store result in idempotency cache
+    if idempotency_cache_key:
+        await backends.idempotency.set(
+            tid, idempotency_cache_key, result, _IDEMPOTENCY_TTL
+        )
+
+    await backends.participants.add(tid, sender)
     return result
 
 

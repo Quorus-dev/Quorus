@@ -100,6 +100,13 @@ class MessageBackend(Protocol):
         """Count total pending messages globally (for health checks)."""
         ...
 
+    async def recipient_depth(self, tenant_id: str, to_name: str) -> int:
+        """Return total stream length for a recipient (queued + pending).
+
+        Used for quota enforcement to prevent unbounded queue growth.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Rooms
@@ -295,13 +302,19 @@ class SSETokenBackend(Protocol):
 @runtime_checkable
 class WebhookBackend(Protocol):
     async def register_dm(
-        self, tenant_id: str, instance_name: str, callback_url: str
+        self,
+        tenant_id: str,
+        instance_name: str,
+        callback_url: str,
+        secret: str = "",
     ) -> None:
+        """Register a DM webhook. Optional per-webhook secret for signing."""
         ...
 
     async def get_dm(
         self, tenant_id: str, instance_name: str
-    ) -> str | None:
+    ) -> dict | None:
+        """Return ``{"url": ..., "secret": ...}`` or None."""
         ...
 
     async def delete_dm(
@@ -315,12 +328,15 @@ class WebhookBackend(Protocol):
         room_id: str,
         callback_url: str,
         registered_by: str,
+        secret: str = "",
     ) -> None:
+        """Register a room webhook. Optional per-webhook secret for signing."""
         ...
 
     async def list_room(
         self, tenant_id: str, room_id: str
     ) -> list[dict]:
+        """Return list of ``{"url": ..., "secret": ..., "registered_by": ...}``."""
         ...
 
     async def delete_room(
@@ -364,4 +380,24 @@ class AnalyticsBackend(Protocol):
         ...
 
     async def get_stats(self, tenant_id: str) -> dict:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Idempotency
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class IdempotencyBackend(Protocol):
+    """Idempotency key storage for deduplicating retried requests."""
+
+    async def get(self, tenant_id: str, key: str) -> dict | None:
+        """Return cached result for key, or None if not found/expired."""
+        ...
+
+    async def set(
+        self, tenant_id: str, key: str, result: dict, ttl: int
+    ) -> None:
+        """Store result with TTL."""
         ...

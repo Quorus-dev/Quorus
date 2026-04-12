@@ -322,6 +322,10 @@ class RedisMessageBackend:
                 break
         return total
 
+    async def recipient_depth(self, tenant_id: str, to_name: str) -> int:
+        """Return total stream length for a recipient."""
+        return await self._r.xlen(self._key(tenant_id, to_name))
+
 
 # -- Rooms ------------------------------------------------------------------
 
@@ -707,7 +711,7 @@ class RedisSSETokenBackend:
 # -- Webhooks (DM + room) --------------------------------------------------
 
 class RedisWebhookBackend:
-    """DM and room webhook registrations."""
+    """DM and room webhook registrations with per-webhook secrets."""
 
     def __init__(self, r: Redis) -> None:
         self._r = r
@@ -719,22 +723,43 @@ class RedisWebhookBackend:
         return f"t:{tid}:webhook:room:{rid}"
 
     async def register_dm(
-        self, tenant_id: str, instance_name: str, callback_url: str
+        self,
+        tenant_id: str,
+        instance_name: str,
+        callback_url: str,
+        secret: str = "",
     ) -> None:
-        await self._r.set(self._dm_key(tenant_id, instance_name), callback_url)
+        data = json.dumps({"url": callback_url, "secret": secret})
+        await self._r.set(self._dm_key(tenant_id, instance_name), data)
 
-    async def get_dm(self, tenant_id: str, instance_name: str) -> str | None:
-        return await self._r.get(self._dm_key(tenant_id, instance_name))
+    async def get_dm(self, tenant_id: str, instance_name: str) -> dict | None:
+        raw = await self._r.get(self._dm_key(tenant_id, instance_name))
+        if not raw:
+            return None
+        # Handle legacy format (plain URL string)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {"url": raw, "secret": ""}
 
     async def delete_dm(self, tenant_id: str, instance_name: str) -> None:
         await self._r.delete(self._dm_key(tenant_id, instance_name))
 
     async def register_room(
-        self, tenant_id: str, room_id: str, callback_url: str, registered_by: str,
+        self,
+        tenant_id: str,
+        room_id: str,
+        callback_url: str,
+        registered_by: str,
+        secret: str = "",
     ) -> None:
         key = self._room_key(tenant_id, room_id)
         raw_hooks = await self._r.lrange(key, 0, -1)
-        new_entry = json.dumps({"url": callback_url, "registered_by": registered_by})
+        new_entry = json.dumps({
+            "url": callback_url,
+            "registered_by": registered_by,
+            "secret": secret,
+        })
         for raw in raw_hooks:
             hook = json.loads(raw)
             if hook["url"] == callback_url:
@@ -849,6 +874,29 @@ class RedisParticipantBackend:
         return total
 
 
+# -- Idempotency ------------------------------------------------------------
+
+class RedisIdempotencyBackend:
+    """Idempotency key storage using Redis strings with TTL."""
+
+    def __init__(self, r: Redis) -> None:
+        self._r = r
+
+    def _key(self, tid: str, key: str) -> str:
+        return f"t:{tid}:idempotency:{key}"
+
+    async def get(self, tenant_id: str, key: str) -> dict | None:
+        cached = await self._r.get(self._key(tenant_id, key))
+        if cached:
+            return json.loads(cached)
+        return None
+
+    async def set(
+        self, tenant_id: str, key: str, result: dict, ttl: int
+    ) -> None:
+        await self._r.set(self._key(tenant_id, key), json.dumps(result), ex=ttl)
+
+
 # -- Convenience bundle -----------------------------------------------------
 
 @dataclass
@@ -864,6 +912,7 @@ class RedisBackends:
     webhooks: RedisWebhookBackend
     analytics: RedisAnalyticsBackend
     participants: RedisParticipantBackend = None  # type: ignore[assignment]
+    idempotency: RedisIdempotencyBackend = None  # type: ignore[assignment]
 
     @classmethod
     def create(cls, r: Redis, max_room_history: int = 200) -> RedisBackends:
@@ -878,4 +927,5 @@ class RedisBackends:
             webhooks=RedisWebhookBackend(r),
             analytics=RedisAnalyticsBackend(r),
             participants=RedisParticipantBackend(r),
+            idempotency=RedisIdempotencyBackend(r),
         )
