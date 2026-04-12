@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import CursorGlow from "@/components/CursorGlow";
 import AnnouncementBar from "@/components/AnnouncementBar";
+import ScrollReset from "@/components/ScrollReset";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -52,6 +53,7 @@ export default function RootLayout({
         className="min-h-full text-white"
         style={{ background: "var(--background)" }}
       >
+        <ScrollReset />
         <CursorGlow />
         <AnnouncementBar />
         {children}

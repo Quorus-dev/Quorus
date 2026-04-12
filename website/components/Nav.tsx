@@ -2,6 +2,11 @@
 
 import { useState, useEffect } from "react";
 
+function smoothScroll(id: string) {
+  const el = document.getElementById(id);
+  el?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 export default function Nav() {
   const [scrolled, setScrolled] = useState(false);
 
@@ -34,27 +39,27 @@ export default function Nav() {
         {/* Links */}
         <div className="hidden md:flex items-center gap-8">
           {[
-            { label: "Features", href: "#features" },
-            { label: "How it works", href: "#howit" },
-            { label: "Architecture", href: "#architecture" },
+            { label: "Features", id: "features" },
+            { label: "How it works", id: "howit" },
+            { label: "Architecture", id: "architecture" },
           ].map((link) => (
-            <a
+            <button
               key={link.label}
-              href={link.href}
+              onClick={() => smoothScroll(link.id)}
               className="text-sm text-white/40 hover:text-white/80 transition-colors"
             >
               {link.label}
-            </a>
+            </button>
           ))}
         </div>
 
         {/* CTA */}
-        <a
-          href="#waitlist"
+        <button
+          onClick={() => smoothScroll("waitlist")}
           className="px-4 py-2 rounded-full text-sm font-medium bg-violet-600 hover:bg-violet-500 text-white transition-all duration-200 hover:shadow-lg hover:shadow-violet-500/25"
         >
           Request access
-        </a>
+        </button>
       </div>
     </nav>
   );

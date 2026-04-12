@@ -23,7 +23,10 @@
 }
 
 html {
-  scroll-behavior: smooth;
+  /* scroll-behavior: smooth intentionally removed — causes page to animate
+     to the browser-restored scroll position on reload, making the page
+     appear to scroll on its own. Smooth scrolling is handled per-element
+     via JS (ScrollReset, anchor onClick handlers). */
   scrollbar-width: thin;
   scrollbar-color: rgba(124, 58, 237, 0.3) transparent;
 }

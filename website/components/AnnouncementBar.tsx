@@ -9,12 +9,16 @@ export default function AnnouncementBar() {
         </span>
         <span className="w-px h-3 bg-white/10" />
         <span>Limited spots now open</span>
-        <a
-          href="#waitlist"
+        <button
+          onClick={() =>
+            document
+              .getElementById("waitlist")
+              ?.scrollIntoView({ behavior: "smooth" })
+          }
           className="text-violet-300 hover:text-violet-200 font-medium underline underline-offset-2 transition-colors duration-150"
         >
           Request access →
-        </a>
+        </button>
       </p>
     </div>
   );

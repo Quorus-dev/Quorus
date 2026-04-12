@@ -363,8 +363,12 @@ export default function Hero() {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.45 }}
         >
-          <a
-            href="#features"
+          <button
+            onClick={() => {
+              document
+                .getElementById("features")
+                ?.scrollIntoView({ behavior: "smooth" });
+            }}
             className="text-sm text-white/30 hover:text-white/60 transition-colors flex items-center gap-1.5"
           >
             See how it works
@@ -381,7 +385,7 @@ export default function Hero() {
                 d="M19 9l-7 7-7-7"
               />
             </svg>
-          </a>
+          </button>
         </motion.div>
 
         {/* Floating badges */}

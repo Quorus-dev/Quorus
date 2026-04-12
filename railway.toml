@@ -1,0 +1,27 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "python -m uvicorn murmur.relay:app --host 0.0.0.0 --port $PORT --workers 1"
+healthcheckPath = "/health"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# ── Required environment variables ──────────────────────────────────────────
+# Set these in the Railway dashboard (Variables tab) BEFORE first deploy:
+#
+#   DATABASE_URL        auto-injected by Railway Postgres plugin
+#   REDIS_URL           auto-injected by Railway Redis plugin
+#   RELAY_SECRET        generate: openssl rand -hex 32
+#   CORS_ORIGINS        https://murmur-ai-website.vercel.app
+#   LOG_LEVEL           WARNING
+#   ALLOW_LEGACY_AUTH   false
+#
+# Optional:
+#   VISIBILITY_TIMEOUT_SECONDS    60
+#   IDEMPOTENCY_TTL_SECONDS       300
+#   MAX_MESSAGE_SIZE              51200
+#   MAX_ROOM_HISTORY              200
+#   MAX_ROOM_MEMBERS              50
