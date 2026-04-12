@@ -40,10 +40,21 @@ def create_jwt(
     tenant_id: str,
     tenant_slug: str,
     role: str = "user",
+    participant_id: str | None = None,
     ttl: int | None = None,
     extra: dict[str, Any] | None = None,
 ) -> str:
-    """Create a signed JWT with standard claims (iss, aud, jti)."""
+    """Create a signed JWT with standard claims (iss, aud, jti).
+
+    Args:
+        sub: Participant name (display name)
+        tenant_id: Tenant UUID
+        tenant_slug: Tenant slug
+        role: Role (user, admin)
+        participant_id: Immutable participant UUID for audit/revocation
+        ttl: Token TTL in seconds (default: JWT_TTL_SECONDS)
+        extra: Additional claims to include
+    """
     now = datetime.now(timezone.utc)
     payload = {
         "sub": sub,
@@ -56,6 +67,8 @@ def create_jwt(
         "iat": now,
         "exp": now + timedelta(seconds=ttl or JWT_TTL_SECONDS),
     }
+    if participant_id:
+        payload["participant_id"] = participant_id
     if extra:
         payload.update(extra)
     algorithm = JWT_ALGORITHM if JWT_ALGORITHM in _VALID_ALGORITHMS else "HS256"

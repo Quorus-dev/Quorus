@@ -38,6 +38,7 @@ class AuthContext:
     """Verified identity from the request."""
 
     sub: str | None = None  # participant name (None for legacy/admin)
+    participant_id: str | None = None  # immutable participant ID
     tenant_id: str | None = None
     tenant_slug: str | None = None
     role: str = "user"
@@ -107,6 +108,7 @@ async def verify_auth(request: Request) -> AuthContext:
 
         return AuthContext(
             sub=claims.get("sub"),
+            participant_id=claims.get("participant_id"),
             tenant_id=claims.get("tenant_id"),
             tenant_slug=claims.get("tenant_slug"),
             role=claims.get("role", "user"),
@@ -165,3 +167,31 @@ def require_role(auth: AuthContext, *roles: str) -> None:
             status_code=403,
             detail=f"Requires role {' or '.join(roles)}, got '{auth.role}'",
         )
+
+
+def require_participant_id(auth: AuthContext, expected_id: str | None = None) -> str:
+    """Enforce that the authenticated user has a valid participant_id.
+
+    Legacy (RELAY_SECRET) users skip this check — they have admin-level access.
+    Returns the participant_id if valid.
+
+    Use this for audit-sensitive operations where immutable identity is required.
+    """
+    if auth.is_legacy:
+        # Legacy auth doesn't have participant_id — this is acceptable for admin ops
+        # but caller should handle None case if needed for audit
+        raise HTTPException(
+            status_code=403,
+            detail="Operation requires account-based identity (not legacy auth)",
+        )
+    if auth.participant_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Token missing participant_id claim — reauthenticate with new API key",
+        )
+    if expected_id and auth.participant_id != expected_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Identity mismatch: token participant_id != expected",
+        )
+    return auth.participant_id

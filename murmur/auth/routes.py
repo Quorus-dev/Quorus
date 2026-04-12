@@ -187,14 +187,16 @@ async def exchange_api_key(req: TokenRequest):
             tenant_id=tenant.id,
             tenant_slug=tenant.slug,
             role=participant.role,
+            participant_id=participant.id,
             extra={"key_prefix": key_row.key_prefix},
         )
 
         logger.info(
-            "JWT issued for %s (tenant=%s, role=%s)",
+            "JWT issued for %s (tenant=%s, role=%s, participant_id=%s)",
             participant.name,
             tenant.slug,
             participant.role,
+            participant.id,
         )
 
         return TokenResponse(

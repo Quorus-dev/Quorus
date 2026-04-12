@@ -155,6 +155,10 @@ class RoomMember(Base):
         String(36), ForeignKey("rooms.id", ondelete="CASCADE"), primary_key=True
     )
     participant_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    # Immutable participant ID for audit/revocation (nullable for legacy records)
+    participant_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("participants.id", ondelete="CASCADE"), nullable=True
+    )
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
@@ -171,6 +175,13 @@ class Message(Base):
     )
     from_name: Mapped[str] = mapped_column(Text, nullable=False)
     to_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Immutable participant IDs for audit (nullable for legacy records)
+    from_participant_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("participants.id", ondelete="SET NULL"), nullable=True
+    )
+    to_participant_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("participants.id", ondelete="SET NULL"), nullable=True
+    )
     # Note: FK dropped in migration 004 — rooms are in Redis, not Postgres
     room_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # Denormalized room name (room metadata is in Redis, not Postgres)
@@ -201,6 +212,10 @@ class Webhook(Base):
         String(36), ForeignKey("tenants.id"), nullable=False
     )
     participant_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Immutable participant ID (nullable for legacy records)
+    participant_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("participants.id", ondelete="CASCADE"), nullable=True
+    )
     room_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("rooms.id"), nullable=True
     )
@@ -215,6 +230,10 @@ class Presence(Base):
 
     tenant_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     participant_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    # Immutable participant ID (nullable for legacy records)
+    participant_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("participants.id", ondelete="CASCADE"), nullable=True
+    )
     last_heartbeat: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
