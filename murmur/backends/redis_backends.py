@@ -177,6 +177,29 @@ class RedisMessageBackend:
                 pipe.xadd(key, {"data": json.dumps(m)})
             await pipe.execute()
 
+    async def enqueue_fanout(
+        self, tenant_id: str, messages_by_recipient: dict[str, dict]
+    ) -> None:
+        """Fan-out: enqueue one message per recipient in a single pipeline.
+
+        This batches all writes into a single Redis round-trip, reducing
+        latency for room messages with many recipients from O(N) to O(1).
+        """
+        if not messages_by_recipient:
+            return
+
+        # Ensure consumer groups exist for all recipients
+        keys = [self._key(tenant_id, name) for name in messages_by_recipient]
+        for key in keys:
+            await self._ensure_group(key)
+
+        # Pipeline all XADD commands
+        async with self._r.pipeline(transaction=False) as pipe:
+            for recipient, message in messages_by_recipient.items():
+                key = self._key(tenant_id, recipient)
+                pipe.xadd(key, {"data": json.dumps(message)})
+            await pipe.execute()
+
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
         """Read and acknowledge all messages (destructive read)."""
         key = self._key(tenant_id, to_name)

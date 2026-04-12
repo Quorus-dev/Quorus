@@ -61,6 +61,14 @@ class InMemoryMessageBackend:
         async with self._lock:
             self._queues[(tenant_id, to_name)].extend(messages)
 
+    async def enqueue_fanout(
+        self, tenant_id: str, messages_by_recipient: dict[str, dict]
+    ) -> None:
+        """Fan-out: enqueue one message per recipient."""
+        async with self._lock:
+            for recipient, message in messages_by_recipient.items():
+                self._queues[(tenant_id, recipient)].append(message)
+
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
         async with self._lock:
             key = (tenant_id, to_name)

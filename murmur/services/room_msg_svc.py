@@ -101,7 +101,10 @@ class RoomMessageService:
         message_id = str(uuid.uuid4())
 
         # Fan-out to each member's DM queue (with backpressure)
+        # Build batch of messages for all eligible recipients
         skipped_recipients: list[str] = []
+        fanout_messages: dict[str, dict] = {}
+
         for recipient in members:
             # Check quota before enqueueing
             depth = await self._msg_backend.recipient_depth(tenant_id, recipient)
@@ -125,10 +128,17 @@ class RoomMessageService:
                 "timestamp": timestamp,
                 "reply_to": reply_to,
             }
-            await self._msg_backend.enqueue(tenant_id, recipient, fan_out_msg)
-            if self._on_enqueue:
-                self._on_enqueue(tenant_id, recipient)
-            self._sse.push(tenant_id, recipient, fan_out_msg)
+            fanout_messages[recipient] = fan_out_msg
+
+        # Batch enqueue all messages in a single operation (pipelined for Redis)
+        if fanout_messages:
+            await self._msg_backend.enqueue_fanout(tenant_id, fanout_messages)
+
+            # Notify via SSE and callbacks
+            for recipient, fan_out_msg in fanout_messages.items():
+                if self._on_enqueue:
+                    self._on_enqueue(tenant_id, recipient)
+                self._sse.push(tenant_id, recipient, fan_out_msg)
 
         # Append to room history
         history_msg = {

@@ -28,6 +28,20 @@ class MessageBackend(Protocol):
         """Append multiple messages atomically."""
         ...
 
+    async def enqueue_fanout(
+        self, tenant_id: str, messages_by_recipient: dict[str, dict]
+    ) -> None:
+        """Fan-out: enqueue one message per recipient in a single operation.
+
+        This is optimized for room messaging where the same message goes
+        to many recipients. Implementations should pipeline writes to
+        minimize round-trips.
+
+        Args:
+            messages_by_recipient: dict mapping recipient name -> message dict
+        """
+        ...
+
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
         """Pop and return all messages, clearing the inbox.
 
