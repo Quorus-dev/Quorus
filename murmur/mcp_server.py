@@ -533,8 +533,20 @@ async def _check_messages(context: Context | None = None) -> str:
     if not messages:
         return "No new messages."
 
+    # Filter out empty/invalid messages (missing required fields)
+    # Debug: log any invalid messages to find root cause of [] unknown:
+    valid_messages = []
+    for msg in messages:
+        if msg.get("from_name") or msg.get("content") or msg.get("timestamp"):
+            valid_messages.append(msg)
+        else:
+            logger.warning("Filtered invalid message: %r", msg)
+
+    if not valid_messages:
+        return "No new messages."
+
     # Format messages first, then ACK after successful formatting
-    result = "\n".join(_format_message(msg) for msg in messages)
+    result = "\n".join(_format_message(msg) for msg in valid_messages)
 
     # ACK fetched messages after successfully processing them
     if ack_token:
