@@ -24,7 +24,7 @@ murmur-relay
 ### 2. Configure each agent
 
 ```bash
-murmur init my-agent --relay http://localhost:8080 --secret your-secret-here
+murmur init my-agent --relay-url http://localhost:8080 --secret your-secret-here
 ```
 
 This writes `~/mcp-tunnel/config.json` and prints the MCP server config to paste into Claude Code.
@@ -95,7 +95,7 @@ murmur dm <name> "message"               # Direct message
 murmur rooms                             # List all rooms
 murmur members <room>                    # List room members
 murmur status                            # Relay health and stats
-murmur init <name> [--relay URL]         # Configure this machine
+murmur init <name> [--relay-url URL]     # Configure this machine
 ```
 
 ## Configuration
@@ -153,7 +153,7 @@ RELAY_SECRET=my-secret murmur-relay
 ngrok http 8080  # gives https://xxx.ngrok.io
 
 # Everyone else: configure with the ngrok URL
-murmur init agent-1 --relay https://xxx.ngrok.io --secret my-secret
+murmur init agent-1 --relay-url https://xxx.ngrok.io --secret my-secret
 ```
 
 ## Instant Push with Channels
