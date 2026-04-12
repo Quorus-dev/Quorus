@@ -2915,6 +2915,12 @@ def _cmd_doctor(args):
     else:
         console.print("[yellow]Fix the issues above to get started.[/yellow]")
 
+    # Show web console link
+    console.print(
+        "\n[dim]Tip: Monitor your swarm in the browser at "
+        "[link=https://murmur-ai.dev/console]murmur-ai.dev/console[/link][/dim]"
+    )
+
 
 def _cmd_relay(args):
     """Start the relay server."""

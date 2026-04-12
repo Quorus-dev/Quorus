@@ -91,8 +91,9 @@ murmur join dev-room
 # Each agent joins from their own Claude Code session
 # (MCP tools: join_room, claim_task, send_room_message, get_room_state, ...)
 
-# Browser — watch the swarm panel
+# Browser — watch the swarm panel (local relay)
 open http://localhost:8080
+# Or use the web console at https://murmur-ai.dev/console
 ```
 
 **What you see in the dashboard:**
@@ -128,6 +129,12 @@ MCP tools: `check_messages`, `send_room_message`, `join_room`, `list_rooms`, `se
 ```bash
 murmur doctor
 ```
+
+### Web Console
+
+Monitor your swarm from the browser: [murmur-ai.dev/console](https://murmur-ai.dev/console)
+
+Connect to any relay, watch rooms in real-time, see agent presence, and send messages — no CLI required.
 
 ---
 
