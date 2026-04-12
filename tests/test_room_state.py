@@ -398,3 +398,102 @@ class TestLockSSEBroadcast:
         assert msg["message_type"] == "LOCK_RELEASED"
 
         sse_svc.unregister_queue("_legacy", "watcher", q)
+
+
+# ---------------------------------------------------------------------------
+# Membership Enforcement Tests
+# ---------------------------------------------------------------------------
+
+
+class TestRoomStateMembership:
+    """Room state endpoints require membership when using JWT auth."""
+
+    @pytest.fixture
+    def alice_jwt(self):
+        from murmur.auth.tokens import create_jwt
+        return create_jwt(sub="alice", tenant_id="t-1", tenant_slug="acme", role="user")
+
+    @pytest.fixture
+    def bob_jwt(self):
+        from murmur.auth.tokens import create_jwt
+        return create_jwt(sub="bob", tenant_id="t-1", tenant_slug="acme", role="user")
+
+    @pytest.fixture
+    async def room_with_alice(self, client: AsyncClient, alice_jwt: str) -> str:
+        """Create a room where alice is the only member."""
+        resp = await client.post(
+            "/rooms",
+            json={"name": "alice-room", "created_by": "alice"},
+            headers={"Authorization": f"Bearer {alice_jwt}"},
+        )
+        assert resp.status_code == 200
+        return resp.json()["id"]
+
+    async def test_non_member_cannot_get_room_state(
+        self, client: AsyncClient, room_with_alice: str, bob_jwt: str
+    ):
+        """Bob cannot view state of a room he's not in."""
+        resp = await client.get(
+            f"/rooms/{room_with_alice}/state",
+            headers={"Authorization": f"Bearer {bob_jwt}"},
+        )
+        assert resp.status_code == 403
+        assert "member" in resp.json()["detail"].lower()
+
+    async def test_non_member_cannot_claim_lock(
+        self, client: AsyncClient, room_with_alice: str, bob_jwt: str
+    ):
+        """Bob cannot claim a lock in a room he's not in."""
+        resp = await client.post(
+            f"/rooms/{room_with_alice}/lock",
+            json={"file_path": "src/main.py", "claimed_by": "bob", "ttl_seconds": 60},
+            headers={"Authorization": f"Bearer {bob_jwt}"},
+        )
+        assert resp.status_code == 403
+
+    async def test_non_member_cannot_set_goal(
+        self, client: AsyncClient, room_with_alice: str, bob_jwt: str
+    ):
+        """Bob cannot set goal in a room he's not in."""
+        resp = await client.patch(
+            f"/rooms/{room_with_alice}/state/goal",
+            json={"goal": "take over alice's room"},
+            headers={"Authorization": f"Bearer {bob_jwt}"},
+        )
+        assert resp.status_code == 403
+
+    async def test_non_member_cannot_add_decision(
+        self, client: AsyncClient, room_with_alice: str, bob_jwt: str
+    ):
+        """Bob cannot add decision in a room he's not in."""
+        resp = await client.post(
+            f"/rooms/{room_with_alice}/state/decisions",
+            json={"decision": "bob's decision"},
+            headers={"Authorization": f"Bearer {bob_jwt}"},
+        )
+        assert resp.status_code == 403
+
+    async def test_member_can_access_room_state(
+        self, client: AsyncClient, room_with_alice: str, alice_jwt: str
+    ):
+        """Alice (room creator/member) can access room state."""
+        resp = await client.get(
+            f"/rooms/{room_with_alice}/state",
+            headers={"Authorization": f"Bearer {alice_jwt}"},
+        )
+        assert resp.status_code == 200
+        assert "active_goal" in resp.json()
+
+    async def test_legacy_auth_bypasses_membership(
+        self, client: AsyncClient, room_id: str
+    ):
+        """Legacy auth (test-secret) bypasses membership for backward compat.
+
+        Uses the room_id fixture which creates a room in the legacy tenant,
+        allowing legacy auth to access it even without explicit membership.
+        """
+        resp = await client.get(
+            f"/rooms/{room_id}/state",
+            headers=HEADERS,  # legacy auth
+        )
+        assert resp.status_code == 200

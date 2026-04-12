@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from murmur.auth.middleware import AuthContext, verify_auth
+from murmur.routes.room_auth import require_room_member
 
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
@@ -38,13 +39,13 @@ async def get_room_state(
     """Return the Shared State Matrix for *room_id*.
 
     Resolves room by UUID or name.  Scoped to the caller's tenant.
+    Requires room membership (403 if not a member).
     """
-    room_svc = request.app.state.room_service
     backends = request.app.state.backends
     tid = _tid(auth)
 
-    # Resolve room (raises 404 if unknown)
-    rid, room_data = await room_svc.get(tid, room_id)
+    # Verify membership and resolve room (raises 404/403)
+    rid, room_data = await require_room_member(request, auth, tid, room_id)
 
     # Expire stale task locks before building the snapshot
     await backends.room_state.expire_tasks(tid, rid)
@@ -150,21 +151,22 @@ async def claim_task(
     if another agent already holds it.
 
     On grant, SSE-broadcasts ``LOCK_ACQUIRED`` to all room members.
+    Requires room membership (403 if not a member).
     """
     if auth.sub and body.claimed_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot claim as another user")
 
-    room_svc = request.app.state.room_service
     backends = request.app.state.backends
     tid = _tid(auth)
+
+    # Verify membership first (before rate limiting to avoid leaking room existence)
+    rid, room_data = await require_room_member(request, auth, tid, room_id)
 
     # Rate limit: 30/min
     rate_limit_svc = request.app.state.rate_limit_service
     caller = auth.sub or "anon"
     if not await rate_limit_svc.check_with_limit(tid, f"lock_acquire:{caller}", 30):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-
-    rid, room_data = await room_svc.get(tid, room_id)
     room_name = room_data.get("name", rid)
     members = room_data.get("members", {})
 
@@ -225,18 +227,19 @@ async def release_task(
     match the current lock holder, 404 if no lock exists for the path.
 
     On success, SSE-broadcasts ``LOCK_RELEASED`` to all room members.
+    Requires room membership (403 if not a member).
     """
-    room_svc = request.app.state.room_service
     backends = request.app.state.backends
     tid = _tid(auth)
+
+    # Verify membership first
+    rid, room_data = await require_room_member(request, auth, tid, room_id)
 
     # Rate limit: 30/min
     rate_limit_svc = request.app.state.rate_limit_service
     caller = auth.sub or "anon"
     if not await rate_limit_svc.check_with_limit(tid, f"lock_release:{caller}", 30):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-
-    rid, room_data = await room_svc.get(tid, room_id)
     room_name = room_data.get("name", rid)
     members = room_data.get("members", {})
 
@@ -317,19 +320,20 @@ async def set_room_goal(
     """Set (or clear) the active goal for a room.
 
     Pass ``null`` for goal to clear it.  Broadcasts ``GOAL_SET`` SSE event
-    to all room members.  Rate limited: 30/min.
+    to all room members.  Rate limited: 10/min.
+    Requires room membership (403 if not a member).
     """
-    room_svc = request.app.state.room_service
     backends = request.app.state.backends
     tid = _tid(auth)
+
+    # Verify membership first
+    rid, room_data = await require_room_member(request, auth, tid, room_id)
 
     # Rate limit: 10/min
     rate_limit_svc = request.app.state.rate_limit_service
     caller = auth.sub or "anon"
     if not await rate_limit_svc.check_with_limit(tid, f"goal:{caller}", 10):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-
-    rid, room_data = await room_svc.get(tid, room_id)
     room_name = room_data.get("name", rid)
     members = room_data.get("members", {})
 
@@ -355,19 +359,20 @@ async def add_room_decision(
     """Record a resolved decision in the room's shared state.
 
     Broadcasts ``DECISION_ADDED`` SSE event to all room members.
-    Rate limited: 30/min.
+    Rate limited: 20/min.
+    Requires room membership (403 if not a member).
     """
-    room_svc = request.app.state.room_service
     backends = request.app.state.backends
     tid = _tid(auth)
+
+    # Verify membership first
+    rid, room_data = await require_room_member(request, auth, tid, room_id)
 
     # Rate limit: 20/min
     rate_limit_svc = request.app.state.rate_limit_service
     caller = auth.sub or "anon"
     if not await rate_limit_svc.check_with_limit(tid, f"decision:{caller}", 20):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-
-    rid, room_data = await room_svc.get(tid, room_id)
     room_name = room_data.get("name", rid)
     members = room_data.get("members", {})
 
