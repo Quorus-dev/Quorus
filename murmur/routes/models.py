@@ -6,7 +6,7 @@ from pydantic import BaseModel, field_validator
 
 from murmur.routes.helpers import _validate_name
 
-VALID_MESSAGE_TYPES = {"chat", "claim", "status", "request", "alert", "sync"}
+VALID_MESSAGE_TYPES = {"chat", "claim", "status", "request", "alert", "sync", "brief", "subtask"}
 VALID_ROLES = {"builder", "reviewer", "researcher", "pm", "qa", "member"}
 
 
@@ -47,6 +47,7 @@ class RoomMessageRequest(BaseModel):
     content: str
     message_type: str = "chat"
     reply_to: str | None = None
+    brief_id: str | None = None
 
     @field_validator("from_name")
     @classmethod
