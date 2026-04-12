@@ -14,7 +14,6 @@ For the full hub with room management, use:
 from __future__ import annotations
 
 import json
-import os
 import sys
 import threading
 import time
@@ -30,12 +29,11 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from rich.console import Console
-    from rich.live import Live
-    from rich.panel import Panel
-    from rich.text import Text
-    from rich.table import Table
     from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
 except ImportError:
     print("rich not installed — pip install rich")
     sys.exit(1)
@@ -248,8 +246,8 @@ def main() -> None:
     console.print()
     console.print(Panel(
         Text.from_markup(
-            f"  [bold bright_cyan]murmur[/bold bright_cyan]"
-            f"  [dim]group chat[/dim]  "
+            "  [bold bright_cyan]murmur[/bold bright_cyan]"
+            "  [dim]group chat[/dim]  "
         ),
         border_style="dim",
         padding=(0, 2),
@@ -287,7 +285,9 @@ def main() -> None:
             # Redraw
             console.clear()
             connected, conn_status = state.get_connected()
-            console.print(Panel(_render_status(relay, name, connected), border_style="dim", padding=(0, 1)))
+            console.print(Panel(
+                _render_status(relay, name, connected), border_style="dim", padding=(0, 1)
+            ))
             console.print()
             console.print(_render_messages(state.get_msgs(), name, room))
             console.print()
@@ -318,7 +318,9 @@ def main() -> None:
                     resp = httpx.get(f"{relay}/rooms", headers=_headers(secret), timeout=5)
                     rooms_data = resp.json()
                     if isinstance(rooms_data, list):
-                        table = Table(box=box.SIMPLE_HEAD, show_header=True, header_style="bold dim")
+                        table = Table(
+                            box=box.SIMPLE_HEAD, show_header=True, header_style="bold dim"
+                        )
                         table.add_column("Room", style="bright_cyan")
                         table.add_column("Members", style="dim")
                         for r in rooms_data:
