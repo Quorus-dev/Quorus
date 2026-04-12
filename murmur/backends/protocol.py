@@ -465,10 +465,13 @@ class IdempotencyBackend(Protocol):
     """Idempotency key storage for deduplicating retried requests.
 
     Supports atomic reservation to prevent race conditions:
-    1. Call reserve() to atomically claim the key
+    1. Call reserve(key, body_fingerprint) to atomically claim the key
     2. If reserve() returns None, process the request
-    3. Call set() to store the result
+    3. Call set(key, body_fingerprint, result) to store the result
     4. If reserve() returns a dict, return the cached result
+
+    Body fingerprinting ensures that reusing an idempotency key with a
+    different request body returns 409 Conflict (per RFC).
     """
 
     async def get(self, tenant_id: str, key: str) -> dict | None:
@@ -476,23 +479,30 @@ class IdempotencyBackend(Protocol):
         ...
 
     async def reserve(
-        self, tenant_id: str, key: str, ttl: int
+        self, tenant_id: str, key: str, body_fingerprint: str, ttl: int
     ) -> dict | None:
         """Atomically reserve a key for processing.
+
+        Args:
+            tenant_id: Tenant identifier
+            key: The idempotency key
+            body_fingerprint: SHA256 hash of the request body
+            ttl: Time-to-live in seconds
 
         Returns:
         - None if reservation succeeded (key was free, now reserved)
         - dict with cached result if key already has a completed result
-        - raises HTTPException(409) if key is reserved but not yet complete
 
-        Uses SET NX to prevent race conditions between concurrent requests.
+        Raises HTTPException(409) if:
+        - Key is reserved but not yet complete (concurrent request)
+        - Key exists with a different body fingerprint (key reuse violation)
         """
         ...
 
     async def set(
-        self, tenant_id: str, key: str, result: dict, ttl: int
+        self, tenant_id: str, key: str, body_fingerprint: str, result: dict, ttl: int
     ) -> None:
-        """Store result with TTL."""
+        """Store result with body fingerprint and TTL."""
         ...
 
     async def delete(self, tenant_id: str, key: str) -> None:
@@ -540,6 +550,36 @@ class RoomStateBackend(Protocol):
         self, tenant_id: str, room_id: str, file_path: str
     ) -> None:
         """Remove a file lock entry."""
+        ...
+
+    async def try_acquire_lock(
+        self, tenant_id: str, room_id: str, file_path: str,
+        lock_data: dict, task_data: dict
+    ) -> tuple[bool, dict | None]:
+        """Atomically try to acquire a lock.
+
+        Prevents TOCTOU race conditions where two replicas both read
+        "unlocked" and both grant the lock.
+
+        Returns:
+            (True, None) if lock was acquired
+            (False, existing_lock_data) if lock is already held
+        """
+        ...
+
+    async def release_lock_atomic(
+        self, tenant_id: str, room_id: str, file_path: str, lock_token: str
+    ) -> tuple[str, dict | None]:
+        """Atomically release a lock with token verification.
+
+        Prevents race conditions where another agent acquires a new lock
+        between the token check and the release.
+
+        Returns:
+            ("not_found", None) if no lock exists
+            ("token_mismatch", existing_lock) if token doesn't match
+            ("released", None) if successfully released
+        """
         ...
 
     async def add_decision(

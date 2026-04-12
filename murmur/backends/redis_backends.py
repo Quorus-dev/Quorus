@@ -909,6 +909,9 @@ class RedisIdempotencyBackend:
     - reserve() uses SET NX to atomically claim a key
     - set() stores the final result
     - get() retrieves cached results
+
+    Body fingerprinting ensures that reusing an idempotency key with a
+    different request body returns 409 Conflict (per RFC).
     """
 
     def __init__(self, r: Redis) -> None:
@@ -924,23 +927,36 @@ class RedisIdempotencyBackend:
             # Don't return pending markers as cached results
             if data.get("_status") == _IDEMPOTENCY_PENDING:
                 return None
-            return data
+            # Strip internal fields before returning
+            result = data.get("_result")
+            return result
         return None
 
     async def reserve(
-        self, tenant_id: str, key: str, ttl: int
+        self, tenant_id: str, key: str, body_fingerprint: str, ttl: int
     ) -> dict | None:
         """Atomically reserve a key for processing.
 
+        Args:
+            tenant_id: Tenant identifier
+            key: The idempotency key (without body fingerprint)
+            body_fingerprint: SHA256 hash of the request body
+            ttl: Time-to-live in seconds
+
         Returns:
         - None if reservation succeeded (caller should process request)
-        - dict with cached result if key has a completed result
-        Raises HTTPException(409) if key is reserved but not yet complete.
+        - dict with cached result if key has a completed result with matching body
+        Raises HTTPException(409) if:
+        - Key is reserved but not yet complete (concurrent request)
+        - Key exists with a different body fingerprint (key reuse violation)
         """
         from fastapi import HTTPException
 
         redis_key = self._key(tenant_id, key)
-        pending_value = json.dumps({"_status": _IDEMPOTENCY_PENDING})
+        pending_value = json.dumps({
+            "_status": _IDEMPOTENCY_PENDING,
+            "_body_fp": body_fingerprint,
+        })
 
         # Try to set the key only if it doesn't exist
         reserved = await self._r.set(redis_key, pending_value, ex=ttl, nx=True)
@@ -949,26 +965,42 @@ class RedisIdempotencyBackend:
             # We got the lock, caller should process the request
             return None
 
-        # Key already exists — check if it's a completed result or still pending
+        # Key already exists — check status and body fingerprint
         cached = await self._r.get(redis_key)
         if cached:
             data = json.loads(cached)
+
+            # Check body fingerprint first
+            stored_fp = data.get("_body_fp")
+            if stored_fp and stored_fp != body_fingerprint:
+                # Same key, different body = violation
+                raise HTTPException(
+                    status_code=409,
+                    detail="Idempotency-Key already used with different request body",
+                )
+
             if data.get("_status") == _IDEMPOTENCY_PENDING:
                 # Another request is still processing this key
                 raise HTTPException(
                     status_code=409,
                     detail="Request with this Idempotency-Key is already in progress",
                 )
+
             # Return the completed result
-            return data
+            return data.get("_result")
 
         # Key expired between set and get — try again
-        return await self.reserve(tenant_id, key, ttl)
+        return await self.reserve(tenant_id, key, body_fingerprint, ttl)
 
     async def set(
-        self, tenant_id: str, key: str, result: dict, ttl: int
+        self, tenant_id: str, key: str, body_fingerprint: str, result: dict, ttl: int
     ) -> None:
-        await self._r.set(self._key(tenant_id, key), json.dumps(result), ex=ttl)
+        """Store the completed result with body fingerprint."""
+        value = json.dumps({
+            "_body_fp": body_fingerprint,
+            "_result": result,
+        })
+        await self._r.set(self._key(tenant_id, key), value, ex=ttl)
 
     async def delete(self, tenant_id: str, key: str) -> None:
         await self._r.delete(self._key(tenant_id, key))
@@ -1215,10 +1247,87 @@ class RedisRoomStateBackend:
     - t:{tid}:room_state:{rid}:tasks — list of JSON tasks
     - t:{tid}:room_state:{rid}:locks — hash (file_path -> JSON lock_data)
     - t:{tid}:room_state:{rid}:decisions — list of JSON decisions
+
+    Atomic operations use Lua scripts to prevent TOCTOU race conditions
+    in distributed deployments.
+    """
+
+    # Lua script: atomic lock acquire
+    # Returns: [0, existing_lock_data] if already locked, [1, nil] if acquired
+    _LUA_ACQUIRE_LOCK = """
+    local locks_key = KEYS[1]
+    local tasks_key = KEYS[2]
+    local file_path = ARGV[1]
+    local lock_data = ARGV[2]
+    local task_data = ARGV[3]
+
+    -- Check if lock already exists (HSETNX returns 0 if key exists)
+    local acquired = redis.call('HSETNX', locks_key, file_path, lock_data)
+    if acquired == 0 then
+        -- Lock already held, return existing data
+        local existing = redis.call('HGET', locks_key, file_path)
+        return {0, existing}
+    end
+
+    -- Lock acquired, append task
+    redis.call('RPUSH', tasks_key, task_data)
+    return {1, nil}
+    """
+
+    # Lua script: atomic lock release with token verification
+    # Returns: 0 if no lock, 1 if token mismatch, 2 if released
+    _LUA_RELEASE_LOCK = """
+    local locks_key = KEYS[1]
+    local tasks_key = KEYS[2]
+    local file_path = ARGV[1]
+    local expected_token = ARGV[2]
+
+    -- Get current lock
+    local lock_json = redis.call('HGET', locks_key, file_path)
+    if not lock_json then
+        return {0, nil}  -- No lock exists
+    end
+
+    -- Parse and verify token
+    local lock = cjson.decode(lock_json)
+    if lock.lock_token ~= expected_token then
+        return {1, lock_json}  -- Token mismatch
+    end
+
+    -- Token matches, release the lock
+    redis.call('HDEL', locks_key, file_path)
+
+    -- Remove from tasks list (find and remove matching task)
+    local tasks = redis.call('LRANGE', tasks_key, 0, -1)
+    if #tasks > 0 then
+        redis.call('DEL', tasks_key)
+        for _, task_json in ipairs(tasks) do
+            local task = cjson.decode(task_json)
+            if task.file_path ~= file_path or task.lock_token ~= expected_token then
+                redis.call('RPUSH', tasks_key, task_json)
+            end
+        end
+    end
+
+    return {2, nil}  -- Successfully released
     """
 
     def __init__(self, r: Redis) -> None:
         self._r = r
+        self._acquire_script = None
+        self._release_script = None
+
+    async def _get_acquire_script(self):
+        """Lazily register the acquire lock Lua script."""
+        if self._acquire_script is None:
+            self._acquire_script = self._r.register_script(self._LUA_ACQUIRE_LOCK)
+        return self._acquire_script
+
+    async def _get_release_script(self):
+        """Lazily register the release lock Lua script."""
+        if self._release_script is None:
+            self._release_script = self._r.register_script(self._LUA_RELEASE_LOCK)
+        return self._release_script
 
     def _key(self, tid: str, rid: str, suffix: str) -> str:
         return f"t:{tid}:room_state:{rid}:{suffix}"
@@ -1326,6 +1435,66 @@ class RedisRoomStateBackend:
         """Remove a file lock entry."""
         key = self._key(tenant_id, room_id, "locks")
         await self._r.hdel(key, file_path)
+
+    async def try_acquire_lock(
+        self, tenant_id: str, room_id: str, file_path: str,
+        lock_data: dict, task_data: dict
+    ) -> tuple[bool, dict | None]:
+        """Atomically try to acquire a lock.
+
+        Uses a Lua script to prevent TOCTOU race conditions where two replicas
+        both read "unlocked" and both grant the lock.
+
+        Returns:
+            (True, None) if lock was acquired
+            (False, existing_lock_data) if lock is already held
+        """
+        locks_key = self._key(tenant_id, room_id, "locks")
+        tasks_key = self._key(tenant_id, room_id, "tasks")
+
+        script = await self._get_acquire_script()
+        result = await script(
+            keys=[locks_key, tasks_key],
+            args=[file_path, json.dumps(lock_data), json.dumps(task_data)],
+        )
+
+        acquired = result[0] == 1
+        if acquired:
+            return (True, None)
+        else:
+            existing = json.loads(result[1]) if result[1] else None
+            return (False, existing)
+
+    async def release_lock_atomic(
+        self, tenant_id: str, room_id: str, file_path: str, lock_token: str
+    ) -> tuple[str, dict | None]:
+        """Atomically release a lock with token verification.
+
+        Uses a Lua script to prevent race conditions where another agent
+        acquires a new lock between the token check and the release.
+
+        Returns:
+            ("not_found", None) if no lock exists
+            ("token_mismatch", existing_lock) if token doesn't match
+            ("released", None) if successfully released
+        """
+        locks_key = self._key(tenant_id, room_id, "locks")
+        tasks_key = self._key(tenant_id, room_id, "tasks")
+
+        script = await self._get_release_script()
+        result = await script(
+            keys=[locks_key, tasks_key],
+            args=[file_path, lock_token],
+        )
+
+        status_code = result[0]
+        if status_code == 0:
+            return ("not_found", None)
+        elif status_code == 1:
+            existing = json.loads(result[1]) if result[1] else None
+            return ("token_mismatch", existing)
+        else:
+            return ("released", None)
 
     async def add_decision(
         self, tenant_id: str, room_id: str, decision: dict

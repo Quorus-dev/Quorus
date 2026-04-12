@@ -173,24 +173,19 @@ async def claim_task(
     # Expire stale locks first
     await backends.room_state.expire_tasks(tid, rid)
 
-    state = await backends.room_state.get(tid, rid)
-    existing = state.get("locked_files", {}).get(body.file_path)
-
-    if existing:
-        return {
-            "locked": True,
-            "held_by": existing.get("held_by"),
-            "expires_at": existing.get("expires_at"),
-        }
-
-    # Grant the lock
+    # Grant the lock atomically (prevents TOCTOU race conditions)
     lock_token = str(uuid.uuid4())
     expires_at = (
         datetime.now(timezone.utc) + timedelta(seconds=body.ttl_seconds)
     ).isoformat()
     task_id = str(uuid.uuid4())
 
-    task = {
+    lock_data = {
+        "held_by": body.claimed_by,
+        "lock_token": lock_token,
+        "expires_at": expires_at,
+    }
+    task_data = {
         "id": task_id,
         "file_path": body.file_path,
         "claimed_by": body.claimed_by,
@@ -198,7 +193,18 @@ async def claim_task(
         "lock_token": lock_token,
         "expires_at": expires_at,
     }
-    await backends.room_state.add_claimed_task(tid, rid, task)
+
+    acquired, existing = await backends.room_state.try_acquire_lock(
+        tid, rid, body.file_path, lock_data, task_data
+    )
+
+    if not acquired:
+        # Lock already held by another agent
+        return {
+            "locked": True,
+            "held_by": existing.get("held_by") if existing else "unknown",
+            "expires_at": existing.get("expires_at") if existing else None,
+        }
 
     _broadcast_lock_event(
         request, tid, rid, room_name, members,
@@ -243,28 +249,23 @@ async def release_task(
     room_name = room_data.get("name", rid)
     members = room_data.get("members", {})
 
-    state = await backends.room_state.get(tid, rid)
-    existing = state.get("locked_files", {}).get(file_path)
+    # Release atomically with token verification (prevents TOCTOU race conditions)
+    status, existing = await backends.room_state.release_lock_atomic(
+        tid, rid, file_path, body.lock_token
+    )
 
-    if not existing:
+    if status == "not_found":
         raise HTTPException(status_code=404, detail="No lock held for this path")
 
-    if existing.get("lock_token") != body.lock_token:
+    if status == "token_mismatch":
         raise HTTPException(status_code=403, detail="Invalid lock token")
 
-    await backends.room_state.release_lock(tid, rid, file_path)
-
-    # Also remove from claimed_tasks list
-    tasks = state.get("claimed_tasks", [])
-    for task in tasks:
-        if task.get("file_path") == file_path and task.get("lock_token") == body.lock_token:
-            await backends.room_state.remove_claimed_task(tid, rid, task["id"])
-            break
-
+    # Caller with valid token is the owner
+    held_by = auth.sub or "unknown"
     _broadcast_lock_event(
         request, tid, rid, room_name, members,
         "LOCK_RELEASED",
-        {"file_path": file_path, "held_by": existing.get("held_by")},
+        {"file_path": file_path, "held_by": held_by},
     )
 
     return {"released": True, "file_path": file_path}

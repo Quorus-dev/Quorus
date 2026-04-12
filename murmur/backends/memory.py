@@ -749,10 +749,12 @@ class InMemoryIdempotencyBackend:
     """Idempotency key storage with TTL-based expiration.
 
     Supports atomic reservation to prevent race conditions.
+    Body fingerprinting ensures same key with different body returns 409.
     """
 
     def __init__(self) -> None:
-        # (tenant_id, key) -> (result, expiry_time)
+        # (tenant_id, key) -> (data, expiry_time)
+        # data contains _body_fp, _status, and _result
         self._store: dict[tuple[str, str], tuple[dict, float]] = {}
         self._lock = asyncio.Lock()
 
@@ -761,25 +763,33 @@ class InMemoryIdempotencyBackend:
             now = time.time()
             cache_key = (tenant_id, key)
             if cache_key in self._store:
-                cached_result, expiry = self._store[cache_key]
+                data, expiry = self._store[cache_key]
                 if now < expiry:
                     # Don't return pending markers as cached results
-                    if cached_result.get("_status") == _IDEMPOTENCY_PENDING:
+                    if data.get("_status") == _IDEMPOTENCY_PENDING:
                         return None
-                    return cached_result
+                    return data.get("_result")
                 # Expired, remove
                 del self._store[cache_key]
             return None
 
     async def reserve(
-        self, tenant_id: str, key: str, ttl: int
+        self, tenant_id: str, key: str, body_fingerprint: str, ttl: int
     ) -> dict | None:
         """Atomically reserve a key for processing.
 
+        Args:
+            tenant_id: Tenant identifier
+            key: The idempotency key
+            body_fingerprint: SHA256 hash of the request body
+            ttl: Time-to-live in seconds
+
         Returns:
         - None if reservation succeeded (caller should process request)
-        - dict with cached result if key has a completed result
-        Raises HTTPException(409) if key is reserved but not yet complete.
+        - dict with cached result if key has a completed result with matching body
+        Raises HTTPException(409) if:
+        - Key is reserved but not yet complete (concurrent request)
+        - Key exists with a different body fingerprint (key reuse violation)
         """
         from fastapi import HTTPException
 
@@ -788,32 +798,43 @@ class InMemoryIdempotencyBackend:
             cache_key = (tenant_id, key)
 
             if cache_key in self._store:
-                cached_result, expiry = self._store[cache_key]
+                data, expiry = self._store[cache_key]
                 if now < expiry:
-                    if cached_result.get("_status") == _IDEMPOTENCY_PENDING:
+                    # Check body fingerprint first
+                    stored_fp = data.get("_body_fp")
+                    if stored_fp and stored_fp != body_fingerprint:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Idempotency-Key already used with different request body",
+                        )
+
+                    if data.get("_status") == _IDEMPOTENCY_PENDING:
                         # Another request is still processing this key
                         raise HTTPException(
                             status_code=409,
                             detail="Request with this Idempotency-Key is already in progress",
                         )
                     # Return the completed result
-                    return cached_result
+                    return data.get("_result")
                 # Expired, remove and claim
                 del self._store[cache_key]
 
-            # Claim the key with pending marker
+            # Claim the key with pending marker and body fingerprint
             self._store[cache_key] = (
-                {"_status": _IDEMPOTENCY_PENDING},
+                {"_status": _IDEMPOTENCY_PENDING, "_body_fp": body_fingerprint},
                 now + ttl,
             )
             return None
 
     async def set(
-        self, tenant_id: str, key: str, result: dict, ttl: int
+        self, tenant_id: str, key: str, body_fingerprint: str, result: dict, ttl: int
     ) -> None:
         async with self._lock:
             now = time.time()
-            self._store[(tenant_id, key)] = (result, now + ttl)
+            self._store[(tenant_id, key)] = (
+                {"_body_fp": body_fingerprint, "_result": result},
+                now + ttl,
+            )
             # Lazy cleanup of expired entries
             expired = [k for k, (_, exp) in self._store.items() if now >= exp]
             for k in expired:
@@ -1015,6 +1036,62 @@ class InMemoryRoomStateBackend:
             key = (tenant_id, room_id)
             if key in self._state:
                 self._state[key]["locked_files"].pop(file_path, None)
+
+    async def try_acquire_lock(
+        self, tenant_id: str, room_id: str, file_path: str,
+        lock_data: dict, task_data: dict
+    ) -> tuple[bool, dict | None]:
+        """Atomically try to acquire a lock.
+
+        Returns:
+            (True, None) if lock was acquired
+            (False, existing_lock_data) if lock is already held
+        """
+        async with self._lock:
+            key = (tenant_id, room_id)
+            self._state.setdefault(key, self._empty())
+
+            existing = self._state[key]["locked_files"].get(file_path)
+            if existing:
+                return (False, existing)
+
+            # Grant the lock
+            self._state[key]["locked_files"][file_path] = lock_data
+            self._state[key]["claimed_tasks"].append(task_data)
+            return (True, None)
+
+    async def release_lock_atomic(
+        self, tenant_id: str, room_id: str, file_path: str, lock_token: str
+    ) -> tuple[str, dict | None]:
+        """Atomically release a lock with token verification.
+
+        Returns:
+            ("not_found", None) if no lock exists
+            ("token_mismatch", existing_lock) if token doesn't match
+            ("released", None) if successfully released
+        """
+        async with self._lock:
+            key = (tenant_id, room_id)
+            if key not in self._state:
+                return ("not_found", None)
+
+            existing = self._state[key]["locked_files"].get(file_path)
+            if not existing:
+                return ("not_found", None)
+
+            if existing.get("lock_token") != lock_token:
+                return ("token_mismatch", existing)
+
+            # Release the lock
+            del self._state[key]["locked_files"][file_path]
+
+            # Remove from claimed_tasks
+            self._state[key]["claimed_tasks"] = [
+                t for t in self._state[key]["claimed_tasks"]
+                if not (t.get("file_path") == file_path and t.get("lock_token") == lock_token)
+            ]
+
+            return ("released", None)
 
     async def add_decision(
         self, tenant_id: str, room_id: str, decision: dict
