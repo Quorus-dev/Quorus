@@ -62,33 +62,45 @@ async def test_send_message_calls_relay():
 
 async def test_check_messages_calls_relay():
     """check_messages should GET from relay for this instance."""
+    # Manual ACK response format: {"messages": [...], "ack_token": "..."}
     mock_client = _make_mock_client(
         "get",
-        [{"id": "1", "from_name": "bob", "content": "hi", "timestamp": "2026-04-05T00:00:00Z"}],
+        {
+            "messages": [
+                {"id": "1", "from_name": "bob", "content": "hi",
+                 "timestamp": "2026-04-05T00:00:00Z"}
+            ],
+            "ack_token": "tok123",
+        },
     )
+    # Also mock the ACK POST call
+    mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
 
     with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
         mock_client.get.assert_called_once_with(
             "http://relay:8080/messages/alice",
-            params={"wait": 0},
+            params={"wait": 0, "ack": "manual"},
             headers={"Authorization": "Bearer secret"},
             timeout=10,
         )
+        # Should ACK after processing
+        mock_client.post.assert_called_once()
         assert "bob" in result
 
 
 async def test_check_messages_always_uses_nonblocking_fetch():
     """check_messages always uses wait=0 — SSE handles live delivery."""
-    mock_client = _make_mock_client("get", [])
+    # Empty messages response (no ACK needed when no messages)
+    mock_client = _make_mock_client("get", {"messages": [], "ack_token": None})
 
     with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
     mock_client.get.assert_called_once_with(
         "http://relay:8080/messages/alice",
-        params={"wait": 0},
+        params={"wait": 0, "ack": "manual"},
         headers={"Authorization": "Bearer secret"},
         timeout=10,
     )
@@ -259,10 +271,12 @@ async def test_auto_poll_delivers_messages():
         {"id": "m1", "from_name": "bob", "content": "hi",
          "timestamp": "2026-04-11T00:00:00Z"},
     ]
-    mock_client2 = _make_mock_client("get", msgs)
+    # Manual ACK response format
+    mock_client2 = _make_mock_client("get", {"messages": msgs, "ack_token": "tok123"})
     with patch("murmur.mcp_server._get_http_client", return_value=mock_client2):
-        fetched, err = await mcp_server._fetch_relay_messages(wait=0)
+        fetched, ack_token, err = await mcp_server._fetch_relay_messages(wait=0)
     assert len(fetched) == 1
+    assert ack_token == "tok123"
     await mcp_server._append_pending_messages(fetched)
     buffered = await mcp_server._drain_pending_messages()
     assert len(buffered) == 1

@@ -239,22 +239,46 @@ async def _notify_active_session(messages: list[dict]) -> None:
                 _active_session = None
 
 
-async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None]:
+async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None, str | None]:
+    """Fetch messages from the relay with manual ACK.
+
+    Returns:
+        (messages, ack_token, error) - messages list, token for ACK, error string
+    """
     timeout = max(wait + 5, 10)
     try:
         client = _get_http_client()
         resp = await client.get(
             f"{RELAY_URL}/messages/{INSTANCE_NAME}",
-            params={"wait": wait},
+            params={"wait": wait, "ack": "manual"},
             headers=_auth_headers(),
             timeout=timeout,
         )
         resp.raise_for_status()
-        messages = resp.json()
+        data = resp.json()
+        # ack=manual returns {"messages": [...], "ack_token": ...}
+        messages = data.get("messages", [])
+        ack_token = data.get("ack_token")
         logger.info("Received %d messages from relay", len(messages))
-        return messages, None
+        return messages, ack_token, None
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return [], _relay_error_message(e)
+        return [], None, _relay_error_message(e)
+
+
+async def _ack_messages(ack_token: str) -> None:
+    """Acknowledge messages using the token from a manual ACK fetch."""
+    try:
+        client = _get_http_client()
+        resp = await client.post(
+            f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
+            json={"ack_token": ack_token},
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.debug("Acknowledged messages with token %s", ack_token[:16])
+    except Exception:
+        logger.warning("Failed to ACK messages (token: %s)", ack_token[:16], exc_info=True)
 
 
 
@@ -500,15 +524,23 @@ async def _check_messages(context: Context | None = None) -> str:
     # Drain the SSE-delivered buffer first. If empty, do a non-blocking
     # relay fetch (wait=0) as a manual fallback — SSE handles live delivery.
     messages = await _drain_pending_messages()
+    ack_token = None
     if not messages:
-        messages, error = await _fetch_relay_messages(wait=0)
+        messages, ack_token, error = await _fetch_relay_messages(wait=0)
         if error:
             return error
 
     if not messages:
         return "No new messages."
 
-    return "\n".join(_format_message(msg) for msg in messages)
+    # Format messages first, then ACK after successful formatting
+    result = "\n".join(_format_message(msg) for msg in messages)
+
+    # ACK fetched messages after successfully processing them
+    if ack_token:
+        await _ack_messages(ack_token)
+
+    return result
 
 
 async def _list_participants(context: Context | None = None) -> str:
