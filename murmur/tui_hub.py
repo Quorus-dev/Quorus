@@ -45,6 +45,7 @@ MAX_MSG = 40
 CONFIG_DIR = Path.home() / "mcp-tunnel"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
+PUBLIC_RELAY = "https://murmur-ai.dev"  # Fallback public relay
 
 # Accent palette for senders
 _ACCENT_COLORS = [
@@ -91,6 +92,15 @@ def _write_config(name: str, relay_url: str, secret: str) -> None:
     CONFIG_FILE.chmod(0o600)
 
 
+def _try_connect(url: str, timeout: float = 3) -> bool:
+    """Test if a relay is reachable."""
+    try:
+        r = httpx.get(f"{url.rstrip('/')}/health", timeout=timeout)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def _first_launch_setup(console: Console) -> dict:
     """Interactive first-launch wizard. Returns config dict."""
     console.print()
@@ -104,11 +114,12 @@ def _first_launch_setup(console: Console) -> dict:
         padding=(0, 1),
     ))
     console.print()
-    console.print("  Welcome. Let's get you set up in 30 seconds.\n")
+    console.print("  Welcome! Let's get you coordinating with other agents.\n")
 
     # Name — conversational, plain English
+    console.print("  [dim]First, pick a name that others will see in rooms.[/dim]\n")
     while True:
-        name = Prompt.ask("  What's your name? (used to identify you in rooms)").strip()
+        name = Prompt.ask("  What should we call you?").strip()
         if not name:
             console.print("  [dim]Name can't be empty — try again.[/dim]")
             continue
@@ -122,47 +133,62 @@ def _first_launch_setup(console: Console) -> dict:
             continue
         break
 
-    # Relay URL — default shown inline
-    relay_url = Prompt.ask(
-        f"  Relay URL? (press Enter for {DEFAULT_RELAY})",
-        default=DEFAULT_RELAY,
-    ).strip().rstrip("/")
+    console.print(f"\n  [green]Nice to meet you, {name}![/green]\n")
 
-    # Secret — optional, soft ask
-    secret = Prompt.ask(
-        "  Relay secret? (press Enter to skip)",
-        default="",
-    ).strip()
-
-    # Connection test with warm feedback
-    console.print()
-    console.print("  Connecting...", end="")
+    # Auto-detect relay — try local first, then offer public
+    console.print("  [dim]Looking for a relay...[/dim]", end="")
+    relay_url = DEFAULT_RELAY
+    secret = ""
     relay_ok = False
-    try:
-        r = httpx.get(f"{relay_url}/health", timeout=5)
-        if r.status_code == 200:
-            console.print(" [bold green]✓[/bold green]")
-            relay_ok = True
-        else:
-            console.print(f" [yellow]relay returned {r.status_code}[/yellow]")
-    except Exception:
-        console.print(" [yellow]not reachable.[/yellow]")
 
-    # If relay is down and it's the default local URL, offer to start it
+    # Try local relay first
+    if _try_connect(DEFAULT_RELAY):
+        console.print(f" [green]found local relay at {DEFAULT_RELAY}[/green]")
+        relay_url = DEFAULT_RELAY
+        relay_ok = True
+    else:
+        console.print(" [dim]no local relay.[/dim]")
+        console.print()
+
+        # Ask if they want to use a custom relay or start local
+        console.print("  [dim]Options:[/dim]")
+        console.print("    [bold]1[/bold] Start a local relay (murmur relay)")
+        console.print("    [bold]2[/bold] Connect to a custom relay URL")
+        console.print()
+
+        choice = Prompt.ask(
+            "  Which one?",
+            choices=["1", "2"],
+            default="1",
+        )
+
+        if choice == "2":
+            relay_url = Prompt.ask(
+                "  Relay URL"
+            ).strip().rstrip("/")
+            secret = Prompt.ask(
+                "  Secret (if required, or Enter to skip)",
+                default="",
+            ).strip()
+            console.print()
+            console.print(f"  Connecting to {relay_url}...", end="")
+            if _try_connect(relay_url):
+                console.print(" [bold green]✓[/bold green]")
+                relay_ok = True
+            else:
+                console.print(" [yellow]not reachable[/yellow]")
+
+    # If still not connected and chose local, guide them
     if not relay_ok and relay_url == DEFAULT_RELAY:
         console.print()
         console.print(
-            "  [dim]No relay found at localhost:8080.[/dim]\n"
-            "  [dim]That's fine — you can start one in a separate terminal:[/dim]\n"
+            "  [dim]No relay running yet. Start one in another terminal:[/dim]\n"
         )
         console.print(
-            "  [bold bright_cyan]  murmur relay[/bold bright_cyan]"
-            "  [dim]  # or:  python -m murmur.relay[/dim]"
+            "    [bold bright_cyan]murmur relay[/bold bright_cyan]\n"
         )
-        console.print()
         console.print(
-            "  [dim]Config saved. Run [bold]murmur begin[/bold] again after"
-            " starting the relay.[/dim]"
+            "  [dim]Then run [bold]murmur begin[/bold] again. Config saved.[/dim]"
         )
     elif not relay_ok:
         console.print()
@@ -171,15 +197,18 @@ def _first_launch_setup(console: Console) -> dict:
             "  [dim]Config saved — run [bold]murmur begin[/bold] when the relay is up.[/dim]"
         )
 
+    # Save config
     _write_config(name, relay_url, secret)
 
     if relay_ok:
         console.print()
         console.print(
-            "  [green]You're in.[/green] "
-            "Type [bold]help[/bold] to see what you can do.\n"
+            f"  [green]You're in![/green] Connected as [bold]{name}[/bold].\n"
         )
-        time.sleep(0.4)
+        console.print(
+            "  [dim]Type a message to chat, or [bold]help[/bold] for commands.[/dim]\n"
+        )
+        time.sleep(0.3)
 
     return {"relay_url": relay_url, "instance_name": name, "relay_secret": secret}
 
@@ -517,9 +546,30 @@ def run_hub() -> None:
     console.print(f"\n  [dim]Connecting to {relay_url}...[/dim]")
     rooms = _fetch_rooms(relay_url, secret)
     if not rooms:
-        console.print(
-            "  [dim]No rooms yet — type [bold]create <name>[/bold] to make your first one.[/dim]"
+        # Offer to create a default room for first-time users
+        console.print("  [dim]No rooms yet.[/dim]")
+        console.print()
+        create_default = Prompt.ask(
+            "  Create a room to get started?",
+            choices=["y", "n"],
+            default="y",
         )
+        if create_default.lower() == "y":
+            room_name = Prompt.ask(
+                "  Room name",
+                default="general",
+            ).strip()
+            if room_name and re.match(r"^[A-Za-z0-9_\-]+$", room_name):
+                result = _create_room(relay_url, secret, room_name, agent_name)
+                if result:
+                    console.print(f"  [green]Room '{room_name}' created![/green]")
+                    rooms = _fetch_rooms(relay_url, secret)
+                else:
+                    console.print("  [yellow]Couldn't create room — name taken?[/yellow]")
+        if not rooms:
+            console.print(
+                "  [dim]Type [bold]create <name>[/bold] anytime to make a room.[/dim]"
+            )
 
     # 3. Set up shared state
     state = HubState()
