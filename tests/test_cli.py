@@ -1,4 +1,5 @@
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1593,3 +1594,140 @@ def test_resolve_no_conflicts_clean_exit(capsys, monkeypatch, tmp_path):
 
     captured = capsys.readouterr()
     assert "No merge conflicts found" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# _cmd_init tests
+# ---------------------------------------------------------------------------
+
+
+def _make_init_args(
+    name="agent-3",
+    relay_url="http://localhost:8080",
+    secret="s3cr3t",
+    api_key=None,
+):
+    args = MagicMock()
+    args.name = name
+    args.relay_url = relay_url
+    args.secret = secret
+    args.api_key = api_key
+    return args
+
+
+def test_cmd_init_happy_path(tmp_path, monkeypatch):
+    """Init writes config, registers MCP into ~/.claude.json, and prints a success summary."""
+    from murmur.cli import _cmd_init
+
+    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
+    # uv available
+    monkeypatch.setattr("murmur.cli.shutil.which", lambda _: "/usr/bin/uv")
+    # relay reachable
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    monkeypatch.setattr("murmur.cli.httpx.get", lambda *a, **kw: mock_resp)
+
+    # Pre-create ~/.claude.json so the registration lands there
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text("{}")
+
+    args = _make_init_args()
+    _cmd_init(args)
+
+    config_path = tmp_path / "mcp-tunnel" / "config.json"
+    assert config_path.exists()
+    cfg = json.loads(config_path.read_text())
+    assert cfg["relay_url"] == "http://localhost:8080"
+    assert cfg["instance_name"] == "agent-3"
+    assert cfg["relay_secret"] == "s3cr3t"
+    assert "api_key" not in cfg
+
+    claude_cfg = json.loads(claude_json.read_text())
+    mcp = claude_cfg["mcpServers"]["murmur"]
+    assert mcp["command"] == "uv"
+    assert "-m" in mcp["args"]
+    assert "murmur.mcp_server" in mcp["args"]
+
+
+def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, capsys):
+    """When uv is not on PATH, the MCP server is registered via sys.executable."""
+    import sys
+
+    from murmur.cli import _cmd_init
+
+    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("murmur.cli.shutil.which", lambda _: None)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    monkeypatch.setattr("murmur.cli.httpx.get", lambda *a, **kw: mock_resp)
+
+    # Pre-create ~/.claude.json so the registration lands there
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text("{}")
+
+    _cmd_init(_make_init_args())
+
+    claude_cfg = json.loads(claude_json.read_text())
+    mcp = claude_cfg["mcpServers"]["murmur"]
+    assert mcp["command"] == sys.executable
+    assert mcp["args"] == ["-m", "murmur.mcp_server"]
+
+    captured = capsys.readouterr()
+    assert "uv" in captured.out  # prints the fallback notice
+
+
+def test_cmd_init_rejects_invalid_url(monkeypatch):
+    """Init exits with code 1 when relay URL is not http/https."""
+    from murmur.cli import _cmd_init
+
+    with pytest.raises(SystemExit) as exc_info:
+        _cmd_init(_make_init_args(relay_url="ftp://not-valid"))
+    assert exc_info.value.code == 1
+
+
+def test_cmd_init_rejects_empty_name(monkeypatch):
+    """Init exits with code 1 when name is empty or whitespace."""
+    from murmur.cli import _cmd_init
+
+    with pytest.raises(SystemExit) as exc_info:
+        _cmd_init(_make_init_args(name="   "))
+    assert exc_info.value.code == 1
+
+
+def test_cmd_init_warns_on_relay_unreachable(tmp_path, monkeypatch, capsys):
+    """Init prints a warning (not an error) when the relay cannot be reached."""
+    from murmur.cli import _cmd_init
+
+    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("murmur.cli.shutil.which", lambda _: "/usr/bin/uv")
+    monkeypatch.setattr(
+        "murmur.cli.httpx.get", lambda *a, **kw: (_ for _ in ()).throw(Exception("timeout"))
+    )
+
+    _cmd_init(_make_init_args())  # must not raise
+
+    captured = capsys.readouterr()
+    assert "Warning" in captured.out or "warning" in captured.out.lower()
+    # config should still be written
+    assert (tmp_path / "mcp-tunnel" / "config.json").exists()
+
+
+def test_cmd_init_warns_on_existing_config(tmp_path, monkeypatch, capsys):
+    """Init prints a warning when an existing config would be overwritten."""
+    from murmur.cli import _cmd_init
+
+    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("murmur.cli.shutil.which", lambda _: "/usr/bin/uv")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    monkeypatch.setattr("murmur.cli.httpx.get", lambda *a, **kw: mock_resp)
+
+    # Create existing config
+    config_dir = tmp_path / "mcp-tunnel"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text('{"relay_url": "http://old:8080"}')
+
+    _cmd_init(_make_init_args())
+
+    captured = capsys.readouterr()
+    assert "overwriting" in captured.out

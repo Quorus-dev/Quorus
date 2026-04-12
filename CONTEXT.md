@@ -133,28 +133,29 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 ## Recent Changes
 
-| Date       | Commit  | What                                                              |
-| ---------- | ------- | ----------------------------------------------------------------- |
-| 2026-04-12 | —       | feat: SQLite persistent room history — zero-dep, survives restart |
-| 2026-04-12 | b0d9572 | feat: Summary Cascade v2 — LLM summarization via --summarize flag |
-| 2026-04-12 | 4211716 | test: 3 unit tests for murmur resolve (CRA) conflict parsing      |
-| 2026-04-12 | e4c4089 | docs: murmur resolve (CRA) design doc                             |
-| 2026-04-12 | 2e0e9fa | docs: VISION.md — 8 moonshot features for YC pitch                |
-| 2026-04-12 | 7de5bfa | feat: B2C API keys design doc + Postgres schema                   |
-| 2026-04-12 | c120f1b | SDK: ReceiveResult ack/iter/len + AckError coverage (780 total)   |
-| 2026-04-12 | e0cbdaf | Integration: room broadcast + Primitive B lock lifecycle tests    |
-| 2026-04-12 | 7cdb77c | SDK: astream SSE tests (happy path + invalid JSON skip)           |
-| 2026-04-12 | 38635bb | SDK: async surface coverage (asend, areceive, a_ack)              |
-| 2026-04-12 | f126518 | SDK: Room.lock(), Room.unlock(), Room.state() with JWT refresh    |
-| 2026-04-12 | adb8755 | 404 rate limiting — block stale clients hammering deleted rooms   |
-| 2026-04-12 | 4d0c65c | SSE notification-only: always fetch+ACK from durable queue        |
-| 2026-04-12 | a0b86b9 | Fix murmur ps crash when uptime_start is null                     |
-| 2026-04-12 | a3a26e1 | Add brief/subtask/decision message types to relay                 |
-| 2026-04-12 | —       | Summary Cascade v1: murmur context + murmur decision commands     |
-| 2026-04-12 | 354d9c8 | Auto-inject messages via murmur inbox + hook commands             |
-| 2026-04-12 | 493d445 | MCP server instructions for agent guidance                        |
-| 2026-04-12 | c86bb05 | SSRF TOCTOU fix — re-validate URLs at webhook delivery time       |
-| 2026-04-12 | ed95df5 | Per-webhook secrets in routes + strip secrets from list API       |
+| Date       | Commit  | What                                                                      |
+| ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | —       | docs+feat: README 3-pillar narrative, murmur init hardening, 6 init tests |
+| 2026-04-12 | —       | feat: SQLite persistent room history — zero-dep, survives restart         |
+| 2026-04-12 | b0d9572 | feat: Summary Cascade v2 — LLM summarization via --summarize flag         |
+| 2026-04-12 | 4211716 | test: 3 unit tests for murmur resolve (CRA) conflict parsing              |
+| 2026-04-12 | e4c4089 | docs: murmur resolve (CRA) design doc                                     |
+| 2026-04-12 | 2e0e9fa | docs: VISION.md — 8 moonshot features for YC pitch                        |
+| 2026-04-12 | 7de5bfa | feat: B2C API keys design doc + Postgres schema                           |
+| 2026-04-12 | c120f1b | SDK: ReceiveResult ack/iter/len + AckError coverage (780 total)           |
+| 2026-04-12 | e0cbdaf | Integration: room broadcast + Primitive B lock lifecycle tests            |
+| 2026-04-12 | 7cdb77c | SDK: astream SSE tests (happy path + invalid JSON skip)                   |
+| 2026-04-12 | 38635bb | SDK: async surface coverage (asend, areceive, a_ack)                      |
+| 2026-04-12 | f126518 | SDK: Room.lock(), Room.unlock(), Room.state() with JWT refresh            |
+| 2026-04-12 | adb8755 | 404 rate limiting — block stale clients hammering deleted rooms           |
+| 2026-04-12 | 4d0c65c | SSE notification-only: always fetch+ACK from durable queue                |
+| 2026-04-12 | a0b86b9 | Fix murmur ps crash when uptime_start is null                             |
+| 2026-04-12 | a3a26e1 | Add brief/subtask/decision message types to relay                         |
+| 2026-04-12 | —       | Summary Cascade v1: murmur context + murmur decision commands             |
+| 2026-04-12 | 354d9c8 | Auto-inject messages via murmur inbox + hook commands                     |
+| 2026-04-12 | 493d445 | MCP server instructions for agent guidance                                |
+| 2026-04-12 | c86bb05 | SSRF TOCTOU fix — re-validate URLs at webhook delivery time               |
+| 2026-04-12 | ed95df5 | Per-webhook secrets in routes + strip secrets from list API               |
 
 ---
 
