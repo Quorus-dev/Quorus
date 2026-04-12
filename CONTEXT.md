@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 06:09 UTC
+Last updated: 2026-04-12 06:12 UTC
 
 ---
 
@@ -25,19 +25,19 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 **What's built:**
 
-| Module                      | Lines  | What                                                                                      |
-| --------------------------- | ------ | ----------------------------------------------------------------------------------------- |
-| murmur/relay.py             | ~1200  | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin        |
-| murmur/mcp_server.py        | ~820   | MCP server: 12 tools incl. claim_task, release_task, get_room_state, SSE push, heartbeat  |
-| murmur/cli.py               | ~3500  | 30+ CLI commands incl. context (Summary Cascade v1), decision, state, locks, usage, etc.  |
-| murmur/routes/room_state.py | ~250   | Primitive A+B: GET state, PATCH goal, POST decisions, POST/DELETE locks (mutex)           |
-| murmur/routes/usage.py      | ~157   | GET /v1/usage + /v1/usage/rooms/{room} — tenant-scoped metrics                            |
-| murmur/routes/agents.py     | ~57    | GET /agents/{name} — profile, rooms, last seen, message count, online status              |
-| murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing                |
-| murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                           |
-| murmur/tui_hub.py           | ~730   | Full-screen TUI hub: `murmur begin` opens interactive Rich terminal UI                    |
-| murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                         |
-| tests/                      | ~8700  | 871 tests: relay, mcp, config, CLI, usage, agents, room_state, sdk, tui_hub, integration  |
+| Module                      | Lines  | What                                                                                     |
+| --------------------------- | ------ | ---------------------------------------------------------------------------------------- |
+| murmur/relay.py             | ~1200  | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin       |
+| murmur/mcp_server.py        | ~820   | MCP server: 12 tools incl. claim_task, release_task, get_room_state, SSE push, heartbeat |
+| murmur/cli.py               | ~3500  | 30+ CLI commands incl. context (Summary Cascade v1), decision, state, locks, usage, etc. |
+| murmur/routes/room_state.py | ~250   | Primitive A+B: GET state, PATCH goal, POST decisions, POST/DELETE locks (mutex)          |
+| murmur/routes/usage.py      | ~157   | GET /v1/usage + /v1/usage/rooms/{room} — tenant-scoped metrics                           |
+| murmur/routes/agents.py     | ~57    | GET /agents/{name} — profile, rooms, last seen, message count, online status             |
+| murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing               |
+| murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                          |
+| murmur/tui_hub.py           | ~730   | Full-screen TUI hub: `murmur begin` opens interactive Rich terminal UI                   |
+| murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                        |
+| tests/                      | ~8700  | 871 tests: relay, mcp, config, CLI, usage, agents, room_state, sdk, tui_hub, integration |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -53,7 +53,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - **Agent identity**: GET /agents/{name} — profile card, rooms, last seen, message count
 - **CLI commands**: murmur state, murmur locks, murmur usage (+ 25 others)
 - **Dashboard**: live swarm panel — active goal, locked files countdown, agent presence, usage bar
-- JWT auth + API keys, per-sender rate limiting
+- JWT auth + API keys, rate limiting on ALL write + history endpoints (60/min msgs, 20/min history, 10/min room create, 30/min join/DM)
 - Docker + Railway/Render deploy configs
 - Reply threading (reply_to field + Room.reply() SDK)
 - **SDK Primitive A/B**: Room.lock(), Room.unlock(), Room.state() — full client-side mutex + state surface with JWT refresh-on-401
@@ -139,16 +139,16 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | 9dddd90 | fix: rate limiting on all write+history endpoints + DM size validation    |
+| 2026-04-12 | 01d5a14 | feat: website Nav/CTA/CodeDemo/Footer polish + Architecture 866+ count    |
+| 2026-04-12 | 2dbc2db | feat: vercel.json fix + QuickStart terminal animation + tui_hub UX        |
 | 2026-04-12 | 86f6af2 | test: murmur resolve edge cases (empty diff, network error, no API key)   |
-| 2026-04-12 | c5a4a7e | feat: murmur doctor MCP server registration check                         |
-| 2026-04-12 | 2dbc2db | feat: TUI wizard graceful "no relay" handling + website quickstart        |
+| 2026-04-12 | c5a4a7e | feat: murmur doctor MCP server registration check (13 checks total)       |
 | 2026-04-12 | 31795e5 | test: 9 tests for share/quickjoin portable join tokens                    |
 | 2026-04-12 | 739392b | feat: murmur/tui_hub.py full-screen TUI + 25 tests (murmur begin)         |
 | 2026-04-12 | 92a2b24 | feat: murmur share + murmur quickjoin for portable join tokens            |
 | 2026-04-12 | —       | docs+feat: README 3-pillar narrative, murmur init hardening, 6 init tests |
 | 2026-04-12 | b0d9572 | feat: Summary Cascade v2 — LLM summarization via --summarize flag         |
-| 2026-04-12 | 4211716 | test: 3 unit tests for murmur resolve (CRA) conflict parsing              |
-| 2026-04-12 | e4c4089 | docs: murmur resolve (CRA) design doc                                     |
 
 ---
 
