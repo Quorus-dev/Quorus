@@ -490,11 +490,11 @@ def run_hub() -> None:
     secret: str = cfg.get("relay_secret", "") or cfg.get("api_key", "")
 
     # 2. Initial room load
-    console.print(f"\n[dim]Connecting to {relay_url}...[/dim]")
+    console.print(f"\n  [dim]Connecting to {relay_url}...[/dim]")
     rooms = _fetch_rooms(relay_url, secret)
     if not rooms:
         console.print(
-            "[yellow]No rooms found. You can create one once the hub opens (press n).[/yellow]"
+            "  [dim]No rooms yet — type [bold]create <name>[/bold] to make your first one.[/dim]"
         )
 
     # 3. Set up shared state
@@ -566,8 +566,22 @@ def run_hub() -> None:
             if not line:
                 continue
 
-            # Special keys / commands
-            if line == "\x1b[A" or line.lower() == "up":
+            # ── Plain-English command parsing ──────────────────────────────────
+            cmd = line.strip()
+            cmd_lower = cmd.lower()
+
+            # quit / exit
+            if cmd_lower in ("quit", "exit", "q"):
+                break
+
+            # help
+            if cmd_lower == "help":
+                _print_help(console)
+                last_render = 0
+                continue
+
+            # Arrow key passthrough (terminal sends escape sequences)
+            if cmd == "\x1b[A" or cmd_lower == "up":
                 state.select_prev()
                 selected = state.get_selected_room()
                 if selected:
@@ -575,10 +589,10 @@ def run_hub() -> None:
                     if rname:
                         _join_room(relay_url, secret, rname, agent_name)
                         state.set_messages(_fetch_history(relay_url, secret, rname))
-                last_render = 0  # force redraw
+                last_render = 0
                 continue
 
-            if line == "\x1b[B" or line.lower() == "down":
+            if cmd == "\x1b[B" or cmd_lower == "down":
                 state.select_next()
                 selected = state.get_selected_room()
                 if selected:
@@ -586,13 +600,41 @@ def run_hub() -> None:
                     if rname:
                         _join_room(relay_url, secret, rname, agent_name)
                         state.set_messages(_fetch_history(relay_url, secret, rname))
-                last_render = 0  # force redraw
+                last_render = 0
                 continue
 
-            if line.lower() == "n":
-                # Create new room
+            # join / go to <room>  — "join dev-room", "go to design", "switch to dev"
+            join_match = re.match(
+                r"^(?:join|go\s+to|switch\s+to|enter)\s+#?(\S+)$",
+                cmd_lower,
+            )
+            if join_match:
+                target = join_match.group(1)
+                rooms_snap = state.get_rooms()
+                match = next(
+                    (r for r in rooms_snap if r.get("name", "").lower() == target),
+                    None,
+                )
+                if match:
+                    state.select_by_name(match["name"])
+                    _join_room(relay_url, secret, match["name"], agent_name)
+                    state.set_messages(_fetch_history(relay_url, secret, match["name"]))
+                    state.set_status_bar(f"Joined #{match['name']}")
+                else:
+                    state.set_status_bar(f"Room '{target}' not found.")
+                last_render = 0
+                continue
+
+            # create / new room called <name>
+            create_match = re.match(
+                r"^(?:create|new\s+room(?:\s+called)?|make(?:\s+room)?)\s+#?(\S+)$",
+                cmd_lower,
+            )
+            # Also handle bare "n" shortcut from old UX
+            if not create_match and cmd_lower == "n":
+                # Prompt inline
                 console.print()
-                new_name = Prompt.ask("[bold]New room name[/bold]").strip()
+                new_name = Prompt.ask("  Room name").strip()
                 if new_name and re.match(r"^[A-Za-z0-9_\-]+$", new_name):
                     result = _create_room(relay_url, secret, new_name, agent_name)
                     if result:
@@ -605,14 +647,56 @@ def run_hub() -> None:
                     else:
                         state.set_status_bar("Failed to create room.")
                 else:
-                    state.set_status_bar("Invalid room name (letters, numbers, hyphens only).")
-                last_render = 0  # force redraw
+                    state.set_status_bar("Invalid name (letters, numbers, hyphens only).")
+                last_render = 0
                 continue
 
-            # Send message to current room
+            if create_match:
+                new_name_raw = create_match.group(1)
+                # Sanitise: strip leading # if present
+                new_name_raw = new_name_raw.lstrip("#")
+                if re.match(r"^[A-Za-z0-9_\-]+$", new_name_raw):
+                    result = _create_room(relay_url, secret, new_name_raw, agent_name)
+                    if result:
+                        state.set_status_bar(f"Room '{new_name_raw}' created.")
+                        new_rooms = _fetch_rooms(relay_url, secret)
+                        state.set_rooms(new_rooms)
+                        state.select_by_name(new_name_raw)
+                        _join_room(relay_url, secret, new_name_raw, agent_name)
+                        state.set_messages(_fetch_history(relay_url, secret, new_name_raw))
+                    else:
+                        state.set_status_bar(f"Couldn't create '{new_name_raw}' — already exists?")
+                else:
+                    state.set_status_bar("Room names: letters, numbers, hyphens, underscores only.")
+                last_render = 0
+                continue
+
+            # invite <name> — shows a join token for the current room
+            invite_match = re.match(r"^invite\s+(\S+)$", cmd_lower)
+            if invite_match:
+                selected = state.get_selected_room()
+                if selected:
+                    rname = selected.get("name") or selected.get("id", "")
+                    invitee = invite_match.group(1)
+                    import json as _json, base64 as _b64
+                    payload = _json.dumps({"relay_url": relay_url, "secret": secret, "room": rname})
+                    token = "murm_join_" + _b64.urlsafe_b64encode(payload.encode()).decode()
+                    console.print()
+                    console.print(f"  [bold]Invite '{invitee}' to #{rname}[/bold]")
+                    console.print(f"  [dim]Share this token:[/dim]")
+                    console.print(f"  [bright_cyan]{token}[/bright_cyan]")
+                    console.print(f"  [dim]They run: murmur join {token} --name {invitee}[/dim]")
+                    console.print()
+                    state.set_status_bar(f"Token generated for #{rname}")
+                else:
+                    state.set_status_bar("No active room. Join one first.")
+                last_render = 0
+                continue
+
+            # ── Default: send as chat message ──────────────────────────────────
             selected = state.get_selected_room()
             if not selected:
-                state.set_status_bar("No room selected. Press n to create one.")
+                state.set_status_bar("No room selected. Type 'create <name>' to make one.")
                 last_render = 0
                 continue
 
@@ -622,18 +706,21 @@ def run_hub() -> None:
                 last_render = 0
                 continue
 
-            ok = _send_message(relay_url, secret, room_name, agent_name, line)
+            ok = _send_message(relay_url, secret, room_name, agent_name, cmd)
             if ok:
                 state.set_status_bar("")
                 # Optimistic local echo
                 state.append_message({
                     "from_name": agent_name,
-                    "content": line,
+                    "content": cmd,
                     "message_type": "chat",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
             else:
-                state.set_status_bar("[red]Send failed — relay unreachable?[/red]")
+                state.set_status_bar(
+                    "Couldn't reach the relay. Is it running? "
+                    "Try: RELAY_SECRET=x python -m murmur.relay"
+                )
 
             last_render = 0  # force immediate redraw after send
 
