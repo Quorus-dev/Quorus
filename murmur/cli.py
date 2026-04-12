@@ -458,6 +458,136 @@ def _cmd_dm(args):
     console.print(f"[green]DM sent to {args.to}[/green]")
 
 
+def _cmd_inbox(args):
+    """Check for pending messages (for hooks or manual use)."""
+    try:
+        resp = httpx.get(
+            f"{RELAY_URL}/messages/{INSTANCE_NAME}/peek",
+            headers=_auth_headers(),
+            timeout=5,
+        )
+        resp.raise_for_status()
+    except httpx.ConnectError:
+        # Silently exit if relay unreachable (don't block Claude)
+        return
+    except httpx.HTTPStatusError:
+        return
+
+    data = resp.json()
+    count = data.get("count", 0)
+    if count == 0:
+        return  # Silent exit, no messages
+
+    # Fetch actual messages to display
+    try:
+        resp = httpx.get(
+            f"{RELAY_URL}/messages/{INSTANCE_NAME}",
+            params={"ack": "manual"},
+            headers=_auth_headers(),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        messages = result.get("messages", [])
+    except (httpx.ConnectError, httpx.HTTPStatusError):
+        return
+
+    if not messages:
+        return
+
+    if getattr(args, "json", False):
+        print(json.dumps(messages))
+        return
+
+    prefix = "" if getattr(args, "quiet", False) else "[murmur] "
+    msg_count = len(messages)
+    print(f"{prefix}{msg_count} new message{'s' if msg_count != 1 else ''}:")
+
+    for msg in messages:
+        ts = msg.get("timestamp", "")[:16].replace("T", " ")  # "2026-04-12 12:34"
+        time_part = ts.split(" ")[1] if " " in ts else ts
+        sender = msg.get("from_name", "unknown")
+        content = msg.get("content", "")
+        # Truncate long messages
+        if len(content) > 100:
+            content = content[:97] + "..."
+        print(f"- {sender} ({time_part}): {content}")
+
+
+CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+
+MURMUR_HOOK_CONFIG = {
+    "matcher": ".*",
+    "hooks": [
+        {
+            "type": "command",
+            "command": "murmur inbox",
+            "timeout": 5,
+        }
+    ],
+}
+
+
+def _cmd_hook(args):
+    """Manage Claude Code message hook."""
+    action = args.action
+
+    # Read existing settings
+    if CLAUDE_SETTINGS_PATH.exists():
+        try:
+            settings = json.loads(CLAUDE_SETTINGS_PATH.read_text())
+        except (json.JSONDecodeError, ValueError):
+            settings = {}
+    else:
+        settings = {}
+
+    # Ensure structure exists
+    if "hooks" not in settings:
+        settings["hooks"] = {}
+    if "UserPromptSubmit" not in settings["hooks"]:
+        settings["hooks"]["UserPromptSubmit"] = []
+
+    hooks_list = settings["hooks"]["UserPromptSubmit"]
+
+    # Check if murmur hook already exists
+    def is_murmur_hook(h):
+        for inner in h.get("hooks", []):
+            cmd = inner.get("command", "")
+            if "murmur inbox" in cmd:
+                return True
+        return False
+
+    murmur_exists = any(is_murmur_hook(h) for h in hooks_list)
+
+    if action == "status":
+        if murmur_exists:
+            console.print("[green]Hook: enabled[/green]")
+        else:
+            console.print("[dim]Hook: not configured[/dim]")
+        return
+
+    if action == "enable":
+        if murmur_exists:
+            console.print("[yellow]Hook already enabled.[/yellow]")
+            return
+        hooks_list.append(MURMUR_HOOK_CONFIG)
+        CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CLAUDE_SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
+        console.print("[green]Hook enabled.[/green]")
+        console.print("[yellow]Restart Claude Code to activate.[/yellow]")
+        return
+
+    if action == "disable":
+        if not murmur_exists:
+            console.print("[dim]Hook not configured.[/dim]")
+            return
+        settings["hooks"]["UserPromptSubmit"] = [
+            h for h in hooks_list if not is_murmur_hook(h)
+        ]
+        CLAUDE_SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
+        console.print("[green]Hook disabled.[/green]")
+
+
 async def _history(room_name: str, limit: int = 50):
     """Fetch and display room message history."""
     client = httpx.AsyncClient()
@@ -2379,6 +2509,17 @@ def main():
     p_dm.add_argument("to", help="Recipient name")
     p_dm.add_argument("message", help="Message content")
 
+    p_inbox = sub.add_parser("inbox", help="Check for pending messages")
+    p_inbox.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
+    p_inbox.add_argument("--json", action="store_true", help="JSON output")
+
+    p_hook = sub.add_parser("hook", help="Manage Claude Code message hook")
+    p_hook.add_argument(
+        "action",
+        choices=["enable", "disable", "status"],
+        help="enable/disable/status",
+    )
+
     p_watch = sub.add_parser("watch", help="Watch a room live")
     p_watch.add_argument("room", help="Room name")
 
@@ -2542,6 +2683,8 @@ def main():
         "members": _cmd_members,
         "say": _cmd_say,
         "dm": _cmd_dm,
+        "inbox": _cmd_inbox,
+        "hook": _cmd_hook,
         "watch": _cmd_watch,
         "history": _cmd_history,
         "export": _cmd_export,
