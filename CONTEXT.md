@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 11:30 EDT
+Last updated: 2026-04-12 12:28 EDT
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-04-12 11:30 EDT
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (754 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (770 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -36,7 +36,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 | murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing               |
 | murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                          |
 | murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                        |
-| tests/                      | ~7500  | 754 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
+| tests/                      | ~7500  | 770 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -74,7 +74,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 - **Decision recording**: `murmur decision <room> "<text>"` — writes to room state decisions via POST /rooms/{room}/state/decisions; surfaced in `murmur context`
 - **Hook auto-injection**: `murmur hook enable` now runs `murmur inbox --quiet && murmur context --quiet` on every UserPromptSubmit
 
-**Tests:** 752 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 770 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -130,17 +130,20 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 ## Recent Changes
 
-| Date       | Commit  | What                                                          |
-| ---------- | ------- | ------------------------------------------------------------- |
-| 2026-04-12 | adb8755 | 404 rate limiting — block stale clients hammering deleted rooms |
-| 2026-04-12 | 4d0c65c | SSE notification-only: always fetch+ACK from durable queue    |
-| 2026-04-12 | a0b86b9 | Fix murmur ps crash when uptime_start is null                 |
-| 2026-04-12 | a3a26e1 | Add brief/subtask/decision message types to relay             |
-| 2026-04-12 | —       | Summary Cascade v1: murmur context + murmur decision commands |
-| 2026-04-12 | 354d9c8 | Auto-inject messages via murmur inbox + hook commands         |
-| 2026-04-12 | 493d445 | MCP server instructions for agent guidance                    |
-| 2026-04-12 | c86bb05 | SSRF TOCTOU fix — re-validate URLs at webhook delivery time   |
-| 2026-04-12 | ed95df5 | Per-webhook secrets in routes + strip secrets from list API   |
+| Date       | Commit  | What                                                               |
+| ---------- | ------- | ------------------------------------------------------------------ |
+| 2026-04-12 | 91e819a | Regression tests: brief/subtask message types (4 tests, 770 total) |
+| 2026-04-12 | 38377be | CI: Python 3.10/3.11/3.12 matrix, switch to uv                     |
+| 2026-04-12 | e39b840 | Fix: brief/subtask message_types rejected by relay (422)           |
+| 2026-04-12 | adb8755 | 404 rate limiting — block stale clients hammering deleted rooms    |
+| 2026-04-12 | 4d0c65c | SSE notification-only: always fetch+ACK from durable queue         |
+| 2026-04-12 | a0b86b9 | Fix murmur ps crash when uptime_start is null                      |
+| 2026-04-12 | a3a26e1 | Add brief/subtask/decision message types to relay                  |
+| 2026-04-12 | —       | Summary Cascade v1: murmur context + murmur decision commands      |
+| 2026-04-12 | 354d9c8 | Auto-inject messages via murmur inbox + hook commands              |
+| 2026-04-12 | 493d445 | MCP server instructions for agent guidance                         |
+| 2026-04-12 | c86bb05 | SSRF TOCTOU fix — re-validate URLs at webhook delivery time        |
+| 2026-04-12 | ed95df5 | Per-webhook secrets in routes + strip secrets from list API        |
 
 ---
 
