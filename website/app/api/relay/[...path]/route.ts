@@ -12,11 +12,13 @@
  *   - Blocks cloud metadata endpoints
  *   - Blocks private/reserved IP ranges (RFC1918, loopback, link-local)
  *   - Blocks localhost variants
+ *   - DNS rebinding protection: resolves hostname and verifies all IPs are public
  *   - PRODUCTION: Requires RELAY_ALLOWLIST (fail closed)
  *   - DEVELOPMENT: Allows any public hostname if RELAY_ALLOWLIST is unset
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import dns from "dns/promises";
 
 // Cloud metadata hostnames — always blocked
 const BLOCKED_HOSTS = new Set([
@@ -119,6 +121,46 @@ function extractIPFromHostname(hostname: string): string | null {
   return null;
 }
 
+/**
+ * Resolve hostname to IP addresses and check if any are private/reserved.
+ * Returns true if safe (all resolved IPs are public), false otherwise.
+ */
+async function isDNSSafe(hostname: string): Promise<boolean> {
+  // If it's already an IP, we checked it in buildTarget
+  if (extractIPFromHostname(hostname)) return true;
+
+  try {
+    // Resolve both IPv4 and IPv6
+    const [ipv4Addrs, ipv6Addrs] = await Promise.all([
+      dns.resolve4(hostname).catch(() => [] as string[]),
+      dns.resolve6(hostname).catch(() => [] as string[]),
+    ]);
+
+    const allAddrs = [...ipv4Addrs, ...ipv6Addrs];
+
+    // If no addresses resolved, block (fail closed)
+    if (allAddrs.length === 0) {
+      console.warn(`[relay-proxy] DNS resolution failed for ${hostname}`);
+      return false;
+    }
+
+    // Check all resolved addresses
+    for (const ip of allAddrs) {
+      if (isPrivateOrReservedIP(ip)) {
+        console.warn(
+          `[relay-proxy] DNS rebinding blocked: ${hostname} resolved to private IP ${ip}`
+        );
+        return false;
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.warn(`[relay-proxy] DNS lookup error for ${hostname}: ${err}`);
+    return false;
+  }
+}
+
 function buildTarget(
   relayUrl: string,
   segments: string[],
@@ -176,6 +218,15 @@ async function proxy(
   if (!target) {
     return NextResponse.json(
       { error: "Invalid or blocked relay URL" },
+      { status: 400 },
+    );
+  }
+
+  // DNS rebinding protection: resolve hostname and verify IPs are public
+  const dnsSafe = await isDNSSafe(target.hostname);
+  if (!dnsSafe) {
+    return NextResponse.json(
+      { error: "Relay hostname resolves to private/reserved IP" },
       { status: 400 },
     );
   }
