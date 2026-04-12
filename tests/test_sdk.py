@@ -149,6 +149,77 @@ class TestRoomSendReceive:
             assert result.messages[0]["content"] == "msg1"
 
 
+class TestMurmurClientRetry:
+    """Tests for MurmurClient._request retry logic."""
+
+    def _make_client(self, retries: int = 3) -> MurmurClient:
+        return MurmurClient("http://t", secret="s", name="a", retries=retries)
+
+    def test_retries_on_connect_error_then_succeeds(self):
+        """_request should retry ConnectError and return on eventual success."""
+        import httpx as _httpx
+        client = self._make_client(retries=3)
+        ok_resp = MagicMock()
+        ok_resp.raise_for_status = MagicMock()
+
+        with patch("murmur.integrations.http_agent.httpx.request") as mock_req, \
+             patch("murmur.integrations.http_agent.time.sleep"):
+            mock_req.side_effect = [
+                _httpx.ConnectError("refused"),
+                _httpx.ConnectError("refused"),
+                ok_resp,
+            ]
+            result = client._request("GET", "http://t/foo")
+
+        assert result is ok_resp
+        assert mock_req.call_count == 3
+
+    def test_raises_after_exhausted_retries(self):
+        """_request should raise the last ConnectError after all retries fail."""
+        import httpx as _httpx
+        client = self._make_client(retries=2)
+
+        with patch("murmur.integrations.http_agent.httpx.request") as mock_req, \
+             patch("murmur.integrations.http_agent.time.sleep"):
+            mock_req.side_effect = _httpx.ConnectError("refused")
+            with pytest.raises(_httpx.ConnectError):
+                client._request("GET", "http://t/foo")
+
+        assert mock_req.call_count == 2
+
+    def test_does_not_retry_http_status_error(self):
+        """_request should NOT retry on HTTPStatusError (4xx/5xx) — only transient errors."""
+        import httpx as _httpx
+        client = self._make_client(retries=3)
+
+        err_resp = MagicMock()
+        err_resp.raise_for_status.side_effect = _httpx.HTTPStatusError(
+            "404", request=MagicMock(), response=MagicMock()
+        )
+
+        with patch("murmur.integrations.http_agent.httpx.request", return_value=err_resp):
+            with pytest.raises(_httpx.HTTPStatusError):
+                client._request("GET", "http://t/foo")
+
+        # Only one attempt — HTTP errors are not retried
+        assert err_resp.raise_for_status.call_count == 1
+
+    def test_retries_on_read_timeout(self):
+        """_request should retry ReadTimeout the same as ConnectError."""
+        import httpx as _httpx
+        client = self._make_client(retries=2)
+        ok_resp = MagicMock()
+        ok_resp.raise_for_status = MagicMock()
+
+        with patch("murmur.integrations.http_agent.httpx.request") as mock_req, \
+             patch("murmur.integrations.http_agent.time.sleep"):
+            mock_req.side_effect = [_httpx.ReadTimeout("timed out"), ok_resp]
+            result = client._request("GET", "http://t/foo")
+
+        assert result is ok_resp
+        assert mock_req.call_count == 2
+
+
 class TestReceiveResult:
     def _make_client(self) -> MurmurClient:
         with patch("murmur.integrations.http_agent.httpx.post"):
