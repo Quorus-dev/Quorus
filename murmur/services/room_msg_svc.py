@@ -121,22 +121,9 @@ class RoomMessageService:
         # recipients may miss real-time delivery — they can poll history.
         # This is better than the reverse (recipients get message, history fails,
         # retry duplicates fan-out).
-        skipped_recipients: list[str] = []
         fanout_messages: dict[str, dict] = {}
 
         for recipient in members:
-            # Check quota before enqueueing
-            depth = await self._msg_backend.recipient_depth(tenant_id, recipient)
-            if depth >= MAX_RECIPIENT_DEPTH:
-                skipped_recipients.append(recipient)
-                logger.warning(
-                    "Room fan-out skipped: recipient queue full",
-                    room=room_name,
-                    recipient=recipient,
-                    depth=depth,
-                )
-                continue
-
             fan_out_msg = {
                 "id": str(uuid.uuid4()),
                 "from_name": sender,
@@ -149,16 +136,26 @@ class RoomMessageService:
             }
             fanout_messages[recipient] = fan_out_msg
 
-        # Batch enqueue all messages in a single operation (pipelined for Redis)
-        # Pass maxlen to enforce atomic backpressure — even if concurrent sends
-        # all pass the advisory depth check, MAXLEN prevents overshooting
+        # Batch enqueue with atomic quota enforcement
+        # Returns set of recipients rejected due to queue capacity
+        rejected_recipients: set[str] = set()
         if fanout_messages:
-            await self._msg_backend.enqueue_fanout(
+            rejected_recipients = await self._msg_backend.enqueue_fanout(
                 tenant_id, fanout_messages, maxlen=MAX_RECIPIENT_DEPTH
             )
 
-            # Notify via SSE and callbacks
+            if rejected_recipients:
+                for r in rejected_recipients:
+                    logger.warning(
+                        "Room fan-out rejected: recipient queue full",
+                        room=room_name,
+                        recipient=r,
+                    )
+
+            # Notify via SSE and callbacks (only for delivered recipients)
             for recipient, fan_out_msg in fanout_messages.items():
+                if recipient in rejected_recipients:
+                    continue
                 if self._on_enqueue:
                     self._on_enqueue(tenant_id, recipient)
                 self._sse.push(tenant_id, recipient, fan_out_msg)
@@ -167,7 +164,7 @@ class RoomMessageService:
         await self._analytics.track_send(tenant_id, sender)
         await self._webhook.notify_room(tenant_id, room_id, history_msg)
 
-        delivered_count = len(members) - len(skipped_recipients)
+        delivered_count = len(members) - len(rejected_recipients)
         logger.info(
             "Room message %s in %s: %s -> %d/%d recipients",
             message_id,
@@ -177,10 +174,10 @@ class RoomMessageService:
             len(members),
         )
         result = {"id": message_id, "timestamp": timestamp}
-        if skipped_recipients:
-            result["skipped_recipients"] = skipped_recipients
+        if rejected_recipients:
+            result["skipped_recipients"] = list(rejected_recipients)
             result["warning"] = (
-                f"{len(skipped_recipients)} recipient(s) skipped due to full queues"
+                f"{len(rejected_recipients)} recipient(s) rejected due to full queues"
             )
         return result
 
