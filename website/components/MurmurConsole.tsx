@@ -73,22 +73,21 @@ async function relayFetch(
 function ConnectModal({
   onConnect,
 }: {
-  onConnect: (relay: string, key: string, name: string) => Promise<void>;
+  onConnect: (relay: string, key: string, name: string, remember: boolean) => Promise<void>;
 }) {
   const [relay, setRelay] = useState(
     () =>
       (typeof window !== "undefined" && sessionStorage.getItem("mr_relay")) ||
       "",
   );
-  const [key, setKey] = useState(
-    () =>
-      (typeof window !== "undefined" && sessionStorage.getItem("mr_key")) || "",
-  );
+  // API key is NOT restored from storage by default — security improvement
+  const [key, setKey] = useState("");
   const [name, setName] = useState(
     () =>
       (typeof window !== "undefined" && sessionStorage.getItem("mr_name")) ||
       "",
   );
+  const [remember, setRemember] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -98,7 +97,7 @@ function ConnectModal({
     setLoading(true);
     setError("");
     try {
-      await onConnect(relay.replace(/\/+$/, ""), key, name);
+      await onConnect(relay.replace(/\/+$/, ""), key, name, remember);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reach relay");
     } finally {
@@ -190,6 +189,27 @@ function ConnectModal({
                 className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/8 text-white text-sm font-mono placeholder:text-white/18 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/15 transition-all"
               />
             </div>
+
+            {/* Security notice */}
+            <div className="px-3 py-2.5 rounded-lg bg-amber-500/[0.06] border border-amber-500/15">
+              <p className="text-[11px] text-amber-400/80 leading-relaxed">
+                <span className="font-semibold">Security note:</span> Your API key is sent through
+                this server to your relay. Only connect to relays you control.
+              </p>
+            </div>
+
+            {/* Remember checkbox */}
+            <label className="flex items-center gap-2.5 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                className="w-4 h-4 rounded bg-white/[0.04] border border-white/15 text-violet-500 focus:ring-violet-500/30 cursor-pointer"
+              />
+              <span className="text-xs text-white/40 group-hover:text-white/55 transition-colors">
+                Remember connection for this session
+              </span>
+            </label>
 
             <AnimatePresence>
               {error && (
@@ -364,7 +384,7 @@ export default function MurmurConsole() {
 
   // Connect handler
   const handleConnect = useCallback(
-    async (rel: string, key: string, name: string) => {
+    async (rel: string, key: string, name: string, remember: boolean) => {
       // Verify relay is reachable
       const health = await relayFetch(rel, key, "health");
       if (!health.ok) throw new Error("Relay unreachable — check URL / key");
@@ -373,11 +393,19 @@ export default function MurmurConsole() {
       const roomsResp = await relayFetch(rel, key, "rooms");
       const roomsData: Room[] = roomsResp.ok ? await roomsResp.json() : [];
 
-      // Persist to sessionStorage
+      // Persist to sessionStorage only if user opted in
+      // Note: API key is stored in memory only (not sessionStorage) for security
       if (typeof window !== "undefined") {
-        sessionStorage.setItem("mr_relay", rel);
-        sessionStorage.setItem("mr_key", key);
-        sessionStorage.setItem("mr_name", name);
+        if (remember) {
+          sessionStorage.setItem("mr_relay", rel);
+          sessionStorage.setItem("mr_name", name);
+          // Deliberately NOT storing mr_key — security improvement
+        } else {
+          sessionStorage.removeItem("mr_relay");
+          sessionStorage.removeItem("mr_name");
+        }
+        // Always clear any legacy stored key
+        sessionStorage.removeItem("mr_key");
       }
 
       setRelay(rel);
@@ -468,9 +496,11 @@ export default function MurmurConsole() {
     setRooms([]);
     setMessages([]);
     setActiveRoom(null);
+    // Clear stored session data
     if (typeof window !== "undefined") {
       sessionStorage.removeItem("mr_relay");
-      sessionStorage.removeItem("mr_key");
+      sessionStorage.removeItem("mr_name");
+      sessionStorage.removeItem("mr_key"); // Clear any legacy stored key
     }
   }, []);
 
