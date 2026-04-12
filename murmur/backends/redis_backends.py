@@ -1198,10 +1198,15 @@ class RedisBackends:
     participants: RedisParticipantBackend = None  # type: ignore[assignment]
     idempotency: RedisIdempotencyBackend = None  # type: ignore[assignment]
     webhook_queue: RedisWebhookQueueBackend = None  # type: ignore[assignment]
+    # room_state uses an in-process InMemoryRoomStateBackend — lock coordination
+    # is replica-local (TTL auto-expires stale locks; full Redis backend is Phase 2).
+    room_state: object = None  # type: ignore[assignment]
 
     @classmethod
     def create(cls, r: Redis, max_room_history: int = 200) -> RedisBackends:
         """Factory that instantiates every backend against *r*."""
+        from murmur.backends.memory import InMemoryRoomStateBackend
+
         return cls(
             messages=RedisMessageBackend(r),
             rooms=RedisRoomBackend(r),
@@ -1214,4 +1219,5 @@ class RedisBackends:
             participants=RedisParticipantBackend(r),
             idempotency=RedisIdempotencyBackend(r),
             webhook_queue=RedisWebhookQueueBackend(r),
+            room_state=InMemoryRoomStateBackend(),
         )
