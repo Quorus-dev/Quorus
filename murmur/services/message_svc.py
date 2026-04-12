@@ -314,27 +314,39 @@ class MessageService:
     ) -> tuple[list[dict], list[dict], str]:
         """Fetch messages, reassemble chunks, re-enqueue incomplete groups.
 
-        Returns (ready, held_back, ack_token). The ack_token only covers
-        ready messages — held_back chunks are ACKed from the original fetch
-        and re-enqueued as fresh entries so they aren't double-delivered.
+        Returns (ready, held_back, ack_token). Only held_back entries are
+        ACKed and re-enqueued as fresh entries. Ready messages stay in
+        pending state — their delivery IDs form the returned ack_token
+        for client-side ACK.
         """
         all_msgs, ack_token = await self._backend.fetch(tenant_id, recipient)
         self._events[ekey].clear()
         ready, held_back = _reassemble_chunks(all_msgs)
 
         if held_back:
-            # ACK everything from the original fetch first — this clears
-            # ALL entries from pending state (both ready and held_back)
-            if ack_token:
-                await self._backend.ack(tenant_id, recipient, ack_token)
-            # Re-enqueue incomplete chunks as fresh stream entries
-            await self._backend.enqueue_batch(
-                tenant_id, recipient, held_back
-            )
-            # Build a new ack_token from only the ready messages' delivery IDs
+            # Collect delivery IDs for held_back and ready messages
+            held_back_ids = [
+                m["_delivery_id"] for m in held_back if "_delivery_id" in m
+            ]
             ready_ids = [
                 m["_delivery_id"] for m in ready if "_delivery_id" in m
             ]
+
+            # ACK only the held_back entries (removes them from pending)
+            if held_back_ids:
+                await self._backend.ack_ids(
+                    tenant_id, recipient, held_back_ids
+                )
+
+            # Re-enqueue incomplete chunks as fresh stream entries
+            # Strip _delivery_id before re-enqueue — they'll get new ones
+            for m in held_back:
+                m.pop("_delivery_id", None)
+            await self._backend.enqueue_batch(
+                tenant_id, recipient, held_back
+            )
+
+            # Return ack_token with only ready message delivery IDs
             ack_token = json.dumps(ready_ids) if ready_ids else ""
 
         return ready, held_back, ack_token

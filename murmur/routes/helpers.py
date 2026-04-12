@@ -65,6 +65,13 @@ def _reassemble_chunks(messages: list[dict]) -> tuple[list[dict], list[dict]]:
                 "content": "".join(c["content"] for c in chunks),
                 "timestamp": chunks[0]["timestamp"],
             }
+            # Preserve delivery IDs from all chunks for ACK
+            chunk_delivery_ids = [
+                c["_delivery_id"] for c in chunks if "_delivery_id" in c
+            ]
+            if chunk_delivery_ids:
+                reassembled["_delivery_id"] = chunk_delivery_ids[0]
+                reassembled["_chunk_delivery_ids"] = chunk_delivery_ids
             ready.append(reassembled)
         else:
             held_back.extend(chunks)
