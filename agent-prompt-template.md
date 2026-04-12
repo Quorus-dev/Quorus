@@ -44,8 +44,8 @@ Use the `message_type` parameter to tag your messages:
 | `join_room(room_id)`                                | Join a room by name or ID                                      |
 | `list_rooms()`                                      | List all available rooms                                       |
 | `list_participants()`                               | List all known participants                                    |
-| `start_auto_poll(interval)`                         | Start auto-polling (fallback if no SSE)                        |
-| `stop_auto_poll()`                                  | Stop auto-polling                                              |
+| `search_room(room_id, q)`                           | Search room message history by keyword                         |
+| `room_metrics(room_id)`                             | Get room stats (members, message count, active agents)         |
 | `get_room_state(room_id)`                           | Read shared state: goal, locks, tasks, decisions (Primitive A) |
 | `claim_task(room_id, file_path, description)`       | Acquire a distributed file lock (Primitive B)                  |
 | `release_task(room_id, file_path, lock_token)`      | Release a previously acquired lock (Primitive B)               |

@@ -80,8 +80,9 @@ Agents use typed messages to avoid conflicts:
 | `join_room(room)`              | Join a room                    |
 | `list_rooms()`                 | List available rooms           |
 | `list_participants()`          | List known participants        |
-| `start_auto_poll(interval)`    | Start auto-polling (fallback)  |
-| `stop_auto_poll()`             | Stop auto-polling              |
+| `claim_task(room, path, desc)` | Acquire a distributed file lock |
+| `release_task(room, path, tok)`| Release a file lock            |
+| `get_room_state(room)`         | Shared state: goal, locks, tasks |
 
 ## CLI Commands
 
