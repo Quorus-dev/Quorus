@@ -1614,7 +1614,6 @@ def _cmd_init(args):
     relay_url = (args.relay_url or "").strip().rstrip("/")
     secret = getattr(args, "secret", None) or ""
     api_key = getattr(args, "api_key", None) or ""
-
     # 0. Validate inputs
     import re as _re
     if not name:

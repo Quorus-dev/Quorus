@@ -461,7 +461,7 @@ class TestRoomLock:
             ok_resp = MagicMock()
             ok_resp.status_code = 200
             ok_resp.json.return_value = {
-                "locked": False, "lock_token": "tok-abc", "expires_at": "2026-04-11T00:05:00Z"
+                "locked": False, "lock_token": "tok-abc", "expires_at": "2026-04-11T00:05:00Z",
             }
             ok_resp.raise_for_status = MagicMock()
 
@@ -472,7 +472,7 @@ class TestRoomLock:
             # Order: Room._exchange_jwt, MurmurClient._exchange_jwt, lock attempt (401),
             # lock 401-branch _exchange_jwt, lock retry (ok)
             mock_post.side_effect = [
-                exchange_resp, exchange_resp, unauth_resp, exchange_resp, ok_resp
+                exchange_resp, exchange_resp, unauth_resp, exchange_resp, ok_resp,
             ]
 
             room = Room("test", relay="http://t", api_key="mct_test", name="a")
@@ -561,7 +561,7 @@ class TestRoomLock:
             ok_resp = MagicMock()
             ok_resp.status_code = 200
             ok_resp.json.return_value = {
-                "goal": None, "claimed_tasks": [], "locked_files": {}, "decisions": []
+                "goal": None, "claimed_tasks": [], "locked_files": {}, "decisions": [],
             }
             ok_resp.raise_for_status = MagicMock()
 
