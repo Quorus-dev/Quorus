@@ -37,6 +37,7 @@ dependencies = [
     "pyjwt>=2.8.0",
     "bcrypt>=4.1.0",
     "redis[hiredis]>=5.0.0",
+    "anthropic>=0.94.0",
 ]
 
 [project.urls]

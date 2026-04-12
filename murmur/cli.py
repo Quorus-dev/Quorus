@@ -2469,6 +2469,263 @@ def _cmd_logs(args):
         console.print(f"[red]Error: {e.response.status_code}[/red]")
 
 
+def _cmd_brief(args):
+    """Drop a task brief into a room for agents to claim subtasks from."""
+    import uuid
+
+    room = args.room
+    task = " ".join(args.task) if isinstance(args.task, list) else args.task
+    brief_id = str(uuid.uuid4())
+    headers = _auth_headers()
+
+    try:
+        resp = httpx.post(
+            f"{RELAY_URL}/rooms/{room}/messages",
+            json={
+                "from_name": INSTANCE_NAME,
+                "content": task,
+                "message_type": "brief",
+                "brief_id": brief_id,
+            },
+            headers=headers,
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except httpx.ConnectError:
+        _relay_unreachable()
+        sys.exit(1)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Room '{room}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e.response.status_code} {e.response.text}[/red]")
+        sys.exit(1)
+
+    console.print(f"[bold green]Brief posted to '{room}'[/bold green]")
+    console.print(f"  brief_id: [dim]{brief_id}[/dim]")
+    console.print(f"  task:     {task}")
+
+
+def _cmd_setup_swarm(args):
+    """Create N rooms each with a purpose and M agents."""
+    rooms_raw = args.rooms
+    agents_per_room = args.agents
+    headers = _auth_headers()
+
+    # Parse "name:purpose,name:purpose,..." into list of dicts
+    rooms_config = []
+    for pair in rooms_raw.split(","):
+        pair = pair.strip()
+        if ":" in pair:
+            name, _, purpose = pair.partition(":")
+            rooms_config.append({"name": name.strip(), "purpose": purpose.strip()})
+        else:
+            rooms_config.append({"name": pair, "purpose": "Build and ship."})
+
+    if not rooms_config:
+        console.print("[red]No rooms specified. Use --rooms 'name:purpose,...'[/red]")
+        sys.exit(1)
+
+    console.print("[bold green]Murmur Swarm Setup[/bold green]\n")
+
+    created_rooms = []
+    for room_cfg in rooms_config:
+        room_name = room_cfg["name"]
+        purpose = room_cfg["purpose"]
+
+        r = httpx.post(
+            f"{RELAY_URL}/rooms",
+            json={"name": room_name, "created_by": INSTANCE_NAME},
+            headers=headers,
+        )
+        if r.status_code == 200:
+            console.print(f"  [green]Room '{room_name}' created[/green]")
+        elif r.status_code == 409:
+            console.print(f"  [yellow]Room '{room_name}' already exists[/yellow]")
+        else:
+            console.print(f"  [red]Failed to create room '{room_name}': {r.text}[/red]")
+            continue
+
+        # Join the human to this room
+        httpx.post(
+            f"{RELAY_URL}/rooms/{room_name}/join",
+            json={"participant": INSTANCE_NAME},
+            headers=headers,
+        )
+
+        # Spawn agents
+        for i in range(1, agents_per_room + 1):
+            agent_name = f"{room_name}-agent-{i}"
+            console.print(f"  Spawning {agent_name}...")
+            _spawn_agent(room_name, agent_name, RELAY_URL, RELAY_SECRET)
+
+        # Send purpose briefing
+        httpx.post(
+            f"{RELAY_URL}/rooms/{room_name}/messages",
+            json={
+                "from_name": INSTANCE_NAME,
+                "content": f"SWARM MISSION: {purpose}\n\n"
+                f"Team: {agents_per_room} agents. Coordinate here. "
+                "Claim tasks, post status, don't duplicate work. Ship it.",
+                "message_type": "alert",
+            },
+            headers=headers,
+        )
+
+        created_rooms.append(room_name)
+
+    # Summary table
+    console.print()
+    table = Table(title="Swarm Summary")
+    table.add_column("Room", style="bold")
+    table.add_column("Purpose")
+    table.add_column("Agents", justify="right")
+    for room_cfg in rooms_config:
+        if room_cfg["name"] in created_rooms:
+            table.add_row(room_cfg["name"], room_cfg["purpose"], str(agents_per_room))
+    console.print(table)
+
+    total = agents_per_room * len(created_rooms)
+    console.print("\n[bold green]Swarm ready![/bold green]")
+    console.print(f"  {len(created_rooms)} rooms, {total} total agents")
+    for rn in created_rooms:
+        console.print(f"  Watch: murmur watch {rn}")
+
+
+def _cmd_resolve(args):
+    """Resolve git merge conflicts using room history as context."""
+    import re
+
+    # Check for anthropic
+    try:
+        import anthropic
+    except ImportError:
+        console.print("[red]anthropic package not installed.[/red]")
+        console.print("[dim]Run: pip install anthropic[/dim]")
+        sys.exit(1)
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        console.print("[red]ANTHROPIC_API_KEY not set.[/red]")
+        console.print("[dim]Export ANTHROPIC_API_KEY=<your-key> and retry.[/dim]")
+        sys.exit(1)
+
+    # 1. Find conflicted files
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=U"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        console.print("[red]git diff failed — are you in a git repo?[/red]")
+        console.print(f"[dim]{result.stderr.strip()}[/dim]")
+        sys.exit(1)
+
+    conflicted_files = [f for f in result.stdout.strip().splitlines() if f]
+    if not conflicted_files:
+        console.print("[green]No merge conflicts found.[/green]")
+        return
+
+    console.print(f"[bold]Found {len(conflicted_files)} conflicted file(s)[/bold]")
+
+    room = getattr(args, "room", None)
+    model = getattr(args, "model", "claude-sonnet-4-6")
+
+    # 2. Fetch room history for context (optional)
+    room_context_msgs: list[str] = []
+    if room:
+        try:
+            resp = httpx.get(
+                f"{RELAY_URL}/rooms/{room}/history",
+                params={"limit": 100},
+                headers=_auth_headers(),
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                history = resp.json()
+                for msg in history:
+                    content = msg.get("content", "")
+                    sender = msg.get("from_name", "?")
+                    # Only include messages that mention any conflicted filename
+                    if any(Path(f).name in content for f in conflicted_files):
+                        ts = msg.get("timestamp", "")[:16]
+                        room_context_msgs.append(f"[{ts}] {sender}: {content}")
+        except Exception:
+            pass  # Room context is optional
+
+    # 3. Process each conflicted file
+    client = anthropic.Anthropic(api_key=api_key)
+
+    for filepath in conflicted_files:
+        console.print(f"\n[bold cyan]Resolving: {filepath}[/bold cyan]")
+
+        try:
+            file_content = Path(filepath).read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            console.print(f"[red]File not found: {filepath}[/red]")
+            continue
+
+        # Extract conflict blocks
+        conflict_pattern = re.compile(
+            r"(<{7} .+?\n[\s\S]*?={7}\n[\s\S]*?>{7} .+?\n)",
+            re.MULTILINE,
+        )
+        conflicts = conflict_pattern.findall(file_content)
+        if not conflicts:
+            console.print(f"[dim]No conflict markers in {filepath}, skipping[/dim]")
+            continue
+
+        # Build prompt
+        context_section = ""
+        if room_context_msgs:
+            ctx = "\n".join(room_context_msgs[-20:])
+            context_section = f"\n\nTeam chat context from room '{room}':\n{ctx}"
+
+        prompt = (
+            "You are a conflict resolution agent. "
+            f"Here is a git merge conflict in `{filepath}` "
+            "and the context from the team's chat history. "
+            "Propose a clean resolution that honors both agents' intentions.\n\n"
+            f"Full file with conflict markers:\n```\n{file_content}\n```"
+            f"{context_section}\n\n"
+            "Respond with:\n"
+            "1. A brief explanation of what each side changed and why the conflict occurred.\n"
+            "2. The complete resolved file content (no conflict markers) in a fenced code block.\n"
+            "Keep it concise."
+        )
+
+        console.print("[dim]Calling Claude...[/dim]")
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as e:
+            console.print(f"[red]Claude API error: {e}[/red]")
+            continue
+
+        reply = response.content[0].text
+        console.print()
+        console.print(reply)
+
+        # Extract resolved file from fenced code block
+        code_match = re.search(r"```(?:\w+)?\n([\s\S]+?)```", reply)
+        if not code_match:
+            console.print("[yellow]Could not extract resolved file from response.[/yellow]")
+            continue
+
+        resolved = code_match.group(1)
+
+        console.print()
+        apply = Confirm.ask(f"Apply this resolution to {filepath}?", default=False)
+        if apply:
+            Path(filepath).write_text(resolved, encoding="utf-8")
+            console.print(f"[green]Written: {filepath}[/green]")
+            console.print(f"[dim]Run 'git add {filepath}' to stage.[/dim]")
+        else:
+            console.print("[dim]Skipped.[/dim]")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="murmur", description="Murmur CLI"
@@ -2669,6 +2926,31 @@ def main():
     p_connect.add_argument("room", help="Room name")
     p_connect.add_argument("name", help="Agent name")
 
+    p_brief = sub.add_parser("brief", help="Drop a task brief into a room")
+    p_brief.add_argument("room", help="Room name")
+    p_brief.add_argument("task", nargs=argparse.REMAINDER, help="Task description")
+
+    p_swarm = sub.add_parser(
+        "setup-swarm", help="Create multiple rooms with agents (swarm setup)"
+    )
+    p_swarm.add_argument(
+        "--rooms", required=True,
+        help="Comma-separated name:purpose pairs, e.g. 'builders:build features,testers:test bugs'",
+    )
+    p_swarm.add_argument(
+        "--agents", type=int, default=3, help="Agents per room (default: 3)"
+    )
+
+    p_resolve = sub.add_parser(
+        "resolve", help="Resolve git merge conflicts using Claude + room history"
+    )
+    p_resolve.add_argument(
+        "--room", default=None, help="Room name for history context (optional)"
+    )
+    p_resolve.add_argument(
+        "--model", default="claude-sonnet-4-6", help="Claude model (default: claude-sonnet-4-6)"
+    )
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -2712,6 +2994,9 @@ def main():
         "state": _cmd_room_state,
         "locks": _cmd_room_locks,
         "usage": _cmd_usage,
+        "brief": _cmd_brief,
+        "setup-swarm": _cmd_setup_swarm,
+        "resolve": _cmd_resolve,
     }
     commands[args.command](args)
 
