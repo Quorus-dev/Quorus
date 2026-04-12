@@ -2965,8 +2965,14 @@ async def _context(
     limit: int = 200,
     quiet: bool = False,
     json_output: bool = False,
+    summarize: bool = False,
+    model: str = "claude-sonnet-4-6",
 ) -> None:
-    """Fetch and display a Summary Cascade briefing for a room."""
+    """Fetch and display a Summary Cascade briefing for a room.
+
+    With --summarize (v2), calls Claude to produce a concise 2-3 paragraph
+    brief instead of the raw context dump.
+    """
     import datetime as _dt
 
     # Resolve room: use provided name, fall back to first room the agent is in
@@ -3136,6 +3142,58 @@ async def _context(
         # Strip trailing blank lines for clean injection
         block = block.rstrip()
 
+        # Summary Cascade v2: LLM summarization
+        if summarize and block:
+            try:
+                import anthropic
+            except ImportError:
+                console.print("[red]anthropic package not installed.[/red]")
+                console.print("[dim]Run: pip install anthropic[/dim]")
+                return
+
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                console.print("[red]ANTHROPIC_API_KEY not set.[/red]")
+                console.print("[dim]Export ANTHROPIC_API_KEY=<your-key> and retry.[/dim]")
+                return
+
+            # Build context for summarization
+            summary_prompt = f"""\
+You are a swarm coordinator briefing an agent joining a room.
+
+Room: {target_room}
+
+Raw context data:
+{block}
+
+Write a concise 2-3 paragraph brief that:
+1. States the active goal and current priorities
+2. Summarizes who is working on what (claimed tasks, locked files)
+3. Notes any recent decisions or blockers the agent should know about
+
+Be direct and actionable. No pleasantries. This will be injected into the agent's context.
+"""
+            if not quiet:
+                console.print("[dim]Generating summary...[/dim]")
+
+            try:
+                llm_client = anthropic.Anthropic(api_key=api_key)
+                response = llm_client.messages.create(
+                    model=model,
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": summary_prompt}],
+                )
+                summary = response.content[0].text
+
+                if not quiet:
+                    console.print(f"\n[bold cyan]=== Summary: {target_room} ===[/bold cyan]\n")
+                print(summary)
+            except Exception as e:
+                console.print(f"[red]LLM error: {e}[/red]")
+                console.print("[dim]Falling back to raw context:[/dim]")
+                print(block)
+            return
+
         if block:
             print(block)
 
@@ -3159,6 +3217,8 @@ def _cmd_context(args):
             limit=getattr(args, "limit", 200),
             quiet=getattr(args, "quiet", False),
             json_output=getattr(args, "json_output", False),
+            summarize=getattr(args, "summarize", False),
+            model=getattr(args, "model", "claude-sonnet-4-6"),
         )
     )
 
@@ -3448,6 +3508,16 @@ def main():
     )
     p_context.add_argument(
         "--json", action="store_true", dest="json_output", help="Machine-readable JSON output"
+    )
+    p_context.add_argument(
+        "--summarize",
+        action="store_true",
+        help="Use LLM to generate concise briefing (Summary Cascade v2)",
+    )
+    p_context.add_argument(
+        "--model",
+        default="claude-sonnet-4-6",
+        help="Claude model for summarization (default: claude-sonnet-4-6)",
     )
 
     p_decision = sub.add_parser(

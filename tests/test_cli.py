@@ -1353,6 +1353,48 @@ async def test_context_auto_detects_room(capsys):
     assert "Build the auth module" in captured.out
 
 
+async def test_context_summarize_requires_api_key(capsys, monkeypatch):
+    """context --summarize should fail gracefully without ANTHROPIC_API_KEY."""
+    from murmur.cli import _context
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev", summarize=True)
+
+    captured = capsys.readouterr()
+    assert "ANTHROPIC_API_KEY not set" in captured.out
+
+
+async def test_context_summarize_calls_llm(capsys, monkeypatch):
+    """context --summarize should call Claude and print the summary."""
+    from murmur.cli import _context
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    # Mock the anthropic client
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text="This is a test summary.")]
+
+    mock_anthropic_client = MagicMock()
+    mock_anthropic_client.messages.create.return_value = mock_response
+
+    # Create a mock httpx client that returns the right data
+    http_client = _mock_context_client()
+    # Ensure aclose is an AsyncMock
+    http_client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=http_client):
+        # Patch anthropic at the import point in the function
+        with patch.dict("sys.modules", {"anthropic": MagicMock(
+            Anthropic=MagicMock(return_value=mock_anthropic_client)
+        )}):
+            await _context("dev", summarize=True)
+
+    captured = capsys.readouterr()
+    assert "This is a test summary" in captured.out
+
+
 # ── decision command tests ────────────────────────────────────────────────
 
 
