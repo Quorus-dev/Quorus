@@ -2864,6 +2864,7 @@ async def test_unknown_message_type_rejected(client: AsyncClient, auth_headers: 
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.anyio
 async def test_rate_limit_create_room(client: AsyncClient, auth_headers):
     """POST /rooms returns 429 when create_room rate limit is exceeded."""
     with patch.object(
@@ -2877,6 +2878,7 @@ async def test_rate_limit_create_room(client: AsyncClient, auth_headers):
     assert resp.status_code == 429
 
 
+@pytest.mark.anyio
 async def test_rate_limit_join_room(client: AsyncClient, auth_headers):
     """POST /rooms/{id}/join returns 429 when join rate limit is exceeded."""
     # Create the room first (outside the rate-limit mock).
@@ -2896,6 +2898,7 @@ async def test_rate_limit_join_room(client: AsyncClient, auth_headers):
     assert resp.status_code == 429
 
 
+@pytest.mark.anyio
 async def test_rate_limit_room_message_check_with_limit(client: AsyncClient, auth_headers):
     """POST /rooms/{id}/messages returns 429 when room_msg rate limit is exceeded."""
     room = await client.post(
@@ -2914,6 +2917,7 @@ async def test_rate_limit_room_message_check_with_limit(client: AsyncClient, aut
     assert resp.status_code == 429
 
 
+@pytest.mark.anyio
 async def test_rate_limit_room_history(client: AsyncClient, auth_headers):
     """GET /rooms/{id}/history returns 429 when history rate limit is exceeded."""
     room = await client.post(
@@ -2931,6 +2935,7 @@ async def test_rate_limit_room_history(client: AsyncClient, auth_headers):
     assert resp.status_code == 429
 
 
+@pytest.mark.anyio
 async def test_rate_limit_dm_send(client: AsyncClient, auth_headers):
     """POST /messages returns 429 when service-level rate limit is exceeded."""
     with patch.object(
@@ -2944,6 +2949,7 @@ async def test_rate_limit_dm_send(client: AsyncClient, auth_headers):
     assert resp.status_code == 429
 
 
+@pytest.mark.anyio
 async def test_dm_content_too_large_returns_413(client: AsyncClient, auth_headers):
     """POST /messages returns 413 when content exceeds MAX_MESSAGE_SIZE bytes."""
     import murmur.routes.messages as dm_routes
@@ -2961,6 +2967,7 @@ async def test_dm_content_too_large_returns_413(client: AsyncClient, auth_header
 
     assert resp.status_code == 413
 
+@pytest.mark.anyio
 async def test_all_standard_message_types_accepted(client: AsyncClient, auth_headers: dict):
     """All standard message types must be accepted by the relay."""
     rid = await _setup_msg_room(client, auth_headers, "all-types-room")
