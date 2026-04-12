@@ -307,15 +307,14 @@ def _init_services(app_instance, redis_conn=None):
 
         backends = InMemoryBackends.create(max_room_history=max_room_history)
 
-        # Replace in-memory room history with SQLite for persistence.
-        # History survives relay restarts; any agent joining a room gets full
-        # context. Disabled in tests via MURMUR_NO_SQLITE_HISTORY=1.
-        if not os.environ.get("MURMUR_NO_SQLITE_HISTORY"):
-            from murmur.backends.sqlite_history import SQLiteRoomHistoryBackend
+    # Use Postgres for room history when DATABASE_URL is set.
+    # History survives relay restarts; any agent joining a room gets full context.
+    if DATABASE_URL:
+        from murmur.backends.postgres_history import PostgresRoomHistoryBackend
 
-            backends.room_history = SQLiteRoomHistoryBackend(
-                max_history=max_room_history
-            )
+        backends.room_history = PostgresRoomHistoryBackend(
+            max_history=max_room_history
+        )
 
     # Notification bus — Redis-backed when available, local-only otherwise
     notification = NotificationService(redis_conn=redis_conn)
