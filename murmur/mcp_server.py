@@ -518,23 +518,27 @@ async def _send_message(to: str, content: str, context: Context | None = None) -
 
 
 async def _check_messages(context: Context | None = None) -> str:
-    """Internal: fetch unread messages from the local buffer or the relay."""
+    """Internal: fetch unread messages from the durable queue with proper ACK.
+
+    SSE is notification-only — we always fetch from the durable queue to ensure
+    messages are properly acknowledged. This prevents duplicates between SSE
+    buffer and HTTP fetch paths.
+    """
     await _remember_session(context)
 
-    # Drain the SSE-delivered buffer first. If empty, do a non-blocking
-    # relay fetch (wait=0) as a manual fallback — SSE handles live delivery.
-    messages = await _drain_pending_messages()
-    ack_token = None
-    if not messages:
-        messages, ack_token, error = await _fetch_relay_messages(wait=0)
-        if error:
-            return error
+    # Clear SSE buffer (notification-only, not authoritative)
+    # SSE tells us messages are available; durable queue is source of truth
+    await _drain_pending_messages()
+
+    # Always fetch from durable queue with manual ACK
+    messages, ack_token, error = await _fetch_relay_messages(wait=0)
+    if error:
+        return error
 
     if not messages:
         return "No new messages."
 
     # Filter out empty/invalid messages (missing required fields)
-    # Debug: log any invalid messages to find root cause of [] unknown:
     valid_messages = []
     for msg in messages:
         if msg.get("from_name") or msg.get("content") or msg.get("timestamp"):
