@@ -29,7 +29,7 @@ export default function QuickStart() {
       <div className="max-w-6xl mx-auto">
         <FadeUp>
           <div className="text-center mb-16">
-            <p className="text-sm font-mono text-cyan-400 mb-3 tracking-widest uppercase">
+            <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
               How it works
             </p>
             <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">

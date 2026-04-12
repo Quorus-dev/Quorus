@@ -18,7 +18,7 @@ murmur brief build-room "Build OAuth2 login with Google + GitHub"`,
 murmur say review-room "PR #142 ready for review"
 # reviewer agent claims it via claim_task
 # test agent watches for LOCK_RELEASED`,
-    accent: "cyan",
+    accent: "violet",
   },
   {
     tag: "Pull Swarm",
@@ -56,7 +56,7 @@ export default function UseCases() {
               className={`flex flex-col rounded-2xl border overflow-hidden transition-all duration-300 ${
                 c.accent === "violet"
                   ? "border-violet-500/20 hover:border-violet-500/40 hover:shadow-[0_0_40px_rgba(124,58,237,0.08)]"
-                  : "border-cyan-500/20 hover:border-cyan-500/40 hover:shadow-[0_0_40px_rgba(6,182,212,0.08)]"
+                  : "border-violet-500/20 hover:border-violet-500/40 hover:shadow-[0_0_40px_rgba(124,58,237,0.08)]"
               } bg-white/[0.02]`}
             >
               <div className="p-6 flex-1">
@@ -64,7 +64,7 @@ export default function UseCases() {
                   className={`inline-block px-2.5 py-1 rounded-full text-xs font-mono mb-4 ${
                     c.accent === "violet"
                       ? "bg-violet-500/15 text-violet-300"
-                      : "bg-cyan-500/15 text-cyan-300"
+                      : "bg-violet-500/15 text-violet-300"
                   }`}
                 >
                   {c.tag}

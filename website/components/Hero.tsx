@@ -323,7 +323,7 @@ export default function Hero() {
       vy: (Math.random() - 0.5) * 0.25,
       size: Math.random() * 1.8 + 0.4,
       alpha: Math.random() * 0.35 + 0.08,
-      hue: Math.random() > 0.55 ? 270 : 190,
+      hue: Math.random() > 0.4 ? 270 : 285,
     }));
 
     let animFrame: number;
@@ -410,7 +410,7 @@ export default function Hero() {
           filter: "blur(70px)",
         }}
       />
-      {/* Cyan left accent */}
+      {/* Left accent — violet variant */}
       <motion.div
         className="absolute pointer-events-none"
         style={{
@@ -419,16 +419,16 @@ export default function Hero() {
           top: "28%",
           left: "2%",
           background:
-            "radial-gradient(ellipse, rgba(6,182,212,0.15) 0%, transparent 70%)",
-          filter: "blur(35px)",
+            "radial-gradient(ellipse, rgba(109,40,217,0.12) 0%, transparent 70%)",
+          filter: "blur(45px)",
         }}
         animate={{
-          scale: [1, 1.22, 1, 1.12, 1],
-          x: [0, 22, 0, -12, 0],
-          opacity: [0.5, 0.9, 0.6, 0.95, 0.5],
+          scale: [1, 1.18, 1, 1.08, 1],
+          x: [0, 18, 0, -10, 0],
+          opacity: [0.4, 0.7, 0.5, 0.75, 0.4],
         }}
         transition={{
-          duration: 12,
+          duration: 14,
           repeat: Infinity,
           ease: "easeInOut",
           delay: 1.5,

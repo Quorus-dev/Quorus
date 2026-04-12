@@ -155,9 +155,9 @@ const accentMap = {
     spotlightColor: "rgba(124,58,237,0.2)",
   },
   cyan: {
-    icon: "text-cyan-400",
-    bg: "bg-cyan-500/15",
-    spotlightColor: "rgba(6,182,212,0.2)",
+    icon: "text-violet-300",
+    bg: "bg-violet-400/12",
+    spotlightColor: "rgba(139,92,246,0.18)",
   },
 };
 
@@ -320,7 +320,7 @@ function SSEVisual() {
     <div className="flex items-center gap-3 mt-4">
       {/* Indicator dot */}
       <motion.div
-        className="w-2 h-2 rounded-full bg-cyan-400"
+        className="w-2 h-2 rounded-full bg-violet-400"
         animate={{ opacity: [1, 0.3, 1] }}
         transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
       />
@@ -328,7 +328,7 @@ function SSEVisual() {
       <motion.div
         key={ms}
         className="font-mono font-bold text-lg tabular-nums"
-        style={{ color: flash ? "#22d3ee" : "#67e8f9" }}
+        style={{ color: flash ? "#a78bfa" : "#c4b5fd" }}
         animate={flash ? { scale: [1, 1.25, 1] } : { scale: 1 }}
         transition={{ duration: 0.22 }}
       >
@@ -377,7 +377,7 @@ function SwarmVisual() {
 
   const statusColor: Record<TaskStatus, string> = {
     open: "text-white/40 border-white/10",
-    claimed: "text-cyan-400 border-cyan-500/40",
+    claimed: "text-violet-300 border-violet-500/40",
     done: "text-violet-400 border-violet-500/40",
   };
 

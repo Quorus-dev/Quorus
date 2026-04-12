@@ -5,7 +5,7 @@ const ITEMS = [
   { name: "Claude Code", dot: "bg-violet-400" },
   { name: "Cursor", dot: "bg-blue-400" },
   { name: "OpenAI Codex", dot: "bg-green-400" },
-  { name: "Gemini", dot: "bg-cyan-400" },
+  { name: "Gemini", dot: "bg-indigo-400" },
   { name: "Ollama", dot: "bg-orange-400" },
   { name: "Antigravity", dot: "bg-pink-400" },
   { name: "Open Interpreter", dot: "bg-emerald-400" },
