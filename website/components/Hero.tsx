@@ -1,12 +1,8 @@
 "use client";
 
-import {
-  motion,
-  useMotionValue,
-  useSpring,
-  AnimatePresence,
-} from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
+
 import Waitlist from "./Waitlist";
 
 // ── Typewriter ────────────────────────────────────────────────────────────────
@@ -253,37 +249,37 @@ const AGENT_NODES = [
 ];
 
 function FloatingAgentNode({ node }: { node: (typeof AGENT_NODES)[0] }) {
-  const yOff = useMotionValue(0);
-  const springY = useSpring(yOff, { stiffness: 22, damping: 7 });
-
-  useEffect(() => {
-    let frame: number;
-    const start = Date.now() + node.delay * 1000;
-    const tick = () => {
-      yOff.set(
-        Math.sin(((Date.now() - start) / 1000) * 0.45 + node.delay) * 12,
-      );
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [node.delay, yOff]);
-
+  // Outer div handles positioning + centering (static CSS, no Framer Motion transforms)
+  // Inner motion.div handles fade-in + float (no transform conflicts)
   return (
-    <motion.div
-      className="absolute hidden xl:flex flex-col pointer-events-none"
+    <div
+      className="absolute hidden xl:block pointer-events-none"
       style={{
         left: `calc(50% + ${node.x}px)`,
         top: `calc(50% + ${node.y}px)`,
-        y: springY,
-        translateX: "-50%",
-        translateY: "-50%",
+        transform: "translate(-50%, -50%)",
       }}
-      initial={{ opacity: 0, scale: 0.7 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ delay: 1.4 + node.delay, duration: 0.6, ease: "easeOut" }}
     >
-      <div className="px-3 py-2 rounded-xl border border-white/[0.09] bg-black/60 backdrop-blur-xl text-xs font-mono min-w-[148px] shadow-xl shadow-black/50">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.8, y: 0 }}
+        animate={{
+          opacity: 1,
+          scale: 1,
+          y: [0, -10, 0],
+        }}
+        transition={{
+          opacity: { delay: 1.4 + node.delay, duration: 0.7, ease: "easeOut" },
+          scale: { delay: 1.4 + node.delay, duration: 0.7, ease: "easeOut" },
+          y: {
+            delay: 1.6 + node.delay,
+            duration: 3.2 + node.delay * 0.5,
+            repeat: Infinity,
+            ease: "easeInOut",
+            repeatType: "mirror",
+          },
+        }}
+        className="px-3 py-2 rounded-xl border border-white/[0.09] bg-black/60 backdrop-blur-xl text-xs font-mono min-w-[148px] shadow-xl shadow-black/50"
+      >
         <div className="flex items-center justify-between gap-2 mb-1">
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-dot shrink-0" />
@@ -296,8 +292,8 @@ function FloatingAgentNode({ node }: { node: (typeof AGENT_NODES)[0] }) {
           )}
         </div>
         <span className="text-white/30 text-[10px]">{node.status}</span>
-      </div>
-    </motion.div>
+      </motion.div>
+    </div>
   );
 }
 

@@ -336,7 +336,7 @@ export default function LiveSwarmDemo() {
               {/* Messages */}
               <div
                 ref={scrollContainerRef}
-                className="min-h-[320px] max-h-[380px] overflow-y-auto py-2 scrollbar-thin"
+                className="h-[380px] overflow-y-auto py-2 scrollbar-thin"
               >
                 <AnimatePresence>
                   {messages.map((msg) => (
