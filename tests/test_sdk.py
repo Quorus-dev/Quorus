@@ -423,6 +423,131 @@ class TestRoomLock:
             assert "claimed_tasks" in result
 
 
+class TestRoomAsync:
+    @pytest.mark.asyncio
+    async def test_asend_posts_message(self):
+        """asend() should POST to rooms/{room}/messages."""
+        from unittest.mock import AsyncMock, patch as apatch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"id": "async-1", "timestamp": "2026-04-12T00:00:00Z"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+            room = Room("test-room", relay="http://t", secret="s", name="a")
+            result = await room.asend("hello async", type="chat")
+
+        assert result["id"] == "async-1"
+        mock_client.post.assert_called_once()
+        call_url = mock_client.post.call_args[0][0]
+        assert "test-room/messages" in call_url
+
+    @pytest.mark.asyncio
+    async def test_asend_passes_reply_to(self):
+        """asend() should include reply_to in body when provided."""
+        from unittest.mock import AsyncMock, patch as apatch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"id": "async-2"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+            room = Room("test-room", relay="http://t", secret="s", name="a")
+            await room.asend("follow-up", reply_to="msg-id-99")
+
+        body = mock_client.post.call_args[1]["json"]
+        assert body["reply_to"] == "msg-id-99"
+
+    @pytest.mark.asyncio
+    async def test_areceive_returns_messages_and_ack_token(self):
+        """areceive() should return messages list and ack_token."""
+        from unittest.mock import AsyncMock, patch as apatch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "messages": [{"id": "m1", "content": "hi"}],
+            "ack_token": "tok-xyz",
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+            room = Room("test-room", relay="http://t", secret="s", name="a")
+            result = await room.areceive(wait=5)
+
+        assert result["messages"] == [{"id": "m1", "content": "hi"}]
+        assert result["ack_token"] == "tok-xyz"
+
+    @pytest.mark.asyncio
+    async def test_areceive_handles_list_response(self):
+        """areceive() should handle legacy list-format responses."""
+        from unittest.mock import AsyncMock, patch as apatch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = [{"id": "m2", "content": "legacy"}]
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+            room = Room("test-room", relay="http://t", secret="s", name="a")
+            result = await room.areceive()
+
+        assert result["messages"] == [{"id": "m2", "content": "legacy"}]
+        assert result["ack_token"] == ""
+
+    @pytest.mark.asyncio
+    async def test_a_ack_posts_token(self):
+        """a_ack() should POST ack_token to messages/{name}/ack."""
+        from unittest.mock import AsyncMock, patch as apatch
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock()
+
+        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+            room = Room("test-room", relay="http://t", secret="s", name="a")
+            await room.a_ack("tok-ack-123")
+
+        mock_client.post.assert_called_once()
+        body = mock_client.post.call_args[1]["json"]
+        assert body["ack_token"] == "tok-ack-123"
+
+    @pytest.mark.asyncio
+    async def test_a_ack_skips_empty_token(self):
+        """a_ack() should be a no-op when ack_token is empty."""
+        from unittest.mock import AsyncMock, patch as apatch
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock()
+
+        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+            room = Room("test-room", relay="http://t", secret="s", name="a")
+            await room.a_ack("")
+
+        mock_client.post.assert_not_called()
+
+
 class TestRoomListener:
     def test_on_message_registers_callback(self):
         """on_message should add callback to listeners."""
