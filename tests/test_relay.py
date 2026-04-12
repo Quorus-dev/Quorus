@@ -2696,3 +2696,86 @@ async def test_404_rate_limit_allows_normal_requests(client: AsyncClient, auth_h
         assert resp.status_code == 404  # Not 429
 
     relay._not_found_counts.clear()
+
+
+# ---------------------------------------------------------------------------
+# Lock input validation (path traversal, field constraints)
+# ---------------------------------------------------------------------------
+
+
+async def test_claim_task_rejects_path_traversal(client: AsyncClient, auth_headers: dict):
+    """file_path containing '..' traversal sequences must be rejected (422)."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-traversal-room")
+    for bad_path in ["../etc/passwd", "src/../../../etc/shadow", "a/../../b"]:
+        resp = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": bad_path, "claimed_by": "alice"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422, f"Expected 422 for path {bad_path!r}"
+
+
+async def test_claim_task_rejects_empty_file_path(client: AsyncClient, auth_headers: dict):
+    """Empty file_path must be rejected (422 — min_length=1)."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-empty-path-room")
+    resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": "", "claimed_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_claim_task_rejects_oversized_file_path(client: AsyncClient, auth_headers: dict):
+    """file_path over 500 chars must be rejected (422 — max_length=500)."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-long-path-room")
+    resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": "a" * 501, "claimed_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_claim_task_accepts_nested_path(client: AsyncClient, auth_headers: dict):
+    """Deeply nested paths without traversal should be accepted."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-nested-room")
+    resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": "src/murmur/routes/room_state.py", "claimed_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["locked"] is False
+
+
+async def test_add_decision_rejects_empty_decision(client: AsyncClient, auth_headers: dict):
+    """Empty decision string must be rejected (422 — min_length=1)."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "decision-empty-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    resp = await client.post(
+        f"/rooms/{rid}/state/decisions",
+        json={"decision": ""},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_set_goal_rejects_oversized_goal(client: AsyncClient, auth_headers: dict):
+    """goal over 1000 chars must be rejected (422 — max_length=1000)."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "goal-long-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    resp = await client.patch(
+        f"/rooms/{rid}/state/goal",
+        json={"goal": "x" * 1001},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
