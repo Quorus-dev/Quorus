@@ -6,6 +6,7 @@ import Architecture from "@/components/Architecture";
 import CodeDemo from "@/components/CodeDemo";
 import QuickStart from "@/components/QuickStart";
 import UseCases from "@/components/UseCases";
+import ManagedService from "@/components/ManagedService";
 import CTA from "@/components/CTA";
 import Footer from "@/components/Footer";
 
@@ -20,6 +21,7 @@ export default function Home() {
       <CodeDemo />
       <QuickStart />
       <UseCases />
+      <ManagedService />
       <CTA />
       <Footer />
     </main>
