@@ -2,6 +2,10 @@
 
 GET /v1/usage                 — tenant-level totals, per-room breakdown
 GET /v1/usage/rooms/{room_id} — single room breakdown with locked files, goal, agents
+
+Authorization:
+- /v1/usage: Admins see all tenant rooms; regular users see only rooms they're members of
+- /v1/usage/rooms/{room_id}: Requires room membership
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request
 
 from murmur.auth.middleware import AuthContext, verify_auth
+from murmur.routes.room_auth import require_room_member
 
 router = APIRouter(prefix="/v1")
 _LEGACY_TENANT = "_legacy"
@@ -28,6 +33,11 @@ async def get_usage(
     auth: AuthContext = Depends(verify_auth),
 ):
     """Return per-tenant aggregate stats.
+
+    Authorization:
+    - Admins see all tenant rooms and stats
+    - Regular users see only rooms they are members of
+    - Legacy auth sees all rooms (backward compatibility)
 
     Response:
     {
@@ -52,7 +62,15 @@ async def get_usage(
         if room_ref:
             active_by_room.setdefault(room_ref, []).append(entry["name"])
 
-    all_rooms = await room_svc.list_all(tid)
+    # Get rooms based on authorization level
+    is_admin = auth.role == "admin"
+    if auth.is_legacy or is_admin:
+        # Admins and legacy auth see all tenant rooms
+        all_rooms = await room_svc.list_all(tid)
+    else:
+        # Regular users see only rooms they are members of
+        all_rooms = await room_svc.list_by_member(tid, auth.sub or "")
+
     rooms_data: list[dict] = []
     for room in all_rooms:
         rid = room["id"]
@@ -98,12 +116,15 @@ async def get_room_usage(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
-    """Return usage breakdown for a specific room (includes state, agents, top senders)."""
+    """Return usage breakdown for a specific room (includes state, agents, top senders).
+
+    Requires room membership (403 if not a member).
+    """
     backends = request.app.state.backends
-    room_svc = request.app.state.room_service
     tid = _tid(auth)
 
-    rid, room_data = await room_svc.get(tid, room_id)
+    # Verify membership before returning usage data
+    rid, room_data = await require_room_member(request, auth, tid, room_id)
     room_name = room_data.get("name", rid)
 
     await backends.room_state.expire_tasks(tid, rid)

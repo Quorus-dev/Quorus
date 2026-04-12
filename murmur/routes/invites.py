@@ -83,7 +83,7 @@ try{
 const res=await fetch('/invite/$room_name/join',{
 method:'POST',
 headers:{'Content-Type':'application/json'},
-body:JSON.stringify({participant:name,token:'$token'}
+body:JSON.stringify({participant:name,token:'$token'})
 });
 if(res.ok){
 r.innerHTML='<div class="msg ok">Joined <b>'+esc('$room_name')+'</b> as <b>'

@@ -156,4 +156,17 @@ async def list_participants_endpoint(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
-    return await request.app.state.backends.participants.list_all(_tid(auth))
+    """List all known participants in the tenant.
+
+    Authorization:
+    - Legacy auth: returns all participants (backward compatibility)
+    - JWT admin: returns all participants
+    - JWT user: returns empty list (use room membership to discover participants)
+
+    This prevents regular users from enumerating all participants in a tenant.
+    """
+    # Only admins and legacy auth can list all participants
+    if auth.is_legacy or auth.role == "admin":
+        return await request.app.state.backends.participants.list_all(_tid(auth))
+    # Regular users get empty list - use room membership instead
+    return []
