@@ -62,6 +62,7 @@ logger = structlog.get_logger("murmur.services.message")
 
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "1000"))
+MAX_RECIPIENT_DEPTH = int(os.environ.get("MAX_RECIPIENT_DEPTH", "10000"))
 
 
 class MessageService:
@@ -166,6 +167,15 @@ class MessageService:
         if not await self._rate_limit.check(tenant_id, sender):
             raise HTTPException(
                 status_code=429, detail="Rate limit exceeded"
+            )
+
+        # Quota check: prevent unbounded queue growth
+        depth = await self._backend.recipient_depth(tenant_id, recipient)
+        if depth >= MAX_RECIPIENT_DEPTH:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Recipient queue full ({depth} messages). "
+                "Consumer must drain messages before accepting more.",
             )
 
         timestamp = datetime.now(timezone.utc).isoformat()
