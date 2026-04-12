@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from murmur.integrations.http_agent import AckError, MurmurClient, ReceiveResult
 from murmur.relay import _reset_state, app
 from murmur.sdk import Room
 
@@ -146,6 +147,78 @@ class TestRoomSendReceive:
 
             assert len(result.messages) == 1
             assert result.messages[0]["content"] == "msg1"
+
+
+class TestReceiveResult:
+    def _make_client(self) -> MurmurClient:
+        with patch("murmur.integrations.http_agent.httpx.post"):
+            return MurmurClient("http://t", secret="s", name="a")
+
+    def test_ack_posts_to_relay(self):
+        """ReceiveResult.ack() should POST ack_token to the relay."""
+        client = self._make_client()
+        with patch.object(client, "_request") as mock_req:
+            result = ReceiveResult(
+                messages=[{"id": "m1"}],
+                ack_token="tok-abc",
+                client=client,
+            )
+            result.ack()
+
+        mock_req.assert_called_once()
+        call_kwargs = mock_req.call_args[1]
+        assert call_kwargs["json"]["ack_token"] == "tok-abc"
+
+    def test_ack_noop_when_no_messages(self):
+        """ReceiveResult.ack() should skip the request when messages list is empty."""
+        client = self._make_client()
+        with patch.object(client, "_request") as mock_req:
+            result = ReceiveResult(messages=[], ack_token="tok-abc", client=client)
+            result.ack()
+
+        mock_req.assert_not_called()
+
+    def test_ack_noop_when_no_token(self):
+        """ReceiveResult.ack() should skip the request when ack_token is empty."""
+        client = self._make_client()
+        with patch.object(client, "_request") as mock_req:
+            result = ReceiveResult(
+                messages=[{"id": "m1"}],
+                ack_token="",
+                client=client,
+            )
+            result.ack()
+
+        mock_req.assert_not_called()
+
+    def test_ack_raises_ack_error_on_failure(self):
+        """ReceiveResult.ack() should wrap request errors as AckError."""
+        client = self._make_client()
+        with patch.object(client, "_request", side_effect=Exception("timeout")):
+            result = ReceiveResult(
+                messages=[{"id": "m1"}],
+                ack_token="tok-abc",
+                client=client,
+            )
+            with pytest.raises(AckError, match="Failed to ACK"):
+                result.ack()
+
+    def test_iter_yields_messages(self):
+        """ReceiveResult should be iterable over messages."""
+        client = self._make_client()
+        msgs = [{"id": "m1"}, {"id": "m2"}]
+        result = ReceiveResult(messages=msgs, ack_token="t", client=client)
+        assert list(result) == msgs
+
+    def test_len_returns_message_count(self):
+        """len(result) should return the number of messages."""
+        client = self._make_client()
+        result = ReceiveResult(
+            messages=[{"id": "m1"}, {"id": "m2"}, {"id": "m3"}],
+            ack_token="t",
+            client=client,
+        )
+        assert len(result) == 3
 
 
 class TestRoomConvenience:
