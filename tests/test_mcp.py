@@ -231,14 +231,14 @@ async def test_process_sse_message_event():
         "message",
         '{"id": "m1", "from_name": "alice", "content": "hi", "timestamp": "2026-04-11T00:00:00Z"}',
     )
-    messages = await mcp_server._drain_pending_messages()
+    messages, _tokens = await mcp_server._drain_pending_messages()
     assert len(messages) == 1
     assert messages[0]["from_name"] == "alice"
 
 
 async def test_process_sse_ignores_connected_event():
     await mcp_server._process_sse_event("connected", '{"participant": "bob"}')
-    messages = await mcp_server._drain_pending_messages()
+    messages, _tokens = await mcp_server._drain_pending_messages()
     assert len(messages) == 0
 
 
@@ -300,7 +300,7 @@ async def test_auto_poll_delivers_messages():
         fetched, _ack_token, err = await mcp_server._fetch_relay_messages(wait=0)
     assert len(fetched) == 1
     await mcp_server._append_pending_messages(fetched)
-    buffered = await mcp_server._drain_pending_messages()
+    buffered, _tokens = await mcp_server._drain_pending_messages()
     assert len(buffered) == 1
     assert buffered[0]["from_name"] == "bob"
 
@@ -357,7 +357,7 @@ async def test_sse_listener_parses_and_buffers():
 
         # Wait for the listener to process the SSE events
         for _ in range(20):
-            msgs = await mcp_server._drain_pending_messages()
+            msgs, _tokens = await mcp_server._drain_pending_messages()
             if msgs:
                 break
             await asyncio.sleep(0.05)
@@ -418,7 +418,7 @@ async def test_sse_listener_reconnects_on_error():
         task = asyncio.create_task(mcp_server._sse_listener(stop))
 
         for _ in range(40):
-            msgs = await mcp_server._drain_pending_messages()
+            msgs, _tokens = await mcp_server._drain_pending_messages()
             if msgs:
                 break
             await asyncio.sleep(0.1)

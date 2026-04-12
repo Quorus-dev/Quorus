@@ -85,6 +85,7 @@ logger.info(
 
 _http_client: httpx.AsyncClient | None = None
 _pending_messages: list[dict[str, Any]] = []
+_pending_ack_tokens: list[str] = []  # deferred ACK tokens for buffered msgs
 _pending_lock = asyncio.Lock()
 _active_session = None
 _active_session_lock = asyncio.Lock()
@@ -105,6 +106,7 @@ def _reset_runtime_state():
     """Reset in-memory MCP runtime state between tests."""
     global _active_session, _http_client, _auto_poll_task, _auto_poll_stop, _heartbeat_task
     _pending_messages.clear()
+    _pending_ack_tokens.clear()
     _active_session = None
     _http_client = None
     _auto_poll_task = None
@@ -197,18 +199,29 @@ async def _remember_session(context: Context | None) -> None:
         _active_session = session
 
 
-async def _append_pending_messages(messages: list[dict]) -> None:
+async def _append_pending_messages(
+    messages: list[dict], ack_token: str = ""
+) -> None:
     if not messages:
         return
     async with _pending_lock:
         _pending_messages.extend(messages)
+        if ack_token:
+            _pending_ack_tokens.append(ack_token)
 
 
-async def _drain_pending_messages() -> list[dict]:
+async def _drain_pending_messages() -> tuple[list[dict], list[str]]:
+    """Drain buffered messages and their deferred ACK tokens.
+
+    Returns (messages, ack_tokens).  Caller is responsible for ACKing
+    the tokens after the messages have been successfully consumed.
+    """
     async with _pending_lock:
         messages = list(_pending_messages)
+        ack_tokens = list(_pending_ack_tokens)
         _pending_messages.clear()
-        return messages
+        _pending_ack_tokens.clear()
+        return messages, ack_tokens
 
 
 async def _send_push_notification(session, msg: dict) -> None:
@@ -317,10 +330,9 @@ async def _background_poll(stop_event: asyncio.Event) -> None:
         if not messages:
             continue
 
-        await _append_pending_messages(messages)
+        # Defer ACK until messages are drained and consumed by the tool
+        await _append_pending_messages(messages, ack_token)
         await _notify_active_session(messages)
-        # ACK after messages are buffered for delivery
-        await _ack_relay_messages(ack_token)
 
 
 async def _auto_poll_loop(stop_event: asyncio.Event, interval: int = 10) -> None:
@@ -339,9 +351,9 @@ async def _auto_poll_loop(stop_event: asyncio.Event, interval: int = 10) -> None
             continue
 
         if messages:
-            await _append_pending_messages(messages)
+            # Defer ACK until messages are drained and consumed by the tool
+            await _append_pending_messages(messages, ack_token)
             await _notify_active_session(messages)
-            await _ack_relay_messages(ack_token)
             logger.info("Auto-poll delivered %d message(s)", len(messages))
 
     logger.info("Auto-poll stopped")
@@ -565,7 +577,7 @@ async def _check_messages(context: Context | None = None) -> str:
     """Internal: fetch unread messages from the local buffer or the relay."""
     await _remember_session(context)
 
-    messages = await _drain_pending_messages()
+    messages, deferred_tokens = await _drain_pending_messages()
     ack_token = ""
     if not messages:
         # lazy/sse = no blocking wait; poll = short wait for efficiency
@@ -579,7 +591,11 @@ async def _check_messages(context: Context | None = None) -> str:
 
     # Format response, then ACK — messages are confirmed processed
     result = "\n".join(_format_message(msg) for msg in messages)
+    # ACK the direct fetch token (if any)
     await _ack_relay_messages(ack_token)
+    # ACK deferred tokens from background/auto-poll buffered messages
+    for token in deferred_tokens:
+        await _ack_relay_messages(token)
     return result
 
 
