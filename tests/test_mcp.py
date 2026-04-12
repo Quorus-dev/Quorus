@@ -510,3 +510,103 @@ async def test_room_metrics_empty():
         result = await mcp_server.room_metrics("empty")
 
     assert "No messages" in result
+
+
+# ---------------------------------------------------------------------------
+# claim_task / release_task / get_room_state MCP tools
+# ---------------------------------------------------------------------------
+
+
+async def test_claim_task_granted():
+    """claim_task returns GRANTED message when lock is available."""
+    mock_client = _make_mock_client("post", {
+        "locked": False,
+        "lock_token": "tok-abc",
+        "expires_at": "2026-04-12T23:00:00Z",
+    })
+    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server.claim_task("dev", "src/auth.py")
+    assert "GRANTED" in result
+    assert "tok-abc" in result
+
+
+async def test_claim_task_already_locked():
+    """claim_task returns LOCKED message when another agent holds the lock."""
+    mock_client = _make_mock_client("post", {
+        "locked": True,
+        "held_by": "agent-1",
+        "expires_at": "2026-04-12T23:00:00Z",
+    })
+    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server.claim_task("dev", "src/auth.py")
+    assert "LOCKED" in result
+    assert "agent-1" in result
+
+
+async def test_claim_task_relay_error():
+    """claim_task returns error message when relay is unreachable."""
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.post = AsyncMock(side_effect=httpx.ConnectError("down"))
+    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server.claim_task("dev", "src/auth.py")
+    assert "error" in result.lower() or "cannot" in result.lower()
+
+
+async def test_release_task_success():
+    """release_task returns RELEASED message on success."""
+    mock_client = _make_mock_client("request", {"released": True, "file_path": "src/auth.py"})
+    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server.release_task("dev", "src/auth.py", "tok-abc")
+    assert "RELEASED" in result
+    assert "src/auth.py" in result
+
+
+async def test_release_task_relay_error():
+    """release_task returns error message when relay is unreachable."""
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.request = AsyncMock(side_effect=httpx.ConnectError("down"))
+    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server.release_task("dev", "src/auth.py", "tok-abc")
+    assert "error" in result.lower() or "cannot" in result.lower()
+
+
+async def test_get_room_state_formats_output():
+    """get_room_state returns formatted state matrix."""
+    mock_client = _make_mock_client("get", {
+        "room_id": "dev",
+        "snapshot_at": "2026-04-12T22:00:00Z",
+        "schema_version": "1.0",
+        "active_goal": "Ship Primitive B",
+        "active_agents": ["agent-1", "agent-2"],
+        "message_count": 42,
+        "last_activity": "2026-04-12T22:00:00Z",
+        "claimed_tasks": [
+            {
+                "claimed_by": "agent-1",
+                "file_path": "src/auth.py",
+                "expires_at": "2026-04-12T22:05:00Z",
+            }
+        ],
+        "locked_files": {
+            "src/auth.py": {"held_by": "agent-1", "expires_at": "2026-04-12T22:05:00Z"}
+        },
+        "resolved_decisions": [],
+    })
+    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server.get_room_state("dev")
+    assert "Ship Primitive B" in result
+    assert "agent-1" in result
+    assert "src/auth.py" in result
+    assert "42" in result
+
+
+async def test_get_room_state_relay_error():
+    """get_room_state returns error message when relay is unreachable."""
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
+    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+        result = await mcp_server.get_room_state("dev")
+    assert "error" in result.lower() or "cannot" in result.lower()
