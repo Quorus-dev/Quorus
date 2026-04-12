@@ -10,7 +10,7 @@ from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from murmur.storage.postgres import Base
+from murmur.admin.models import Base
 
 
 class OutboxStatus(str, Enum):

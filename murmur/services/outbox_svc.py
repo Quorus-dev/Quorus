@@ -26,7 +26,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from murmur.backends.protocol import MessageBackend
+from murmur.models.audit import AuditEvent
 from murmur.models.outbox import MessageOutbox, OutboxStatus
+from murmur.services.audit_svc import AuditService
 from murmur.services.room_svc import RoomService
 from murmur.services.sse_svc import SSEService
 from murmur.services.webhook_svc import WebhookService
@@ -54,12 +56,14 @@ class OutboxWorker:
         msg_backend: MessageBackend,
         sse_svc: SSEService,
         webhook_svc: WebhookService,
+        audit_svc: AuditService | None = None,
         on_enqueue: Callable[[str, str], None] | None = None,
     ) -> None:
         self._room = room_svc
         self._msg_backend = msg_backend
         self._sse = sse_svc
         self._webhook = webhook_svc
+        self._audit = audit_svc
         self._on_enqueue = on_enqueue
         self._worker_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self._running = False
@@ -175,6 +179,17 @@ class OutboxWorker:
         self, session: AsyncSession, entry: MessageOutbox
     ) -> None:
         """Process a single outbox entry — fan-out to all room members."""
+        # Record fan-out started
+        if self._audit:
+            await self._audit.record(
+                tenant_id=entry.tenant_id,
+                message_id=entry.message_id,
+                event_type=AuditEvent.FANOUT_STARTED,
+                actor=self._worker_id,
+                room_id=entry.room_id,
+                room_name=entry.room_name,
+            )
+
         try:
             # Get room members
             room_id, room_data = await self._room.get(entry.tenant_id, entry.room_id)
@@ -187,6 +202,16 @@ class OutboxWorker:
                     room=entry.room_name,
                 )
                 await self._mark_completed(session, entry)
+                if self._audit:
+                    await self._audit.record(
+                        tenant_id=entry.tenant_id,
+                        message_id=entry.message_id,
+                        event_type=AuditEvent.FANOUT_COMPLETED,
+                        actor=self._worker_id,
+                        room_id=entry.room_id,
+                        room_name=entry.room_name,
+                        details={"members": 0, "delivered": 0},
+                    )
                 return
 
             # Build fan-out messages
@@ -200,6 +225,29 @@ class OutboxWorker:
                 entry.tenant_id, fanout_messages, maxlen=MAX_RECIPIENT_DEPTH
             )
 
+            # Record delivery events for each recipient
+            if self._audit:
+                for recipient in members:
+                    if recipient in rejected:
+                        await self._audit.record(
+                            tenant_id=entry.tenant_id,
+                            message_id=entry.message_id,
+                            event_type=AuditEvent.DELIVERY_REJECTED,
+                            target=recipient,
+                            room_id=entry.room_id,
+                            room_name=entry.room_name,
+                            error="Queue full",
+                        )
+                    else:
+                        await self._audit.record(
+                            tenant_id=entry.tenant_id,
+                            message_id=entry.message_id,
+                            event_type=AuditEvent.DELIVERED,
+                            target=recipient,
+                            room_id=entry.room_id,
+                            room_name=entry.room_name,
+                        )
+
             # Push to SSE and notify callbacks
             for recipient, msg in fanout_messages.items():
                 if recipient in rejected:
@@ -207,6 +255,16 @@ class OutboxWorker:
                 if self._on_enqueue:
                     self._on_enqueue(entry.tenant_id, recipient)
                 self._sse.push(entry.tenant_id, recipient, msg)
+                # Record SSE push
+                if self._audit:
+                    await self._audit.record(
+                        tenant_id=entry.tenant_id,
+                        message_id=entry.message_id,
+                        event_type=AuditEvent.SSE_PUSHED,
+                        target=recipient,
+                        room_id=entry.room_id,
+                        room_name=entry.room_name,
+                    )
 
             # Send webhook notification
             history_msg = {
@@ -225,6 +283,26 @@ class OutboxWorker:
             await self._mark_completed(session, entry)
 
             delivered = len(members) - len(rejected)
+
+            # Record fan-out completion
+            if self._audit:
+                event_type = (
+                    AuditEvent.FANOUT_PARTIAL if rejected else AuditEvent.FANOUT_COMPLETED
+                )
+                await self._audit.record(
+                    tenant_id=entry.tenant_id,
+                    message_id=entry.message_id,
+                    event_type=event_type,
+                    actor=self._worker_id,
+                    room_id=entry.room_id,
+                    room_name=entry.room_name,
+                    details={
+                        "members": len(members),
+                        "delivered": delivered,
+                        "rejected": list(rejected) if rejected else [],
+                    },
+                )
+
             logger.info(
                 "Outbox entry processed",
                 entry_id=str(entry.id),
@@ -235,6 +313,18 @@ class OutboxWorker:
             )
 
         except Exception as e:
+            # Record fan-out failure
+            if self._audit:
+                await self._audit.record(
+                    tenant_id=entry.tenant_id,
+                    message_id=entry.message_id,
+                    event_type=AuditEvent.FANOUT_FAILED,
+                    actor=self._worker_id,
+                    room_id=entry.room_id,
+                    room_name=entry.room_name,
+                    error=str(e),
+                    details={"retry_count": entry.retry_count},
+                )
             await self._handle_failure(session, entry, str(e))
 
     async def _mark_completed(

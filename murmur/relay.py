@@ -285,6 +285,7 @@ def _init_services(app_instance, redis_conn=None):
     otherwise in-memory backends are created.
     """
     from murmur.services.analytics_svc import AnalyticsService
+    from murmur.services.audit_svc import AuditService
     from murmur.services.invite_svc import InviteService
     from murmur.services.message_svc import MessageService
     from murmur.services.notification_svc import NotificationService
@@ -333,10 +334,15 @@ def _init_services(app_instance, redis_conn=None):
         notification=notification,
     )
     room = RoomService(backends.rooms)
+
+    # Audit service (only when Postgres is configured)
+    audit = AuditService() if DATABASE_URL else None
+
     room_msg = RoomMessageService(
         room, backends.room_history, backends.messages,
         sse, webhook, analytics, rate_limit,
         on_enqueue=message.notify_new_message,
+        audit=audit,
     )
     presence = PresenceService(backends.presence)
 
@@ -362,6 +368,7 @@ def _init_services(app_instance, redis_conn=None):
     app_instance.state.analytics_service = analytics
     app_instance.state.rate_limit_service = rate_limit
     app_instance.state.invite_service = invite
+    app_instance.state.audit_service = audit
     app_instance.state.backends = backends
 
     # Create outbox worker if enabled (requires Postgres)
@@ -373,6 +380,7 @@ def _init_services(app_instance, redis_conn=None):
             msg_backend=backends.messages,
             sse_svc=sse,
             webhook_svc=webhook,
+            audit_svc=audit,
             on_enqueue=message.notify_new_message,
         )
         app_instance.state.outbox_worker = outbox_worker

@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from murmur.routes.agents import router as agents_router
 from murmur.routes.analytics import router as analytics_router
+from murmur.routes.audit import router as audit_router
 from murmur.routes.health import router as health_router
 from murmur.routes.invites import router as invites_router
 from murmur.routes.messages import router as messages_router
@@ -28,3 +29,4 @@ router.include_router(analytics_router)
 router.include_router(agents_router)
 router.include_router(invites_router)
 router.include_router(usage_router)
+router.include_router(audit_router)

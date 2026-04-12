@@ -11,7 +11,9 @@ import structlog
 from fastapi import HTTPException
 
 from murmur.backends.protocol import MessageBackend, RoomHistoryBackend
+from murmur.models.audit import AuditEvent
 from murmur.services.analytics_svc import AnalyticsService
+from murmur.services.audit_svc import AuditService
 from murmur.services.rate_limit_svc import RateLimitService
 from murmur.services.room_svc import RoomService
 from murmur.services.sse_svc import SSEService
@@ -38,6 +40,7 @@ class RoomMessageService:
         analytics: AnalyticsService,
         rate_limit: RateLimitService,
         on_enqueue: Callable[[str, str], None] | None = None,
+        audit: AuditService | None = None,
     ) -> None:
         self._room = room
         self._history = history
@@ -48,6 +51,7 @@ class RoomMessageService:
         self._rate_limit = rate_limit
         # Callback to signal long-poll wakeup: on_enqueue(tenant_id, recipient)
         self._on_enqueue = on_enqueue
+        self._audit = audit
 
     # ------------------------------------------------------------------
     # Send (fan-out to member DM queues)
@@ -158,6 +162,30 @@ class RoomMessageService:
                 reply_to=uuid.UUID(reply_to) if reply_to else None,
             )
             session.add(outbox_entry)
+
+        # Record audit events (best-effort, fire-and-forget)
+        if self._audit:
+            await self._audit.record(
+                tenant_id=tenant_id,
+                message_id=message_id,
+                event_type=AuditEvent.MESSAGE_CREATED,
+                actor=sender,
+                room_id=room_id,
+                room_name=room_name,
+                details={
+                    "message_type": message_type,
+                    "reply_to": reply_to,
+                    "member_count": len(members),
+                },
+            )
+            await self._audit.record(
+                tenant_id=tenant_id,
+                message_id=message_id,
+                event_type=AuditEvent.MESSAGE_QUEUED,
+                actor=sender,
+                room_id=room_id,
+                room_name=room_name,
+            )
 
         # Track analytics (best-effort)
         try:
