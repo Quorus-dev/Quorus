@@ -116,9 +116,6 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Priority | Issue | Impact | Path to Fix |
 |----------|-------|--------|-------------|
-| **High** | No transactional outbox | Fan-out failures after Postgres commit | Outbox table + background worker |
-| **High** | No delivery/audit ledger | Cannot debug "what happened to message X" | Event log table + admin UI |
-| **High** | Name-based identity | No immutable user_id; painful for rename/audit/revocation | Add user_id/agent_id columns, migrate |
 | **High** | Console accepts shared secrets | Not SaaS-ready auth model | First-party auth or key-only |
 | **High** | Webhook SSRF app-level only | httpx re-resolves DNS; no egress enforcement | Egress proxy or network policy |
 | **High** | No load/chaos testing | Unproven concurrency envelope | k6/locust tests, failure injection |
@@ -141,6 +138,9 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - ✅ Per-tenant backpressure (XLEN check before XADD)
 - ✅ Timestamped HMAC webhook signing
 - ✅ API key in memory only, never sessionStorage
+- ✅ **Transactional outbox** — atomic Postgres writes + background worker fan-out (USE_OUTBOX=true)
+- ✅ **Audit ledger** — message lifecycle events (MESSAGE_CREATED → FANOUT_* → DELIVERED); API at /v1/audit/*
+- ✅ **Account-based identity** — participant_id in JWT claims + migration 008 adds FK columns to tables
 
 ### What This Means
 
@@ -168,6 +168,9 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | (pending) | feat: account-based identity — participant_id in JWTs, migration 008     |
+| 2026-04-12 | (pending) | feat: audit ledger — message lifecycle events with API at /v1/audit/*  |
+| 2026-04-12 | (pending) | feat: transactional outbox — atomic Postgres + background worker fan-out |
 | 2026-04-12 | fd741e5 | refactor: migrate website from Next.js to Vite — removes proxy SSRF risk |
 | 2026-04-12 | 5250d7b | fix: DNS rebinding protection in relay proxy (resolve before fetch)       |
 | 2026-04-12 | 2f2abfb | ci: add Postgres integration tests and CI job (migrations + CRUD)         |
@@ -176,8 +179,6 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | 2026-04-12 | 9f7ee4f | fix: fail closed if RELAY_ALLOWLIST unset in production                   |
 | 2026-04-12 | e294225 | fix: make room fan-out failures non-fatal after history commit            |
 | 2026-04-12 | f2983ee | fix: console credential handling — no sessionStorage for keys, warning    |
-| 2026-04-12 | 70269f1 | fix: expire legacy Redis tasks without expires_at_epoch                   |
-| 2026-04-12 | 4eb07ff | fix: harden relay proxy against SSRF (block private IPs, allowlist)       |
 
 ---
 
