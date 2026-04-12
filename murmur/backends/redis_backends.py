@@ -876,8 +876,17 @@ class RedisParticipantBackend:
 
 # -- Idempotency ------------------------------------------------------------
 
+_IDEMPOTENCY_PENDING = "__pending__"
+
+
 class RedisIdempotencyBackend:
-    """Idempotency key storage using Redis strings with TTL."""
+    """Idempotency key storage using Redis strings with TTL.
+
+    Supports atomic reservation to prevent race conditions:
+    - reserve() uses SET NX to atomically claim a key
+    - set() stores the final result
+    - get() retrieves cached results
+    """
 
     def __init__(self, r: Redis) -> None:
         self._r = r
@@ -888,8 +897,50 @@ class RedisIdempotencyBackend:
     async def get(self, tenant_id: str, key: str) -> dict | None:
         cached = await self._r.get(self._key(tenant_id, key))
         if cached:
-            return json.loads(cached)
+            data = json.loads(cached)
+            # Don't return pending markers as cached results
+            if data.get("_status") == _IDEMPOTENCY_PENDING:
+                return None
+            return data
         return None
+
+    async def reserve(
+        self, tenant_id: str, key: str, ttl: int
+    ) -> dict | None:
+        """Atomically reserve a key for processing.
+
+        Returns:
+        - None if reservation succeeded (caller should process request)
+        - dict with cached result if key has a completed result
+        Raises HTTPException(409) if key is reserved but not yet complete.
+        """
+        from fastapi import HTTPException
+
+        redis_key = self._key(tenant_id, key)
+        pending_value = json.dumps({"_status": _IDEMPOTENCY_PENDING})
+
+        # Try to set the key only if it doesn't exist
+        reserved = await self._r.set(redis_key, pending_value, ex=ttl, nx=True)
+
+        if reserved:
+            # We got the lock, caller should process the request
+            return None
+
+        # Key already exists — check if it's a completed result or still pending
+        cached = await self._r.get(redis_key)
+        if cached:
+            data = json.loads(cached)
+            if data.get("_status") == _IDEMPOTENCY_PENDING:
+                # Another request is still processing this key
+                raise HTTPException(
+                    status_code=409,
+                    detail="Request with this Idempotency-Key is already in progress",
+                )
+            # Return the completed result
+            return data
+
+        # Key expired between set and get — try again
+        return await self.reserve(tenant_id, key, ttl)
 
     async def set(
         self, tenant_id: str, key: str, result: dict, ttl: int

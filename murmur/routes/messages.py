@@ -31,6 +31,7 @@ async def send_message(
     - ``Idempotency-Key``: optional key to deduplicate retried requests.
       If provided, repeated sends with the same key within the TTL window
       (default 5 minutes) return the original response without re-sending.
+      Concurrent requests with the same key return 409 Conflict.
     """
     sender = auth.sub or msg.from_name
     if auth.sub and msg.from_name != auth.sub:
@@ -40,16 +41,18 @@ async def send_message(
     backends = request.app.state.backends
     idempotency_cache_key = f"dm:{idempotency_key}" if idempotency_key else None
 
-    # Check idempotency key for cached result
+    # Atomically reserve the idempotency key (prevents race conditions)
     if idempotency_cache_key:
-        cached = await backends.idempotency.get(tid, idempotency_cache_key)
+        cached = await backends.idempotency.reserve(
+            tid, idempotency_cache_key, _IDEMPOTENCY_TTL
+        )
         if cached:
             return cached
 
     svc = request.app.state.message_service
     result = await svc.send_dm(tid, sender, msg.to, msg.content)
 
-    # Store result in idempotency cache
+    # Store result in idempotency cache (replaces pending marker)
     if idempotency_cache_key:
         await backends.idempotency.set(
             tid, idempotency_cache_key, result, _IDEMPOTENCY_TTL

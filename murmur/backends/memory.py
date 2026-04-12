@@ -734,9 +734,14 @@ class InMemoryParticipantBackend:
 
 # -- Idempotency ------------------------------------------------------------
 
+_IDEMPOTENCY_PENDING = "__pending__"
+
 
 class InMemoryIdempotencyBackend:
-    """Idempotency key storage with TTL-based expiration."""
+    """Idempotency key storage with TTL-based expiration.
+
+    Supports atomic reservation to prevent race conditions.
+    """
 
     def __init__(self) -> None:
         # (tenant_id, key) -> (result, expiry_time)
@@ -750,9 +755,49 @@ class InMemoryIdempotencyBackend:
             if cache_key in self._store:
                 cached_result, expiry = self._store[cache_key]
                 if now < expiry:
+                    # Don't return pending markers as cached results
+                    if cached_result.get("_status") == _IDEMPOTENCY_PENDING:
+                        return None
                     return cached_result
                 # Expired, remove
                 del self._store[cache_key]
+            return None
+
+    async def reserve(
+        self, tenant_id: str, key: str, ttl: int
+    ) -> dict | None:
+        """Atomically reserve a key for processing.
+
+        Returns:
+        - None if reservation succeeded (caller should process request)
+        - dict with cached result if key has a completed result
+        Raises HTTPException(409) if key is reserved but not yet complete.
+        """
+        from fastapi import HTTPException
+
+        async with self._lock:
+            now = time.time()
+            cache_key = (tenant_id, key)
+
+            if cache_key in self._store:
+                cached_result, expiry = self._store[cache_key]
+                if now < expiry:
+                    if cached_result.get("_status") == _IDEMPOTENCY_PENDING:
+                        # Another request is still processing this key
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Request with this Idempotency-Key is already in progress",
+                        )
+                    # Return the completed result
+                    return cached_result
+                # Expired, remove and claim
+                del self._store[cache_key]
+
+            # Claim the key with pending marker
+            self._store[cache_key] = (
+                {"_status": _IDEMPOTENCY_PENDING},
+                now + ttl,
+            )
             return None
 
     async def set(
