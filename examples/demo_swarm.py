@@ -16,7 +16,6 @@ Visit http://localhost:8080 to see the swarm in action.
 """
 
 import asyncio
-import time
 
 from murmur.sdk import Room
 
@@ -45,7 +44,7 @@ async def main():
             name=agent_name,
         )
         try:
-            result = room.join()
+            room.join()
             rooms[agent_name] = room
             print(f"  ✓ {agent_name} joined {demo_room}")
         except Exception as e:

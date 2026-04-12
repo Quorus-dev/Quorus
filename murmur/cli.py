@@ -2588,7 +2588,9 @@ def _decompose_brief(task: str, brief_id: str) -> list[str]:
         )
         raw = response.content[0].text.strip() if response.content else ""
         if not raw:
-            console.print("[yellow]Claude returned an empty response — skipping decomposition[/yellow]")
+            console.print(
+                "[yellow]Claude returned an empty response — skipping decomposition[/yellow]"
+            )
             return []
         subtasks = []
         for line in raw.splitlines():
