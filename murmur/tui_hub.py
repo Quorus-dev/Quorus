@@ -78,18 +78,44 @@ def _load_config() -> Optional[dict]:
         return None
 
 
-def _write_config(name: str, relay_url: str, secret: str) -> None:
+def _write_config(
+    name: str,
+    relay_url: str,
+    secret: str = "",
+    api_key: str = "",
+) -> None:
     CONFIG_DIR.mkdir(exist_ok=True)
     config = {
         "relay_url": relay_url.rstrip("/"),
         "instance_name": name,
         "relay_secret": secret,
+        "api_key": api_key,
         "poll_mode": "sse",
         "push_notification_method": "notifications/claude/channel",
         "push_notification_channel": "mcp-tunnel",
     }
     CONFIG_FILE.write_text(json.dumps(config, indent=2))
     CONFIG_FILE.chmod(0o600)
+
+
+def _signup(relay_url: str, name: str, workspace: str) -> dict | None:
+    """Call the self-service signup endpoint. Returns response dict or None on error."""
+    try:
+        r = httpx.post(
+            f"{relay_url.rstrip('/')}/v1/auth/signup",
+            json={"name": name, "workspace": workspace},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return r.json()
+        elif r.status_code == 409:
+            return {"error": "workspace_taken"}
+        elif r.status_code == 429:
+            return {"error": "rate_limited"}
+        else:
+            return {"error": f"status_{r.status_code}"}
+    except Exception:
+        return None
 
 
 def _try_connect(url: str, timeout: float = 3) -> bool:
@@ -135,10 +161,11 @@ def _first_launch_setup(console: Console) -> dict:
 
     console.print(f"\n  [green]Nice to meet you, {name}![/green]\n")
 
-    # Auto-detect relay — try local first, then offer public
+    # Auto-detect relay — try local first, then offer options
     console.print("  [dim]Looking for a relay...[/dim]", end="")
     relay_url = DEFAULT_RELAY
     secret = ""
+    api_key = ""
     relay_ok = False
 
     # Try local relay first
@@ -150,26 +177,36 @@ def _first_launch_setup(console: Console) -> dict:
         console.print(" [dim]no local relay.[/dim]")
         console.print()
 
-        # Ask if they want to use a custom relay or start local
-        console.print("  [dim]Options:[/dim]")
+        # Offer options: local, custom, or signup
+        console.print("  [dim]How would you like to connect?[/dim]\n")
         console.print("    [bold]1[/bold] Start a local relay (murmur relay)")
-        console.print("    [bold]2[/bold] Connect to a custom relay URL")
+        console.print("    [bold]2[/bold] Connect to a relay (I have a URL + secret/API key)")
+        console.print("    [bold]3[/bold] Sign up for a new account on a hosted relay")
         console.print()
 
         choice = Prompt.ask(
             "  Which one?",
-            choices=["1", "2"],
+            choices=["1", "2", "3"],
             default="1",
         )
 
         if choice == "2":
+            # Connect with existing credentials
             relay_url = Prompt.ask(
                 "  Relay URL"
             ).strip().rstrip("/")
-            secret = Prompt.ask(
-                "  Secret (if required, or Enter to skip)",
-                default="",
-            ).strip()
+
+            auth_type = Prompt.ask(
+                "  Auth type",
+                choices=["secret", "api-key", "none"],
+                default="secret",
+            )
+
+            if auth_type == "secret":
+                secret = Prompt.ask("  Secret").strip()
+            elif auth_type == "api-key":
+                api_key = Prompt.ask("  API key (mct_...)").strip()
+
             console.print()
             console.print(f"  Connecting to {relay_url}...", end="")
             if _try_connect(relay_url):
@@ -177,6 +214,81 @@ def _first_launch_setup(console: Console) -> dict:
                 relay_ok = True
             else:
                 console.print(" [yellow]not reachable[/yellow]")
+
+        elif choice == "3":
+            # Self-service signup
+            relay_url = Prompt.ask(
+                "  Relay URL",
+                default=PUBLIC_RELAY,
+            ).strip().rstrip("/")
+
+            console.print()
+            console.print(f"  Connecting to {relay_url}...", end="")
+            if not _try_connect(relay_url):
+                console.print(" [yellow]not reachable[/yellow]")
+                console.print(
+                    f"\n  [dim]Couldn't reach {relay_url}. Check the URL and try again.[/dim]"
+                )
+            else:
+                console.print(" [bold green]✓[/bold green]")
+                console.print()
+
+                # Get workspace name
+                console.print("  [dim]Pick a workspace name (like a team or project name).[/dim]\n")
+                while True:
+                    workspace = Prompt.ask("  Workspace").strip().lower()
+                    if not workspace:
+                        console.print("  [dim]Workspace can't be empty.[/dim]")
+                        continue
+                    if len(workspace) < 2 or len(workspace) > 64:
+                        console.print("  [dim]Keep it between 2-64 characters.[/dim]")
+                        continue
+                    ws_re = r"^[a-z0-9][a-z0-9_\-]*[a-z0-9]$"
+                    if not re.match(ws_re, workspace) and len(workspace) > 1:
+                        console.print(
+                            "  [dim]Use lowercase letters, numbers, hyphens. "
+                            "Start/end with letter or number.[/dim]"
+                        )
+                        continue
+                    break
+
+                console.print()
+                console.print("  Creating account...", end="")
+
+                result = _signup(relay_url, name, workspace)
+
+                if result is None:
+                    console.print(" [red]failed[/red]")
+                    console.print(
+                        "\n  [dim]Could not reach signup endpoint. "
+                        "Is this a production relay?[/dim]"
+                    )
+                elif "error" in result:
+                    console.print(" [red]failed[/red]")
+                    if result["error"] == "workspace_taken":
+                        console.print(
+                            f"\n  [yellow]Workspace '{workspace}' is already taken. "
+                            "Try another name.[/yellow]"
+                        )
+                    elif result["error"] == "rate_limited":
+                        console.print(
+                            "\n  [yellow]Too many signups. Try again in an hour.[/yellow]"
+                        )
+                    else:
+                        console.print(f"\n  [dim]Error: {result['error']}[/dim]")
+                else:
+                    console.print(" [bold green]✓[/bold green]")
+                    api_key = result.get("api_key", "")
+                    relay_ok = True
+
+                    console.print()
+                    console.print(
+                        f"  [green]Account created![/green] Workspace: [bold]{workspace}[/bold]\n"
+                    )
+                    console.print(
+                        "  [yellow]Save your API key — it won't be shown again:[/yellow]\n"
+                    )
+                    console.print(f"    [bold]{api_key}[/bold]\n")
 
     # If still not connected and chose local, guide them
     if not relay_ok and relay_url == DEFAULT_RELAY:
@@ -190,7 +302,7 @@ def _first_launch_setup(console: Console) -> dict:
         console.print(
             "  [dim]Then run [bold]murmur begin[/bold] again. Config saved.[/dim]"
         )
-    elif not relay_ok:
+    elif not relay_ok and choice != "3":
         console.print()
         console.print(
             f"  [dim]Couldn't reach {relay_url}.[/dim]\n"
@@ -198,7 +310,7 @@ def _first_launch_setup(console: Console) -> dict:
         )
 
     # Save config
-    _write_config(name, relay_url, secret)
+    _write_config(name, relay_url, secret=secret, api_key=api_key)
 
     if relay_ok:
         console.print()
@@ -210,10 +322,57 @@ def _first_launch_setup(console: Console) -> dict:
         )
         time.sleep(0.3)
 
-    return {"relay_url": relay_url, "instance_name": name, "relay_secret": secret}
+    return {
+        "relay_url": relay_url,
+        "instance_name": name,
+        "relay_secret": secret,
+        "api_key": api_key,
+    }
 
 
 # ── API helpers ───────────────────────────────────────────────────────────────
+
+# Cache for exchanged JWT tokens (api_key -> jwt)
+_jwt_cache: dict[str, str] = {}
+
+
+def _exchange_api_key_for_jwt(relay: str, api_key: str) -> str | None:
+    """Exchange an API key for a JWT token."""
+    if api_key in _jwt_cache:
+        return _jwt_cache[api_key]
+
+    try:
+        r = httpx.post(
+            f"{relay.rstrip('/')}/v1/auth/token",
+            json={"api_key": api_key},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            jwt = r.json().get("token")
+            if jwt:
+                _jwt_cache[api_key] = jwt
+                return jwt
+    except Exception:
+        pass
+    return None
+
+
+def _get_auth_token(relay: str, secret: str) -> str:
+    """Get the auth token to use. Exchanges API keys for JWTs if needed."""
+    if not secret:
+        return ""
+
+    # If it looks like an API key, exchange for JWT
+    if secret.startswith("mct_"):
+        jwt = _exchange_api_key_for_jwt(relay, secret)
+        if jwt:
+            return jwt
+        # Fall back to using API key directly (will fail auth but gives better error)
+        return secret
+
+    # Otherwise use as-is (legacy secret or already a JWT)
+    return secret
+
 
 def _auth_headers(secret: str) -> dict:
     return {"Authorization": f"Bearer {secret}"} if secret else {}
@@ -540,7 +699,10 @@ def run_hub() -> None:
 
     relay_url: str = cfg.get("relay_url", DEFAULT_RELAY).rstrip("/")
     agent_name: str = cfg.get("instance_name", "agent")
-    secret: str = cfg.get("relay_secret", "") or cfg.get("api_key", "")
+    raw_secret: str = cfg.get("relay_secret", "") or cfg.get("api_key", "")
+
+    # Exchange API key for JWT if needed
+    secret = _get_auth_token(relay_url, raw_secret)
 
     # 2. Initial room load
     console.print(f"\n  [dim]Connecting to {relay_url}...[/dim]")
