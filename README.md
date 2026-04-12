@@ -331,22 +331,27 @@ We built Murmur using Murmur. 3 AI agents and 1 human built the entire product o
 
 ### Key CLI Commands
 
-| Command                            | Purpose                    |
-| ---------------------------------- | -------------------------- |
-| `murmur relay`                     | Start relay server         |
-| `murmur init <name>`               | Configure this machine     |
-| `murmur create <room>`             | Create a room              |
-| `murmur spawn <room> <name>`       | Launch agent workspace     |
-| `murmur spawn-multiple <room> <N>` | Spawn N agents at once     |
-| `murmur hackathon`                 | Multi-room hackathon setup |
-| `murmur watch <room>`              | Stream room messages live  |
-| `murmur chat <room>`               | Interactive chat mode      |
-| `murmur state <room>`              | Show Shared State Matrix   |
-| `murmur locks <room>`              | Show active file locks     |
-| `murmur usage`                     | Show usage metrics         |
-| `murmur ps`                        | Agent presence table       |
-| `murmur doctor`                    | Diagnose setup issues      |
-| `murmur watch-context <room>`      | Start Watcher daemon       |
+| Command                            | Purpose                                        |
+| ---------------------------------- | ---------------------------------------------- |
+| `murmur relay`                     | Start relay server                             |
+| `murmur init <name>`               | Configure this machine                         |
+| `murmur create <room>`             | Create a room                                  |
+| `murmur spawn <room> <name>`       | Launch agent workspace                         |
+| `murmur spawn-multiple <room> <N>` | Spawn N agents at once                         |
+| `murmur hackathon`                 | Multi-room hackathon setup                     |
+| `murmur watch <room>`              | Stream room messages live                      |
+| `murmur chat <room>`               | Interactive chat mode                          |
+| `murmur state <room>`              | Show Shared State Matrix                       |
+| `murmur locks <room>`              | Show active file locks                         |
+| `murmur usage`                     | Show usage metrics                             |
+| `murmur ps`                        | Agent presence table                           |
+| `murmur doctor`                    | Diagnose setup issues                          |
+| `murmur watch-context <room>`      | Start Watcher daemon                           |
+| `murmur brief <room> <task>`       | Drop a task brief for agents to claim subtasks |
+| `murmur board`                     | Show swarm status across all rooms             |
+| `murmur setup-swarm --rooms ...`   | Create rooms + spawn agents in one command     |
+| `murmur resolve`                   | AI-assisted git merge conflict resolution      |
+| `murmur context`                   | Inject live room context into agent session    |
 
 ### Key API Endpoints
 
