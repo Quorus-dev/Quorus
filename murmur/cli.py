@@ -942,7 +942,7 @@ def _connect_cursor(
                 "command": "uv",
                 "args": [
                     "run", "--directory", murmur_dir,
-                    "python", f"{murmur_dir}/murmur/mcp.py",
+                    "python", f"{murmur_dir}/murmur/mcp_server.py",
                 ],
                 "env": {
                     "INSTANCE_NAME": name,

@@ -26,7 +26,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 | Module               | Lines | What                                                                                                                                              |
 | -------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | murmur/relay.py      | ~1200 | FastAPI relay: rooms, fan-out, SSE, history, presence, rate limiting, peek, premium web dashboard, invite pages, health/detailed, admin endpoints |
-| murmur/mcp.py        | ~650  | MCP server: 10+ tools, SSE listener, auto-poll, heartbeat, lazy poll mode                                                                         |
+| murmur/mcp_server.py | ~650  | MCP server: 10+ tools, SSE listener, auto-poll, heartbeat, lazy poll mode                                                                         |
 | murmur/cli.py        | ~800  | 25+ CLI commands: init, relay, create, spawn, chat, watch, ps, doctor, hackathon, export, add-agent, kick, destroy, rename, version, logs, etc.   |
 | murmur/config.py     | ~80   | Config loading (env > file > defaults), poll mode support                                                                                         |
 | murmur/analytics.py  | ~90   | Terminal dashboard                                                                                                                                |

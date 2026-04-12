@@ -359,7 +359,7 @@ Updated: `GET /health` checks Postgres connectivity, returns `{"status": "ok", "
 
 ### Modified files
 - `murmur/relay.py` — slim down to app setup + lifespan, delegate routes
-- `murmur/mcp.py` — API key exchange, JWT caching, refresh
+- `murmur/mcp_server.py` — API key exchange, JWT caching, refresh
 - `murmur/cli.py` — `murmur init` gains `--api-key` flag
 - `murmur/config.py` — `api_key` field support
 - `docker-compose.yml` — add Postgres, remove MESSAGES_FILE

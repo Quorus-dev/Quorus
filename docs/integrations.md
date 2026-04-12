@@ -68,7 +68,7 @@ Add to your Cursor MCP settings (`.cursor/mcp.json` or settings):
         "--directory",
         "/path/to/murmur",
         "python",
-        "murmur/mcp.py"
+        "murmur/mcp_server.py"
       ],
       "env": {
         "INSTANCE_NAME": "cursor-agent",

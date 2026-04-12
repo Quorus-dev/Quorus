@@ -37,7 +37,7 @@ echo ""
 echo "Add this to your Claude Code MCP settings:"
 echo ""
 echo "  Name: murmur"
-echo "  Command: uv run --directory $SCRIPT_DIR python $SCRIPT_DIR/murmur/mcp.py"
+echo "  Command: uv run --directory $SCRIPT_DIR python $SCRIPT_DIR/murmur/mcp_server.py"
 echo ""
 echo "Or add to ~/.claude/claude_desktop_config.json:"
 echo ""
@@ -46,7 +46,7 @@ cat <<EOF
   "mcpServers": {
     "murmur": {
       "command": "uv",
-      "args": ["run", "--directory", "$SCRIPT_DIR", "python", "$SCRIPT_DIR/murmur/mcp.py"]
+      "args": ["run", "--directory", "$SCRIPT_DIR", "python", "$SCRIPT_DIR/murmur/mcp_server.py"]
     }
   }
 }
