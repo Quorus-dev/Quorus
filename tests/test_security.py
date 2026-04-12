@@ -457,14 +457,13 @@ class TestHugePayloads:
 
     @pytest.mark.anyio
     async def test_dm_over_size_limit_rejected(self, client):
-        """DM content over MAX_MESSAGE_SIZE (51200 default) is rejected with 413."""
-        content = "A" * 60000
+        content = "A" * 60000  # over MAX_MESSAGE_SIZE (51200)
         r = await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": content},
             headers=AUTH,
         )
-        assert r.status_code == 413
+        assert r.status_code == 413  # consistent with room message behavior
 
     @pytest.mark.anyio
     async def test_room_message_over_size_limit_rejected(self, client):
@@ -658,9 +657,9 @@ class TestRoomSecurity:
 class TestRateLimiting:
     @pytest.mark.anyio
     async def test_rate_limit_on_messages(self, client):
-        """Sending more than rate limit (30/min for DMs) should be rejected."""
-        # DM rate limit is 30 per 60s window
-        for i in range(30):
+        """Sending more than RATE_LIMIT_MAX messages should be rejected."""
+        # Default is 60 per 60s window
+        for i in range(60):
             r = await client.post(
                 "/messages",
                 json={"from_name": "spammer", "to": "victim", "content": f"msg-{i}"},
@@ -668,7 +667,7 @@ class TestRateLimiting:
             )
             assert r.status_code == 200, f"Message {i} rejected early"
 
-        # 31st should be rate-limited
+        # 61st should be rate-limited
         r = await client.post(
             "/messages",
             json={"from_name": "spammer", "to": "victim", "content": "one-too-many"},

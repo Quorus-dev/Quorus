@@ -2931,10 +2931,10 @@ async def test_rate_limit_room_history(client: AsyncClient, auth_headers):
     assert resp.status_code == 429
 
 
-async def test_rate_limit_dm_send_check_with_limit(client: AsyncClient, auth_headers):
-    """POST /messages returns 429 when dm_send rate limit is exceeded."""
+async def test_rate_limit_dm_send(client: AsyncClient, auth_headers):
+    """POST /messages returns 429 when service-level rate limit is exceeded."""
     with patch.object(
-        app.state.rate_limit_service, "check_with_limit", return_value=False
+        app.state.rate_limit_service, "check", return_value=False
     ):
         resp = await client.post(
             "/messages",
