@@ -1,14 +1,12 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  motion,
-  useMotionValue,
-  useSpring,
-  AnimatePresence,
-} from "framer-motion";
+import { motion, useMotionValue, useSpring } from "framer-motion";
+import Waitlist from "./Waitlist";
 
-const INSTALL_CMD = `pip install murmur-ai`;
+function HeroWaitlist() {
+  return <Waitlist size="lg" label="Request access" className="w-full" />;
+}
 
 const TYPEWRITER_WORDS = [
   "AI Swarms",
@@ -172,7 +170,6 @@ function FloatingAgentNode({ node }: { node: (typeof AGENT_NODES)[0] }) {
 }
 
 export default function Hero() {
-  const [copied, setCopied] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Aurora particle field
@@ -247,12 +244,6 @@ export default function Hero() {
       window.removeEventListener("resize", resize);
     };
   }, []);
-
-  const copy = () => {
-    navigator.clipboard.writeText(INSTALL_CMD);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   return (
     <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
@@ -347,8 +338,8 @@ export default function Hero() {
           transition={{ duration: 0.6 }}
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-xs text-white/60 mb-8 backdrop-blur-sm"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-dot" />
-          Open source · MIT · Zero config · One command
+          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 pulse-dot" />
+          Private beta · Limited spots
         </motion.div>
 
         {/* Headline */}
@@ -375,106 +366,41 @@ export default function Hero() {
           Rooms, SSE push, shared state, distributed locks — for every AI agent.
         </motion.p>
 
-        {/* Install command */}
+        {/* Waitlist form */}
         <motion.div
-          className="w-full max-w-2xl mb-8"
+          className="w-full max-w-lg mb-5"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.3 }}
         >
-          <div
-            className="code-block flex items-center justify-between px-5 py-3.5 group cursor-pointer relative overflow-hidden"
-            onClick={copy}
-          >
-            {/* Shimmer on hover */}
-            <div
-              className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
-              style={{
-                background:
-                  "linear-gradient(90deg, transparent, rgba(124,58,237,0.06), transparent)",
-              }}
-            />
-            <div className="flex items-center gap-3 min-w-0 relative z-10">
-              <span className="text-white/30 font-mono text-sm shrink-0">
-                $
-              </span>
-              <span className="font-mono text-sm text-green-400 truncate">
-                {INSTALL_CMD}
-              </span>
-            </div>
-            <button className="ml-4 shrink-0 p-1.5 rounded-md text-white/30 hover:text-white/80 hover:bg-white/10 transition-all relative z-10">
-              <AnimatePresence mode="wait">
-                {copied ? (
-                  <motion.svg
-                    key="check"
-                    className="w-4 h-4 text-green-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    exit={{ scale: 0 }}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </motion.svg>
-                ) : (
-                  <motion.svg
-                    key="copy"
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    exit={{ scale: 0 }}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                    />
-                  </motion.svg>
-                )}
-              </AnimatePresence>
-            </button>
-          </div>
+          <HeroWaitlist />
         </motion.div>
 
-        {/* CTAs */}
+        {/* Scroll hint */}
         <motion.div
-          className="flex flex-col sm:flex-row gap-3 mb-16"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.4 }}
+          className="mb-14"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.45 }}
         >
           <a
-            href="https://github.com/Aarya2004/murmur"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="relative px-6 py-3 rounded-full bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-all duration-200 hover:shadow-lg hover:shadow-violet-500/30 overflow-hidden group"
+            href="#features"
+            className="text-sm text-white/30 hover:text-white/60 transition-colors flex items-center gap-1.5"
           >
-            <span className="relative z-10">Read the Docs →</span>
-            <div
-              className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-              style={{
-                background:
-                  "linear-gradient(135deg, rgba(255,255,255,0.1), transparent)",
-              }}
-            />
-          </a>
-          <a
-            href="https://github.com/Aarya2004/murmur"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-6 py-3 rounded-full border border-white/10 hover:border-white/25 bg-white/5 hover:bg-white/8 text-white text-sm font-medium transition-all duration-200 hover:shadow-lg hover:shadow-white/5"
-          >
-            View on GitHub
+            See how it works
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
+              />
+            </svg>
           </a>
         </motion.div>
 
@@ -488,10 +414,10 @@ export default function Hero() {
           {[
             "SSE push delivery",
             "Zero polling",
-            "Zero config",
-            "murmur begin",
-            "MIT licensed",
-            "Open source",
+            "Any model",
+            "Any machine",
+            "Real-time state",
+            "Distributed locks",
           ].map((badge, i) => (
             <motion.span
               key={badge}

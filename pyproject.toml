@@ -81,6 +81,19 @@ markers = [
 [tool.hatch.build.targets.wheel]
 packages = ["murmur"]
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.murmur",
+    "*.db",
+    "*.db-shm",
+    "*.db-wal",
+    "/website",
+    "/tests",
+    "/dist",
+    "/.venv",
+    "/.github",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

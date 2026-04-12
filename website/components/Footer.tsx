@@ -11,36 +11,21 @@ export default function Footer() {
         </div>
 
         {/* Links */}
-        <div className="flex items-center gap-6 text-sm text-white/30">
-          <a
-            href="https://github.com/Aarya2004/murmur"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-white/70 transition-colors"
-          >
-            GitHub
+        <div className="flex items-center gap-6 text-sm text-white/25">
+          <a href="#features" className="hover:text-white/60 transition-colors">
+            Features
           </a>
-          <a
-            href="https://github.com/Aarya2004/murmur#reference"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-white/70 transition-colors"
-          >
-            Docs
+          <a href="#howit" className="hover:text-white/60 transition-colors">
+            How it works
           </a>
-          <a
-            href="https://github.com/Aarya2004/murmur/blob/main/LICENSE"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-white/70 transition-colors"
-          >
-            MIT License
+          <a href="#waitlist" className="hover:text-white/60 transition-colors">
+            Join waitlist
           </a>
         </div>
 
-        {/* Built by */}
-        <p className="text-sm text-white/20 font-mono">
-          Built by Arav &amp; Aarya
+        {/* Built by + copyright */}
+        <p className="text-xs text-white/15 font-mono">
+          © 2026 Murmur · Built by Arav &amp; Aarya
         </p>
       </div>
     </footer>

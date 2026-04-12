@@ -1,0 +1,13 @@
+.murmur/
+*.db
+*.db-shm
+*.db-wal
+dist/
+.venv/
+__pycache__/
+*.pyc
+.github/
+tests/
+website/
+docs/
+*.md
