@@ -1574,9 +1574,10 @@ class MyClass:
 
 def test_resolve_no_conflicts_clean_exit(capsys, monkeypatch, tmp_path):
     """resolve should exit cleanly when no conflicts are found."""
-    from murmur.cli import _cmd_resolve
-    from unittest.mock import MagicMock
     import subprocess
+    from unittest.mock import MagicMock
+
+    from murmur.cli import _cmd_resolve
 
     # Mock git to return no conflicted files
     mock_result = MagicMock()
@@ -1738,7 +1739,7 @@ def test_cmd_init_warns_on_existing_config(tmp_path, monkeypatch, capsys):
 
 def test_encode_join_token_with_secret():
     """Token encodes relay URL, room, expiry, and secret."""
-    from murmur.cli import _encode_join_token, _decode_join_token
+    from murmur.cli import _decode_join_token, _encode_join_token
 
     token = _encode_join_token(
         relay_url="https://relay.example.com",
@@ -1757,7 +1758,7 @@ def test_encode_join_token_with_secret():
 
 def test_encode_join_token_with_api_key():
     """Token uses api_key field when provided."""
-    from murmur.cli import _encode_join_token, _decode_join_token
+    from murmur.cli import _decode_join_token, _encode_join_token
 
     token = _encode_join_token(
         relay_url="https://relay.example.com",

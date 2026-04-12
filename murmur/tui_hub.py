@@ -16,10 +16,10 @@ Keyboard shortcuts:
 from __future__ import annotations
 
 import json
-import sys
 import re
-import time
+import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -33,9 +33,8 @@ except ImportError:
 try:
     from rich.console import Console
     from rich.panel import Panel
-    from rich.text import Text
     from rich.prompt import Prompt
-    from rich.rule import Rule
+    from rich.text import Text
 except ImportError:
     print("rich not installed — pip install rich")
     sys.exit(1)
@@ -149,12 +148,12 @@ def _first_launch_setup(console: Console) -> dict:
             " [yellow]couldn't reach the relay.[/yellow]\n"
             "\n"
             "  [dim]Is it running? Start it with:[/dim]\n"
-            f"  [dim]  RELAY_SECRET=x python -m murmur.relay[/dim]"
+            "  [dim]  RELAY_SECRET=x python -m murmur.relay[/dim]"
         )
 
     _write_config(name, relay_url, secret)
     console.print()
-    console.print(f"  [green]You're in.[/green] Type [bold]help[/bold] to see what you can do.\n")
+    console.print("  [green]You're in.[/green] Type [bold]help[/bold] to see what you can do.\n")
     time.sleep(0.6)
 
     return {"relay_url": relay_url, "instance_name": name, "relay_secret": secret}
@@ -535,7 +534,10 @@ def run_hub() -> None:
                 connected, conn_status = state.get_connection()
                 rooms_snap = state.get_rooms()
                 selected = state.get_selected_room()
-                room_name = (selected.get("name") or selected.get("id", "general")) if selected else "general"
+                room_name = (
+                    (selected.get("name") or selected.get("id", "general"))
+                    if selected else "general"
+                )
                 msgs_snap = state.get_messages()
                 status_bar = state.get_status_bar()
 
@@ -678,12 +680,13 @@ def run_hub() -> None:
                 if selected:
                     rname = selected.get("name") or selected.get("id", "")
                     invitee = invite_match.group(1)
-                    import json as _json, base64 as _b64
+                    import base64 as _b64
+                    import json as _json
                     payload = _json.dumps({"relay_url": relay_url, "secret": secret, "room": rname})
                     token = "murm_join_" + _b64.urlsafe_b64encode(payload.encode()).decode()
                     console.print()
                     console.print(f"  [bold]Invite '{invitee}' to #{rname}[/bold]")
-                    console.print(f"  [dim]Share this token:[/dim]")
+                    console.print("  [dim]Share this token:[/dim]")
                     console.print(f"  [bright_cyan]{token}[/bright_cyan]")
                     console.print(f"  [dim]They run: murmur join {token} --name {invitee}[/dim]")
                     console.print()

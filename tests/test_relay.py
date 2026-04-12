@@ -2867,4 +2867,6 @@ async def test_all_standard_message_types_accepted(client: AsyncClient, auth_hea
             json={"from_name": "agent-1", "content": f"test {msg_type}", "message_type": msg_type},
             headers=auth_headers,
         )
-        assert resp.status_code == 200, f"Expected 200 for message_type={msg_type!r}, got {resp.status_code}"
+        assert resp.status_code == 200, (
+            f"Expected 200 for message_type={msg_type!r}, got {resp.status_code}"
+        )

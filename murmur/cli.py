@@ -1614,7 +1614,6 @@ def _cmd_init(args):
     relay_url = (args.relay_url or "").strip().rstrip("/")
     secret = getattr(args, "secret", None) or ""
     api_key = getattr(args, "api_key", None) or ""
-    murmur_dir = Path(__file__).resolve().parent
 
     # 0. Validate inputs
     import re as _re
@@ -1799,7 +1798,7 @@ def _cmd_invite_token(args):
     console.print(f"  {token}")
     console.print("")
     console.print("[dim]Share this token with any agent. They run:[/dim]")
-    console.print(f"[dim]  murmur join <token> --name THEIR_NAME[/dim]")
+    console.print("[dim]  murmur join <token> --name THEIR_NAME[/dim]")
 
 
 def _cmd_join(args):
@@ -1991,8 +1990,8 @@ def _cmd_share(args):
         return
 
     # Generate token
-    import time
     import base64
+    import time
 
     payload = {
         "r": RELAY_URL,

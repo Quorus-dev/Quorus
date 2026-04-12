@@ -2,10 +2,6 @@
 
 import json
 import threading
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from murmur import tui_hub
 from murmur.tui_hub import (
@@ -13,10 +9,8 @@ from murmur.tui_hub import (
     _auth_headers,
     _load_config,
     _sender_color,
-    _sender_color_cache,
     _write_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # HubState — thread-safe coordination

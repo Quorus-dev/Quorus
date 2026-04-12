@@ -20,7 +20,6 @@ import os
 import sqlite3
 from pathlib import Path
 
-
 _DEFAULT_DB = ".murmur/history.db"
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS room_history (

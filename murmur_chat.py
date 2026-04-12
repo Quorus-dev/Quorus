@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Simple polling chat for test-room on Aarya's relay."""
-import sys, time, threading, httpx, json
-from datetime import datetime, timezone
+import sys
+import threading
+import time
+
+import httpx
 
 RELAY   = "http://100.127.251.47:9000"
 SECRET  = "medport-secret"

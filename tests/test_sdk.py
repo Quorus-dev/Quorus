@@ -460,7 +460,9 @@ class TestRoomLock:
 
             ok_resp = MagicMock()
             ok_resp.status_code = 200
-            ok_resp.json.return_value = {"locked": False, "lock_token": "tok-abc", "expires_at": "2026-04-11T00:05:00Z"}
+            ok_resp.json.return_value = {
+                "locked": False, "lock_token": "tok-abc", "expires_at": "2026-04-11T00:05:00Z"
+            }
             ok_resp.raise_for_status = MagicMock()
 
             exchange_resp = MagicMock()
@@ -469,7 +471,9 @@ class TestRoomLock:
 
             # Order: Room._exchange_jwt, MurmurClient._exchange_jwt, lock attempt (401),
             # lock 401-branch _exchange_jwt, lock retry (ok)
-            mock_post.side_effect = [exchange_resp, exchange_resp, unauth_resp, exchange_resp, ok_resp]
+            mock_post.side_effect = [
+                exchange_resp, exchange_resp, unauth_resp, exchange_resp, ok_resp
+            ]
 
             room = Room("test", relay="http://t", api_key="mct_test", name="a")
             result = room.lock("src/auth.py")
@@ -556,7 +560,9 @@ class TestRoomLock:
 
             ok_resp = MagicMock()
             ok_resp.status_code = 200
-            ok_resp.json.return_value = {"goal": None, "claimed_tasks": [], "locked_files": {}, "decisions": []}
+            ok_resp.json.return_value = {
+                "goal": None, "claimed_tasks": [], "locked_files": {}, "decisions": []
+            }
             ok_resp.raise_for_status = MagicMock()
 
             mock_get.side_effect = [unauth_resp, ok_resp]
@@ -571,7 +577,8 @@ class TestRoomAsync:
     @pytest.mark.asyncio
     async def test_asend_posts_message(self):
         """asend() should POST to rooms/{room}/messages."""
-        from unittest.mock import AsyncMock, patch as apatch
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch as apatch
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"id": "async-1", "timestamp": "2026-04-12T00:00:00Z"}
@@ -594,7 +601,8 @@ class TestRoomAsync:
     @pytest.mark.asyncio
     async def test_asend_passes_reply_to(self):
         """asend() should include reply_to in body when provided."""
-        from unittest.mock import AsyncMock, patch as apatch
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch as apatch
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"id": "async-2"}
@@ -615,7 +623,8 @@ class TestRoomAsync:
     @pytest.mark.asyncio
     async def test_areceive_returns_messages_and_ack_token(self):
         """areceive() should return messages list and ack_token."""
-        from unittest.mock import AsyncMock, patch as apatch
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch as apatch
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -639,7 +648,8 @@ class TestRoomAsync:
     @pytest.mark.asyncio
     async def test_areceive_handles_list_response(self):
         """areceive() should handle legacy list-format responses."""
-        from unittest.mock import AsyncMock, patch as apatch
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch as apatch
 
         mock_response = MagicMock()
         mock_response.json.return_value = [{"id": "m2", "content": "legacy"}]
@@ -660,7 +670,8 @@ class TestRoomAsync:
     @pytest.mark.asyncio
     async def test_a_ack_posts_token(self):
         """a_ack() should POST ack_token to messages/{name}/ack."""
-        from unittest.mock import AsyncMock, patch as apatch
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch as apatch
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -678,7 +689,8 @@ class TestRoomAsync:
     @pytest.mark.asyncio
     async def test_a_ack_skips_empty_token(self):
         """a_ack() should be a no-op when ack_token is empty."""
-        from unittest.mock import AsyncMock, patch as apatch
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch as apatch
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -694,8 +706,8 @@ class TestRoomAsync:
     @pytest.mark.asyncio
     async def test_astream_yields_messages(self):
         """astream() should yield parsed JSON from SSE 'message' events."""
-        from unittest.mock import AsyncMock, MagicMock, patch as apatch
-        import json as _json
+        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import patch as apatch
 
         sse_lines = [
             "event: message",
@@ -737,7 +749,8 @@ class TestRoomAsync:
     @pytest.mark.asyncio
     async def test_astream_skips_invalid_json(self):
         """astream() should silently skip lines that aren't valid JSON."""
-        from unittest.mock import AsyncMock, MagicMock, patch as apatch
+        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import patch as apatch
 
         sse_lines = [
             "event: message",

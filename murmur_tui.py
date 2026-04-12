@@ -9,22 +9,21 @@ Keyboard shortcuts:
   Enter  — send message
   Ctrl+C — quit
 """
-import sys
-import time
-import threading
 import argparse
-import httpx
+import sys
+import threading
+import time
 from datetime import datetime, timezone
 
+import httpx
+
 try:
+    from rich import box
+    from rich.columns import Columns
     from rich.console import Console
-    from rich.layout import Layout
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-    from rich.live import Live
-    from rich.columns import Columns
-    from rich import box
 except ImportError:
     print("rich not installed — pip install rich")
     sys.exit(1)
@@ -229,6 +228,7 @@ def main() -> None:
     def _snapshot() -> str:
         """Render the whole view as a static string for one-shot printing."""
         from io import StringIO
+
         from rich.console import Console as C
         buf = StringIO()
         c = C(file=buf, width=120, no_color=False, highlight=False)
