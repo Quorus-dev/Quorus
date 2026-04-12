@@ -32,7 +32,7 @@ async def test_two_instances_conversation(client: AsyncClient):
     assert resp.status_code == 200
 
     # Bob checks messages
-    resp = await client.get("/messages/bob", headers=HEADERS)
+    resp = await client.get("/messages/bob?ack=server", headers=HEADERS)
     messages = resp.json()
     assert len(messages) == 1
     assert messages[0]["from_name"] == "alice"
@@ -47,7 +47,7 @@ async def test_two_instances_conversation(client: AsyncClient):
     assert resp.status_code == 200
 
     # Alice checks messages
-    resp = await client.get("/messages/alice", headers=HEADERS)
+    resp = await client.get("/messages/alice?ack=server", headers=HEADERS)
     messages = resp.json()
     assert len(messages) == 1
     assert messages[0]["from_name"] == "bob"
@@ -68,7 +68,7 @@ async def test_two_instances_conversation(client: AsyncClient):
     assert "bob" in data["participants"]
 
     # No more messages for either
-    resp = await client.get("/messages/alice", headers=HEADERS)
+    resp = await client.get("/messages/alice?ack=server", headers=HEADERS)
     assert resp.json() == []
-    resp = await client.get("/messages/bob", headers=HEADERS)
+    resp = await client.get("/messages/bob?ack=server", headers=HEADERS)
     assert resp.json() == []

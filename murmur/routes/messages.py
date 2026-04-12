@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import os
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from murmur.auth.middleware import AuthContext, require_identity, verify_auth
 from murmur.routes.models import AckRequest, SendMessageRequest
 
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
+_IDEMPOTENCY_TTL = int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "300"))
 
 
 def _tid(auth: AuthContext) -> str:
@@ -20,14 +23,40 @@ async def send_message(
     msg: SendMessageRequest,
     request: Request,
     auth: AuthContext = Depends(verify_auth),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
+    """Send a direct message.
+
+    Headers:
+    - ``Idempotency-Key``: optional key to deduplicate retried requests.
+      If provided, repeated sends with the same key within the TTL window
+      (default 5 minutes) return the original response without re-sending.
+    """
     sender = auth.sub or msg.from_name
     if auth.sub and msg.from_name != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot send as another user")
+
+    tid = _tid(auth)
+    backends = request.app.state.backends
+    idempotency_cache_key = f"dm:{idempotency_key}" if idempotency_key else None
+
+    # Check idempotency key for cached result
+    if idempotency_cache_key:
+        cached = await backends.idempotency.get(tid, idempotency_cache_key)
+        if cached:
+            return cached
+
     svc = request.app.state.message_service
-    result = await svc.send_dm(_tid(auth), sender, msg.to, msg.content)
+    result = await svc.send_dm(tid, sender, msg.to, msg.content)
+
+    # Store result in idempotency cache
+    if idempotency_cache_key:
+        await backends.idempotency.set(
+            tid, idempotency_cache_key, result, _IDEMPOTENCY_TTL
+        )
+
     # Track participants via backend
-    await request.app.state.backends.participants.add(_tid(auth), sender, msg.to)
+    await backends.participants.add(tid, sender, msg.to)
     return result
 
 
@@ -37,16 +66,20 @@ async def get_messages(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
     wait: int = 0,
-    ack: str = "auto",
+    ack: str = "manual",
 ):
     """Fetch pending messages for *recipient*.
 
     Query params:
     - ``wait``: long-poll timeout in seconds (0-60)
-    - ``ack``: ``"auto"`` (default) auto-acknowledges on response,
-      ``"manual"`` returns an ``ack_token`` for client-side ACK via
-      ``POST /messages/{recipient}/ack``.  Unacked messages are
-      redelivered after the visibility timeout.
+    - ``ack``: acknowledgment mode:
+      - ``"manual"`` (default): returns ``ack_token`` for client-side ACK
+        via ``POST /messages/{recipient}/ack``. Unacked messages are
+        redelivered after the visibility timeout. **Recommended for
+        at-least-once delivery.**
+      - ``"server"``: auto-acknowledges on response. Messages are deleted
+        before the client processes them — use only for dev/testing.
+      - ``"auto"``: legacy alias for ``"server"``.
     """
     require_identity(auth, recipient)
     svc = request.app.state.message_service
@@ -59,7 +92,7 @@ async def get_messages(
             "ack_token": result.ack_token,
         }
 
-    # Default: server-side ACK (backward compatible)
+    # Server-side ACK (legacy "auto" or explicit "server")
     await result.ack()
     return result.messages
 

@@ -68,7 +68,7 @@ class TestLegacyAuthStillWorks:
             json={"from_name": "alice", "to": "bob", "content": "hello"},
             headers=legacy_headers,
         )
-        resp = await client.get("/messages/bob", headers=legacy_headers)
+        resp = await client.get("/messages/bob?ack=server", headers=legacy_headers)
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
@@ -106,7 +106,7 @@ class TestJWTAuth:
             json={"from_name": "alice", "to": "bob", "content": "hello"},
             headers=alice_headers,
         )
-        resp = await client.get("/messages/bob", headers=bob_headers)
+        resp = await client.get("/messages/bob?ack=server", headers=bob_headers)
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 

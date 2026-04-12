@@ -53,7 +53,7 @@ async def test_multi_agent_room_conversation(client: AsyncClient):
 
     # All other agents should see the claim
     for agent in ["arav-agent-2", "aarya-agent-1", "aarya-agent-2"]:
-        resp = await client.get(f"/messages/{agent}", headers=HEADERS)
+        resp = await client.get(f"/messages/{agent}?ack=server", headers=HEADERS)
         msgs = resp.json()
         assert len(msgs) == 1
         assert msgs[0]["message_type"] == "claim"
@@ -61,7 +61,7 @@ async def test_multi_agent_room_conversation(client: AsyncClient):
         assert msgs[0]["from_name"] == "arav-agent-1"
 
     # Sender also sees their own message (room shows all traffic)
-    resp = await client.get("/messages/arav-agent-1", headers=HEADERS)
+    resp = await client.get("/messages/arav-agent-1?ack=server", headers=HEADERS)
     msgs = resp.json()
     assert len(msgs) == 1
     assert msgs[0]["from_name"] == "arav-agent-1"
@@ -79,7 +79,7 @@ async def test_multi_agent_room_conversation(client: AsyncClient):
     assert resp.status_code == 200
 
     # arav-agent-1 should see aarya's status
-    resp = await client.get("/messages/arav-agent-1", headers=HEADERS)
+    resp = await client.get("/messages/arav-agent-1?ack=server", headers=HEADERS)
     msgs = resp.json()
     assert len(msgs) == 1
     assert msgs[0]["from_name"] == "aarya-agent-1"
@@ -92,7 +92,7 @@ async def test_multi_agent_room_conversation(client: AsyncClient):
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    resp = await client.get("/messages/aarya-agent-1", headers=HEADERS)
+    resp = await client.get("/messages/aarya-agent-1?ack=server", headers=HEADERS)
     msgs = resp.json()
     dm_msgs = [m for m in msgs if m.get("room") is None]
     assert len(dm_msgs) == 1
@@ -161,13 +161,13 @@ async def test_two_rooms_isolation(client: AsyncClient):
     )
     assert resp.status_code == 200
 
-    resp = await client.get("/messages/bob", headers=HEADERS)
+    resp = await client.get("/messages/bob?ack=server", headers=HEADERS)
     assert len(resp.json()) == 1
 
-    resp = await client.get("/messages/dave", headers=HEADERS)
+    resp = await client.get("/messages/dave?ack=server", headers=HEADERS)
     assert resp.json() == []
 
-    resp = await client.get("/messages/charlie", headers=HEADERS)
+    resp = await client.get("/messages/charlie?ack=server", headers=HEADERS)
     assert resp.json() == []
 
 
@@ -189,7 +189,7 @@ async def test_concurrent_room_messages(client: AsyncClient):
 
     await asyncio.gather(*[send_one(i) for i in range(10)])
 
-    resp = await client.get("/messages/bob", headers=HEADERS)
+    resp = await client.get("/messages/bob?ack=server", headers=HEADERS)
     msgs = resp.json()
     assert len(msgs) == 10
     contents = {m["content"] for m in msgs}
@@ -206,7 +206,7 @@ async def test_room_message_long_poll_wakes(client: AsyncClient):
     await client.post(f"/rooms/{room_id}/join", json={"participant": "bob"}, headers=HEADERS)
 
     async def poll():
-        return await client.get("/messages/bob?wait=10", headers=HEADERS)
+        return await client.get("/messages/bob?wait=10&ack=server", headers=HEADERS)
 
     async def send_delayed():
         await asyncio.sleep(0.5)

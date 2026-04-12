@@ -76,6 +76,57 @@ async def test_send_message(client: AsyncClient, auth_headers: dict):
     assert "timestamp" in data
 
 
+async def test_idempotency_key_deduplicates_dm(client: AsyncClient, auth_headers: dict):
+    """Idempotency-Key header should deduplicate retried DM sends."""
+    headers = {**auth_headers, "Idempotency-Key": "test-key-123"}
+
+    # First send
+    resp1 = await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hello"},
+        headers=headers,
+    )
+    assert resp1.status_code == 200
+    msg_id1 = resp1.json()["id"]
+
+    # Retry with same key — should return cached result
+    resp2 = await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hello"},
+        headers=headers,
+    )
+    assert resp2.status_code == 200
+    msg_id2 = resp2.json()["id"]
+    assert msg_id1 == msg_id2
+
+    # Only one message should be delivered
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
+    messages = resp.json()
+    assert len(messages) == 1
+
+
+async def test_idempotency_key_different_keys_allow_duplicates(
+    client: AsyncClient, auth_headers: dict
+):
+    """Different idempotency keys should allow multiple sends."""
+    resp1 = await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hello"},
+        headers={**auth_headers, "Idempotency-Key": "key-1"},
+    )
+    resp2 = await client.post(
+        "/messages",
+        json={"from_name": "alice", "to": "bob", "content": "hello"},
+        headers={**auth_headers, "Idempotency-Key": "key-2"},
+    )
+    assert resp1.json()["id"] != resp2.json()["id"]
+
+    # Both messages should be delivered
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
+    messages = resp.json()
+    assert len(messages) == 2
+
+
 async def test_receive_messages(client: AsyncClient, auth_headers: dict):
     await client.post(
         "/messages",
@@ -87,7 +138,7 @@ async def test_receive_messages(client: AsyncClient, auth_headers: dict):
         json={"from_name": "alice", "to": "bob", "content": "msg2"},
         headers=auth_headers,
     )
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     assert resp.status_code == 200
     messages = resp.json()
     assert len(messages) == 2
@@ -104,13 +155,13 @@ async def test_receive_clears_messages(client: AsyncClient, auth_headers: dict):
         json={"from_name": "alice", "to": "bob", "content": "hello"},
         headers=auth_headers,
     )
-    await client.get("/messages/bob", headers=auth_headers)
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    await client.get("/messages/bob?ack=server", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     assert resp.json() == []
 
 
 async def test_receive_no_messages(client: AsyncClient, auth_headers: dict):
-    resp = await client.get("/messages/nobody", headers=auth_headers)
+    resp = await client.get("/messages/nobody?ack=server", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -137,6 +188,34 @@ async def test_recipient_is_listed_as_participant(client: AsyncClient, auth_head
     assert "dave" in participants
 
 
+async def test_recipient_quota_rejects_when_full(client: AsyncClient, auth_headers: dict):
+    """When recipient queue reaches MAX_RECIPIENT_DEPTH, sends should be rejected."""
+    from unittest.mock import patch
+
+    # Patch MAX_RECIPIENT_DEPTH to a small value for testing
+    with patch("murmur.services.message_svc.MAX_RECIPIENT_DEPTH", 2):
+        # Send 2 messages (at limit)
+        await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "quota-bob", "content": "msg1"},
+            headers=auth_headers,
+        )
+        await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "quota-bob", "content": "msg2"},
+            headers=auth_headers,
+        )
+
+        # Third should be rejected
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "quota-bob", "content": "msg3"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 503
+        assert "queue full" in resp.json()["detail"].lower()
+
+
 async def test_file_persistence_save_and_load(
     client: AsyncClient, auth_headers: dict, tmp_path
 ):
@@ -153,7 +232,7 @@ async def test_file_persistence_save_and_load(
         _reset_state()
         _load_from_file()
 
-        resp = await client.get("/messages/bob", headers=auth_headers)
+        resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
         messages = resp.json()
         assert len(messages) == 1
         assert messages[0]["content"] == "persist me"
@@ -171,13 +250,13 @@ async def test_delivered_messages_do_not_reappear_after_reload(
             headers=auth_headers,
         )
 
-        resp = await client.get("/messages/bob", headers=auth_headers)
+        resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
         assert [msg["content"] for msg in resp.json()] == ["deliver once"]
 
         _reset_state()
         _load_from_file()
 
-        resp = await client.get("/messages/bob", headers=auth_headers)
+        resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
         assert resp.json() == []
 
 
@@ -190,7 +269,7 @@ async def test_message_cap_trims_oldest(client: AsyncClient, auth_headers: dict)
             headers=auth_headers,
         )
 
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     messages = resp.json()
     assert len(messages) == 7
     assert messages[0]["content"] == "msg-0"
@@ -209,7 +288,7 @@ async def test_concurrent_sends_no_data_loss(client: AsyncClient, auth_headers: 
 
     await asyncio.gather(*[send_one(i) for i in range(20)])
 
-    resp = await client.get("/messages/target", headers=auth_headers)
+    resp = await client.get("/messages/target?ack=server", headers=auth_headers)
     messages = resp.json()
     assert len(messages) == 20
     contents = {m["content"] for m in messages}
@@ -223,7 +302,7 @@ async def test_small_message_has_no_chunk_fields(client: AsyncClient, auth_heade
         json={"from_name": "alice", "to": "bob", "content": "small"},
         headers=auth_headers,
     )
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     msg = resp.json()[0]
     assert "chunk_group" not in msg
 
@@ -240,7 +319,7 @@ async def test_large_message_is_chunked_and_reassembled(client: AsyncClient, aut
         )
         assert resp.status_code == 200
 
-        resp = await client.get("/messages/bob", headers=auth_headers)
+        resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
         messages = resp.json()
         assert len(messages) == 1
         assert messages[0]["content"] == large_content
@@ -261,7 +340,7 @@ async def test_large_unicode_message_is_chunked_without_corruption(
         )
         assert resp.status_code == 200
 
-        resp = await client.get("/messages/bob", headers=auth_headers)
+        resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
         messages = resp.json()
         assert len(messages) == 1
         assert messages[0]["content"] == large_content
@@ -303,7 +382,7 @@ async def test_message_cap_does_not_split_chunk_groups(client: AsyncClient, auth
             headers=auth_headers,
         )
 
-        resp = await client.get("/messages/bob", headers=auth_headers)
+        resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
         messages = resp.json()
 
     assert [msg["content"] for msg in messages] == ["one", "two", "abcdefghij"]
@@ -343,7 +422,7 @@ async def test_analytics_after_send_and_receive(client: AsyncClient, auth_header
     assert data["participants"]["alice"]["sent"] == 2
 
     # Now bob fetches
-    await client.get("/messages/bob", headers=auth_headers)
+    await client.get("/messages/bob?ack=server", headers=auth_headers)
 
     resp = await client.get("/analytics", headers=auth_headers)
     data = resp.json()
@@ -387,7 +466,7 @@ async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: di
         "chunk_total": 2,
     })
 
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     messages = resp.json()
     assert len(messages) == 0
 
@@ -402,7 +481,7 @@ async def test_incomplete_chunks_held_back(client: AsyncClient, auth_headers: di
         "chunk_total": 2,
     })
 
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     messages = resp.json()
     assert len(messages) == 1
     assert messages[0]["content"] == "part1part2"
@@ -415,7 +494,7 @@ async def test_long_poll_returns_immediately_with_messages(client: AsyncClient, 
         json={"from_name": "alice", "to": "bob", "content": "hi"},
         headers=auth_headers,
     )
-    resp = await client.get("/messages/bob?wait=10", headers=auth_headers)
+    resp = await client.get("/messages/bob?wait=10&ack=server", headers=auth_headers)
     assert resp.status_code == 200
     assert len(resp.json()) == 1
 
@@ -431,14 +510,14 @@ async def test_message_event_is_rearmed_by_consumer(client: AsyncClient, auth_he
     )
     assert msg_svc._events[("_legacy", "bob")].is_set()
 
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     assert resp.status_code == 200
     assert not msg_svc._events[("_legacy", "bob")].is_set()
 
 
 async def test_long_poll_returns_empty_on_timeout(client: AsyncClient, auth_headers: dict):
     """Long-poll should return empty list after timeout if no messages arrive."""
-    resp = await client.get("/messages/nobody?wait=1", headers=auth_headers)
+    resp = await client.get("/messages/nobody?wait=1&ack=server", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -447,7 +526,7 @@ async def test_long_poll_wakes_on_new_message(client: AsyncClient, auth_headers:
     """Long-poll should return as soon as a message arrives."""
 
     async def poll():
-        return await client.get("/messages/bob?wait=10", headers=auth_headers)
+        return await client.get("/messages/bob?wait=10&ack=server", headers=auth_headers)
 
     async def send_delayed():
         await asyncio.sleep(0.5)
@@ -473,7 +552,7 @@ async def test_long_poll_wakes_on_new_message(client: AsyncClient, auth_headers:
 async def test_long_poll_clamps_max_wait(client: AsyncClient, auth_headers: dict):
     """Wait values above 60 should be clamped. Use wait=2 to keep test fast."""
     start = time.monotonic()
-    resp = await client.get("/messages/nobody?wait=2", headers=auth_headers)
+    resp = await client.get("/messages/nobody?wait=2&ack=server", headers=auth_headers)
     elapsed = time.monotonic() - start
     assert resp.status_code == 200
     assert resp.json() == []
@@ -483,7 +562,7 @@ async def test_long_poll_clamps_max_wait(client: AsyncClient, auth_headers: dict
 
 async def test_no_wait_param_returns_immediately(client: AsyncClient, auth_headers: dict):
     """Without wait param, should return immediately even if empty."""
-    resp = await client.get("/messages/nobody", headers=auth_headers)
+    resp = await client.get("/messages/nobody?ack=server", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -669,7 +748,7 @@ async def test_message_ttl_expires_old_messages(client: AsyncClient, auth_header
         headers=auth_headers,
     )
 
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     messages = resp.json()
     contents = [m["content"] for m in messages]
     # Both messages returned (service layer does not TTL-expire)
@@ -691,7 +770,7 @@ async def test_message_ttl_is_enforced_on_read_without_new_send(
         "timestamp": "2020-01-01T00:00:00+00:00",
     })
 
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     assert len(resp.json()) == 1
     assert resp.json()[0]["content"] == "stale"
 
@@ -849,7 +928,7 @@ async def test_send_room_message_fans_out(client: AsyncClient, auth_headers: dic
     assert resp.status_code == 200
 
     # Bob gets it
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     msgs = resp.json()
     assert len(msgs) == 1
     assert msgs[0]["content"] == "hello team"
@@ -857,13 +936,13 @@ async def test_send_room_message_fans_out(client: AsyncClient, auth_headers: dic
     assert msgs[0]["room"] == "team"
 
     # Charlie gets it
-    resp = await client.get("/messages/charlie", headers=auth_headers)
+    resp = await client.get("/messages/charlie?ack=server", headers=auth_headers)
     msgs = resp.json()
     assert len(msgs) == 1
     assert msgs[0]["room"] == "team"
 
     # Alice also sees her own message (room shows all traffic)
-    resp = await client.get("/messages/alice", headers=auth_headers)
+    resp = await client.get("/messages/alice?ack=server", headers=auth_headers)
     msgs = resp.json()
     assert len(msgs) == 1
     assert msgs[0]["content"] == "hello team"
@@ -882,7 +961,7 @@ async def test_room_message_with_type(client: AsyncClient, auth_headers: dict):
         json={"from_name": "alice", "content": "CLAIMING: auth module", "message_type": "claim"},
         headers=auth_headers,
     )
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     assert resp.json()[0]["message_type"] == "claim"
 
 
@@ -919,7 +998,7 @@ async def test_dm_still_works_after_rooms_added(client: AsyncClient, auth_header
         json={"from_name": "alice", "to": "bob", "content": "direct msg"},
         headers=auth_headers,
     )
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     msgs = resp.json()
     assert len(msgs) == 1
     assert msgs[0]["content"] == "direct msg"
@@ -1072,8 +1151,8 @@ async def test_room_history_not_cleared_on_read(client: AsyncClient, auth_header
     )
 
     # Read clears inbox
-    await client.get("/messages/bob", headers=auth_headers)
-    await client.get("/messages/alice", headers=auth_headers)
+    await client.get("/messages/bob?ack=server", headers=auth_headers)
+    await client.get("/messages/alice?ack=server", headers=auth_headers)
 
     # History still has the message
     resp = await client.get(f"/rooms/{room_id}/history", headers=auth_headers)
@@ -1348,7 +1427,7 @@ async def test_heartbeat_preserves_uptime_start(client: AsyncClient, auth_header
 
 
 async def test_peek_empty(client: AsyncClient, auth_headers):
-    resp = await client.get("/messages/nobody/peek", headers=auth_headers)
+    resp = await client.get("/messages/nobody/peek?ack=server", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert data["count"] == 0
@@ -1361,17 +1440,17 @@ async def test_peek_with_messages(client: AsyncClient, auth_headers):
         json={"from_name": "alice", "to": "bob", "content": "hi"},
         headers=auth_headers,
     )
-    resp = await client.get("/messages/bob/peek", headers=auth_headers)
+    resp = await client.get("/messages/bob/peek?ack=server", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["count"] == 1
 
     # Peek doesn't consume — count stays the same
-    resp2 = await client.get("/messages/bob/peek", headers=auth_headers)
+    resp2 = await client.get("/messages/bob/peek?ack=server", headers=auth_headers)
     assert resp2.json()["count"] == 1
 
 
 async def test_peek_requires_auth(client: AsyncClient):
-    resp = await client.get("/messages/bob/peek")
+    resp = await client.get("/messages/bob/peek?ack=server")
     assert resp.status_code == 401
 
 
@@ -1603,7 +1682,7 @@ async def test_unicode_emoji_message(client: AsyncClient, auth_headers: dict):
         json={"from_name": "alice", "content": content},
         headers=auth_headers,
     )
-    resp = await client.get("/messages/bob", headers=auth_headers)
+    resp = await client.get("/messages/bob?ack=server", headers=auth_headers)
     msgs = resp.json()
     assert len(msgs) == 1
     assert msgs[0]["content"] == content

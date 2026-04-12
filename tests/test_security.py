@@ -755,7 +755,7 @@ class TestContentSafety:
         assert r.status_code == 200
 
         # Retrieve and verify content round-trips
-        r = await client.get("/messages/bob", headers=AUTH)
+        r = await client.get("/messages/bob?ack=server", headers=AUTH)
         assert r.status_code == 200
         msgs = r.json()
         assert len(msgs) >= 1
@@ -831,24 +831,24 @@ class TestPathParameterAbuse:
 class TestLongPollSecurity:
     @pytest.mark.anyio
     async def test_wait_negative_clamped(self, client):
-        r = await client.get("/messages/alice?wait=-1", headers=AUTH)
+        r = await client.get("/messages/alice?wait=-1&ack=server", headers=AUTH)
         assert r.status_code == 200
 
     @pytest.mark.anyio
     async def test_wait_zero(self, client):
-        r = await client.get("/messages/alice?wait=0", headers=AUTH)
+        r = await client.get("/messages/alice?wait=0&ack=server", headers=AUTH)
         assert r.status_code == 200
 
     @pytest.mark.anyio
     async def test_wait_over_max_clamped(self, client):
         """wait > 60 should be clamped, not cause a long hang."""
         # We set a short timeout on the client
-        r = await client.get("/messages/alice?wait=1", headers=AUTH)
+        r = await client.get("/messages/alice?wait=1&ack=server", headers=AUTH)
         assert r.status_code == 200
 
     @pytest.mark.anyio
     async def test_wait_non_numeric(self, client):
-        r = await client.get("/messages/alice?wait=abc", headers=AUTH)
+        r = await client.get("/messages/alice?wait=abc&ack=server", headers=AUTH)
         assert r.status_code == 422
 
 
@@ -872,7 +872,7 @@ class TestConcurrency:
         results = await asyncio.gather(*[send(i) for i in range(20)])
         assert all(r.status_code == 200 for r in results)
 
-        r = await client.get("/messages/target", headers=AUTH)
+        r = await client.get("/messages/target?ack=server", headers=AUTH)
         assert len(r.json()) == 20
 
 
@@ -1005,7 +1005,7 @@ class TestUnicodeEdgeCases:
             headers=AUTH,
         )
         assert r.status_code == 200
-        r = await client.get("/messages/bob", headers=AUTH)
+        r = await client.get("/messages/bob?ack=server", headers=AUTH)
         assert r.json()[0]["content"] == content
 
     @pytest.mark.anyio
