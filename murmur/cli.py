@@ -3672,6 +3672,12 @@ def _cmd_decision(args):
     console.print(f"  decision: {decision_text}")
 
 
+def _cmd_begin(args):
+    """Open the Murmur interactive TUI hub."""
+    from murmur.tui_hub import run_hub
+    run_hub()
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="murmur", description="Murmur CLI"
@@ -3960,6 +3966,8 @@ def main():
         "decision", nargs=argparse.REMAINDER, help="Decision text"
     )
 
+    sub.add_parser("begin", help="Open the Murmur hub (interactive TUI)")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -4012,6 +4020,7 @@ def main():
         "resolve": _cmd_resolve,
         "context": _cmd_context,
         "decision": _cmd_decision,
+        "begin": _cmd_begin,
     }
     commands[args.command](args)
 
