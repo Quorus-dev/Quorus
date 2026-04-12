@@ -1,0 +1,50 @@
+# GitHub Actions workflow for Vercel Deployment (manual trigger)
+name: Deploy to Vercel (Manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      # Required by Vercel CLI for auth and routing to the right project
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+    defaults:
+      run:
+        working-directory: website
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.5"
+
+      - run: npm install -g npm@10.8.2
+
+      - name: Install Dependencies
+        run: npm ci --legacy-peer-deps
+
+      # Pull production env & project settings from Vercel
+      # This writes .vercel/project.json and .env.local.production.local as needed
+      - name: Vercel Pull (production)
+        run: |
+          npx vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      # Build with Vercel CLI to match Vercel's build environment
+      - name: Build (Vercel CLI)
+        run: |
+          npx vercel build --prod --token="$VERCEL_TOKEN"
+
+      # Deploy previously built artifacts to Vercel Production
+      - name: Deploy to Vercel (Production)
+        run: |
+          npx vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
