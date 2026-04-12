@@ -171,9 +171,8 @@ class Message(Base):
     )
     from_name: Mapped[str] = mapped_column(Text, nullable=False)
     to_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    room_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("rooms.id"), nullable=True
-    )
+    # Note: FK dropped in migration 004 — rooms are in Redis, not Postgres
+    room_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     message_type: Mapped[str] = mapped_column(Text, nullable=False, default="chat")
     timestamp: Mapped[datetime] = mapped_column(
