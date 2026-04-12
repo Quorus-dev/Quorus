@@ -111,7 +111,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` + atomic SET NX reservation        |
 | ~~Critical~~ | ~~Room state not membership-scoped~~         | ✅ require_room_member() on all state/lock endpoints    |
 | ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend + Lua scripts (acquire/release/expire) |
-| ~~Critical~~ | ~~Web console proxy SSRF~~                   | ✅ Block private IPs; DNS rebinding check; fail closed in prod |
+| ~~Critical~~ | ~~Web console proxy SSRF~~                   | ✅ REMOVED — Vite static site, console calls relays directly   |
 | ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
 | ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH + atomic MAXLEN on XADD          |
@@ -153,6 +153,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | fd741e5 | refactor: migrate website from Next.js to Vite — removes proxy SSRF risk |
 | 2026-04-12 | 5250d7b | fix: DNS rebinding protection in relay proxy (resolve before fetch)       |
 | 2026-04-12 | 2f2abfb | ci: add Postgres integration tests and CI job (migrations + CRUD)         |
 | 2026-04-12 | 00eebad | ci: add website lint and build job                                        |
@@ -162,7 +163,6 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | 2026-04-12 | f2983ee | fix: console credential handling — no sessionStorage for keys, warning    |
 | 2026-04-12 | 70269f1 | fix: expire legacy Redis tasks without expires_at_epoch                   |
 | 2026-04-12 | 4eb07ff | fix: harden relay proxy against SSRF (block private IPs, allowlist)       |
-| 2026-04-12 | 01618a8 | feat: warm first-run wizard for murmur begin (conversational, auto-detect)|
 
 ---
 
