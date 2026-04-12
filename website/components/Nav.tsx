@@ -53,13 +53,24 @@ export default function Nav() {
           ))}
         </div>
 
-        {/* CTA */}
-        <button
-          onClick={() => smoothScroll("waitlist")}
-          className="px-4 py-2 rounded-full text-sm font-medium bg-violet-600 hover:bg-violet-500 text-white transition-all duration-200 hover:shadow-lg hover:shadow-violet-500/25"
-        >
-          Request access
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Console link */}
+          <a
+            href="/console"
+            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-white/40 hover:text-white/70 border border-white/8 hover:border-white/15 bg-white/[0.02] hover:bg-white/[0.05] transition-all duration-200"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400/70" />
+            console
+          </a>
+
+          {/* CTA */}
+          <button
+            onClick={() => smoothScroll("waitlist")}
+            className="px-4 py-2 rounded-full text-sm font-medium bg-violet-600 hover:bg-violet-500 text-white transition-all duration-200 hover:shadow-lg hover:shadow-violet-500/25"
+          >
+            Request access
+          </button>
+        </div>
       </div>
     </nav>
   );
