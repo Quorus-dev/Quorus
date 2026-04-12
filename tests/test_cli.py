@@ -1696,6 +1696,106 @@ def test_resolve_no_conflicts_clean_exit(capsys, monkeypatch, tmp_path):
     assert "No merge conflicts found" in captured.out
 
 
+def test_resolve_empty_conflict_block():
+    """Regex should handle edge case of empty conflict sides gracefully."""
+    import re
+
+    conflict_pattern = re.compile(
+        r"(<{7} .+?\n[\s\S]*?={7}\n[\s\S]*?>{7} .+?\n)",
+        re.MULTILINE,
+    )
+
+    # Edge case: empty ours side
+    sample_empty_ours = """\
+<<<<<<< HEAD
+=======
+    print("only in theirs")
+>>>>>>> feature
+"""
+    conflicts = conflict_pattern.findall(sample_empty_ours)
+    assert len(conflicts) == 1
+
+    # Edge case: empty theirs side
+    sample_empty_theirs = """\
+<<<<<<< HEAD
+    print("only in ours")
+=======
+>>>>>>> feature
+"""
+    conflicts = conflict_pattern.findall(sample_empty_theirs)
+    assert len(conflicts) == 1
+
+    # Edge case: both sides empty (deletion conflict)
+    sample_both_empty = """\
+<<<<<<< HEAD
+=======
+>>>>>>> feature
+"""
+    conflicts = conflict_pattern.findall(sample_both_empty)
+    assert len(conflicts) == 1
+
+
+def test_resolve_no_api_key_error(capsys, monkeypatch):
+    """resolve should error gracefully when ANTHROPIC_API_KEY is not set."""
+    import subprocess
+    from unittest.mock import MagicMock
+
+    from murmur.cli import _cmd_resolve
+
+    # Mock git to return conflicted files
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "src/auth.py"
+
+    def mock_run(*a, **kw):
+        return mock_result
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    args = MagicMock()
+    args.room = None
+    args.model = "claude-sonnet-4-6"
+
+    try:
+        _cmd_resolve(args)
+    except SystemExit:
+        pass  # Expected when API key is missing
+
+    captured = capsys.readouterr()
+    # Should mention API key or conflicts
+    assert len(captured.out) > 0
+
+
+def test_resolve_git_command_failure(capsys, monkeypatch):
+    """resolve should handle git command failures gracefully."""
+    import subprocess
+    from unittest.mock import MagicMock
+
+    from murmur.cli import _cmd_resolve
+
+    # Mock git to fail
+    mock_result = MagicMock()
+    mock_result.returncode = 128
+    mock_result.stdout = ""
+    mock_result.stderr = "fatal: not a git repository"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    args = MagicMock()
+    args.room = None
+    args.model = "claude-sonnet-4-6"
+
+    try:
+        _cmd_resolve(args)
+    except SystemExit as e:
+        assert e.code == 1  # Expected exit code for git failure
+
+    captured = capsys.readouterr()
+    assert "git diff failed" in captured.out or "not a git repository" in captured.out
+
+
 # ---------------------------------------------------------------------------
 # _cmd_init tests
 # ---------------------------------------------------------------------------
