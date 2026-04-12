@@ -111,7 +111,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` + atomic SET NX reservation        |
 | ~~Critical~~ | ~~Room state not membership-scoped~~         | ✅ require_room_member() on all state/lock endpoints    |
 | ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend + Lua scripts (acquire/release/expire) |
-| ~~Critical~~ | ~~Web console proxy SSRF~~                   | ✅ Block private IPs, localhost, metadata; RELAY_ALLOWLIST env |
+| ~~Critical~~ | ~~Web console proxy SSRF~~                   | ✅ Block private IPs; fail closed in prod if no RELAY_ALLOWLIST |
 | ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
 | ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH + atomic MAXLEN on XADD          |
@@ -131,6 +131,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | **Medium**   | Auth is name-oriented, not account-based     | No immutable IDs, no revocation                         |
 | ~~Medium~~   | ~~Dashboard puts credentials in URL~~        | ✅ Token stored in sessionStorage, URL cleared          |
 | **Medium**   | Webhook SSRF policy-based only               | httpx re-resolves DNS; needs egress network policy      |
+| ~~Medium~~   | ~~Website Node version unenforced~~          | ✅ .nvmrc + .node-version + engines field               |
 | **Low**      | Operational metrics thin                     | Need stream depth, pending age, redelivery counts       |
 
 ### Next Priorities
@@ -152,6 +153,8 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | 679fa13 | fix: add .nvmrc and .node-version for Node 20 enforcement                 |
+| 2026-04-12 | 9f7ee4f | fix: fail closed if RELAY_ALLOWLIST unset in production                   |
 | 2026-04-12 | e294225 | fix: make room fan-out failures non-fatal after history commit            |
 | 2026-04-12 | f2983ee | fix: console credential handling — no sessionStorage for keys, warning    |
 | 2026-04-12 | d6464e6 | fix: add engines field requiring Node 20.9+ for website                   |
@@ -160,8 +163,6 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | 2026-04-12 | 01618a8 | feat: warm first-run wizard for murmur begin (conversational, auto-detect)|
 | 2026-04-12 | f4c2673 | feat: add /console link to doctor output and README                       |
 | 2026-04-12 | cc71538 | docs: update CONTEXT.md with critical fixes                               |
-| 2026-04-12 | fe398ce | fix: denormalize room_name in Postgres history (migration 005)            |
-| 2026-04-12 | af83ffd | fix: Lua XLEN quota-check + reject (true backpressure, no message loss)   |
 
 ---
 
