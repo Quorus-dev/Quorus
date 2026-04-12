@@ -13,34 +13,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install ruff
-        run: pip install ruff
-
       - name: Run ruff
-        run: ruff check .
+        run: uvx ruff check .
 
   test:
-    name: Tests (no Docker)
+    name: Tests / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: pip
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: uv pip install --system -e ".[test]"
 
       - name: Run tests (skip integration)
-        run: pytest -v -m "not integration" --tb=short
+        run: pytest -q -m "not integration" --tb=short
         env:
           MURMUR_SECRET: ci-test-secret
           PYTHONWARNINGS: default
@@ -62,14 +69,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: uv pip install --system -e ".[test]"
 
       - name: Run Redis integration tests
         run: pytest tests/test_redis_integration.py -v --tb=short
