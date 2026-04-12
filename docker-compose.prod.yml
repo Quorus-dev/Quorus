@@ -1,0 +1,105 @@
+# Production-grade docker-compose configuration
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This overlay adds:
+# - Redis AOF persistence with fsync every second
+# - Redis password authentication
+# - Redis maxmemory with noeviction policy
+# - PostgreSQL connection limits
+# - Resource limits for all services
+# - Production logging configuration
+
+services:
+  relay:
+    environment:
+      # Override Redis URL with auth
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379/0
+      # Production settings
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
+      # Visibility timeout for at-least-once delivery
+      VISIBILITY_TIMEOUT_SECONDS: ${VISIBILITY_TIMEOUT_SECONDS:-60}
+      # Idempotency TTL (5 minutes default)
+      IDEMPOTENCY_TTL_SECONDS: ${IDEMPOTENCY_TTL_SECONDS:-300}
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  postgres:
+    environment:
+      # Require strong password in production
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    command:
+      - postgres
+      - -c
+      - max_connections=100
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - log_statement=ddl
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  redis:
+    image: redis:7-alpine
+    # Production Redis configuration:
+    # - AOF persistence with fsync every second
+    # - Password authentication
+    # - Memory limit with noeviction (reject writes when full)
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD required}
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - noeviction
+      - --tcp-keepalive
+      - "300"
+      - --timeout
+      - "0"
+    volumes:
+      - redisdata:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 768M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  pgdata:
+  redisdata:
