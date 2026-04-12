@@ -12,7 +12,8 @@
  *   - Blocks cloud metadata endpoints
  *   - Blocks private/reserved IP ranges (RFC1918, loopback, link-local)
  *   - Blocks localhost variants
- *   - Validates hostname against allowlist if RELAY_ALLOWLIST is set
+ *   - PRODUCTION: Requires RELAY_ALLOWLIST (fail closed)
+ *   - DEVELOPMENT: Allows any public hostname if RELAY_ALLOWLIST is unset
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -27,11 +28,22 @@ const BLOCKED_HOSTS = new Set([
   "localhost.localdomain",
 ]);
 
+// Production check — fail closed if allowlist not configured
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
 // Relay allowlist from environment (comma-separated hostnames)
-// If set, only these relay hosts are allowed
+// REQUIRED in production; optional in development
 const RELAY_ALLOWLIST: Set<string> | null = (() => {
   const envVal = process.env.RELAY_ALLOWLIST;
-  if (!envVal) return null;
+  if (!envVal) {
+    if (IS_PRODUCTION) {
+      console.error(
+        "[relay-proxy] FATAL: RELAY_ALLOWLIST must be set in production. " +
+        "Set it to a comma-separated list of allowed relay hostnames."
+      );
+    }
+    return null;
+  }
   return new Set(envVal.split(",").map((h) => h.trim().toLowerCase()));
 })();
 
@@ -147,6 +159,14 @@ async function proxy(
   req: NextRequest,
   segments: string[],
 ): Promise<NextResponse> {
+  // Fail closed in production if allowlist not configured
+  if (IS_PRODUCTION && !RELAY_ALLOWLIST) {
+    return NextResponse.json(
+      { error: "Relay proxy disabled: RELAY_ALLOWLIST not configured" },
+      { status: 503 },
+    );
+  }
+
   const relayUrl = req.headers.get("x-relay-url");
   if (!relayUrl) {
     return NextResponse.json({ error: "Missing x-relay-url" }, { status: 400 });
