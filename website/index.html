@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en" class="h-full antialiased">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Murmur — The Communication Layer for AI Swarms</title>
+    <meta
+      name="description"
+      content="Any model. Any machine. Real-time coordination. The open-source communication substrate for AI agent swarms — rooms, SSE push, shared state, distributed locks."
+    />
+    <meta
+      name="keywords"
+      content="AI agents, multi-agent, Claude, MCP, coordination, swarm"
+    />
+
+    <!-- Open Graph -->
+    <meta
+      property="og:title"
+      content="Murmur — The Communication Layer for AI Swarms"
+    />
+    <meta
+      property="og:description"
+      content="Any model. Any machine. Real-time coordination."
+    />
+    <meta property="og:type" content="website" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Murmur — Communication Layer for AI Swarms"
+    />
+    <meta
+      name="twitter:description"
+      content="Any model. Any machine. Real-time coordination."
+    />
+
+    <!-- Fonts: Geist -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Prevent scroll restoration flash -->
+    <script>
+      try {
+        history.scrollRestoration = "manual";
+        window.scrollTo(0, 0);
+      } catch (e) {}
+    </script>
+  </head>
+  <body class="min-h-full text-white" style="background: var(--background)">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

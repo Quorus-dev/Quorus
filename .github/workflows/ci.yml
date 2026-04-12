@@ -127,7 +127,7 @@ jobs:
           PYTHONWARNINGS: default
 
   website:
-    name: Website (lint + build)
+    name: Website (Vite lint + build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -140,17 +140,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: "website/.nvmrc"
-          cache: "npm"
-          cache-dependency-path: website/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Run lint
         run: npm run lint
 
       - name: Build
         run: npm run build
-        env:
-          # Skip telemetry during CI builds
-          NEXT_TELEMETRY_DISABLED: 1
