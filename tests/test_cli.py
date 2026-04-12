@@ -1472,3 +1472,82 @@ def test_hook_command_includes_both_inbox_and_context():
     assert "murmur inbox" in all_commands
     assert "murmur context" in all_commands
     assert "--quiet" in all_commands
+
+
+# ── resolve command (CRA - Conflict Resolution Agent) ────────────────────────
+
+
+def test_resolve_conflict_pattern_parsing():
+    """Verify conflict marker regex extracts conflict blocks correctly."""
+    import re
+
+    conflict_pattern = re.compile(
+        r"(<{7} .+?\n[\s\S]*?={7}\n[\s\S]*?>{7} .+?\n)",
+        re.MULTILINE,
+    )
+
+    sample_file = """\
+def hello():
+<<<<<<< HEAD
+    print("Hello from main")
+=======
+    print("Hello from feature")
+>>>>>>> feature-branch
+    return True
+"""
+    conflicts = conflict_pattern.findall(sample_file)
+    assert len(conflicts) == 1
+    assert "HEAD" in conflicts[0]
+    assert "feature-branch" in conflicts[0]
+    assert 'print("Hello from main")' in conflicts[0]
+    assert 'print("Hello from feature")' in conflicts[0]
+
+
+def test_resolve_multiple_conflicts():
+    """Verify regex handles multiple conflict blocks in one file."""
+    import re
+
+    conflict_pattern = re.compile(
+        r"(<{7} .+?\n[\s\S]*?={7}\n[\s\S]*?>{7} .+?\n)",
+        re.MULTILINE,
+    )
+
+    sample_file = """\
+<<<<<<< HEAD
+import foo
+=======
+import bar
+>>>>>>> branch-a
+class MyClass:
+<<<<<<< HEAD
+    x = 1
+=======
+    x = 2
+>>>>>>> branch-a
+"""
+    conflicts = conflict_pattern.findall(sample_file)
+    assert len(conflicts) == 2
+
+
+def test_resolve_no_conflicts_clean_exit(capsys, monkeypatch, tmp_path):
+    """resolve should exit cleanly when no conflicts are found."""
+    from murmur.cli import _cmd_resolve
+    from unittest.mock import MagicMock
+    import subprocess
+
+    # Mock git to return no conflicted files
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    args = MagicMock()
+    args.room = None
+    args.model = "claude-sonnet-4-6"
+
+    _cmd_resolve(args)
+
+    captured = capsys.readouterr()
+    assert "No merge conflicts found" in captured.out
