@@ -58,13 +58,14 @@ Duplicate requests with the same key within the TTL window return `409 Conflict`
 
 ## Rate limits
 
-| Scope                | Limit               |
-| -------------------- | ------------------- |
-| Lock acquire/release | 30 req/min per user |
-| Goal set             | 10 req/min per user |
-| Decision record      | 20 req/min per user |
+| Scope                | Limit                                                                                                             |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Lock acquire/release | 30 req/min per user                                                                                               |
+| Goal set             | 10 req/min per user                                                                                               |
+| Decision record      | 20 req/min per user                                                                                               |
+| 404 abuse protection | `NOT_FOUND_LIMIT` 404s/IP/min (default 30) → `429` + `Retry-After` for `NOT_FOUND_BLOCK_DURATION` s (default 300) |
 
-Rate-limited responses: `429 Too Many Requests`.
+Rate-limited responses: `429 Too Many Requests`. The 404 abuse limit is configurable via `NOT_FOUND_LIMIT`, `NOT_FOUND_WINDOW`, and `NOT_FOUND_BLOCK_DURATION` environment variables.
 
 ---
 
@@ -362,12 +363,13 @@ Send a message to a room. Fan-out to all members via DM queue + SSE.
 
 **Request**
 
-| Field          | Type   | Default | Notes                                                  |
-| -------------- | ------ | ------- | ------------------------------------------------------ |
-| `from_name`    | string | —       | required; must match auth identity                     |
-| `content`      | string | —       | required; max `MAX_MESSAGE_SIZE` bytes (default 51200) |
-| `message_type` | string | `chat`  | `chat`, `claim`, `status`, `request`, `alert`, `sync`  |
-| `reply_to`     | string | null    | message ID of parent (validates existence)             |
+| Field          | Type   | Default | Notes                                                                                 |
+| -------------- | ------ | ------- | ------------------------------------------------------------------------------------- |
+| `from_name`    | string | —       | required; must match auth identity                                                    |
+| `content`      | string | —       | required; max `MAX_MESSAGE_SIZE` bytes (default 51200)                                |
+| `message_type` | string | `chat`  | `chat`, `claim`, `status`, `request`, `alert`, `sync`, `brief`, `subtask`, `decision` |
+| `reply_to`     | string | null    | message ID of parent (validates existence)                                            |
+| `brief_id`     | string | null    | ID of the brief this message belongs to                                               |
 
 **Idempotency-Key**: Supported.
 
