@@ -906,6 +906,37 @@ _WEBHOOK_CONSUMER = "worker"
 _WEBHOOK_VISIBILITY_TIMEOUT = int(os.environ.get("WEBHOOK_VISIBILITY_TIMEOUT", "30"))
 _DLQ_MAX_SIZE = 1000
 
+# Lua: atomic NACK — ACK+DEL old entry, then either XADD retry or LPUSH to DLQ
+# KEYS[1] = queue stream, KEYS[2] = DLQ list
+# ARGV[1] = consumer group, ARGV[2] = job_id, ARGV[3] = updated job JSON
+# ARGV[4] = max_retries, ARGV[5] = current attempt, ARGV[6] = dlq_max_size
+# Returns 1 if retried, 0 if moved to DLQ, -1 if job not found
+_WEBHOOK_NACK_LUA = """
+local queue = KEYS[1]
+local dlq = KEYS[2]
+local cg = ARGV[1]
+local job_id = ARGV[2]
+local job_json = ARGV[3]
+local max_retries = tonumber(ARGV[4])
+local attempt = tonumber(ARGV[5])
+local dlq_max = tonumber(ARGV[6])
+
+-- ACK and delete old entry atomically
+redis.call('XACK', queue, cg, job_id)
+redis.call('XDEL', queue, job_id)
+
+if attempt >= max_retries then
+    -- Move to DLQ
+    redis.call('LPUSH', dlq, job_json)
+    redis.call('LTRIM', dlq, 0, dlq_max - 1)
+    return 0
+else
+    -- Re-enqueue for retry
+    redis.call('XADD', queue, '*', 'data', job_json)
+    return 1
+end
+"""
+
 
 class RedisWebhookQueueBackend:
     """Durable webhook delivery queue using Redis Streams.
@@ -982,8 +1013,13 @@ class RedisWebhookQueueBackend:
     async def nack(
         self, job_id: str, error: str, max_retries: int
     ) -> bool:
-        """Mark job as failed. Returns True if job will be retried."""
-        # Fetch the job data
+        """Mark job as failed. Returns True if job will be retried.
+
+        Uses a Lua script to atomically ACK+DEL the old entry and either
+        re-enqueue for retry or move to DLQ. This eliminates the crash
+        window where a job could be lost.
+        """
+        # Fetch the job data first (read doesn't need to be atomic)
         entries = await self._r.xrange(_WEBHOOK_QUEUE_KEY, job_id, job_id)
         if not entries:
             return False
@@ -992,25 +1028,20 @@ class RedisWebhookQueueBackend:
         job["attempt"] = job.get("attempt", 0) + 1
         job["last_error"] = error
 
-        # ACK and delete the old entry
-        await self._r.xack(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, job_id)
-        await self._r.xdel(_WEBHOOK_QUEUE_KEY, job_id)
-
-        if job["attempt"] >= max_retries:
-            # Move to DLQ
-            await self._add_to_dlq(job)
-            return False
-
-        # Re-enqueue for retry
-        await self._r.xadd(_WEBHOOK_QUEUE_KEY, {"data": json.dumps(job)})
-        return True
-
-    async def _add_to_dlq(self, job: dict) -> None:
-        """Add job to dead letter queue."""
-        async with self._r.pipeline(transaction=True) as pipe:
-            pipe.lpush(_WEBHOOK_DLQ_KEY, json.dumps(job))
-            pipe.ltrim(_WEBHOOK_DLQ_KEY, 0, _DLQ_MAX_SIZE - 1)
-            await pipe.execute()
+        # Atomic NACK via Lua script
+        result = await self._r.eval(
+            _WEBHOOK_NACK_LUA,
+            2,  # number of keys
+            _WEBHOOK_QUEUE_KEY,
+            _WEBHOOK_DLQ_KEY,
+            _WEBHOOK_CG,
+            job_id,
+            json.dumps(job),
+            str(max_retries),
+            str(job["attempt"]),
+            str(_DLQ_MAX_SIZE),
+        )
+        return result == 1
 
     async def get_dlq(self, limit: int = 50) -> list[dict]:
         """Return recent dead letter queue entries."""
@@ -1055,6 +1086,7 @@ class RedisBackends:
     analytics: RedisAnalyticsBackend
     participants: RedisParticipantBackend = None  # type: ignore[assignment]
     idempotency: RedisIdempotencyBackend = None  # type: ignore[assignment]
+    webhook_queue: RedisWebhookQueueBackend = None  # type: ignore[assignment]
 
     @classmethod
     def create(cls, r: Redis, max_room_history: int = 200) -> RedisBackends:
@@ -1070,4 +1102,5 @@ class RedisBackends:
             analytics=RedisAnalyticsBackend(r),
             participants=RedisParticipantBackend(r),
             idempotency=RedisIdempotencyBackend(r),
+            webhook_queue=RedisWebhookQueueBackend(r),
         )

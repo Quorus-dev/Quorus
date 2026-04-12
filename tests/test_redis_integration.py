@@ -39,8 +39,15 @@ def redis_container():
     """Start a Redis container for the test module."""
     if not TESTCONTAINERS_AVAILABLE:
         pytest.skip("testcontainers not installed")
-    with RedisContainer("redis:7-alpine") as container:
-        yield container
+    try:
+        with RedisContainer("redis:7-alpine") as container:
+            yield container
+    except PermissionError:
+        pytest.skip("Docker socket not accessible (permission denied)")
+    except Exception as e:
+        if "docker" in str(e).lower() or "permission" in str(e).lower():
+            pytest.skip(f"Docker unavailable: {e}")
+        raise
 
 
 @pytest.fixture
@@ -276,7 +283,7 @@ class TestRedisWebhookQueue:
         job = {"target": "nack-test", "callback_url": "https://example.com/hook",
                "payload": {}, "secret": "", "attempt": 0, "created_at": 0.0,
                "last_error": ""}
-        job_id = await backend.enqueue(job)
+        await backend.enqueue(job)
 
         jobs = await backend.fetch(count=10)
         assert len(jobs) == 1
