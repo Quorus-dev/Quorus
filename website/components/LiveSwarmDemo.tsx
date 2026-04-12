@@ -217,11 +217,12 @@ export default function LiveSwarmDemo() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [typing, setTyping] = useState<AgentKey | null>(null);
   const [scriptIdx, setScriptIdx] = useState(0);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to bottom as messages arrive
+  // Scroll within the message container only — never touches page scroll
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages, typing]);
 
   // Drive the conversation
@@ -333,7 +334,10 @@ export default function LiveSwarmDemo() {
               </div>
 
               {/* Messages */}
-              <div className="min-h-[320px] max-h-[380px] overflow-y-auto py-2 scrollbar-thin">
+              <div
+                ref={scrollContainerRef}
+                className="min-h-[320px] max-h-[380px] overflow-y-auto py-2 scrollbar-thin"
+              >
                 <AnimatePresence>
                   {messages.map((msg) => (
                     <MessageRow
@@ -346,7 +350,6 @@ export default function LiveSwarmDemo() {
                 <AnimatePresence>
                   {typing && <TypingIndicator key="typing" agent={typing} />}
                 </AnimatePresence>
-                <div ref={bottomRef} />
               </div>
             </div>
 
