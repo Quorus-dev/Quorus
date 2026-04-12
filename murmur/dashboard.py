@@ -343,8 +343,22 @@ header{
 <script>
 const API=location.origin;
 const P=new URLSearchParams(location.search);
-const TOKEN=P.get('token')||'';
-const NAME=P.get('name')||'web-user';
+
+// Security: read token from URL once, store in sessionStorage, then clear URL
+// This prevents token leakage via browser history, referrers, and logs
+let TOKEN=sessionStorage.getItem('murmur_token')||'';
+let NAME=sessionStorage.getItem('murmur_name')||'web-user';
+if(P.has('token')){
+  TOKEN=P.get('token');
+  sessionStorage.setItem('murmur_token',TOKEN);
+  if(P.has('name')){
+    NAME=P.get('name');
+    sessionStorage.setItem('murmur_name',NAME);
+  }
+  // Clear credentials from URL (replace history entry)
+  const cleanUrl=location.pathname;
+  history.replaceState(null,'',cleanUrl);
+}
 const H={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
 let currentRoom=null,sse=null;
 const unread={};

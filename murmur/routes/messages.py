@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -10,6 +13,7 @@ from murmur.auth.middleware import AuthContext, require_identity, verify_auth
 from murmur.routes.models import AckRequest, SendMessageRequest
 
 router = APIRouter()
+_logger = logging.getLogger(__name__)
 _LEGACY_TENANT = "_legacy"
 _IDEMPOTENCY_TTL = int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "300"))
 _MAX_DM_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))  # 51 KB
@@ -17,6 +21,13 @@ _MAX_DM_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))  # 51 KB
 
 def _tid(auth: AuthContext) -> str:
     return auth.tenant_id or _LEGACY_TENANT
+
+
+def _body_fingerprint(body: dict) -> str:
+    """Create a short fingerprint of the request body for idempotency binding."""
+    # Sort keys for deterministic hashing
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 @router.post("/messages")
@@ -33,6 +44,8 @@ async def send_message(
       If provided, repeated sends with the same key within the TTL window
       (default 5 minutes) return the original response without re-sending.
       Concurrent requests with the same key return 409 Conflict.
+      The key is bound to the request body — different content with the
+      same key is treated as a new request.
     """
     sender = auth.sub or msg.from_name
     if auth.sub and msg.from_name != auth.sub:
@@ -42,7 +55,13 @@ async def send_message(
 
     tid = _tid(auth)
     backends = request.app.state.backends
-    idempotency_cache_key = f"dm:{idempotency_key}" if idempotency_key else None
+
+    # Build idempotency cache key with body fingerprint
+    # This ensures same key + different body = different cache entry
+    idempotency_cache_key = None
+    if idempotency_key:
+        body_fp = _body_fingerprint(msg.model_dump())
+        idempotency_cache_key = f"dm:{idempotency_key}:{body_fp}"
 
     # Atomically reserve the idempotency key (prevents race conditions)
     if idempotency_cache_key:
@@ -62,10 +81,14 @@ async def send_message(
         raise
 
     # Store result in idempotency cache (replaces pending marker)
+    # If this fails, log warning but still return result — the message was sent
     if idempotency_cache_key:
-        await backends.idempotency.set(
-            tid, idempotency_cache_key, result, _IDEMPOTENCY_TTL
-        )
+        try:
+            await backends.idempotency.set(
+                tid, idempotency_cache_key, result, _IDEMPOTENCY_TTL
+            )
+        except Exception as e:
+            _logger.warning("Failed to store idempotency result: %s", e)
 
     # Track participants via backend
     await backends.participants.add(tid, sender, msg.to)

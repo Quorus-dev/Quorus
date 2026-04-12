@@ -124,6 +124,9 @@ class SSEService:
             channel = NotificationService.dm_channel(tenant_id, recipient)
 
             def _on_remote(msg: dict, _q: asyncio.Queue = q) -> None:
+                # Filter out internal wakeup signals (used for long-poll)
+                if msg.get("wake"):
+                    return
                 try:
                     _q.put_nowait(msg)
                 except asyncio.QueueFull:

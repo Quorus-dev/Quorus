@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -15,6 +18,13 @@ _IDEMPOTENCY_TTL = int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "300"))
 
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
+_logger = logging.getLogger(__name__)
+
+
+def _body_fingerprint(body: dict) -> str:
+    """Create a short fingerprint of the request body for idempotency binding."""
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 def _tid(auth: AuthContext) -> str:
@@ -35,6 +45,8 @@ async def send_room_message(
     - ``Idempotency-Key``: optional key to deduplicate retried requests.
       If provided, repeated sends with the same key within the TTL window
       (default 5 minutes) return the original response without re-sending.
+      The key is bound to the request body — different content with the
+      same key is treated as a new request.
     """
     sender = auth.sub or msg.from_name
     if auth.sub and msg.from_name != auth.sub:
@@ -49,7 +61,12 @@ async def send_room_message(
     if not await rate_limit_svc.check_with_limit(tid, f"room_msg:{sender}", 60):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     backends = request.app.state.backends
-    idempotency_cache_key = f"room:{room_id}:{idempotency_key}" if idempotency_key else None
+
+    # Build idempotency cache key with body fingerprint
+    idempotency_cache_key = None
+    if idempotency_key:
+        body_fp = _body_fingerprint(msg.model_dump())
+        idempotency_cache_key = f"room:{room_id}:{idempotency_key}:{body_fp}"
 
     # Atomically reserve the idempotency key (prevents race conditions)
     if idempotency_cache_key:
@@ -72,10 +89,14 @@ async def send_room_message(
         raise
 
     # Store result in idempotency cache (replaces pending marker)
+    # If this fails, log warning but still return result — the message was sent
     if idempotency_cache_key:
-        await backends.idempotency.set(
-            tid, idempotency_cache_key, result, _IDEMPOTENCY_TTL
-        )
+        try:
+            await backends.idempotency.set(
+                tid, idempotency_cache_key, result, _IDEMPOTENCY_TTL
+            )
+        except Exception as e:
+            _logger.warning("Failed to store idempotency result: %s", e)
 
     await backends.participants.add(tid, sender)
     return result
