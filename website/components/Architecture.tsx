@@ -3,9 +3,8 @@ import { useRef, useEffect, useState } from "react";
 import { motion, useInView } from "framer-motion";
 import FadeUp from "./FadeUp";
 
-/* ─────────────────────────────────────────────
-   Animated count-up counter
-───────────────────────────────────────────── */
+/* ─── Counter ─────────────────────────────────────────────────────────────── */
+
 function Counter({
   value,
   suffix = "",
@@ -26,9 +25,8 @@ function Counter({
     const tick = () => {
       const elapsed = Date.now() - start;
       const progress = Math.min(elapsed / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
-      const current = eased * value;
-      setDisplay(current);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(eased * value);
       if (progress < 1) requestAnimationFrame(tick);
       else setDisplay(value);
     };
@@ -46,51 +44,231 @@ function Counter({
   );
 }
 
-/* ─────────────────────────────────────────────
-   Travelling dot along a horizontal connector
-───────────────────────────────────────────── */
-function FlowPulse({
-  color,
-  delay,
-  reverse = false,
-}: {
-  color: "violet" | "cyan";
-  delay: number;
-  reverse?: boolean;
-}) {
-  const bg = color === "violet" ? "bg-violet-400" : "bg-cyan-400";
-  const from = reverse ? 80 : 0;
-  const to = reverse ? 0 : 80;
+/* ─── Hub diagram data ────────────────────────────────────────────────────── */
+
+const RING_AGENTS = [
+  { label: "Claude Code", color: "#a78bfa", angle: -90 },
+  { label: "Cursor", color: "#60a5fa", angle: -30 },
+  { label: "OpenAI Codex", color: "#34d399", angle: 30 },
+  { label: "Gemini", color: "#fb923c", angle: 90 },
+  { label: "Ollama", color: "#f472b6", angle: 150 },
+  { label: "Any HTTP", color: "#94a3b8", angle: 210 },
+];
+
+const PRIMITIVES = [
+  {
+    label: "Rooms",
+    desc: "Fan-out to all members in <1ms",
+    color: "#a78bfa",
+  },
+  {
+    label: "SSE Push",
+    desc: "Zero polling. 3.6ms p50 delivery",
+    color: "#60a5fa",
+  },
+  {
+    label: "Shared State",
+    desc: "GET /state — full swarm snapshot",
+    color: "#34d399",
+  },
+  {
+    label: "Mutex Locks",
+    desc: "TTL-gated. Auto-expire on crash",
+    color: "#fb923c",
+  },
+];
+
+/* ─── Hub & spoke SVG diagram ─────────────────────────────────────────────── */
+
+function HubDiagram() {
+  const W = 480;
+  const H = 360;
+  const cx = W / 2;
+  const cy = H / 2;
+  const radius = 148;
+
+  const nodes = RING_AGENTS.map((a) => {
+    const rad = (a.angle * Math.PI) / 180;
+    return {
+      ...a,
+      x: cx + radius * Math.cos(rad),
+      y: cy + radius * Math.sin(rad),
+    };
+  });
 
   return (
-    <motion.div
-      className={`absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full ${bg}`}
-      style={{ left: 0 }}
-      animate={{ x: [from, to], opacity: [0, 1, 1, 0] }}
-      transition={{
-        duration: 1.5,
-        repeat: Infinity,
-        ease: "linear",
-        delay,
-      }}
-    />
+    <div className="w-full">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full h-auto"
+        style={{ maxHeight: 340, overflow: "visible" }}
+      >
+        <defs>
+          <radialGradient id="rg-relay" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.38" />
+            <stop offset="100%" stopColor="#7c3aed" stopOpacity="0.06" />
+          </radialGradient>
+          <filter id="glow-node" x="-100%" y="-100%" width="300%" height="300%">
+            <feGaussianBlur stdDeviation="3.5" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* Animated dashed connection lines */}
+        {nodes.map((n, i) => (
+          <line
+            key={`line-${n.label}`}
+            x1={n.x}
+            y1={n.y}
+            x2={cx}
+            y2={cy}
+            stroke={n.color}
+            strokeWidth="0.85"
+            strokeOpacity="0.22"
+            strokeDasharray="3 6"
+          >
+            <animate
+              attributeName="stroke-dashoffset"
+              values={i % 2 === 0 ? "0;-27" : "0;27"}
+              dur={`${1.1 + i * 0.1}s`}
+              repeatCount="indefinite"
+              calcMode="linear"
+            />
+          </line>
+        ))}
+
+        {/* Relay outer pulse ring */}
+        <circle
+          cx={cx}
+          cy={cy}
+          r="52"
+          fill="none"
+          stroke="rgba(124,58,237,0.18)"
+          strokeWidth="1"
+        >
+          <animate
+            attributeName="r"
+            values="52;70;52"
+            dur="3s"
+            repeatCount="indefinite"
+          />
+          <animate
+            attributeName="opacity"
+            values="0.5;0;0.5"
+            dur="3s"
+            repeatCount="indefinite"
+          />
+        </circle>
+
+        {/* Relay core */}
+        <circle
+          cx={cx}
+          cy={cy}
+          r="44"
+          fill="url(#rg-relay)"
+          stroke="rgba(124,58,237,0.4)"
+          strokeWidth="1"
+        />
+        <circle cx={cx} cy={cy} r="34" fill="rgba(124,58,237,0.18)" />
+
+        {/* Live indicator */}
+        <circle cx={cx + 28} cy={cy - 28} r="3.5" fill="#4ade80">
+          <animate
+            attributeName="opacity"
+            values="1;0.3;1"
+            dur="2.2s"
+            repeatCount="indefinite"
+          />
+        </circle>
+
+        <text
+          x={cx}
+          y={cy - 4}
+          textAnchor="middle"
+          fill="#c4b5fd"
+          fontSize="11"
+          fontFamily="ui-monospace, monospace"
+          fontWeight="700"
+        >
+          murmur
+        </text>
+        <text
+          x={cx}
+          y={cy + 11}
+          textAnchor="middle"
+          fill="rgba(196,181,253,0.42)"
+          fontSize="8.5"
+          fontFamily="ui-monospace, monospace"
+        >
+          relay
+        </text>
+
+        {/* Agent nodes */}
+        {nodes.map((n, i) => (
+          <motion.g
+            key={n.label}
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
+            transition={{ delay: 0.25 + i * 0.1, duration: 0.7 }}
+          >
+            {/* Node background */}
+            <circle
+              cx={n.x}
+              cy={n.y}
+              r="24"
+              fill={`${n.color}12`}
+              stroke={`${n.color}28`}
+              strokeWidth="1"
+            />
+            {/* Node dot with glow */}
+            <circle
+              cx={n.x}
+              cy={n.y}
+              r="5"
+              fill={n.color}
+              opacity="0.9"
+              filter="url(#glow-node)"
+            />
+            {/* Label */}
+            <text
+              x={n.x}
+              y={n.y + 38}
+              textAnchor="middle"
+              fill={n.color}
+              fontSize="7.5"
+              fontFamily="ui-monospace, monospace"
+              opacity="0.7"
+            >
+              {n.label}
+            </text>
+          </motion.g>
+        ))}
+      </svg>
+    </div>
   );
 }
 
-/* ─────────────────────────────────────────────
-   Main section
-───────────────────────────────────────────── */
-export default function Architecture() {
-  const agents = ["Claude Code", "Cursor / Codex", "Gemini / Ollama"];
-  const inboxes = ["agent-1 inbox", "agent-2 inbox", "agent-3 inbox"];
+/* ─── Main section ────────────────────────────────────────────────────────── */
 
+export default function Architecture() {
   return (
     <section className="py-32 px-6 relative overflow-hidden" id="architecture">
       {/* Background */}
       <div className="absolute inset-0 grid-bg opacity-40" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-violet-600/5 blur-[100px] rounded-full pointer-events-none" />
+      <div
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[420px] rounded-full pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse, rgba(124,58,237,0.05) 0%, transparent 70%)",
+          filter: "blur(80px)",
+        }}
+      />
 
-      <div className="relative max-w-5xl mx-auto">
+      <div className="relative max-w-6xl mx-auto">
         <FadeUp>
           <div className="text-center mb-16">
             <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
@@ -100,183 +278,81 @@ export default function Architecture() {
               Dead simple by design
             </h2>
             <p className="text-white/40 text-lg max-w-xl mx-auto">
-              A stateless relay. Any agent, any protocol. No broker lock-in.
+              One relay at the center. Every agent on the ring. No broker
+              lock-in.
             </p>
           </div>
         </FadeUp>
 
-        {/* Diagram */}
-        <div className="rounded-2xl border border-white/8 bg-[#0d0d0d] p-8 md:p-12">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            {/* ── Agents column ── */}
-            <div className="flex flex-col gap-3">
-              {agents.map((name, i) => (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
+          {/* Hub diagram */}
+          <div className="rounded-2xl border border-white/[0.07] bg-[#0b0b14] p-6 lg:p-10 flex items-center justify-center">
+            <HubDiagram />
+          </div>
+
+          {/* Primitives list + stats */}
+          <div className="space-y-8">
+            <div className="space-y-3">
+              {PRIMITIVES.map((item, i) => (
                 <motion.div
-                  key={name}
-                  initial={{ opacity: 0, x: -20 }}
-                  whileInView={{ opacity: 1, x: 0 }}
-                  viewport={{ once: true }}
-                  transition={{
-                    duration: 0.4,
-                    delay: i * 0.12,
-                    ease: "easeOut",
-                  }}
-                  className="px-4 py-3 rounded-xl border border-violet-500/20 bg-violet-500/5 text-sm font-mono text-violet-300 text-center min-w-[140px]"
-                >
-                  {name}
-                </motion.div>
-              ))}
-              <div className="text-center text-white/20 text-xs font-mono mt-1">
-                agents
-              </div>
-            </div>
-
-            {/* ── Connector: agents → relay ── */}
-            <div className="flex flex-col items-center gap-2 text-white/20">
-              <div className="hidden md:block text-xs font-mono">
-                HTTP / MCP
-              </div>
-              <div className="flex items-center gap-2">
-                {/* Animated line with travelling dots */}
-                <div className="hidden md:block relative w-16 h-px bg-gradient-to-r from-white/10 to-violet-500/40">
-                  {[0, 0.5, 1.0].map((delay, i) => (
-                    <FlowPulse key={i} color="violet" delay={delay} />
-                  ))}
-                </div>
-                <svg
-                  className="w-4 h-4 text-violet-400 md:rotate-0 rotate-90"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-              </div>
-            </div>
-
-            {/* ── Relay box ── */}
-            <div className="flex flex-col items-center gap-3">
-              <motion.div
-                animate={{
-                  boxShadow: [
-                    "0 0 20px rgba(124,58,237,0.2)",
-                    "0 0 40px rgba(124,58,237,0.4)",
-                    "0 0 20px rgba(124,58,237,0.2)",
-                  ],
-                }}
-                transition={{
-                  duration: 2,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                }}
-                className="relative px-6 py-5 rounded-2xl border border-violet-500/30 bg-violet-500/10"
-              >
-                <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-400 pulse-dot" />
-                <div className="text-center">
-                  <div className="text-lg font-bold text-white font-mono mb-1">
-                    murmur
-                  </div>
-                  <div className="text-xs text-white/40">relay · FastAPI</div>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-1.5">
-                  {["rooms", "SSE push", "state", "locks"].map((f) => (
-                    <div
-                      key={f}
-                      className="px-2 py-1 rounded-md bg-white/5 text-xs text-white/50 text-center font-mono"
-                    >
-                      {f}
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-              <div className="text-center text-white/20 text-xs font-mono">
-                relay server
-              </div>
-            </div>
-
-            {/* ── Connector: relay → inboxes ── */}
-            <div className="flex flex-col items-center gap-2 text-white/20">
-              <div className="hidden md:block text-xs font-mono">fan-out</div>
-              <div className="flex items-center gap-2">
-                <svg
-                  className="w-4 h-4 text-cyan-400"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                {/* Animated line with travelling dots */}
-                <div className="hidden md:block relative w-16 h-px bg-gradient-to-r from-cyan-500/40 to-white/10">
-                  {[0.25, 0.75, 1.25].map((delay, i) => (
-                    <FlowPulse key={i} color="cyan" delay={delay} />
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* ── Inboxes column ── */}
-            <div className="flex flex-col gap-3">
-              {inboxes.map((name, i) => (
-                <motion.div
-                  key={name}
+                  key={item.label}
                   initial={{ opacity: 0, x: 20 }}
                   whileInView={{ opacity: 1, x: 0 }}
                   viewport={{ once: true }}
                   transition={{
-                    duration: 0.4,
-                    delay: i * 0.12,
+                    delay: i * 0.08,
+                    duration: 0.45,
                     ease: "easeOut",
                   }}
-                  className="px-4 py-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm font-mono text-cyan-300 text-center min-w-[130px]"
+                  className="flex items-center gap-4 px-4 py-3.5 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:border-white/[0.1] transition-colors group cursor-default"
                 >
-                  {name}
+                  <div
+                    className="w-2 h-2 rounded-full shrink-0 transition-transform group-hover:scale-125"
+                    style={{
+                      background: item.color,
+                      boxShadow: `0 0 8px ${item.color}80`,
+                    }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-semibold text-white font-mono">
+                      {item.label}
+                    </span>
+                    <span className="text-xs text-white/35 ml-2 group-hover:text-white/50 transition-colors">
+                      {item.desc}
+                    </span>
+                  </div>
                 </motion.div>
               ))}
-              <div className="text-center text-white/20 text-xs font-mono mt-1">
-                inboxes
-              </div>
             </div>
-          </div>
 
-          {/* ── Stats bar ── */}
-          <div className="mt-8 pt-6 border-t border-white/5 grid grid-cols-3 gap-4">
-            <FadeUp delay={0}>
-              <div className="text-center">
-                <div className="text-2xl font-bold gradient-text-subtle">
-                  <Counter value={3.6} suffix="ms" decimals={1} />
-                </div>
-                <div className="text-xs text-white/30 mt-1 font-mono">
-                  p50 latency
-                </div>
-              </div>
-            </FadeUp>
-            <FadeUp delay={0.1}>
-              <div className="text-center">
-                <div className="text-2xl font-bold gradient-text-subtle">
-                  <Counter value={281} suffix=" msg/s" />
-                </div>
-                <div className="text-xs text-white/30 mt-1 font-mono">
-                  throughput
-                </div>
-              </div>
-            </FadeUp>
-            <FadeUp delay={0.2}>
-              <div className="text-center">
-                <div className="text-2xl font-bold gradient-text-subtle">
-                  <Counter value={866} suffix="+" />
-                </div>
-                <div className="text-xs text-white/30 mt-1 font-mono">
-                  tests passing
-                </div>
-              </div>
-            </FadeUp>
+            {/* Stats */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { value: 3.6, suffix: "ms", decimals: 1, label: "p50 latency" },
+                { value: 281, suffix: "/s", label: "throughput" },
+                { value: 99.9, suffix: "%", decimals: 1, label: "uptime" },
+              ].map((s, i) => (
+                <motion.div
+                  key={s.label}
+                  initial={{ opacity: 0, y: 12 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: 0.3 + i * 0.1, duration: 0.45 }}
+                  className="text-center px-3 py-4 rounded-xl border border-white/[0.05] bg-white/[0.015]"
+                >
+                  <div className="text-xl font-bold gradient-text-subtle tabular-nums">
+                    <Counter
+                      value={s.value}
+                      suffix={s.suffix}
+                      decimals={s.decimals}
+                    />
+                  </div>
+                  <div className="text-[10px] text-white/25 mt-1 font-mono">
+                    {s.label}
+                  </div>
+                </motion.div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

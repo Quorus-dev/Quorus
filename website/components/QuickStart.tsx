@@ -76,8 +76,12 @@ export default function QuickStart() {
               </div>
             ))}
             <div className="mt-2">
-              <a
-                href="#waitlist"
+              <button
+                onClick={() =>
+                  document
+                    .getElementById("waitlist")
+                    ?.scrollIntoView({ behavior: "smooth" })
+                }
                 className="inline-flex items-center gap-2 text-sm text-violet-400 hover:text-violet-300 transition-colors font-medium"
               >
                 Request early access
@@ -94,7 +98,7 @@ export default function QuickStart() {
                     d="M17 8l4 4m0 0l-4 4m4-4H3"
                   />
                 </svg>
-              </a>
+              </button>
             </div>
           </div>
 

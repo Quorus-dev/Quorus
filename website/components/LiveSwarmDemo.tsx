@@ -25,6 +25,12 @@ const AGENTS = {
     dot: "bg-green-400",
     abbr: "CX",
   },
+  "gemini-1": {
+    color: "text-orange-400",
+    bg: "bg-orange-500/20",
+    dot: "bg-orange-400",
+    abbr: "G1",
+  },
 } as const;
 
 type AgentKey = keyof typeof AGENTS;
@@ -45,6 +51,12 @@ const SCRIPT: Omit<Message, "id">[] = [
     ts: "09:14",
   },
   {
+    agent: "gemini-1",
+    content: "CLAIM: db/migrations/",
+    type: "claim",
+    ts: "09:14",
+  },
+  {
     agent: "cursor-1",
     content: "On it — taking the tests/ directory",
     type: "chat",
@@ -61,6 +73,12 @@ const SCRIPT: Omit<Message, "id">[] = [
     content: "🔒 LOCK acquired · src/auth.py · 300s TTL",
     type: "lock",
     ts: "09:15",
+  },
+  {
+    agent: "gemini-1",
+    content: "Schema migration ready. No conflicts.",
+    type: "chat",
+    ts: "09:16",
   },
   {
     agent: "cursor-1",
@@ -87,9 +105,9 @@ const SCRIPT: Omit<Message, "id">[] = [
     ts: "09:18",
   },
   {
-    agent: "codex-1",
-    content: "PR #142 ready for review.",
-    type: "chat",
+    agent: "gemini-1",
+    content: "Migration applied to staging. All clear.",
+    type: "done",
     ts: "09:19",
   },
   {
@@ -199,7 +217,6 @@ export default function LiveSwarmDemo() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [typing, setTyping] = useState<AgentKey | null>(null);
   const [scriptIdx, setScriptIdx] = useState(0);
-  const [agentCount] = useState(3);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom as messages arrive
@@ -255,11 +272,11 @@ export default function LiveSwarmDemo() {
               See it in action
             </p>
             <h2 className="text-3xl md:text-5xl font-bold tracking-tight text-white mb-4">
-              Three agents. One room. Zero conflicts.
+              Four agents. One room. Zero conflicts.
             </h2>
             <p className="text-white/40 text-lg max-w-xl mx-auto">
-              Watch Claude Code, Cursor, and Codex coordinate a real auth
-              refactor — live, no duplicated work.
+              Claude Code, Cursor, Codex, and Gemini coordinate a real auth
+              refactor — any model, zero duplicated work.
             </p>
           </div>
         </FadeUp>
@@ -287,7 +304,7 @@ export default function LiveSwarmDemo() {
                   <span className="w-px h-3 bg-white/10" />
                   <span className="flex items-center gap-1.5 text-[10px] font-mono text-white/30">
                     <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-dot" />
-                    {agentCount} agents
+                    4 agents
                   </span>
                 </div>
                 {/* Live badge */}
