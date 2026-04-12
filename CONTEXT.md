@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 05:59 UTC
+Last updated: 2026-04-12 06:09 UTC
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-04-12 05:59 UTC
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (866 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (871 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -37,7 +37,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                           |
 | murmur/tui_hub.py           | ~730   | Full-screen TUI hub: `murmur begin` opens interactive Rich terminal UI                    |
 | murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                         |
-| tests/                      | ~8500  | 866 tests: relay, mcp, config, CLI, usage, agents, room_state, sdk, tui_hub, integration  |
+| tests/                      | ~8700  | 871 tests: relay, mcp, config, CLI, usage, agents, room_state, sdk, tui_hub, integration  |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -79,8 +79,9 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - **Hook auto-injection**: `murmur hook enable` now runs `murmur inbox --quiet && murmur context --quiet` on every UserPromptSubmit
 - **Portable join tokens**: `murmur share <room>` generates portable token; `murmur quickjoin <token> --name <name>` joins with zero config
 - **TUI Hub**: `murmur begin` opens full-screen interactive terminal UI with rooms, agents, live chat
+- **Doctor diagnostics**: `murmur doctor` runs 13 checks incl. MCP server registration, relay version, hook status
 
-**Tests:** 866 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 871 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -138,6 +139,9 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | 86f6af2 | test: murmur resolve edge cases (empty diff, network error, no API key)   |
+| 2026-04-12 | c5a4a7e | feat: murmur doctor MCP server registration check                         |
+| 2026-04-12 | 2dbc2db | feat: TUI wizard graceful "no relay" handling + website quickstart        |
 | 2026-04-12 | 31795e5 | test: 9 tests for share/quickjoin portable join tokens                    |
 | 2026-04-12 | 739392b | feat: murmur/tui_hub.py full-screen TUI + 25 tests (murmur begin)         |
 | 2026-04-12 | 92a2b24 | feat: murmur share + murmur quickjoin for portable join tokens            |
@@ -145,9 +149,6 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | 2026-04-12 | b0d9572 | feat: Summary Cascade v2 — LLM summarization via --summarize flag         |
 | 2026-04-12 | 4211716 | test: 3 unit tests for murmur resolve (CRA) conflict parsing              |
 | 2026-04-12 | e4c4089 | docs: murmur resolve (CRA) design doc                                     |
-| 2026-04-12 | 2e0e9fa | docs: VISION.md — 8 moonshot features for YC pitch                        |
-| 2026-04-12 | 7de5bfa | feat: B2C API keys design doc + Postgres schema                           |
-| 2026-04-12 | c120f1b | SDK: ReceiveResult ack/iter/len + AckError coverage                       |
 
 ---
 
