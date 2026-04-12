@@ -229,13 +229,54 @@ class WebhookService:
                 )
         return url
 
+    @classmethod
+    async def validate_url_at_delivery(cls, callback_url: str) -> bool:
+        """Re-validate URL at delivery time to prevent DNS TOCTOU attacks.
+
+        Returns True if safe to deliver, False if the URL now resolves to
+        a private/internal address (attacker may have changed DNS).
+
+        Does NOT raise exceptions — just returns False on unsafe conditions
+        so the caller can skip delivery and log the issue.
+        """
+        parsed = urlparse(callback_url)
+        if not parsed.hostname:
+            return False
+
+        host = parsed.hostname.rstrip(".").lower()
+
+        # Re-check hostname literal IPs
+        try:
+            ip = ipaddress.ip_address(host)
+            return not cls._is_private_ip(ip)
+        except ValueError:
+            pass
+
+        # Re-resolve DNS at delivery time
+        try:
+            addrinfo = await asyncio.to_thread(
+                socket.getaddrinfo, host, None, 0, socket.SOCK_STREAM
+            )
+        except socket.gaierror:
+            return False  # Can't resolve — skip delivery
+
+        if not addrinfo:
+            return False
+
+        for _family, _, _, _, sockaddr in addrinfo:
+            resolved_ip = ipaddress.ip_address(sockaddr[0])
+            if cls._is_private_ip(resolved_ip):
+                return False  # DNS now points to private IP — skip
+
+        return True
+
     # -- DM webhooks ----------------------------------------------------------
 
     async def register_dm(
-        self, tenant_id: str, name: str, url: str
+        self, tenant_id: str, name: str, url: str, secret: str = ""
     ) -> None:
         validated = await self.validate_url(url)
-        await self._backend.register_dm(tenant_id, name, validated)
+        await self._backend.register_dm(tenant_id, name, validated, secret)
 
     async def get_dm_url(
         self, tenant_id: str, name: str
@@ -253,10 +294,11 @@ class WebhookService:
         room_id: str,
         url: str,
         registered_by: str,
+        secret: str = "",
     ) -> None:
         validated = await self.validate_url(url)
         await self._backend.register_room(
-            tenant_id, room_id, validated, registered_by
+            tenant_id, room_id, validated, registered_by, secret
         )
 
     async def list_room(
@@ -371,6 +413,15 @@ class WebhookService:
     async def _process_job(self, job: WebhookJob) -> None:
         """Attempt delivery with retry on failure (in-memory queue)."""
         async with self._semaphore:
+            # Re-validate URL at delivery time (prevent DNS TOCTOU attacks)
+            if not await self.validate_url_at_delivery(job.callback_url):
+                logger.error(
+                    "SSRF blocked: webhook URL %s now resolves to private address",
+                    job.callback_url,
+                )
+                self._stats["total_failed"] += 1
+                return  # Permanently fail — do not retry
+
             try:
                 client = self._get_client()
                 timestamp = int(time.time())
@@ -437,6 +488,17 @@ class WebhookService:
             payload = job_data.get("payload", {})
             secret = job_data.get("secret", "")
             attempt = job_data.get("attempt", 0)
+
+            # Re-validate URL at delivery time (prevent DNS TOCTOU attacks)
+            if not await self.validate_url_at_delivery(callback_url):
+                logger.error(
+                    "SSRF blocked: webhook URL %s now resolves to private address",
+                    callback_url,
+                )
+                self._stats["total_failed"] += 1
+                # ACK to remove from queue — this is a permanent failure
+                await self._queue_backend.ack(job_id)
+                return
 
             try:
                 client = self._get_client()
