@@ -11,7 +11,7 @@ Last updated: 2026-04-12 07:00 EDT
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (713 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (722 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -68,8 +68,10 @@ murmur init <your-name> --relay <url> --secret <secret>
 - Premium web dashboard at GET / (live SSE, presence dots, unread badges, auto-scroll)
 - Discord-style invite pages at GET /invite/{room}
 - Integration guides for Codex, Cursor, Gemini, Ollama
+- **Auto-inject messages**: `murmur hook enable` + `murmur inbox` for UserPromptSubmit hook
+- **MCP server instructions**: Agents receive guidance on tools and expected behavior
 
-**Tests:** 713 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 722 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -127,6 +129,8 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 | Date       | Commit  | What                                                          |
 | ---------- | ------- | ------------------------------------------------------------- |
+| 2026-04-12 | 354d9c8 | Auto-inject messages via murmur inbox + hook commands         |
+| 2026-04-12 | 493d445 | MCP server instructions for agent guidance                    |
 | 2026-04-12 | c86bb05 | SSRF TOCTOU fix — re-validate URLs at webhook delivery time   |
 | 2026-04-12 | ed95df5 | Per-webhook secrets in routes + strip secrets from list API   |
 | 2026-04-12 | 839f83c | Webhook retry with exponential backoff                        |
