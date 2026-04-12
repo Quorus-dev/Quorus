@@ -133,24 +133,42 @@ async def test_send_message_relay_unreachable():
         assert "error" in result.lower() or "cannot" in result.lower()
 
 
-async def test_check_messages_prefers_local_buffer():
-    """Buffered channel messages should be returned before hitting the relay."""
+async def test_check_messages_always_fetches_from_durable_queue():
+    """check_messages should always fetch from durable queue, SSE is notification-only."""
+    # Put messages in SSE buffer (these should be ignored/cleared)
     await mcp_server._append_pending_messages([
         {
-            "id": "msg-1",
-            "from_name": "alice",
-            "content": "pushed",
+            "id": "sse-msg",
+            "from_name": "sse_sender",
+            "content": "sse notification",
             "timestamp": "2026-04-08T12:00:00Z",
         }
     ])
 
-    mock_client = _make_mock_client("get", [])
+    # Mock the HTTP client to return messages from durable queue
+    mock_client = _make_mock_client("get", {
+        "messages": [
+            {
+                "id": "queue-msg",
+                "from_name": "alice",
+                "content": "from durable queue",
+                "timestamp": "2026-04-08T12:00:00Z",
+            }
+        ],
+        "ack_token": "test-ack-token",
+    })
+    # Also mock the ACK endpoint
+    mock_ack_response = MagicMock(status_code=200, raise_for_status=MagicMock())
+    mock_client.post = AsyncMock(return_value=mock_ack_response)
+
     with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
-    mock_client.get.assert_not_called()
+    # HTTP get should be called (always fetch from durable queue)
+    mock_client.get.assert_called_once()
+    # Result should contain the durable queue message, not the SSE message
     assert "alice" in result
-    assert "pushed" in result
+    assert "from durable queue" in result
 
 
 async def test_send_push_notification_uses_configured_method():
