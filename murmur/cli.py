@@ -1002,6 +1002,8 @@ def _cmd_connect(args):
         "cursor": _connect_cursor,
         "ollama": _connect_ollama,
         "claude": _connect_claude,
+        "gemini": _connect_gemini,
+        "http": _connect_http,
     }
 
     if platform not in generators:
@@ -1183,6 +1185,92 @@ def _connect_claude(
         highlight=False, markup=False,
     )
     console.print(f"\n[green]{name} joined room '{room}'. Ready to go.[/green]")
+
+
+def _connect_gemini(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generate Gemini CLI MCP config and system prompt."""
+    console.print("\n[bold green]Gemini CLI Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]\n")
+
+    mcp_config = json.dumps({
+        "mcpServers": {
+            "murmur": {
+                "command": "uv",
+                "args": [
+                    "run", "--directory", murmur_dir,
+                    "python", f"{murmur_dir}/murmur/mcp_server.py",
+                ],
+                "env": {
+                    "INSTANCE_NAME": name,
+                    "RELAY_URL": relay_url,
+                    "RELAY_SECRET": secret,
+                },
+            }
+        }
+    }, indent=2)
+
+    console.print("[bold]1. Add to ~/.gemini/settings.json:[/bold]\n")
+    console.print(mcp_config, highlight=False, markup=False)
+
+    console.print("\n[bold]2. Add to your GEMINI.md system prompt:[/bold]\n")
+    rules = f"""\
+You are {name} in the {room} Murmur coordination room. Use MCP tools to coordinate:
+- check_messages() — read pending messages from other agents
+- send_room_message(room_id="{room}", content="...", message_type="chat") — broadcast
+- claim_task(room_id="{room}", task_id="...", agent_id="{name}") — claim exclusive work
+- release_task(room_id="{room}", task_id="...") — release when done
+- get_room_state(room_id="{room}") — full coordination snapshot
+
+Check messages after every task. Use CLAIM: prefix for file/task locks. Post STATUS: when done."""
+
+    console.print(rules, highlight=False, markup=False)
+    console.print(f"\n[green]{name} joined room '{room}'. Restart Gemini CLI to activate MCP.[/green]")
+
+
+def _connect_http(
+    room: str, name: str, relay_url: str, secret: str, murmur_dir: str,
+) -> None:
+    """Generic HTTP/curl integration for any agent that can make HTTP calls."""
+    console.print("\n[bold green]Generic HTTP Agent Setup[/bold green]\n")
+    console.print(f"  Agent:  [cyan]{name}[/cyan]")
+    console.print(f"  Room:   [cyan]{room}[/cyan]")
+    console.print(f"  Relay:  [cyan]{relay_url}[/cyan]\n")
+    console.print("[dim]Works with any agent: Codex, Antigravity, Open Interpreter, Windsurf, etc.[/dim]\n")
+
+    console.print("[bold]System prompt to give the agent:[/bold]\n")
+    system_prompt = f"""\
+You are {name} in a Murmur coordination room. Communicate via these HTTP endpoints:
+
+# Join the room first (run once):
+curl -sX POST "{relay_url}/rooms/{room}/join" \\
+  -H "Authorization: Bearer {secret}" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"participant":"{name}"}}'
+
+# Check for messages from other agents:
+curl -s "{relay_url}/rooms/{room}/history?limit=20" \\
+  -H "Authorization: Bearer {secret}"
+
+# Send a message to all agents in the room:
+curl -sX POST "{relay_url}/rooms/{room}/messages" \\
+  -H "Authorization: Bearer {secret}" -H "Content-Type: application/json" \\
+  -d '{{"from_name":"{name}","content":"your message","message_type":"chat"}}'
+
+# Claim exclusive access to a file/task (distributed mutex):
+curl -sX POST "{relay_url}/rooms/{room}/lock" \\
+  -H "Authorization: Bearer {secret}" -H "Content-Type: application/json" \\
+  -d '{{"resource":"{name}_task","locked_by":"{name}","ttl_seconds":300}}'
+
+# Get full room state (goal, tasks, decisions):
+curl -s "{relay_url}/rooms/{room}/state" -H "Authorization: Bearer {secret}"
+
+Check messages before each task. Claim with CLAIM:. Post STATUS: when done."""
+
+    console.print(system_prompt, highlight=False, markup=False)
+    console.print(f"\n[green]{name} joined room '{room}'. Ready.[/green]")
 
 
 async def _kick(room_name: str, participant: str) -> None:
@@ -3930,8 +4018,9 @@ def main():
         help="Generate setup for any agent platform (codex, cursor, ollama, claude)",
     )
     p_connect.add_argument(
-        "platform", choices=["codex", "cursor", "ollama", "claude"],
-        help="Agent platform",
+        "platform",
+        choices=["codex", "cursor", "ollama", "claude", "gemini", "http"],
+        help="Agent platform (http = generic curl/HTTP for any AI that can make requests)",
     )
     p_connect.add_argument("room", help="Room name")
     p_connect.add_argument("name", help="Agent name")
