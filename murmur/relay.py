@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -455,6 +456,99 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
+# ---------------------------------------------------------------------------
+# 404 Rate Limiting — block clients that repeatedly hit non-existent resources
+# ---------------------------------------------------------------------------
+
+# Config: max 404s per IP before temporary block
+NOT_FOUND_LIMIT = int(os.environ.get("NOT_FOUND_LIMIT", "30"))
+NOT_FOUND_WINDOW = int(os.environ.get("NOT_FOUND_WINDOW", "60"))  # seconds
+NOT_FOUND_BLOCK_DURATION = int(os.environ.get("NOT_FOUND_BLOCK_DURATION", "300"))
+
+# In-memory state (will be cleared on restart, which is fine for this use case)
+_not_found_counts: dict[str, list[float]] = {}  # IP -> list of timestamps
+_blocked_ips: dict[str, float] = {}  # IP -> block expiry timestamp
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP from request, handling proxies."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _is_blocked(ip: str) -> tuple[bool, int]:
+    """Check if IP is blocked. Returns (blocked, retry_after_seconds)."""
+    if ip in _blocked_ips:
+        expiry = _blocked_ips[ip]
+        now = time.time()
+        if now < expiry:
+            return True, int(expiry - now)
+        else:
+            del _blocked_ips[ip]
+    return False, 0
+
+
+def _record_not_found(ip: str) -> bool:
+    """Record a 404 for this IP. Returns True if IP should now be blocked."""
+    now = time.time()
+    cutoff = now - NOT_FOUND_WINDOW
+
+    # Get or create timestamp list
+    if ip not in _not_found_counts:
+        _not_found_counts[ip] = []
+
+    # Prune old timestamps
+    _not_found_counts[ip] = [ts for ts in _not_found_counts[ip] if ts > cutoff]
+
+    # Add new timestamp
+    _not_found_counts[ip].append(now)
+
+    # Check if limit exceeded
+    if len(_not_found_counts[ip]) >= NOT_FOUND_LIMIT:
+        _blocked_ips[ip] = now + NOT_FOUND_BLOCK_DURATION
+        logger.warning(
+            "Blocking IP for repeated 404s",
+            ip=ip,
+            count=len(_not_found_counts[ip]),
+            block_duration=NOT_FOUND_BLOCK_DURATION,
+        )
+        del _not_found_counts[ip]
+        return True
+    return False
+
+
+class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
+    """Block clients that repeatedly hit non-existent resources (404 spam)."""
+
+    async def dispatch(self, request: Request, call_next):
+        from starlette.responses import JSONResponse
+
+        client_ip = _get_client_ip(request)
+
+        # Check if already blocked
+        blocked, retry_after = _is_blocked(client_ip)
+        if blocked:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Too many requests to non-existent resources. "
+                    "Please verify your room/resource IDs."
+                },
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        response = await call_next(request)
+
+        # Track 404s
+        if response.status_code == 404:
+            _record_not_found(client_ip)
+
+        return response
+
+
+app.add_middleware(NotFoundRateLimitMiddleware)
 app.add_middleware(RequestContextMiddleware)
 
 # Instrument Prometheus metrics but don't auto-expose — we add an auth-protected route.

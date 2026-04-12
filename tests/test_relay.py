@@ -2638,3 +2638,61 @@ async def test_add_room_decision(client: AsyncClient, auth_headers: dict):
     decisions = state.json()["resolved_decisions"]
     assert len(decisions) == 1
     assert decisions[0]["decision"] == "Use SSE over polling"
+
+
+# ---------------------------------------------------------------------------
+# 404 Rate Limiting Tests
+# ---------------------------------------------------------------------------
+
+
+async def test_404_rate_limit_blocks_after_threshold(client: AsyncClient, auth_headers):
+    """Repeated 404s from same client should trigger rate limiting."""
+    from murmur import relay
+
+    # Reset state
+    relay._not_found_counts.clear()
+    relay._blocked_ips.clear()
+
+    # Store original limit and set a low threshold for testing
+    original_limit = relay.NOT_FOUND_LIMIT
+    relay.NOT_FOUND_LIMIT = 5
+
+    try:
+        # Hit non-existent rooms repeatedly
+        for i in range(5):
+            resp = await client.get(
+                f"/rooms/nonexistent-room-{i}/history",
+                headers=auth_headers,
+            )
+            assert resp.status_code == 404
+
+        # Next request should be blocked with 429
+        resp = await client.get(
+            "/rooms/another-fake-room/history",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 429
+        assert "Retry-After" in resp.headers
+    finally:
+        relay.NOT_FOUND_LIMIT = original_limit
+        relay._not_found_counts.clear()
+        relay._blocked_ips.clear()
+
+
+async def test_404_rate_limit_allows_normal_requests(client: AsyncClient, auth_headers):
+    """Normal 404s under threshold should not be blocked."""
+    from murmur import relay
+
+    # Reset state
+    relay._not_found_counts.clear()
+    relay._blocked_ips.clear()
+
+    # A few 404s should be fine
+    for i in range(3):
+        resp = await client.get(
+            f"/rooms/missing-room-{i}/history",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404  # Not 429
+
+    relay._not_found_counts.clear()
