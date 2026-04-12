@@ -2505,6 +2505,183 @@ def _cmd_brief(args):
     console.print(f"  brief_id: [dim]{brief_id}[/dim]")
     console.print(f"  task:     {task}")
 
+    # Auto-decompose into subtasks via Claude API
+    subtasks = _decompose_brief(task, brief_id)
+    if subtasks:
+        # Post each subtask as a separate message
+        for subtask in subtasks:
+            try:
+                httpx.post(
+                    f"{RELAY_URL}/rooms/{room}/messages",
+                    json={
+                        "from_name": INSTANCE_NAME,
+                        "content": subtask,
+                        "message_type": "subtask",
+                        "brief_id": brief_id,
+                    },
+                    headers=headers,
+                    timeout=10,
+                ).raise_for_status()
+            except (httpx.ConnectError, httpx.HTTPStatusError):
+                console.print(f"[yellow]Warning: failed to post subtask: {subtask}[/yellow]")
+
+        # Display summary table
+        table = Table(title=f"Brief Decomposition — {brief_id[:8]}", show_lines=True)
+        table.add_column("Brief ID", style="dim", no_wrap=True)
+        table.add_column("Task", style="bold")
+        table.add_column("Subtasks", style="cyan")
+        table.add_row(brief_id[:8], task, "\n".join(f"{i+1}. {s}" for i, s in enumerate(subtasks)))
+        console.print(table)
+
+
+def _decompose_brief(task: str, brief_id: str) -> list[str]:
+    """Call Claude to break a brief into subtasks. Returns [] on any failure."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        console.print("[yellow]ANTHROPIC_API_KEY not set — skipping subtask decomposition[/yellow]")
+        return []
+    try:
+        import anthropic
+    except ImportError:
+        console.print("[yellow]anthropic not installed — skipping subtask decomposition[/yellow]")
+        return []
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Break this task into 3-5 specific, independently claimable subtasks "
+                    "for AI agents working in parallel on a software project. "
+                    "Return ONLY a numbered list, one subtask per line, no explanation.\n\n"
+                    f"Task: {task}"
+                ),
+            }],
+        )
+        raw = response.content[0].text.strip()
+        subtasks = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Strip leading "1. " / "1) " / "- " prefixes
+            import re
+            cleaned = re.sub(r"^[\d]+[.)]\s*|-\s*", "", line).strip()
+            if cleaned:
+                subtasks.append(cleaned)
+        return subtasks
+    except Exception as exc:
+        console.print(f"[yellow]Subtask decomposition failed: {exc}[/yellow]")
+        return []
+
+
+async def _show_board(room_filter: str | None = None) -> None:
+    """Fetch all rooms + their state in parallel, then render the board."""
+    import datetime as _dt
+
+    client = _get_client()
+    try:
+        # 1. List all rooms
+        resp = await client.get(f"{RELAY_URL}/rooms", headers=_auth_headers())
+        resp.raise_for_status()
+        rooms = resp.json()
+    except httpx.ConnectError:
+        _relay_unreachable()
+        await client.aclose()
+        return
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error listing rooms: {e.response.status_code}[/red]")
+        await client.aclose()
+        return
+
+    if room_filter:
+        rooms = [r for r in rooms if r["name"] == room_filter]
+        if not rooms:
+            console.print(f"[red]Room '{room_filter}' not found[/red]")
+            await client.aclose()
+            return
+
+    if not rooms:
+        console.print("[dim]No rooms yet.[/dim]")
+        await client.aclose()
+        return
+
+    # 2. Fetch all room states in parallel
+    async def fetch_state(room: dict) -> dict:
+        try:
+            r = await client.get(
+                f"{RELAY_URL}/rooms/{room['id']}/state",
+                headers=_auth_headers(),
+                timeout=10,
+            )
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {}
+
+    states = await asyncio.gather(*[fetch_state(r) for r in rooms])
+
+    # 3. Render summary table
+    table = Table(title="Murmur Swarm Board", show_lines=True)
+    table.add_column("Room", style="bold cyan", no_wrap=True)
+    table.add_column("Active Brief / Goal", style="white")
+    table.add_column("Agents", style="green", justify="center")
+    table.add_column("Claimed Tasks", style="yellow", justify="center")
+
+    room_details: list[tuple[str, list[dict]]] = []
+
+    for room, state in zip(rooms, states):
+        goal = state.get("active_goal") or "[dim](none)[/dim]"
+        agents = state.get("active_agents") or room.get("members", [])
+        claimed = state.get("claimed_tasks", [])
+        table.add_row(
+            room["name"],
+            goal,
+            str(len(agents)),
+            str(len(claimed)),
+        )
+        room_details.append((room["name"], claimed, agents))
+
+    console.print(table)
+
+    # 4. Per-room claimed task detail
+    any_claimed = any(claimed for _, claimed, _ in room_details)
+    if any_claimed:
+        console.print()
+        for room_name, claimed, _agents in room_details:
+            if not claimed:
+                continue
+            console.print(f"[bold]{room_name}:[/bold]")
+            for task in claimed:
+                agent = task.get("claimed_by") or task.get("agent") or "?"
+                content = task.get("content") or task.get("task") or str(task)
+                ts = task.get("claimed_at") or task.get("timestamp") or ""
+                age_str = ""
+                if ts:
+                    try:
+                        diff = round(
+                            (
+                                _dt.datetime.now(_dt.timezone.utc)
+                                - _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            ).total_seconds()
+                        )
+                        if diff < 60:
+                            age_str = f" (claimed {diff}s ago)"
+                        else:
+                            age_str = f" (claimed {diff // 60}m ago)"
+                    except ValueError:
+                        pass
+                console.print(f"  [cyan]•[/cyan] [{agent}] {content}{age_str}")
+
+    await client.aclose()
+
+
+def _cmd_board(args):
+    asyncio.run(_show_board(getattr(args, "room", None)))
+
 
 def _cmd_setup_swarm(args):
     """Create N rooms each with a purpose and M agents."""
@@ -2930,6 +3107,9 @@ def main():
     p_brief.add_argument("room", help="Room name")
     p_brief.add_argument("task", nargs=argparse.REMAINDER, help="Task description")
 
+    p_board = sub.add_parser("board", help="Show swarm status board")
+    p_board.add_argument("--room", default=None, help="Filter to specific room")
+
     p_swarm = sub.add_parser(
         "setup-swarm", help="Create multiple rooms with agents (swarm setup)"
     )
@@ -2995,6 +3175,7 @@ def main():
         "locks": _cmd_room_locks,
         "usage": _cmd_usage,
         "brief": _cmd_brief,
+        "board": _cmd_board,
         "setup-swarm": _cmd_setup_swarm,
         "resolve": _cmd_resolve,
     }
