@@ -11,7 +11,7 @@ Last updated: 2026-04-12 11:30 EDT
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (752 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (754 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -36,7 +36,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 | murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing               |
 | murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                          |
 | murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                        |
-| tests/                      | ~7500  | 752 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
+| tests/                      | ~7500  | 754 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -132,6 +132,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 | Date       | Commit  | What                                                          |
 | ---------- | ------- | ------------------------------------------------------------- |
+| 2026-04-12 | adb8755 | 404 rate limiting — block stale clients hammering deleted rooms |
 | 2026-04-12 | 4d0c65c | SSE notification-only: always fetch+ACK from durable queue    |
 | 2026-04-12 | a0b86b9 | Fix murmur ps crash when uptime_start is null                 |
 | 2026-04-12 | a3a26e1 | Add brief/subtask/decision message types to relay             |
@@ -140,8 +141,6 @@ murmur init <your-name> --relay <url> --secret <secret>
 | 2026-04-12 | 493d445 | MCP server instructions for agent guidance                    |
 | 2026-04-12 | c86bb05 | SSRF TOCTOU fix — re-validate URLs at webhook delivery time   |
 | 2026-04-12 | ed95df5 | Per-webhook secrets in routes + strip secrets from list API   |
-| 2026-04-12 | 839f83c | Webhook retry with exponential backoff                        |
-| 2026-04-12 | 6deb7a2 | Atomic idempotency with SET NX prevents race conditions       |
 
 ---
 
