@@ -480,3 +480,7 @@ class IdempotencyBackend(Protocol):
     ) -> None:
         """Store result with TTL."""
         ...
+
+    async def delete(self, tenant_id: str, key: str) -> None:
+        """Delete a key (used to release pending reservations on failure)."""
+        ...

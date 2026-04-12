@@ -811,6 +811,10 @@ class InMemoryIdempotencyBackend:
             for k in expired:
                 del self._store[k]
 
+    async def delete(self, tenant_id: str, key: str) -> None:
+        async with self._lock:
+            self._store.pop((tenant_id, key), None)
+
     def clear(self) -> None:
         self._store.clear()
 

@@ -947,6 +947,9 @@ class RedisIdempotencyBackend:
     ) -> None:
         await self._r.set(self._key(tenant_id, key), json.dumps(result), ex=ttl)
 
+    async def delete(self, tenant_id: str, key: str) -> None:
+        await self._r.delete(self._key(tenant_id, key))
+
 
 # -- Webhook delivery queue -------------------------------------------------
 
