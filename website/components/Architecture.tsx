@@ -270,7 +270,7 @@ export default function Architecture() {
             <FadeUp delay={0.2}>
               <div className="text-center">
                 <div className="text-2xl font-bold gradient-text-subtle">
-                  <Counter value={780} suffix="+" />
+                  <Counter value={866} suffix="+" />
                 </div>
                 <div className="text-xs text-white/30 mt-1 font-mono">
                   tests passing

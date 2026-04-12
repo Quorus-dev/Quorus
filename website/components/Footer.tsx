@@ -21,7 +21,7 @@ export default function Footer() {
             GitHub
           </a>
           <a
-            href="https://github.com/Aarya2004/murmur"
+            href="https://github.com/Aarya2004/murmur#reference"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-white/70 transition-colors"

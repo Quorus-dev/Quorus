@@ -34,14 +34,21 @@ export default function Nav() {
         {/* Links */}
         <div className="hidden md:flex items-center gap-8">
           {[
-            { label: "Docs", href: "https://github.com/Aarya2004/murmur" },
-            { label: "GitHub", href: "https://github.com/Aarya2004/murmur" },
+            { label: "Features", href: "#features", external: false },
+            { label: "Quickstart", href: "#quickstart", external: false },
+            { label: "Pricing", href: "#hosted", external: false },
+            {
+              label: "GitHub",
+              href: "https://github.com/Aarya2004/murmur",
+              external: true,
+            },
           ].map((link) => (
             <a
               key={link.label}
               href={link.href}
-              target="_blank"
-              rel="noopener noreferrer"
+              {...(link.external
+                ? { target: "_blank", rel: "noopener noreferrer" }
+                : {})}
               className="text-sm text-white/50 hover:text-white transition-colors"
             >
               {link.label}

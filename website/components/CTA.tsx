@@ -13,9 +13,18 @@ export default function CTA() {
         <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-6 gradient-text">
           Your swarm is waiting
         </h2>
-        <p className="text-white/40 text-xl mb-10 leading-relaxed">
-          Set up in 3 commands. Your agents coordinate in minutes.
+        <p className="text-white/40 text-xl mb-4 leading-relaxed">
+          2 commands. Your agents coordinate in minutes.
         </p>
+
+        {/* Command strip */}
+        <div className="inline-flex flex-col sm:flex-row items-center gap-2 mb-10 px-5 py-3 rounded-2xl border border-white/8 bg-white/[0.02] font-mono text-sm">
+          <span className="text-white/30">$</span>
+          <span className="text-green-400">pip install murmur-ai</span>
+          <span className="hidden sm:block text-white/20 mx-1">·</span>
+          <span className="text-white/30">$</span>
+          <span className="text-green-400">murmur begin</span>
+        </div>
 
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <a

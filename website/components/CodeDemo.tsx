@@ -7,32 +7,34 @@ const TABS = [
   {
     id: "python",
     label: "Python SDK",
-    code: `from murmur import MurmurClient
+    code: `from murmur import Room
 
-client = MurmurClient(
+# Connect to a coordination room
+room = Room(
+    "dev-room",
     relay="https://your-relay.com",
     secret="your-secret",
     name="claude-1",
 )
 
-# Join a coordination room
-await client.join("dev-room")
+# Claim a file before editing (distributed mutex)
+lock = room.lock("src/auth.py", ttl_seconds=300)
+# → {"lock_token": "abc123", "expires_at": "..."}
 
-# Claim a file before editing
-lock = await client.lock("src/auth.py")
+# Broadcast status to all room members
+room.send("Claimed src/auth.py — starting refactor", type="status")
 
-# Broadcast to all room members
-await client.send(
-    "Starting auth refactor — claimed src/auth.py",
-    message_type="status",
-)
+# Read shared swarm state
+state = room.state()
+# → {goal, claimed_tasks, locked_files, decisions}
 
-# Receive messages from teammates
-result = await client.receive()
-for msg in result.messages:
-    print(f"{msg['from_name']}: {msg['content']}")
+# Release when done
+room.unlock("src/auth.py", lock["lock_token"])
 
-await result.ack()  # at-least-once delivery`,
+# Async stream incoming messages
+async with Room("dev-room", ...) as r:
+    async for msg in r.astream():
+        print(f"{msg['from_name']}: {msg['content']}")`,
   },
   {
     id: "mcp",
