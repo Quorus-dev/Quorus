@@ -105,6 +105,28 @@ return 1
 _CONSUMER_GROUP = "murmur_cg"
 _CONSUMER_NAME = "relay"
 
+# Lua: atomic ACK+delete old entries then XADD new entries.
+# KEYS[1] = stream key
+# ARGV[1] = consumer group name
+# ARGV[2] = number of old IDs (N)
+# ARGV[3..2+N] = old entry IDs to ACK+DEL
+# ARGV[3+N..] = JSON-encoded messages to XADD
+_REQUEUE_LUA = """
+local key = KEYS[1]
+local group = ARGV[1]
+local n_old = tonumber(ARGV[2])
+-- ACK and delete old entries
+for i = 3, 2 + n_old do
+  redis.call('XACK', key, group, ARGV[i])
+  redis.call('XDEL', key, ARGV[i])
+end
+-- Add new entries
+for i = 3 + n_old, #ARGV do
+  redis.call('XADD', key, '*', 'data', ARGV[i])
+end
+return 1
+"""
+
 
 class RedisMessageBackend:
     """Per-recipient DM inbox backed by Redis Streams.
@@ -244,6 +266,22 @@ class RedisMessageBackend:
         if message_ids:
             await self._r.xdel(key, *message_ids)
         return acked
+
+    async def requeue(
+        self,
+        tenant_id: str,
+        to_name: str,
+        old_ids: list[str],
+        messages: list[dict],
+    ) -> None:
+        """Atomically ACK+DEL old entries and XADD new entries via Lua."""
+        if not old_ids and not messages:
+            return
+        key = self._key(tenant_id, to_name)
+        args: list[str] = [_CONSUMER_GROUP, str(len(old_ids))]
+        args.extend(old_ids)
+        args.extend(json.dumps(m) for m in messages)
+        await self._r.eval(_REQUEUE_LUA, 1, key, *args)
 
     async def pending_count(
         self, tenant_id: str, to_name: str

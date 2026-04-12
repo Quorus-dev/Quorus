@@ -66,6 +66,22 @@ class MessageBackend(Protocol):
         """
         ...
 
+    async def requeue(
+        self,
+        tenant_id: str,
+        to_name: str,
+        old_ids: list[str],
+        messages: list[dict],
+    ) -> None:
+        """Atomically ACK *old_ids* and re-enqueue *messages* as new entries.
+
+        Used to return incomplete chunk groups to the inbox without a
+        crash window.  If the process dies mid-operation, either the old
+        entries survive (will be reclaimed by visibility timeout) or the
+        new entries survive — no data is lost.
+        """
+        ...
+
     async def pending_count(
         self, tenant_id: str, to_name: str
     ) -> int:

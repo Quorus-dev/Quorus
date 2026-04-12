@@ -123,6 +123,32 @@ class InMemoryMessageBackend:
                     acked += 1
             return acked
 
+    async def requeue(
+        self,
+        tenant_id: str,
+        to_name: str,
+        old_ids: list[str],
+        messages: list[dict],
+    ) -> None:
+        """Atomically ACK old entries and re-enqueue as new (under one lock)."""
+        async with self._lock:
+            # Remove old entries from pending
+            for mid in old_ids:
+                key = self._msg_id_index.pop(mid, None)
+                if key is None:
+                    continue
+                tid, name, token = key
+                if tid != tenant_id or name != to_name:
+                    continue
+                entry = self._pending.get(key)
+                if entry:
+                    msgs, fetch_time = entry
+                    msgs[:] = [m for m in msgs if m.get("id") != mid]
+                    if not msgs:
+                        self._pending.pop(key, None)
+            # Re-enqueue as fresh messages
+            self._queues[(tenant_id, to_name)].extend(messages)
+
     async def pending_count(
         self, tenant_id: str, to_name: str
     ) -> int:

@@ -312,42 +312,43 @@ class MessageService:
         recipient: str,
         ekey: tuple[str, str],
     ) -> tuple[list[dict], list[dict], str]:
-        """Fetch messages, reassemble chunks, re-enqueue incomplete groups.
+        """Fetch messages, reassemble chunks, atomically requeue incomplete groups.
 
-        Returns (ready, held_back, ack_token). Only held_back entries are
-        ACKed and re-enqueued as fresh entries. Ready messages stay in
-        pending state — their delivery IDs form the returned ack_token
-        for client-side ACK.
+        Returns (ready, held_back, ack_token).  Incomplete chunk groups
+        are atomically ACKed and re-enqueued via ``backend.requeue()``
+        (a single Lua script on Redis) so there is no crash window where
+        data could be lost.
+
+        The ack_token covers only ready messages.  For reassembled chunked
+        messages it includes *all* chunk delivery IDs, not just the first.
         """
         all_msgs, ack_token = await self._backend.fetch(tenant_id, recipient)
         self._events[ekey].clear()
         ready, held_back = _reassemble_chunks(all_msgs)
 
         if held_back:
-            # Collect delivery IDs for held_back and ready messages
             held_back_ids = [
                 m["_delivery_id"] for m in held_back if "_delivery_id" in m
             ]
-            ready_ids = [
-                m["_delivery_id"] for m in ready if "_delivery_id" in m
-            ]
-
-            # ACK only the held_back entries (removes them from pending)
-            if held_back_ids:
-                await self._backend.ack_ids(
-                    tenant_id, recipient, held_back_ids
-                )
-
-            # Re-enqueue incomplete chunks as fresh stream entries
-            # Strip _delivery_id before re-enqueue — they'll get new ones
+            # Strip delivery IDs before re-enqueue — they'll get new ones
             for m in held_back:
                 m.pop("_delivery_id", None)
-            await self._backend.enqueue_batch(
-                tenant_id, recipient, held_back
+            # Atomic ACK+re-enqueue: no crash window
+            await self._backend.requeue(
+                tenant_id, recipient, held_back_ids, held_back
             )
 
-            # Return ack_token with only ready message delivery IDs
-            ack_token = json.dumps(ready_ids) if ready_ids else ""
+        # Always rebuild ack_token from ready messages so it correctly
+        # includes every chunk delivery ID for reassembled messages.
+        ready_ids: list[str] = []
+        for m in ready:
+            chunk_ids = m.get("_chunk_delivery_ids")
+            if chunk_ids:
+                ready_ids.extend(chunk_ids)
+            elif "_delivery_id" in m:
+                ready_ids.append(m["_delivery_id"])
+
+        ack_token = json.dumps(ready_ids) if ready_ids else ""
 
         return ready, held_back, ack_token
 
@@ -364,8 +365,23 @@ class MessageService:
     async def ack_by_ids(
         self, tenant_id: str, recipient: str, message_ids: list[str]
     ) -> int:
-        """Acknowledge specific message IDs. Returns count of newly acked."""
-        return await self._backend.ack_ids(tenant_id, recipient, message_ids)
+        """Acknowledge specific message IDs. Returns count of newly acked.
+
+        Delivery IDs may be compound JSON arrays (for reassembled chunked
+        messages).  These are transparently expanded so all underlying
+        stream entries are ACKed.
+        """
+        expanded: list[str] = []
+        for mid in message_ids:
+            try:
+                parsed = json.loads(mid)
+                if isinstance(parsed, list):
+                    expanded.extend(parsed)
+                    continue
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+            expanded.append(mid)
+        return await self._backend.ack_ids(tenant_id, recipient, expanded)
 
     # ------------------------------------------------------------------
     # Peek
