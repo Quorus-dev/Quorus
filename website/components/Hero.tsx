@@ -11,8 +11,9 @@ function HeroWaitlist() {
 const TYPEWRITER_WORDS = [
   "AI Swarms",
   "Agent Teams",
-  "Claude Agents",
-  "Distributed AI",
+  "Cursor Agents",
+  "Codex Agents",
+  "Gemini Agents",
   "Your Swarm",
 ];
 
@@ -48,53 +49,10 @@ function TypewriterWord() {
   );
 }
 
-const SUBHEADLINES = [
-  "Any model. Any machine. Real-time coordination.",
-  "3 lines of Python. Infinite agent reach.",
-  "SSE push, shared state, distributed locks — built in.",
-  "The missing communication layer for AI swarms.",
-];
-
-function TypewriterSubheadline() {
-  const [index, setIndex] = useState(0);
-  const [displayed, setDisplayed] = useState("");
-  const [phase, setPhase] = useState<"typing" | "holding" | "erasing">(
-    "typing",
-  );
-  const text = SUBHEADLINES[index];
-
-  useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout>;
-    if (phase === "typing" && displayed.length < text.length) {
-      timeout = setTimeout(
-        () => setDisplayed(text.slice(0, displayed.length + 1)),
-        38,
-      );
-    } else if (phase === "typing" && displayed.length === text.length) {
-      timeout = setTimeout(() => setPhase("holding"), 2800);
-    } else if (phase === "holding") {
-      timeout = setTimeout(() => setPhase("erasing"), 0);
-    } else if (phase === "erasing" && displayed.length > 0) {
-      timeout = setTimeout(() => setDisplayed(displayed.slice(0, -1)), 22);
-    } else if (phase === "erasing" && displayed.length === 0) {
-      setIndex((i) => (i + 1) % SUBHEADLINES.length);
-      setPhase("typing");
-    }
-    return () => clearTimeout(timeout);
-  }, [displayed, phase, text]);
-
-  return (
-    <span>
-      {displayed}
-      <span className="text-violet-400 opacity-70">|</span>
-    </span>
-  );
-}
-
 const AGENT_NODES = [
   {
     id: "a1",
-    label: "claude-1",
+    label: "claude-code",
     status: "building auth...",
     locked: true,
     x: -290,
@@ -103,7 +61,7 @@ const AGENT_NODES = [
   },
   {
     id: "a2",
-    label: "claude-2",
+    label: "cursor-1",
     status: "reviewing PR",
     locked: false,
     x: 290,
@@ -112,7 +70,7 @@ const AGENT_NODES = [
   },
   {
     id: "a3",
-    label: "codex-3",
+    label: "codex-1",
     status: "running tests",
     locked: false,
     x: 0,
@@ -257,33 +215,49 @@ export default function Hero() {
       />
 
       {/* Aurora mesh — layered animated blobs */}
+      {/* Primary violet orb — centered behind headline */}
       <motion.div
-        className="absolute w-[1100px] h-[700px] rounded-full pointer-events-none"
+        className="absolute w-[900px] h-[600px] rounded-full pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(124,58,237,0.15) 0%, rgba(109,40,217,0.06) 40%, transparent 70%)",
-          top: "15%",
+            "radial-gradient(ellipse, rgba(124,58,237,0.28) 0%, rgba(109,40,217,0.10) 45%, transparent 70%)",
+          top: "10%",
           left: "50%",
           translateX: "-50%",
+          filter: "blur(40px)",
         }}
         animate={{
-          scale: [1, 1.08, 0.97, 1.05, 1],
-          opacity: [0.7, 1, 0.8, 1, 0.7],
+          scale: [1, 1.07, 0.96, 1.04, 1],
+          opacity: [0.8, 1, 0.85, 1, 0.8],
         }}
         transition={{ duration: 9, repeat: Infinity, ease: "easeInOut" }}
       />
-      <motion.div
-        className="absolute w-[600px] h-[500px] rounded-full pointer-events-none"
+      {/* Secondary tight glow — headline halo */}
+      <div
+        className="absolute w-[500px] h-[280px] rounded-full pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(6,182,212,0.09) 0%, transparent 70%)",
-          top: "35%",
-          left: "20%",
+            "radial-gradient(ellipse, rgba(139,92,246,0.18) 0%, transparent 70%)",
+          top: "22%",
+          left: "50%",
+          transform: "translateX(-50%)",
+          filter: "blur(60px)",
+        }}
+      />
+      {/* Cyan accent — left */}
+      <motion.div
+        className="absolute w-[500px] h-[400px] rounded-full pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse, rgba(6,182,212,0.12) 0%, transparent 70%)",
+          top: "30%",
+          left: "5%",
+          filter: "blur(30px)",
         }}
         animate={{
-          scale: [1, 1.25, 1, 1.1, 1],
-          x: [0, 30, 0, -20, 0],
-          opacity: [0.5, 0.9, 0.6, 1, 0.5],
+          scale: [1, 1.2, 1, 1.1, 1],
+          x: [0, 25, 0, -15, 0],
+          opacity: [0.5, 0.85, 0.6, 0.95, 0.5],
         }}
         transition={{
           duration: 11,
@@ -292,18 +266,20 @@ export default function Hero() {
           delay: 1.5,
         }}
       />
+      {/* Purple accent — right */}
       <motion.div
-        className="absolute w-[450px] h-[350px] rounded-full pointer-events-none"
+        className="absolute w-[380px] h-[300px] rounded-full pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(167,139,250,0.08) 0%, transparent 70%)",
-          top: "50%",
-          left: "65%",
+            "radial-gradient(ellipse, rgba(167,139,250,0.14) 0%, transparent 70%)",
+          top: "45%",
+          left: "68%",
+          filter: "blur(30px)",
         }}
         animate={{
-          scale: [1, 1.15, 0.95, 1.2, 1],
-          y: [0, -20, 10, -10, 0],
-          opacity: [0.4, 0.8, 0.5, 0.9, 0.4],
+          scale: [1, 1.12, 0.93, 1.18, 1],
+          y: [0, -18, 8, -10, 0],
+          opacity: [0.45, 0.8, 0.5, 0.88, 0.45],
         }}
         transition={{
           duration: 13,
@@ -361,9 +337,10 @@ export default function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.2 }}
         >
-          Any model. Any machine. Real-time coordination.
+          Claude Code, Cursor, Codex, Gemini — any agent, any model, any
+          machine.
           <br className="hidden md:block" />
-          Rooms, SSE push, shared state, distributed locks — for every AI agent.
+          Rooms, SSE push, shared state, distributed locks. Zero config.
         </motion.p>
 
         {/* Waitlist form */}
