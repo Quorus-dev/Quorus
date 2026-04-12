@@ -71,6 +71,22 @@ class RoomMessageService:
         Uses direct backend.enqueue + SSE push (not MessageService.send_dm)
         to avoid per-fan-out rate limiting.
 
+        **Delivery model (eventual consistency):**
+
+        1. Message is persisted to Postgres (source of truth) FIRST.
+        2. Fan-out to Redis member queues for real-time delivery.
+        3. SSE push to connected clients.
+        4. Analytics/webhook notifications (best-effort).
+
+        If step 1 fails, the operation fails cleanly (no side effects).
+        If steps 2-4 fail after step 1, the message is durably stored but
+        some recipients may miss real-time delivery. They can poll history.
+
+        This is better than the reverse (recipients get message, history fails)
+        which would cause duplicate fan-out on retry.
+
+        **Future:** An outbox pattern would make steps 2-4 fully transactional.
+
         Returns ``{"id": ..., "timestamp": ...}``.
         """
         # Rate limit the sender
@@ -139,30 +155,58 @@ class RoomMessageService:
         # Batch enqueue with atomic quota enforcement
         # Returns set of recipients rejected due to queue capacity
         rejected_recipients: set[str] = set()
+        fanout_failed = False
         if fanout_messages:
-            rejected_recipients = await self._msg_backend.enqueue_fanout(
-                tenant_id, fanout_messages, maxlen=MAX_RECIPIENT_DEPTH
+            try:
+                rejected_recipients = await self._msg_backend.enqueue_fanout(
+                    tenant_id, fanout_messages, maxlen=MAX_RECIPIENT_DEPTH
+                )
+
+                if rejected_recipients:
+                    for r in rejected_recipients:
+                        logger.warning(
+                            "Room fan-out rejected: recipient queue full",
+                            room=room_name,
+                            recipient=r,
+                        )
+
+                # Notify via SSE and callbacks (only for delivered recipients)
+                for recipient, fan_out_msg in fanout_messages.items():
+                    if recipient in rejected_recipients:
+                        continue
+                    if self._on_enqueue:
+                        self._on_enqueue(tenant_id, recipient)
+                    self._sse.push(tenant_id, recipient, fan_out_msg)
+            except Exception as e:
+                # Fan-out failed but message is in Postgres — log and continue
+                fanout_failed = True
+                logger.error(
+                    "Room fan-out failed after history commit (message saved but "
+                    "real-time delivery failed — recipients can poll history)",
+                    message_id=message_id,
+                    room=room_name,
+                    error=str(e),
+                )
+
+        # Analytics and webhook notification (best-effort, don't fail the send)
+        try:
+            await self._analytics.track_send(tenant_id, sender)
+        except Exception as e:
+            logger.warning(
+                "Analytics tracking failed (non-fatal)",
+                message_id=message_id,
+                error=str(e),
             )
 
-            if rejected_recipients:
-                for r in rejected_recipients:
-                    logger.warning(
-                        "Room fan-out rejected: recipient queue full",
-                        room=room_name,
-                        recipient=r,
-                    )
-
-            # Notify via SSE and callbacks (only for delivered recipients)
-            for recipient, fan_out_msg in fanout_messages.items():
-                if recipient in rejected_recipients:
-                    continue
-                if self._on_enqueue:
-                    self._on_enqueue(tenant_id, recipient)
-                self._sse.push(tenant_id, recipient, fan_out_msg)
-
-        # Analytics and webhook notification
-        await self._analytics.track_send(tenant_id, sender)
-        await self._webhook.notify_room(tenant_id, room_id, history_msg)
+        try:
+            await self._webhook.notify_room(tenant_id, room_id, history_msg)
+        except Exception as e:
+            logger.warning(
+                "Webhook notification failed (non-fatal)",
+                message_id=message_id,
+                room=room_name,
+                error=str(e),
+            )
 
         delivered_count = len(members) - len(rejected_recipients)
         logger.info(
@@ -174,7 +218,11 @@ class RoomMessageService:
             len(members),
         )
         result = {"id": message_id, "timestamp": timestamp}
-        if rejected_recipients:
+        if fanout_failed:
+            result["warning"] = (
+                "Real-time delivery failed — message saved, poll history to retrieve"
+            )
+        elif rejected_recipients:
             result["skipped_recipients"] = list(rejected_recipients)
             result["warning"] = (
                 f"{len(rejected_recipients)} recipient(s) rejected due to full queues"
