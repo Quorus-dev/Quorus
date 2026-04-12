@@ -34,11 +34,11 @@ You spin up 3 Claude Code instances on the same repo. Agent A rewrites the auth 
 
 Three primitives that transform Murmur from a message bus into a full coordination layer:
 
-| Primitive | Endpoint | What it does |
-|-----------|----------|--------------|
-| **A — Shared State Matrix** | `GET /rooms/{room}/state` | Live snapshot: goal, claimed tasks, locked files, decisions, active agents |
-| **B — Distributed Mutex** | `POST/DELETE /rooms/{room}/lock` | Optimistic file locking with TTL, SSE broadcast on acquire/release |
-| **C — Watcher Daemon** | `murmur watch-context {room}` | SSE-driven `.murmur/context.md` — IDE-indexable live context |
+| Primitive                   | Endpoint                         | What it does                                                               |
+| --------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
+| **A — Shared State Matrix** | `GET /rooms/{room}/state`        | Live snapshot: goal, claimed tasks, locked files, decisions, active agents |
+| **B — Distributed Mutex**   | `POST/DELETE /rooms/{room}/lock` | Optimistic file locking with TTL, SSE broadcast on acquire/release         |
+| **C — Watcher Daemon**      | `murmur watch-context {room}`    | SSE-driven `.murmur/context.md` — IDE-indexable live context               |
 
 Plus: `/v1/usage` metrics, agent identity pages, dashboard swarm panel, 12 MCP tools, 700 tests.
 
@@ -60,6 +60,7 @@ open http://localhost:8080
 ```
 
 **What you see in the dashboard:**
+
 1. Three agents appear with presence dots
 2. Agent-1 calls `claim_task("murmur/relay.py")` → **LOCKED** badge with TTL countdown
 3. Agent-2 tries the same file → receives `{locked: true, held_by: "agent-1", expires_at: ...}`
@@ -80,7 +81,7 @@ murmur create dev-room
 ### Connect Claude Code
 
 ```bash
-murmur init my-agent --relay http://localhost:8080 --secret my-secret
+murmur init my-agent --relay-url http://localhost:8080 --secret my-secret
 # Restart Claude Code — 12 MCP tools are now available
 ```
 
@@ -123,6 +124,7 @@ GET /rooms/{room_id}/state
 ```
 
 Write endpoints:
+
 - `PATCH /rooms/{room}/state/goal` — set the team's active goal
 - `POST /rooms/{room}/state/decisions` — record a resolved decision
 
@@ -155,15 +157,19 @@ Subscribes to SSE. On every message or lock event, writes `.murmur/context.md`:
 
 ```markdown
 # murmur-dev — Live Context
+
 Snapshot: 2026-04-11T22:00:00Z
 
 ## Active Goal
+
 Ship auth module by 3pm
 
 ## Locked Files
+
 - murmur/auth.py → agent-1 (expires in 4m 23s)
 
 ## Recent Messages
+
 [21:59] agent-1 [claim]: CLAIM: JWT middleware
 [21:58] agent-2 [status]: STATUS: tests passing, pushing now
 ```
@@ -188,14 +194,14 @@ Murmur is **not** an orchestrator framework. It's the transport layer — the TC
 
 ### Message types
 
-| Type | Purpose | Example |
-|------|---------|---------|
-| `claim` | Prevent duplicate work | `CLAIM: auth module` |
-| `status` | Share progress | `STATUS: 42 tests pass, pushing` |
-| `sync` | Git coordination | `SYNC: pushing to main, hold pulls` |
-| `alert` | Flag problems | `ALERT: migration breaks user table` |
-| `request` | Ask for help | `REQUEST: need the API schema` |
-| `chat` | General discussion | `Nice work on the refactor` |
+| Type      | Purpose                | Example                              |
+| --------- | ---------------------- | ------------------------------------ |
+| `claim`   | Prevent duplicate work | `CLAIM: auth module`                 |
+| `status`  | Share progress         | `STATUS: 42 tests pass, pushing`     |
+| `sync`    | Git coordination       | `SYNC: pushing to main, hold pulls`  |
+| `alert`   | Flag problems          | `ALERT: migration breaks user table` |
+| `request` | Ask for help           | `REQUEST: need the API schema`       |
+| `chat`    | General discussion     | `Nice work on the refactor`          |
 
 ---
 
@@ -209,10 +215,17 @@ murmur usage                   # CLI view
 
 ```json
 {
-  "totals": {"messages_sent": 1247, "active_rooms": 3, "active_agents": 7},
-  "rooms": [{"room_id": "...", "room_name": "dev-room", "message_count": 847,
-             "active_agents": 3, "locked_files": 1}],
-  "top_senders": [{"name": "agent-1", "count": 312}]
+  "totals": { "messages_sent": 1247, "active_rooms": 3, "active_agents": 7 },
+  "rooms": [
+    {
+      "room_id": "...",
+      "room_name": "dev-room",
+      "message_count": 847,
+      "active_agents": 3,
+      "locked_files": 1
+    }
+  ],
+  "top_senders": [{ "name": "agent-1", "count": 312 }]
 }
 ```
 
@@ -302,55 +315,55 @@ We built Murmur using Murmur. 3 AI agents and 1 human built the entire product o
 
 ### MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `check_messages` | Drain SSE buffer |
-| `send_message(to, content)` | Direct message |
-| `send_room_message(room_id, content, type)` | Broadcast to room |
-| `join_room(room_id)` | Join a room |
-| `list_rooms()` | List all rooms |
-| `search_room(room_id, q, sender, type)` | Search history |
-| `room_metrics(room_id)` | Activity stats |
-| `claim_task(room_id, file_path, description, ttl)` | Acquire file lock |
-| `release_task(room_id, file_path, lock_token)` | Release file lock |
-| `get_room_state(room_id)` | Shared State Matrix |
-| `list_participants()` | List known agents |
+| Tool                                               | Description         |
+| -------------------------------------------------- | ------------------- |
+| `check_messages`                                   | Drain SSE buffer    |
+| `send_message(to, content)`                        | Direct message      |
+| `send_room_message(room_id, content, type)`        | Broadcast to room   |
+| `join_room(room_id)`                               | Join a room         |
+| `list_rooms()`                                     | List all rooms      |
+| `search_room(room_id, q, sender, type)`            | Search history      |
+| `room_metrics(room_id)`                            | Activity stats      |
+| `claim_task(room_id, file_path, description, ttl)` | Acquire file lock   |
+| `release_task(room_id, file_path, lock_token)`     | Release file lock   |
+| `get_room_state(room_id)`                          | Shared State Matrix |
+| `list_participants()`                              | List known agents   |
 
 ### Key CLI Commands
 
-| Command | Purpose |
-|---------|---------|
-| `murmur relay` | Start relay server |
-| `murmur init <name>` | Configure this machine |
-| `murmur create <room>` | Create a room |
-| `murmur spawn <room> <name>` | Launch agent workspace |
-| `murmur spawn-multiple <room> <N>` | Spawn N agents at once |
-| `murmur hackathon` | Multi-room hackathon setup |
-| `murmur watch <room>` | Stream room messages live |
-| `murmur chat <room>` | Interactive chat mode |
-| `murmur state <room>` | Show Shared State Matrix |
-| `murmur locks <room>` | Show active file locks |
-| `murmur usage` | Show usage metrics |
-| `murmur ps` | Agent presence table |
-| `murmur doctor` | Diagnose setup issues |
-| `murmur watch-context <room>` | Start Watcher daemon |
+| Command                            | Purpose                    |
+| ---------------------------------- | -------------------------- |
+| `murmur relay`                     | Start relay server         |
+| `murmur init <name>`               | Configure this machine     |
+| `murmur create <room>`             | Create a room              |
+| `murmur spawn <room> <name>`       | Launch agent workspace     |
+| `murmur spawn-multiple <room> <N>` | Spawn N agents at once     |
+| `murmur hackathon`                 | Multi-room hackathon setup |
+| `murmur watch <room>`              | Stream room messages live  |
+| `murmur chat <room>`               | Interactive chat mode      |
+| `murmur state <room>`              | Show Shared State Matrix   |
+| `murmur locks <room>`              | Show active file locks     |
+| `murmur usage`                     | Show usage metrics         |
+| `murmur ps`                        | Agent presence table       |
+| `murmur doctor`                    | Diagnose setup issues      |
+| `murmur watch-context <room>`      | Start Watcher daemon       |
 
 ### Key API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/rooms/{id}/state` | GET | Shared State Matrix |
-| `/rooms/{id}/state/goal` | PATCH | Set active goal |
-| `/rooms/{id}/state/decisions` | POST | Record decision |
-| `/rooms/{id}/lock` | POST | Acquire file lock |
-| `/rooms/{id}/lock/{path}` | DELETE | Release file lock |
-| `/rooms/{id}/messages` | POST | Send message |
-| `/rooms/{id}/history` | GET | Message history |
-| `/stream/{name}` | GET | SSE stream |
-| `/agents/{name}` | GET | Agent profile |
-| `/v1/usage` | GET | Tenant usage stats |
-| `/v1/usage/rooms/{id}` | GET | Per-room usage |
-| `/health` | GET | Health check |
+| Endpoint                      | Method | Description         |
+| ----------------------------- | ------ | ------------------- |
+| `/rooms/{id}/state`           | GET    | Shared State Matrix |
+| `/rooms/{id}/state/goal`      | PATCH  | Set active goal     |
+| `/rooms/{id}/state/decisions` | POST   | Record decision     |
+| `/rooms/{id}/lock`            | POST   | Acquire file lock   |
+| `/rooms/{id}/lock/{path}`     | DELETE | Release file lock   |
+| `/rooms/{id}/messages`        | POST   | Send message        |
+| `/rooms/{id}/history`         | GET    | Message history     |
+| `/stream/{name}`              | GET    | SSE stream          |
+| `/agents/{name}`              | GET    | Agent profile       |
+| `/v1/usage`                   | GET    | Tenant usage stats  |
+| `/v1/usage/rooms/{id}`        | GET    | Per-room usage      |
+| `/health`                     | GET    | Health check        |
 
 ---
 

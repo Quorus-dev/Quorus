@@ -19,7 +19,7 @@ Murmur (package: murmur-ai) is the universal communication substrate for AI agen
 
 ```bash
 pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"
-murmur init <your-name> --relay <url> --secret <secret>
+murmur init <your-name> --relay-url <url> --secret <secret>
 # restart claude code — done
 ```
 
