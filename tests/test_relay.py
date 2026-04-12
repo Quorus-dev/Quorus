@@ -2779,3 +2779,85 @@ async def test_set_goal_rejects_oversized_goal(client: AsyncClient, auth_headers
         headers=auth_headers,
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# message_type validation — regression for brief/subtask types
+# ---------------------------------------------------------------------------
+
+
+async def _setup_msg_room(client: AsyncClient, headers: dict, name: str) -> str:
+    """Create a room, join alice + agent-1, return the room UUID."""
+    r = await client.post(
+        "/rooms", json={"name": name, "created_by": "alice"}, headers=headers
+    )
+    rid = r.json()["id"]
+    await client.post(f"/rooms/{rid}/join", json={"participant": "agent-1"}, headers=headers)
+    return rid
+
+
+async def test_brief_message_type_accepted(client: AsyncClient, auth_headers: dict):
+    """message_type='brief' must be accepted by the relay (regression: was 422)."""
+    rid = await _setup_msg_room(client, auth_headers, "brief-type-room")
+    resp = await client.post(
+        f"/rooms/{rid}/messages",
+        json={
+            "from_name": "agent-1",
+            "content": "Implement OAuth login",
+            "message_type": "brief",
+            "brief_id": "test-brief-uuid",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    # Verify stored correctly in history
+    history = await client.get(f"/rooms/{rid}/history", headers=auth_headers)
+    msgs = history.json()
+    assert any(m["message_type"] == "brief" for m in msgs)
+
+
+async def test_subtask_message_type_accepted(client: AsyncClient, auth_headers: dict):
+    """message_type='subtask' must be accepted by the relay (regression: was 422)."""
+    rid = await _setup_msg_room(client, auth_headers, "subtask-type-room")
+    resp = await client.post(
+        f"/rooms/{rid}/messages",
+        json={
+            "from_name": "agent-1",
+            "content": "Set up Google OAuth credentials",
+            "message_type": "subtask",
+            "brief_id": "parent-brief-uuid",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    history = await client.get(f"/rooms/{rid}/history", headers=auth_headers)
+    msgs = history.json()
+    assert any(m["message_type"] == "subtask" for m in msgs)
+
+
+async def test_unknown_message_type_rejected(client: AsyncClient, auth_headers: dict):
+    """Unknown message_type values must be rejected with 422."""
+    rid = await _setup_msg_room(client, auth_headers, "unknown-type-room")
+    resp = await client.post(
+        f"/rooms/{rid}/messages",
+        json={
+            "from_name": "agent-1",
+            "content": "This should fail",
+            "message_type": "not-a-real-type",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_all_standard_message_types_accepted(client: AsyncClient, auth_headers: dict):
+    """All standard message types must be accepted by the relay."""
+    rid = await _setup_msg_room(client, auth_headers, "all-types-room")
+    standard_types = ["chat", "claim", "status", "request", "alert", "sync", "brief", "subtask"]
+    for msg_type in standard_types:
+        resp = await client.post(
+            f"/rooms/{rid}/messages",
+            json={"from_name": "agent-1", "content": f"test {msg_type}", "message_type": msg_type},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, f"Expected 200 for message_type={msg_type!r}, got {resp.status_code}"
