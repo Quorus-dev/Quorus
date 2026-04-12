@@ -81,7 +81,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - **TUI Hub**: `murmur begin` opens full-screen interactive terminal UI with rooms, agents, live chat
 - **Doctor diagnostics**: `murmur doctor` runs 13 checks incl. MCP server registration, relay version, hook status
 
-**Tests:** 861 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 867 passing + 21 Redis integration tests (require Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -112,9 +112,9 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend + Lua scripts (acquire/release/expire) |
 | ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
 | ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
-| ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH quota (default 10000)            |
+| ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH + atomic MAXLEN on XADD          |
 | ~~High~~     | ~~Usage/participant endpoints leak data~~    | ✅ Scoped by auth level (admin vs user)                 |
-| **High**     | Room fan-out is write-amplified              | N members = N queue writes per message                  |
+| ~~High~~     | ~~Room fan-out not atomic~~                  | ✅ Postgres-first ordering + atomic MAXLEN backpressure |
 | ~~High~~     | ~~SSE receives internal wakeup messages~~    | ✅ Filter {"wake":true} in SSE queue handler            |
 | ~~High~~     | ~~Idempotency key not bound to body~~        | ✅ Same key + different body returns 409 Conflict       |
 | **Medium**   | No migration/rebuild story for Redis         | Key schema changes are operationally risky              |
@@ -145,6 +145,8 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | 0970b92 | test: Redis integration tests for locks, expiry, backpressure (867 total) |
+| 2026-04-12 | b03edd6 | fix: Postgres-first room send + atomic MAXLEN backpressure                |
 | 2026-04-12 | 71983c6 | fix: atomic task expiry + ORM FK mismatch                                 |
 | 2026-04-12 | e422b09 | fix: atomic distributed locks + idempotency 409 on body mismatch          |
 | 2026-04-12 | 082cd18 | fix: SSE wakeup filter, idempotency body fingerprint, dashboard token     |
