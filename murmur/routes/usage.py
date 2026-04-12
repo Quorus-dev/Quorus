@@ -52,10 +52,7 @@ async def get_usage(
     room_svc = request.app.state.room_service
     tid = _tid(auth)
 
-    stats = await analytics_svc.get_stats(tid)
-
     presence_entries = await backends.presence.list_all(tid, _PRESENCE_TIMEOUT)
-    total_active_agents: set[str] = {e["name"] for e in presence_entries}
     active_by_room: dict[str, list[str]] = {}
     for entry in presence_entries:
         room_ref = entry.get("room", "")
@@ -71,15 +68,29 @@ async def get_usage(
         # Regular users see only rooms they are members of
         all_rooms = await room_svc.list_by_member(tid, auth.sub or "")
 
+    # Compute per-room stats and aggregate totals from visible rooms only
     rooms_data: list[dict] = []
+    total_messages = 0
+    total_active_agents: set[str] = set()
+    aggregate_senders: Counter[str] = Counter()
+
     for room in all_rooms:
         rid = room["id"]
         room_name = room.get("name", rid)
         history = await backends.room_history.get_recent(tid, rid, limit=200)
         msg_count = len(history)
+        total_messages += msg_count
+
+        # Aggregate sender stats from room history
+        for msg in history:
+            sender = msg.get("from_name", msg.get("from", "unknown"))
+            aggregate_senders[sender] += 1
+
         room_agents = list(set(
             active_by_room.get(rid, []) + active_by_room.get(room_name, [])
         ))
+        total_active_agents.update(room_agents)
+
         await backends.room_state.expire_tasks(tid, rid)
         state = await backends.room_state.get(tid, rid)
         locked_count = len(state.get("locked_files", {}))
@@ -93,15 +104,25 @@ async def get_usage(
 
     rooms_data.sort(key=lambda r: r["message_count"], reverse=True)
 
-    per_sender = stats.get("per_sender", {})
-    top_senders = sorted(per_sender.items(), key=lambda x: x[1], reverse=True)[:10]
+    # For admins/legacy, use analytics service; for regular users, use computed stats
+    if auth.is_legacy or is_admin:
+        stats = await analytics_svc.get_stats(tid)
+        messages_sent = stats.get("total_sent", 0)
+        messages_delivered = stats.get("total_delivered", 0)
+        per_sender = stats.get("per_sender", {})
+        top_senders = sorted(per_sender.items(), key=lambda x: x[1], reverse=True)[:10]
+    else:
+        # Non-admins see only stats from their visible rooms
+        messages_sent = total_messages
+        messages_delivered = total_messages  # Approximation from visible history
+        top_senders = aggregate_senders.most_common(10)
 
     return {
         "tenant_id": tid,
         "snapshot_at": datetime.now(timezone.utc).isoformat(),
         "totals": {
-            "messages_sent": stats.get("total_sent", 0),
-            "messages_delivered": stats.get("total_delivered", 0),
+            "messages_sent": messages_sent,
+            "messages_delivered": messages_delivered,
             "active_rooms": len(all_rooms),
             "active_agents": len(total_active_agents),
         },
