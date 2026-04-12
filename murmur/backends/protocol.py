@@ -262,6 +262,49 @@ class WebhookBackend(Protocol):
         ...
 
 
+@runtime_checkable
+class WebhookQueueBackend(Protocol):
+    """Durable webhook delivery queue with retry and DLQ support.
+
+    Uses Redis Streams for at-least-once delivery of webhook jobs.
+    Jobs that fail after max retries are moved to a dead letter queue.
+    """
+
+    async def enqueue(self, job: dict) -> str:
+        """Add a webhook job to the queue. Returns job ID."""
+        ...
+
+    async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
+        """Fetch pending jobs for delivery.
+
+        Returns list of (job_id, job_data) tuples.
+        Jobs become pending until ack() or nack() is called.
+        """
+        ...
+
+    async def ack(self, job_id: str) -> None:
+        """Acknowledge successful delivery, removing the job."""
+        ...
+
+    async def nack(
+        self, job_id: str, error: str, max_retries: int
+    ) -> bool:
+        """Mark job as failed. Returns True if job will be retried.
+
+        If attempts >= max_retries, job is moved to DLQ and False is returned.
+        Otherwise, job is re-enqueued with incremented attempt count.
+        """
+        ...
+
+    async def get_dlq(self, limit: int = 50) -> list[dict]:
+        """Return recent dead letter queue entries for monitoring."""
+        ...
+
+    async def get_stats(self) -> dict:
+        """Return queue statistics: pending, dlq_size, etc."""
+        ...
+
+
 # ---------------------------------------------------------------------------
 # Analytics
 # ---------------------------------------------------------------------------

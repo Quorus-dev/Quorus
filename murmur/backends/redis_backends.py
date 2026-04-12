@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from redis.asyncio import Redis
+from redis.exceptions import ResponseError
+
+_redis_logger = __import__("logging").getLogger("murmur.redis_backends")
 
 MESSAGE_TTL = int(os.environ.get("MESSAGE_TTL_SECONDS", "86400"))
 VISIBILITY_TIMEOUT = int(os.environ.get("VISIBILITY_TIMEOUT_SECONDS", "60"))
@@ -704,6 +707,140 @@ class RedisRoomStateBackend:
             state["claimed_tasks"] = live_tasks
             await self._write(tenant_id, room_id, state)
         return expired_ids
+
+
+class RedisIdempotencyBackend:
+    """Idempotency key storage using Redis strings with TTL."""
+
+    def __init__(self, r: Redis) -> None:
+        self._r = r
+
+    def _key(self, tid: str, key: str) -> str:
+        return f"t:{tid}:idempotency:{key}"
+
+    async def get(self, tenant_id: str, key: str) -> dict | None:
+        cached = await self._r.get(self._key(tenant_id, key))
+        if cached:
+            return json.loads(cached)
+        return None
+
+    async def set(
+        self, tenant_id: str, key: str, result: dict, ttl: int
+    ) -> None:
+        await self._r.set(self._key(tenant_id, key), json.dumps(result), ex=ttl)
+
+
+# -- Webhook delivery queue -------------------------------------------------
+
+_WEBHOOK_QUEUE_KEY = "webhook:queue"
+_WEBHOOK_DLQ_KEY = "webhook:dlq"
+_WEBHOOK_CG = "webhook_workers"
+_WEBHOOK_CONSUMER = "worker"
+_WEBHOOK_VISIBILITY_TIMEOUT = int(os.environ.get("WEBHOOK_VISIBILITY_TIMEOUT", "30"))
+_DLQ_MAX_SIZE = 1000
+
+
+class RedisWebhookQueueBackend:
+    """Durable webhook delivery queue using Redis Streams.
+
+    Provides at-least-once delivery for webhook jobs:
+    - enqueue → XADD to the queue stream
+    - fetch → XREADGROUP (new) + XAUTOCLAIM (stale pending)
+    - ack → XACK + XDEL on success
+    - nack → increment attempt, re-enqueue or move to DLQ
+    """
+
+    def __init__(self, r: Redis) -> None:
+        self._r = r
+        self._group_created = False
+
+    async def _ensure_group(self) -> None:
+        if self._group_created:
+            return
+        try:
+            await self._r.xgroup_create(
+                _WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, id="0", mkstream=True
+            )
+        except ResponseError as e:
+            if "BUSYGROUP" not in str(e):
+                raise
+        self._group_created = True
+
+    async def enqueue(self, job: dict) -> str:
+        await self._ensure_group()
+        job_id = await self._r.xadd(_WEBHOOK_QUEUE_KEY, {"data": json.dumps(job)})
+        return job_id
+
+    async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
+        await self._ensure_group()
+        jobs: list[tuple[str, dict]] = []
+        visibility_ms = _WEBHOOK_VISIBILITY_TIMEOUT * 1000
+        try:
+            claimed = await self._r.xautoclaim(
+                _WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, _WEBHOOK_CONSUMER,
+                min_idle_time=visibility_ms, start_id="0-0", count=count
+            )
+            if claimed and len(claimed) >= 2:
+                for entry_id, fields in claimed[1]:
+                    job = json.loads(fields["data"])
+                    jobs.append((entry_id, job))
+        except ResponseError as e:
+            _redis_logger.warning("XAUTOCLAIM failed: %s", e)
+
+        remaining = count - len(jobs)
+        if remaining > 0:
+            entries = await self._r.xreadgroup(
+                _WEBHOOK_CG, _WEBHOOK_CONSUMER,
+                {_WEBHOOK_QUEUE_KEY: ">"}, count=remaining
+            )
+            if entries:
+                for _stream_key, stream_entries in entries:
+                    for entry_id, fields in stream_entries:
+                        job = json.loads(fields["data"])
+                        jobs.append((entry_id, job))
+        return jobs
+
+    async def ack(self, job_id: str) -> None:
+        await self._r.xack(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, job_id)
+        await self._r.xdel(_WEBHOOK_QUEUE_KEY, job_id)
+
+    async def nack(self, job_id: str, error: str, max_retries: int) -> bool:
+        entries = await self._r.xrange(_WEBHOOK_QUEUE_KEY, job_id, job_id)
+        if not entries:
+            return False
+        job = json.loads(entries[0][1]["data"])
+        job["attempt"] = job.get("attempt", 0) + 1
+        job["last_error"] = error
+        await self._r.xack(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, job_id)
+        await self._r.xdel(_WEBHOOK_QUEUE_KEY, job_id)
+        if job["attempt"] >= max_retries:
+            await self._add_to_dlq(job)
+            return False
+        await self._r.xadd(_WEBHOOK_QUEUE_KEY, {"data": json.dumps(job)})
+        return True
+
+    async def _add_to_dlq(self, job: dict) -> None:
+        async with self._r.pipeline(transaction=True) as pipe:
+            pipe.lpush(_WEBHOOK_DLQ_KEY, json.dumps(job))
+            pipe.ltrim(_WEBHOOK_DLQ_KEY, 0, _DLQ_MAX_SIZE - 1)
+            await pipe.execute()
+
+    async def get_dlq(self, limit: int = 50) -> list[dict]:
+        raw = await self._r.lrange(_WEBHOOK_DLQ_KEY, 0, limit - 1)
+        return [json.loads(j) for j in raw]
+
+    async def get_stats(self) -> dict:
+        try:
+            queue_len = await self._r.xlen(_WEBHOOK_QUEUE_KEY)
+        except ResponseError:
+            queue_len = 0
+        try:
+            pending_info = await self._r.xpending(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG)
+            pending = pending_info["pending"] if pending_info else 0
+        except ResponseError:
+            pending = 0
+        dlq_size = await self._r.llen(_WEBHOOK_DLQ_KEY)
+        return {"queue_length": queue_len, "pending": pending, "dlq_size": dlq_size}
 
 
 # -- Convenience bundle -----------------------------------------------------

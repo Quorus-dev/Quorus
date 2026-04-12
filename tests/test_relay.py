@@ -2229,7 +2229,7 @@ async def test_fan_out_preserves_reply_to(client: AsyncClient, auth_headers: dic
         headers=auth_headers,
     )
     # alice should receive the reply with reply_to set
-    msgs_resp = await client.get("/messages/alice", headers=auth_headers)
+    msgs_resp = await client.get("/messages/alice", params={"ack": "server"}, headers=auth_headers)
     msgs = msgs_resp.json()
     reply = next((m for m in msgs if m.get("reply_to") == root_id), None)
     assert reply is not None
