@@ -1366,6 +1366,7 @@ class RedisRoomStateBackend:
     # Returns: JSON array of expired task IDs
     # Only removes a lock if the stored token matches the expired task's token
     # Uses numeric expires_at_epoch for accurate comparison (no ISO parsing)
+    # MIGRATION: Tasks without expires_at_epoch are treated as expired (legacy cleanup)
     _LUA_EXPIRE_TASKS = """
     local tasks_key = KEYS[1]
     local locks_key = KEYS[2]
@@ -1384,7 +1385,18 @@ class RedisRoomStateBackend:
         -- Use numeric epoch timestamp (stored as expires_at_epoch)
         local exp_ts = task.expires_at_epoch
 
-        if exp_ts and exp_ts < now_ts then
+        -- MIGRATION: Tasks without expires_at_epoch are from the old format
+        -- and should be expired to prevent permanent zombie tasks
+        local is_expired = false
+        if exp_ts == nil then
+            -- Legacy task without epoch timestamp — expire it
+            is_expired = true
+        elseif exp_ts < now_ts then
+            -- Normal expiry check
+            is_expired = true
+        end
+
+        if is_expired then
             -- Task expired
             table.insert(expired_ids, task.id)
 
@@ -1401,7 +1413,7 @@ class RedisRoomStateBackend:
                 end
             end
         else
-            -- Task still valid (no expires_at_epoch = never expires)
+            -- Task still valid
             table.insert(live_tasks, task_json)
         end
     end
