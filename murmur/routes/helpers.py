@@ -5,6 +5,7 @@ These are stateless utilities with no dependency on in-memory relay state.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 
@@ -65,12 +66,15 @@ def _reassemble_chunks(messages: list[dict]) -> tuple[list[dict], list[dict]]:
                 "content": "".join(c["content"] for c in chunks),
                 "timestamp": chunks[0]["timestamp"],
             }
-            # Preserve delivery IDs from all chunks for ACK
+            # Preserve delivery IDs from all chunks for ACK.
+            # _delivery_id is a compound JSON token so per-message ACK
+            # covers every chunk.  _chunk_delivery_ids is kept as a
+            # plain list for internal use (ack_token rebuilding, etc.).
             chunk_delivery_ids = [
                 c["_delivery_id"] for c in chunks if "_delivery_id" in c
             ]
             if chunk_delivery_ids:
-                reassembled["_delivery_id"] = chunk_delivery_ids[0]
+                reassembled["_delivery_id"] = json.dumps(chunk_delivery_ids)
                 reassembled["_chunk_delivery_ids"] = chunk_delivery_ids
             ready.append(reassembled)
         else:
