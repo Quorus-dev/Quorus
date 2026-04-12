@@ -81,7 +81,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - **TUI Hub**: `murmur begin` opens full-screen interactive terminal UI with rooms, agents, live chat
 - **Doctor diagnostics**: `murmur doctor` runs 13 checks incl. MCP server registration, relay version, hook status
 
-**Tests:** 871 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 860 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -108,16 +108,21 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~Critical~~ | ~~No real Redis/Postgres integration tests~~ | ✅ 14 integration tests with testcontainers             |
 | ~~Critical~~ | ~~Auto-ACK default is a footgun~~            | ✅ `ack=manual` is now the default                      |
 | ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` + atomic SET NX reservation        |
+| ~~Critical~~ | ~~Room state not membership-scoped~~         | ✅ require_room_member() on all state/lock endpoints    |
+| ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend for cross-replica coordination |
 | ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
 | ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH quota (default 10000)            |
+| ~~High~~     | ~~Usage/participant endpoints leak data~~    | ✅ Scoped by auth level (admin vs user)                 |
 | **High**     | Room fan-out is write-amplified              | N members = N queue writes per message                  |
+| **High**     | SSE receives internal wakeup messages        | Wakeup payloads leak to client SSE stream               |
 | **Medium**   | No migration/rebuild story for Redis         | Key schema changes are operationally risky              |
 | ~~Medium~~   | ~~Webhook signing too weak~~                 | ✅ Timestamped HMAC + per-webhook secrets               |
 | ~~Medium~~   | ~~SSRF TOCTOU at webhook delivery~~          | ✅ Re-validate DNS at delivery time                     |
 | **Medium**   | No delivery/audit ledger                     | "What happened to message X?" has no answer             |
 | ~~Medium~~   | ~~MCP swallows ACK failures~~                | ✅ Warning shown when ACK fails                         |
 | **Medium**   | Auth is name-oriented, not account-based     | No immutable IDs, no revocation                         |
+| **Medium**   | Dashboard puts credentials in URL            | Tokens in query params leak via logs/referrers          |
 | **Low**      | Operational metrics thin                     | Need stream depth, pending age, redelivery counts       |
 
 ### Next Priorities
@@ -139,16 +144,16 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | 6764411 | fix: scope usage/participant endpoints by auth level + invite JS fix      |
+| 2026-04-12 | f0f3139 | feat: RedisRoomStateBackend for distributed mutex (cross-replica locks)   |
+| 2026-04-12 | a56479a | fix: require room membership for state/lock endpoints (critical auth fix) |
+| 2026-04-12 | f98c16b | refactor: replace SQLite with Postgres for room history + migration 003   |
+| 2026-04-12 | 0a7a2e1 | fix: resolve test regressions from rate limit changes                     |
 | 2026-04-12 | 9dddd90 | fix: rate limiting on all write+history endpoints + DM size validation    |
 | 2026-04-12 | 01d5a14 | feat: website Nav/CTA/CodeDemo/Footer polish + Architecture 866+ count    |
 | 2026-04-12 | 2dbc2db | feat: vercel.json fix + QuickStart terminal animation + tui_hub UX        |
 | 2026-04-12 | 86f6af2 | test: murmur resolve edge cases (empty diff, network error, no API key)   |
 | 2026-04-12 | c5a4a7e | feat: murmur doctor MCP server registration check (13 checks total)       |
-| 2026-04-12 | 31795e5 | test: 9 tests for share/quickjoin portable join tokens                    |
-| 2026-04-12 | 739392b | feat: murmur/tui_hub.py full-screen TUI + 25 tests (murmur begin)         |
-| 2026-04-12 | 92a2b24 | feat: murmur share + murmur quickjoin for portable join tokens            |
-| 2026-04-12 | —       | docs+feat: README 3-pillar narrative, murmur init hardening, 6 init tests |
-| 2026-04-12 | b0d9572 | feat: Summary Cascade v2 — LLM summarization via --summarize flag         |
 
 ---
 
