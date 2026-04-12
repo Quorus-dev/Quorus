@@ -8,6 +8,7 @@ All keys are tenant-scoped with the prefix ``t:{tenant_id}:``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
@@ -17,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
-_redis_logger = __import__("logging").getLogger("murmur.redis_backends")
+_redis_logger = logging.getLogger("murmur.backends.redis")
 
 MESSAGE_TTL = int(os.environ.get("MESSAGE_TTL_SECONDS", "86400"))
 VISIBILITY_TIMEOUT = int(os.environ.get("VISIBILITY_TIMEOUT_SECONDS", "60"))
@@ -38,11 +39,104 @@ redis.call('EXPIRE', key, window)
 return 1
 """
 
+# Lua: atomic room create (check name not taken, then create)
+# KEYS[1]=name_index, KEYS[2]=meta_key, KEYS[3]=members_key, KEYS[4]=room_index
+# ARGV[1]=room_name, ARGV[2]=room_id, ARGV[n...]=meta field/value pairs
+# Returns 1 if created, 0 if name taken
+_ROOM_CREATE_LUA = """
+local name_idx = KEYS[1]
+local meta_key = KEYS[2]
+local members_key = KEYS[3]
+local room_idx = KEYS[4]
+local room_name = ARGV[1]
+local room_id = ARGV[2]
+if redis.call('HEXISTS', name_idx, room_name) == 1 then return 0 end
+for i = 3, #ARGV, 2 do
+  redis.call('HSET', meta_key, ARGV[i], ARGV[i+1])
+end
+redis.call('HSET', name_idx, room_name, room_id)
+redis.call('SADD', room_idx, room_id)
+return 1
+"""
 
-# -- Messages (DM inboxes) -------------------------------------------------
+# Lua: atomic room rename (check new name not taken by different room)
+# KEYS[1]=name_index, KEYS[2]=meta_key
+# ARGV[1]=old_name, ARGV[2]=new_name, ARGV[3]=room_id
+# Returns 1 if renamed, 0 if name taken
+_ROOM_RENAME_LUA = """
+local name_idx = KEYS[1]
+local meta_key = KEYS[2]
+local old_name = ARGV[1]
+local new_name = ARGV[2]
+local room_id = ARGV[3]
+local existing = redis.call('HGET', name_idx, new_name)
+if existing and existing ~= room_id then return 0 end
+if old_name ~= '' then redis.call('HDEL', name_idx, old_name) end
+redis.call('HSET', name_idx, new_name, room_id)
+redis.call('HSET', meta_key, 'name', new_name)
+return 1
+"""
+
+# Lua: atomic add member with capacity check + reverse index
+# KEYS[1]=members_key, KEYS[2]=member_rooms_key
+# ARGV[1]=name, ARGV[2]=role, ARGV[3]=max_members, ARGV[4]=room_id
+# Returns 1 if added, 0 if at capacity
+_ROOM_ADD_MEMBER_LUA = """
+local members_key = KEYS[1]
+local member_rooms = KEYS[2]
+local name = ARGV[1]
+local role = ARGV[2]
+local max_members = tonumber(ARGV[3])
+local room_id = ARGV[4]
+if redis.call('HEXISTS', members_key, name) == 1 then
+  redis.call('HSET', members_key, name, role)
+  return 1
+end
+local count = redis.call('HLEN', members_key)
+if count >= max_members then return 0 end
+redis.call('HSET', members_key, name, role)
+redis.call('SADD', member_rooms, room_id)
+return 1
+"""
+
+
+# -- Messages (DM inboxes via Redis Streams) --------------------------------
+
+_CONSUMER_GROUP = "murmur_cg"
+_CONSUMER_NAME = "relay"
+
+# Lua: atomic ACK+delete old entries then XADD new entries.
+# KEYS[1] = stream key
+# ARGV[1] = consumer group name
+# ARGV[2] = number of old IDs (N)
+# ARGV[3..2+N] = old entry IDs to ACK+DEL
+# ARGV[3+N..] = JSON-encoded messages to XADD
+_REQUEUE_LUA = """
+local key = KEYS[1]
+local group = ARGV[1]
+local n_old = tonumber(ARGV[2])
+-- ACK and delete old entries
+for i = 3, 2 + n_old do
+  redis.call('XACK', key, group, ARGV[i])
+  redis.call('XDEL', key, ARGV[i])
+end
+-- Add new entries
+for i = 3 + n_old, #ARGV do
+  redis.call('XADD', key, '*', 'data', ARGV[i])
+end
+return 1
+"""
+
 
 class RedisMessageBackend:
-    """Per-recipient DM inbox backed by Redis Lists."""
+    """Per-recipient DM inbox backed by Redis Streams.
+
+    Uses XADD/XREADGROUP/XACK for at-least-once delivery:
+    - enqueue → XADD to the recipient's stream
+    - fetch → XREADGROUP (new msgs) + XAUTOCLAIM (stale pending)
+    - ack → XACK to confirm receipt
+    - Unacked messages are automatically redelivered after VISIBILITY_TIMEOUT
+    """
 
     def __init__(self, r: Redis) -> None:
         self._r = r
@@ -50,12 +144,22 @@ class RedisMessageBackend:
     def _key(self, tid: str, name: str) -> str:
         return f"t:{tid}:dm:{name}"
 
+    async def _ensure_group(self, key: str) -> None:
+        """Create consumer group if it doesn't exist."""
+        try:
+            await self._r.xgroup_create(key, _CONSUMER_GROUP, id="0", mkstream=True)
+        except ResponseError as e:
+            if "BUSYGROUP" not in str(e):
+                _redis_logger.error("Unexpected error creating consumer group: %s", e)
+                raise
+
     async def enqueue(self, tenant_id: str, to_name: str, message: dict) -> None:
         key = self._key(tenant_id, to_name)
-        async with self._r.pipeline(transaction=True) as pipe:
-            pipe.rpush(key, json.dumps(message))
-            pipe.expire(key, MESSAGE_TTL)
-            await pipe.execute()
+        await self._ensure_group(key)
+        # No MAXLEN trim — acked entries are deleted via XDEL in ack().
+        # Stream growth is bounded by delivery rate, not blind trimming
+        # that could drop unacked pending entries.
+        await self._r.xadd(key, {"data": json.dumps(message)})
 
     async def enqueue_batch(
         self, tenant_id: str, to_name: str, messages: list[dict]
@@ -63,99 +167,164 @@ class RedisMessageBackend:
         if not messages:
             return
         key = self._key(tenant_id, to_name)
-        encoded = [json.dumps(m) for m in messages]
-        async with self._r.pipeline(transaction=True) as pipe:
-            pipe.rpush(key, *encoded)
-            pipe.expire(key, MESSAGE_TTL)
+        await self._ensure_group(key)
+        async with self._r.pipeline(transaction=False) as pipe:
+            for m in messages:
+                pipe.xadd(key, {"data": json.dumps(m)})
             await pipe.execute()
 
-    def _inflight_key(self, tid: str, name: str, token: str) -> str:
-        return f"t:{tid}:dm:{name}:inflight:{token}"
-
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
+        """Read and acknowledge all messages (destructive read)."""
         key = self._key(tenant_id, to_name)
-        async with self._r.pipeline(transaction=True) as pipe:
-            pipe.lrange(key, 0, -1)
-            pipe.delete(key)
-            results = await pipe.execute()
-        return [json.loads(m) for m in results[0]]
-
-    # Lua script: atomically read all messages, move to inflight, set TTL.
-    # Returns the messages that were moved — no race with concurrent enqueue.
-    _FETCH_SCRIPT = """
-    local inbox = KEYS[1]
-    local inflight = KEYS[2]
-    local ttl = tonumber(ARGV[1])
-    local msgs = redis.call('LRANGE', inbox, 0, -1)
-    if #msgs == 0 then return {} end
-    redis.call('DEL', inbox)
-    for i, m in ipairs(msgs) do
-        redis.call('RPUSH', inflight, m)
-    end
-    redis.call('EXPIRE', inflight, ttl)
-    return msgs
-    """
+        await self._ensure_group(key)
+        entries = await self._r.xreadgroup(
+            _CONSUMER_GROUP, _CONSUMER_NAME, {key: ">"}, count=10000
+        )
+        if not entries:
+            return []
+        messages = []
+        ids = []
+        for stream_key, stream_entries in entries:
+            for entry_id, fields in stream_entries:
+                ids.append(entry_id)
+                messages.append(json.loads(fields["data"]))
+        if ids:
+            await self._r.xack(key, _CONSUMER_GROUP, *ids)
+            await self._r.xdel(key, *ids)
+        return messages
 
     async def fetch(
         self, tenant_id: str, to_name: str
     ) -> tuple[list[dict], str]:
         key = self._key(tenant_id, to_name)
-        token = uuid.uuid4().hex
-        inflight = self._inflight_key(tenant_id, to_name, token)
+        await self._ensure_group(key)
 
-        # Atomic Lua: read + delete inbox + copy to inflight in one call.
-        msgs_raw = await self._r.eval(
-            self._FETCH_SCRIPT, 2, key, inflight, VISIBILITY_TIMEOUT,
+        messages = []
+        all_ids = []
+
+        # 1. Reclaim stale pending messages (unacked past visibility timeout)
+        visibility_ms = VISIBILITY_TIMEOUT * 1000
+        try:
+            claimed = await self._r.xautoclaim(
+                key, _CONSUMER_GROUP, _CONSUMER_NAME,
+                min_idle_time=visibility_ms, start_id="0-0", count=1000
+            )
+            # xautoclaim returns (next_start_id, claimed_entries, deleted_ids)
+            if claimed and len(claimed) >= 2:
+                for entry_id, fields in claimed[1]:
+                    all_ids.append(entry_id)
+                    msg = json.loads(fields["data"])
+                    msg["_delivery_id"] = entry_id
+                    messages.append(msg)
+        except ResponseError as e:
+            # XAUTOCLAIM requires Redis 6.2+. Log but don't fail.
+            _redis_logger.warning(
+                "XAUTOCLAIM failed (Redis 6.2+ required for auto-reclaim): %s", e
+            )
+
+        # 2. Read new messages
+        entries = await self._r.xreadgroup(
+            _CONSUMER_GROUP, _CONSUMER_NAME, {key: ">"}, count=10000
         )
-        if not msgs_raw:
+        if entries:
+            for stream_key, stream_entries in entries:
+                for entry_id, fields in stream_entries:
+                    all_ids.append(entry_id)
+                    msg = json.loads(fields["data"])
+                    msg["_delivery_id"] = entry_id
+                    messages.append(msg)
+
+        if not messages:
             return [], ""
 
-        messages = [json.loads(m) for m in msgs_raw]
-        return messages, token
+        # ack_token = JSON list of stream entry IDs
+        ack_token = json.dumps(all_ids)
+        return messages, ack_token
 
     async def ack(
         self, tenant_id: str, to_name: str, ack_token: str
     ) -> None:
         if not ack_token:
             return
-        inflight = self._inflight_key(tenant_id, to_name, ack_token)
-        await self._r.delete(inflight)
+        key = self._key(tenant_id, to_name)
+        try:
+            ids = json.loads(ack_token)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if ids:
+            await self._r.xack(key, _CONSUMER_GROUP, *ids)
+            # Trim acked entries from the stream
+            await self._r.xdel(key, *ids)
+
+    async def ack_ids(
+        self, tenant_id: str, to_name: str, message_ids: list[str]
+    ) -> int:
+        if not message_ids:
+            return 0
+        key = self._key(tenant_id, to_name)
+        acked = await self._r.xack(key, _CONSUMER_GROUP, *message_ids)
+        if message_ids:
+            await self._r.xdel(key, *message_ids)
+        return acked
+
+    async def requeue(
+        self,
+        tenant_id: str,
+        to_name: str,
+        old_ids: list[str],
+        messages: list[dict],
+    ) -> None:
+        """Atomically ACK+DEL old entries and XADD new entries via Lua."""
+        if not old_ids and not messages:
+            return
+        key = self._key(tenant_id, to_name)
+        args: list[str] = [_CONSUMER_GROUP, str(len(old_ids))]
+        args.extend(old_ids)
+        args.extend(json.dumps(m) for m in messages)
+        await self._r.eval(_REQUEUE_LUA, 1, key, *args)
+
+    async def pending_count(
+        self, tenant_id: str, to_name: str
+    ) -> int:
+        key = self._key(tenant_id, to_name)
+        try:
+            info = await self._r.xpending(key, _CONSUMER_GROUP)
+            return info["pending"] if info else 0
+        except ResponseError:
+            return 0  # No consumer group yet
 
     async def peek(self, tenant_id: str, to_name: str) -> int:
-        return await self._r.llen(self._key(tenant_id, to_name))
+        return await self._r.xlen(self._key(tenant_id, to_name))
 
     async def count_all(self, tenant_id: str) -> int:
-        """Count total pending messages across all recipients for a tenant."""
+        """Count total messages across all recipient streams for a tenant."""
         cursor, total = "0", 0
         while True:
             cursor, keys = await self._r.scan(
                 cursor=cursor, match=f"t:{tenant_id}:dm:*", count=100
             )
             for key in keys:
-                # Skip inflight keys (contain :inflight:)
-                key_str = key if isinstance(key, str) else key.decode()
-                if ":inflight:" in key_str:
-                    continue
-                total += await self._r.llen(key)
+                total += await self._r.xlen(key)
             if cursor == 0 or cursor == "0":
                 break
         return total
 
     async def count_all_global(self) -> int:
-        """Count total pending messages globally."""
+        """Count total messages globally across all streams."""
         cursor, total = "0", 0
         while True:
             cursor, keys = await self._r.scan(
                 cursor=cursor, match="t:*:dm:*", count=100
             )
             for key in keys:
-                key_str = key if isinstance(key, str) else key.decode()
-                if ":inflight:" in key_str:
-                    continue
-                total += await self._r.llen(key)
+                total += await self._r.xlen(key)
             if cursor == 0 or cursor == "0":
                 break
         return total
+
+    async def recipient_depth(self, tenant_id: str, to_name: str) -> int:
+        """Return total stream length for a recipient."""
+        return await self._r.xlen(self._key(tenant_id, to_name))
 
 
 # -- Rooms ------------------------------------------------------------------
@@ -178,6 +347,9 @@ class RedisRoomBackend:
     def _room_index_key(self, tid: str) -> str:
         return f"t:{tid}:room:_index"
 
+    def _member_rooms_key(self, tid: str, name: str) -> str:
+        return f"t:{tid}:member:{name}:rooms"
+
     async def create(self, tenant_id: str, room_id: str, room_data: dict) -> None:
         meta = {k: v for k, v in room_data.items() if k != "members"}
         members = room_data.get("members", {})
@@ -186,11 +358,63 @@ class RedisRoomBackend:
                 pipe.hset(self._meta_key(tenant_id, room_id), mapping=meta)
             if members:
                 pipe.hset(self._members_key(tenant_id, room_id), mapping=members)
+                # Maintain reverse index: member -> rooms
+                for member_name in members:
+                    pipe.sadd(self._member_rooms_key(tenant_id, member_name), room_id)
             name = room_data.get("name")
             if name:
                 pipe.hset(self._name_index_key(tenant_id), name, room_id)
             pipe.sadd(self._room_index_key(tenant_id), room_id)
             await pipe.execute()
+
+    async def create_if_name_available(
+        self, tenant_id: str, room_id: str, room_data: dict
+    ) -> bool:
+        meta = {k: v for k, v in room_data.items() if k != "members"}
+        name = room_data.get("name", "")
+        if not name:
+            await self.create(tenant_id, room_id, room_data)
+            return True
+        # Flatten meta dict to alternating key/value args for Lua
+        meta_args: list[str] = []
+        for k, v in meta.items():
+            meta_args.extend([k, str(v)])
+        result = await self._r.eval(
+            _ROOM_CREATE_LUA,
+            4,
+            self._name_index_key(tenant_id),
+            self._meta_key(tenant_id, room_id),
+            self._members_key(tenant_id, room_id),
+            self._room_index_key(tenant_id),
+            name,
+            room_id,
+            *meta_args,
+        )
+        if result == 0:
+            return False
+        # Add members separately (pipeline is fine, already created atomically)
+        members = room_data.get("members", {})
+        if members:
+            await self._r.hset(
+                self._members_key(tenant_id, room_id), mapping=members
+            )
+        return True
+
+    async def rename_if_available(
+        self, tenant_id: str, room_id: str, new_name: str
+    ) -> bool:
+        meta_key = self._meta_key(tenant_id, room_id)
+        old_name = await self._r.hget(meta_key, "name") or ""
+        result = await self._r.eval(
+            _ROOM_RENAME_LUA,
+            2,
+            self._name_index_key(tenant_id),
+            meta_key,
+            old_name,
+            new_name,
+            room_id,
+        )
+        return result == 1
 
     async def get(self, tenant_id: str, room_id: str) -> dict | None:
         meta = await self._r.hgetall(self._meta_key(tenant_id, room_id))
@@ -215,6 +439,20 @@ class RedisRoomBackend:
                 results.append((rid, data))
         return results
 
+    async def list_by_member(
+        self, tenant_id: str, member_name: str
+    ) -> list[tuple[str, dict]]:
+        """Return rooms where member_name is a member via reverse index."""
+        room_ids = await self._r.smembers(
+            self._member_rooms_key(tenant_id, member_name)
+        )
+        results: list[tuple[str, dict]] = []
+        for rid in room_ids:
+            data = await self.get(tenant_id, rid)
+            if data is not None:
+                results.append((rid, data))
+        return results
+
     async def update(self, tenant_id: str, room_id: str, updates: dict) -> None:
         meta_key = self._meta_key(tenant_id, room_id)
         if not await self._r.exists(meta_key):
@@ -232,13 +470,19 @@ class RedisRoomBackend:
 
     async def delete(self, tenant_id: str, room_id: str) -> None:
         meta_key = self._meta_key(tenant_id, room_id)
+        members_key = self._members_key(tenant_id, room_id)
         name = await self._r.hget(meta_key, "name")
+        # Get all members to clean up reverse index
+        members = await self._r.hkeys(members_key)
         async with self._r.pipeline(transaction=True) as pipe:
             pipe.delete(meta_key)
-            pipe.delete(self._members_key(tenant_id, room_id))
+            pipe.delete(members_key)
             if name:
                 pipe.hdel(self._name_index_key(tenant_id), name)
             pipe.srem(self._room_index_key(tenant_id), room_id)
+            # Clean up reverse index for all members
+            for member_name in members:
+                pipe.srem(self._member_rooms_key(tenant_id, member_name), room_id)
             await pipe.execute()
 
     async def add_member(
@@ -246,12 +490,33 @@ class RedisRoomBackend:
     ) -> None:
         if not await self._r.exists(self._meta_key(tenant_id, room_id)):
             return
-        await self._r.hset(self._members_key(tenant_id, room_id), name, role)
+        async with self._r.pipeline(transaction=True) as pipe:
+            pipe.hset(self._members_key(tenant_id, room_id), name, role)
+            pipe.sadd(self._member_rooms_key(tenant_id, name), room_id)
+            await pipe.execute()
+
+    async def add_member_if_capacity(
+        self, tenant_id: str, room_id: str, name: str, role: str, max_members: int
+    ) -> bool:
+        result = await self._r.eval(
+            _ROOM_ADD_MEMBER_LUA,
+            2,
+            self._members_key(tenant_id, room_id),
+            self._member_rooms_key(tenant_id, name),
+            name,
+            role,
+            str(max_members),
+            room_id,
+        )
+        return result == 1
 
     async def remove_member(self, tenant_id: str, room_id: str, name: str) -> None:
         if not await self._r.exists(self._meta_key(tenant_id, room_id)):
             return
-        await self._r.hdel(self._members_key(tenant_id, room_id), name)
+        async with self._r.pipeline(transaction=True) as pipe:
+            pipe.hdel(self._members_key(tenant_id, room_id), name)
+            pipe.srem(self._member_rooms_key(tenant_id, name), room_id)
+            await pipe.execute()
 
     async def get_members(self, tenant_id: str, room_id: str) -> dict[str, str]:
         return await self._r.hgetall(self._members_key(tenant_id, room_id))
@@ -446,7 +711,7 @@ class RedisSSETokenBackend:
 # -- Webhooks (DM + room) --------------------------------------------------
 
 class RedisWebhookBackend:
-    """DM and room webhook registrations."""
+    """DM and room webhook registrations with per-webhook secrets."""
 
     def __init__(self, r: Redis) -> None:
         self._r = r
@@ -458,22 +723,43 @@ class RedisWebhookBackend:
         return f"t:{tid}:webhook:room:{rid}"
 
     async def register_dm(
-        self, tenant_id: str, instance_name: str, callback_url: str
+        self,
+        tenant_id: str,
+        instance_name: str,
+        callback_url: str,
+        secret: str = "",
     ) -> None:
-        await self._r.set(self._dm_key(tenant_id, instance_name), callback_url)
+        data = json.dumps({"url": callback_url, "secret": secret})
+        await self._r.set(self._dm_key(tenant_id, instance_name), data)
 
-    async def get_dm(self, tenant_id: str, instance_name: str) -> str | None:
-        return await self._r.get(self._dm_key(tenant_id, instance_name))
+    async def get_dm(self, tenant_id: str, instance_name: str) -> dict | None:
+        raw = await self._r.get(self._dm_key(tenant_id, instance_name))
+        if not raw:
+            return None
+        # Handle legacy format (plain URL string)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {"url": raw, "secret": ""}
 
     async def delete_dm(self, tenant_id: str, instance_name: str) -> None:
         await self._r.delete(self._dm_key(tenant_id, instance_name))
 
     async def register_room(
-        self, tenant_id: str, room_id: str, callback_url: str, registered_by: str,
+        self,
+        tenant_id: str,
+        room_id: str,
+        callback_url: str,
+        registered_by: str,
+        secret: str = "",
     ) -> None:
         key = self._room_key(tenant_id, room_id)
         raw_hooks = await self._r.lrange(key, 0, -1)
-        new_entry = json.dumps({"url": callback_url, "registered_by": registered_by})
+        new_entry = json.dumps({
+            "url": callback_url,
+            "registered_by": registered_by,
+            "secret": secret,
+        })
         for raw in raw_hooks:
             hook = json.loads(raw)
             if hook["url"] == callback_url:
@@ -588,126 +874,7 @@ class RedisParticipantBackend:
         return total
 
 
-# -- Room state (goal, locks, decisions) -----------------------------------
-
-class RedisRoomStateBackend:
-    """Per-room coordination state backed by a single Redis JSON blob.
-
-    Key schema: ``t:{tenant_id}:room:{room_id}:state``
-    The value is a JSON object with keys: active_goal, claimed_tasks,
-    locked_files, resolved_decisions.
-    """
-
-    def __init__(self, r: Redis) -> None:
-        self._r = r
-
-    def _key(self, tid: str, rid: str) -> str:
-        return f"t:{tid}:room:{rid}:state"
-
-    def _empty(self) -> dict:
-        return {
-            "active_goal": None,
-            "claimed_tasks": [],
-            "locked_files": {},
-            "resolved_decisions": [],
-        }
-
-    async def _read(self, tid: str, rid: str) -> dict:
-        raw = await self._r.get(self._key(tid, rid))
-        if raw is None:
-            return self._empty()
-        return json.loads(raw)
-
-    async def _write(self, tid: str, rid: str, state: dict) -> None:
-        await self._r.set(self._key(tid, rid), json.dumps(state))
-
-    async def get(self, tenant_id: str, room_id: str) -> dict:
-        return await self._read(tenant_id, room_id)
-
-    async def set_goal(
-        self, tenant_id: str, room_id: str, goal: str | None
-    ) -> None:
-        state = await self._read(tenant_id, room_id)
-        state["active_goal"] = goal
-        await self._write(tenant_id, room_id, state)
-
-    async def add_claimed_task(
-        self, tenant_id: str, room_id: str, task: dict
-    ) -> None:
-        state = await self._read(tenant_id, room_id)
-        state["claimed_tasks"].append(task)
-        fp = task.get("file_path")
-        if fp:
-            state["locked_files"][fp] = {
-                "held_by": task["claimed_by"],
-                "lock_token": task["lock_token"],
-                "expires_at": task["expires_at"],
-            }
-        await self._write(tenant_id, room_id, state)
-
-    async def remove_claimed_task(
-        self, tenant_id: str, room_id: str, task_id: str
-    ) -> None:
-        state = await self._read(tenant_id, room_id)
-        removed = None
-        live = []
-        for t in state.get("claimed_tasks", []):
-            if t.get("id") == task_id:
-                removed = t
-            else:
-                live.append(t)
-        state["claimed_tasks"] = live
-        if removed:
-            fp = removed.get("file_path")
-            if fp:
-                state["locked_files"].pop(fp, None)
-        await self._write(tenant_id, room_id, state)
-
-    async def set_lock(
-        self, tenant_id: str, room_id: str, file_path: str, lock_data: dict
-    ) -> None:
-        state = await self._read(tenant_id, room_id)
-        state["locked_files"][file_path] = lock_data
-        await self._write(tenant_id, room_id, state)
-
-    async def release_lock(
-        self, tenant_id: str, room_id: str, file_path: str
-    ) -> None:
-        state = await self._read(tenant_id, room_id)
-        state["locked_files"].pop(file_path, None)
-        await self._write(tenant_id, room_id, state)
-
-    async def add_decision(
-        self, tenant_id: str, room_id: str, decision: dict
-    ) -> None:
-        state = await self._read(tenant_id, room_id)
-        state["resolved_decisions"].append(decision)
-        await self._write(tenant_id, room_id, state)
-
-    async def expire_tasks(
-        self, tenant_id: str, room_id: str
-    ) -> list[str]:
-        now = time.time()
-        state = await self._read(tenant_id, room_id)
-        expired_ids: list[str] = []
-        live_tasks: list[dict] = []
-        for task in state.get("claimed_tasks", []):
-            try:
-                exp = datetime.fromisoformat(task["expires_at"]).timestamp()
-                if exp < now:
-                    expired_ids.append(task["id"])
-                    fp = task.get("file_path")
-                    if fp:
-                        state["locked_files"].pop(fp, None)
-                else:
-                    live_tasks.append(task)
-            except (KeyError, ValueError):
-                live_tasks.append(task)
-        if expired_ids:
-            state["claimed_tasks"] = live_tasks
-            await self._write(tenant_id, room_id, state)
-        return expired_ids
-
+# -- Idempotency ------------------------------------------------------------
 
 class RedisIdempotencyBackend:
     """Idempotency key storage using Redis strings with TTL."""
@@ -733,11 +900,67 @@ class RedisIdempotencyBackend:
 # -- Webhook delivery queue -------------------------------------------------
 
 _WEBHOOK_QUEUE_KEY = "webhook:queue"
+_WEBHOOK_DELAY_KEY = "webhook:delay"  # Sorted set for delayed retries
 _WEBHOOK_DLQ_KEY = "webhook:dlq"
 _WEBHOOK_CG = "webhook_workers"
 _WEBHOOK_CONSUMER = "worker"
 _WEBHOOK_VISIBILITY_TIMEOUT = int(os.environ.get("WEBHOOK_VISIBILITY_TIMEOUT", "30"))
+_WEBHOOK_BACKOFF_BASE = int(os.environ.get("WEBHOOK_BACKOFF_BASE", "2"))  # seconds
 _DLQ_MAX_SIZE = 1000
+
+# Lua: atomic NACK — ACK+DEL old entry, then either ZADD to delay set or LPUSH to DLQ
+# KEYS[1] = queue stream, KEYS[2] = delay sorted set, KEYS[3] = DLQ list
+# ARGV[1] = consumer group, ARGV[2] = job_id, ARGV[3] = updated job JSON
+# ARGV[4] = max_retries, ARGV[5] = current attempt, ARGV[6] = dlq_max_size
+# ARGV[7] = retry_at timestamp (when to retry)
+# Returns 1 if scheduled for retry, 0 if moved to DLQ
+_WEBHOOK_NACK_LUA = """
+local queue = KEYS[1]
+local delay_set = KEYS[2]
+local dlq = KEYS[3]
+local cg = ARGV[1]
+local job_id = ARGV[2]
+local job_json = ARGV[3]
+local max_retries = tonumber(ARGV[4])
+local attempt = tonumber(ARGV[5])
+local dlq_max = tonumber(ARGV[6])
+local retry_at = tonumber(ARGV[7])
+
+-- ACK and delete old entry atomically
+redis.call('XACK', queue, cg, job_id)
+redis.call('XDEL', queue, job_id)
+
+if attempt >= max_retries then
+    -- Move to DLQ
+    redis.call('LPUSH', dlq, job_json)
+    redis.call('LTRIM', dlq, 0, dlq_max - 1)
+    return 0
+else
+    -- Add to delay set with retry_at as score
+    redis.call('ZADD', delay_set, retry_at, job_json)
+    return 1
+end
+"""
+
+# Lua: promote due jobs from delay set to stream
+# KEYS[1] = delay sorted set, KEYS[2] = queue stream
+# ARGV[1] = current timestamp, ARGV[2] = max jobs to promote
+# Returns number of jobs promoted
+_WEBHOOK_PROMOTE_LUA = """
+local delay_set = KEYS[1]
+local queue = KEYS[2]
+local now = tonumber(ARGV[1])
+local max_promote = tonumber(ARGV[2])
+
+local due = redis.call('ZRANGEBYSCORE', delay_set, 0, now, 'LIMIT', 0, max_promote)
+local promoted = 0
+for _, job_json in ipairs(due) do
+    redis.call('XADD', queue, '*', 'data', job_json)
+    redis.call('ZREM', delay_set, job_json)
+    promoted = promoted + 1
+end
+return promoted
+"""
 
 
 class RedisWebhookQueueBackend:
@@ -755,6 +978,7 @@ class RedisWebhookQueueBackend:
         self._group_created = False
 
     async def _ensure_group(self) -> None:
+        """Create consumer group if it doesn't exist."""
         if self._group_created:
             return
         try:
@@ -767,13 +991,20 @@ class RedisWebhookQueueBackend:
         self._group_created = True
 
     async def enqueue(self, job: dict) -> str:
+        """Add a webhook job to the queue. Returns job ID."""
         await self._ensure_group()
         job_id = await self._r.xadd(_WEBHOOK_QUEUE_KEY, {"data": json.dumps(job)})
         return job_id
 
     async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
+        """Fetch pending jobs for delivery."""
         await self._ensure_group()
         jobs: list[tuple[str, dict]] = []
+
+        # 0. Promote any due delayed jobs back to the main queue
+        await self.promote_delayed()
+
+        # 1. Reclaim stale pending jobs (visibility timeout expired)
         visibility_ms = _WEBHOOK_VISIBILITY_TIMEOUT * 1000
         try:
             claimed = await self._r.xautoclaim(
@@ -787,6 +1018,7 @@ class RedisWebhookQueueBackend:
         except ResponseError as e:
             _redis_logger.warning("XAUTOCLAIM failed: %s", e)
 
+        # 2. Read new jobs
         remaining = count - len(jobs)
         if remaining > 0:
             entries = await self._r.xreadgroup(
@@ -798,49 +1030,101 @@ class RedisWebhookQueueBackend:
                     for entry_id, fields in stream_entries:
                         job = json.loads(fields["data"])
                         jobs.append((entry_id, job))
+
         return jobs
 
     async def ack(self, job_id: str) -> None:
+        """Acknowledge successful delivery, removing the job."""
         await self._r.xack(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, job_id)
         await self._r.xdel(_WEBHOOK_QUEUE_KEY, job_id)
 
-    async def nack(self, job_id: str, error: str, max_retries: int) -> bool:
+    async def nack(
+        self, job_id: str, error: str, max_retries: int
+    ) -> bool:
+        """Mark job as failed. Returns True if job will be retried.
+
+        Uses exponential backoff: retry delays are 2s, 4s, 8s, etc.
+        Failed jobs go to a delay sorted set and are promoted back to
+        the main stream when their retry time arrives.
+
+        Uses a Lua script to atomically ACK+DEL the old entry and either
+        add to delay set for retry or move to DLQ. This eliminates the
+        crash window where a job could be lost.
+        """
+        # Fetch the job data first (read doesn't need to be atomic)
         entries = await self._r.xrange(_WEBHOOK_QUEUE_KEY, job_id, job_id)
         if not entries:
             return False
+
         job = json.loads(entries[0][1]["data"])
         job["attempt"] = job.get("attempt", 0) + 1
         job["last_error"] = error
-        await self._r.xack(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, job_id)
-        await self._r.xdel(_WEBHOOK_QUEUE_KEY, job_id)
-        if job["attempt"] >= max_retries:
-            await self._add_to_dlq(job)
-            return False
-        await self._r.xadd(_WEBHOOK_QUEUE_KEY, {"data": json.dumps(job)})
-        return True
 
-    async def _add_to_dlq(self, job: dict) -> None:
-        async with self._r.pipeline(transaction=True) as pipe:
-            pipe.lpush(_WEBHOOK_DLQ_KEY, json.dumps(job))
-            pipe.ltrim(_WEBHOOK_DLQ_KEY, 0, _DLQ_MAX_SIZE - 1)
-            await pipe.execute()
+        # Calculate retry time with exponential backoff: 2^attempt seconds
+        delay_seconds = _WEBHOOK_BACKOFF_BASE ** job["attempt"]
+        retry_at = time.time() + delay_seconds
+
+        # Atomic NACK via Lua script
+        result = await self._r.eval(
+            _WEBHOOK_NACK_LUA,
+            3,  # number of keys
+            _WEBHOOK_QUEUE_KEY,
+            _WEBHOOK_DELAY_KEY,
+            _WEBHOOK_DLQ_KEY,
+            _WEBHOOK_CG,
+            job_id,
+            json.dumps(job),
+            str(max_retries),
+            str(job["attempt"]),
+            str(_DLQ_MAX_SIZE),
+            str(retry_at),
+        )
+        return result == 1
+
+    async def promote_delayed(self, max_promote: int = 100) -> int:
+        """Move due jobs from delay set to main queue.
+
+        Should be called periodically by workers before fetching.
+        Returns the number of jobs promoted.
+        """
+        now = time.time()
+        result = await self._r.eval(
+            _WEBHOOK_PROMOTE_LUA,
+            2,  # number of keys
+            _WEBHOOK_DELAY_KEY,
+            _WEBHOOK_QUEUE_KEY,
+            str(now),
+            str(max_promote),
+        )
+        return int(result) if result else 0
 
     async def get_dlq(self, limit: int = 50) -> list[dict]:
+        """Return recent dead letter queue entries."""
         raw = await self._r.lrange(_WEBHOOK_DLQ_KEY, 0, limit - 1)
         return [json.loads(j) for j in raw]
 
     async def get_stats(self) -> dict:
+        """Return queue statistics."""
         try:
             queue_len = await self._r.xlen(_WEBHOOK_QUEUE_KEY)
         except ResponseError:
             queue_len = 0
+
         try:
             pending_info = await self._r.xpending(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG)
             pending = pending_info["pending"] if pending_info else 0
         except ResponseError:
             pending = 0
+
+        delayed = await self._r.zcard(_WEBHOOK_DELAY_KEY)
         dlq_size = await self._r.llen(_WEBHOOK_DLQ_KEY)
-        return {"queue_length": queue_len, "pending": pending, "dlq_size": dlq_size}
+
+        return {
+            "queue_length": queue_len,
+            "pending": pending,
+            "delayed": delayed,
+            "dlq_size": dlq_size,
+        }
 
 
 # -- Convenience bundle -----------------------------------------------------
@@ -858,7 +1142,8 @@ class RedisBackends:
     webhooks: RedisWebhookBackend
     analytics: RedisAnalyticsBackend
     participants: RedisParticipantBackend = None  # type: ignore[assignment]
-    room_state: RedisRoomStateBackend = None  # type: ignore[assignment]
+    idempotency: RedisIdempotencyBackend = None  # type: ignore[assignment]
+    webhook_queue: RedisWebhookQueueBackend = None  # type: ignore[assignment]
 
     @classmethod
     def create(cls, r: Redis, max_room_history: int = 200) -> RedisBackends:
@@ -873,5 +1158,6 @@ class RedisBackends:
             webhooks=RedisWebhookBackend(r),
             analytics=RedisAnalyticsBackend(r),
             participants=RedisParticipantBackend(r),
-            room_state=RedisRoomStateBackend(r),
+            idempotency=RedisIdempotencyBackend(r),
+            webhook_queue=RedisWebhookQueueBackend(r),
         )

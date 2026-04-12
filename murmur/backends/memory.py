@@ -773,11 +773,15 @@ class InMemoryIdempotencyBackend:
 # -- Webhook delivery queue -------------------------------------------------
 
 
+_MEMORY_BACKOFF_BASE = 2  # seconds
+
+
 class InMemoryWebhookQueueBackend:
     """In-memory webhook delivery queue with retry and DLQ support."""
 
     def __init__(self, dlq_max_size: int = 1000) -> None:
         self._queue: list[tuple[str, dict]] = []  # (job_id, job_data)
+        self._delayed: list[tuple[float, dict]] = []  # (retry_at, job_data)
         self._pending: dict[str, dict] = {}  # job_id -> job_data
         self._dlq: list[dict] = []
         self._dlq_max_size = dlq_max_size
@@ -795,11 +799,34 @@ class InMemoryWebhookQueueBackend:
     async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
         """Fetch pending jobs for delivery."""
         async with self._lock:
+            # Promote due delayed jobs first
+            self._promote_delayed_locked()
             fetched = self._queue[:count]
             self._queue = self._queue[count:]
             for job_id, job in fetched:
                 self._pending[job_id] = job
             return fetched
+
+    def _promote_delayed_locked(self) -> int:
+        """Move due delayed jobs to main queue (call under lock)."""
+        now = time.time()
+        promoted = 0
+        still_delayed = []
+        for retry_at, job in self._delayed:
+            if retry_at <= now:
+                self._counter += 1
+                job_id = f"job-{self._counter}"
+                self._queue.append((job_id, job))
+                promoted += 1
+            else:
+                still_delayed.append((retry_at, job))
+        self._delayed = still_delayed
+        return promoted
+
+    async def promote_delayed(self, max_promote: int = 100) -> int:
+        """Move due delayed jobs back to the main queue."""
+        async with self._lock:
+            return self._promote_delayed_locked()
 
     async def ack(self, job_id: str) -> None:
         """Acknowledge successful delivery, removing the job."""
@@ -825,10 +852,10 @@ class InMemoryWebhookQueueBackend:
                     self._dlq = self._dlq[: self._dlq_max_size]
                 return False
 
-            # Re-enqueue for retry
-            self._counter += 1
-            new_job_id = f"job-{self._counter}"
-            self._queue.append((new_job_id, job))
+            # Schedule for delayed retry with exponential backoff
+            delay_seconds = _MEMORY_BACKOFF_BASE ** job["attempt"]
+            retry_at = time.time() + delay_seconds
+            self._delayed.append((retry_at, job))
             return True
 
     async def get_dlq(self, limit: int = 50) -> list[dict]:
@@ -842,11 +869,13 @@ class InMemoryWebhookQueueBackend:
             return {
                 "queue_length": len(self._queue),
                 "pending": len(self._pending),
+                "delayed": len(self._delayed),
                 "dlq_size": len(self._dlq),
             }
 
     def clear(self) -> None:
         self._queue.clear()
+        self._delayed.clear()
         self._pending.clear()
         self._dlq.clear()
 

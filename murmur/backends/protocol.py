@@ -268,6 +268,7 @@ class WebhookQueueBackend(Protocol):
 
     Uses Redis Streams for at-least-once delivery of webhook jobs.
     Jobs that fail after max retries are moved to a dead letter queue.
+    Retries use exponential backoff (2s, 4s, 8s, etc.).
     """
 
     async def enqueue(self, job: dict) -> str:
@@ -279,6 +280,7 @@ class WebhookQueueBackend(Protocol):
 
         Returns list of (job_id, job_data) tuples.
         Jobs become pending until ack() or nack() is called.
+        Automatically promotes due delayed jobs before fetching.
         """
         ...
 
@@ -292,7 +294,15 @@ class WebhookQueueBackend(Protocol):
         """Mark job as failed. Returns True if job will be retried.
 
         If attempts >= max_retries, job is moved to DLQ and False is returned.
-        Otherwise, job is re-enqueued with incremented attempt count.
+        Otherwise, job is scheduled for retry after exponential backoff delay.
+        """
+        ...
+
+    async def promote_delayed(self, max_promote: int = 100) -> int:
+        """Move due delayed jobs back to the main queue.
+
+        Called automatically by fetch(), but can be called separately.
+        Returns the number of jobs promoted.
         """
         ...
 
@@ -301,7 +311,7 @@ class WebhookQueueBackend(Protocol):
         ...
 
     async def get_stats(self) -> dict:
-        """Return queue statistics: pending, dlq_size, etc."""
+        """Return queue statistics: pending, delayed, dlq_size, etc."""
         ...
 
 
