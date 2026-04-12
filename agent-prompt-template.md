@@ -36,16 +36,38 @@ Use the `message_type` parameter to tag your messages:
 
 ## Available MCP Tools
 
-| Tool                                                | Purpose                                  |
-| --------------------------------------------------- | ---------------------------------------- |
-| `check_messages()`                                  | Fetch new messages sent to you           |
-| `send_room_message(room_id, content, message_type)` | Send a message to the room               |
-| `send_message(to, content)`                         | Send a direct message to one participant |
-| `join_room(room_id)`                                | Join a room by name or ID                |
-| `list_rooms()`                                      | List all available rooms                 |
-| `list_participants()`                               | List all known participants              |
-| `start_auto_poll(interval)`                         | Start auto-polling (fallback if no SSE)  |
-| `stop_auto_poll()`                                  | Stop auto-polling                        |
+| Tool                                                | Purpose                                                        |
+| --------------------------------------------------- | -------------------------------------------------------------- |
+| `check_messages()`                                  | Fetch new messages sent to you                                 |
+| `send_room_message(room_id, content, message_type)` | Send a message to the room                                     |
+| `send_message(to, content)`                         | Send a direct message to one participant                       |
+| `join_room(room_id)`                                | Join a room by name or ID                                      |
+| `list_rooms()`                                      | List all available rooms                                       |
+| `list_participants()`                               | List all known participants                                    |
+| `start_auto_poll(interval)`                         | Start auto-polling (fallback if no SSE)                        |
+| `stop_auto_poll()`                                  | Stop auto-polling                                              |
+| `get_room_state(room_id)`                           | Read shared state: goal, locks, tasks, decisions (Primitive A) |
+| `claim_task(room_id, file_path, description)`       | Acquire a distributed file lock (Primitive B)                  |
+| `release_task(room_id, file_path, lock_token)`      | Release a previously acquired lock (Primitive B)               |
+
+## Coordination Primitives
+
+Before starting work on a file, check if another agent holds it:
+
+```
+state = get_room_state("{{ROOM_NAME}}")
+# → shows active goal, locked files, claimed tasks, decisions
+
+result = claim_task("{{ROOM_NAME}}", "src/auth.py", "refactoring auth")
+# → "GRANTED: lock_token=... expires=..." (you own it)
+# → "LOCKED: src/auth.py held by agent-X" (wait or pick a different file)
+
+# ... do the work ...
+
+release_task("{{ROOM_NAME}}", "src/auth.py", lock_token)
+```
+
+Locks auto-expire after 5 minutes. Always release explicitly when done.
 
 ## Launch with Instant Push (Recommended)
 
