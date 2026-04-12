@@ -311,7 +311,9 @@ def _init_services(app_instance, redis_conn=None):
     rate_limit = RateLimitService(backends.rate_limit, rate_limit_window, rate_limit_max)
     analytics = AnalyticsService(backends.analytics)
     sse = SSEService(backends.sse_tokens, notification=notification)
-    webhook = WebhookService(backends.webhooks)
+    # Use durable webhook queue when available (Redis backends have webhook_queue)
+    webhook_queue = getattr(backends, "webhook_queue", None)
+    webhook = WebhookService(backends.webhooks, queue_backend=webhook_queue)
     message = MessageService(
         backends.messages, sse, webhook, analytics, rate_limit,
         notification=notification,

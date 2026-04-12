@@ -1510,7 +1510,7 @@ def _cmd_init(args):
         "command": "uv",
         "args": [
             "run", "--directory", str(repo_dir),
-            "python", str(murmur_dir / "mcp.py"),
+            "python", str(murmur_dir / "mcp_server.py"),
         ],
         "env": {},
     }
@@ -1592,7 +1592,7 @@ def _cmd_join(args):
         "command": "uv",
         "args": [
             "run", "--directory", str(repo_dir),
-            "python", str(murmur_dir / "mcp.py"),
+            "python", str(murmur_dir / "mcp_server.py"),
         ],
         "env": {},
     }
@@ -1658,7 +1658,7 @@ def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
                 "command": "uv",
                 "args": [
                     "run", "--directory", str(murmur_dir.parent),
-                    "python", str(murmur_dir / "mcp.py"),
+                    "python", str(murmur_dir / "mcp_server.py"),
                 ],
                 "env": {
                     "INSTANCE_NAME": name,
@@ -1833,7 +1833,7 @@ def _cmd_add_agent(args):
                 "command": "uv",
                 "args": [
                     "run", "--directory", str(murmur_dir.parent),
-                    "python", str(murmur_dir / "mcp.py"),
+                    "python", str(murmur_dir / "mcp_server.py"),
                 ],
                 "env": {
                     "INSTANCE_NAME": name,
