@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 12:28 EDT
+Last updated: 2026-04-12 04:35 UTC
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-04-12 12:28 EDT
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (770 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (780 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -25,18 +25,18 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 **What's built:**
 
-| Module                      | Lines  | What                                                                                     |
-| --------------------------- | ------ | ---------------------------------------------------------------------------------------- |
-| murmur/relay.py             | ~1200  | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin       |
-| murmur/mcp_server.py        | ~820   | MCP server: 12 tools incl. claim_task, release_task, get_room_state, SSE push, heartbeat |
-| murmur/cli.py               | ~3500  | 30+ CLI commands incl. context (Summary Cascade v1), decision, state, locks, usage, etc. |
-| murmur/routes/room_state.py | ~250   | Primitive A+B: GET state, PATCH goal, POST decisions, POST/DELETE locks (mutex)          |
-| murmur/routes/usage.py      | ~157   | GET /v1/usage + /v1/usage/rooms/{room} — tenant-scoped metrics                           |
-| murmur/routes/agents.py     | ~57    | GET /agents/{name} — profile, rooms, last seen, message count, online status             |
-| murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing               |
-| murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                          |
-| murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                        |
-| tests/                      | ~7500  | 770 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
+| Module                      | Lines  | What                                                                                      |
+| --------------------------- | ------ | ----------------------------------------------------------------------------------------- |
+| murmur/relay.py             | ~1200  | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin        |
+| murmur/mcp_server.py        | ~820   | MCP server: 12 tools incl. claim_task, release_task, get_room_state, SSE push, heartbeat  |
+| murmur/cli.py               | ~3500  | 30+ CLI commands incl. context (Summary Cascade v1), decision, state, locks, usage, etc.  |
+| murmur/routes/room_state.py | ~250   | Primitive A+B: GET state, PATCH goal, POST decisions, POST/DELETE locks (mutex)           |
+| murmur/routes/usage.py      | ~157   | GET /v1/usage + /v1/usage/rooms/{room} — tenant-scoped metrics                            |
+| murmur/routes/agents.py     | ~57    | GET /agents/{name} — profile, rooms, last seen, message count, online status              |
+| murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing                |
+| murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                           |
+| murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                         |
+| tests/                      | ~8200  | 780 tests: relay, mcp, config, CLI, usage, agents, room_state, sdk, integration, security |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -55,6 +55,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 - JWT auth + API keys, per-sender rate limiting
 - Docker + Railway/Render deploy configs
 - Reply threading (reply_to field + Room.reply() SDK)
+- **SDK Primitive A/B**: Room.lock(), Room.unlock(), Room.state() — full client-side mutex + state surface with JWT refresh-on-401
 - Durable webhook queue (Redis Streams, ACK/NACK + DLQ)
 - Idempotency-Key header support for sends
 - ack=manual default — at-least-once delivery to caller
@@ -74,7 +75,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 - **Decision recording**: `murmur decision <room> "<text>"` — writes to room state decisions via POST /rooms/{room}/state/decisions; surfaced in `murmur context`
 - **Hook auto-injection**: `murmur hook enable` now runs `murmur inbox --quiet && murmur context --quiet` on every UserPromptSubmit
 
-**Tests:** 770 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 780 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -132,6 +133,13 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 | Date       | Commit  | What                                                               |
 | ---------- | ------- | ------------------------------------------------------------------ |
+| 2026-04-12 | c120f1b | SDK: ReceiveResult ack/iter/len + AckError coverage (780 total)    |
+| 2026-04-12 | e0cbdaf | Integration: room broadcast + Primitive B lock lifecycle tests     |
+| 2026-04-12 | 7cdb77c | SDK: astream SSE tests (happy path + invalid JSON skip)            |
+| 2026-04-12 | 38635bb | SDK: async surface coverage (asend, areceive, a_ack)               |
+| 2026-04-12 | f126518 | SDK: Room.lock(), Room.unlock(), Room.state() with JWT refresh     |
+| 2026-04-12 | ea50150 | RoomStateBackend protocol + RedisBackends typing fix               |
+| 2026-04-12 | a146a28 | Fix: wire room_state into RedisBackends (AttributeError in prod)   |
 | 2026-04-12 | 91e819a | Regression tests: brief/subtask message types (4 tests, 770 total) |
 | 2026-04-12 | 38377be | CI: Python 3.10/3.11/3.12 matrix, switch to uv                     |
 | 2026-04-12 | e39b840 | Fix: brief/subtask message_types rejected by relay (422)           |
