@@ -115,14 +115,15 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH quota (default 10000)            |
 | ~~High~~     | ~~Usage/participant endpoints leak data~~    | ✅ Scoped by auth level (admin vs user)                 |
 | **High**     | Room fan-out is write-amplified              | N members = N queue writes per message                  |
-| **High**     | SSE receives internal wakeup messages        | Wakeup payloads leak to client SSE stream               |
+| ~~High~~     | ~~SSE receives internal wakeup messages~~    | ✅ Filter {"wake":true} in SSE queue handler            |
+| ~~High~~     | ~~Idempotency key not bound to body~~        | ✅ Body fingerprint (SHA256) included in cache key      |
 | **Medium**   | No migration/rebuild story for Redis         | Key schema changes are operationally risky              |
 | ~~Medium~~   | ~~Webhook signing too weak~~                 | ✅ Timestamped HMAC + per-webhook secrets               |
 | ~~Medium~~   | ~~SSRF TOCTOU at webhook delivery~~          | ✅ Re-validate DNS at delivery time                     |
 | **Medium**   | No delivery/audit ledger                     | "What happened to message X?" has no answer             |
 | ~~Medium~~   | ~~MCP swallows ACK failures~~                | ✅ Warning shown when ACK fails                         |
 | **Medium**   | Auth is name-oriented, not account-based     | No immutable IDs, no revocation                         |
-| **Medium**   | Dashboard puts credentials in URL            | Tokens in query params leak via logs/referrers          |
+| ~~Medium~~   | ~~Dashboard puts credentials in URL~~        | ✅ Token stored in sessionStorage, URL cleared          |
 | **Low**      | Operational metrics thin                     | Need stream depth, pending age, redelivery counts       |
 
 ### Next Priorities
@@ -144,6 +145,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | 082cd18 | fix: SSE wakeup filter, idempotency body fingerprint, dashboard token     |
 | 2026-04-12 | 6764411 | fix: scope usage/participant endpoints by auth level + invite JS fix      |
 | 2026-04-12 | f0f3139 | feat: RedisRoomStateBackend for distributed mutex (cross-replica locks)   |
 | 2026-04-12 | a56479a | fix: require room membership for state/lock endpoints (critical auth fix) |
@@ -153,7 +155,6 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | 2026-04-12 | 01d5a14 | feat: website Nav/CTA/CodeDemo/Footer polish + Architecture 866+ count    |
 | 2026-04-12 | 2dbc2db | feat: vercel.json fix + QuickStart terminal animation + tui_hub UX        |
 | 2026-04-12 | 86f6af2 | test: murmur resolve edge cases (empty diff, network error, no API key)   |
-| 2026-04-12 | c5a4a7e | feat: murmur doctor MCP server registration check (13 checks total)       |
 
 ---
 
