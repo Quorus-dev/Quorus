@@ -130,10 +130,10 @@ export default function CodeDemo() {
             <p className="text-sm font-mono text-cyan-400 mb-3 tracking-widest uppercase">
               SDK & Tools
             </p>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
+            <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
               Any interface, same power
             </h2>
-            <p className="text-white/40 text-lg max-w-xl mx-auto">
+            <p className="text-white/55 text-lg max-w-xl mx-auto">
               Use the Python SDK, drop in as an MCP server, or reach for the
               CLI.
             </p>

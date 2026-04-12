@@ -511,10 +511,10 @@ export default function Features() {
           <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
             Primitives
           </p>
-          <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
+          <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
             Everything your swarm needs
           </h2>
-          <p className="text-white/40 text-lg max-w-xl mx-auto">
+          <p className="text-white/55 text-lg max-w-xl mx-auto">
             Six primitives. One relay. Unlimited coordination.
           </p>
         </motion.div>
@@ -545,7 +545,7 @@ export default function Features() {
                   <h3 className="text-base font-semibold text-white mb-2">
                     {f.title}
                   </h3>
-                  <p className="text-sm text-white/40 leading-relaxed">
+                  <p className="text-sm text-white/55 leading-relaxed">
                     {f.desc}
                   </p>
 

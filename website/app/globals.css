@@ -2,7 +2,7 @@
 
 :root {
   --background: #06060a;
-  --foreground: #ffffff;
+  --foreground: #f2f2f8; /* slight blue-white warmth — not pure white */
   --muted: #888888;
   --border: #1a1a2e;
   --surface: #0d0d18;
@@ -86,14 +86,14 @@ body::before {
 }
 
 /* ─── Gradient text ─────────────────────────────────────────────────────────── */
+/* Violet-only gradient — no cyan. Cyan at 100% is the #1 "AI template" tell. */
 .gradient-text {
   background: linear-gradient(
-    120deg,
+    135deg,
     #ffffff 0%,
-    #e4d4ff 30%,
-    #a78bfa 55%,
-    #7c3aed 75%,
-    #06b6d4 100%
+    #ede9fe 25%,
+    #c4b5fd 55%,
+    #7c3aed 100%
   );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -101,7 +101,7 @@ body::before {
 }
 
 .gradient-text-subtle {
-  background: linear-gradient(120deg, #ffffff 0%, #ddd6fe 50%, #c4b5fd 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #ede9fe 45%, #c4b5fd 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -340,7 +340,8 @@ body::before {
   animation: border-spin 4s ease infinite;
 }
 
-/* ─── Text shimmer (for highlighted phrases) ────────────────────────────────── */
+/* ─── Text shimmer (hero "Communication" only) ──────────────────────────────── */
+/* Pure violet — no cyan. Slowed to 8s so it's felt, not watched. */
 @keyframes text-shimmer {
   0% {
     background-position: -200% center;
@@ -353,17 +354,17 @@ body::before {
 .text-shimmer {
   background: linear-gradient(
     90deg,
-    #a78bfa 0%,
-    #ffffff 25%,
-    #a78bfa 50%,
-    #06b6d4 75%,
-    #a78bfa 100%
+    #7c3aed 0%,
+    #c4b5fd 28%,
+    #ffffff 50%,
+    #c4b5fd 72%,
+    #7c3aed 100%
   );
   background-size: 200% auto;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  animation: text-shimmer 4s linear infinite;
+  animation: text-shimmer 8s linear infinite;
 }
 
 /* ─── Section alt background ────────────────────────────────────────────────── */

@@ -41,84 +41,43 @@ function Counter({
 }
 
 const STATS = [
-  {
-    value: 3.6,
-    suffix: "ms",
-    decimals: 1,
-    label: "p50 latency",
-    color: "#a78bfa",
-  },
-  {
-    value: 281,
-    suffix: " msg/s",
-    label: "throughput",
-    color: "#60a5fa",
-  },
-  {
-    value: 866,
-    suffix: "+",
-    label: "tests passing",
-    color: "#34d399",
-  },
-  {
-    value: 99.9,
-    suffix: "%",
-    decimals: 1,
-    label: "uptime",
-    color: "#fb923c",
-  },
+  { value: 3.6, suffix: "ms", decimals: 1, label: "p50 latency" },
+  { value: 281, suffix: " msg/s", label: "throughput" },
+  { value: 866, suffix: "+", label: "tests passing" },
+  { value: 99.9, suffix: "%", decimals: 1, label: "uptime" },
 ];
 
 export default function StatsBand() {
   return (
     <section className="relative py-14 overflow-hidden border-y border-white/[0.05]">
-      {/* Gradient wash */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 60% 100% at 50% 50%, rgba(124,58,237,0.04) 0%, transparent 70%)",
+            "radial-gradient(ellipse 60% 100% at 50% 50%, rgba(124,58,237,0.03) 0%, transparent 70%)",
         }}
       />
 
       <div className="max-w-5xl mx-auto px-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-10 md:gap-0 md:divide-x md:divide-white/[0.06]">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-10 md:gap-0 md:divide-x md:divide-white/[0.05]">
           {STATS.map((stat, i) => (
             <motion.div
               key={stat.label}
-              initial={{ opacity: 0, y: 16 }}
+              initial={{ opacity: 0, y: 12 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.1, duration: 0.5, ease: "easeOut" }}
-              className="flex flex-col items-center text-center gap-2 group"
+              className="flex flex-col items-center text-center gap-2"
             >
-              {/* Number */}
-              <div
-                className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight transition-all duration-300 group-hover:scale-105"
-                style={{
-                  background: `linear-gradient(120deg, #ffffff 0%, ${stat.color} 60%)`,
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  backgroundClip: "text",
-                  filter: `drop-shadow(0 0 12px ${stat.color}40)`,
-                }}
-              >
+              <div className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight text-white">
                 <Counter
                   value={stat.value}
                   suffix={stat.suffix}
                   decimals={stat.decimals}
                 />
               </div>
-
-              {/* Label */}
-              <div className="flex items-center gap-2">
-                <span
-                  className="w-1 h-1 rounded-full"
-                  style={{ background: stat.color, opacity: 0.6 }}
-                />
-                <span className="text-xs text-white/25 font-mono tracking-widest uppercase">
-                  {stat.label}
-                </span>
+              <div className="text-xs text-white/30 font-mono tracking-widest uppercase">
+                {stat.label}
               </div>
             </motion.div>
           ))}

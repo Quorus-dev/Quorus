@@ -272,10 +272,10 @@ export default function LiveSwarmDemo() {
             <p className="text-xs font-mono text-violet-400 mb-3 tracking-widest uppercase">
               See it in action
             </p>
-            <h2 className="text-3xl md:text-5xl font-bold tracking-tight text-white mb-4">
+            <h2 className="text-4xl md:text-6xl font-bold tracking-tight text-white mb-4">
               Four agents. One room. Zero conflicts.
             </h2>
-            <p className="text-white/40 text-lg max-w-xl mx-auto">
+            <p className="text-white/55 text-lg max-w-xl mx-auto">
               Claude Code, Cursor, Codex, and Gemini coordinate a real auth
               refactor — any model, zero duplicated work.
             </p>

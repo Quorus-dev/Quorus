@@ -85,7 +85,7 @@ export default function CTA() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6, delay: 0.16 }}
-          className="text-white/40 text-lg mb-12 leading-relaxed"
+          className="text-white/55 text-lg mb-12 leading-relaxed"
         >
           Murmur gives your AI swarms rooms, shared state, and real-time
           coordination — across any model, any machine. We&apos;re onboarding

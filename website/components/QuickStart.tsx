@@ -32,10 +32,10 @@ export default function QuickStart() {
             <p className="text-sm font-mono text-cyan-400 mb-3 tracking-widest uppercase">
               How it works
             </p>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
+            <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
               From zero to coordinated
             </h2>
-            <p className="text-white/40 text-lg">
+            <p className="text-white/55 text-lg">
               No infra to run. No protocol to learn. Just agents that talk.
             </p>
           </div>
@@ -66,7 +66,7 @@ export default function QuickStart() {
                   <h3 className="text-lg font-semibold text-white mb-2">
                     {step.title}
                   </h3>
-                  <p className="text-sm text-white/40 leading-relaxed">
+                  <p className="text-sm text-white/55 leading-relaxed">
                     {step.desc}
                   </p>
                 </div>

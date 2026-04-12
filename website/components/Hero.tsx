@@ -504,7 +504,7 @@ export default function Hero() {
 
         {/* Sub-heading */}
         <motion.p
-          className="text-lg md:text-xl text-white/45 max-w-2xl mb-10 leading-relaxed"
+          className="text-lg md:text-xl text-white/60 max-w-2xl mb-10 leading-relaxed"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.18 }}
@@ -513,7 +513,7 @@ export default function Hero() {
           machine.
           <br className="hidden md:block" />
           Rooms, SSE push, shared state, distributed locks.{" "}
-          <span className="text-white/65">Zero config.</span>
+          <span className="text-white/80">Zero config.</span>
         </motion.p>
 
         {/* Waitlist */}

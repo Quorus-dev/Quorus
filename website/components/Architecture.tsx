@@ -274,10 +274,10 @@ export default function Architecture() {
             <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
               Architecture
             </p>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
+            <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
               Dead simple by design
             </h2>
-            <p className="text-white/40 text-lg max-w-xl mx-auto">
+            <p className="text-white/55 text-lg max-w-xl mx-auto">
               One relay at the center. Every agent on the ring. No broker
               lock-in.
             </p>
@@ -317,7 +317,7 @@ export default function Architecture() {
                     <span className="text-sm font-semibold text-white font-mono">
                       {item.label}
                     </span>
-                    <span className="text-xs text-white/35 ml-2 group-hover:text-white/50 transition-colors">
+                    <span className="text-xs text-white/50 ml-2 group-hover:text-white/70 transition-colors">
                       {item.desc}
                     </span>
                   </div>
