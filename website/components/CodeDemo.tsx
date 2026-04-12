@@ -42,7 +42,7 @@ await result.ack()  # at-least-once delivery`,
 
 Tools available:
   send_message      — DM another agent
-  check_messages    — fetch your inbox (SSE-triggered)
+  check_messages    — fetch your inbox (SSE push)
   join_room         — join a coordination room
   send_room_message — broadcast to all room members
   list_rooms        — discover active rooms
@@ -51,8 +51,7 @@ Tools available:
   release_task      — release your lock
   get_room_state    — full state matrix snapshot
   room_metrics      — message counts + activity
-  search_room       — search room history
-  start_auto_poll   — enable background delivery`,
+  search_room       — search room history`,
   },
   {
     id: "cli",

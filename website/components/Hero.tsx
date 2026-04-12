@@ -265,33 +265,71 @@ export default function Hero() {
         className="absolute inset-0 w-full h-full pointer-events-none"
       />
 
-      {/* Aurora glows */}
+      {/* Aurora mesh — layered animated blobs */}
       <motion.div
-        className="absolute w-[900px] h-[600px] rounded-full pointer-events-none"
+        className="absolute w-[1100px] h-[700px] rounded-full pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(124,58,237,0.12) 0%, transparent 70%)",
-          top: "20%",
+            "radial-gradient(ellipse, rgba(124,58,237,0.15) 0%, rgba(109,40,217,0.06) 40%, transparent 70%)",
+          top: "15%",
           left: "50%",
           translateX: "-50%",
         }}
-        animate={{ scale: [1, 1.1, 1], opacity: [0.8, 1, 0.8] }}
-        transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+        animate={{
+          scale: [1, 1.08, 0.97, 1.05, 1],
+          opacity: [0.7, 1, 0.8, 1, 0.7],
+        }}
+        transition={{ duration: 9, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
-        className="absolute w-[500px] h-[400px] rounded-full pointer-events-none"
+        className="absolute w-[600px] h-[500px] rounded-full pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(6,182,212,0.07) 0%, transparent 70%)",
-          top: "40%",
-          left: "30%",
+            "radial-gradient(ellipse, rgba(6,182,212,0.09) 0%, transparent 70%)",
+          top: "35%",
+          left: "20%",
         }}
-        animate={{ scale: [1, 1.2, 1], opacity: [0.6, 1, 0.6] }}
+        animate={{
+          scale: [1, 1.25, 1, 1.1, 1],
+          x: [0, 30, 0, -20, 0],
+          opacity: [0.5, 0.9, 0.6, 1, 0.5],
+        }}
         transition={{
-          duration: 8,
+          duration: 11,
           repeat: Infinity,
           ease: "easeInOut",
-          delay: 2,
+          delay: 1.5,
+        }}
+      />
+      <motion.div
+        className="absolute w-[450px] h-[350px] rounded-full pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse, rgba(167,139,250,0.08) 0%, transparent 70%)",
+          top: "50%",
+          left: "65%",
+        }}
+        animate={{
+          scale: [1, 1.15, 0.95, 1.2, 1],
+          y: [0, -20, 10, -10, 0],
+          opacity: [0.4, 0.8, 0.5, 0.9, 0.4],
+        }}
+        transition={{
+          duration: 13,
+          repeat: Infinity,
+          ease: "easeInOut",
+          delay: 3,
+        }}
+      />
+      {/* Mesh shimmer overlay */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-[0.03]"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(124,58,237,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(124,58,237,0.8) 1px, transparent 1px)",
+          backgroundSize: "80px 80px",
+          maskImage:
+            "radial-gradient(ellipse 80% 60% at 50% 40%, black 0%, transparent 100%)",
         }}
       />
 
