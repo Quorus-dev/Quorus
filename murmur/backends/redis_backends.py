@@ -174,12 +174,18 @@ class RedisMessageBackend:
             await pipe.execute()
 
     async def enqueue_fanout(
-        self, tenant_id: str, messages_by_recipient: dict[str, dict]
+        self, tenant_id: str, messages_by_recipient: dict[str, dict],
+        maxlen: int | None = None,
     ) -> None:
         """Fan-out: enqueue one message per recipient in a single pipeline.
 
         This batches all writes into a single Redis round-trip, reducing
         latency for room messages with many recipients from O(N) to O(1).
+
+        Args:
+            maxlen: If set, use XADD MAXLEN ~ to atomically enforce a per-stream
+                    cap. This prevents concurrent sends from overshooting quotas.
+                    The ~ (approximate) trimming is more efficient than exact.
         """
         if not messages_by_recipient:
             return
@@ -189,11 +195,15 @@ class RedisMessageBackend:
         for key in keys:
             await self._ensure_group(key)
 
-        # Pipeline all XADD commands
+        # Pipeline all XADD commands with optional MAXLEN for atomic backpressure
         async with self._r.pipeline(transaction=False) as pipe:
             for recipient, message in messages_by_recipient.items():
                 key = self._key(tenant_id, recipient)
-                pipe.xadd(key, {"data": json.dumps(message)})
+                if maxlen:
+                    # MAXLEN ~ N trims to approximately N entries (more efficient)
+                    pipe.xadd(key, {"data": json.dumps(message)}, maxlen=maxlen, approximate=True)
+                else:
+                    pipe.xadd(key, {"data": json.dumps(message)})
             await pipe.execute()
 
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:

@@ -29,7 +29,8 @@ class MessageBackend(Protocol):
         ...
 
     async def enqueue_fanout(
-        self, tenant_id: str, messages_by_recipient: dict[str, dict]
+        self, tenant_id: str, messages_by_recipient: dict[str, dict],
+        maxlen: int | None = None,
     ) -> None:
         """Fan-out: enqueue one message per recipient in a single operation.
 
@@ -39,6 +40,9 @@ class MessageBackend(Protocol):
 
         Args:
             messages_by_recipient: dict mapping recipient name -> message dict
+            maxlen: If set, atomically enforce a per-recipient queue cap.
+                    Old messages are trimmed when the cap is exceeded.
+                    This prevents concurrent sends from overshooting quotas.
         """
         ...
 

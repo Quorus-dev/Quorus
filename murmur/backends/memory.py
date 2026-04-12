@@ -62,12 +62,20 @@ class InMemoryMessageBackend:
             self._queues[(tenant_id, to_name)].extend(messages)
 
     async def enqueue_fanout(
-        self, tenant_id: str, messages_by_recipient: dict[str, dict]
+        self, tenant_id: str, messages_by_recipient: dict[str, dict],
+        maxlen: int | None = None,
     ) -> None:
         """Fan-out: enqueue one message per recipient."""
         async with self._lock:
             for recipient, message in messages_by_recipient.items():
-                self._queues[(tenant_id, recipient)].append(message)
+                key = (tenant_id, recipient)
+                self._queues[key].append(message)
+                # Enforce maxlen by trimming oldest entries
+                if maxlen and len(self._queues[key]) > maxlen:
+                    # Remove oldest entries to stay at maxlen
+                    excess = len(self._queues[key]) - maxlen
+                    for _ in range(excess):
+                        self._queues[key].popleft()
 
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
         async with self._lock:
