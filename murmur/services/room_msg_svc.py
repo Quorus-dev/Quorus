@@ -21,6 +21,9 @@ logger = structlog.get_logger("murmur.services.room_msg")
 
 MAX_RECIPIENT_DEPTH = int(os.environ.get("MAX_RECIPIENT_DEPTH", "10000"))
 
+# Feature flag for outbox pattern (enable once migration 006 is applied)
+USE_OUTBOX = os.environ.get("USE_OUTBOX", "false").lower() in ("1", "true", "yes")
+
 
 class RoomMessageService:
     """Handles room message fan-out, history storage, and search."""
@@ -68,27 +71,120 @@ class RoomMessageService:
     ) -> dict:
         """Send a message to a room, fan-out to all members.
 
-        Uses direct backend.enqueue + SSE push (not MessageService.send_dm)
-        to avoid per-fan-out rate limiting.
+        **Delivery model:**
 
-        **Delivery model (eventual consistency):**
+        When USE_OUTBOX=true (recommended for production):
+        - History + outbox written atomically to Postgres
+        - Background worker handles fan-out (at-least-once guarantee)
+        - Returns immediately after Postgres commit
 
-        1. Message is persisted to Postgres (source of truth) FIRST.
-        2. Fan-out to Redis member queues for real-time delivery.
-        3. SSE push to connected clients.
-        4. Analytics/webhook notifications (best-effort).
-
-        If step 1 fails, the operation fails cleanly (no side effects).
-        If steps 2-4 fail after step 1, the message is durably stored but
-        some recipients may miss real-time delivery. They can poll history.
-
-        This is better than the reverse (recipients get message, history fails)
-        which would cause duplicate fan-out on retry.
-
-        **Future:** An outbox pattern would make steps 2-4 fully transactional.
+        When USE_OUTBOX=false (legacy mode):
+        - History written to Postgres first
+        - Fan-out attempted inline (best-effort)
+        - If fan-out fails, message is in history but real-time delivery fails
 
         Returns ``{"id": ..., "timestamp": ...}``.
         """
+        if USE_OUTBOX:
+            return await self._send_with_outbox(
+                tenant_id, room_id, sender, content, message_type, reply_to
+            )
+        return await self._send_inline(
+            tenant_id, room_id, sender, content, message_type, reply_to
+        )
+
+    async def _send_with_outbox(
+        self,
+        tenant_id: str,
+        room_id: str,
+        sender: str,
+        content: str,
+        message_type: str = "chat",
+        reply_to: str | None = None,
+    ) -> dict:
+        """Send using the outbox pattern — transactional fan-out guarantee."""
+        from murmur.models.outbox import MessageOutbox
+        from murmur.storage.postgres import get_db_session
+
+        # Rate limit the sender
+        if not await self._rate_limit.check(tenant_id, sender):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+        # Resolve room and verify membership
+        room_id, room_data = await self._room.get(tenant_id, room_id)
+        members = room_data.get("members", {})
+        if sender not in members:
+            raise HTTPException(status_code=403, detail="Not a member of this room")
+
+        # Validate reply_to
+        if reply_to is not None:
+            parent = await self._history.get_by_id(tenant_id, room_id, reply_to)
+            if parent is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"reply_to message '{reply_to}' not found in this room",
+                )
+
+        room_name = room_data.get("name", "")
+        timestamp = datetime.now(timezone.utc).isoformat()
+        message_id = uuid.uuid4()
+
+        # Build history message
+        history_msg = {
+            "id": str(message_id),
+            "from": sender,
+            "from_name": sender,
+            "room": room_name,
+            "content": content,
+            "message_type": message_type,
+            "timestamp": timestamp,
+            "reply_to": reply_to,
+        }
+
+        # Write history + outbox atomically
+        async with get_db_session() as session:
+            # Append to history
+            await self._history.append(tenant_id, room_id, history_msg)
+
+            # Create outbox entry
+            outbox_entry = MessageOutbox(
+                tenant_id=tenant_id,
+                room_id=room_id,
+                room_name=room_name,
+                message_id=message_id,
+                sender=sender,
+                content=content,
+                message_type=message_type,
+                reply_to=uuid.UUID(reply_to) if reply_to else None,
+            )
+            session.add(outbox_entry)
+
+        # Track analytics (best-effort)
+        try:
+            await self._analytics.track_send(tenant_id, sender)
+        except Exception as e:
+            logger.warning("Analytics tracking failed", error=str(e))
+
+        logger.info(
+            "Room message queued for fan-out",
+            message_id=str(message_id),
+            room=room_name,
+            sender=sender,
+            members=len(members),
+        )
+
+        return {"id": str(message_id), "timestamp": timestamp, "status": "queued"}
+
+    async def _send_inline(
+        self,
+        tenant_id: str,
+        room_id: str,
+        sender: str,
+        content: str,
+        message_type: str = "chat",
+        reply_to: str | None = None,
+    ) -> dict:
+        """Send with inline fan-out (legacy mode, best-effort delivery)."""
         # Rate limit the sender
         if not await self._rate_limit.check(tenant_id, sender):
             raise HTTPException(

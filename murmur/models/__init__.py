@@ -10,9 +10,12 @@ Usage:
 
 from murmur.models.account import Account, AccountTier
 from murmur.models.api_key import APIKey
+from murmur.models.outbox import MessageOutbox, OutboxStatus
 
 __all__ = [
     "Account",
     "AccountTier",
     "APIKey",
+    "MessageOutbox",
+    "OutboxStatus",
 ]

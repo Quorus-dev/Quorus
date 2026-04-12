@@ -44,6 +44,9 @@ MESSAGES_FILE = os.environ.get("MESSAGES_FILE", "messages.json")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 BOOTSTRAP_SECRET = os.environ.get("BOOTSTRAP_SECRET", "")
 
+# Feature flag for outbox pattern (enable once migration 006 is applied)
+USE_OUTBOX = os.environ.get("USE_OUTBOX", "false").lower() in ("1", "true", "yes")
+
 # ---------------------------------------------------------------------------
 # Startup validation
 # ---------------------------------------------------------------------------
@@ -361,6 +364,20 @@ def _init_services(app_instance, redis_conn=None):
     app_instance.state.invite_service = invite
     app_instance.state.backends = backends
 
+    # Create outbox worker if enabled (requires Postgres)
+    if USE_OUTBOX and DATABASE_URL:
+        from murmur.services.outbox_svc import OutboxWorker
+
+        outbox_worker = OutboxWorker(
+            room_svc=room,
+            msg_backend=backends.messages,
+            sse_svc=sse,
+            webhook_svc=webhook,
+            on_enqueue=message.notify_new_message,
+        )
+        app_instance.state.outbox_worker = outbox_worker
+        logger.info("Outbox worker created (will start in lifespan)")
+
 
 # ---------------------------------------------------------------------------
 # Lifespan
@@ -397,7 +414,24 @@ async def lifespan(app):
     if hasattr(app.state, "webhook_service"):
         app.state.webhook_service.start()
 
+    # Start outbox worker (for transactional fan-out)
+    outbox_task = None
+    if hasattr(app.state, "outbox_worker"):
+        outbox_task = asyncio.create_task(app.state.outbox_worker.start())
+        logger.info("Outbox worker started")
+
     yield
+
+    # Stop outbox worker
+    if hasattr(app.state, "outbox_worker"):
+        app.state.outbox_worker.stop()
+        if outbox_task:
+            outbox_task.cancel()
+            try:
+                await outbox_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Outbox worker stopped")
 
     logger.info("Relay server shutting down")
 
