@@ -19,6 +19,10 @@ import httpx
 logger = logging.getLogger("murmur.http_agent")
 
 
+class AckError(Exception):
+    """Raised when message acknowledgement fails."""
+
+
 class ReceiveResult:
     """Result of a receive() call with deferred ACK.
 
@@ -38,7 +42,11 @@ class ReceiveResult:
         self._client = client
 
     def ack(self) -> None:
-        """Acknowledge receipt — call after successful processing."""
+        """Acknowledge receipt — call after successful processing.
+
+        Raises :class:`AckError` on failure so callers know redelivery
+        will occur.
+        """
         if not self._ack_token or not self.messages:
             return
         try:
@@ -47,8 +55,8 @@ class ReceiveResult:
                 f"{self._client.relay_url}/messages/{self._client.name}/ack",
                 json={"ack_token": self._ack_token},
             )
-        except Exception:
-            logger.warning("Failed to ACK messages")
+        except Exception as exc:
+            raise AckError(f"Failed to ACK messages: {exc}") from exc
 
     def __iter__(self):
         return iter(self.messages)
