@@ -11,7 +11,7 @@ Last updated: 2026-04-12 11:30 EDT
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (722 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (752 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -36,7 +36,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 | murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing               |
 | murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                          |
 | murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                        |
-| tests/                      | ~7500  | 738 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
+| tests/                      | ~7500  | 752 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -74,7 +74,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 - **Decision recording**: `murmur decision <room> "<text>"` — writes to room state decisions via POST /rooms/{room}/state/decisions; surfaced in `murmur context`
 - **Hook auto-injection**: `murmur hook enable` now runs `murmur inbox --quiet && murmur context --quiet` on every UserPromptSubmit
 
-**Tests:** 738 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 752 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -132,6 +132,9 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 | Date       | Commit  | What                                                          |
 | ---------- | ------- | ------------------------------------------------------------- |
+| 2026-04-12 | 4d0c65c | SSE notification-only: always fetch+ACK from durable queue    |
+| 2026-04-12 | a0b86b9 | Fix murmur ps crash when uptime_start is null                 |
+| 2026-04-12 | a3a26e1 | Add brief/subtask/decision message types to relay             |
 | 2026-04-12 | —       | Summary Cascade v1: murmur context + murmur decision commands |
 | 2026-04-12 | 354d9c8 | Auto-inject messages via murmur inbox + hook commands         |
 | 2026-04-12 | 493d445 | MCP server instructions for agent guidance                    |
@@ -139,12 +142,6 @@ murmur init <your-name> --relay <url> --secret <secret>
 | 2026-04-12 | ed95df5 | Per-webhook secrets in routes + strip secrets from list API   |
 | 2026-04-12 | 839f83c | Webhook retry with exponential backoff                        |
 | 2026-04-12 | 6deb7a2 | Atomic idempotency with SET NX prevents race conditions       |
-| 2026-04-12 | dccb872 | Room fan-out respects per-recipient queue depth quota         |
-| 2026-04-12 | merge   | dev → main: Primitives A/B/C, SSE-only push, usage, 700 tests |
-| 2026-04-12 | f338b56 | Durable webhook queue with Redis Streams                      |
-| 2026-04-12 | de39ef1 | Rename mcp.py to mcp_server.py (avoid shadowing)              |
-| 2026-04-12 | 400fd7c | Production Redis config (AOF, auth, noeviction)               |
-| 2026-04-12 | 4ff1b43 | Surface ACK failures in MCP check_messages                    |
 
 ---
 
