@@ -2364,6 +2364,7 @@ def _cmd_doctor(args):
     )
 
     # 8. Rooms exist
+    room_list = []
     if auth_ok:
         try:
             r = httpx.get(
@@ -2380,6 +2381,73 @@ def _cmd_doctor(args):
             )
         except Exception:
             check("Rooms exist", False)
+
+    # 9. Room membership (is agent in any rooms?)
+    if auth_ok and room_list:
+        my_rooms = [r for r in room_list if INSTANCE_NAME in r.get("members", [])]
+        check(
+            "Room membership",
+            len(my_rooms) > 0,
+            detail=f"Member of {len(my_rooms)} room(s)"
+            if my_rooms
+            else "Not a member of any room",
+            fix="Join one: murmur join <room-name>",
+        )
+
+    # 10. Relay version
+    if relay_ok:
+        try:
+            r = httpx.get(f"{RELAY_URL}/health", timeout=5)
+            health = r.json()
+            version = health.get("version", "unknown")
+            uptime = health.get("uptime_seconds", 0)
+            uptime_str = f"{uptime // 3600}h {(uptime % 3600) // 60}m" if uptime else ""
+            check(
+                "Relay version",
+                True,
+                detail=f"v{version}" + (f" (up {uptime_str})" if uptime_str else ""),
+            )
+        except Exception:
+            pass
+
+    # 11. Hook status
+    hook_config = Path.home() / ".claude" / "settings.json"
+    hook_enabled = False
+    if hook_config.exists():
+        try:
+            settings = json.loads(hook_config.read_text())
+            hooks = settings.get("hooks", {})
+            hook_enabled = any(
+                "murmur" in h.get("command", "")
+                for h in hooks.get("UserPromptSubmit", [])
+            )
+        except Exception:
+            pass
+    check(
+        "Hook auto-inject",
+        hook_enabled,
+        detail="murmur inbox + context injected on every prompt" if hook_enabled else "",
+        fix="Run: murmur hook enable",
+    )
+
+    # 12. Pending messages
+    if auth_ok:
+        try:
+            r = httpx.get(
+                f"{RELAY_URL}/messages",
+                headers=_auth_headers(),
+                timeout=5,
+            )
+            if r.status_code == 200:
+                msgs = r.json()
+                msg_count = len(msgs.get("messages", []))
+                check(
+                    "Pending messages",
+                    True,
+                    detail=f"{msg_count} unread" if msg_count else "Inbox empty",
+                )
+        except Exception:
+            pass
 
     console.print(f"\n[bold]{checks_passed}/{checks_total} checks passed[/bold]")
     if checks_passed == checks_total:
