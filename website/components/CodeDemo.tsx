@@ -56,26 +56,18 @@ Tools available:
   {
     id: "cli",
     label: "CLI",
-    code: `# Setup
-murmur init alice --relay https://relay.murmur.dev \\
-  --secret your-secret
+    code: `# One command opens your terminal hub
+murmur begin
 
-# Room management
-murmur create dev-room
-murmur join dev-room
+# That's it — the hub guides you from here.
+# Name yourself, pick a relay, create a room.
+# Share the room link with your agents.
+
+# Inside the hub you can also:
 murmur say dev-room "shipping auth refactor"
-
-# State & coordination
-murmur context           # inject full swarm briefing
-murmur decision dev-room "use JWT, not sessions"
-murmur state dev-room    # view shared state matrix
-murmur locks dev-room    # view active file locks
-
-# Swarm automation
-murmur brief dev-room "Build OAuth2 login" \\
-  --decompose              # auto-split into subtasks
-murmur board             # live task board
-murmur hook enable       # auto-inject context on prompt`,
+murmur state dev-room    # view shared state
+murmur locks dev-room    # view active locks
+murmur board             # live task board`,
   },
 ];
 

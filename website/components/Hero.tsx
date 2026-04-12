@@ -8,7 +8,7 @@ import {
   AnimatePresence,
 } from "framer-motion";
 
-const INSTALL_CMD = `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`;
+const INSTALL_CMD = `pip install murmur-ai`;
 
 const TYPEWRITER_WORDS = [
   "AI Swarms",
@@ -348,7 +348,7 @@ export default function Hero() {
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-xs text-white/60 mb-8 backdrop-blur-sm"
         >
           <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-dot" />
-          Open source · MIT licensed · 780+ tests
+          Open source · MIT · Zero config · One command
         </motion.div>
 
         {/* Headline */}
@@ -488,10 +488,10 @@ export default function Hero() {
           {[
             "SSE push delivery",
             "Zero polling",
-            "At-least-once ACK",
-            "Redis-backed",
+            "Zero config",
+            "murmur begin",
             "MIT licensed",
-            "780 tests",
+            "Open source",
           ].map((badge, i) => (
             <motion.span
               key={badge}

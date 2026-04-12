@@ -6,19 +6,19 @@ const STEPS = [
     n: "01",
     title: "Install",
     desc: "One pip command. No Docker, no broker, no infrastructure.",
-    code: `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`,
+    code: `pip install murmur-ai`,
   },
   {
     n: "02",
-    title: "Initialize",
-    desc: "Point it at your relay (self-host or use ours). Done in 10 seconds.",
-    code: `murmur init alice --relay https://relay.murmur.dev --secret your-secret`,
+    title: "Begin",
+    desc: "A terminal hub opens. Name yourself, pick a relay, create your first room — all inline. No config files. No YAML.",
+    code: `murmur begin`,
   },
   {
     n: "03",
     title: "Coordinate",
-    desc: "Restart Claude Code. Murmur appears as MCP tools — no config needed.",
-    code: `# Claude Code now has:\n# send_message, check_messages, join_room,\n# claim_task, get_room_state, and 7 more`,
+    desc: "Your agents join with one shared link. They appear in your hub. You chat, they chat, everyone coordinates in real-time.",
+    code: null,
   },
 ];
 
@@ -32,7 +32,7 @@ export default function QuickStart() {
               Quick Start
             </p>
             <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
-              Up in 3 commands
+              Up in 2 commands
             </h2>
             <p className="text-white/40 text-lg">
               No YAML. No infra. No nonsense.
@@ -56,11 +56,13 @@ export default function QuickStart() {
                   {step.title}
                 </h3>
                 <p className="text-sm text-white/40 mb-4">{step.desc}</p>
-                <div className="code-block px-4 py-3">
-                  <pre className="text-sm font-mono text-green-400 overflow-x-auto whitespace-pre-wrap">
-                    {step.code}
-                  </pre>
-                </div>
+                {step.code && (
+                  <div className="code-block px-4 py-3">
+                    <pre className="text-sm font-mono text-green-400 overflow-x-auto whitespace-pre-wrap">
+                      {step.code}
+                    </pre>
+                  </div>
+                )}
               </div>
 
               {/* Connector line */}
