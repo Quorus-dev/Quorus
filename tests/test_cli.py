@@ -178,6 +178,105 @@ def test_cli_doctor_all_pass(capsys):
     assert "checks passed" in captured.out
 
 
+def test_cli_doctor_mcp_registration_detected(capsys, tmp_path):
+    """Doctor detects murmur MCP server registration."""
+    from murmur.cli import _cmd_doctor
+
+    # Create a mock .claude.json with murmur server
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text(json.dumps({
+        "mcpServers": {
+            "murmur": {
+                "command": "uv",
+                "args": ["run", "python", "murmur/mcp_server.py"]
+            }
+        }
+    }))
+
+    mock_health = MagicMock()
+    mock_health.status_code = 200
+    mock_health.json.return_value = {"version": "0.1.0", "uptime_seconds": 100}
+
+    mock_rooms = MagicMock()
+    mock_rooms.status_code = 200
+    mock_rooms.json.return_value = [{"id": "r1", "name": "test", "members": ["my-agent"]}]
+
+    mock_msgs = MagicMock()
+    mock_msgs.status_code = 200
+    mock_msgs.json.return_value = {"messages": []}
+
+    def mock_get(url, **kwargs):
+        if "health" in url:
+            return mock_health
+        if "messages" in url:
+            return mock_msgs
+        return mock_rooms
+
+    args = MagicMock()
+    args.verbose = False
+
+    with patch("httpx.get", side_effect=mock_get), \
+         patch("murmur.cli.INSTANCE_NAME", "my-agent"), \
+         patch("murmur.cli.RELAY_SECRET", "secret"), \
+         patch("murmur.cli.Path.home", return_value=tmp_path), \
+         patch("murmur.cli.Path.cwd", return_value=tmp_path), \
+         patch("murmur.config.resolve_config_file") as mock_resolve:
+        mock_path = MagicMock()
+        mock_path.exists.return_value = True
+        mock_resolve.return_value = mock_path
+        _cmd_doctor(args)
+
+    captured = capsys.readouterr()
+    assert "MCP server registered" in captured.out
+    assert "OK" in captured.out  # Check passes when murmur is registered
+
+
+def test_cli_doctor_mcp_registration_not_found(capsys, tmp_path):
+    """Doctor detects missing murmur MCP server registration."""
+    from murmur.cli import _cmd_doctor
+
+    # Create a .claude.json without murmur server
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text(json.dumps({
+        "mcpServers": {
+            "other-server": {
+                "command": "node",
+                "args": ["some-other-server.js"]
+            }
+        }
+    }))
+
+    mock_health = MagicMock()
+    mock_health.status_code = 200
+
+    mock_rooms = MagicMock()
+    mock_rooms.status_code = 200
+    mock_rooms.json.return_value = []
+
+    def mock_get(url, **kwargs):
+        if "health" in url:
+            return mock_health
+        return mock_rooms
+
+    args = MagicMock()
+    args.verbose = False
+
+    with patch("httpx.get", side_effect=mock_get), \
+         patch("murmur.cli.INSTANCE_NAME", "my-agent"), \
+         patch("murmur.cli.RELAY_SECRET", "secret"), \
+         patch("murmur.cli.Path.home", return_value=tmp_path), \
+         patch("murmur.cli.Path.cwd", return_value=tmp_path), \
+         patch("murmur.config.resolve_config_file") as mock_resolve:
+        mock_path = MagicMock()
+        mock_path.exists.return_value = True
+        mock_resolve.return_value = mock_path
+        _cmd_doctor(args)
+
+    captured = capsys.readouterr()
+    assert "MCP server registered" in captured.out
+    assert "FAIL" in captured.out
+
+
 # ── export command tests ────────────────────────────────────────────────
 
 _SAMPLE_MSGS = [

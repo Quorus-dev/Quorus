@@ -2700,6 +2700,35 @@ def _cmd_doctor(args):
         fix="Run: murmur init <name> --secret <secret>",
     )
 
+    # 7b. MCP server registered (murmur/claude-tunnel in mcpServers)
+    mcp_registered = False
+    mcp_server_name = None
+    if mcp_found:
+        try:
+            config_path = mcp_json if mcp_json.exists() else home_claude
+            config_data = json.loads(config_path.read_text())
+            servers = config_data.get("mcpServers", {})
+            # Look for murmur or claude-tunnel server
+            for name, server in servers.items():
+                args = server.get("args", [])
+                args_str = " ".join(str(a) for a in args)
+                if "murmur" in name.lower() or "murmur" in args_str.lower():
+                    mcp_registered = True
+                    mcp_server_name = name
+                    break
+                if "tunnel" in name.lower() or "mcp_server" in args_str:
+                    mcp_registered = True
+                    mcp_server_name = name
+                    break
+        except Exception:
+            pass
+    check(
+        "MCP server registered",
+        mcp_registered,
+        detail=f"Server: {mcp_server_name}" if mcp_server_name else "",
+        fix="Run: murmur init <name> --secret <secret>",
+    )
+
     # 8. Rooms exist
     room_list = []
     if auth_ok:
