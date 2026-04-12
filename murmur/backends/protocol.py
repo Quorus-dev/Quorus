@@ -484,3 +484,58 @@ class IdempotencyBackend(Protocol):
     async def delete(self, tenant_id: str, key: str) -> None:
         """Delete a key (used to release pending reservations on failure)."""
         ...
+
+
+class RoomStateBackend(Protocol):
+    """Shared State Matrix — goal, claimed tasks, file locks, decisions.
+
+    Provides the coordination substrate for Primitive A (read) and
+    Primitive B (distributed mutex).  Implementations must be safe for
+    concurrent async access.
+    """
+
+    async def get(self, tenant_id: str, room_id: str) -> dict:
+        """Return a snapshot of the room's coordination state."""
+        ...
+
+    async def set_goal(
+        self, tenant_id: str, room_id: str, goal: str | None
+    ) -> None:
+        """Set (or clear) the active goal for a room."""
+        ...
+
+    async def add_claimed_task(
+        self, tenant_id: str, room_id: str, task: dict
+    ) -> None:
+        """Record a newly acquired file lock as a claimed task."""
+        ...
+
+    async def remove_claimed_task(
+        self, tenant_id: str, room_id: str, task_id: str
+    ) -> None:
+        """Remove a claimed task (on release or manual clear)."""
+        ...
+
+    async def set_lock(
+        self, tenant_id: str, room_id: str, file_path: str, lock_data: dict
+    ) -> None:
+        """Directly set a lock entry (used internally by add_claimed_task)."""
+        ...
+
+    async def release_lock(
+        self, tenant_id: str, room_id: str, file_path: str
+    ) -> None:
+        """Remove a file lock entry."""
+        ...
+
+    async def add_decision(
+        self, tenant_id: str, room_id: str, decision: dict
+    ) -> None:
+        """Append a resolved decision to the room's decision log."""
+        ...
+
+    async def expire_tasks(
+        self, tenant_id: str, room_id: str
+    ) -> list[str]:
+        """Remove and return IDs of tasks whose TTL has elapsed."""
+        ...

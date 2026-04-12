@@ -14,9 +14,13 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
+
+if TYPE_CHECKING:
+    from murmur.backends.protocol import RoomStateBackend
 
 _redis_logger = logging.getLogger("murmur.backends.redis")
 
@@ -1200,7 +1204,7 @@ class RedisBackends:
     webhook_queue: RedisWebhookQueueBackend = None  # type: ignore[assignment]
     # room_state uses an in-process InMemoryRoomStateBackend — lock coordination
     # is replica-local (TTL auto-expires stale locks; full Redis backend is Phase 2).
-    room_state: object = None  # type: ignore[assignment]
+    room_state: "RoomStateBackend" = None  # type: ignore[assignment]
 
     @classmethod
     def create(cls, r: Redis, max_room_history: int = 200) -> RedisBackends:
