@@ -32,6 +32,9 @@ _DLQ_MAX_SIZE = 1000
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
 
+WEBHOOK_REPLAY_WINDOW = int(os.environ.get("WEBHOOK_REPLAY_WINDOW", "300"))  # 5 min
+
+
 @dataclass
 class WebhookJob:
     """A webhook delivery job with retry tracking."""
@@ -39,6 +42,7 @@ class WebhookJob:
     target: str
     callback_url: str
     payload: dict
+    secret: str = ""  # per-webhook secret, falls back to global
     attempt: int = 0
     created_at: float = field(default_factory=time.time)
     last_error: str = ""
@@ -96,11 +100,36 @@ class WebhookService:
     # -- Payload signing -------------------------------------------------------
 
     @staticmethod
-    def sign_payload(payload: dict, secret: str = "") -> str:
-        """Compute HMAC-SHA256 signature for a webhook payload."""
+    def sign_payload(payload: dict, timestamp: int, secret: str = "") -> str:
+        """Compute HMAC-SHA256 signature for a webhook payload.
+
+        Signature covers: ``{timestamp}.{canonical_json_body}``
+        This prevents replay attacks if the receiver validates the timestamp
+        is within an acceptable window (e.g., 5 minutes).
+        """
         key = (secret or WEBHOOK_SECRET).encode()
         body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return hmac.new(key, body.encode(), hashlib.sha256).hexdigest()
+        signed_data = f"{timestamp}.{body}"
+        return hmac.new(key, signed_data.encode(), hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def verify_signature(
+        payload: dict,
+        timestamp: int,
+        signature: str,
+        secret: str = "",
+        max_age: int = WEBHOOK_REPLAY_WINDOW,
+    ) -> bool:
+        """Verify webhook signature and timestamp.
+
+        Returns True if signature is valid and timestamp is within max_age.
+        """
+        # Check timestamp is recent enough
+        now = int(time.time())
+        if abs(now - timestamp) > max_age:
+            return False
+        expected = WebhookService.sign_payload(payload, timestamp, secret)
+        return hmac.compare_digest(expected, signature)
 
     # -- URL validation (SSRF protection) -------------------------------------
 
@@ -234,9 +263,13 @@ class WebhookService:
 
     # -- Delivery queue -------------------------------------------------------
 
-    def _enqueue_job(self, target: str, url: str, payload: dict) -> None:
+    def _enqueue_job(
+        self, target: str, url: str, payload: dict, secret: str = ""
+    ) -> None:
         """Add a delivery job to the queue (non-blocking, drops if full)."""
-        job = WebhookJob(target=target, callback_url=url, payload=payload)
+        job = WebhookJob(
+            target=target, callback_url=url, payload=payload, secret=secret
+        )
         try:
             self._queue.put_nowait(job)
             self._stats["total_enqueued"] += 1
@@ -248,10 +281,10 @@ class WebhookService:
         self, tenant_id: str, recipient: str, message: dict
     ) -> None:
         """Queue DM webhook delivery if registered."""
-        url = await self._backend.get_dm(tenant_id, recipient)
-        if not url:
+        hook = await self._backend.get_dm(tenant_id, recipient)
+        if not hook:
             return
-        self._enqueue_job(recipient, url, message)
+        self._enqueue_job(recipient, hook["url"], message, hook.get("secret", ""))
 
     async def notify_room(
         self, tenant_id: str, room_id: str, message: dict
@@ -259,7 +292,9 @@ class WebhookService:
         """Queue room webhook deliveries for all registered URLs."""
         hooks = await self._backend.list_room(tenant_id, room_id)
         for hook in hooks:
-            self._enqueue_job(f"room:{room_id}", hook["url"], message)
+            self._enqueue_job(
+                f"room:{room_id}", hook["url"], message, hook.get("secret", "")
+            )
 
     # -- Background worker ----------------------------------------------------
 
@@ -280,13 +315,16 @@ class WebhookService:
         async with self._semaphore:
             try:
                 client = self._get_client()
+                timestamp = int(time.time())
                 headers: dict[str, str] = {
                     "Content-Type": "application/json",
                     "X-Webhook-Attempt": str(job.attempt + 1),
                 }
-                if WEBHOOK_SECRET:
-                    sig = self.sign_payload(job.payload)
-                    headers["X-Webhook-Signature"] = f"sha256={sig}"
+                secret = job.secret or WEBHOOK_SECRET
+                if secret:
+                    sig = self.sign_payload(job.payload, timestamp, secret)
+                    headers["X-Murmur-Timestamp"] = str(timestamp)
+                    headers["X-Murmur-Signature"] = f"sha256={sig}"
 
                 resp = await client.post(
                     job.callback_url, json=job.payload, headers=headers
