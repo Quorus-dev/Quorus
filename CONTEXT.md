@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-11 03:40 EDT
+Last updated: 2026-04-12 01:30 EDT
 
 ---
 
@@ -64,17 +64,60 @@ murmur init <your-name> --relay <url> --secret <secret>
 - Discord-style invite pages at GET /invite/{room}
 - Integration guides for Codex, Cursor, Gemini, Ollama
 
-**Tests:** 461 passing, all green. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms. PyPI publish ready.
+**Tests:** 608 passing, all green. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
 ---
 
-## In Progress (agents building now)
+## Production Readiness
 
-- agent-1: Edge case testing and error handling
-- agent-2: Performance, reliability, detailed health endpoint
-- agent-3: Developer experience (murmur doctor, better errors, --verbose)
+**Current rating:** Private demo 8.8/10 | Public alpha 7.2/10 | Production SaaS 5.2/10
+
+### Delivery Guarantees
+
+Manual ACK can provide client-confirmed delivery for callers that explicitly ACK only after successful processing. The API still permits unsafe auto-ACK and some client surfaces make correct usage easier than others.
+
+| Path | Guarantee | Notes |
+|------|-----------|-------|
+| HTTP client + manual ACK | At-least-once to caller | Caller must call `result.ack()` after processing |
+| HTTP client + auto ACK | At-most-once | Messages deleted before caller processes — **footgun** |
+| MCP tools | At-least-once to MCP server | ACK happens after formatting, before tool result reaches Claude |
+| SSE | Live notifications only | Not durable — use for real-time UX, not delivery |
+| Webhooks | Best-effort | In-memory queue, no DLQ persistence |
+
+### Blockers for Production SaaS
+
+| Priority | Issue | Status |
+|----------|-------|--------|
+| **Critical** | No real Redis/Postgres integration tests | Tests use in-memory backend |
+| **Critical** | Auto-ACK default is a footgun | `ack=auto` should not be default for external clients |
+| **Critical** | No idempotency on send | Client retries create duplicates |
+| **High** | Redis persistence undefined | No AOF, maxmemory policy, backups in compose |
+| **High** | Webhook queue is in-memory | Crashes lose queued jobs and DLQ |
+| **High** | No per-tenant quotas/backpressure | Stuck consumer grows Redis indefinitely |
+| **High** | Room fan-out is write-amplified | N members = N queue writes per message |
+| **Medium** | No migration/rebuild story for Redis | Key schema changes are operationally risky |
+| **Medium** | Webhook signing too weak | No timestamp, no per-webhook secrets |
+| **Medium** | No delivery/audit ledger | "What happened to message X?" has no answer |
+| **Medium** | MCP swallows ACK failures | Users see messages then duplicates without knowing why |
+| **Medium** | Auth is name-oriented, not account-based | No immutable IDs, no revocation |
+| **Low** | Operational metrics thin | Need stream depth, pending age, redelivery counts |
+
+### Next Priorities
+
+1. Real Redis integration tests (testcontainers)
+2. Make `ack=manual` the default, rename auto to `ack=server`
+3. Add `Idempotency-Key` header support
+4. Decide data authority: Redis durable vs Postgres source of truth
+5. Durable webhook queue (Redis Streams)
+6. Production Redis config (AOF, auth, TLS, quotas)
+
+---
+
+## In Progress
+
+(none currently)
 
 ---
 
@@ -82,16 +125,16 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 | Date       | Commit  | What                                               |
 | ---------- | ------- | -------------------------------------------------- |
+| 2026-04-12 | baca2c1 | ReceiveResult.ack() raises AckError on failure     |
+| 2026-04-12 | d3f77a4 | MCP auto-poll defers ACK until consumption         |
+| 2026-04-12 | 781e971 | Per-message ACK for chunked messages covers all    |
+| 2026-04-12 | 8d1e13a | Atomic requeue eliminates chunk crash window       |
+| 2026-04-11 | 73f2d05 | Catch specific Redis exceptions                    |
+| 2026-04-11 | 1e24989 | Only ACK held-back chunks, leave ready pending     |
+| 2026-04-11 | 700559c | Clients ACK after processing, not before           |
+| 2026-04-11 | 881f034 | Default all clients to manual ACK                  |
+| 2026-04-11 | a204db8 | Room membership reverse index in Redis             |
 | 2026-04-11 | c02144d | Show HN + Twitter launch drafts                    |
-| 2026-04-11 | 02d4822 | Integration guides (Codex, Cursor, Gemini, Ollama) |
-| 2026-04-11 | ed32c0b | Web dashboard at GET / with live SSE messages      |
-| 2026-04-11 | d86f531 | Discord-style invite pages at /invite/{room}       |
-| 2026-04-11 | ae09ffa | murmur hackathon command                           |
-| 2026-04-11 | 65b1d58 | Peek endpoint for non-destructive inbox check      |
-| 2026-04-11 | 9bb599b | TypeScript MurmurClient + peek in Python client    |
-| 2026-04-11 | 6551487 | Hackathon readiness test — 6 agents, 2 rooms       |
-| 2026-04-11 | 5584939 | Stress test — 281 msg/s, p50=3.6ms                 |
-| 2026-04-11 | 6477dc2 | Lazy poll mode + OpenAPI docs                      |
 
 ---
 
