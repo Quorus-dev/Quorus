@@ -489,6 +489,7 @@ def _cmd_inbox(args):
         resp.raise_for_status()
         result = resp.json()
         messages = result.get("messages", [])
+        ack_token = result.get("ack_token")
     except (httpx.ConnectError, httpx.HTTPStatusError):
         return
 
@@ -497,21 +498,32 @@ def _cmd_inbox(args):
 
     if getattr(args, "json", False):
         print(json.dumps(messages))
-        return
+    else:
+        prefix = "" if getattr(args, "quiet", False) else "[murmur] "
+        msg_count = len(messages)
+        print(f"{prefix}{msg_count} new message{'s' if msg_count != 1 else ''}:")
 
-    prefix = "" if getattr(args, "quiet", False) else "[murmur] "
-    msg_count = len(messages)
-    print(f"{prefix}{msg_count} new message{'s' if msg_count != 1 else ''}:")
+        for msg in messages:
+            ts = msg.get("timestamp", "")[:16].replace("T", " ")  # "2026-04-12 12:34"
+            time_part = ts.split(" ")[1] if " " in ts else ts
+            sender = msg.get("from_name", "unknown")
+            content = msg.get("content", "")
+            # Truncate long messages
+            if len(content) > 100:
+                content = content[:97] + "..."
+            print(f"- {sender} ({time_part}): {content}")
 
-    for msg in messages:
-        ts = msg.get("timestamp", "")[:16].replace("T", " ")  # "2026-04-12 12:34"
-        time_part = ts.split(" ")[1] if " " in ts else ts
-        sender = msg.get("from_name", "unknown")
-        content = msg.get("content", "")
-        # Truncate long messages
-        if len(content) > 100:
-            content = content[:97] + "..."
-        print(f"- {sender} ({time_part}): {content}")
+    # ACK messages after successfully printing (prevents redelivery)
+    if ack_token:
+        try:
+            httpx.post(
+                f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
+                json={"ack_token": ack_token},
+                headers=_auth_headers(),
+                timeout=5,
+            )
+        except (httpx.ConnectError, httpx.HTTPStatusError):
+            pass  # Best effort — messages may redeliver but output succeeded
 
 
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
