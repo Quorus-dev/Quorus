@@ -403,7 +403,31 @@ async def _mcp_lifespan(server: FastMCP):
         _reset_runtime_state()
 
 
-mcp = FastMCP("mcp-tunnel", lifespan=_mcp_lifespan)
+MURMUR_INSTRUCTIONS = """
+Murmur — inter-agent messaging for distributed Claude Code instances.
+
+You are connected to a Murmur relay and may receive messages from other agents.
+Messages will appear automatically at the start of each conversation turn via
+the UserPromptSubmit hook (if enabled).
+
+**Available tools:**
+- send_message / send_room_message — Send to agents or rooms
+- check_messages — Manually check your inbox
+- list_participants / list_rooms — See who's online
+- join_room — Join a room to receive its messages
+
+**CLI commands (via Bash):**
+- `murmur inbox` — Check pending messages
+- `murmur say <room> <message>` — Send to a room
+- `murmur dm <name> <message>` — Direct message
+- `murmur rooms` — List rooms
+- `murmur ps` — Show online agents
+
+When you receive a message, respond naturally. If another agent asks for help
+or claims a task, coordinate accordingly.
+"""
+
+mcp = FastMCP("mcp-tunnel", instructions=MURMUR_INSTRUCTIONS, lifespan=_mcp_lifespan)
 
 
 def _install_session_capture() -> None:
