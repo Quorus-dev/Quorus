@@ -2857,6 +2857,110 @@ async def test_unknown_message_type_rejected(client: AsyncClient, auth_headers: 
     assert resp.status_code == 422
 
 
+# ---------------------------------------------------------------------------
+# Rate limit tests for endpoints secured in commit 4a1c884
+# check_with_limit uses a caller-supplied max_count (not self._max_count),
+# so we mock check_with_limit directly to return False.
+# ---------------------------------------------------------------------------
+
+
+async def test_rate_limit_create_room(client: AsyncClient, auth_headers):
+    """POST /rooms returns 429 when create_room rate limit is exceeded."""
+    with patch.object(
+        app.state.rate_limit_service, "check_with_limit", return_value=False
+    ):
+        resp = await client.post(
+            "/rooms",
+            json={"name": "rl-room", "created_by": "alice"},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 429
+
+
+async def test_rate_limit_join_room(client: AsyncClient, auth_headers):
+    """POST /rooms/{id}/join returns 429 when join rate limit is exceeded."""
+    # Create the room first (outside the rate-limit mock).
+    room = await client.post(
+        "/rooms", json={"name": "rl-join", "created_by": "alice"}, headers=auth_headers
+    )
+    room_id = room.json()["id"]
+
+    with patch.object(
+        app.state.rate_limit_service, "check_with_limit", return_value=False
+    ):
+        resp = await client.post(
+            f"/rooms/{room_id}/join",
+            json={"participant": "bob"},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 429
+
+
+async def test_rate_limit_room_message_check_with_limit(client: AsyncClient, auth_headers):
+    """POST /rooms/{id}/messages returns 429 when room_msg rate limit is exceeded."""
+    room = await client.post(
+        "/rooms", json={"name": "rl-msg", "created_by": "alice"}, headers=auth_headers
+    )
+    room_id = room.json()["id"]
+
+    with patch.object(
+        app.state.rate_limit_service, "check_with_limit", return_value=False
+    ):
+        resp = await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "alice", "content": "hello"},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 429
+
+
+async def test_rate_limit_room_history(client: AsyncClient, auth_headers):
+    """GET /rooms/{id}/history returns 429 when history rate limit is exceeded."""
+    room = await client.post(
+        "/rooms", json={"name": "rl-history", "created_by": "alice"}, headers=auth_headers
+    )
+    room_id = room.json()["id"]
+
+    with patch.object(
+        app.state.rate_limit_service, "check_with_limit", return_value=False
+    ):
+        resp = await client.get(
+            f"/rooms/{room_id}/history",
+            headers=auth_headers,
+        )
+    assert resp.status_code == 429
+
+
+async def test_rate_limit_dm_send_check_with_limit(client: AsyncClient, auth_headers):
+    """POST /messages returns 429 when dm_send rate limit is exceeded."""
+    with patch.object(
+        app.state.rate_limit_service, "check_with_limit", return_value=False
+    ):
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "hi"},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 429
+
+
+async def test_dm_content_too_large_returns_413(client: AsyncClient, auth_headers):
+    """POST /messages returns 413 when content exceeds MAX_MESSAGE_SIZE bytes."""
+    import murmur.routes.messages as dm_routes
+
+    original = dm_routes._MAX_DM_SIZE
+    try:
+        dm_routes._MAX_DM_SIZE = 10  # anything > 10 bytes triggers 413
+        resp = await client.post(
+            "/messages",
+            json={"from_name": "alice", "to": "bob", "content": "x" * 11},
+            headers=auth_headers,
+        )
+    finally:
+        dm_routes._MAX_DM_SIZE = original
+
+    assert resp.status_code == 413
+
 async def test_all_standard_message_types_accepted(client: AsyncClient, auth_headers: dict):
     """All standard message types must be accepted by the relay."""
     rid = await _setup_msg_room(client, auth_headers, "all-types-room")
