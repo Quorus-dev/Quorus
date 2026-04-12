@@ -100,9 +100,8 @@ export default function CTA() {
           transition={{ duration: 0.6, delay: 0.24 }}
           className="relative mb-8"
         >
-          {/* Card glow */}
-          <div className="absolute -inset-px rounded-2xl bg-gradient-to-r from-violet-500/40 via-violet-400/20 to-cyan-500/20 blur-sm pointer-events-none" />
-          <div className="relative rounded-2xl border border-violet-500/20 bg-[#0d0d18]/80 backdrop-blur-sm p-6">
+          {/* Card — animated gradient border */}
+          <div className="animated-border rounded-2xl bg-[#0a0a1a]/90 backdrop-blur-sm p-6">
             <Waitlist
               size="lg"
               className="max-w-md mx-auto"

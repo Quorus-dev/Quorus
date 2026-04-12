@@ -325,7 +325,10 @@ export default function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.1 }}
         >
-          <span className="text-white block">The Communication</span>
+          <span className="text-white block">
+            The&nbsp;
+            <span className="text-shimmer">Communication</span>
+          </span>
           <span className="text-white">Layer for </span>
           <TypewriterWord />
         </motion.h1>

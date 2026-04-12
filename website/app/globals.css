@@ -276,3 +276,119 @@ body::before {
   background-size: 200% 100%;
   animation: bar-shimmer 4s ease infinite;
 }
+
+/* ─── Scrollbar thin (for LiveSwarmDemo) ────────────────────────────────────── */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 58, 237, 0.2) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(124, 58, 237, 0.2);
+  border-radius: 2px;
+}
+
+/* ─── Floating orbit animation ──────────────────────────────────────────────── */
+@keyframes orbit {
+  from {
+    transform: rotate(0deg) translateX(180px) rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg) translateX(180px) rotate(-360deg);
+  }
+}
+
+.orbit-dot {
+  animation: orbit 8s linear infinite;
+}
+
+.orbit-dot-reverse {
+  animation: orbit 12s linear infinite reverse;
+}
+
+/* ─── Gradient border glow — animated ──────────────────────────────────────── */
+@keyframes border-spin {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animated-border {
+  background:
+    linear-gradient(#0d0d18, #0d0d18) padding-box,
+    linear-gradient(
+        135deg,
+        rgba(124, 58, 237, 0.6),
+        rgba(6, 182, 212, 0.4),
+        rgba(167, 139, 250, 0.5),
+        rgba(124, 58, 237, 0.6)
+      )
+      border-box;
+  background-size: 300% 300%;
+  border: 1px solid transparent;
+  animation: border-spin 4s ease infinite;
+}
+
+/* ─── Text shimmer (for highlighted phrases) ────────────────────────────────── */
+@keyframes text-shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.text-shimmer {
+  background: linear-gradient(
+    90deg,
+    #a78bfa 0%,
+    #ffffff 25%,
+    #a78bfa 50%,
+    #06b6d4 75%,
+    #a78bfa 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: text-shimmer 4s linear infinite;
+}
+
+/* ─── Section alt background ────────────────────────────────────────────────── */
+.section-alt {
+  background: linear-gradient(
+    180deg,
+    rgba(13, 13, 24, 0) 0%,
+    rgba(13, 13, 24, 0.5) 20%,
+    rgba(13, 13, 24, 0.5) 80%,
+    rgba(13, 13, 24, 0) 100%
+  );
+}
+
+/* ─── Radial gradient spotlight ─────────────────────────────────────────────── */
+.spotlight {
+  position: relative;
+  overflow: hidden;
+}
+
+.spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(124, 58, 237, 0.06),
+    transparent 40%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
