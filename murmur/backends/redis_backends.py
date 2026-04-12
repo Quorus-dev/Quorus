@@ -14,13 +14,9 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
-
-if TYPE_CHECKING:
-    from murmur.backends.protocol import RoomStateBackend
 
 _redis_logger = logging.getLogger("murmur.backends.redis")
 
@@ -1208,6 +1204,178 @@ class RedisWebhookQueueBackend:
         }
 
 
+# -- Room State (Shared State Matrix) --------------------------------------
+
+
+class RedisRoomStateBackend:
+    """Redis-backed room coordination state for distributed mutex.
+
+    Key schema:
+    - t:{tid}:room_state:{rid}:goal — string (active goal)
+    - t:{tid}:room_state:{rid}:tasks — list of JSON tasks
+    - t:{tid}:room_state:{rid}:locks — hash (file_path -> JSON lock_data)
+    - t:{tid}:room_state:{rid}:decisions — list of JSON decisions
+    """
+
+    def __init__(self, r: Redis) -> None:
+        self._r = r
+
+    def _key(self, tid: str, rid: str, suffix: str) -> str:
+        return f"t:{tid}:room_state:{rid}:{suffix}"
+
+    async def get(self, tenant_id: str, room_id: str) -> dict:
+        """Return a snapshot of the room's coordination state."""
+        goal_key = self._key(tenant_id, room_id, "goal")
+        tasks_key = self._key(tenant_id, room_id, "tasks")
+        locks_key = self._key(tenant_id, room_id, "locks")
+        decisions_key = self._key(tenant_id, room_id, "decisions")
+
+        pipe = self._r.pipeline()
+        pipe.get(goal_key)
+        pipe.lrange(tasks_key, 0, -1)
+        pipe.hgetall(locks_key)
+        pipe.lrange(decisions_key, 0, -1)
+        goal, tasks_raw, locks_raw, decisions_raw = await pipe.execute()
+
+        claimed_tasks = [json.loads(t) for t in tasks_raw] if tasks_raw else []
+        locked_files = {
+            k: json.loads(v) for k, v in locks_raw.items()
+        } if locks_raw else {}
+        resolved_decisions = [
+            json.loads(d) for d in decisions_raw
+        ] if decisions_raw else []
+
+        return {
+            "active_goal": goal,
+            "claimed_tasks": claimed_tasks,
+            "locked_files": locked_files,
+            "resolved_decisions": resolved_decisions,
+        }
+
+    async def set_goal(
+        self, tenant_id: str, room_id: str, goal: str | None
+    ) -> None:
+        """Set (or clear) the active goal for a room."""
+        key = self._key(tenant_id, room_id, "goal")
+        if goal is None:
+            await self._r.delete(key)
+        else:
+            await self._r.set(key, goal)
+
+    async def add_claimed_task(
+        self, tenant_id: str, room_id: str, task: dict
+    ) -> None:
+        """Record a newly acquired file lock as a claimed task."""
+        tasks_key = self._key(tenant_id, room_id, "tasks")
+        locks_key = self._key(tenant_id, room_id, "locks")
+
+        pipe = self._r.pipeline()
+        pipe.rpush(tasks_key, json.dumps(task))
+
+        # Also write the file lock entry
+        fp = task.get("file_path")
+        if fp:
+            lock_data = {
+                "held_by": task["claimed_by"],
+                "lock_token": task["lock_token"],
+                "expires_at": task["expires_at"],
+            }
+            pipe.hset(locks_key, fp, json.dumps(lock_data))
+
+        await pipe.execute()
+
+    async def remove_claimed_task(
+        self, tenant_id: str, room_id: str, task_id: str
+    ) -> None:
+        """Remove a claimed task (on release or manual clear)."""
+        tasks_key = self._key(tenant_id, room_id, "tasks")
+        locks_key = self._key(tenant_id, room_id, "locks")
+
+        # Get all tasks, filter out the one to remove, write back
+        tasks_raw = await self._r.lrange(tasks_key, 0, -1)
+        if not tasks_raw:
+            return
+
+        new_tasks = []
+        removed_fp = None
+        for t in tasks_raw:
+            task = json.loads(t)
+            if task.get("id") == task_id:
+                removed_fp = task.get("file_path")
+            else:
+                new_tasks.append(t)
+
+        pipe = self._r.pipeline()
+        pipe.delete(tasks_key)
+        if new_tasks:
+            pipe.rpush(tasks_key, *new_tasks)
+        if removed_fp:
+            pipe.hdel(locks_key, removed_fp)
+        await pipe.execute()
+
+    async def set_lock(
+        self, tenant_id: str, room_id: str, file_path: str, lock_data: dict
+    ) -> None:
+        """Directly set a lock entry."""
+        key = self._key(tenant_id, room_id, "locks")
+        await self._r.hset(key, file_path, json.dumps(lock_data))
+
+    async def release_lock(
+        self, tenant_id: str, room_id: str, file_path: str
+    ) -> None:
+        """Remove a file lock entry."""
+        key = self._key(tenant_id, room_id, "locks")
+        await self._r.hdel(key, file_path)
+
+    async def add_decision(
+        self, tenant_id: str, room_id: str, decision: dict
+    ) -> None:
+        """Append a resolved decision to the room's decision log."""
+        key = self._key(tenant_id, room_id, "decisions")
+        await self._r.rpush(key, json.dumps(decision))
+
+    async def expire_tasks(
+        self, tenant_id: str, room_id: str
+    ) -> list[str]:
+        """Remove and return IDs of tasks whose TTL has elapsed."""
+        tasks_key = self._key(tenant_id, room_id, "tasks")
+        locks_key = self._key(tenant_id, room_id, "locks")
+
+        tasks_raw = await self._r.lrange(tasks_key, 0, -1)
+        if not tasks_raw:
+            return []
+
+        now = time.time()
+        expired_ids: list[str] = []
+        live_tasks: list[str] = []
+        expired_paths: list[str] = []
+
+        for t in tasks_raw:
+            task = json.loads(t)
+            try:
+                exp = datetime.fromisoformat(task["expires_at"]).timestamp()
+                if exp < now:
+                    expired_ids.append(task["id"])
+                    fp = task.get("file_path")
+                    if fp:
+                        expired_paths.append(fp)
+                else:
+                    live_tasks.append(t)
+            except (KeyError, ValueError):
+                live_tasks.append(t)
+
+        if expired_ids:
+            pipe = self._r.pipeline()
+            pipe.delete(tasks_key)
+            if live_tasks:
+                pipe.rpush(tasks_key, *live_tasks)
+            if expired_paths:
+                pipe.hdel(locks_key, *expired_paths)
+            await pipe.execute()
+
+        return expired_ids
+
+
 # -- Convenience bundle -----------------------------------------------------
 
 @dataclass
@@ -1225,15 +1393,11 @@ class RedisBackends:
     participants: RedisParticipantBackend = None  # type: ignore[assignment]
     idempotency: RedisIdempotencyBackend = None  # type: ignore[assignment]
     webhook_queue: RedisWebhookQueueBackend = None  # type: ignore[assignment]
-    # room_state uses an in-process InMemoryRoomStateBackend — lock coordination
-    # is replica-local (TTL auto-expires stale locks; full Redis backend is Phase 2).
-    room_state: "RoomStateBackend" = None  # type: ignore[assignment]
+    room_state: RedisRoomStateBackend = None  # type: ignore[assignment]
 
     @classmethod
     def create(cls, r: Redis, max_room_history: int = 200) -> RedisBackends:
         """Factory that instantiates every backend against *r*."""
-        from murmur.backends.memory import InMemoryRoomStateBackend
-
         return cls(
             messages=RedisMessageBackend(r),
             rooms=RedisRoomBackend(r),
@@ -1246,5 +1410,5 @@ class RedisBackends:
             participants=RedisParticipantBackend(r),
             idempotency=RedisIdempotencyBackend(r),
             webhook_queue=RedisWebhookQueueBackend(r),
-            room_state=InMemoryRoomStateBackend(),
+            room_state=RedisRoomStateBackend(r),
         )
