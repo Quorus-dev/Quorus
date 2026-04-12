@@ -126,7 +126,7 @@ class TestRoomSendReceive:
 
     @pytest.mark.asyncio
     async def test_receive_messages(self):
-        """Room.receive should fetch pending messages."""
+        """Room.receive should return ReceiveResult with messages."""
         with patch("murmur.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = [
@@ -142,10 +142,10 @@ class TestRoomSendReceive:
                     secret="s",
                     name="agent",
                 )
-                msgs = room.receive()
+                result = room.receive()
 
-            assert len(msgs) == 1
-            assert msgs[0]["content"] == "msg1"
+            assert len(result.messages) == 1
+            assert result.messages[0]["content"] == "msg1"
 
 
 class TestRoomConvenience:

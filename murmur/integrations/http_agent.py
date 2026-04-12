@@ -5,9 +5,10 @@ Usage:
 
     client = MurmurClient("https://your-relay.example.com", name="my-agent", api_key="mct_...")
     client.join("dev-room")
-    client.send("dev-room", "Hello from any agent!")
-    messages = client.receive()
-    history = client.history("dev-room", limit=20)
+    result = client.receive()
+    for msg in result.messages:
+        process(msg)
+    result.ack()  # ACK after successful processing
 """
 
 import logging
@@ -16,6 +17,44 @@ import time
 import httpx
 
 logger = logging.getLogger("murmur.http_agent")
+
+
+class ReceiveResult:
+    """Result of a receive() call with deferred ACK.
+
+    Messages are delivered but not acknowledged until ``ack()`` is called.
+    If the caller crashes before calling ``ack()``, unacknowledged messages
+    will be redelivered on the next receive().
+    """
+
+    def __init__(
+        self,
+        messages: list[dict],
+        ack_token: str,
+        client: "MurmurClient",
+    ) -> None:
+        self.messages = messages
+        self._ack_token = ack_token
+        self._client = client
+
+    def ack(self) -> None:
+        """Acknowledge receipt — call after successful processing."""
+        if not self._ack_token or not self.messages:
+            return
+        try:
+            self._client._request(
+                "POST",
+                f"{self._client.relay_url}/messages/{self._client.name}/ack",
+                json={"ack_token": self._ack_token},
+            )
+        except Exception:
+            logger.warning("Failed to ACK messages")
+
+    def __iter__(self):
+        return iter(self.messages)
+
+    def __len__(self):
+        return len(self.messages)
 
 
 class MurmurClient:
@@ -110,28 +149,23 @@ class MurmurClient:
         )
         return r.json()
 
-    def receive(self, wait: int = 0) -> list[dict]:
-        """Fetch pending messages with client-side ACK."""
+    def receive(self, wait: int = 0) -> ReceiveResult:
+        """Fetch pending messages. Caller MUST call result.ack() after processing.
+
+        Unacknowledged messages are redelivered on the next receive().
+        """
         r = self._request(
             "GET", f"{self.relay_url}/messages/{self.name}",
             params={"wait": wait, "ack": "manual"},
         )
         data = r.json()
         if isinstance(data, list):
-            messages = data
-            ack_token = ""
-        else:
-            messages = data.get("messages", [])
-            ack_token = data.get("ack_token", "")
-        if ack_token and messages:
-            try:
-                self._request(
-                    "POST", f"{self.relay_url}/messages/{self.name}/ack",
-                    json={"ack_token": ack_token},
-                )
-            except Exception:
-                logger.warning("Failed to ACK messages")
-        return messages
+            return ReceiveResult(data, "", self)
+        return ReceiveResult(
+            data.get("messages", []),
+            data.get("ack_token", ""),
+            self,
+        )
 
     def peek(self) -> dict:
         """Check pending message count without consuming them."""

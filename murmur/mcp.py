@@ -252,7 +252,8 @@ async def _notify_active_session(messages: list[dict]) -> None:
                 _active_session = None
 
 
-async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None]:
+async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str, str | None]:
+    """Fetch messages from relay. Returns (messages, ack_token, error)."""
     timeout = max(wait + 5, 10)
     try:
         client = _get_http_client()
@@ -264,28 +265,32 @@ async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None]:
         )
         resp.raise_for_status()
         data = resp.json()
-        # Handle both manual ACK (dict) and auto ACK (list) responses
         if isinstance(data, list):
             messages = data
             ack_token = ""
         else:
             messages = data.get("messages", [])
             ack_token = data.get("ack_token", "")
-        # Client-side ACK: confirm receipt after successful fetch
-        if ack_token and messages:
-            try:
-                await client.post(
-                    f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
-                    json={"ack_token": ack_token},
-                    headers=_auth_headers(),
-                    timeout=5,
-                )
-            except Exception:
-                logger.warning("Failed to ACK messages", exc_info=True)
         logger.info("Received %d messages from relay", len(messages))
-        return messages, None
+        return messages, ack_token, None
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return [], _relay_error_message(e)
+        return [], "", _relay_error_message(e)
+
+
+async def _ack_relay_messages(ack_token: str) -> None:
+    """ACK messages after successful processing."""
+    if not ack_token:
+        return
+    try:
+        client = _get_http_client()
+        await client.post(
+            f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
+            json={"ack_token": ack_token},
+            headers=_auth_headers(),
+            timeout=5,
+        )
+    except Exception:
+        logger.warning("Failed to ACK messages", exc_info=True)
 
 
 async def _background_poll(stop_event: asyncio.Event) -> None:
@@ -301,7 +306,7 @@ async def _background_poll(stop_event: asyncio.Event) -> None:
                 continue
             continue
 
-        messages, error = await _fetch_relay_messages(wait=30)
+        messages, ack_token, error = await _fetch_relay_messages(wait=30)
         if error:
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=2)
@@ -314,6 +319,8 @@ async def _background_poll(stop_event: asyncio.Event) -> None:
 
         await _append_pending_messages(messages)
         await _notify_active_session(messages)
+        # ACK after messages are buffered for delivery
+        await _ack_relay_messages(ack_token)
 
 
 async def _auto_poll_loop(stop_event: asyncio.Event, interval: int = 10) -> None:
@@ -326,7 +333,7 @@ async def _auto_poll_loop(stop_event: asyncio.Event, interval: int = 10) -> None
         except asyncio.TimeoutError:
             pass  # interval elapsed, time to poll
 
-        messages, error = await _fetch_relay_messages(wait=0)
+        messages, ack_token, error = await _fetch_relay_messages(wait=0)
         if error:
             logger.warning("Auto-poll fetch error: %s", error)
             continue
@@ -334,6 +341,7 @@ async def _auto_poll_loop(stop_event: asyncio.Event, interval: int = 10) -> None
         if messages:
             await _append_pending_messages(messages)
             await _notify_active_session(messages)
+            await _ack_relay_messages(ack_token)
             logger.info("Auto-poll delivered %d message(s)", len(messages))
 
     logger.info("Auto-poll stopped")
@@ -558,17 +566,21 @@ async def _check_messages(context: Context | None = None) -> str:
     await _remember_session(context)
 
     messages = await _drain_pending_messages()
+    ack_token = ""
     if not messages:
         # lazy/sse = no blocking wait; poll = short wait for efficiency
         wait = 0 if POLL_MODE in ("lazy", "sse") else 30
-        messages, error = await _fetch_relay_messages(wait=wait)
+        messages, ack_token, error = await _fetch_relay_messages(wait=wait)
         if error:
             return error
 
     if not messages:
         return "No new messages."
 
-    return "\n".join(_format_message(msg) for msg in messages)
+    # Format response, then ACK — messages are confirmed processed
+    result = "\n".join(_format_message(msg) for msg in messages)
+    await _ack_relay_messages(ack_token)
+    return result
 
 
 async def _list_participants(context: Context | None = None) -> str:

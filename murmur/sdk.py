@@ -113,8 +113,16 @@ class Room:
             self.room, content, msg_type=type, reply_to=reply_to,
         )
 
-    def receive(self, wait: int = 0) -> list[dict]:
-        """Get pending messages."""
+    def receive(self, wait: int = 0):
+        """Get pending messages. Returns a ReceiveResult — call .ack() after processing.
+
+        Usage::
+
+            result = room.receive()
+            for msg in result.messages:
+                process(msg)
+            result.ack()
+        """
         return self._client.receive(wait=wait)
 
     def history(self, limit: int = 50) -> list[dict]:
@@ -173,14 +181,20 @@ class Room:
     def listen(self, poll_interval: int = 5) -> None:
         """Block and listen for messages, calling registered callbacks.
 
+        ACKs messages after all callbacks complete successfully.
         Uses long-polling. For SSE streaming, use stream() instead.
         """
+        from murmur.integrations.http_agent import ReceiveResult
+
         while not self._stop_event.is_set():
             try:
-                messages = self.receive(wait=poll_interval)
-                for msg in messages:
+                result = self.receive(wait=poll_interval)
+                msgs = result.messages if isinstance(result, ReceiveResult) else result
+                for msg in msgs:
                     for cb in self._listeners:
                         cb(msg)
+                if isinstance(result, ReceiveResult):
+                    result.ack()
             except (httpx.ConnectError, httpx.ReadTimeout):
                 self._stop_event.wait(2)
 
@@ -225,8 +239,11 @@ class Room:
             r.raise_for_status()
             return r.json()
 
-    async def areceive(self, wait: int = 0) -> list[dict]:
-        """Async receive with client-side ACK."""
+    async def areceive(self, wait: int = 0):
+        """Async receive. Returns messages and ack_token for deferred ACK.
+
+        Call ``await room.a_ack(ack_token)`` after processing.
+        """
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 f"{self.relay}/messages/{self.name}",
@@ -241,17 +258,19 @@ class Room:
             else:
                 messages = data.get("messages", [])
                 ack_token = data.get("ack_token", "")
-            if ack_token and messages:
-                try:
-                    await client.post(
-                        f"{self.relay}/messages/{self.name}/ack",
-                        json={"ack_token": ack_token},
-                        headers=self._get_auth_headers(),
-                        timeout=5,
-                    )
-                except Exception:
-                    pass
-            return messages
+            return {"messages": messages, "ack_token": ack_token}
+
+    async def a_ack(self, ack_token: str) -> None:
+        """Acknowledge messages from a previous areceive() call."""
+        if not ack_token:
+            return
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{self.relay}/messages/{self.name}/ack",
+                json={"ack_token": ack_token},
+                headers=self._get_auth_headers(),
+                timeout=5,
+            )
 
     async def astream(self):
         """Async generator that yields messages via SSE.

@@ -297,7 +297,7 @@ async def test_auto_poll_delivers_messages():
     ]
     mock_client2 = _make_mock_client("get", msgs)
     with patch("murmur.mcp._get_http_client", return_value=mock_client2):
-        fetched, err = await mcp_server._fetch_relay_messages(wait=0)
+        fetched, _ack_token, err = await mcp_server._fetch_relay_messages(wait=0)
     assert len(fetched) == 1
     await mcp_server._append_pending_messages(fetched)
     buffered = await mcp_server._drain_pending_messages()
