@@ -12,6 +12,7 @@ from murmur.routes.models import AckRequest, SendMessageRequest
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
 _IDEMPOTENCY_TTL = int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "300"))
+_MAX_DM_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 
 
 def _tid(auth: AuthContext) -> str:
@@ -36,8 +37,15 @@ async def send_message(
     sender = auth.sub or msg.from_name
     if auth.sub and msg.from_name != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot send as another user")
+    if len(msg.content.encode("utf-8")) > _MAX_DM_SIZE:
+        raise HTTPException(status_code=413, detail="Message content exceeds maximum size")
 
     tid = _tid(auth)
+
+    # Rate limit: 30/min per sender
+    rate_limit_svc = request.app.state.rate_limit_service
+    if not await rate_limit_svc.check_with_limit(tid, f"dm_send:{sender}", 30):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     backends = request.app.state.backends
     idempotency_cache_key = f"dm:{idempotency_key}" if idempotency_key else None
 

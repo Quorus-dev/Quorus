@@ -33,9 +33,16 @@ async def create_room(
     creator = auth.sub or req.created_by
     if auth.sub and req.created_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot create room as another user")
+
+    # Rate limit: 10/min — room creation is a heavyweight operation
+    tid = _tid(auth)
+    rate_limit_svc = request.app.state.rate_limit_service
+    if not await rate_limit_svc.check_with_limit(tid, f"create_room:{creator}", 10):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
     svc = request.app.state.room_service
-    result = await svc.create(_tid(auth), req.name, creator)
-    await request.app.state.backends.participants.add(_tid(auth), creator)
+    result = await svc.create(tid, req.name, creator)
+    await request.app.state.backends.participants.add(tid, creator)
     return result
 
 
@@ -106,10 +113,17 @@ async def join_room(
                 status_code=403,
                 detail="Only room creator or admin can add members.",
             )
+    # Rate limit: 30/min
+    join_tid = _tid(auth)
+    join_caller = auth.sub or participant
+    join_rate_svc = request.app.state.rate_limit_service
+    if not await join_rate_svc.check_with_limit(join_tid, f"join:{join_caller}", 30):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
     svc = request.app.state.room_service
-    rid, _ = await svc.get(_tid(auth), room_id)
-    await svc.join(_tid(auth), rid, participant, req.role, MAX_ROOM_MEMBERS)
-    await request.app.state.backends.participants.add(_tid(auth), participant)
+    rid, _ = await svc.get(join_tid, room_id)
+    await svc.join(join_tid, rid, participant, req.role, MAX_ROOM_MEMBERS)
+    await request.app.state.backends.participants.add(join_tid, participant)
     return {"status": "joined", "role": req.role}
 
 

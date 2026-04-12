@@ -57,6 +57,11 @@ async def send_room_message(
         raise HTTPException(status_code=413, detail="Message content exceeds maximum size")
 
     tid = _tid(auth)
+
+    # Rate limit: 60/min per sender (agents send frequently)
+    rate_limit_svc = request.app.state.rate_limit_service
+    if not await rate_limit_svc.check_with_limit(tid, f"room_msg:{sender}", 60):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     backends = request.app.state.backends
     idempotency_cache_key = f"room:{room_id}:{idempotency_key}" if idempotency_key else None
 
@@ -99,6 +104,13 @@ async def get_room_history(
 ):
     tid = _tid(auth)
     await _require_room_member(request, auth, tid, room_id)
+
+    # Rate limit: 20/min — history returns up to 200 messages
+    caller = auth.sub or "anon"
+    rate_limit_svc = request.app.state.rate_limit_service
+    if not await rate_limit_svc.check_with_limit(tid, f"history:{caller}", 20):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
     svc = request.app.state.room_msg_service
     return await svc.history(tid, room_id, limit)
 

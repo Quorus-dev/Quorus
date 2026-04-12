@@ -3295,7 +3295,13 @@ def _cmd_resolve(args):
             pass  # Room context is optional
 
     # 3. Process each conflicted file
-    client = anthropic.Anthropic(api_key=api_key)
+    import httpx as _httpx
+    client = anthropic.Anthropic(
+        api_key=api_key,
+        http_client=_httpx.Client(
+            timeout=_httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0),
+        ),
+    )
 
     for filepath in conflicted_files:
         console.print(f"\n[bold cyan]Resolving: {filepath}[/bold cyan]")
