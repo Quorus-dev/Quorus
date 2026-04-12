@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 03:00 EDT
+Last updated: 2026-04-12 03:45 EDT
 
 ---
 
@@ -85,7 +85,7 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 | MCP tools | At-least-once to MCP server | ACK happens after formatting, before tool result reaches Claude |
 | SSE | Live notifications only | Not durable — use for real-time UX, not delivery |
 | Webhooks (in-memory) | Best-effort | In-memory queue, no DLQ persistence |
-| Webhooks (durable) | At-least-once | Redis Streams queue with ACK/NACK + DLQ |
+| Webhooks (durable) | At-least-once | Redis Streams queue with ACK/NACK + DLQ (no backoff delay yet) |
 
 ### Blockers for Production SaaS
 
@@ -105,12 +105,17 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 | **Medium** | Auth is name-oriented, not account-based | No immutable IDs, no revocation |
 | **Low** | Operational metrics thin | Need stream depth, pending age, redelivery counts |
 
+### Known Limitations
+
+- **Webhook retry has no backoff delay**: Failed webhooks are re-enqueued immediately, not after exponential backoff. Would need delayed sorted set or next_attempt_at tracking.
+- **Per-webhook secrets not exposed in routes**: Backend supports them, but registration routes don't generate/return secrets.
+
 ### Next Priorities
 
-1. Decide data authority: Redis durable vs Postgres source of truth
-2. Room fan-out optimization (Redis pub/sub or shared streams)
-3. Account-based auth with immutable IDs
-4. Delivery/audit ledger for message tracing
+1. Webhook backoff delay (delayed sorted set or next_attempt_at)
+2. Per-webhook secret generation in registration routes
+3. Decide data authority: Redis durable vs Postgres source of truth
+4. Room fan-out optimization (Redis pub/sub or shared streams)
 
 ---
 
@@ -124,12 +129,12 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 
 | Date       | Commit  | What                                               |
 | ---------- | ------- | -------------------------------------------------- |
+| 2026-04-12 | 2173acb | Wire durable webhook queue into app, fix CLI paths |
 | 2026-04-12 | f338b56 | Durable webhook queue with Redis Streams           |
 | 2026-04-12 | de39ef1 | Rename mcp.py to mcp_server.py (avoid shadowing)   |
 | 2026-04-12 | 400fd7c | Production Redis config (AOF, auth, noeviction)    |
 | 2026-04-12 | 4ff1b43 | Surface ACK failures in MCP check_messages         |
 | 2026-04-12 | 261bc89 | Per-webhook secrets + timestamped HMAC signatures  |
-| 2026-04-12 | d6f6004 | Per-recipient queue depth quota (MAX_RECIPIENT_DEPTH) |
 | 2026-04-12 | 6cb9200 | Redis integration tests with testcontainers        |
 | 2026-04-12 | ce2ab69 | Idempotency-Key header support for sends           |
 | 2026-04-12 | 3a61c83 | Make ack=manual the default for message fetches    |
