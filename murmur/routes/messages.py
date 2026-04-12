@@ -50,7 +50,13 @@ async def send_message(
             return cached
 
     svc = request.app.state.message_service
-    result = await svc.send_dm(tid, sender, msg.to, msg.content)
+    try:
+        result = await svc.send_dm(tid, sender, msg.to, msg.content)
+    except Exception:
+        # Release the pending key so retries aren't blocked by 409
+        if idempotency_cache_key:
+            await backends.idempotency.delete(tid, idempotency_cache_key)
+        raise
 
     # Store result in idempotency cache (replaces pending marker)
     if idempotency_cache_key:
