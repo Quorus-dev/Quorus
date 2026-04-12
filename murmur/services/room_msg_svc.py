@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Callable
@@ -17,6 +18,8 @@ from murmur.services.sse_svc import SSEService
 from murmur.services.webhook_svc import WebhookService
 
 logger = structlog.get_logger("murmur.services.room_msg")
+
+MAX_RECIPIENT_DEPTH = int(os.environ.get("MAX_RECIPIENT_DEPTH", "10000"))
 
 
 class RoomMessageService:
@@ -97,8 +100,21 @@ class RoomMessageService:
         timestamp = datetime.now(timezone.utc).isoformat()
         message_id = str(uuid.uuid4())
 
-        # Fan-out to each member's DM queue
+        # Fan-out to each member's DM queue (with backpressure)
+        skipped_recipients: list[str] = []
         for recipient in members:
+            # Check quota before enqueueing
+            depth = await self._msg_backend.recipient_depth(tenant_id, recipient)
+            if depth >= MAX_RECIPIENT_DEPTH:
+                skipped_recipients.append(recipient)
+                logger.warning(
+                    "Room fan-out skipped: recipient queue full",
+                    room=room_name,
+                    recipient=recipient,
+                    depth=depth,
+                )
+                continue
+
             fan_out_msg = {
                 "id": str(uuid.uuid4()),
                 "from_name": sender,
@@ -131,14 +147,22 @@ class RoomMessageService:
         await self._analytics.track_send(tenant_id, sender)
         await self._webhook.notify_room(tenant_id, room_id, history_msg)
 
+        delivered_count = len(members) - len(skipped_recipients)
         logger.info(
-            "Room message %s in %s: %s -> %d recipients",
+            "Room message %s in %s: %s -> %d/%d recipients",
             message_id,
             room_name,
             sender,
+            delivered_count,
             len(members),
         )
-        return {"id": message_id, "timestamp": timestamp}
+        result = {"id": message_id, "timestamp": timestamp}
+        if skipped_recipients:
+            result["skipped_recipients"] = skipped_recipients
+            result["warning"] = (
+                f"{len(skipped_recipients)} recipient(s) skipped due to full queues"
+            )
+        return result
 
     # ------------------------------------------------------------------
     # History
