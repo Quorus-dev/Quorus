@@ -106,12 +106,12 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Priority     | Issue                                        | Status                                                  |
 | ------------ | -------------------------------------------- | ------------------------------------------------------- |
-| ~~Critical~~ | ~~No real Redis/Postgres integration tests~~ | ✅ 14 integration tests with testcontainers             |
+| ~~Critical~~ | ~~No real Redis/Postgres integration tests~~ | ✅ Redis + Postgres integration tests in CI             |
 | ~~Critical~~ | ~~Auto-ACK default is a footgun~~            | ✅ `ack=manual` is now the default                      |
 | ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` + atomic SET NX reservation        |
 | ~~Critical~~ | ~~Room state not membership-scoped~~         | ✅ require_room_member() on all state/lock endpoints    |
 | ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend + Lua scripts (acquire/release/expire) |
-| ~~Critical~~ | ~~Web console proxy SSRF~~                   | ✅ Block private IPs; fail closed in prod if no RELAY_ALLOWLIST |
+| ~~Critical~~ | ~~Web console proxy SSRF~~                   | ✅ Block private IPs; DNS rebinding check; fail closed in prod |
 | ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
 | ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH + atomic MAXLEN on XADD          |
@@ -153,16 +153,16 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | 5250d7b | fix: DNS rebinding protection in relay proxy (resolve before fetch)       |
+| 2026-04-12 | 2f2abfb | ci: add Postgres integration tests and CI job (migrations + CRUD)         |
+| 2026-04-12 | 00eebad | ci: add website lint and build job                                        |
 | 2026-04-12 | 679fa13 | fix: add .nvmrc and .node-version for Node 20 enforcement                 |
 | 2026-04-12 | 9f7ee4f | fix: fail closed if RELAY_ALLOWLIST unset in production                   |
 | 2026-04-12 | e294225 | fix: make room fan-out failures non-fatal after history commit            |
 | 2026-04-12 | f2983ee | fix: console credential handling — no sessionStorage for keys, warning    |
-| 2026-04-12 | d6464e6 | fix: add engines field requiring Node 20.9+ for website                   |
 | 2026-04-12 | 70269f1 | fix: expire legacy Redis tasks without expires_at_epoch                   |
 | 2026-04-12 | 4eb07ff | fix: harden relay proxy against SSRF (block private IPs, allowlist)       |
 | 2026-04-12 | 01618a8 | feat: warm first-run wizard for murmur begin (conversational, auto-detect)|
-| 2026-04-12 | f4c2673 | feat: add /console link to doctor output and README                       |
-| 2026-04-12 | cc71538 | docs: update CONTEXT.md with critical fixes                               |
 
 ---
 
