@@ -1,24 +1,30 @@
+import contextlib
 from contextlib import asynccontextmanager, suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-import murmur.mcp_server as mcp_server
+import murmur.mcp as mcp_server
 
 
 @pytest.fixture(autouse=True)
 def configure_mcp():
     """Patch module-level constants for all tests."""
-    with (
+    patches = [
         patch.object(mcp_server, "RELAY_URL", "http://relay:8080"),
         patch.object(mcp_server, "RELAY_SECRET", "secret"),
         patch.object(mcp_server, "INSTANCE_NAME", "alice"),
-        patch.object(mcp_server, "ENABLE_BACKGROUND_POLLING", False),
-        patch.object(mcp_server, "POLL_MODE", "poll"),
+        patch.object(mcp_server, "POLL_MODE", "lazy"),
         patch.object(mcp_server, "PUSH_NOTIFICATION_METHOD", None),
         patch.object(mcp_server, "PUSH_NOTIFICATION_CHANNEL", "mcp-tunnel"),
-    ):
+    ]
+    # API_KEY added in newer mcp.py — patch only if present
+    if hasattr(mcp_server, "API_KEY"):
+        patches.append(patch.object(mcp_server, "API_KEY", ""))
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
         mcp_server._reset_runtime_state()
         yield
         mcp_server._reset_runtime_state()
@@ -43,7 +49,7 @@ async def test_send_message_calls_relay():
         "post", {"id": "test-id", "timestamp": "2026-04-05T00:00:00Z"}
     )
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._send_message("bob", "hello")
 
         mock_client.post.assert_called_once_with(
@@ -61,32 +67,28 @@ async def test_check_messages_calls_relay():
         [{"id": "1", "from_name": "bob", "content": "hi", "timestamp": "2026-04-05T00:00:00Z"}],
     )
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
         mock_client.get.assert_called_once_with(
             "http://relay:8080/messages/alice",
-            params={"wait": 30, "ack": "manual"},
+            params={"wait": 0},
             headers={"Authorization": "Bearer secret"},
-            timeout=35,
+            timeout=10,
         )
         assert "bob" in result
 
 
-async def test_check_messages_uses_nonblocking_fetch_when_background_polling_enabled():
-    """Manual checks should not long-poll behind the background poller."""
+async def test_check_messages_always_uses_nonblocking_fetch():
+    """check_messages always uses wait=0 — SSE handles live delivery."""
     mock_client = _make_mock_client("get", [])
 
-    with (
-        patch.object(mcp_server, "ENABLE_BACKGROUND_POLLING", True),
-        patch.object(mcp_server, "POLL_MODE", "sse"),
-        patch("murmur.mcp_server._get_http_client", return_value=mock_client),
-    ):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
     mock_client.get.assert_called_once_with(
         "http://relay:8080/messages/alice",
-        params={"wait": 0, "ack": "manual"},
+        params={"wait": 0},
         headers={"Authorization": "Bearer secret"},
         timeout=10,
     )
@@ -97,7 +99,7 @@ async def test_list_participants_calls_relay():
     """list_participants should GET /participants from relay."""
     mock_client = _make_mock_client("get", ["alice", "bob"])
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._list_participants()
 
         mock_client.get.assert_called_once_with(
@@ -114,7 +116,7 @@ async def test_send_message_relay_unreachable():
     mock_client.is_closed = False
     mock_client.post.side_effect = httpx.ConnectError("Connection refused")
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._send_message("bob", "hello")
         assert "error" in result.lower() or "cannot" in result.lower()
 
@@ -131,7 +133,7 @@ async def test_check_messages_prefers_local_buffer():
     ])
 
     mock_client = _make_mock_client("get", [])
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
     mock_client.get.assert_not_called()
@@ -195,7 +197,7 @@ async def test_send_room_message_posts_to_relay():
     mock_client = _make_mock_client(
         "post", {"id": "msg-1", "timestamp": "2026-04-11T00:00:00Z"}
     )
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._send_room_message("room-123", "hello room")
     assert "msg-1" in result
     mock_client.post.assert_called_once()
@@ -206,7 +208,7 @@ async def test_send_room_message_posts_to_relay():
 
 async def test_join_room_posts_to_relay():
     mock_client = _make_mock_client("post", {"status": "joined"})
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._join_room("room-123")
     assert "joined" in result.lower()
 
@@ -221,7 +223,7 @@ async def test_list_rooms_gets_from_relay():
         }
     ]
     mock_client = _make_mock_client("get", mock_rooms)
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         result = await mcp_server._list_rooms()
     assert "yc-hack" in result
 
@@ -231,62 +233,24 @@ async def test_process_sse_message_event():
         "message",
         '{"id": "m1", "from_name": "alice", "content": "hi", "timestamp": "2026-04-11T00:00:00Z"}',
     )
-    messages, _tokens = await mcp_server._drain_pending_messages()
+    messages = await mcp_server._drain_pending_messages()
     assert len(messages) == 1
     assert messages[0]["from_name"] == "alice"
 
 
 async def test_process_sse_ignores_connected_event():
     await mcp_server._process_sse_event("connected", '{"participant": "bob"}')
-    messages, _tokens = await mcp_server._drain_pending_messages()
+    messages = await mcp_server._drain_pending_messages()
     assert len(messages) == 0
 
 
-async def test_start_auto_poll_creates_task():
-    """start_auto_poll should create a background task."""
-    mock_client = _make_mock_client("get", [])
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
-        result = await mcp_server._start_auto_poll(interval=10)
-    assert "started" in result.lower()
-    assert mcp_server._auto_poll_task is not None
-    assert not mcp_server._auto_poll_task.done()
-    # Clean up
-    await mcp_server._stop_auto_poll()
-
-
-async def test_start_auto_poll_rejects_double_start():
-    """Starting auto-poll twice should return an already-running message."""
-    mock_client = _make_mock_client("get", [])
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
-        await mcp_server._start_auto_poll(interval=10)
-        result = await mcp_server._start_auto_poll(interval=10)
-    assert "already running" in result.lower()
-    await mcp_server._stop_auto_poll()
-
-
-async def test_stop_auto_poll_stops_task():
-    """stop_auto_poll should cancel the background task."""
-    mock_client = _make_mock_client("get", [])
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
-        await mcp_server._start_auto_poll(interval=10)
-        result = await mcp_server._stop_auto_poll()
-    assert "stopped" in result.lower()
-    assert mcp_server._auto_poll_task is None
-
-
-async def test_stop_auto_poll_when_not_running():
-    """stop_auto_poll should return a helpful message if not running."""
-    result = await mcp_server._stop_auto_poll()
-    assert "not running" in result.lower()
-
-
-async def test_auto_poll_clamps_interval():
-    """Interval should be clamped to [2, 300]."""
-    mock_client = _make_mock_client("get", [])
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
-        result = await mcp_server._start_auto_poll(interval=1)
-    assert "2s" in result
-    await mcp_server._stop_auto_poll()
+async def test_sse_listener_is_only_delivery_mode():
+    """SSE is the only background delivery mechanism — no interval polling."""
+    # start_auto_poll and stop_auto_poll no longer exist.
+    assert not hasattr(mcp_server, "_auto_poll_task")
+    assert not hasattr(mcp_server, "_auto_poll_stop")
+    assert not hasattr(mcp_server, "_start_auto_poll")
+    assert not hasattr(mcp_server, "_stop_auto_poll")
 
 
 async def test_auto_poll_delivers_messages():
@@ -296,11 +260,11 @@ async def test_auto_poll_delivers_messages():
          "timestamp": "2026-04-11T00:00:00Z"},
     ]
     mock_client2 = _make_mock_client("get", msgs)
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client2):
-        fetched, _ack_token, err = await mcp_server._fetch_relay_messages(wait=0)
+    with patch("murmur.mcp._get_http_client", return_value=mock_client2):
+        fetched, err = await mcp_server._fetch_relay_messages(wait=0)
     assert len(fetched) == 1
     await mcp_server._append_pending_messages(fetched)
-    buffered, _tokens = await mcp_server._drain_pending_messages()
+    buffered = await mcp_server._drain_pending_messages()
     assert len(buffered) == 1
     assert buffered[0]["from_name"] == "bob"
 
@@ -351,13 +315,13 @@ async def test_sse_listener_parses_and_buffers():
     mock_client.is_closed = False
     mock_client.stream = fake_stream
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("murmur.mcp._get_http_client", return_value=mock_client):
         stop = asyncio.Event()
         task = asyncio.create_task(mcp_server._sse_listener(stop))
 
         # Wait for the listener to process the SSE events
         for _ in range(20):
-            msgs, _tokens = await mcp_server._drain_pending_messages()
+            msgs = await mcp_server._drain_pending_messages()
             if msgs:
                 break
             await asyncio.sleep(0.05)
@@ -412,13 +376,13 @@ async def test_sse_listener_reconnects_on_error():
     mock_client.stream = failing_then_ok_stream
 
     with patch(
-        "murmur.mcp_server._get_http_client", return_value=mock_client
+        "murmur.mcp._get_http_client", return_value=mock_client
     ):
         stop = asyncio.Event()
         task = asyncio.create_task(mcp_server._sse_listener(stop))
 
         for _ in range(40):
-            msgs, _tokens = await mcp_server._drain_pending_messages()
+            msgs = await mcp_server._drain_pending_messages()
             if msgs:
                 break
             await asyncio.sleep(0.1)
@@ -450,7 +414,7 @@ async def test_search_room_by_keyword():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("murmur.mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("murmur.mcp.httpx.AsyncClient", return_value=mock_client):
         result = await mcp_server.search_room("dev", q="hello")
 
     assert "alice" in result
@@ -468,7 +432,7 @@ async def test_search_room_no_results():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("murmur.mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("murmur.mcp.httpx.AsyncClient", return_value=mock_client):
         result = await mcp_server.search_room("dev", q="nonexistent")
 
     assert "No matching" in result
@@ -490,7 +454,7 @@ async def test_room_metrics_returns_stats():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("murmur.mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("murmur.mcp.httpx.AsyncClient", return_value=mock_client):
         result = await mcp_server.room_metrics("dev")
 
     assert "3 messages" in result
@@ -510,7 +474,7 @@ async def test_room_metrics_empty():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("murmur.mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("murmur.mcp.httpx.AsyncClient", return_value=mock_client):
         result = await mcp_server.room_metrics("empty")
 
     assert "No messages" in result

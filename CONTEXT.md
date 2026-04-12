@@ -9,7 +9,9 @@ Last updated: 2026-04-12 03:00 EDT
 
 ## Current State
 
-Murmur (package: murmur-ai) is the universal communication layer for AI agents. Group chat for agents — any platform, any model, any machine.
+Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
+
+**Branch:** `main` (700 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -23,48 +25,51 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 **What's built:**
 
-| Module               | Lines | What                                                                                                                                              |
-| -------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| murmur/relay.py      | ~1200 | FastAPI relay: rooms, fan-out, SSE, history, presence, rate limiting, peek, premium web dashboard, invite pages, health/detailed, admin endpoints |
-| murmur/mcp_server.py | ~650  | MCP server: 10+ tools, SSE listener, auto-poll, heartbeat, lazy poll mode                                                                         |
-| murmur/cli.py        | ~800  | 25+ CLI commands: init, relay, create, spawn, chat, watch, ps, doctor, hackathon, export, add-agent, kick, destroy, rename, version, logs, etc.   |
-| murmur/config.py     | ~80   | Config loading (env > file > defaults), poll mode support                                                                                         |
-| murmur/analytics.py  | ~90   | Terminal dashboard                                                                                                                                |
-| murmur/integrations/ | ~200  | Universal HTTP client (Python + TypeScript)                                                                                                       |
-| tests/               | ~5000 | 461 tests: relay, mcp, config, integration, rooms, stress, security, hackathon, CLI, edge cases                                                   |
+| Module                      | Lines  | What                                                                                     |
+| --------------------------- | ------ | ---------------------------------------------------------------------------------------- |
+| murmur/relay.py             | ~1200  | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin       |
+| murmur/mcp_server.py        | ~820   | MCP server: 12 tools incl. claim_task, release_task, get_room_state, SSE push, heartbeat |
+| murmur/cli.py               | ~2500  | 28+ CLI commands incl. state, locks, usage, init, relay, create, spawn, hackathon, etc.  |
+| murmur/routes/room_state.py | ~250   | Primitive A+B: GET state, PATCH goal, POST decisions, POST/DELETE locks (mutex)          |
+| murmur/routes/usage.py      | ~157   | GET /v1/usage + /v1/usage/rooms/{room} — tenant-scoped metrics                           |
+| murmur/routes/agents.py     | ~57    | GET /agents/{name} — profile, rooms, last seen, message count, online status             |
+| murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing               |
+| murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                          |
+| murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                        |
+| tests/                      | ~7000  | 700 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
-**25+ CLI commands available via `murmur <command>`**
-
-**Key features:**
+**Key features (complete):**
 
 - Rooms with fan-out messaging (send once, all members receive)
-- SSE push delivery (real-time, replaces polling)
-- Message types: chat, claim, status, request, alert, sync
-- Room history (persistent, not cleared on read)
-- Agent presence/heartbeat system with murmur ps
-- Per-sender rate limiting
-- Universal HTTP API (any agent platform can connect)
-- Python + TypeScript client libraries
-- murmur spawn/spawn-multiple (auto-launch agents)
+- **SSE-only push delivery** — zero polling, instant delivery
+- **Primitive A: Shared State Matrix** — GET /rooms/{room}/state → goal, locked files, claimed tasks, decisions, active agents
+- **Primitive B: Distributed Mutex Locking** — POST/DELETE /rooms/{room}/lock, SSE broadcast LOCK_ACQUIRED/LOCK_RELEASED, TTL auto-expire
+- **Primitive C: Watcher Daemon** — writes .murmur/context.md for IDE indexing, event-driven via SSE
+- **MCP tools**: claim_task, release_task, get_room_state (12 tools total)
+- **Usage metrics**: GET /v1/usage — messages, active agents, per-room breakdown, top senders
+- **Agent identity**: GET /agents/{name} — profile card, rooms, last seen, message count
+- **CLI commands**: murmur state, murmur locks, murmur usage (+ 25 others)
+- **Dashboard**: live swarm panel — active goal, locked files countdown, agent presence, usage bar
+- JWT auth + API keys, per-sender rate limiting
+- Docker + Railway/Render deploy configs
+- Reply threading (reply_to field + Room.reply() SDK)
+- Durable webhook queue (Redis Streams, ACK/NACK + DLQ)
+- Idempotency-Key header support for sends
+- ack=manual default — at-least-once delivery to caller
 - murmur add-agent (interactive setup wizard)
 - murmur quickstart (one-command demo)
 - murmur hackathon (two-room hackathon setup)
 - murmur doctor (diagnose setup issues)
 - murmur export (room history as JSON/markdown)
 - murmur kick/destroy/rename (room admin)
-- murmur version, murmur logs
-- Docker + docker-compose + Railway/Render deploy configs
-- Peek endpoint for non-destructive inbox checks
-- Watcher daemon for file-based notifications
-- Interactive chat mode (murmur chat)
 - OpenAPI docs at /docs
 - Premium web dashboard at GET / (live SSE, presence dots, unread badges, auto-scroll)
 - Discord-style invite pages at GET /invite/{room}
 - Integration guides for Codex, Cursor, Gemini, Ollama
 
-**Tests:** 611 passing, all green + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 700 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -76,34 +81,31 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 ### Delivery Guarantees
 
-Manual ACK can provide client-confirmed delivery for callers that explicitly ACK only after successful processing. The API still permits unsafe auto-ACK and some client surfaces make correct usage easier than others.
-
-| Path | Guarantee | Notes |
-|------|-----------|-------|
-| HTTP client + manual ACK | At-least-once to caller | Caller must call `result.ack()` after processing |
-| HTTP client + auto ACK | At-most-once | Messages deleted before caller processes — **footgun** |
-| MCP tools | At-least-once to MCP server | ACK happens after formatting, before tool result reaches Claude |
-| SSE | Live notifications only | Not durable — use for real-time UX, not delivery |
-| Webhooks (in-memory) | Best-effort | In-memory queue, no DLQ persistence |
-| Webhooks (durable) | At-least-once | Redis Streams queue with ACK/NACK + DLQ |
+| Path                     | Guarantee                   | Notes                                                           |
+| ------------------------ | --------------------------- | --------------------------------------------------------------- |
+| HTTP client + manual ACK | At-least-once to caller     | Caller must call `result.ack()` after processing                |
+| HTTP client + auto ACK   | At-most-once                | Messages deleted before caller processes — **footgun**          |
+| MCP tools                | At-least-once to MCP server | ACK happens after formatting, before tool result reaches Claude |
+| SSE                      | Live notifications only     | Not durable — use for real-time UX, not delivery                |
+| Webhooks (durable)       | At-least-once               | Redis Streams queue with ACK/NACK + DLQ                         |
 
 ### Blockers for Production SaaS
 
-| Priority | Issue | Status |
-|----------|-------|--------|
-| ~~Critical~~ | ~~No real Redis/Postgres integration tests~~ | ✅ 9 integration tests with testcontainers |
-| ~~Critical~~ | ~~Auto-ACK default is a footgun~~ | ✅ `ack=manual` is now the default |
-| ~~Critical~~ | ~~No idempotency on send~~ | ✅ `Idempotency-Key` header support |
-| ~~High~~ | ~~Redis persistence undefined~~ | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
-| ~~High~~ | ~~Webhook queue is in-memory~~ | ✅ Durable Redis Streams queue with ACK/NACK + DLQ |
-| ~~High~~ | ~~No per-tenant quotas/backpressure~~ | ✅ MAX_RECIPIENT_DEPTH quota (default 10000) |
-| **High** | Room fan-out is write-amplified | N members = N queue writes per message |
-| **Medium** | No migration/rebuild story for Redis | Key schema changes are operationally risky |
-| ~~Medium~~ | ~~Webhook signing too weak~~ | ✅ Timestamped HMAC + per-webhook secrets |
-| **Medium** | No delivery/audit ledger | "What happened to message X?" has no answer |
-| ~~Medium~~ | ~~MCP swallows ACK failures~~ | ✅ Warning shown when ACK fails |
-| **Medium** | Auth is name-oriented, not account-based | No immutable IDs, no revocation |
-| **Low** | Operational metrics thin | Need stream depth, pending age, redelivery counts |
+| Priority     | Issue                                        | Status                                                  |
+| ------------ | -------------------------------------------- | ------------------------------------------------------- |
+| ~~Critical~~ | ~~No real Redis/Postgres integration tests~~ | ✅ 14 integration tests with testcontainers             |
+| ~~Critical~~ | ~~Auto-ACK default is a footgun~~            | ✅ `ack=manual` is now the default                      |
+| ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` header support                     |
+| ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
+| ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue with ACK/NACK + DLQ      |
+| ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH quota (default 10000)            |
+| **High**     | Room fan-out is write-amplified              | N members = N queue writes per message                  |
+| **Medium**   | No migration/rebuild story for Redis         | Key schema changes are operationally risky              |
+| ~~Medium~~   | ~~Webhook signing too weak~~                 | ✅ Timestamped HMAC + per-webhook secrets               |
+| **Medium**   | No delivery/audit ledger                     | "What happened to message X?" has no answer             |
+| ~~Medium~~   | ~~MCP swallows ACK failures~~                | ✅ Warning shown when ACK fails                         |
+| **Medium**   | Auth is name-oriented, not account-based     | No immutable IDs, no revocation                         |
+| **Low**      | Operational metrics thin                     | Need stream depth, pending age, redelivery counts       |
 
 ### Next Priorities
 
@@ -122,20 +124,18 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 
 ## Recent Changes
 
-| Date       | Commit  | What                                               |
-| ---------- | ------- | -------------------------------------------------- |
-| 2026-04-12 | f338b56 | Durable webhook queue with Redis Streams           |
-| 2026-04-12 | de39ef1 | Rename mcp.py to mcp_server.py (avoid shadowing)   |
-| 2026-04-12 | 400fd7c | Production Redis config (AOF, auth, noeviction)    |
-| 2026-04-12 | 4ff1b43 | Surface ACK failures in MCP check_messages         |
-| 2026-04-12 | 261bc89 | Per-webhook secrets + timestamped HMAC signatures  |
-| 2026-04-12 | d6f6004 | Per-recipient queue depth quota (MAX_RECIPIENT_DEPTH) |
-| 2026-04-12 | 6cb9200 | Redis integration tests with testcontainers        |
-| 2026-04-12 | ce2ab69 | Idempotency-Key header support for sends           |
-| 2026-04-12 | 3a61c83 | Make ack=manual the default for message fetches    |
-| 2026-04-12 | baca2c1 | ReceiveResult.ack() raises AckError on failure     |
-| 2026-04-12 | d3f77a4 | MCP auto-poll defers ACK until consumption         |
-| 2026-04-12 | 781e971 | Per-message ACK for chunked messages covers all    |
+| Date       | Commit  | What                                                          |
+| ---------- | ------- | ------------------------------------------------------------- |
+| 2026-04-12 | merge   | dev → main: Primitives A/B/C, SSE-only push, usage, 700 tests |
+| 2026-04-12 | f338b56 | Durable webhook queue with Redis Streams                      |
+| 2026-04-12 | de39ef1 | Rename mcp.py to mcp_server.py (avoid shadowing)              |
+| 2026-04-12 | 400fd7c | Production Redis config (AOF, auth, noeviction)               |
+| 2026-04-12 | 4ff1b43 | Surface ACK failures in MCP check_messages                    |
+| 2026-04-12 | 261bc89 | Per-webhook secrets + timestamped HMAC signatures             |
+| 2026-04-12 | d6f6004 | Per-recipient queue depth quota (MAX_RECIPIENT_DEPTH)         |
+| 2026-04-12 | 6cb9200 | Redis integration tests with testcontainers                   |
+| 2026-04-12 | ce2ab69 | Idempotency-Key header support for sends                      |
+| 2026-04-11 | 9b40539 | SSE-only push: removed polling, lazy default, auto_poll tools |
 
 ---
 
@@ -162,11 +162,11 @@ Each member's inbox → agent reads via check_messages / HTTP GET / SSE stream
 - MIT licensed
 - Relay is the universal API — MCP is one client integration
 - Web dashboard for non-technical users
-- Medium effort for implementation, high/max for architecture
+- SSE-only delivery — no polling of any kind
 
 ---
 
 ## Contributors
 
 - **Arav** (aravkek) — co-founder, parent Claude directing agents
-- **Aarya** (Aarya2004) — co-founder, joining with agents soon
+- **Aarya** (Aarya2004) — co-founder

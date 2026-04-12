@@ -16,38 +16,13 @@ from dataclasses import dataclass, field
 
 
 class InMemoryMessageBackend:
-    """Per-recipient DM inbox with at-least-once delivery semantics.
-
-    Messages move through three states:
-    1. Queued — waiting in the inbox
-    2. Pending — fetched but not yet acknowledged (redelivered after timeout)
-    3. Acknowledged — removed permanently
-    """
-
-    VISIBILITY_TIMEOUT = 60  # seconds before unacked messages are redelivered
+    """Per-recipient DM inbox backed by a plain dict."""
 
     def __init__(self) -> None:
         self._queues: dict[tuple[str, str], list[dict]] = defaultdict(list)
-        # Pending messages: (tenant_id, to_name, ack_token) -> (messages, fetch_time)
-        self._pending: dict[tuple[str, str, str], tuple[list[dict], float]] = {}
-        # Per-message ID -> (tenant_id, to_name, ack_token) for ack_ids
-        self._msg_id_index: dict[str, tuple[str, str, str]] = {}
+        # Inflight messages keyed by (tenant_id, to_name, ack_token)
+        self._inflight: dict[tuple[str, str, str], list[dict]] = {}
         self._lock = asyncio.Lock()
-
-    def _redeliver_stale(self, tenant_id: str, to_name: str) -> None:
-        """Move timed-out pending messages back to the queue (call under lock)."""
-        now = time.time()
-        stale_keys = []
-        for (tid, name, token), (msgs, fetch_time) in self._pending.items():
-            if tid == tenant_id and name == to_name:
-                if now - fetch_time > self.VISIBILITY_TIMEOUT:
-                    stale_keys.append((tid, name, token))
-        for key in stale_keys:
-            msgs, _ = self._pending.pop(key)
-            self._queues[(tenant_id, to_name)].extend(msgs)
-            for m in msgs:
-                mid = m.get("id", "")
-                self._msg_id_index.pop(mid, None)
 
     async def enqueue(
         self, tenant_id: str, to_name: str, message: dict
@@ -72,92 +47,20 @@ class InMemoryMessageBackend:
         self, tenant_id: str, to_name: str
     ) -> tuple[list[dict], str]:
         async with self._lock:
-            # Redeliver stale pending messages first
-            self._redeliver_stale(tenant_id, to_name)
             key = (tenant_id, to_name)
             msgs = list(self._queues[key])
             if not msgs:
                 return [], ""
             self._queues[key].clear()
             token = uuid.uuid4().hex
-            # Inject _delivery_id for client-side per-message ACK
-            for m in msgs:
-                mid = m.get("id", "")
-                if mid:
-                    m["_delivery_id"] = mid
-            self._pending[(tenant_id, to_name, token)] = (msgs, time.time())
-            for m in msgs:
-                mid = m.get("id", "")
-                if mid:
-                    self._msg_id_index[mid] = (tenant_id, to_name, token)
+            self._inflight[(tenant_id, to_name, token)] = msgs
             return msgs, token
 
     async def ack(
         self, tenant_id: str, to_name: str, ack_token: str
     ) -> None:
         async with self._lock:
-            entry = self._pending.pop((tenant_id, to_name, ack_token), None)
-            if entry:
-                msgs, _ = entry
-                for m in msgs:
-                    self._msg_id_index.pop(m.get("id", ""), None)
-
-    async def ack_ids(
-        self, tenant_id: str, to_name: str, message_ids: list[str]
-    ) -> int:
-        async with self._lock:
-            acked = 0
-            for mid in message_ids:
-                key = self._msg_id_index.pop(mid, None)
-                if key is None:
-                    continue
-                tid, name, token = key
-                if tid != tenant_id or name != to_name:
-                    continue
-                entry = self._pending.get(key)
-                if entry:
-                    msgs, fetch_time = entry
-                    msgs[:] = [m for m in msgs if m.get("id") != mid]
-                    if not msgs:
-                        self._pending.pop(key, None)
-                    acked += 1
-            return acked
-
-    async def requeue(
-        self,
-        tenant_id: str,
-        to_name: str,
-        old_ids: list[str],
-        messages: list[dict],
-    ) -> None:
-        """Atomically ACK old entries and re-enqueue as new (under one lock)."""
-        async with self._lock:
-            # Remove old entries from pending
-            for mid in old_ids:
-                key = self._msg_id_index.pop(mid, None)
-                if key is None:
-                    continue
-                tid, name, token = key
-                if tid != tenant_id or name != to_name:
-                    continue
-                entry = self._pending.get(key)
-                if entry:
-                    msgs, fetch_time = entry
-                    msgs[:] = [m for m in msgs if m.get("id") != mid]
-                    if not msgs:
-                        self._pending.pop(key, None)
-            # Re-enqueue as fresh messages
-            self._queues[(tenant_id, to_name)].extend(messages)
-
-    async def pending_count(
-        self, tenant_id: str, to_name: str
-    ) -> int:
-        async with self._lock:
-            total = 0
-            for (tid, name, _), (msgs, _) in self._pending.items():
-                if tid == tenant_id and name == to_name:
-                    total += len(msgs)
-            return total
+            self._inflight.pop((tenant_id, to_name, ack_token), None)
 
     async def peek(self, tenant_id: str, to_name: str) -> int:
         async with self._lock:
@@ -175,20 +78,9 @@ class InMemoryMessageBackend:
         async with self._lock:
             return sum(len(msgs) for msgs in self._queues.values())
 
-    async def recipient_depth(self, tenant_id: str, to_name: str) -> int:
-        async with self._lock:
-            key = (tenant_id, to_name)
-            queued = len(self._queues.get(key, []))
-            pending = 0
-            for (tid, name, _), (msgs, _) in self._pending.items():
-                if tid == tenant_id and name == to_name:
-                    pending += len(msgs)
-            return queued + pending
-
     def clear(self) -> None:
         self._queues.clear()
-        self._pending.clear()
-        self._msg_id_index.clear()
+        self._inflight.clear()
 
 
 # -- Rooms ------------------------------------------------------------------
@@ -238,16 +130,6 @@ class InMemoryRoomBackend:
                 if tid == tenant_id
             ]
 
-    async def list_by_member(
-        self, tenant_id: str, member_name: str
-    ) -> list[tuple[str, dict]]:
-        async with self._lock:
-            return [
-                (rid, dict(data))
-                for (tid, rid), data in self._rooms.items()
-                if tid == tenant_id and member_name in data.get("members", {})
-            ]
-
     async def update(
         self, tenant_id: str, room_id: str, updates: dict
     ) -> None:
@@ -274,36 +156,6 @@ class InMemoryRoomBackend:
                 if name:
                     self._name_index.pop((tenant_id, name), None)
 
-    async def create_if_name_available(
-        self, tenant_id: str, room_id: str, room_data: dict
-    ) -> bool:
-        async with self._lock:
-            name = room_data.get("name")
-            if name and (tenant_id, name) in self._name_index:
-                return False
-            self._rooms[(tenant_id, room_id)] = room_data
-            if name:
-                self._name_index[(tenant_id, name)] = room_id
-            return True
-
-    async def rename_if_available(
-        self, tenant_id: str, room_id: str, new_name: str
-    ) -> bool:
-        async with self._lock:
-            key = (tenant_id, room_id)
-            if key not in self._rooms:
-                return False
-            # Check if new name is taken by a different room
-            existing_id = self._name_index.get((tenant_id, new_name))
-            if existing_id is not None and existing_id != room_id:
-                return False
-            old_name = self._rooms[key].get("name")
-            if old_name:
-                self._name_index.pop((tenant_id, old_name), None)
-            self._rooms[key]["name"] = new_name
-            self._name_index[(tenant_id, new_name)] = room_id
-            return True
-
     async def add_member(
         self, tenant_id: str, room_id: str, name: str, role: str
     ) -> None:
@@ -313,19 +165,6 @@ class InMemoryRoomBackend:
                 return
             members = self._rooms[key].setdefault("members", {})
             members[name] = role
-
-    async def add_member_if_capacity(
-        self, tenant_id: str, room_id: str, name: str, role: str, max_members: int
-    ) -> bool:
-        async with self._lock:
-            key = (tenant_id, room_id)
-            if key not in self._rooms:
-                return False
-            members = self._rooms[key].setdefault("members", {})
-            if name not in members and len(members) >= max_members:
-                return False
-            members[name] = role
-            return True
 
     async def remove_member(
         self, tenant_id: str, room_id: str, name: str
@@ -407,6 +246,27 @@ class InMemoryRoomHistoryBackend:
                 if len(results) >= limit:
                     break
             results.reverse()
+            return results
+
+    async def get_by_id(
+        self, tenant_id: str, room_id: str, message_id: str
+    ) -> dict | None:
+        """Return a single message by ID, or None if not found."""
+        async with self._lock:
+            for msg in self._history[(tenant_id, room_id)]:
+                if msg.get("id") == message_id:
+                    return dict(msg)
+            return None
+
+    async def get_thread(
+        self, tenant_id: str, room_id: str, message_id: str
+    ) -> list[dict]:
+        """Return the parent message and all direct replies."""
+        async with self._lock:
+            results = []
+            for msg in self._history[(tenant_id, room_id)]:
+                if msg.get("id") == message_id or msg.get("reply_to") == message_id:
+                    results.append(dict(msg))
             return results
 
     async def delete(self, tenant_id: str, room_id: str) -> None:
@@ -548,33 +408,26 @@ class InMemorySSETokenBackend:
 
 
 class InMemoryWebhookBackend:
-    """DM and room webhook registrations with per-webhook secrets."""
+    """DM and room webhook registrations."""
 
     def __init__(self) -> None:
-        # (tenant_id, instance_name) -> {"url": ..., "secret": ...}
-        self._dm_hooks: dict[tuple[str, str], dict] = {}
-        # (tenant_id, room_id) -> [{"url", "secret", "registered_by"}]
+        # (tenant_id, instance_name) -> callback_url
+        self._dm_hooks: dict[tuple[str, str], str] = {}
+        # (tenant_id, room_id) -> [{url, registered_by}]
         self._room_hooks: dict[tuple[str, str], list[dict]] = defaultdict(
             list
         )
         self._lock = asyncio.Lock()
 
     async def register_dm(
-        self,
-        tenant_id: str,
-        instance_name: str,
-        callback_url: str,
-        secret: str = "",
+        self, tenant_id: str, instance_name: str, callback_url: str
     ) -> None:
         async with self._lock:
-            self._dm_hooks[(tenant_id, instance_name)] = {
-                "url": callback_url,
-                "secret": secret,
-            }
+            self._dm_hooks[(tenant_id, instance_name)] = callback_url
 
     async def get_dm(
         self, tenant_id: str, instance_name: str
-    ) -> dict | None:
+    ) -> str | None:
         async with self._lock:
             return self._dm_hooks.get((tenant_id, instance_name))
 
@@ -590,7 +443,6 @@ class InMemoryWebhookBackend:
         room_id: str,
         callback_url: str,
         registered_by: str,
-        secret: str = "",
     ) -> None:
         async with self._lock:
             key = (tenant_id, room_id)
@@ -598,10 +450,9 @@ class InMemoryWebhookBackend:
             for hook in self._room_hooks[key]:
                 if hook["url"] == callback_url:
                     hook["registered_by"] = registered_by
-                    hook["secret"] = secret
                     return
             self._room_hooks[key].append(
-                {"url": callback_url, "registered_by": registered_by, "secret": secret}
+                {"url": callback_url, "registered_by": registered_by}
             )
 
     async def list_room(
@@ -709,123 +560,126 @@ class InMemoryParticipantBackend:
         self._participants.clear()
 
 
-# -- Idempotency ------------------------------------------------------------
+# -- Room state (Shared State Matrix — Primitive A) -------------------------
 
 
-class InMemoryIdempotencyBackend:
-    """Idempotency key storage with TTL-based expiration."""
+class InMemoryRoomStateBackend:
+    """Per-room coordination state: goal, claimed tasks, file locks, decisions."""
 
     def __init__(self) -> None:
-        # (tenant_id, key) -> (result, expiry_time)
-        self._store: dict[tuple[str, str], tuple[dict, float]] = {}
+        # (tenant_id, room_id) -> state dict
+        self._state: dict[tuple[str, str], dict] = {}
         self._lock = asyncio.Lock()
 
-    async def get(self, tenant_id: str, key: str) -> dict | None:
-        async with self._lock:
-            now = time.time()
-            cache_key = (tenant_id, key)
-            if cache_key in self._store:
-                cached_result, expiry = self._store[cache_key]
-                if now < expiry:
-                    return cached_result
-                # Expired, remove
-                del self._store[cache_key]
-            return None
+    def _empty(self) -> dict:
+        return {
+            "active_goal": None,
+            "claimed_tasks": [],
+            "locked_files": {},
+            "resolved_decisions": [],
+        }
 
-    async def set(
-        self, tenant_id: str, key: str, result: dict, ttl: int
+    async def get(self, tenant_id: str, room_id: str) -> dict:
+        async with self._lock:
+            return dict(self._state.get((tenant_id, room_id), self._empty()))
+
+    async def set_goal(
+        self, tenant_id: str, room_id: str, goal: str | None
     ) -> None:
         async with self._lock:
-            now = time.time()
-            self._store[(tenant_id, key)] = (result, now + ttl)
-            # Lazy cleanup of expired entries
-            expired = [k for k, (_, exp) in self._store.items() if now >= exp]
-            for k in expired:
-                del self._store[k]
+            key = (tenant_id, room_id)
+            self._state.setdefault(key, self._empty())
+            self._state[key]["active_goal"] = goal
+
+    async def add_claimed_task(
+        self, tenant_id: str, room_id: str, task: dict
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            self._state.setdefault(key, self._empty())
+            self._state[key]["claimed_tasks"].append(task)
+            # Also write the file lock entry
+            fp = task.get("file_path")
+            if fp:
+                self._state[key]["locked_files"][fp] = {
+                    "held_by": task["claimed_by"],
+                    "lock_token": task["lock_token"],
+                    "expires_at": task["expires_at"],
+                }
+
+    async def remove_claimed_task(
+        self, tenant_id: str, room_id: str, task_id: str
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            if key not in self._state:
+                return
+            tasks = self._state[key]["claimed_tasks"]
+            removed = None
+            self._state[key]["claimed_tasks"] = [
+                t for t in tasks if t.get("id") != task_id
+                or (removed := t) is None  # capture and drop
+            ]
+            if removed:
+                fp = removed.get("file_path")
+                if fp:
+                    self._state[key]["locked_files"].pop(fp, None)
+
+    async def set_lock(
+        self, tenant_id: str, room_id: str, file_path: str, lock_data: dict
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            self._state.setdefault(key, self._empty())
+            self._state[key]["locked_files"][file_path] = lock_data
+
+    async def release_lock(
+        self, tenant_id: str, room_id: str, file_path: str
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            if key in self._state:
+                self._state[key]["locked_files"].pop(file_path, None)
+
+    async def add_decision(
+        self, tenant_id: str, room_id: str, decision: dict
+    ) -> None:
+        async with self._lock:
+            key = (tenant_id, room_id)
+            self._state.setdefault(key, self._empty())
+            self._state[key]["resolved_decisions"].append(decision)
+
+    async def expire_tasks(
+        self, tenant_id: str, room_id: str
+    ) -> list[str]:
+        now = time.time()
+        async with self._lock:
+            key = (tenant_id, room_id)
+            if key not in self._state:
+                return []
+            expired_ids: list[str] = []
+            live_tasks: list[dict] = []
+            for task in self._state[key]["claimed_tasks"]:
+                # expires_at is ISO8601; parse to epoch for comparison
+                try:
+                    from datetime import datetime
+                    exp = datetime.fromisoformat(
+                        task["expires_at"]
+                    ).timestamp()
+                    if exp < now:
+                        expired_ids.append(task["id"])
+                        fp = task.get("file_path")
+                        if fp:
+                            self._state[key]["locked_files"].pop(fp, None)
+                    else:
+                        live_tasks.append(task)
+                except (KeyError, ValueError):
+                    live_tasks.append(task)
+            self._state[key]["claimed_tasks"] = live_tasks
+            return expired_ids
 
     def clear(self) -> None:
-        self._store.clear()
-
-
-# -- Webhook delivery queue -------------------------------------------------
-
-
-class InMemoryWebhookQueueBackend:
-    """In-memory webhook delivery queue with retry and DLQ support."""
-
-    def __init__(self, dlq_max_size: int = 1000) -> None:
-        self._queue: list[tuple[str, dict]] = []  # (job_id, job_data)
-        self._pending: dict[str, dict] = {}  # job_id -> job_data
-        self._dlq: list[dict] = []
-        self._dlq_max_size = dlq_max_size
-        self._counter = 0
-        self._lock = asyncio.Lock()
-
-    async def enqueue(self, job: dict) -> str:
-        """Add a webhook job to the queue. Returns job ID."""
-        async with self._lock:
-            self._counter += 1
-            job_id = f"job-{self._counter}"
-            self._queue.append((job_id, job))
-            return job_id
-
-    async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
-        """Fetch pending jobs for delivery."""
-        async with self._lock:
-            fetched = self._queue[:count]
-            self._queue = self._queue[count:]
-            for job_id, job in fetched:
-                self._pending[job_id] = job
-            return fetched
-
-    async def ack(self, job_id: str) -> None:
-        """Acknowledge successful delivery, removing the job."""
-        async with self._lock:
-            self._pending.pop(job_id, None)
-
-    async def nack(
-        self, job_id: str, error: str, max_retries: int
-    ) -> bool:
-        """Mark job as failed. Returns True if job will be retried."""
-        async with self._lock:
-            job = self._pending.pop(job_id, None)
-            if job is None:
-                return False
-
-            job["attempt"] = job.get("attempt", 0) + 1
-            job["last_error"] = error
-
-            if job["attempt"] >= max_retries:
-                # Move to DLQ
-                self._dlq.insert(0, job)
-                if len(self._dlq) > self._dlq_max_size:
-                    self._dlq = self._dlq[: self._dlq_max_size]
-                return False
-
-            # Re-enqueue for retry
-            self._counter += 1
-            new_job_id = f"job-{self._counter}"
-            self._queue.append((new_job_id, job))
-            return True
-
-    async def get_dlq(self, limit: int = 50) -> list[dict]:
-        """Return recent dead letter queue entries."""
-        async with self._lock:
-            return list(self._dlq[:limit])
-
-    async def get_stats(self) -> dict:
-        """Return queue statistics."""
-        async with self._lock:
-            return {
-                "queue_length": len(self._queue),
-                "pending": len(self._pending),
-                "dlq_size": len(self._dlq),
-            }
-
-    def clear(self) -> None:
-        self._queue.clear()
-        self._pending.clear()
-        self._dlq.clear()
+        self._state.clear()
 
 
 # -- Convenience bundle -----------------------------------------------------
@@ -846,11 +700,8 @@ class InMemoryBackends:
     participants: InMemoryParticipantBackend = field(
         default_factory=InMemoryParticipantBackend
     )
-    idempotency: InMemoryIdempotencyBackend = field(
-        default_factory=InMemoryIdempotencyBackend
-    )
-    webhook_queue: InMemoryWebhookQueueBackend = field(
-        default_factory=InMemoryWebhookQueueBackend
+    room_state: InMemoryRoomStateBackend = field(
+        default_factory=InMemoryRoomStateBackend
     )
 
     @classmethod
@@ -868,8 +719,7 @@ class InMemoryBackends:
             webhooks=InMemoryWebhookBackend(),
             analytics=InMemoryAnalyticsBackend(),
             participants=InMemoryParticipantBackend(),
-            idempotency=InMemoryIdempotencyBackend(),
-            webhook_queue=InMemoryWebhookQueueBackend(),
+            room_state=InMemoryRoomStateBackend(),
         )
 
     def clear_all(self) -> None:
@@ -883,3 +733,4 @@ class InMemoryBackends:
         self.webhooks.clear()
         self.analytics.clear()
         self.participants.clear()
+        self.room_state.clear()

@@ -648,3 +648,178 @@ def test_add_agent_cancelled(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "Cancelled" in captured.out
+
+
+# ── state command tests ──────────────────────────────────────────────────────
+
+_SAMPLE_STATE = {
+    "room_id": "r1",
+    "snapshot_at": "2026-04-11T10:00:00Z",
+    "schema_version": "1.0",
+    "active_goal": "Build distributed mutex locking layer",
+    "claimed_tasks": [],
+    "locked_files": {
+        "murmur/relay.py": {
+            "held_by": "arav-agent-1",
+            "claimed_by": "arav-agent-1",
+            "expires_at": "2026-04-11T10:05:00Z",
+            "lock_token": "abc12345-token",
+        },
+        "murmur/mcp.py": {
+            "held_by": "arav-agent-2",
+            "claimed_by": "arav-agent-2",
+            "expires_at": "2026-04-11T10:02:00Z",
+            "lock_token": "def67890-token",
+        },
+    },
+    "resolved_decisions": ["use redis", "use fastapi", "add SSE"],
+    "active_agents": ["arav", "arav-agent-1", "arav-agent-2"],
+    "message_count": 47,
+    "last_activity": "2026-04-11T09:58:00Z",
+}
+
+
+async def test_cmd_room_state_shows_goal(capsys):
+    from murmur.cli import _room_state
+
+    client = _mock_client(200, _SAMPLE_STATE)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _room_state("murmur-dev")
+
+    captured = capsys.readouterr()
+    assert "Build distributed mutex locking layer" in captured.out
+    assert "arav-agent-1" in captured.out
+    assert "3 online" in captured.out
+    assert "murmur/relay.py" in captured.out
+    assert "47" in captured.out
+
+
+async def test_cmd_room_state_no_goal(capsys):
+    from murmur.cli import _room_state
+
+    state = dict(_SAMPLE_STATE)
+    state["active_goal"] = None
+    state["locked_files"] = {}
+    client = _mock_client(200, state)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _room_state("murmur-dev")
+
+    captured = capsys.readouterr()
+    assert "No active goal" in captured.out
+    assert "None" in captured.out
+
+
+async def test_cmd_room_state_not_found(capsys):
+    import httpx
+
+    from murmur.cli import _room_state
+
+    resp = MagicMock()
+    resp.status_code = 404
+    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not Found", request=MagicMock(), response=resp
+    )
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    client.aclose = AsyncMock()
+    with patch("murmur.cli._get_client", return_value=client):
+        await _room_state("ghost-room")
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out
+
+
+# ── locks command tests ──────────────────────────────────────────────────────
+
+
+async def test_cmd_room_locks_shows_table(capsys):
+    from murmur.cli import _room_locks
+
+    client = _mock_client(200, _SAMPLE_STATE)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _room_locks("murmur-dev")
+
+    captured = capsys.readouterr()
+    assert "murmur/relay.py" in captured.out
+    assert "arav-agent-1" in captured.out
+    assert "abc12345" in captured.out
+
+
+async def test_cmd_room_locks_empty(capsys):
+    from murmur.cli import _room_locks
+
+    state = dict(_SAMPLE_STATE)
+    state["locked_files"] = {}
+    client = _mock_client(200, state)
+    with patch("murmur.cli._get_client", return_value=client):
+        await _room_locks("murmur-dev")
+
+    captured = capsys.readouterr()
+    assert "No active locks" in captured.out
+
+
+# ── usage command tests ──────────────────────────────────────────────────────
+
+_ANALYTICS_USAGE = {
+    "total_messages_sent": 1247,
+    "total_messages_delivered": 1200,
+    "messages_pending": 3,
+    "participants": {
+        "arav-agent-1": {"sent": 342, "received": 300},
+        "arav-agent-2": {"sent": 218, "received": 200},
+        "arav": {"sent": 156, "received": 140},
+    },
+    "hourly_volume": [],
+    "uptime_seconds": 7200,
+}
+
+_ROOMS_LIST = [
+    {"id": "r1", "name": "murmur-dev", "members": ["arav", "arav-agent-1"]},
+    {"id": "r2", "name": "murmur-prod", "members": ["arav-agent-2"]},
+    {"id": "r3", "name": "staging", "members": []},
+]
+
+_PRESENCE_LIST = [
+    {"name": "arav", "online": True},
+    {"name": "arav-agent-1", "online": True},
+    {"name": "arav-agent-2", "online": False},
+]
+
+
+async def test_cmd_usage_shows_stats(capsys):
+    from murmur.cli import _usage
+
+    analytics_resp = _mock_response(200, _ANALYTICS_USAGE)
+    analytics_resp.is_success = True
+    rooms_resp = _mock_response(200, _ROOMS_LIST)
+    rooms_resp.is_success = True
+    presence_resp = _mock_response(200, _PRESENCE_LIST)
+    presence_resp.is_success = True
+
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=[analytics_resp, rooms_resp, presence_resp])
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _usage()
+
+    captured = capsys.readouterr()
+    assert "1,247" in captured.out
+    assert "arav-agent-1" in captured.out
+    assert "342" in captured.out
+
+
+async def test_cmd_usage_relay_down(capsys):
+    import httpx
+
+    from murmur.cli import _usage
+
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _usage()
+
+    captured = capsys.readouterr()
+    assert "Cannot connect" in captured.out

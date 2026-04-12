@@ -10,7 +10,7 @@ build/
 .venv/
 .env
 messages.json
-.claude/settings.local.json
+.claude/
 uv.lock
 .DS_Store
 ROADMAP.md

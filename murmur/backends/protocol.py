@@ -38,14 +38,12 @@ class MessageBackend(Protocol):
     async def fetch(
         self, tenant_id: str, to_name: str
     ) -> tuple[list[dict], str]:
-        """Fetch pending messages with at-least-once delivery semantics.
+        """Fetch pending messages with visibility-timeout semantics.
 
-        Returns ``(messages, ack_token)``.  Messages become *pending* until
-        :meth:`ack` is called.  Unacknowledged messages are redelivered
-        on the next fetch after the visibility timeout expires.
-
-        The ack_token is opaque — it may be a single ID, a JSON-encoded
-        list of stream entry IDs, or any backend-specific token.
+        Returns ``(messages, ack_token)``.  Messages are held in an inflight
+        set until :meth:`ack` is called.  If not acked within the visibility
+        timeout the inflight key expires (messages are considered delivered
+        and dropped — acceptable for ephemeral DM delivery).
         """
         ...
 
@@ -53,39 +51,7 @@ class MessageBackend(Protocol):
         self, tenant_id: str, to_name: str, ack_token: str
     ) -> None:
         """Acknowledge receipt of a previous :meth:`fetch`, permanently
-        removing the pending messages.  Unacked messages are redelivered."""
-        ...
-
-    async def ack_ids(
-        self, tenant_id: str, to_name: str, message_ids: list[str]
-    ) -> int:
-        """Acknowledge specific message IDs.  Returns the count of newly acked.
-
-        This enables client-side ACK where the client confirms individual
-        messages after processing them.
-        """
-        ...
-
-    async def requeue(
-        self,
-        tenant_id: str,
-        to_name: str,
-        old_ids: list[str],
-        messages: list[dict],
-    ) -> None:
-        """Atomically ACK *old_ids* and re-enqueue *messages* as new entries.
-
-        Used to return incomplete chunk groups to the inbox without a
-        crash window.  If the process dies mid-operation, either the old
-        entries survive (will be reclaimed by visibility timeout) or the
-        new entries survive — no data is lost.
-        """
-        ...
-
-    async def pending_count(
-        self, tenant_id: str, to_name: str
-    ) -> int:
-        """Count messages that have been delivered but not yet acknowledged."""
+        removing the inflight messages."""
         ...
 
     async def peek(self, tenant_id: str, to_name: str) -> int:
@@ -98,13 +64,6 @@ class MessageBackend(Protocol):
 
     async def count_all_global(self) -> int:
         """Count total pending messages globally (for health checks)."""
-        ...
-
-    async def recipient_depth(self, tenant_id: str, to_name: str) -> int:
-        """Return total stream length for a recipient (queued + pending).
-
-        Used for quota enforcement to prevent unbounded queue growth.
-        """
         ...
 
 
@@ -133,12 +92,6 @@ class RoomBackend(Protocol):
         """Return all rooms for a tenant as (room_id, data) pairs."""
         ...
 
-    async def list_by_member(
-        self, tenant_id: str, member_name: str
-    ) -> list[tuple[str, dict]]:
-        """Return rooms where *member_name* is a member, as (room_id, data) pairs."""
-        ...
-
     async def update(
         self, tenant_id: str, room_id: str, updates: dict
     ) -> None:
@@ -147,36 +100,9 @@ class RoomBackend(Protocol):
     async def delete(self, tenant_id: str, room_id: str) -> None:
         ...
 
-    async def create_if_name_available(
-        self, tenant_id: str, room_id: str, room_data: dict
-    ) -> bool:
-        """Atomically create a room only if the name is not taken.
-
-        Returns True if created, False if name already exists.
-        """
-        ...
-
-    async def rename_if_available(
-        self, tenant_id: str, room_id: str, new_name: str
-    ) -> bool:
-        """Atomically rename a room only if the new name is not taken.
-
-        Returns True if renamed, False if name already exists.
-        """
-        ...
-
     async def add_member(
         self, tenant_id: str, room_id: str, name: str, role: str
     ) -> None:
-        ...
-
-    async def add_member_if_capacity(
-        self, tenant_id: str, room_id: str, name: str, role: str, max_members: int
-    ) -> bool:
-        """Atomically add a member only if the room is under capacity.
-
-        Returns True if added, False if at max capacity.
-        """
         ...
 
     async def remove_member(
@@ -302,19 +228,13 @@ class SSETokenBackend(Protocol):
 @runtime_checkable
 class WebhookBackend(Protocol):
     async def register_dm(
-        self,
-        tenant_id: str,
-        instance_name: str,
-        callback_url: str,
-        secret: str = "",
+        self, tenant_id: str, instance_name: str, callback_url: str
     ) -> None:
-        """Register a DM webhook. Optional per-webhook secret for signing."""
         ...
 
     async def get_dm(
         self, tenant_id: str, instance_name: str
-    ) -> dict | None:
-        """Return ``{"url": ..., "secret": ...}`` or None."""
+    ) -> str | None:
         ...
 
     async def delete_dm(
@@ -328,15 +248,12 @@ class WebhookBackend(Protocol):
         room_id: str,
         callback_url: str,
         registered_by: str,
-        secret: str = "",
     ) -> None:
-        """Register a room webhook. Optional per-webhook secret for signing."""
         ...
 
     async def list_room(
         self, tenant_id: str, room_id: str
     ) -> list[dict]:
-        """Return list of ``{"url": ..., "secret": ..., "registered_by": ...}``."""
         ...
 
     async def delete_room(
@@ -384,68 +301,60 @@ class AnalyticsBackend(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Webhook delivery queue
+# Room state (Shared State Matrix — Primitive A)
 # ---------------------------------------------------------------------------
 
 
 @runtime_checkable
-class WebhookQueueBackend(Protocol):
-    """Durable webhook delivery queue with retry and DLQ support.
+class RoomStateBackend(Protocol):
+    """Mutable room-level coordination state (goal, locks, decisions)."""
 
-    Uses Redis Streams for at-least-once delivery of webhook jobs.
-    Jobs that fail after max retries are moved to a dead letter queue.
-    """
+    async def get(self, tenant_id: str, room_id: str) -> dict:
+        """Return stored state for the room.
 
-    async def enqueue(self, job: dict) -> str:
-        """Add a webhook job to the queue. Returns job ID."""
-        ...
-
-    async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
-        """Fetch pending jobs for delivery.
-
-        Returns list of (job_id, job_data) tuples.
-        Jobs become pending until ack() or nack() is called.
+        Keys: active_goal, claimed_tasks, locked_files, resolved_decisions.
+        Returns empty defaults if no state has been written yet.
         """
         ...
 
-    async def ack(self, job_id: str) -> None:
-        """Acknowledge successful delivery, removing the job."""
-        ...
-
-    async def nack(
-        self, job_id: str, error: str, max_retries: int
-    ) -> bool:
-        """Mark job as failed. Returns True if job will be retried.
-
-        If attempts >= max_retries, job is moved to DLQ and False is returned.
-        Otherwise, job is re-enqueued with incremented attempt count.
-        """
-        ...
-
-    async def get_dlq(self, limit: int = 50) -> list[dict]:
-        """Return recent dead letter queue entries for monitoring."""
-        ...
-
-    async def get_stats(self) -> dict:
-        """Return queue statistics: pending, dlq_size, etc."""
-        ...
-
-
-# ---------------------------------------------------------------------------
-# Idempotency
-# ---------------------------------------------------------------------------
-
-
-@runtime_checkable
-class IdempotencyBackend(Protocol):
-    """Idempotency key storage for deduplicating retried requests."""
-
-    async def get(self, tenant_id: str, key: str) -> dict | None:
-        """Return cached result for key, or None if not found/expired."""
-        ...
-
-    async def set(
-        self, tenant_id: str, key: str, result: dict, ttl: int
+    async def set_goal(
+        self, tenant_id: str, room_id: str, goal: str | None
     ) -> None:
-        """Store result with TTL."""
+        """Set (or clear) the active goal for the room."""
+        ...
+
+    async def add_claimed_task(
+        self, tenant_id: str, room_id: str, task: dict
+    ) -> None:
+        """Append a claimed task entry."""
+        ...
+
+    async def remove_claimed_task(
+        self, tenant_id: str, room_id: str, task_id: str
+    ) -> None:
+        """Remove a claimed task by its id (also releases its lock)."""
+        ...
+
+    async def set_lock(
+        self, tenant_id: str, room_id: str, file_path: str, lock_data: dict
+    ) -> None:
+        """Acquire or refresh a file lock."""
+        ...
+
+    async def release_lock(
+        self, tenant_id: str, room_id: str, file_path: str
+    ) -> None:
+        """Release a file lock."""
+        ...
+
+    async def add_decision(
+        self, tenant_id: str, room_id: str, decision: dict
+    ) -> None:
+        """Record a resolved decision."""
+        ...
+
+    async def expire_tasks(
+        self, tenant_id: str, room_id: str
+    ) -> list[str]:
+        """Remove tasks/locks whose TTL has expired.  Returns expired task ids."""
         ...

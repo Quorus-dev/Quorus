@@ -47,6 +47,13 @@ class RoomMessageService:
     # Send (fan-out to member DM queues)
     # ------------------------------------------------------------------
 
+    async def get_thread(
+        self, tenant_id: str, room_id: str, message_id: str
+    ) -> list[dict]:
+        """Return the parent message and all its replies."""
+        room_id, _ = await self._room.get(tenant_id, room_id)
+        return await self._history.get_thread(tenant_id, room_id, message_id)
+
     async def send(
         self,
         tenant_id: str,
@@ -76,6 +83,15 @@ class RoomMessageService:
             raise HTTPException(
                 status_code=403, detail="Not a member of this room"
             )
+
+        # Validate reply_to refers to a real message in this room
+        if reply_to is not None:
+            parent = await self._history.get_by_id(tenant_id, room_id, reply_to)
+            if parent is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"reply_to message '{reply_to}' not found in this room",
+                )
 
         room_name = room_data.get("name", "")
         timestamp = datetime.now(timezone.utc).isoformat()

@@ -95,6 +95,26 @@ async def get_room_history(
     return await svc.history(tid, room_id, limit)
 
 
+@router.get("/rooms/{room_id}/thread/{message_id}")
+async def get_message_thread(
+    room_id: str,
+    message_id: str,
+    request: Request,
+    auth: AuthContext = Depends(verify_auth),
+):
+    """Return the parent message and all its replies.
+
+    Returns 404 if the message_id is not found in the room.
+    """
+    tid = _tid(auth)
+    await _require_room_member(request, auth, tid, room_id)
+    svc = request.app.state.room_msg_service
+    thread = await svc.get_thread(tid, room_id, message_id)
+    if not thread:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return thread
+
+
 @router.get("/rooms/{room_id}/search")
 async def search_room_history(
     room_id: str,

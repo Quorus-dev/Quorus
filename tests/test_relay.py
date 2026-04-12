@@ -2005,3 +2005,634 @@ async def test_dashboard_css_variables(client: AsyncClient):
     assert resp.status_code == 200
     assert ":root{" in resp.text or ":root {" in resp.text
     assert "var(--" in resp.text
+
+
+async def test_agent_profile_basic(client: AsyncClient, auth_headers: dict):
+  """Get agent profile returns agent info."""
+  # Create heartbeat for agent
+  await client.post(
+      "/heartbeat",
+      json={"instance_name": "alice", "status": "active"},
+      headers=auth_headers,
+  )
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  data = resp.json()
+  assert data["name"] == "alice"
+  assert "last_seen" in data
+  assert "rooms" in data
+  assert "message_count" in data
+  assert "online" in data
+
+
+async def test_agent_profile_not_found(client: AsyncClient, auth_headers: dict):
+  """Get agent profile returns 404 for unknown agent."""
+  resp = await client.get("/agents/nonexistent", headers=auth_headers)
+  assert resp.status_code == 404
+
+
+async def test_agent_profile_shows_rooms(client: AsyncClient, auth_headers: dict):
+  """Get agent profile shows rooms agent is in."""
+  # Create rooms with alice
+  await client.post(
+      "/rooms",
+      json={"name": "dev", "created_by": "alice"},
+      headers=auth_headers,
+  )
+  await client.post(
+      "/rooms",
+      json={"name": "ops", "created_by": "alice"},
+      headers=auth_headers,
+  )
+  # Heartbeat to register agent
+  await client.post(
+      "/heartbeat",
+      json={"instance_name": "alice", "status": "active"},
+      headers=auth_headers,
+  )
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  rooms = resp.json()["rooms"]
+  assert len(rooms) == 2
+  room_names = {r["name"] for r in rooms}
+  assert room_names == {"dev", "ops"}
+
+
+async def test_agent_profile_shows_message_count(client: AsyncClient, auth_headers: dict):
+  """Get agent profile shows message count."""
+  # Send messages from agent
+  await client.post(
+      "/messages",
+      json={"from_name": "alice", "to": "bob", "content": "msg1"},
+      headers=auth_headers,
+  )
+  await client.post(
+      "/messages",
+      json={"from_name": "alice", "to": "bob", "content": "msg2"},
+      headers=auth_headers,
+  )
+  # Heartbeat to register agent
+  await client.post(
+      "/heartbeat",
+      json={"instance_name": "alice", "status": "active"},
+      headers=auth_headers,
+  )
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  assert resp.json()["message_count"] == 2
+
+
+async def test_agent_profile_shows_online_status(client: AsyncClient, auth_headers: dict):
+  """Get agent profile shows online status."""
+  await client.post(
+      "/heartbeat",
+      json={"instance_name": "alice", "status": "active"},
+      headers=auth_headers,
+  )
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  assert resp.json()["online"] is True
+
+  # Backdate heartbeat to show as offline
+  backends = app.state.backends
+  backends.presence._entries[("_legacy", "alice")]["last_heartbeat"] = 0.0
+
+  resp = await client.get("/agents/alice", headers=auth_headers)
+  assert resp.status_code == 200
+  assert resp.json()["online"] is False
+
+
+async def test_agent_profile_requires_auth(client: AsyncClient):
+  """Get agent profile requires auth."""
+  resp = await client.get("/agents/alice")
+  assert resp.status_code == 401
+
+
+# ── reply threading tests ────────────────────────────────────────────────
+
+async def _setup_thread_room(client: AsyncClient, auth_headers: dict):
+    """Create a room with alice and bob, send a root message, return (room_id, msg_id)."""
+    resp = await client.post(
+        "/rooms", json={"name": "thread-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = resp.json()["id"]
+    for name in ("alice", "bob"):
+        await client.post(
+            "/rooms/thread-room/join",
+            json={"participant": name}, headers=auth_headers,
+        )
+    # Send root message
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "alice", "content": "root message", "message_type": "chat"},
+        headers=auth_headers,
+    )
+    msg_id = resp.json()["id"]
+    return room_id, msg_id
+
+
+async def test_reply_to_stored_in_history(client: AsyncClient, auth_headers: dict):
+    """reply_to field should be persisted in room history."""
+    room_id, root_id = await _setup_thread_room(client, auth_headers)
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "bob", "content": "reply!", "reply_to": root_id},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    history = await client.get(
+        f"/rooms/{room_id}/history", headers=auth_headers,
+    )
+    msgs = history.json()
+    reply = next((m for m in msgs if m.get("reply_to") == root_id), None)
+    assert reply is not None
+    assert reply["content"] == "reply!"
+
+
+async def test_reply_to_invalid_id_returns_422(client: AsyncClient, auth_headers: dict):
+    """reply_to with a nonexistent message ID should return 422."""
+    room_id, _ = await _setup_thread_room(client, auth_headers)
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "bob", "content": "bad reply", "reply_to": "nonexistent-id"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_get_thread_returns_parent_and_replies(client: AsyncClient, auth_headers: dict):
+    """GET /rooms/{id}/thread/{msg_id} returns parent + all replies."""
+    room_id, root_id = await _setup_thread_room(client, auth_headers)
+    # Add two replies
+    for i in range(2):
+        await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "bob", "content": f"reply {i}", "reply_to": root_id},
+            headers=auth_headers,
+        )
+    resp = await client.get(
+        f"/rooms/{room_id}/thread/{root_id}", headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    thread = resp.json()
+    assert len(thread) == 3  # parent + 2 replies
+    assert thread[0]["id"] == root_id
+    assert all(m.get("reply_to") == root_id or m["id"] == root_id for m in thread)
+
+
+async def test_get_thread_not_found(client: AsyncClient, auth_headers: dict):
+    """GET /rooms/{id}/thread/{unknown_id} returns 404."""
+    resp = await client.post(
+        "/rooms", json={"name": "empty-thread-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    room_id = resp.json()["id"]
+    await client.post(
+        "/rooms/empty-thread-room/join",
+        json={"participant": "alice"}, headers=auth_headers,
+    )
+    resp = await client.get(
+        f"/rooms/{room_id}/thread/no-such-id", headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+async def test_get_thread_requires_auth(client: AsyncClient):
+    """GET /rooms/{id}/thread/{msg_id} requires authentication."""
+    resp = await client.get("/rooms/any-room/thread/any-id")
+    assert resp.status_code == 401
+
+
+async def test_reply_to_none_still_works(client: AsyncClient, auth_headers: dict):
+    """Messages without reply_to should work unchanged."""
+    room_id, _ = await _setup_thread_room(client, auth_headers)
+    resp = await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "alice", "content": "plain chat", "message_type": "chat"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    history = await client.get(f"/rooms/{room_id}/history", headers=auth_headers)
+    msgs = history.json()
+    plain = next((m for m in msgs if m["content"] == "plain chat"), None)
+    assert plain is not None
+    assert plain.get("reply_to") is None
+
+
+async def test_fan_out_preserves_reply_to(client: AsyncClient, auth_headers: dict):
+    """Fan-out messages should carry reply_to to all recipients."""
+    room_id, root_id = await _setup_thread_room(client, auth_headers)
+    await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "bob", "content": "reply to alice", "reply_to": root_id},
+        headers=auth_headers,
+    )
+    # alice should receive the reply with reply_to set
+    msgs_resp = await client.get("/messages/alice", headers=auth_headers)
+    msgs = msgs_resp.json()
+    reply = next((m for m in msgs if m.get("reply_to") == root_id), None)
+    assert reply is not None
+    assert reply["from_name"] == "bob"
+
+
+# ---------------------------------------------------------------------------
+# Room state (Primitive A) tests
+# ---------------------------------------------------------------------------
+
+
+async def _setup_state_room(client: AsyncClient, auth_headers: dict):
+    """Helper: create a room with two members, return room_id."""
+    resp = await client.post(
+        "/rooms",
+        json={"name": "state-test-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    room_id = resp.json()["id"]
+    # Add bob as member
+    await client.post(
+        f"/rooms/{room_id}/join",
+        json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    return room_id
+
+
+async def test_room_state_basic(client: AsyncClient, auth_headers: dict):
+    """GET /rooms/{id}/state returns correct schema for an empty room."""
+    room_id = await _setup_state_room(client, auth_headers)
+    resp = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["room_id"] == room_id
+    assert data["schema_version"] == "1.0"
+    assert "snapshot_at" in data
+    assert data["active_goal"] is None
+    assert data["claimed_tasks"] == []
+    assert data["locked_files"] == {}
+    assert data["resolved_decisions"] == []
+    assert isinstance(data["active_agents"], list)
+    assert isinstance(data["message_count"], int)
+
+
+async def test_room_state_by_name(client: AsyncClient, auth_headers: dict):
+    """GET /rooms/{name}/state resolves by name, not just UUID."""
+    await _setup_state_room(client, auth_headers)
+    resp = await client.get("/rooms/state-test-room/state", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["schema_version"] == "1.0"
+
+
+async def test_room_state_404_for_unknown_room(client: AsyncClient, auth_headers: dict):
+    """Unknown room returns 404."""
+    resp = await client.get("/rooms/nonexistent-xyz/state", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+async def test_room_state_no_auth_returns_401(client: AsyncClient):
+    """No auth returns 401."""
+    resp = await client.get("/rooms/anything/state")
+    assert resp.status_code == 401
+
+
+async def test_room_state_message_count(client: AsyncClient, auth_headers: dict):
+    """message_count reflects actual messages posted to the room."""
+    room_id = await _setup_state_room(client, auth_headers)
+    # Post two messages
+    for content in ("hello", "world"):
+        await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "alice", "content": content},
+            headers=auth_headers,
+        )
+    resp = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    assert resp.json()["message_count"] == 2
+
+
+async def test_room_state_active_agents_from_members(client: AsyncClient, auth_headers: dict):
+    """active_agents falls back to room members when no presence data."""
+    room_id = await _setup_state_room(client, auth_headers)
+    resp = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    agents = resp.json()["active_agents"]
+    assert "alice" in agents
+    assert "bob" in agents
+
+
+# ---------------------------------------------------------------------------
+# Room state Primitive B (distributed mutex / claim_task) tests
+# ---------------------------------------------------------------------------
+
+
+async def _setup_lock_room(client: AsyncClient, auth_headers: dict, name: str = "lock-test-room"):
+    """Helper: create a room with two members, return room_id."""
+    resp = await client.post(
+        "/rooms",
+        json={"name": name, "created_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    room_id = resp.json()["id"]
+    await client.post(
+        f"/rooms/{room_id}/join",
+        json={"participant": "bob"},
+        headers=auth_headers,
+    )
+    return room_id
+
+
+async def test_claim_task_grants_lock(client: AsyncClient, auth_headers: dict):
+    """POST /rooms/{id}/lock returns locked=false with token when available."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-grant-room")
+    resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": "src/auth.py", "claimed_by": "alice", "ttl_seconds": 60},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["locked"] is False
+    assert "lock_token" in data
+    assert "expires_at" in data
+    assert data["lock_token"]  # non-empty UUID
+
+
+async def test_claim_task_shows_taken(client: AsyncClient, auth_headers: dict):
+    """Second claim on same path returns locked=true with held_by."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-taken-room")
+    path = "src/models.py"
+
+    # Alice grabs the lock
+    resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    assert resp.json()["locked"] is False
+
+    # Bob tries to claim the same file
+    resp2 = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "bob", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["locked"] is True
+    assert data2["held_by"] == "alice"
+    assert "expires_at" in data2
+
+
+async def test_claim_task_appears_in_state(client: AsyncClient, auth_headers: dict):
+    """Claimed task appears in GET /rooms/{id}/state locked_files."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-state-room")
+    path = "murmur/relay.py"
+
+    resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    assert resp.json()["locked"] is False
+
+    state = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    locked = state.json()["locked_files"]
+    assert path in locked
+    assert locked[path]["held_by"] == "alice"
+
+
+async def test_release_task_removes_lock(client: AsyncClient, auth_headers: dict):
+    """DELETE /rooms/{id}/lock/{path} releases the lock and removes it from state."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-release-room")
+    path = "src/routes.py"
+
+    # Claim
+    claim_resp = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    token = claim_resp.json()["lock_token"]
+
+    # Release
+    rel_resp = await client.request(
+        "DELETE",
+        f"/rooms/{room_id}/lock/{path}",
+        json={"lock_token": token},
+        headers=auth_headers,
+    )
+    assert rel_resp.status_code == 200
+    assert rel_resp.json()["released"] is True
+
+    # Verify gone from state
+    state = await client.get(f"/rooms/{room_id}/state", headers=auth_headers)
+    assert path not in state.json()["locked_files"]
+
+
+async def test_release_task_wrong_token_403(client: AsyncClient, auth_headers: dict):
+    """Wrong token returns 403."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-403-room")
+    path = "src/service.py"
+
+    await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+
+    resp = await client.request(
+        "DELETE",
+        f"/rooms/{room_id}/lock/{path}",
+        json={"lock_token": "invalid-token-xyz"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+
+
+async def test_release_task_no_lock_404(client: AsyncClient, auth_headers: dict):
+    """Releasing a non-existent lock returns 404."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-404-room")
+
+    resp = await client.request(
+        "DELETE",
+        f"/rooms/{room_id}/lock/nonexistent/path.py",
+        json={"lock_token": "any-token"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+async def test_claim_task_re_lock_after_release(client: AsyncClient, auth_headers: dict):
+    """After releasing, a new agent can claim the same path."""
+    room_id = await _setup_lock_room(client, auth_headers, "lock-relock-room")
+    path = "src/db.py"
+
+    # Alice claims
+    c1 = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "alice", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    token = c1.json()["lock_token"]
+
+    # Alice releases
+    await client.request(
+        "DELETE",
+        f"/rooms/{room_id}/lock/{path}",
+        json={"lock_token": token},
+        headers=auth_headers,
+    )
+
+    # Bob can now claim
+    c2 = await client.post(
+        f"/rooms/{room_id}/lock",
+        json={"file_path": path, "claimed_by": "bob", "ttl_seconds": 300},
+        headers=auth_headers,
+    )
+    assert c2.json()["locked"] is False
+    assert c2.json()["lock_token"] != token
+
+
+async def test_claim_task_no_auth_401(client: AsyncClient):
+    """No auth returns 401."""
+    resp = await client.post(
+        "/rooms/any-room/lock",
+        json={"file_path": "x.py", "claimed_by": "alice"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_claim_task_unknown_room_404(client: AsyncClient, auth_headers: dict):
+    """Unknown room returns 404."""
+    resp = await client.post(
+        "/rooms/unknown-room-xyz/lock",
+        json={"file_path": "x.py", "claimed_by": "alice"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Usage endpoint (/v1/usage) tests
+# ---------------------------------------------------------------------------
+
+
+async def test_v1_usage_basic(client: AsyncClient, auth_headers: dict):
+    """GET /v1/usage returns expected schema."""
+    resp = await client.get("/v1/usage", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "tenant_id" in data
+    assert "snapshot_at" in data
+    assert "totals" in data
+    assert "rooms" in data
+    assert "top_senders" in data
+    totals = data["totals"]
+    assert "messages_sent" in totals
+    assert "messages_delivered" in totals
+    assert "active_rooms" in totals
+    assert "active_agents" in totals
+
+
+async def test_v1_usage_no_auth(client: AsyncClient):
+    """GET /v1/usage without auth returns 401."""
+    resp = await client.get("/v1/usage")
+    assert resp.status_code == 401
+
+
+async def test_v1_usage_room_detail(client: AsyncClient, auth_headers: dict):
+    """GET /v1/usage/rooms/{id} returns room-level stats."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "usage-test", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    resp = await client.get(f"/v1/usage/rooms/{rid}", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["room_id"] == rid
+    assert "message_count" in data
+    assert "active_agents" in data
+    assert "locked_files" in data
+
+
+async def test_v1_usage_room_not_found(client: AsyncClient, auth_headers: dict):
+    """GET /v1/usage/rooms/unknown returns 404."""
+    resp = await client.get("/v1/usage/rooms/no-such-room", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# State write endpoints tests
+# ---------------------------------------------------------------------------
+
+
+async def test_set_room_goal(client: AsyncClient, auth_headers: dict):
+    """PATCH /rooms/{id}/state/goal sets the active goal."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "goal-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    resp = await client.patch(
+        f"/rooms/{rid}/state/goal",
+        json={"goal": "Ship Primitive A by noon"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["active_goal"] == "Ship Primitive A by noon"
+
+    # Verify via GET /state
+    state = await client.get(f"/rooms/{rid}/state", headers=auth_headers)
+    assert state.json()["active_goal"] == "Ship Primitive A by noon"
+
+
+async def test_clear_room_goal(client: AsyncClient, auth_headers: dict):
+    """PATCH /rooms/{id}/state/goal with null clears the goal."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "goal-clear-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    await client.patch(
+        f"/rooms/{rid}/state/goal",
+        json={"goal": "temporary goal"},
+        headers=auth_headers,
+    )
+    resp = await client.patch(
+        f"/rooms/{rid}/state/goal",
+        json={"goal": None},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["active_goal"] is None
+
+
+async def test_add_room_decision(client: AsyncClient, auth_headers: dict):
+    """POST /rooms/{id}/state/decisions records a decision."""
+    room = await client.post(
+        "/rooms",
+        json={"name": "decision-room", "created_by": "alice"},
+        headers=auth_headers,
+    )
+    rid = room.json()["id"]
+    resp = await client.post(
+        f"/rooms/{rid}/state/decisions",
+        json={"decision": "Use SSE over polling", "rationale": "lower latency"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["decision"] == "Use SSE over polling"
+    assert d["rationale"] == "lower latency"
+    assert "id" in d
+    assert "decided_at" in d
+
+    # Verify via GET /state
+    state = await client.get(f"/rooms/{rid}/state", headers=auth_headers)
+    decisions = state.json()["resolved_decisions"]
+    assert len(decisions) == 1
+    assert decisions[0]["decision"] == "Use SSE over polling"

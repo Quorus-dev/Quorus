@@ -28,7 +28,6 @@ RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
 API_KEY = _config["api_key"]
 INSTANCE_NAME = _config["instance_name"]
-ENABLE_BACKGROUND_POLLING = _config["enable_background_polling"]
 POLL_MODE = _config["poll_mode"]
 PUSH_NOTIFICATION_METHOD = _config["push_notification_method"]
 PUSH_NOTIFICATION_CHANNEL = _config["push_notification_channel"]
@@ -57,14 +56,8 @@ def _validate_relay_url(value: str) -> str:
 _validate_relay_url(RELAY_URL)
 if not RELAY_SECRET and not API_KEY:
     raise SystemExit(
-        "No auth credentials configured. "
-        "Set API_KEY (recommended) or RELAY_SECRET (deprecated, local dev only)."
-    )
-
-if RELAY_SECRET and not API_KEY:
-    logger.warning(
-        "Using RELAY_SECRET for auth is deprecated. "
-        "Use API_KEY for production deployments."
+        "Neither relay_secret nor api_key is set. "
+        "Set RELAY_SECRET or API_KEY env var or config file value."
     )
 
 _auth_mode = "api_key" if API_KEY else "legacy"
@@ -85,12 +78,9 @@ logger.info(
 
 _http_client: httpx.AsyncClient | None = None
 _pending_messages: list[dict[str, Any]] = []
-_pending_ack_tokens: list[str] = []  # deferred ACK tokens for buffered msgs
 _pending_lock = asyncio.Lock()
 _active_session = None
 _active_session_lock = asyncio.Lock()
-_auto_poll_task: asyncio.Task | None = None
-_auto_poll_stop: asyncio.Event | None = None
 _heartbeat_task: asyncio.Task | None = None
 
 
@@ -104,13 +94,10 @@ def _get_http_client() -> httpx.AsyncClient:
 
 def _reset_runtime_state():
     """Reset in-memory MCP runtime state between tests."""
-    global _active_session, _http_client, _auto_poll_task, _auto_poll_stop, _heartbeat_task
+    global _active_session, _http_client, _heartbeat_task
     _pending_messages.clear()
-    _pending_ack_tokens.clear()
     _active_session = None
     _http_client = None
-    _auto_poll_task = None
-    _auto_poll_stop = None
     _heartbeat_task = None
 
 
@@ -133,12 +120,12 @@ async def _exchange_api_key_for_jwt() -> str:
 async def _get_bearer_token() -> str:
     """Get the Bearer token — cached JWT if using API key auth, else relay secret."""
     global _cached_jwt
-    if API_KEY:
-        async with _jwt_lock:
-            if _cached_jwt:
-                return _cached_jwt
-            return await _exchange_api_key_for_jwt()
-    return RELAY_SECRET
+    if not API_KEY:
+        return RELAY_SECRET
+    async with _jwt_lock:
+        if _cached_jwt:
+            return _cached_jwt
+        return await _exchange_api_key_for_jwt()
 
 
 async def _refresh_jwt_on_401() -> str | None:
@@ -156,10 +143,8 @@ async def _refresh_jwt_on_401() -> str | None:
 
 
 def _auth_headers() -> dict[str, str]:
-    """Sync auth headers — uses cached JWT (api_key mode) or relay secret (legacy)."""
-    if API_KEY:
-        if not _cached_jwt:
-            raise RuntimeError("JWT not available — API key exchange has not completed yet")
+    """Sync auth headers — uses cached JWT or relay secret."""
+    if _cached_jwt:
         return {"Authorization": f"Bearer {_cached_jwt}"}
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
 
@@ -199,29 +184,18 @@ async def _remember_session(context: Context | None) -> None:
         _active_session = session
 
 
-async def _append_pending_messages(
-    messages: list[dict], ack_token: str = ""
-) -> None:
+async def _append_pending_messages(messages: list[dict]) -> None:
     if not messages:
         return
     async with _pending_lock:
         _pending_messages.extend(messages)
-        if ack_token:
-            _pending_ack_tokens.append(ack_token)
 
 
-async def _drain_pending_messages() -> tuple[list[dict], list[str]]:
-    """Drain buffered messages and their deferred ACK tokens.
-
-    Returns (messages, ack_tokens).  Caller is responsible for ACKing
-    the tokens after the messages have been successfully consumed.
-    """
+async def _drain_pending_messages() -> list[dict]:
     async with _pending_lock:
         messages = list(_pending_messages)
-        ack_tokens = list(_pending_ack_tokens)
         _pending_messages.clear()
-        _pending_ack_tokens.clear()
-        return messages, ack_tokens
+        return messages
 
 
 async def _send_push_notification(session, msg: dict) -> None:
@@ -265,101 +239,23 @@ async def _notify_active_session(messages: list[dict]) -> None:
                 _active_session = None
 
 
-async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str, str | None]:
-    """Fetch messages from relay. Returns (messages, ack_token, error)."""
+async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None]:
     timeout = max(wait + 5, 10)
     try:
         client = _get_http_client()
         resp = await client.get(
             f"{RELAY_URL}/messages/{INSTANCE_NAME}",
-            params={"wait": wait, "ack": "manual"},
+            params={"wait": wait},
             headers=_auth_headers(),
             timeout=timeout,
         )
         resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, list):
-            messages = data
-            ack_token = ""
-        else:
-            messages = data.get("messages", [])
-            ack_token = data.get("ack_token", "")
+        messages = resp.json()
         logger.info("Received %d messages from relay", len(messages))
-        return messages, ack_token, None
+        return messages, None
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return [], "", _relay_error_message(e)
+        return [], _relay_error_message(e)
 
-
-async def _ack_relay_messages(ack_token: str) -> bool:
-    """ACK messages after successful processing. Returns True on success."""
-    if not ack_token:
-        return True
-    try:
-        client = _get_http_client()
-        resp = await client.post(
-            f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
-            json={"ack_token": ack_token},
-            headers=_auth_headers(),
-            timeout=5,
-        )
-        resp.raise_for_status()
-        return True
-    except Exception:
-        logger.warning("Failed to ACK messages", exc_info=True)
-        return False
-
-
-async def _background_poll(stop_event: asyncio.Event) -> None:
-    """Long-poll the relay and optionally forward results via client notifications."""
-    while not stop_event.is_set():
-        async with _active_session_lock:
-            has_session = _active_session is not None
-
-        if not has_session:
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=0.5)
-            except asyncio.TimeoutError:
-                continue
-            continue
-
-        messages, ack_token, error = await _fetch_relay_messages(wait=30)
-        if error:
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=2)
-            except asyncio.TimeoutError:
-                continue
-            continue
-
-        if not messages:
-            continue
-
-        # Defer ACK until messages are drained and consumed by the tool
-        await _append_pending_messages(messages, ack_token)
-        await _notify_active_session(messages)
-
-
-async def _auto_poll_loop(stop_event: asyncio.Event, interval: int = 10) -> None:
-    """Poll the relay every `interval` seconds and push new messages as notifications."""
-    logger.info("Auto-poll started (interval=%ds)", interval)
-    while not stop_event.is_set():
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=interval)
-            break  # stop_event was set
-        except asyncio.TimeoutError:
-            pass  # interval elapsed, time to poll
-
-        messages, ack_token, error = await _fetch_relay_messages(wait=0)
-        if error:
-            logger.warning("Auto-poll fetch error: %s", error)
-            continue
-
-        if messages:
-            # Defer ACK until messages are drained and consumed by the tool
-            await _append_pending_messages(messages, ack_token)
-            await _notify_active_session(messages)
-            logger.info("Auto-poll delivered %d message(s)", len(messages))
-
-    logger.info("Auto-poll stopped")
 
 
 async def _heartbeat_loop(stop_event: asyncio.Event, interval: int = 30) -> None:
@@ -399,19 +295,21 @@ async def _process_sse_event(event_type: str, data: str) -> None:
 
 
 async def _get_sse_token() -> str:
-    """Get a short-lived SSE stream token."""
-    bearer = await _get_bearer_token()
-    client = _get_http_client()
-    resp = await client.post(
-        f"{RELAY_URL}/stream/token",
-        json={"recipient": INSTANCE_NAME},
-        headers={"Authorization": f"Bearer {bearer}"},
-        timeout=10,
-    )
-    if resp.status_code == 200:
-        return resp.json()["token"]
-    # Fallback: use the bearer token directly (works for legacy mode)
-    return bearer
+    """Get a short-lived SSE stream token, falling back to RELAY_SECRET."""
+    try:
+        bearer = await _get_bearer_token()
+        client = _get_http_client()
+        resp = await client.post(
+            f"{RELAY_URL}/stream/token",
+            json={"recipient": INSTANCE_NAME},
+            headers={"Authorization": f"Bearer {bearer}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json()["token"]
+    except Exception:
+        pass
+    return RELAY_SECRET
 
 
 async def _sse_listener(stop_event: asyncio.Event) -> None:
@@ -477,13 +375,14 @@ async def _mcp_lifespan(server: FastMCP):
             )
 
     stop_event = asyncio.Event()
-    poll_task = None
 
-    if POLL_MODE == "sse":
-        poll_task = asyncio.create_task(_sse_listener(stop_event))
-        logger.info("SSE background listener enabled (poll_mode=sse)")
-    elif POLL_MODE == "lazy":
-        logger.info("Lazy poll mode — no background polling, agent checks manually")
+    # SSE is the only delivery mode. Always open a persistent push connection.
+    sse_task = asyncio.create_task(_sse_listener(stop_event))
+    if POLL_MODE == "lazy":
+        # Lazy mode: SSE still runs (for push delivery) but we skip channel cap.
+        logger.info("Lazy poll mode — SSE running, channel notifications disabled")
+    else:
+        logger.info("SSE push listener started")
 
     # Always start heartbeat so the relay knows this agent is alive
     _heartbeat_task = asyncio.create_task(_heartbeat_loop(stop_event))
@@ -492,20 +391,13 @@ async def _mcp_lifespan(server: FastMCP):
         yield {"stop_event": stop_event}
     finally:
         stop_event.set()
-        if poll_task is not None:
-            poll_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await poll_task
+        sse_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await sse_task
         if _heartbeat_task is not None:
             _heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await _heartbeat_task
-        if _auto_poll_stop is not None:
-            _auto_poll_stop.set()
-        if _auto_poll_task is not None:
-            _auto_poll_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await _auto_poll_task
         if _http_client is not None:
             await _http_client.aclose()
         _reset_runtime_state()
@@ -554,7 +446,8 @@ def _declare_channel_capability() -> None:
     mcp._mcp_server.create_initialization_options = patched_create
 
 
-if POLL_MODE == "sse":
+# Always declare channel capability — SSE push is always active.
+if POLL_MODE != "lazy":
     _declare_channel_capability()
 
 
@@ -580,34 +473,18 @@ async def _check_messages(context: Context | None = None) -> str:
     """Internal: fetch unread messages from the local buffer or the relay."""
     await _remember_session(context)
 
-    messages, deferred_tokens = await _drain_pending_messages()
-    ack_token = ""
+    # Drain the SSE-delivered buffer first. If empty, do a non-blocking
+    # relay fetch (wait=0) as a manual fallback — SSE handles live delivery.
+    messages = await _drain_pending_messages()
     if not messages:
-        # lazy/sse = no blocking wait; poll = short wait for efficiency
-        wait = 0 if POLL_MODE in ("lazy", "sse") else 30
-        messages, ack_token, error = await _fetch_relay_messages(wait=wait)
+        messages, error = await _fetch_relay_messages(wait=0)
         if error:
             return error
 
     if not messages:
         return "No new messages."
 
-    # Format response, then ACK — messages are confirmed processed
-    result = "\n".join(_format_message(msg) for msg in messages)
-
-    # ACK all tokens and track failures
-    ack_failed = False
-    if ack_token:
-        if not await _ack_relay_messages(ack_token):
-            ack_failed = True
-    for token in deferred_tokens:
-        if not await _ack_relay_messages(token):
-            ack_failed = True
-
-    if ack_failed:
-        result += "\n\n⚠️ WARNING: ACK failed — these messages may be redelivered."
-
-    return result
+    return "\n".join(_format_message(msg) for msg in messages)
 
 
 async def _list_participants(context: Context | None = None) -> str:
@@ -681,56 +558,6 @@ async def _list_rooms(context: Context | None = None) -> str:
         return "Rooms:\n" + "\n".join(lines)
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
         return _relay_error_message(e)
-
-
-async def _start_auto_poll(interval: int = 10, context: Context | None = None) -> str:
-    """Internal: start the auto-poll background loop."""
-    global _auto_poll_task, _auto_poll_stop
-    await _remember_session(context)
-
-    if _auto_poll_task is not None and not _auto_poll_task.done():
-        return f"Auto-poll already running (interval={interval}s). Call stop_auto_poll first."
-
-    interval = max(2, min(interval, 300))
-    _auto_poll_stop = asyncio.Event()
-    _auto_poll_task = asyncio.create_task(_auto_poll_loop(_auto_poll_stop, interval))
-    return f"Auto-poll started (every {interval}s). New messages arrive as notifications."
-
-
-async def _stop_auto_poll(context: Context | None = None) -> str:
-    """Internal: stop the auto-poll background loop."""
-    global _auto_poll_task, _auto_poll_stop
-    await _remember_session(context)
-
-    if _auto_poll_task is None or _auto_poll_task.done():
-        return "Auto-poll is not running."
-
-    _auto_poll_stop.set()
-    _auto_poll_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await _auto_poll_task
-    _auto_poll_task = None
-    _auto_poll_stop = None
-    return "Auto-poll stopped."
-
-
-@mcp.tool()
-async def start_auto_poll(interval: int = 10, context: Context = None) -> str:
-    """Start auto-polling for new messages every `interval` seconds.
-
-    Messages are delivered as push notifications without needing to call
-    check_messages manually. Call stop_auto_poll to stop.
-
-    Args:
-        interval: Seconds between polls (default 10, min 2, max 300)
-    """
-    return await _start_auto_poll(interval, context)
-
-
-@mcp.tool()
-async def stop_auto_poll(context: Context = None) -> str:
-    """Stop the auto-poll background loop started by start_auto_poll."""
-    return await _stop_auto_poll(context)
 
 
 @mcp.tool()
@@ -880,6 +707,168 @@ async def room_metrics(room_id: str) -> str:
         lines.append(f"\nTask completion: {completions}/{claims} ({rate:.0f}%)")
 
     return "\n".join(lines)
+
+
+@mcp.tool()
+async def claim_task(
+    room_id: str,
+    file_path: str,
+    description: str = "",
+    ttl_seconds: int = 300,
+) -> str:
+    """Acquire an optimistic lock on a file path in a room (Primitive B).
+
+    Returns granted (with lock_token) or locked (with held_by) status.
+    On grant, SSE-broadcasts LOCK_ACQUIRED to all room members.
+
+    Args:
+        room_id: The room name or ID
+        file_path: The file path to lock (e.g. "src/auth.py")
+        description: Optional description of the work being done
+        ttl_seconds: Lock TTL in seconds (default 300)
+    """
+    try:
+        client = _get_http_client()
+        resp = await client.post(
+            f"{RELAY_URL}/rooms/{room_id}/lock",
+            json={
+                "file_path": file_path,
+                "claimed_by": INSTANCE_NAME,
+                "description": description,
+                "ttl_seconds": ttl_seconds,
+            },
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            new_token = await _refresh_jwt_on_401()
+            if new_token:
+                resp = await client.post(
+                    f"{RELAY_URL}/rooms/{room_id}/lock",
+                    json={
+                        "file_path": file_path,
+                        "claimed_by": INSTANCE_NAME,
+                        "description": description,
+                        "ttl_seconds": ttl_seconds,
+                    },
+                    headers=_auth_headers(),
+                    timeout=10,
+                )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("locked"):
+            return (
+                f"LOCKED: {file_path} is held by {data['held_by']}, "
+                f"expires {data['expires_at']}"
+            )
+        return (
+            f"GRANTED: lock_token={data['lock_token']} "
+            f"expires={data['expires_at']}"
+        )
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
+
+
+@mcp.tool()
+async def release_task(
+    room_id: str,
+    file_path: str,
+    lock_token: str,
+) -> str:
+    """Release a previously acquired file lock (Primitive B).
+
+    Validates lock_token ownership. SSE-broadcasts LOCK_RELEASED on success.
+
+    Args:
+        room_id: The room name or ID
+        file_path: The file path to unlock (must match what was locked)
+        lock_token: The token returned by claim_task when lock was granted
+    """
+    try:
+        client = _get_http_client()
+        url = f"{RELAY_URL}/rooms/{room_id}/lock/{file_path}"
+        resp = await client.request(
+            "DELETE",
+            url,
+            json={"lock_token": lock_token},
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            new_token = await _refresh_jwt_on_401()
+            if new_token:
+                resp = await client.request(
+                    "DELETE",
+                    url,
+                    json={"lock_token": lock_token},
+                    headers=_auth_headers(),
+                    timeout=10,
+                )
+        resp.raise_for_status()
+        return f"RELEASED: {file_path}"
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
+
+
+@mcp.tool()
+async def get_room_state(room_id: str) -> str:
+    """Get the Shared State Matrix for a room (Primitive A).
+
+    Returns: active goal, claimed tasks, locked files, resolved decisions,
+    active agents, message count, and last activity timestamp.
+
+    Args:
+        room_id: The room name or ID (e.g., "murmur-dev")
+    """
+    try:
+        client = _get_http_client()
+        resp = await client.get(
+            f"{RELAY_URL}/rooms/{room_id}/state",
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            new_token = await _refresh_jwt_on_401()
+            if new_token:
+                resp = await client.get(
+                    f"{RELAY_URL}/rooms/{room_id}/state",
+                    headers=_auth_headers(),
+                    timeout=10,
+                )
+        resp.raise_for_status()
+        data = resp.json()
+        lines = [
+            f"Room: {room_id} (snapshot: {data.get('snapshot_at', '')[:19]})",
+            f"Schema: {data.get('schema_version', '?')}",
+            f"Goal: {data.get('active_goal') or '(none)'}",
+            f"Active agents ({len(data.get('active_agents', []))}): "
+            + ", ".join(data.get("active_agents", [])),
+            f"Messages: {data.get('message_count', 0)} | "
+            f"Last activity: {(data.get('last_activity') or '')[:19]}",
+        ]
+        tasks = data.get("claimed_tasks", [])
+        if tasks:
+            lines.append(f"\nClaimed tasks ({len(tasks)}):")
+            for t in tasks:
+                lines.append(
+                    f"  [{t['claimed_by']}] {t['file_path']} "
+                    f"(expires {t.get('expires_at', '')[:19]})"
+                )
+        locks = data.get("locked_files", {})
+        if locks:
+            lines.append(f"\nLocked files ({len(locks)}):")
+            for fp, lock in locks.items():
+                lines.append(f"  {fp} → held by {lock['held_by']}")
+        decisions = data.get("resolved_decisions", [])
+        if decisions:
+            lines.append(f"\nDecisions ({len(decisions)}):")
+            for d in decisions[-5:]:
+                lines.append(
+                    f"  [{d.get('decided_by', '?')}] {d['decision']}"
+                )
+        return "\n".join(lines)
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return _relay_error_message(e)
 
 
 if __name__ == "__main__":
