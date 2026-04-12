@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 07:00 EDT
+Last updated: 2026-04-12 08:00 EDT
 
 ---
 
@@ -29,14 +29,14 @@ murmur init <your-name> --relay <url> --secret <secret>
 | --------------------------- | ------ | ---------------------------------------------------------------------------------------- |
 | murmur/relay.py             | ~1200  | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin       |
 | murmur/mcp_server.py        | ~820   | MCP server: 12 tools incl. claim_task, release_task, get_room_state, SSE push, heartbeat |
-| murmur/cli.py               | ~2500  | 28+ CLI commands incl. state, locks, usage, init, relay, create, spawn, hackathon, etc.  |
+| murmur/cli.py               | ~3500  | 30+ CLI commands incl. context (Summary Cascade v1), decision, state, locks, usage, etc. |
 | murmur/routes/room_state.py | ~250   | Primitive A+B: GET state, PATCH goal, POST decisions, POST/DELETE locks (mutex)          |
 | murmur/routes/usage.py      | ~157   | GET /v1/usage + /v1/usage/rooms/{room} — tenant-scoped metrics                           |
 | murmur/routes/agents.py     | ~57    | GET /agents/{name} — profile, rooms, last seen, message count, online status             |
 | murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing               |
 | murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                          |
 | murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                        |
-| tests/                      | ~7000  | 700 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
+| tests/                      | ~7500  | 738 tests: relay, mcp, config, CLI, usage, agents, room_state, watcher, stress, security |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -70,8 +70,11 @@ murmur init <your-name> --relay <url> --secret <secret>
 - Integration guides for Codex, Cursor, Gemini, Ollama
 - **Auto-inject messages**: `murmur hook enable` + `murmur inbox` for UserPromptSubmit hook
 - **MCP server instructions**: Agents receive guidance on tools and expected behavior
+- **Summary Cascade v1**: `murmur context [--room R] [--quiet] [--json]` — injected briefing of active goal, briefs, claimed tasks, decisions, status updates, locked files; zero vector DB
+- **Decision recording**: `murmur decision <room> "<text>"` — writes to room state decisions via POST /rooms/{room}/state/decisions; surfaced in `murmur context`
+- **Hook auto-injection**: `murmur hook enable` now runs `murmur inbox --quiet && murmur context --quiet` on every UserPromptSubmit
 
-**Tests:** 722 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 738 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -129,6 +132,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 | Date       | Commit  | What                                                          |
 | ---------- | ------- | ------------------------------------------------------------- |
+| 2026-04-12 | —       | Summary Cascade v1: murmur context + murmur decision commands |
 | 2026-04-12 | 354d9c8 | Auto-inject messages via murmur inbox + hook commands         |
 | 2026-04-12 | 493d445 | MCP server instructions for agent guidance                    |
 | 2026-04-12 | c86bb05 | SSRF TOCTOU fix — re-validate URLs at webhook delivery time   |

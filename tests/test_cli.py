@@ -1034,3 +1034,441 @@ def test_cmd_hook_status_when_enabled(capsys, tmp_path):
 
     captured = capsys.readouterr()
     assert "enabled" in captured.out
+
+
+# ── context command (Summary Cascade v1) tests ───────────────────────────
+
+_CONTEXT_STATE = {
+    "room_id": "r1",
+    "active_goal": "Build the auth module",
+    "claimed_tasks": [
+        {
+            "id": "t1",
+            "claimed_by": "agent-1",
+            "description": "implement JWT middleware",
+            "file_path": "src/auth/middleware.py",
+        }
+    ],
+    "locked_files": {
+        "src/auth/middleware.py": {
+            "held_by": "agent-1",
+            "expires_at": "2099-01-01T00:00:00+00:00",
+        }
+    },
+    "resolved_decisions": [
+        {
+            "id": "d1",
+            "decision": "Use RS256 for JWT signing",
+            "decided_at": "2026-04-11T08:00:00Z",
+        }
+    ],
+    "active_agents": ["agent-1", "agent-2"],
+    "message_count": 5,
+    "last_activity": "2026-04-11T09:00:00Z",
+}
+
+_CONTEXT_HISTORY = [
+    {
+        "id": "m1",
+        "from_name": "alice",
+        "content": "Build the auth module",
+        "message_type": "brief",
+        "brief_id": "brief-uuid-1234",
+        "timestamp": "2026-04-11T07:00:00Z",
+    },
+    {
+        "id": "m2",
+        "from_name": "agent-1",
+        "content": "Claiming JWT middleware implementation",
+        "message_type": "claim",
+        "timestamp": "2026-04-11T07:30:00Z",
+    },
+    {
+        "id": "m3",
+        "from_name": "agent-1",
+        "content": "Use RS256 for JWT signing",
+        "message_type": "decision",
+        "timestamp": "2026-04-11T08:00:00Z",
+    },
+    {
+        "id": "m4",
+        "from_name": "agent-1",
+        "content": "JWT middleware done, pushing to branch feat/jwt",
+        "message_type": "status",
+        "timestamp": "2026-04-11T08:30:00Z",
+    },
+    {
+        "id": "m5",
+        "from_name": "alice",
+        "content": "just chatting",
+        "message_type": "chat",
+        "timestamp": "2026-04-11T09:00:00Z",
+    },
+]
+
+
+def _mock_context_client():
+    """Client whose parallel gather calls return state + history."""
+    state_resp = MagicMock()
+    state_resp.status_code = 200
+    state_resp.json.return_value = _CONTEXT_STATE
+    state_resp.raise_for_status = MagicMock()
+
+    hist_resp = MagicMock()
+    hist_resp.status_code = 200
+    hist_resp.json.return_value = _CONTEXT_HISTORY
+    hist_resp.raise_for_status = MagicMock()
+
+    client = AsyncMock()
+    # asyncio.gather calls both get() coroutines; side_effect feeds them in order
+    client.get = AsyncMock(side_effect=[state_resp, hist_resp])
+    client.aclose = AsyncMock()
+    return client
+
+
+async def test_context_shows_active_goal(capsys):
+    from murmur.cli import _context
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev")
+
+    captured = capsys.readouterr()
+    assert "Build the auth module" in captured.out
+    assert "Active Goal" in captured.out
+
+
+async def test_context_shows_header_without_quiet(capsys):
+    from murmur.cli import _context
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev", quiet=False)
+
+    captured = capsys.readouterr()
+    assert "=== Room Context: dev ===" in captured.out
+
+
+async def test_context_quiet_suppresses_header(capsys):
+    from murmur.cli import _context
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev", quiet=True)
+
+    captured = capsys.readouterr()
+    assert "=== Room Context" not in captured.out
+    # Content should still be present
+    assert "Build the auth module" in captured.out
+
+
+async def test_context_shows_claimed_tasks(capsys):
+    from murmur.cli import _context
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev")
+
+    captured = capsys.readouterr()
+    assert "agent-1" in captured.out
+    assert "implement JWT middleware" in captured.out
+
+
+async def test_context_shows_locked_files(capsys):
+    from murmur.cli import _context
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev")
+
+    captured = capsys.readouterr()
+    assert "src/auth/middleware.py" in captured.out
+
+
+async def test_context_shows_decisions(capsys):
+    from murmur.cli import _context
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev")
+
+    captured = capsys.readouterr()
+    assert "RS256" in captured.out
+
+
+async def test_context_shows_status_updates(capsys):
+    from murmur.cli import _context
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev")
+
+    captured = capsys.readouterr()
+    assert "JWT middleware done" in captured.out
+
+
+async def test_context_filters_chat_messages(capsys):
+    from murmur.cli import _context
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev")
+
+    captured = capsys.readouterr()
+    # "just chatting" is a chat-type message; should be excluded from context
+    assert "just chatting" not in captured.out
+
+
+async def test_context_json_output(capsys):
+    import json as _json
+
+    from murmur.cli import _context
+
+    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+        await _context("dev", json_output=True)
+
+    captured = capsys.readouterr()
+    data = _json.loads(captured.out)
+    assert data["room"] == "dev"
+    assert data["active_goal"] == "Build the auth module"
+    assert isinstance(data["claimed_tasks"], list)
+    assert isinstance(data["resolved_decisions"], list)
+
+
+async def test_context_deduplicates_messages(capsys):
+    from murmur.cli import _context
+
+    # Two identical status messages — should appear only once
+    duplicate_history = [
+        {
+            "id": "m1",
+            "from_name": "agent-1",
+            "content": "same status",
+            "message_type": "status",
+            "timestamp": "2026-04-11T08:00:00Z",
+        },
+        {
+            "id": "m2",
+            "from_name": "agent-1",
+            "content": "same status",
+            "message_type": "status",
+            "timestamp": "2026-04-11T08:01:00Z",
+        },
+    ]
+    state_resp = MagicMock()
+    state_resp.status_code = 200
+    state_resp.json.return_value = {**_CONTEXT_STATE, "claimed_tasks": [], "locked_files": {}}
+    state_resp.raise_for_status = MagicMock()
+    hist_resp = MagicMock()
+    hist_resp.status_code = 200
+    hist_resp.json.return_value = duplicate_history
+    hist_resp.raise_for_status = MagicMock()
+
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=[state_resp, hist_resp])
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _context("dev")
+
+    captured = capsys.readouterr()
+    # "same status" should appear exactly once
+    assert captured.out.count("same status") == 1
+
+
+async def test_context_relay_unreachable(capsys):
+    import httpx
+
+    from murmur.cli import _context
+
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _context("dev")
+
+    captured = capsys.readouterr()
+    assert "Cannot connect" in captured.out
+
+
+async def test_context_quiet_suppresses_relay_error(capsys):
+    import httpx
+
+    from murmur.cli import _context
+
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _context("dev", quiet=True)
+
+    captured = capsys.readouterr()
+    assert captured.out.strip() == ""
+
+
+async def test_context_room_not_found(capsys):
+    import httpx
+
+    from murmur.cli import _context
+
+    resp = MagicMock()
+    resp.status_code = 404
+    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not Found", request=MagicMock(), response=resp
+    )
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _context("ghost-room")
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out
+
+
+async def test_context_auto_detects_room(capsys):
+    from murmur.cli import _context
+
+    rooms_resp = MagicMock()
+    rooms_resp.status_code = 200
+    rooms_resp.json.return_value = [
+        {"id": "r1", "name": "dev", "members": ["test-user"]},
+    ]
+    rooms_resp.raise_for_status = MagicMock()
+
+    state_resp = MagicMock()
+    state_resp.status_code = 200
+    state_resp.json.return_value = _CONTEXT_STATE
+    state_resp.raise_for_status = MagicMock()
+
+    hist_resp = MagicMock()
+    hist_resp.status_code = 200
+    hist_resp.json.return_value = _CONTEXT_HISTORY
+    hist_resp.raise_for_status = MagicMock()
+
+    client = AsyncMock()
+    # First call: list rooms; second + third: state and history (gathered)
+    client.get = AsyncMock(side_effect=[rooms_resp, state_resp, hist_resp])
+    client.aclose = AsyncMock()
+
+    with patch("murmur.cli._get_client", return_value=client):
+        await _context(room_name=None)
+
+    captured = capsys.readouterr()
+    assert "Build the auth module" in captured.out
+
+
+# ── decision command tests ────────────────────────────────────────────────
+
+
+def test_decision_posts_and_prints_confirmation(capsys):
+    from murmur.cli import _cmd_decision
+
+    result = {
+        "id": "dec-uuid-1234",
+        "decision": "Use RS256 for JWT signing",
+        "decided_by": "test-user",
+        "decided_at": "2026-04-11T08:00:00Z",
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = result
+    mock_resp.raise_for_status = MagicMock()
+
+    args = MagicMock()
+    args.room = "dev"
+    args.decision = ["Use", "RS256", "for", "JWT", "signing"]
+
+    with patch("httpx.post", return_value=mock_resp):
+        _cmd_decision(args)
+
+    captured = capsys.readouterr()
+    assert "Decision recorded" in captured.out
+    assert "RS256" in captured.out
+    assert "dev" in captured.out
+
+
+def test_decision_shows_id_prefix(capsys):
+    from murmur.cli import _cmd_decision
+
+    result = {
+        "id": "abcdef12-rest-of-uuid",
+        "decision": "Use Postgres for persistence",
+        "decided_by": "test-user",
+        "decided_at": "2026-04-11T09:00:00Z",
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = result
+    mock_resp.raise_for_status = MagicMock()
+
+    args = MagicMock()
+    args.room = "dev"
+    args.decision = ["Use", "Postgres", "for", "persistence"]
+
+    with patch("httpx.post", return_value=mock_resp):
+        _cmd_decision(args)
+
+    captured = capsys.readouterr()
+    # ID should be truncated to 8 chars
+    assert "abcdef12" in captured.out
+
+
+def test_decision_empty_text_rejected(capsys):
+    from murmur.cli import _cmd_decision
+
+    args = MagicMock()
+    args.room = "dev"
+    args.decision = ["   "]
+
+    _cmd_decision(args)
+
+    captured = capsys.readouterr()
+    assert "empty" in captured.out.lower()
+
+
+def test_decision_relay_unreachable(capsys):
+    import httpx
+
+    from murmur.cli import _cmd_decision
+
+    args = MagicMock()
+    args.room = "dev"
+    args.decision = ["Use RS256"]
+
+    with patch("httpx.post", side_effect=httpx.ConnectError("refused")):
+        _cmd_decision(args)
+
+    captured = capsys.readouterr()
+    assert "Cannot connect" in captured.out
+
+
+def test_decision_room_not_found(capsys):
+    import httpx
+
+    from murmur.cli import _cmd_decision
+
+    resp = MagicMock()
+    resp.status_code = 404
+    resp.text = "Not Found"
+    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not Found", request=MagicMock(), response=resp
+    )
+
+    args = MagicMock()
+    args.room = "ghost"
+    args.decision = ["Use RS256"]
+
+    with patch("httpx.post", return_value=resp):
+        _cmd_decision(args)
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out
+
+
+# ── hook command includes context in combined command ─────────────────────
+
+
+def test_hook_command_includes_both_inbox_and_context():
+    """Enabled hook should run both inbox and context for auto-injection."""
+    from murmur.cli import MURMUR_HOOK_CONFIG
+
+    all_commands = " ".join(h["command"] for h in MURMUR_HOOK_CONFIG["hooks"])
+    assert "murmur inbox" in all_commands
+    assert "murmur context" in all_commands
+    assert "--quiet" in all_commands
