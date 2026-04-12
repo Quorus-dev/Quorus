@@ -547,6 +547,84 @@ class TestRoomAsync:
 
         mock_client.post.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_astream_yields_messages(self):
+        """astream() should yield parsed JSON from SSE 'message' events."""
+        from unittest.mock import AsyncMock, MagicMock, patch as apatch
+        import json as _json
+
+        sse_lines = [
+            "event: message",
+            'data: {"id": "sse-1", "content": "hello"}',
+            "",
+            "event: message",
+            'data: {"id": "sse-2", "content": "world"}',
+            "",
+            "event: heartbeat",
+            "data: ping",
+            "",
+        ]
+
+        async def fake_aiter_lines():
+            for line in sse_lines:
+                yield line
+
+        mock_resp = MagicMock()
+        mock_resp.aiter_lines = fake_aiter_lines
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client), \
+             apatch.object(Room, "_get_sse_token", return_value="sse-tok"):
+            room = Room("test-room", relay="http://t", secret="s", name="a")
+            messages = []
+            async for msg in room.astream():
+                messages.append(msg)
+
+        assert len(messages) == 2
+        assert messages[0] == {"id": "sse-1", "content": "hello"}
+        assert messages[1] == {"id": "sse-2", "content": "world"}
+
+    @pytest.mark.asyncio
+    async def test_astream_skips_invalid_json(self):
+        """astream() should silently skip lines that aren't valid JSON."""
+        from unittest.mock import AsyncMock, MagicMock, patch as apatch
+
+        sse_lines = [
+            "event: message",
+            "data: not-valid-json",
+            "",
+            "event: message",
+            'data: {"id": "ok"}',
+            "",
+        ]
+
+        async def fake_aiter_lines():
+            for line in sse_lines:
+                yield line
+
+        mock_resp = MagicMock()
+        mock_resp.aiter_lines = fake_aiter_lines
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client), \
+             apatch.object(Room, "_get_sse_token", return_value="sse-tok"):
+            room = Room("test-room", relay="http://t", secret="s", name="a")
+            messages = [msg async for msg in room.astream()]
+
+        assert messages == [{"id": "ok"}]
+
 
 class TestRoomListener:
     def test_on_message_registers_callback(self):
