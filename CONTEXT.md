@@ -81,7 +81,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - **TUI Hub**: `murmur begin` opens full-screen interactive terminal UI with rooms, agents, live chat
 - **Doctor diagnostics**: `murmur doctor` runs 13 checks incl. MCP server registration, relay version, hook status
 
-**Tests:** 867 passing + 21 Redis integration tests (require Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 869 passing + 23 Redis integration tests (require Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -114,12 +114,15 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH + atomic MAXLEN on XADD          |
 | ~~High~~     | ~~Usage/participant endpoints leak data~~    | ✅ Scoped by auth level (admin vs user)                 |
-| ~~High~~     | ~~Room fan-out not atomic~~                  | ✅ Postgres-first ordering + atomic MAXLEN backpressure |
+| ~~High~~     | ~~Room fan-out not atomic~~                  | ✅ Postgres-first ordering + Lua quota-check + reject   |
 | ~~High~~     | ~~SSE receives internal wakeup messages~~    | ✅ Filter {"wake":true} in SSE queue handler            |
 | ~~High~~     | ~~Idempotency key not bound to body~~        | ✅ Same key + different body returns 409 Conflict       |
+| ~~High~~     | ~~Lock expiry uses ISO string parsing~~      | ✅ expires_at_epoch numeric timestamp in Lua            |
+| ~~High~~     | ~~MAXLEN causes silent message loss~~        | ✅ Lua XLEN check + reject (true backpressure)          |
 | **Medium**   | No migration/rebuild story for Redis         | Key schema changes are operationally risky              |
 | ~~Medium~~   | ~~Webhook signing too weak~~                 | ✅ Timestamped HMAC + per-webhook secrets               |
 | ~~Medium~~   | ~~SSRF TOCTOU at webhook delivery~~          | ✅ Re-validate DNS at delivery time                     |
+| ~~Medium~~   | ~~Postgres history loses room names~~        | ✅ Denormalized room_name column (migration 005)        |
 | **Medium**   | No delivery/audit ledger                     | "What happened to message X?" has no answer             |
 | ~~Medium~~   | ~~MCP swallows ACK failures~~                | ✅ Warning shown when ACK fails                         |
 | **Medium**   | Auth is name-oriented, not account-based     | No immutable IDs, no revocation                         |
@@ -145,6 +148,9 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | (next)  | fix: Lua XLEN quota-check + reject (true backpressure, no message loss)   |
+| 2026-04-12 | (next)  | fix: expires_at_epoch for accurate lock expiry in Lua scripts             |
+| 2026-04-12 | (next)  | fix: denormalize room_name in Postgres history (migration 005)            |
 | 2026-04-12 | 0970b92 | test: Redis integration tests for locks, expiry, backpressure (867 total) |
 | 2026-04-12 | b03edd6 | fix: Postgres-first room send + atomic MAXLEN backpressure                |
 | 2026-04-12 | 71983c6 | fix: atomic task expiry + ORM FK mismatch                                 |
@@ -154,10 +160,6 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | 2026-04-12 | f0f3139 | feat: RedisRoomStateBackend for distributed mutex (cross-replica locks)   |
 | 2026-04-12 | a56479a | fix: require room membership for state/lock endpoints (critical auth fix) |
 | 2026-04-12 | f98c16b | refactor: replace SQLite with Postgres for room history + migration 003   |
-| 2026-04-12 | 0a7a2e1 | fix: resolve test regressions from rate limit changes                     |
-| 2026-04-12 | 9dddd90 | fix: rate limiting on all write+history endpoints + DM size validation    |
-| 2026-04-12 | 01d5a14 | feat: website Nav/CTA/CodeDemo/Footer polish + Architecture 866+ count    |
-| 2026-04-12 | 2dbc2db | feat: vercel.json fix + QuickStart terminal animation + tui_hub UX        |
 
 ---
 
