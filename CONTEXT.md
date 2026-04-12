@@ -90,56 +90,71 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 ## Production Readiness
 
-**Current rating:** Private demo 9.0/10 | Public alpha 8.0/10 | Production SaaS 6.5/10
+**Current rating:**
 
-### Delivery Guarantees
+| Stage | Score | Notes |
+|-------|-------|-------|
+| Trusted private demo | 9.1/10 | Solid for internal/team use |
+| Controlled public alpha | 7.8/10 | Ready with published limitations |
+| Paid early access | 7.0/10 | Needs clear limits, no hard SLA |
+| Serious production SaaS | 6.3/10 | Blockers below must be resolved |
+| High-scale (millions) | 4.3/10 | Needs load tests, sharding, chaos engineering |
 
-| Path                     | Guarantee                   | Notes                                                           |
+### Delivery Guarantees (Honest Assessment)
+
+| Path                     | Guarantee                   | Caveats                                                         |
 | ------------------------ | --------------------------- | --------------------------------------------------------------- |
-| HTTP client + manual ACK | At-least-once to caller     | Caller must call `result.ack()` after processing                |
-| HTTP client + auto ACK   | At-most-once                | Messages deleted before caller processes — **footgun**          |
-| MCP tools                | At-least-once to MCP server | ACK happens after formatting, before tool result reaches Claude |
-| SSE                      | Live notifications only     | Not durable — use for real-time UX, not delivery                |
-| Webhooks (durable)       | At-least-once               | Redis Streams queue with ACK/NACK + DLQ                         |
+| HTTP client + manual ACK | At-least-once to caller     | Only for DM inbox path; caller must call `result.ack()`         |
+| Room messages            | Best-effort fan-out         | Postgres-first, but fan-out can fail after commit (fallback: poll history) |
+| MCP tools                | At-least-once to MCP server | ACK before tool result reaches Claude                           |
+| SSE                      | Live notifications only     | **Not durable** — use for UX, not delivery guarantees           |
+| Webhooks                 | At-least-once (queue)       | Redis Streams + DLQ, but app-level SSRF checks only             |
 
-### Blockers for Production SaaS
+**Key limitation:** No transactional outbox. Room send can commit to history but fail fan-out. This is documented eventual consistency, not a delivery guarantee.
 
-| Priority     | Issue                                        | Status                                                  |
-| ------------ | -------------------------------------------- | ------------------------------------------------------- |
-| ~~Critical~~ | ~~No real Redis/Postgres integration tests~~ | ✅ Redis + Postgres integration tests in CI             |
-| ~~Critical~~ | ~~Auto-ACK default is a footgun~~            | ✅ `ack=manual` is now the default                      |
-| ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` + atomic SET NX reservation        |
-| ~~Critical~~ | ~~Room state not membership-scoped~~         | ✅ require_room_member() on all state/lock endpoints    |
-| ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend + Lua scripts (acquire/release/expire) |
-| ~~Critical~~ | ~~Web console proxy SSRF~~                   | ✅ REMOVED — Vite static site, console calls relays directly   |
-| ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
-| ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
-| ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH + atomic MAXLEN on XADD          |
-| ~~High~~     | ~~Usage/participant endpoints leak data~~    | ✅ Scoped by auth level (admin vs user)                 |
-| ~~High~~     | ~~Room fan-out not atomic~~                  | ✅ Postgres-first + non-fatal fan-out errors with logging |
-| ~~High~~     | ~~SSE receives internal wakeup messages~~    | ✅ Filter {"wake":true} in SSE queue handler            |
-| ~~High~~     | ~~Idempotency key not bound to body~~        | ✅ Same key + different body returns 409 Conflict       |
-| ~~High~~     | ~~Lock expiry uses ISO string parsing~~      | ✅ expires_at_epoch numeric timestamp in Lua            |
-| ~~High~~     | ~~MAXLEN causes silent message loss~~        | ✅ Lua XLEN check + reject (true backpressure)          |
-| ~~High~~     | ~~Console stores credentials in session~~    | ✅ API key in memory only, security warning, opt-in persist |
-| ~~Medium~~   | ~~No migration story for Redis tasks~~       | ✅ Legacy tasks without expires_at_epoch auto-expired   |
-| ~~Medium~~   | ~~Webhook signing too weak~~                 | ✅ Timestamped HMAC + per-webhook secrets               |
-| ~~Medium~~   | ~~SSRF TOCTOU at webhook delivery~~          | ✅ Re-validate DNS at delivery time                     |
-| ~~Medium~~   | ~~Postgres history loses room names~~        | ✅ Denormalized room_name column (migration 005)        |
-| **Medium**   | No delivery/audit ledger                     | "What happened to message X?" has no answer             |
-| ~~Medium~~   | ~~MCP swallows ACK failures~~                | ✅ Warning shown when ACK fails                         |
-| **Medium**   | Auth is name-oriented, not account-based     | No immutable IDs, no revocation                         |
-| ~~Medium~~   | ~~Dashboard puts credentials in URL~~        | ✅ Token stored in sessionStorage, URL cleared          |
-| **Medium**   | Webhook SSRF policy-based only               | httpx re-resolves DNS; needs egress network policy      |
-| ~~Medium~~   | ~~Website Node version unenforced~~          | ✅ .nvmrc + .node-version + engines field               |
-| **Low**      | Operational metrics thin                     | Need stream depth, pending age, redelivery counts       |
+### Remaining Blockers for Production SaaS
+
+| Priority | Issue | Impact | Path to Fix |
+|----------|-------|--------|-------------|
+| **High** | No transactional outbox | Fan-out failures after Postgres commit | Outbox table + background worker |
+| **High** | No delivery/audit ledger | Cannot debug "what happened to message X" | Event log table + admin UI |
+| **High** | Name-based identity | No immutable user_id; painful for rename/audit/revocation | Add user_id/agent_id columns, migrate |
+| **High** | Console accepts shared secrets | Not SaaS-ready auth model | First-party auth or key-only |
+| **High** | Webhook SSRF app-level only | httpx re-resolves DNS; no egress enforcement | Egress proxy or network policy |
+| **High** | No load/chaos testing | Unproven concurrency envelope | k6/locust tests, failure injection |
+| **Medium** | Signup abuse controls | 5/hr IP limit only; no email verify/CAPTCHA | Add verification, tenant quotas |
+| **Medium** | Thin operational metrics | No fan-out failures, DLQ age, ACK lag metrics | Domain-specific Prometheus counters |
+| **Medium** | No runbooks/alerts | Ops flying blind | Document failure modes, set thresholds |
+| **Medium** | No admin tools | No DLQ replay, user suspension, stuck queue fix | Admin CLI/API |
+| **Low** | Simple RBAC | No org roles, key scopes, service accounts | Expand role model |
+
+### Resolved Issues (for reference)
+
+- ✅ Redis + Postgres integration tests in CI
+- ✅ `ack=manual` default (no silent message loss)
+- ✅ `Idempotency-Key` + body binding + 409 on mismatch
+- ✅ Room membership checks on all state/lock endpoints
+- ✅ Redis Lua scripts for distributed locks
+- ✅ Web console proxy removed (Vite static site)
+- ✅ Redis AOF persistence configured
+- ✅ Durable webhook queue (Redis Streams + DLQ)
+- ✅ Per-tenant backpressure (XLEN check before XADD)
+- ✅ Timestamped HMAC webhook signing
+- ✅ API key in memory only, never sessionStorage
+
+### What This Means
+
+**Ship as:** Controlled early-access beta with published limitations, no hard delivery SLA, webhook caveats, and monitored tenant limits.
+
+**Do not market as:** Fully production-ready infrastructure with contractual delivery guarantees.
 
 ### Next Priorities
 
-1. Delivery/audit ledger for message tracing
-2. Account-based auth with immutable IDs
-3. Network-level egress filtering for webhooks
-4. Full outbox pattern for transactional room send
+1. **Outbox pattern** — transactional room sends with guaranteed fan-out
+2. **Audit ledger** — event log for debugging, abuse, incidents
+3. **Account-based identity** — immutable IDs, proper revocation
+4. **Load testing** — prove the concurrency envelope
+5. **Egress controls** — network-level webhook SSRF protection
 
 ---
 
