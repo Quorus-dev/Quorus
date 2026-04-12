@@ -131,10 +131,11 @@ def _snapshot_state() -> dict:
             "tenant_id": rdata.get("tenant_id", "_legacy"),
             "created_at": rdata.get("created_at", ""),
         }
-    # Room history
+    # Room history (only snapshot if using in-memory backend)
     history = {}
-    for (tid, rid), msgs in backends.room_history._history.items():
-        history[rid] = list(msgs)
+    if hasattr(backends.room_history, "_history"):
+        for (tid, rid), msgs in backends.room_history._history.items():
+            history[rid] = list(msgs)
     # Room webhooks
     room_webhooks = {}
     for (tid, rid), hooks in backends.webhooks._room_hooks.items():
@@ -305,6 +306,16 @@ def _init_services(app_instance, redis_conn=None):
         from murmur.backends.memory import InMemoryBackends
 
         backends = InMemoryBackends.create(max_room_history=max_room_history)
+
+        # Replace in-memory room history with SQLite for persistence.
+        # History survives relay restarts; any agent joining a room gets full
+        # context. Disabled in tests via MURMUR_NO_SQLITE_HISTORY=1.
+        if not os.environ.get("MURMUR_NO_SQLITE_HISTORY"):
+            from murmur.backends.sqlite_history import SQLiteRoomHistoryBackend
+
+            backends.room_history = SQLiteRoomHistoryBackend(
+                max_history=max_room_history
+            )
 
     # Notification bus — Redis-backed when available, local-only otherwise
     notification = NotificationService(redis_conn=redis_conn)

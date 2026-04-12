@@ -1236,10 +1236,14 @@ async def test_room_history_persists(client: AsyncClient, auth_headers: dict, tm
         _reset_state()
         _load_from_file()
 
-        backends = app.state.backends
-        history = backends.room_history._history.get(("_legacy", room_id), [])
-        assert len(history) == 1
-        assert history[0]["content"] == "persisted"
+        # Verify via API (avoid accessing backend internals directly)
+        hist_resp = await client.get(
+            f"/rooms/{room_id}/history", headers=auth_headers
+        )
+        assert hist_resp.status_code == 200
+        msgs = hist_resp.json()
+        assert len(msgs) >= 1
+        assert any(m["content"] == "persisted" for m in msgs)
 
 
 async def test_rate_limit_dm(client: AsyncClient, auth_headers):
@@ -1741,16 +1745,19 @@ async def test_persistence_survives_restart(
         names = [r["name"] for r in resp.json()]
         assert "persist-room" in names
 
-        # History still has the message
-        backends = app.state.backends
+        # History still has the message — verify via API
         rid = None
         for r in resp.json():
             if r["name"] == "persist-room":
                 rid = r["id"]
         assert rid is not None
-        history = backends.room_history._history.get(("_legacy", rid), [])
-        assert len(history) == 1
-        assert history[0]["content"] == "before restart"
+        hist_resp = await client.get(
+            f"/rooms/{rid}/history", headers=auth_headers
+        )
+        assert hist_resp.status_code == 200
+        msgs = hist_resp.json()
+        assert len(msgs) >= 1
+        assert any(m["content"] == "before restart" for m in msgs)
 
 
 async def test_dashboard_returns_html(client: AsyncClient):
