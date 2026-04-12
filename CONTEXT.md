@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 05:42 UTC
+Last updated: 2026-04-12 05:59 UTC
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-04-12 05:42 UTC
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (780 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (866 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -35,8 +35,9 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | murmur/routes/agents.py     | ~57    | GET /agents/{name} — profile, rooms, last seen, message count, online status              |
 | murmur/watcher.py           | ~238   | Primitive C: SSE-driven daemon, writes .murmur/context.md for IDE indexing                |
 | murmur/dashboard.py         | ~large | Web dashboard: live messages + swarm activity panel + usage bar                           |
+| murmur/tui_hub.py           | ~730   | Full-screen TUI hub: `murmur begin` opens interactive Rich terminal UI                    |
 | murmur/backends/            | ~900   | In-memory + Redis backends for all state (incl. RoomStateBackend)                         |
-| tests/                      | ~8200  | 780 tests: relay, mcp, config, CLI, usage, agents, room_state, sdk, integration, security |
+| tests/                      | ~8500  | 866 tests: relay, mcp, config, CLI, usage, agents, room_state, sdk, tui_hub, integration  |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -76,8 +77,10 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - **CRA (murmur resolve)**: `murmur resolve [--room R] [--model M]` — AI-powered git merge conflict resolution using room history for agent intent
 - **Decision recording**: `murmur decision <room> "<text>"` — writes to room state decisions via POST /rooms/{room}/state/decisions; surfaced in `murmur context`
 - **Hook auto-injection**: `murmur hook enable` now runs `murmur inbox --quiet && murmur context --quiet` on every UserPromptSubmit
+- **Portable join tokens**: `murmur share <room>` generates portable token; `murmur quickjoin <token> --name <name>` joins with zero config
+- **TUI Hub**: `murmur begin` opens full-screen interactive terminal UI with rooms, agents, live chat
 
-**Tests:** 780 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 866 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -135,27 +138,16 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | 31795e5 | test: 9 tests for share/quickjoin portable join tokens                    |
+| 2026-04-12 | 739392b | feat: murmur/tui_hub.py full-screen TUI + 25 tests (murmur begin)         |
+| 2026-04-12 | 92a2b24 | feat: murmur share + murmur quickjoin for portable join tokens            |
 | 2026-04-12 | —       | docs+feat: README 3-pillar narrative, murmur init hardening, 6 init tests |
-| 2026-04-12 | —       | feat: SQLite persistent room history — zero-dep, survives restart         |
 | 2026-04-12 | b0d9572 | feat: Summary Cascade v2 — LLM summarization via --summarize flag         |
 | 2026-04-12 | 4211716 | test: 3 unit tests for murmur resolve (CRA) conflict parsing              |
 | 2026-04-12 | e4c4089 | docs: murmur resolve (CRA) design doc                                     |
 | 2026-04-12 | 2e0e9fa | docs: VISION.md — 8 moonshot features for YC pitch                        |
 | 2026-04-12 | 7de5bfa | feat: B2C API keys design doc + Postgres schema                           |
-| 2026-04-12 | c120f1b | SDK: ReceiveResult ack/iter/len + AckError coverage (780 total)           |
-| 2026-04-12 | e0cbdaf | Integration: room broadcast + Primitive B lock lifecycle tests            |
-| 2026-04-12 | 7cdb77c | SDK: astream SSE tests (happy path + invalid JSON skip)                   |
-| 2026-04-12 | 38635bb | SDK: async surface coverage (asend, areceive, a_ack)                      |
-| 2026-04-12 | f126518 | SDK: Room.lock(), Room.unlock(), Room.state() with JWT refresh            |
-| 2026-04-12 | adb8755 | 404 rate limiting — block stale clients hammering deleted rooms           |
-| 2026-04-12 | 4d0c65c | SSE notification-only: always fetch+ACK from durable queue                |
-| 2026-04-12 | a0b86b9 | Fix murmur ps crash when uptime_start is null                             |
-| 2026-04-12 | a3a26e1 | Add brief/subtask/decision message types to relay                         |
-| 2026-04-12 | —       | Summary Cascade v1: murmur context + murmur decision commands             |
-| 2026-04-12 | 354d9c8 | Auto-inject messages via murmur inbox + hook commands                     |
-| 2026-04-12 | 493d445 | MCP server instructions for agent guidance                                |
-| 2026-04-12 | c86bb05 | SSRF TOCTOU fix — re-validate URLs at webhook delivery time               |
-| 2026-04-12 | ed95df5 | Per-webhook secrets in routes + strip secrets from list API               |
+| 2026-04-12 | c120f1b | SDK: ReceiveResult ack/iter/len + AckError coverage                       |
 
 ---
 
