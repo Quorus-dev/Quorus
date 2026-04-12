@@ -747,6 +747,87 @@ class InMemoryIdempotencyBackend:
         self._store.clear()
 
 
+# -- Webhook delivery queue -------------------------------------------------
+
+
+class InMemoryWebhookQueueBackend:
+    """In-memory webhook delivery queue with retry and DLQ support."""
+
+    def __init__(self, dlq_max_size: int = 1000) -> None:
+        self._queue: list[tuple[str, dict]] = []  # (job_id, job_data)
+        self._pending: dict[str, dict] = {}  # job_id -> job_data
+        self._dlq: list[dict] = []
+        self._dlq_max_size = dlq_max_size
+        self._counter = 0
+        self._lock = asyncio.Lock()
+
+    async def enqueue(self, job: dict) -> str:
+        """Add a webhook job to the queue. Returns job ID."""
+        async with self._lock:
+            self._counter += 1
+            job_id = f"job-{self._counter}"
+            self._queue.append((job_id, job))
+            return job_id
+
+    async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
+        """Fetch pending jobs for delivery."""
+        async with self._lock:
+            fetched = self._queue[:count]
+            self._queue = self._queue[count:]
+            for job_id, job in fetched:
+                self._pending[job_id] = job
+            return fetched
+
+    async def ack(self, job_id: str) -> None:
+        """Acknowledge successful delivery, removing the job."""
+        async with self._lock:
+            self._pending.pop(job_id, None)
+
+    async def nack(
+        self, job_id: str, error: str, max_retries: int
+    ) -> bool:
+        """Mark job as failed. Returns True if job will be retried."""
+        async with self._lock:
+            job = self._pending.pop(job_id, None)
+            if job is None:
+                return False
+
+            job["attempt"] = job.get("attempt", 0) + 1
+            job["last_error"] = error
+
+            if job["attempt"] >= max_retries:
+                # Move to DLQ
+                self._dlq.insert(0, job)
+                if len(self._dlq) > self._dlq_max_size:
+                    self._dlq = self._dlq[: self._dlq_max_size]
+                return False
+
+            # Re-enqueue for retry
+            self._counter += 1
+            new_job_id = f"job-{self._counter}"
+            self._queue.append((new_job_id, job))
+            return True
+
+    async def get_dlq(self, limit: int = 50) -> list[dict]:
+        """Return recent dead letter queue entries."""
+        async with self._lock:
+            return list(self._dlq[:limit])
+
+    async def get_stats(self) -> dict:
+        """Return queue statistics."""
+        async with self._lock:
+            return {
+                "queue_length": len(self._queue),
+                "pending": len(self._pending),
+                "dlq_size": len(self._dlq),
+            }
+
+    def clear(self) -> None:
+        self._queue.clear()
+        self._pending.clear()
+        self._dlq.clear()
+
+
 # -- Convenience bundle -----------------------------------------------------
 
 
@@ -768,6 +849,9 @@ class InMemoryBackends:
     idempotency: InMemoryIdempotencyBackend = field(
         default_factory=InMemoryIdempotencyBackend
     )
+    webhook_queue: InMemoryWebhookQueueBackend = field(
+        default_factory=InMemoryWebhookQueueBackend
+    )
 
     @classmethod
     def create(cls, max_room_history: int = 200) -> InMemoryBackends:
@@ -785,6 +869,7 @@ class InMemoryBackends:
             analytics=InMemoryAnalyticsBackend(),
             participants=InMemoryParticipantBackend(),
             idempotency=InMemoryIdempotencyBackend(),
+            webhook_queue=InMemoryWebhookQueueBackend(),
         )
 
     def clear_all(self) -> None:

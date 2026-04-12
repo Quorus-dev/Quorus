@@ -19,6 +19,7 @@ from redis.asyncio import Redis
 from murmur.backends.redis_backends import (
     RedisIdempotencyBackend,
     RedisMessageBackend,
+    RedisWebhookQueueBackend,
 )
 
 # Mark all tests in this module as integration tests
@@ -222,3 +223,117 @@ class TestRedisIdempotency:
         # Should be gone
         result = await backend.get("tenant1", "key-expire")
         assert result is None
+
+
+class TestRedisWebhookQueue:
+    """Test durable webhook queue with Redis Streams."""
+
+    async def test_enqueue_and_fetch(self, redis_client):
+        """Basic enqueue and fetch should work."""
+        backend = RedisWebhookQueueBackend(redis_client)
+
+        job = {
+            "target": "test-target",
+            "callback_url": "https://example.com/hook",
+            "payload": {"message": "hello"},
+            "secret": "",
+            "attempt": 0,
+            "created_at": 1234567890.0,
+            "last_error": "",
+        }
+        job_id = await backend.enqueue(job)
+        assert job_id
+
+        jobs = await backend.fetch(count=10)
+        assert len(jobs) == 1
+        fetched_id, fetched_job = jobs[0]
+        assert fetched_id == job_id
+        assert fetched_job["target"] == "test-target"
+        assert fetched_job["callback_url"] == "https://example.com/hook"
+
+    async def test_ack_removes_job(self, redis_client):
+        """ACKed jobs should be removed from the queue."""
+        backend = RedisWebhookQueueBackend(redis_client)
+
+        job = {"target": "ack-test", "callback_url": "https://example.com/hook",
+               "payload": {}, "secret": "", "attempt": 0, "created_at": 0.0,
+               "last_error": ""}
+        job_id = await backend.enqueue(job)
+
+        jobs = await backend.fetch(count=10)
+        assert len(jobs) == 1
+
+        await backend.ack(job_id)
+
+        # Should not get the job again
+        jobs2 = await backend.fetch(count=10)
+        assert len(jobs2) == 0
+
+    async def test_nack_retries_job(self, redis_client):
+        """NACKed jobs should be re-enqueued for retry."""
+        backend = RedisWebhookQueueBackend(redis_client)
+
+        job = {"target": "nack-test", "callback_url": "https://example.com/hook",
+               "payload": {}, "secret": "", "attempt": 0, "created_at": 0.0,
+               "last_error": ""}
+        job_id = await backend.enqueue(job)
+
+        jobs = await backend.fetch(count=10)
+        assert len(jobs) == 1
+        original_id, _ = jobs[0]
+
+        # NACK with room for retry
+        will_retry = await backend.nack(original_id, "connection failed", max_retries=3)
+        assert will_retry is True
+
+        # Should get the job again (re-enqueued)
+        jobs2 = await backend.fetch(count=10)
+        assert len(jobs2) == 1
+        new_id, new_job = jobs2[0]
+        assert new_id != original_id  # New entry
+        assert new_job["attempt"] == 1
+        assert new_job["last_error"] == "connection failed"
+
+    async def test_nack_moves_to_dlq_after_max_retries(self, redis_client):
+        """Jobs should move to DLQ after max retries."""
+        backend = RedisWebhookQueueBackend(redis_client)
+
+        job = {"target": "dlq-test", "callback_url": "https://example.com/hook",
+               "payload": {}, "secret": "", "attempt": 2, "created_at": 0.0,
+               "last_error": ""}
+        job_id = await backend.enqueue(job)
+
+        jobs = await backend.fetch(count=10)
+        assert len(jobs) == 1
+
+        # NACK with attempt already at max-1
+        will_retry = await backend.nack(job_id, "final failure", max_retries=3)
+        assert will_retry is False
+
+        # Job should not be re-enqueued
+        jobs2 = await backend.fetch(count=10)
+        assert len(jobs2) == 0
+
+        # Job should be in DLQ
+        dlq = await backend.get_dlq(limit=10)
+        assert len(dlq) == 1
+        assert dlq[0]["target"] == "dlq-test"
+        assert dlq[0]["attempt"] == 3
+        assert dlq[0]["last_error"] == "final failure"
+
+    async def test_get_stats(self, redis_client):
+        """Stats should reflect queue state."""
+        backend = RedisWebhookQueueBackend(redis_client)
+
+        stats = await backend.get_stats()
+        assert stats["queue_length"] == 0
+        assert stats["dlq_size"] == 0
+
+        # Enqueue a job
+        job = {"target": "stats-test", "callback_url": "https://example.com/hook",
+               "payload": {}, "secret": "", "attempt": 0, "created_at": 0.0,
+               "last_error": ""}
+        await backend.enqueue(job)
+
+        stats = await backend.get_stats()
+        assert stats["queue_length"] == 1
