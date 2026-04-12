@@ -81,7 +81,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - **TUI Hub**: `murmur begin` opens full-screen interactive terminal UI with rooms, agents, live chat
 - **Doctor diagnostics**: `murmur doctor` runs 13 checks incl. MCP server registration, relay version, hook status
 
-**Tests:** 860 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 861 passing + 14 Redis integration tests (skipped in CI without Docker). 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -109,14 +109,14 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~Critical~~ | ~~Auto-ACK default is a footgun~~            | ✅ `ack=manual` is now the default                      |
 | ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` + atomic SET NX reservation        |
 | ~~Critical~~ | ~~Room state not membership-scoped~~         | ✅ require_room_member() on all state/lock endpoints    |
-| ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend for cross-replica coordination |
+| ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend + Lua scripts for atomic ops   |
 | ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
 | ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH quota (default 10000)            |
 | ~~High~~     | ~~Usage/participant endpoints leak data~~    | ✅ Scoped by auth level (admin vs user)                 |
 | **High**     | Room fan-out is write-amplified              | N members = N queue writes per message                  |
 | ~~High~~     | ~~SSE receives internal wakeup messages~~    | ✅ Filter {"wake":true} in SSE queue handler            |
-| ~~High~~     | ~~Idempotency key not bound to body~~        | ✅ Body fingerprint (SHA256) included in cache key      |
+| ~~High~~     | ~~Idempotency key not bound to body~~        | ✅ Same key + different body returns 409 Conflict       |
 | **Medium**   | No migration/rebuild story for Redis         | Key schema changes are operationally risky              |
 | ~~Medium~~   | ~~Webhook signing too weak~~                 | ✅ Timestamped HMAC + per-webhook secrets               |
 | ~~Medium~~   | ~~SSRF TOCTOU at webhook delivery~~          | ✅ Re-validate DNS at delivery time                     |
@@ -145,6 +145,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | (HEAD)  | fix: atomic distributed locks + idempotency 409 on body mismatch          |
 | 2026-04-12 | 082cd18 | fix: SSE wakeup filter, idempotency body fingerprint, dashboard token     |
 | 2026-04-12 | 6764411 | fix: scope usage/participant endpoints by auth level + invite JS fix      |
 | 2026-04-12 | f0f3139 | feat: RedisRoomStateBackend for distributed mutex (cross-replica locks)   |
@@ -154,7 +155,6 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | 2026-04-12 | 9dddd90 | fix: rate limiting on all write+history endpoints + DM size validation    |
 | 2026-04-12 | 01d5a14 | feat: website Nav/CTA/CodeDemo/Footer polish + Architecture 866+ count    |
 | 2026-04-12 | 2dbc2db | feat: vercel.json fix + QuickStart terminal animation + tui_hub UX        |
-| 2026-04-12 | 86f6af2 | test: murmur resolve edge cases (empty diff, network error, no API key)   |
 
 ---
 
