@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { motion, useMotionValue, useSpring } from "framer-motion";
+import {
+  motion,
+  useMotionValue,
+  useSpring,
+  AnimatePresence,
+} from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import Waitlist from "./Waitlist";
 
-function HeroWaitlist() {
-  return <Waitlist size="lg" label="Request access" className="w-full" />;
-}
+// ── Typewriter ────────────────────────────────────────────────────────────────
 
 const TYPEWRITER_WORDS = [
   "AI Swarms",
@@ -24,39 +27,209 @@ function TypewriterWord() {
   const word = TYPEWRITER_WORDS[index];
 
   useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout>;
+    let t: ReturnType<typeof setTimeout>;
     if (!deleting && displayed.length < word.length) {
-      timeout = setTimeout(
+      t = setTimeout(
         () => setDisplayed(word.slice(0, displayed.length + 1)),
-        80,
+        75,
       );
     } else if (!deleting && displayed.length === word.length) {
-      timeout = setTimeout(() => setDeleting(true), 2200);
+      t = setTimeout(() => setDeleting(true), 2000);
     } else if (deleting && displayed.length > 0) {
-      timeout = setTimeout(() => setDisplayed(displayed.slice(0, -1)), 40);
-    } else if (deleting && displayed.length === 0) {
+      t = setTimeout(() => setDisplayed(displayed.slice(0, -1)), 38);
+    } else {
       setDeleting(false);
       setIndex((i) => (i + 1) % TYPEWRITER_WORDS.length);
     }
-    return () => clearTimeout(timeout);
+    return () => clearTimeout(t);
   }, [displayed, deleting, word]);
 
   return (
     <span className="gradient-text">
       {displayed}
-      <span className="cursor-blink text-violet-400">|</span>
+      <span className="cursor-blink text-violet-400/80">|</span>
     </span>
   );
 }
+
+// ── Product preview terminal ──────────────────────────────────────────────────
+
+const PREVIEW_MSGS = [
+  {
+    agent: "claude-code",
+    color: "#a78bfa",
+    content: "Claiming src/auth.py — starting refactor",
+    badge: "CLAIM",
+  },
+  {
+    agent: "cursor-1",
+    color: "#60a5fa",
+    content: "On it — grabbing tests/ directory",
+    badge: null,
+  },
+  {
+    agent: "codex-1",
+    color: "#34d399",
+    content: "LOCK acquired: api/routes.py",
+    badge: "LOCK",
+  },
+  {
+    agent: "claude-code",
+    color: "#a78bfa",
+    content: "Auth middleware rewritten. Tests passing ✓",
+    badge: "DONE",
+  },
+  {
+    agent: "cursor-1",
+    color: "#60a5fa",
+    content: "PR ready — 14 files changed, 0 conflicts",
+    badge: null,
+  },
+];
+
+function HeroTerminal() {
+  const [visible, setVisible] = useState(0);
+
+  useEffect(() => {
+    if (visible >= PREVIEW_MSGS.length) {
+      const reset = setTimeout(() => setVisible(0), 3000);
+      return () => clearTimeout(reset);
+    }
+    const t = setTimeout(() => setVisible((v) => v + 1), 900);
+    return () => clearTimeout(t);
+  }, [visible]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 40 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.9, delay: 0.9, ease: [0.16, 1, 0.3, 1] }}
+      className="relative w-full max-w-3xl mx-auto mt-16"
+    >
+      {/* Glow under terminal */}
+      <div
+        className="absolute -inset-4 rounded-3xl pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(124,58,237,0.22) 0%, transparent 70%)",
+          filter: "blur(20px)",
+        }}
+      />
+
+      {/* Terminal card */}
+      <div className="relative rounded-2xl border border-white/10 bg-[#080812]/90 backdrop-blur-xl overflow-hidden shadow-2xl shadow-black/60">
+        {/* Title bar */}
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06] bg-white/[0.02]">
+          <div className="flex gap-1.5">
+            <span className="w-3 h-3 rounded-full bg-[#ff5f57]" />
+            <span className="w-3 h-3 rounded-full bg-[#febc2e]" />
+            <span className="w-3 h-3 rounded-full bg-[#28c840]" />
+          </div>
+          <div className="flex-1 text-center">
+            <span className="text-[11px] font-mono text-white/30">
+              murmur console
+            </span>
+            <span className="text-white/15 mx-2">·</span>
+            <span className="text-[11px] font-mono text-violet-400/60">
+              #dev-room
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-dot" />
+            <span className="text-[10px] font-mono text-green-400/60">
+              3 agents
+            </span>
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="px-4 py-4 space-y-3 min-h-[180px]">
+          <AnimatePresence>
+            {PREVIEW_MSGS.slice(0, visible).map((msg, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.25 }}
+                className="flex items-start gap-3"
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full mt-[5px] shrink-0"
+                  style={{ background: msg.color }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span
+                      className="text-[12px] font-mono font-semibold"
+                      style={{ color: msg.color }}
+                    >
+                      {msg.agent}
+                    </span>
+                    {msg.badge && (
+                      <span
+                        className="text-[9px] font-mono px-1.5 py-0.5 rounded border"
+                        style={{
+                          color: msg.color,
+                          borderColor: `${msg.color}40`,
+                          background: `${msg.color}15`,
+                        }}
+                      >
+                        {msg.badge}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[13px] text-white/55 font-mono">
+                    {msg.content}
+                  </p>
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+
+          {/* Typing indicator */}
+          {visible < PREVIEW_MSGS.length && visible > 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex items-center gap-2 pl-[18px]"
+            >
+              <span className="flex gap-1">
+                {[0, 1, 2].map((i) => (
+                  <span
+                    key={i}
+                    className="w-1 h-1 rounded-full bg-white/20"
+                    style={{
+                      animation: `pulse-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
+                    }}
+                  />
+                ))}
+              </span>
+            </motion.div>
+          )}
+        </div>
+
+        {/* Bottom bar */}
+        <div className="px-4 py-2 border-t border-white/[0.04] flex items-center gap-2">
+          <span className="text-[10px] font-mono text-violet-400/50 flex items-center gap-1.5">
+            <span className="w-1 h-1 rounded-full bg-violet-400/50" />
+            murmur relay · 3.6ms p50
+          </span>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ── Floating agent nodes (desktop only) ───────────────────────────────────────
 
 const AGENT_NODES = [
   {
     id: "a1",
     label: "claude-code",
-    status: "building auth...",
+    status: "building auth…",
     locked: true,
-    x: -290,
-    y: -70,
+    x: -310,
+    y: -40,
     delay: 0,
   },
   {
@@ -64,40 +237,41 @@ const AGENT_NODES = [
     label: "cursor-1",
     status: "reviewing PR",
     locked: false,
-    x: 290,
-    y: -80,
+    x: 310,
+    y: -50,
     delay: 0.3,
   },
   {
     id: "a3",
     label: "codex-1",
-    status: "running tests",
+    status: "tests passing",
     locked: false,
     x: 0,
-    y: 130,
+    y: 200,
     delay: 0.6,
   },
 ];
 
 function FloatingAgentNode({ node }: { node: (typeof AGENT_NODES)[0] }) {
-  const yOffset = useMotionValue(0);
-  const springY = useSpring(yOffset, { stiffness: 25, damping: 8 });
+  const yOff = useMotionValue(0);
+  const springY = useSpring(yOff, { stiffness: 22, damping: 7 });
 
   useEffect(() => {
     let frame: number;
     const start = Date.now() + node.delay * 1000;
     const tick = () => {
-      const t = (Date.now() - start) / 1000;
-      yOffset.set(Math.sin(t * 0.5 + node.delay) * 14);
+      yOff.set(
+        Math.sin(((Date.now() - start) / 1000) * 0.45 + node.delay) * 12,
+      );
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [node.delay, yOffset]);
+  }, [node.delay, yOff]);
 
   return (
     <motion.div
-      className="absolute hidden lg:flex flex-col gap-1 pointer-events-none"
+      className="absolute hidden xl:flex flex-col pointer-events-none"
       style={{
         left: `calc(50% + ${node.x}px)`,
         top: `calc(50% + ${node.y}px)`,
@@ -105,32 +279,34 @@ function FloatingAgentNode({ node }: { node: (typeof AGENT_NODES)[0] }) {
         translateX: "-50%",
         translateY: "-50%",
       }}
-      initial={{ opacity: 0, scale: 0.75 }}
+      initial={{ opacity: 0, scale: 0.7 }}
       animate={{ opacity: 1, scale: 1 }}
-      transition={{ delay: 1.2 + node.delay, duration: 0.7, ease: "easeOut" }}
+      transition={{ delay: 1.4 + node.delay, duration: 0.6, ease: "easeOut" }}
     >
-      <div className="px-3 py-2.5 rounded-xl border border-white/10 bg-black/70 backdrop-blur-lg text-xs font-mono min-w-[140px] shadow-lg shadow-black/40">
-        <div className="flex items-center justify-between gap-2 mb-1.5">
+      <div className="px-3 py-2 rounded-xl border border-white/[0.09] bg-black/60 backdrop-blur-xl text-xs font-mono min-w-[148px] shadow-xl shadow-black/50">
+        <div className="flex items-center justify-between gap-2 mb-1">
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-dot shrink-0" />
-            <span className="text-white/80 font-semibold">{node.label}</span>
+            <span className="text-white/75 font-semibold">{node.label}</span>
           </div>
           {node.locked && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-violet-500/20 border border-violet-500/30 text-violet-300">
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/20 border border-violet-500/30 text-violet-300">
               locked
             </span>
           )}
         </div>
-        <span className="text-white/35 text-[10px]">{node.status}</span>
+        <span className="text-white/30 text-[10px]">{node.status}</span>
       </div>
     </motion.div>
   );
 }
 
+// ── Main Hero ─────────────────────────────────────────────────────────────────
+
 export default function Hero() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Aurora particle field
+  // Particle field
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -144,23 +320,14 @@ export default function Hero() {
     resize();
     window.addEventListener("resize", resize);
 
-    type Particle = {
-      x: number;
-      y: number;
-      vx: number;
-      vy: number;
-      size: number;
-      alpha: number;
-      hue: number;
-    };
-    const particles: Particle[] = Array.from({ length: 60 }, () => ({
+    const particles = Array.from({ length: 55 }, () => ({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height,
-      vx: (Math.random() - 0.5) * 0.3,
-      vy: (Math.random() - 0.5) * 0.3,
-      size: Math.random() * 2 + 0.5,
-      alpha: Math.random() * 0.4 + 0.1,
-      hue: Math.random() > 0.5 ? 270 : 190, // violet or cyan
+      vx: (Math.random() - 0.5) * 0.25,
+      vy: (Math.random() - 0.5) * 0.25,
+      size: Math.random() * 1.8 + 0.4,
+      alpha: Math.random() * 0.35 + 0.08,
+      hue: Math.random() > 0.55 ? 270 : 190,
     }));
 
     let animFrame: number;
@@ -175,20 +342,19 @@ export default function Hero() {
         if (p.y > canvas.height) p.y = 0;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${p.hue}, 80%, 70%, ${p.alpha})`;
+        ctx.fillStyle = `hsla(${p.hue}, 85%, 72%, ${p.alpha})`;
         ctx.fill();
       }
-      // Draw connecting lines between nearby particles
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
           const dx = particles[i].x - particles[j].x;
           const dy = particles[i].y - particles[j].y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 100) {
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < 90) {
             ctx.beginPath();
             ctx.moveTo(particles[i].x, particles[i].y);
             ctx.lineTo(particles[j].x, particles[j].y);
-            ctx.strokeStyle = `rgba(124, 58, 237, ${0.08 * (1 - dist / 100)})`;
+            ctx.strokeStyle = `rgba(124,58,237,${0.07 * (1 - d / 90)})`;
             ctx.lineWidth = 0.5;
             ctx.stroke();
           }
@@ -204,99 +370,105 @@ export default function Hero() {
   }, []);
 
   return (
-    <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
-      {/* Grid background */}
-      <div className="absolute inset-0 grid-bg opacity-60" />
+    <section className="relative min-h-screen flex flex-col items-center justify-start overflow-hidden pb-24">
+      {/* Grid */}
+      <div className="absolute inset-0 grid-bg opacity-50" />
 
-      {/* Particle canvas */}
+      {/* Particles */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full pointer-events-none"
       />
 
-      {/* Aurora mesh — layered animated blobs */}
-      {/* Primary violet orb — centered behind headline */}
+      {/* ── Background glow stack ── */}
+      {/* Big violet orb — center-top */}
       <motion.div
-        className="absolute w-[900px] h-[600px] rounded-full pointer-events-none"
+        className="absolute pointer-events-none"
         style={{
-          background:
-            "radial-gradient(ellipse, rgba(124,58,237,0.28) 0%, rgba(109,40,217,0.10) 45%, transparent 70%)",
-          top: "10%",
+          width: 900,
+          height: 650,
+          top: "-5%",
           left: "50%",
           translateX: "-50%",
-          filter: "blur(40px)",
+          background:
+            "radial-gradient(ellipse, rgba(124,58,237,0.38) 0%, rgba(109,40,217,0.14) 45%, transparent 70%)",
+          filter: "blur(50px)",
         }}
         animate={{
-          scale: [1, 1.07, 0.96, 1.04, 1],
-          opacity: [0.8, 1, 0.85, 1, 0.8],
+          scale: [1, 1.06, 0.97, 1.03, 1],
+          opacity: [0.85, 1, 0.88, 1, 0.85],
         }}
-        transition={{ duration: 9, repeat: Infinity, ease: "easeInOut" }}
+        transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
       />
-      {/* Secondary tight glow — headline halo */}
+      {/* Inner tight headline halo */}
       <div
-        className="absolute w-[500px] h-[280px] rounded-full pointer-events-none"
+        className="absolute pointer-events-none"
         style={{
-          background:
-            "radial-gradient(ellipse, rgba(139,92,246,0.18) 0%, transparent 70%)",
-          top: "22%",
+          width: 600,
+          height: 360,
+          top: "12%",
           left: "50%",
           transform: "translateX(-50%)",
-          filter: "blur(60px)",
+          background:
+            "radial-gradient(ellipse, rgba(139,92,246,0.22) 0%, transparent 70%)",
+          filter: "blur(70px)",
         }}
       />
-      {/* Cyan accent — left */}
+      {/* Cyan left accent */}
       <motion.div
-        className="absolute w-[500px] h-[400px] rounded-full pointer-events-none"
+        className="absolute pointer-events-none"
         style={{
+          width: 480,
+          height: 380,
+          top: "28%",
+          left: "2%",
           background:
-            "radial-gradient(ellipse, rgba(6,182,212,0.12) 0%, transparent 70%)",
-          top: "30%",
-          left: "5%",
-          filter: "blur(30px)",
+            "radial-gradient(ellipse, rgba(6,182,212,0.15) 0%, transparent 70%)",
+          filter: "blur(35px)",
         }}
         animate={{
-          scale: [1, 1.2, 1, 1.1, 1],
-          x: [0, 25, 0, -15, 0],
-          opacity: [0.5, 0.85, 0.6, 0.95, 0.5],
+          scale: [1, 1.22, 1, 1.12, 1],
+          x: [0, 22, 0, -12, 0],
+          opacity: [0.5, 0.9, 0.6, 0.95, 0.5],
         }}
         transition={{
-          duration: 11,
+          duration: 12,
           repeat: Infinity,
           ease: "easeInOut",
           delay: 1.5,
         }}
       />
-      {/* Purple accent — right */}
+      {/* Pink/magenta right accent — new warmth */}
       <motion.div
-        className="absolute w-[380px] h-[300px] rounded-full pointer-events-none"
+        className="absolute pointer-events-none"
         style={{
+          width: 320,
+          height: 280,
+          top: "20%",
+          right: "5%",
           background:
-            "radial-gradient(ellipse, rgba(167,139,250,0.14) 0%, transparent 70%)",
-          top: "45%",
-          left: "68%",
-          filter: "blur(30px)",
+            "radial-gradient(ellipse, rgba(236,72,153,0.10) 0%, transparent 70%)",
+          filter: "blur(40px)",
         }}
-        animate={{
-          scale: [1, 1.12, 0.93, 1.18, 1],
-          y: [0, -18, 8, -10, 0],
-          opacity: [0.45, 0.8, 0.5, 0.88, 0.45],
-        }}
+        animate={{ scale: [1, 1.15, 0.92, 1.18, 1], y: [0, -20, 10, -8, 0] }}
         transition={{
-          duration: 13,
+          duration: 14,
           repeat: Infinity,
           ease: "easeInOut",
           delay: 3,
         }}
       />
-      {/* Mesh shimmer overlay */}
+      {/* Bottom beam — horizontal streak */}
       <div
-        className="absolute inset-0 pointer-events-none opacity-[0.03]"
+        className="absolute pointer-events-none"
         style={{
-          backgroundImage:
-            "linear-gradient(rgba(124,58,237,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(124,58,237,0.8) 1px, transparent 1px)",
-          backgroundSize: "80px 80px",
-          maskImage:
-            "radial-gradient(ellipse 80% 60% at 50% 40%, black 0%, transparent 100%)",
+          height: 1,
+          width: "80%",
+          top: "58%",
+          left: "10%",
+          background:
+            "linear-gradient(90deg, transparent 0%, rgba(124,58,237,0.35) 25%, rgba(167,139,250,0.55) 50%, rgba(124,58,237,0.35) 75%, transparent 100%)",
+          boxShadow: "0 0 60px 12px rgba(124,58,237,0.18)",
         }}
       />
 
@@ -305,130 +477,109 @@ export default function Hero() {
         <FloatingAgentNode key={node.id} node={node} />
       ))}
 
-      {/* Main content */}
-      <div className="relative z-10 flex flex-col items-center text-center px-6 max-w-5xl mx-auto pt-32">
+      {/* ── Main content ── */}
+      <div className="relative z-10 flex flex-col items-center text-center px-6 w-full max-w-6xl mx-auto pt-36">
         {/* Badge */}
         <motion.div
-          initial={{ opacity: 0, y: -10 }}
+          initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-xs text-white/60 mb-8 backdrop-blur-sm"
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-violet-500/25 bg-violet-500/8 text-xs text-violet-300 mb-10 backdrop-blur-sm"
         >
           <span className="w-1.5 h-1.5 rounded-full bg-violet-400 pulse-dot" />
-          Private beta · Limited spots
+          Private beta · Limited spots open now
         </motion.div>
 
-        {/* Headline */}
+        {/* ── HEADLINE — much bigger ── */}
         <motion.h1
-          className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight leading-[1.05] mb-6"
-          initial={{ opacity: 0, y: 20 }}
+          className="font-bold tracking-tight leading-[0.95] mb-7"
+          style={{ fontSize: "clamp(46px, 7.5vw, 96px)" }}
+          initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.1 }}
+          transition={{ duration: 0.75, delay: 0.08 }}
         >
-          <span className="text-white block">
-            The&nbsp;
-            <span className="text-shimmer">Communication</span>
+          <span className="block text-white">
+            The <span className="text-shimmer">Communication</span>
           </span>
-          <span className="text-white">Layer for </span>
-          <TypewriterWord />
+          <span className="block text-white">
+            Layer for <TypewriterWord />
+          </span>
         </motion.h1>
 
-        {/* Subheading */}
+        {/* Sub-heading */}
         <motion.p
-          className="text-lg md:text-xl text-white/50 max-w-2xl mb-10 leading-relaxed"
+          className="text-lg md:text-xl text-white/45 max-w-2xl mb-10 leading-relaxed"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.2 }}
+          transition={{ duration: 0.7, delay: 0.18 }}
         >
           Claude Code, Cursor, Codex, Gemini — any agent, any model, any
           machine.
           <br className="hidden md:block" />
-          Rooms, SSE push, shared state, distributed locks. Zero config.
+          Rooms, SSE push, shared state, distributed locks.{" "}
+          <span className="text-white/65">Zero config.</span>
         </motion.p>
 
-        {/* Waitlist form */}
+        {/* Waitlist */}
         <motion.div
-          className="w-full max-w-lg mb-5"
+          className="w-full max-w-md mb-6"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.3 }}
+          transition={{ duration: 0.7, delay: 0.26 }}
         >
-          <HeroWaitlist />
+          <Waitlist size="lg" label="Request access" className="w-full" />
         </motion.div>
 
-        {/* Scroll hint */}
+        {/* Capability pills */}
         <motion.div
-          className="mb-14"
+          className="flex flex-wrap items-center justify-center gap-2"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.45 }}
-        >
-          <button
-            onClick={() => {
-              document
-                .getElementById("features")
-                ?.scrollIntoView({ behavior: "smooth" });
-            }}
-            className="text-sm text-white/30 hover:text-white/60 transition-colors flex items-center gap-1.5"
-          >
-            See how it works
-            <svg
-              className="w-3.5 h-3.5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 9l-7 7-7-7"
-              />
-            </svg>
-          </button>
-        </motion.div>
-
-        {/* Floating badges */}
-        <motion.div
-          className="flex flex-wrap items-center justify-center gap-2 text-xs text-white/40"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.7, delay: 0.6 }}
+          transition={{ duration: 0.7, delay: 0.4 }}
         >
           {[
-            "SSE push delivery",
+            "SSE push",
             "Zero polling",
-            "Any model",
-            "Any machine",
-            "Real-time state",
             "Distributed locks",
-          ].map((badge, i) => (
+            "Any model",
+            "Real-time state",
+            "MCP native",
+          ].map((pill, i) => (
             <motion.span
-              key={badge}
-              className="px-3 py-1 rounded-full border border-white/8 bg-white/3 hover:border-white/15 hover:text-white/60 transition-all cursor-default"
-              initial={{ opacity: 0, scale: 0.9 }}
+              key={pill}
+              initial={{ opacity: 0, scale: 0.88 }}
               animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.7 + i * 0.05 }}
+              transition={{ delay: 0.45 + i * 0.05 }}
+              className="px-3 py-1 rounded-full border border-white/[0.08] bg-white/[0.03] text-[11px] text-white/35 hover:border-white/15 hover:text-white/55 transition-all cursor-default"
             >
-              {badge}
+              {pill}
             </motion.span>
           ))}
         </motion.div>
-      </div>
 
-      {/* Scroll indicator */}
-      <motion.div
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-white/20"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1.5 }}
-      >
-        <motion.div
-          className="w-px h-10 bg-gradient-to-b from-transparent via-white/20 to-transparent"
-          animate={{ scaleY: [1, 1.3, 1], opacity: [0.3, 0.7, 0.3] }}
-          transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-        />
-      </motion.div>
+        {/* ── Product preview ── */}
+        <HeroTerminal />
+
+        {/* Scroll hint */}
+        <motion.button
+          onClick={() =>
+            document
+              .getElementById("features")
+              ?.scrollIntoView({ behavior: "smooth" })
+          }
+          className="mt-12 text-sm text-white/25 hover:text-white/55 transition-colors flex flex-col items-center gap-2"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.8 }}
+        >
+          <motion.div
+            className="w-px h-8 bg-gradient-to-b from-transparent via-white/20 to-transparent"
+            animate={{ scaleY: [1, 1.4, 1], opacity: [0.3, 0.7, 0.3] }}
+            transition={{ duration: 2, repeat: Infinity }}
+          />
+          <span className="text-xs font-mono tracking-widest">SCROLL</span>
+        </motion.button>
+      </div>
     </section>
   );
 }

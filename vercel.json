@@ -2,10 +2,5 @@
   "framework": "nextjs",
   "buildCommand": "cd website && npm run build",
   "outputDirectory": "website/.next",
-  "installCommand": "cd website && npm install",
-  "experimentalServices": {
-    "web": {
-      "routePrefix": "/"
-    }
-  }
+  "installCommand": "cd website && npm install"
 }

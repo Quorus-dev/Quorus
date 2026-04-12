@@ -49,6 +49,19 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      {/*
+        This script runs synchronously while the HTML is being parsed —
+        BEFORE the browser can restore the previous scroll position.
+        useEffect is too late (fires after hydration). This is the only
+        reliable fix for scroll-restoration on reload.
+      */}
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{history.scrollRestoration='manual';window.scrollTo(0,0);}catch(e){}`,
+          }}
+        />
+      </head>
       <body
         className="min-h-full text-white"
         style={{ background: "var(--background)" }}
