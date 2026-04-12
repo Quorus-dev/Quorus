@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 04:35 UTC
+Last updated: 2026-04-12 05:42 UTC
 
 ---
 
@@ -72,6 +72,8 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - **Auto-inject messages**: `murmur hook enable` + `murmur inbox` for UserPromptSubmit hook
 - **MCP server instructions**: Agents receive guidance on tools and expected behavior
 - **Summary Cascade v1**: `murmur context [--room R] [--quiet] [--json]` — injected briefing of active goal, briefs, claimed tasks, decisions, status updates, locked files; zero vector DB
+- **Summary Cascade v2**: `murmur context --summarize [--model M]` — LLM-powered 2-3 paragraph brief from raw context data, actionable for agent injection
+- **CRA (murmur resolve)**: `murmur resolve [--room R] [--model M]` — AI-powered git merge conflict resolution using room history for agent intent
 - **Decision recording**: `murmur decision <room> "<text>"` — writes to room state decisions via POST /rooms/{room}/state/decisions; surfaced in `murmur context`
 - **Hook auto-injection**: `murmur hook enable` now runs `murmur inbox --quiet && murmur context --quiet` on every UserPromptSubmit
 
@@ -133,16 +135,16 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                               |
 | ---------- | ------- | ------------------------------------------------------------------ |
+| 2026-04-12 | b0d9572 | feat: Summary Cascade v2 — LLM summarization via --summarize flag  |
+| 2026-04-12 | 4211716 | test: 3 unit tests for murmur resolve (CRA) conflict parsing       |
+| 2026-04-12 | e4c4089 | docs: murmur resolve (CRA) design doc                              |
+| 2026-04-12 | 2e0e9fa | docs: VISION.md — 8 moonshot features for YC pitch                 |
+| 2026-04-12 | 7de5bfa | feat: B2C API keys design doc + Postgres schema                    |
 | 2026-04-12 | c120f1b | SDK: ReceiveResult ack/iter/len + AckError coverage (780 total)    |
 | 2026-04-12 | e0cbdaf | Integration: room broadcast + Primitive B lock lifecycle tests     |
 | 2026-04-12 | 7cdb77c | SDK: astream SSE tests (happy path + invalid JSON skip)            |
 | 2026-04-12 | 38635bb | SDK: async surface coverage (asend, areceive, a_ack)               |
 | 2026-04-12 | f126518 | SDK: Room.lock(), Room.unlock(), Room.state() with JWT refresh     |
-| 2026-04-12 | ea50150 | RoomStateBackend protocol + RedisBackends typing fix               |
-| 2026-04-12 | a146a28 | Fix: wire room_state into RedisBackends (AttributeError in prod)   |
-| 2026-04-12 | 91e819a | Regression tests: brief/subtask message types (4 tests, 770 total) |
-| 2026-04-12 | 38377be | CI: Python 3.10/3.11/3.12 matrix, switch to uv                     |
-| 2026-04-12 | e39b840 | Fix: brief/subtask message_types rejected by relay (422)           |
 | 2026-04-12 | adb8755 | 404 rate limiting — block stale clients hammering deleted rooms    |
 | 2026-04-12 | 4d0c65c | SSE notification-only: always fetch+ACK from durable queue         |
 | 2026-04-12 | a0b86b9 | Fix murmur ps crash when uptime_start is null                      |
