@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "murmur": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/aravkekane/Desktop/Murmur",
+        "python",
+        "-m",
+        "murmur.mcp_server"
+      ],
+      "env": {
+        "INSTANCE_NAME": "arav-agent-3",
+        "RELAY_URL": "http://100.127.251.47:9000",
+        "RELAY_SECRET": "medport-secret"
+      }
+    }
+  }
+}

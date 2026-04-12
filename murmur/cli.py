@@ -4,9 +4,11 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from rich.console import Console
@@ -1607,16 +1609,48 @@ def _cmd_usage(args):
 
 def _cmd_init(args):
     """One-command setup: write config, register MCP server with Claude Code."""
-    name = args.name
-    relay_url = args.relay_url
+    name = args.name.strip()
+    relay_url = (args.relay_url or "").strip().rstrip("/")
     secret = getattr(args, "secret", None) or ""
     api_key = getattr(args, "api_key", None) or ""
-    repo_dir = Path(__file__).resolve().parent.parent
     murmur_dir = Path(__file__).resolve().parent
 
-    # 1. Write config
+    # 0. Validate inputs
+    import re as _re
+    if not name:
+        console.print("[red]Error: name cannot be empty.[/red]")
+        sys.exit(1)
+    if len(name) > 64:
+        console.print("[red]Error: name must be 64 characters or fewer.[/red]")
+        sys.exit(1)
+    if not _re.match(r"^[A-Za-z0-9_\-]+$", name):
+        console.print(
+            f"[red]Error: name '{name}' contains invalid characters.[/red]\n"
+            "  Use only letters, numbers, hyphens, and underscores. No spaces."
+        )
+        sys.exit(1)
+
+    parsed = urlparse(relay_url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        console.print(
+            f"[red]Error: invalid relay URL '{relay_url}'.[/red]\n"
+            "Expected format: http://localhost:8080 or https://relay.example.com"
+        )
+        sys.exit(1)
+
+    if not api_key and not secret:
+        console.print("[red]Error: --secret or --api-key is required.[/red]")
+        sys.exit(1)
+
+    # 1. Write config (warn if overwriting)
     config_dir = Path.home() / "mcp-tunnel"
     config_dir.mkdir(exist_ok=True)
+    config_path = config_dir / "config.json"
+    if config_path.exists():
+        console.print(
+            f"[yellow]Warning: config already exists at {config_path} — overwriting.[/yellow]"
+        )
+
     config = {
         "relay_url": relay_url,
         "instance_name": name,
@@ -1628,50 +1662,95 @@ def _cmd_init(args):
         config["api_key"] = api_key
     else:
         config["relay_secret"] = secret
-    config_path = config_dir / "config.json"
     config_path.write_text(json.dumps(config, indent=2))
-    # Set 0600 permissions — API keys are sensitive
-    config_path.chmod(0o600)
+    config_path.chmod(0o600)  # API keys / secrets are sensitive
     console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
-    # 2. Register MCP server with Claude Code
-    claude_config_path = Path.home() / ".claude.json"
-    if claude_config_path.exists():
-        try:
-            claude_config = json.loads(claude_config_path.read_text())
-        except (json.JSONDecodeError, ValueError):
-            claude_config = {}
+    # 2. Build MCP server command — prefer `uv run`, fall back to `python -m`
+    if shutil.which("uv"):
+        mcp_command = "uv"
+        mcp_args = ["run", "python", "-m", "murmur.mcp_server"]
     else:
-        claude_config = {}
+        mcp_command = sys.executable
+        mcp_args = ["-m", "murmur.mcp_server"]
+        console.print(
+            "[yellow]Note: 'uv' not found on PATH — using Python interpreter directly. "
+            "Install uv for faster startup: https://docs.astral.sh/uv/[/yellow]"
+        )
 
-    if "mcpServers" not in claude_config:
-        claude_config["mcpServers"] = {}
-
-    claude_config["mcpServers"]["murmur"] = {
+    # 3. Register MCP server with Claude Code
+    # Claude Code CLI → ~/.claude/settings.json
+    # Claude Desktop  → ~/.claude.json
+    # Project-level fallback → .mcp.json in cwd
+    mcp_entry = {
         "type": "stdio",
-        "command": "uv",
-        "args": [
-            "run", "--directory", str(repo_dir),
-            "python", str(murmur_dir / "mcp_server.py"),
-        ],
+        "command": mcp_command,
+        "args": mcp_args,
         "env": {},
     }
-    claude_config_path.write_text(json.dumps(claude_config, indent=2))
-    console.print("[green]MCP server registered in ~/.claude.json[/green]")
+    candidates = [
+        Path.home() / ".claude" / "settings.json",
+        Path.home() / ".claude.json",
+    ]
+    registered_path = None
+    for cfg_path in candidates:
+        if cfg_path.exists():
+            try:
+                claude_config = json.loads(cfg_path.read_text())
+            except (json.JSONDecodeError, ValueError):
+                claude_config = {}
+            claude_config.setdefault("mcpServers", {})["murmur"] = mcp_entry
+            cfg_path.write_text(json.dumps(claude_config, indent=2))
+            registered_path = cfg_path
+            break
 
-    # 3. Summary
+    if registered_path:
+        console.print(f"[green]MCP server registered in {registered_path}[/green]")
+    else:
+        # Neither Claude config exists — write project-level .mcp.json
+        mcp_json_path = Path.cwd() / ".mcp.json"
+        existing = {}
+        if mcp_json_path.exists():
+            try:
+                existing = json.loads(mcp_json_path.read_text())
+            except (json.JSONDecodeError, ValueError):
+                pass
+        existing.setdefault("mcpServers", {})["murmur"] = mcp_entry
+        mcp_json_path.write_text(json.dumps(existing, indent=2))
+        console.print(f"[green]MCP server config written to {mcp_json_path}[/green]")
+        console.print(
+            "[dim]  No ~/.claude/settings.json found — wrote project-level .mcp.json[/dim]"
+        )
+
+    # 4. Verify relay is reachable (best-effort, non-blocking)
+    try:
+        resp = httpx.get(f"{relay_url}/health", timeout=3.0)
+        if resp.status_code == 200:
+            console.print(f"[green]Relay reachable at {relay_url}[/green]")
+        else:
+            console.print(
+                f"[yellow]Warning: relay returned HTTP {resp.status_code} — "
+                "is it running?[/yellow]"
+            )
+    except Exception:
+        console.print(
+            f"[yellow]Warning: could not reach relay at {relay_url}. "
+            "Start it with: murmur relay[/yellow]"
+        )
+
+    # 5. Summary
     console.print("")
     console.print(f"[bold]Murmur initialized for: {name}[/bold]")
-    console.print(f"  Relay: {relay_url}")
-    console.print(f"  Config: {config_path}")
-    console.print("  MCP server: registered as 'murmur'")
+    console.print(f"  Relay:      {relay_url}")
+    console.print(f"  Config:     {config_path}")
+    console.print(f"  MCP server: {mcp_command} {' '.join(mcp_args)}")
     console.print("")
     console.print("[yellow]Restart Claude Code to pick up the MCP server.[/yellow]")
     console.print("")
     console.print("Next steps:")
-    console.print("  murmur relay                    # Start the relay server")
-    console.print("  murmur create <room-name>       # Create a room")
-    console.print(f"  murmur invite <room> {name}     # Join yourself")
+    console.print("  murmur create <room-name>       # Create a coordination room")
+    console.print("  murmur join <room-name>          # Join the room")
+    console.print("  murmur doctor                   # Verify everything is wired up")
 
 
 def _cmd_invite_link(args):

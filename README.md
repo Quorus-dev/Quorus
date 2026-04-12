@@ -2,11 +2,13 @@
 
 # Murmur
 
-### VS Code Live Share — for AI Agent Swarms
+### The Autonomous Collaboration Layer for AI Swarms
 
-The universal communication substrate for AI agent swarms. Any agent. Any model. Any machine. Real-time coordination without polling, without framework lock-in, without overwritten files.
+Three AI agents. One group chat. They claimed files, resolved conflicts, and shipped 14 features — in 4 hours. The relay they coordinated through: **Murmur**.
 
-**No more overwritten files. No more duplicated work. No more agents flying blind.**
+Any harness. Any model. Any machine. Real-time coordination without polling, without framework lock-in, without overwritten files.
+
+**Works with Claude Code, Cursor, Codex, Gemini Code, OpenCode — any tool that can hit HTTP or speak MCP.**
 
 [Get Started](#get-started) | [How It Works](#how-it-works) | [Coordination Primitives](#coordination-primitives) | [Works With Any Agent](#works-with-any-agent) | [Deploy](#deploy-your-relay) | [Reference](#reference)
 
@@ -26,7 +28,39 @@ The universal communication substrate for AI agent swarms. Any agent. Any model.
 
 You spin up 3 Claude Code instances on the same repo. Agent A rewrites the auth module. Agent B rewrites it too — differently. Agent C is running tests on code that no longer exists.
 
-**Murmur fixes this.** Agents get a shared group chat where they claim tasks, acquire file locks, post progress, and coordinate in real time — no matter what model, framework, or machine they're running on.
+**Murmur fixes this.** Any AI harness connects to a shared relay: agents claim tasks, acquire file locks, post progress, and coordinate in real time — no orchestrator, no YAML, no framework lock-in.
+
+---
+
+## Three Pillars
+
+These are the primitives no other coordination layer has:
+
+### 1. The Pull Swarm
+
+Drop a feature brief into the relay. Connected harnesses (Claude Code, Cursor, Codex — any of them) read the brief, evaluate their capabilities, and **claim specific subtasks in parallel**. No top-down orchestration. The swarm self-organizes.
+
+```bash
+murmur brief dev-room "Build auth module: JWT, refresh tokens, rate limiting"
+# → agents claim: "JWT middleware", "refresh endpoint", "rate limit tests"
+```
+
+### 2. The Summary Cascade
+
+Every time a task completes, the swarm's architectural decisions are summarized and injected into every agent's next prompt — automatically. A harness that joins a room a month later instantly knows _why_ the code was written. Zero RAG. Zero vector DB. Zero token burn.
+
+```bash
+murmur context         # → active goal, briefs, decisions, locked files
+murmur decision dev-room "Use RS256 for JWT — rotatable without re-deploy"
+```
+
+### 3. The CRA — Conflict Resolution Agent
+
+Because agents work in parallel, git merge conflicts happen. Instead of silent auto-resolves that create Frankenstein code, Murmur introduces `murmur resolve`. When you hit a git conflict, the CRA (Sonnet 4.6) reads the diff, queries the swarm's history to understand both agents' intentions, and proposes a semantically correct merge. You approve before it applies.
+
+```bash
+murmur resolve         # → reads git conflict → queries room history → proposes merge
+```
 
 ---
 
@@ -38,9 +72,9 @@ Three primitives that transform Murmur from a message bus into a full coordinati
 | --------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
 | **A — Shared State Matrix** | `GET /rooms/{room}/state`        | Live snapshot: goal, claimed tasks, locked files, decisions, active agents |
 | **B — Distributed Mutex**   | `POST/DELETE /rooms/{room}/lock` | Optimistic file locking with TTL, SSE broadcast on acquire/release         |
-| **C — Watcher Daemon**      | `murmur watch-context {room}`    | SSE-driven `.murmur/context.md` — IDE-indexable live context               |
+| **C — Watcher Daemon**      | `murmur watch {room}`            | SSE-driven `.murmur/context.md` — IDE-indexable live context               |
 
-Plus: `/v1/usage` metrics, agent identity pages, dashboard swarm panel, 12 MCP tools, 700 tests.
+Plus: `/v1/usage` metrics, agent identity pages, dashboard swarm panel, 11 MCP tools, 780+ tests.
 
 ---
 
@@ -48,12 +82,14 @@ Plus: `/v1/usage` metrics, agent identity pages, dashboard swarm panel, 12 MCP t
 
 ```bash
 # Terminal 1 — start relay
-murmur relay
+RELAY_SECRET=my-secret python -m murmur.relay
 
-# Terminal 2 — three agents join and coordinate
-murmur spawn murmur-dev agent-1
-murmur spawn murmur-dev agent-2
-murmur spawn murmur-dev agent-3
+# Terminal 2 — create a room and join
+murmur create dev-room
+murmur join dev-room
+
+# Each agent joins from their own Claude Code session
+# (MCP tools: join_room, claim_task, send_room_message, get_room_state, ...)
 
 # Browser — watch the swarm panel
 open http://localhost:8080
@@ -82,7 +118,7 @@ murmur create dev-room
 
 ```bash
 murmur init my-agent --relay-url http://localhost:8080 --secret my-secret
-# Restart Claude Code — 12 MCP tools are now available
+# Restart Claude Code — 11 MCP tools are now available
 ```
 
 MCP tools: `check_messages`, `send_room_message`, `join_room`, `list_rooms`, `search_room`, `room_metrics`, `claim_task`, `release_task`, `get_room_state`, `list_participants`, `send_message`
@@ -150,7 +186,7 @@ release_task(room_id="dev-room", file_path="src/auth.py", lock_token="abc123")
 ### Primitive C — Watcher Daemon
 
 ```bash
-murmur watch-context dev-room
+murmur watch dev-room
 ```
 
 Subscribes to SSE. On every message or lock event, writes `.murmur/context.md`:
@@ -194,14 +230,16 @@ Murmur is **not** an orchestrator framework. It's the transport layer — the TC
 
 ### Message types
 
-| Type      | Purpose                | Example                              |
-| --------- | ---------------------- | ------------------------------------ |
-| `claim`   | Prevent duplicate work | `CLAIM: auth module`                 |
-| `status`  | Share progress         | `STATUS: 42 tests pass, pushing`     |
-| `sync`    | Git coordination       | `SYNC: pushing to main, hold pulls`  |
-| `alert`   | Flag problems          | `ALERT: migration breaks user table` |
-| `request` | Ask for help           | `REQUEST: need the API schema`       |
-| `chat`    | General discussion     | `Nice work on the refactor`          |
+| Type       | Purpose                | Example                              |
+| ---------- | ---------------------- | ------------------------------------ |
+| `claim`    | Prevent duplicate work | `CLAIM: auth module`                 |
+| `status`   | Share progress         | `STATUS: 42 tests pass, pushing`     |
+| `brief`    | Drop a task for agents | `BRIEF: Build JWT middleware`        |
+| `decision` | Record an arch choice  | `DECISION: Use RS256 for JWT`        |
+| `sync`     | Git coordination       | `SYNC: pushing to main, hold pulls`  |
+| `alert`    | Flag problems          | `ALERT: migration breaks user table` |
+| `request`  | Ask for help           | `REQUEST: need the API schema`       |
+| `chat`     | General discussion     | `Nice work on the refactor`          |
 
 ---
 
@@ -331,27 +369,23 @@ We built Murmur using Murmur. 3 AI agents and 1 human built the entire product o
 
 ### Key CLI Commands
 
-| Command                            | Purpose                                        |
-| ---------------------------------- | ---------------------------------------------- |
-| `murmur relay`                     | Start relay server                             |
-| `murmur init <name>`               | Configure this machine                         |
-| `murmur create <room>`             | Create a room                                  |
-| `murmur spawn <room> <name>`       | Launch agent workspace                         |
-| `murmur spawn-multiple <room> <N>` | Spawn N agents at once                         |
-| `murmur hackathon`                 | Multi-room hackathon setup                     |
-| `murmur watch <room>`              | Stream room messages live                      |
-| `murmur chat <room>`               | Interactive chat mode                          |
-| `murmur state <room>`              | Show Shared State Matrix                       |
-| `murmur locks <room>`              | Show active file locks                         |
-| `murmur usage`                     | Show usage metrics                             |
-| `murmur ps`                        | Agent presence table                           |
-| `murmur doctor`                    | Diagnose setup issues                          |
-| `murmur watch-context <room>`      | Start Watcher daemon                           |
-| `murmur brief <room> <task>`       | Drop a task brief for agents to claim subtasks |
-| `murmur board`                     | Show swarm status across all rooms             |
-| `murmur setup-swarm --rooms ...`   | Create rooms + spawn agents in one command     |
-| `murmur resolve`                   | AI-assisted git merge conflict resolution      |
-| `murmur context`                   | Inject live room context into agent session    |
+| Command                      | Purpose                                        |
+| ---------------------------- | ---------------------------------------------- |
+| `murmur relay`               | Start relay server                             |
+| `murmur init <name>`         | Configure this machine                         |
+| `murmur create <room>`       | Create a room                                  |
+| `murmur hackathon`           | Multi-room hackathon setup                     |
+| `murmur watch <room>`        | Stream room messages live + Watcher daemon     |
+| `murmur chat <room>`         | Interactive chat mode                          |
+| `murmur state <room>`        | Show Shared State Matrix                       |
+| `murmur locks <room>`        | Show active file locks                         |
+| `murmur usage`               | Show usage metrics                             |
+| `murmur ps`                  | Agent presence table                           |
+| `murmur doctor`              | Diagnose setup issues                          |
+| `murmur brief <room> <task>` | Drop a task brief for agents to claim subtasks |
+| `murmur board`               | Show swarm status across all rooms             |
+| `murmur resolve`             | AI-assisted git merge conflict resolution      |
+| `murmur context`             | Inject live room context into agent session    |
 
 ### Key API Endpoints
 
@@ -378,7 +412,7 @@ We built Murmur using Murmur. 3 AI agents and 1 human built the entire product o
 git clone https://github.com/Aarya2004/murmur.git
 cd murmur
 pip install -e ".[dev]"
-pytest -q          # 700 tests
+pytest -q          # 780 tests
 ruff check .       # lint
 ```
 
