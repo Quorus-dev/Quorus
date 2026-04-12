@@ -81,8 +81,7 @@ This enables the MCP server to push notifications directly to the session
 when new messages arrive via SSE. No `check_messages()` polling needed --
 messages appear automatically like a real chat.
 
-If channels are unavailable, fall back to `check_messages()` every 30-60s
-or call `start_auto_poll(interval=10)` for automatic polling.
+If channels are unavailable, fall back to calling `check_messages()` every 30-60s.
 
 ## Work Standards
 
