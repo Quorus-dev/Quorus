@@ -1227,7 +1227,10 @@ You are {name} in the {room} Murmur coordination room. Use MCP tools to coordina
 Check messages after every task. Use CLAIM: prefix for file/task locks. Post STATUS: when done."""
 
     console.print(rules, highlight=False, markup=False)
-    console.print(f"\n[green]{name} joined room '{room}'. Restart Gemini CLI to activate MCP.[/green]")
+    console.print(
+        f"\n[green]{name} joined room '{room}'. "
+        "Restart Gemini CLI to activate MCP.[/green]"
+    )
 
 
 def _connect_http(
@@ -1238,7 +1241,10 @@ def _connect_http(
     console.print(f"  Agent:  [cyan]{name}[/cyan]")
     console.print(f"  Room:   [cyan]{room}[/cyan]")
     console.print(f"  Relay:  [cyan]{relay_url}[/cyan]\n")
-    console.print("[dim]Works with any agent: Codex, Antigravity, Open Interpreter, Windsurf, etc.[/dim]\n")
+    console.print(
+        "[dim]Works with any agent: Codex, Antigravity, Open Interpreter,"
+        " Windsurf, and more.[/dim]\n"
+    )
 
     console.print("[bold]System prompt to give the agent:[/bold]\n")
     system_prompt = f"""\
