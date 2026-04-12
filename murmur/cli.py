@@ -727,7 +727,7 @@ async def _ps() -> None:
                     uptime = f"{hours}h {minutes}m"
                 else:
                     uptime = f"{minutes}m"
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, TypeError):
                 uptime = "—"
 
             # Format last heartbeat as relative time
@@ -741,7 +741,7 @@ async def _ps() -> None:
                     hb_str = f"{secs // 60}m ago"
                 else:
                     hb_str = f"{secs // 3600}h ago"
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, TypeError):
                 hb_str = "—"
 
             table.add_row(
