@@ -56,17 +56,15 @@ async def send_message(
     tid = _tid(auth)
     backends = request.app.state.backends
 
-    # Build idempotency cache key with body fingerprint
-    # This ensures same key + different body = different cache entry
-    idempotency_cache_key = None
-    if idempotency_key:
-        body_fp = _body_fingerprint(msg.model_dump())
-        idempotency_cache_key = f"dm:{idempotency_key}:{body_fp}"
+    # Calculate body fingerprint for idempotency verification
+    body_fp = _body_fingerprint(msg.model_dump()) if idempotency_key else None
+    idempotency_cache_key = f"dm:{idempotency_key}" if idempotency_key else None
 
     # Atomically reserve the idempotency key (prevents race conditions)
+    # Returns 409 if same key used with different body
     if idempotency_cache_key:
         cached = await backends.idempotency.reserve(
-            tid, idempotency_cache_key, _IDEMPOTENCY_TTL
+            tid, idempotency_cache_key, body_fp, _IDEMPOTENCY_TTL
         )
         if cached:
             return cached
@@ -85,7 +83,7 @@ async def send_message(
     if idempotency_cache_key:
         try:
             await backends.idempotency.set(
-                tid, idempotency_cache_key, result, _IDEMPOTENCY_TTL
+                tid, idempotency_cache_key, body_fp, result, _IDEMPOTENCY_TTL
             )
         except Exception as e:
             _logger.warning("Failed to store idempotency result: %s", e)

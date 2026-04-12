@@ -206,8 +206,8 @@ class TestRedisIdempotency:
 
         backend = RedisIdempotencyBackend(redis_client)
 
-        # First set
-        await backend.set("tenant1", "key-1", {"id": "msg-1"}, ttl=60)
+        # First set (with body fingerprint)
+        await backend.set("tenant1", "key-1", "fp-abc123", {"id": "msg-1"}, ttl=60)
 
         # Should be able to get
         result = await backend.get("tenant1", "key-1")
@@ -218,7 +218,7 @@ class TestRedisIdempotency:
         backend = RedisIdempotencyBackend(redis_client)
 
         # Set with 1 second TTL
-        await backend.set("tenant1", "key-expire", {"id": "msg-1"}, ttl=1)
+        await backend.set("tenant1", "key-expire", "fp-abc123", {"id": "msg-1"}, ttl=1)
 
         # Should exist immediately
         result = await backend.get("tenant1", "key-expire")
@@ -230,6 +230,26 @@ class TestRedisIdempotency:
         # Should be gone
         result = await backend.get("tenant1", "key-expire")
         assert result is None
+
+    async def test_idempotency_body_mismatch_409(self, redis_client):
+        """Same key with different body should return 409."""
+        import pytest
+        from fastapi import HTTPException
+
+        backend = RedisIdempotencyBackend(redis_client)
+
+        # Reserve with one body fingerprint
+        result = await backend.reserve("tenant1", "key-conflict", "fp-body1", ttl=60)
+        assert result is None  # Reservation succeeded
+
+        # Store result
+        await backend.set("tenant1", "key-conflict", "fp-body1", {"id": "msg-1"}, ttl=60)
+
+        # Try to reserve with different body fingerprint - should 409
+        with pytest.raises(HTTPException) as exc_info:
+            await backend.reserve("tenant1", "key-conflict", "fp-body2", ttl=60)
+        assert exc_info.value.status_code == 409
+        assert "different request body" in exc_info.value.detail
 
 
 class TestRedisWebhookQueue:
