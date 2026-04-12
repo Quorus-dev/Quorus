@@ -823,3 +823,214 @@ async def test_cmd_usage_relay_down(capsys):
 
     captured = capsys.readouterr()
     assert "Cannot connect" in captured.out
+
+
+# -----------------------------------------------------------------------------
+# inbox / hook command tests
+# -----------------------------------------------------------------------------
+
+
+def test_cmd_inbox_no_messages(capsys):
+    """When no messages, inbox should exit silently."""
+    import httpx as httpx_mod
+
+    from murmur.cli import _cmd_inbox
+
+    peek_resp = MagicMock()
+    peek_resp.status_code = 200
+    peek_resp.json.return_value = {"count": 0, "pending": 0}
+    peek_resp.raise_for_status = MagicMock()
+
+    with patch.object(httpx_mod, "get", return_value=peek_resp):
+        args = MagicMock()
+        args.quiet = False
+        args.json = False
+        _cmd_inbox(args)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_cmd_inbox_with_messages(capsys):
+    """When messages exist, inbox should print them."""
+    import httpx as httpx_mod
+
+    from murmur.cli import _cmd_inbox
+
+    peek_resp = MagicMock()
+    peek_resp.status_code = 200
+    peek_resp.json.return_value = {"count": 2, "pending": 0}
+    peek_resp.raise_for_status = MagicMock()
+
+    fetch_resp = MagicMock()
+    fetch_resp.status_code = 200
+    fetch_resp.json.return_value = {
+        "messages": [
+            {"from_name": "alice", "content": "Hello", "timestamp": "2026-04-12T12:34:00Z"},
+            {"from_name": "bob", "content": "World", "timestamp": "2026-04-12T12:35:00Z"},
+        ],
+        "ack_token": "tok123",
+    }
+    fetch_resp.raise_for_status = MagicMock()
+
+    with patch.object(httpx_mod, "get", side_effect=[peek_resp, fetch_resp]):
+        args = MagicMock()
+        args.quiet = False
+        args.json = False
+        _cmd_inbox(args)
+
+    captured = capsys.readouterr()
+    assert "[murmur]" in captured.out
+    assert "2 new messages" in captured.out
+    assert "alice" in captured.out
+    assert "bob" in captured.out
+
+
+def test_cmd_inbox_json_output(capsys):
+    """--json flag should output raw JSON."""
+    import httpx as httpx_mod
+
+    from murmur.cli import _cmd_inbox
+
+    peek_resp = MagicMock()
+    peek_resp.status_code = 200
+    peek_resp.json.return_value = {"count": 1, "pending": 0}
+    peek_resp.raise_for_status = MagicMock()
+
+    messages = [{"from_name": "alice", "content": "Test", "timestamp": "2026-04-12T12:34:00Z"}]
+    fetch_resp = MagicMock()
+    fetch_resp.status_code = 200
+    fetch_resp.json.return_value = {"messages": messages, "ack_token": "tok"}
+    fetch_resp.raise_for_status = MagicMock()
+
+    with patch.object(httpx_mod, "get", side_effect=[peek_resp, fetch_resp]):
+        args = MagicMock()
+        args.quiet = False
+        args.json = True
+        _cmd_inbox(args)
+
+    captured = capsys.readouterr()
+    import json
+    output = json.loads(captured.out)
+    assert output[0]["from_name"] == "alice"
+
+
+def test_cmd_inbox_relay_unreachable(capsys):
+    """Should exit silently when relay is unreachable."""
+    import httpx as httpx_mod
+
+    from murmur.cli import _cmd_inbox
+
+    with patch.object(httpx_mod, "get", side_effect=httpx_mod.ConnectError("refused")):
+        args = MagicMock()
+        args.quiet = False
+        args.json = False
+        _cmd_inbox(args)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""  # Silent exit
+
+
+def test_cmd_hook_status_not_configured(capsys, tmp_path):
+    """Hook status should show not configured when no hook exists."""
+    from murmur.cli import _cmd_hook
+
+    settings_path = tmp_path / ".claude" / "settings.json"
+    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+        args = MagicMock()
+        args.action = "status"
+        _cmd_hook(args)
+
+    captured = capsys.readouterr()
+    assert "not configured" in captured.out
+
+
+def test_cmd_hook_enable_creates_hook(capsys, tmp_path):
+    """Hook enable should create the settings file with hook config."""
+    import json
+
+    from murmur.cli import _cmd_hook
+
+    settings_path = tmp_path / ".claude" / "settings.json"
+    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+        args = MagicMock()
+        args.action = "enable"
+        _cmd_hook(args)
+
+    captured = capsys.readouterr()
+    assert "enabled" in captured.out
+
+    # Verify file was created
+    assert settings_path.exists()
+    settings = json.loads(settings_path.read_text())
+    assert "UserPromptSubmit" in settings["hooks"]
+    hooks = settings["hooks"]["UserPromptSubmit"]
+    assert any("murmur inbox" in str(h) for h in hooks)
+
+
+def test_cmd_hook_enable_already_enabled(capsys, tmp_path):
+    """Hook enable when already enabled should show warning."""
+    import json
+
+    from murmur.cli import MURMUR_HOOK_CONFIG, _cmd_hook
+
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(json.dumps({
+        "hooks": {"UserPromptSubmit": [MURMUR_HOOK_CONFIG]}
+    }))
+
+    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+        args = MagicMock()
+        args.action = "enable"
+        _cmd_hook(args)
+
+    captured = capsys.readouterr()
+    assert "already enabled" in captured.out
+
+
+def test_cmd_hook_disable_removes_hook(capsys, tmp_path):
+    """Hook disable should remove the murmur hook from settings."""
+    import json
+
+    from murmur.cli import MURMUR_HOOK_CONFIG, _cmd_hook
+
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(json.dumps({
+        "hooks": {"UserPromptSubmit": [MURMUR_HOOK_CONFIG]}
+    }))
+
+    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+        args = MagicMock()
+        args.action = "disable"
+        _cmd_hook(args)
+
+    captured = capsys.readouterr()
+    assert "disabled" in captured.out
+
+    # Verify hook was removed
+    settings = json.loads(settings_path.read_text())
+    hooks = settings["hooks"]["UserPromptSubmit"]
+    assert not any("murmur inbox" in str(h) for h in hooks)
+
+
+def test_cmd_hook_status_when_enabled(capsys, tmp_path):
+    """Hook status should show enabled when hook exists."""
+    import json
+
+    from murmur.cli import MURMUR_HOOK_CONFIG, _cmd_hook
+
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(json.dumps({
+        "hooks": {"UserPromptSubmit": [MURMUR_HOOK_CONFIG]}
+    }))
+
+    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+        args = MagicMock()
+        args.action = "status"
+        _cmd_hook(args)
+
+    captured = capsys.readouterr()
+    assert "enabled" in captured.out
