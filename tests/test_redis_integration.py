@@ -276,8 +276,10 @@ class TestRedisWebhookQueue:
         jobs2 = await backend.fetch(count=10)
         assert len(jobs2) == 0
 
-    async def test_nack_retries_job(self, redis_client):
-        """NACKed jobs should be re-enqueued for retry."""
+    async def test_nack_schedules_retry_with_backoff(self, redis_client):
+        """NACKed jobs should be scheduled for retry with exponential backoff."""
+        import time
+
         backend = RedisWebhookQueueBackend(redis_client)
 
         job = {"target": "nack-test", "callback_url": "https://example.com/hook",
@@ -293,10 +295,29 @@ class TestRedisWebhookQueue:
         will_retry = await backend.nack(original_id, "connection failed", max_retries=3)
         assert will_retry is True
 
-        # Should get the job again (re-enqueued)
+        # Job should be in delayed set, not immediately available
+        stats = await backend.get_stats()
+        assert stats["delayed"] == 1
+        assert stats["queue_length"] == 0
+
+        # Fetch should return nothing (job is delayed)
         jobs2 = await backend.fetch(count=10)
-        assert len(jobs2) == 1
-        new_id, new_job = jobs2[0]
+        assert len(jobs2) == 0
+
+        # Manually promote the delayed job by setting its score to past
+        # (simulating time passing)
+        delayed_jobs = await redis_client.zrange("webhook:delay", 0, -1)
+        assert len(delayed_jobs) == 1
+        await redis_client.zadd("webhook:delay", {delayed_jobs[0]: time.time() - 1})
+
+        # Now promote_delayed should move it to the queue
+        promoted = await backend.promote_delayed()
+        assert promoted == 1
+
+        # Job should now be fetchable
+        jobs3 = await backend.fetch(count=10)
+        assert len(jobs3) == 1
+        new_id, new_job = jobs3[0]
         assert new_id != original_id  # New entry
         assert new_job["attempt"] == 1
         assert new_job["last_error"] == "connection failed"

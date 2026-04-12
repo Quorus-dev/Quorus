@@ -655,7 +655,7 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
 
     webhook_svc = app.state.webhook_service
 
-    # Register webhook
+    # Register webhook (patch DNS for registration-time SSRF check)
     with patch("socket.getaddrinfo", _fake_getaddrinfo_public):
         await client.post(
             "/webhooks",
@@ -669,7 +669,9 @@ async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict
     mock_http_client.post = AsyncMock(return_value=mock_response)
     mock_http_client.is_closed = False
 
-    with mock_patch.object(webhook_svc, "_client", mock_http_client):
+    # Patch both the HTTP client and delivery-time SSRF check
+    with mock_patch.object(webhook_svc, "_client", mock_http_client), \
+         patch("socket.getaddrinfo", _fake_getaddrinfo_public):
         # Ensure the worker is running
         webhook_svc.start()
         await client.post(
