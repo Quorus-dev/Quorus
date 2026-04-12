@@ -109,7 +109,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~Critical~~ | ~~Auto-ACK default is a footgun~~            | ✅ `ack=manual` is now the default                      |
 | ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` + atomic SET NX reservation        |
 | ~~Critical~~ | ~~Room state not membership-scoped~~         | ✅ require_room_member() on all state/lock endpoints    |
-| ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend + Lua scripts for atomic ops   |
+| ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend + Lua scripts (acquire/release/expire) |
 | ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
 | ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH quota (default 10000)            |
@@ -145,7 +145,8 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
-| 2026-04-12 | (HEAD)  | fix: atomic distributed locks + idempotency 409 on body mismatch          |
+| 2026-04-12 | 71983c6 | fix: atomic task expiry + ORM FK mismatch                                 |
+| 2026-04-12 | e422b09 | fix: atomic distributed locks + idempotency 409 on body mismatch          |
 | 2026-04-12 | 082cd18 | fix: SSE wakeup filter, idempotency body fingerprint, dashboard token     |
 | 2026-04-12 | 6764411 | fix: scope usage/participant endpoints by auth level + invite JS fix      |
 | 2026-04-12 | f0f3139 | feat: RedisRoomStateBackend for distributed mutex (cross-replica locks)   |
