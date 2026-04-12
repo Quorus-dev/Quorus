@@ -175,15 +175,17 @@ async def claim_task(
 
     # Grant the lock atomically (prevents TOCTOU race conditions)
     lock_token = str(uuid.uuid4())
-    expires_at = (
-        datetime.now(timezone.utc) + timedelta(seconds=body.ttl_seconds)
-    ).isoformat()
+    expires_dt = datetime.now(timezone.utc) + timedelta(seconds=body.ttl_seconds)
+    expires_at = expires_dt.isoformat()
+    # Store epoch timestamp for accurate Lua comparison (avoids ISO parsing bugs)
+    expires_at_epoch = int(expires_dt.timestamp())
     task_id = str(uuid.uuid4())
 
     lock_data = {
         "held_by": body.claimed_by,
         "lock_token": lock_token,
         "expires_at": expires_at,
+        "expires_at_epoch": expires_at_epoch,
     }
     task_data = {
         "id": task_id,
@@ -192,6 +194,7 @@ async def claim_task(
         "description": body.description,
         "lock_token": lock_token,
         "expires_at": expires_at,
+        "expires_at_epoch": expires_at_epoch,
     }
 
     acquired, existing = await backends.room_state.try_acquire_lock(

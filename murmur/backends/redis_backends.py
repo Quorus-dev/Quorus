@@ -127,6 +127,33 @@ end
 return 1
 """
 
+# Lua: atomic quota-check + enqueue (no message loss)
+# KEYS[n] = stream keys (one per recipient)
+# ARGV[1] = maxlen (quota)
+# ARGV[2..n+1] = JSON messages (one per recipient, same order as KEYS)
+# Returns JSON array of indices (0-based) that were rejected due to quota
+_QUOTA_ENQUEUE_LUA = """
+local maxlen = tonumber(ARGV[1])
+local rejected = {}
+local num_keys = #KEYS
+
+for i = 1, num_keys do
+    local key = KEYS[i]
+    local msg = ARGV[i + 1]
+    local len = redis.call('XLEN', key)
+
+    if len >= maxlen then
+        -- Reject: queue is at capacity
+        table.insert(rejected, i - 1)  -- 0-based index
+    else
+        -- Accept: add to stream
+        redis.call('XADD', key, '*', 'data', msg)
+    end
+end
+
+return cjson.encode(rejected)
+"""
+
 
 class RedisMessageBackend:
     """Per-recipient DM inbox backed by Redis Streams.
@@ -176,35 +203,48 @@ class RedisMessageBackend:
     async def enqueue_fanout(
         self, tenant_id: str, messages_by_recipient: dict[str, dict],
         maxlen: int | None = None,
-    ) -> None:
+    ) -> set[str]:
         """Fan-out: enqueue one message per recipient in a single pipeline.
 
         This batches all writes into a single Redis round-trip, reducing
         latency for room messages with many recipients from O(N) to O(1).
 
         Args:
-            maxlen: If set, use XADD MAXLEN ~ to atomically enforce a per-stream
-                    cap. This prevents concurrent sends from overshooting quotas.
-                    The ~ (approximate) trimming is more efficient than exact.
+            maxlen: If set, atomically check queue length and reject recipients
+                    at capacity. This is true backpressure (no message loss).
+
+        Returns:
+            Set of recipient names that were rejected due to queue capacity.
         """
         if not messages_by_recipient:
-            return
+            return set()
 
         # Ensure consumer groups exist for all recipients
-        keys = [self._key(tenant_id, name) for name in messages_by_recipient]
+        recipients = list(messages_by_recipient.keys())
+        keys = [self._key(tenant_id, name) for name in recipients]
         for key in keys:
             await self._ensure_group(key)
 
-        # Pipeline all XADD commands with optional MAXLEN for atomic backpressure
-        async with self._r.pipeline(transaction=False) as pipe:
-            for recipient, message in messages_by_recipient.items():
-                key = self._key(tenant_id, recipient)
-                if maxlen:
-                    # MAXLEN ~ N trims to approximately N entries (more efficient)
-                    pipe.xadd(key, {"data": json.dumps(message)}, maxlen=maxlen, approximate=True)
-                else:
+        if maxlen:
+            # Use Lua script for atomic quota-check + enqueue (no message loss)
+            messages = [json.dumps(messages_by_recipient[r]) for r in recipients]
+            result = await self._r.eval(
+                _QUOTA_ENQUEUE_LUA,
+                len(keys),
+                *keys,
+                maxlen,
+                *messages,
+            )
+            rejected_indices = json.loads(result)
+            return {recipients[i] for i in rejected_indices}
+        else:
+            # No quota: simple pipeline
+            async with self._r.pipeline(transaction=False) as pipe:
+                for recipient, message in messages_by_recipient.items():
+                    key = self._key(tenant_id, recipient)
                     pipe.xadd(key, {"data": json.dumps(message)})
-            await pipe.execute()
+                await pipe.execute()
+            return set()
 
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
         """Read and acknowledge all messages (destructive read)."""
@@ -1325,6 +1365,7 @@ class RedisRoomStateBackend:
     # Lua script: atomic task expiry with token-verified lock cleanup
     # Returns: JSON array of expired task IDs
     # Only removes a lock if the stored token matches the expired task's token
+    # Uses numeric expires_at_epoch for accurate comparison (no ISO parsing)
     _LUA_EXPIRE_TASKS = """
     local tasks_key = KEYS[1]
     local locks_key = KEYS[2]
@@ -1340,20 +1381,8 @@ class RedisRoomStateBackend:
 
     for _, task_json in ipairs(tasks) do
         local task = cjson.decode(task_json)
-        local expires_at = task.expires_at
-        local exp_ts = nil
-
-        -- Parse ISO8601 timestamp (simplified: extract epoch from string)
-        -- Format: 2026-04-12T12:34:56.789+00:00 or similar
-        if expires_at then
-            -- Use Lua pattern to extract date/time components
-            local y, mo, d, h, mi, s = expires_at:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
-            if y then
-                -- Approximate conversion (assumes UTC, ignores leap seconds)
-                local days = (tonumber(y) - 1970) * 365 + (tonumber(mo) - 1) * 30 + tonumber(d)
-                exp_ts = days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
-            end
-        end
+        -- Use numeric epoch timestamp (stored as expires_at_epoch)
+        local exp_ts = task.expires_at_epoch
 
         if exp_ts and exp_ts < now_ts then
             -- Task expired
@@ -1372,7 +1401,7 @@ class RedisRoomStateBackend:
                 end
             end
         else
-            -- Task still valid
+            -- Task still valid (no expires_at_epoch = never expires)
             table.insert(live_tasks, task_json)
         end
     end

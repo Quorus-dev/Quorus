@@ -492,12 +492,14 @@ class TestRedisRoomStateLocking:
         """Expiry should only remove locks whose token matches the expired task."""
         backend = RedisRoomStateBackend(redis_client)
 
-        # Create an expired lock
+        # Create an expired lock (epoch 1577836800 = 2020-01-01T00:00:00+00:00)
         past_ts = "2020-01-01T00:00:00+00:00"
+        past_epoch = 1577836800
         old_lock = {
             "held_by": "agent-old",
             "lock_token": "old-token",
             "expires_at": past_ts,
+            "expires_at_epoch": past_epoch,
         }
         old_task = {
             "id": "old-task",
@@ -505,6 +507,7 @@ class TestRedisRoomStateLocking:
             "claimed_by": "agent-old",
             "lock_token": "old-token",
             "expires_at": past_ts,
+            "expires_at_epoch": past_epoch,
         }
 
         # Manually insert the old task/lock (simulating it was acquired earlier)
@@ -535,7 +538,7 @@ class TestRedisRoomStateLocking:
 
 
 class TestRedisMessageBackpressure:
-    """Test atomic backpressure via MAXLEN."""
+    """Test atomic backpressure via quota-check + reject (no message loss)."""
 
     async def test_maxlen_parameter_accepted(self, redis_client):
         """enqueue_fanout should accept maxlen parameter without error."""
@@ -546,7 +549,10 @@ class TestRedisMessageBackpressure:
 
         # Verify that calling with maxlen doesn't raise an error
         messages = {recipient: {"id": "msg-1", "content": "message 1"}}
-        await backend.enqueue_fanout("tenant1", messages, maxlen=5)
+        rejected = await backend.enqueue_fanout("tenant1", messages, maxlen=5)
+
+        # No rejection for first message
+        assert rejected == set()
 
         # Message should be enqueued
         depth = await backend.recipient_depth("tenant1", recipient)
@@ -562,7 +568,63 @@ class TestRedisMessageBackpressure:
         # Enqueue 10 separate messages to one recipient
         for i in range(10):
             messages = {recipient: {"id": f"msg-{i}", "content": f"message {i}"}}
-            await backend.enqueue_fanout("tenant1", messages, maxlen=None)
+            rejected = await backend.enqueue_fanout("tenant1", messages, maxlen=None)
+            assert rejected == set()
 
         depth = await backend.recipient_depth("tenant1", recipient)
         assert depth == 10
+
+    async def test_maxlen_rejects_at_capacity(self, redis_client):
+        """When queue is at capacity, new messages should be rejected (not trimmed)."""
+        backend = RedisMessageBackend(redis_client)
+
+        # Use unique recipient
+        recipient = f"recipient-reject-{id(self)}"
+        maxlen = 5
+
+        # Fill queue to capacity
+        for i in range(maxlen):
+            messages = {recipient: {"id": f"msg-{i}", "content": f"message {i}"}}
+            rejected = await backend.enqueue_fanout("tenant1", messages, maxlen=maxlen)
+            assert rejected == set()
+
+        # Verify at capacity
+        depth = await backend.recipient_depth("tenant1", recipient)
+        assert depth == maxlen
+
+        # Next message should be rejected
+        messages = {recipient: {"id": "msg-overflow", "content": "should be rejected"}}
+        rejected = await backend.enqueue_fanout("tenant1", messages, maxlen=maxlen)
+        assert recipient in rejected
+
+        # Queue depth unchanged (no trimming, no new message)
+        depth_after = await backend.recipient_depth("tenant1", recipient)
+        assert depth_after == maxlen
+
+    async def test_maxlen_mixed_accept_reject(self, redis_client):
+        """Fanout to multiple recipients: some accepted, some rejected."""
+        backend = RedisMessageBackend(redis_client)
+        maxlen = 3
+
+        # Set up two recipients: one at capacity, one empty
+        full_recipient = f"recipient-full-{id(self)}"
+        empty_recipient = f"recipient-empty-{id(self)}"
+
+        # Fill one recipient to capacity
+        for i in range(maxlen):
+            messages = {full_recipient: {"id": f"msg-{i}", "content": f"m{i}"}}
+            await backend.enqueue_fanout("tenant1", messages, maxlen=maxlen)
+
+        # Fanout to both
+        messages = {
+            full_recipient: {"id": "new-1", "content": "to full"},
+            empty_recipient: {"id": "new-2", "content": "to empty"},
+        }
+        rejected = await backend.enqueue_fanout("tenant1", messages, maxlen=maxlen)
+
+        # Full recipient rejected, empty accepted
+        assert rejected == {full_recipient}
+
+        # Verify depths
+        assert await backend.recipient_depth("tenant1", full_recipient) == maxlen
+        assert await backend.recipient_depth("tenant1", empty_recipient) == 1

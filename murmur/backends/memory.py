@@ -64,18 +64,21 @@ class InMemoryMessageBackend:
     async def enqueue_fanout(
         self, tenant_id: str, messages_by_recipient: dict[str, dict],
         maxlen: int | None = None,
-    ) -> None:
-        """Fan-out: enqueue one message per recipient."""
+    ) -> set[str]:
+        """Fan-out: enqueue one message per recipient.
+
+        Returns set of recipients rejected due to queue capacity.
+        """
+        rejected: set[str] = set()
         async with self._lock:
             for recipient, message in messages_by_recipient.items():
                 key = (tenant_id, recipient)
+                # Check capacity before enqueue (true backpressure)
+                if maxlen and len(self._queues[key]) >= maxlen:
+                    rejected.add(recipient)
+                    continue
                 self._queues[key].append(message)
-                # Enforce maxlen by trimming oldest entries
-                if maxlen and len(self._queues[key]) > maxlen:
-                    # Remove oldest entries to stay at maxlen
-                    excess = len(self._queues[key]) - maxlen
-                    for _ in range(excess):
-                        self._queues[key].popleft()
+        return rejected
 
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
         async with self._lock:
@@ -1120,12 +1123,15 @@ class InMemoryRoomStateBackend:
             expired_ids: list[str] = []
             live_tasks: list[dict] = []
             for task in self._state[key]["claimed_tasks"]:
-                # expires_at is ISO8601; parse to epoch for comparison
+                # Prefer numeric expires_at_epoch if available (more reliable)
+                # Fall back to parsing ISO string for backwards compatibility
                 try:
-                    from datetime import datetime
-                    exp = datetime.fromisoformat(
-                        task["expires_at"]
-                    ).timestamp()
+                    exp = task.get("expires_at_epoch")
+                    if exp is None:
+                        from datetime import datetime
+                        exp = datetime.fromisoformat(
+                            task["expires_at"]
+                        ).timestamp()
                     if exp < now:
                         expired_ids.append(task["id"])
                         fp = task.get("file_path")
