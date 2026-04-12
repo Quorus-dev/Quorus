@@ -1731,3 +1731,155 @@ def test_cmd_init_warns_on_existing_config(tmp_path, monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "overwriting" in captured.out
+
+
+# ==================== share/quickjoin tests ====================
+
+
+def test_encode_join_token_with_secret():
+    """Token encodes relay URL, room, expiry, and secret."""
+    from murmur.cli import _encode_join_token, _decode_join_token
+
+    token = _encode_join_token(
+        relay_url="https://relay.example.com",
+        room="test-room",
+        secret="my-secret",
+    )
+
+    assert token.startswith("murmur://")
+    payload = _decode_join_token(token)
+    assert payload is not None
+    assert payload["r"] == "https://relay.example.com"
+    assert payload["n"] == "test-room"
+    assert payload["s"] == "my-secret"
+    assert "e" in payload  # expiry timestamp
+
+
+def test_encode_join_token_with_api_key():
+    """Token uses api_key field when provided."""
+    from murmur.cli import _encode_join_token, _decode_join_token
+
+    token = _encode_join_token(
+        relay_url="https://relay.example.com",
+        room="test-room",
+        api_key="mur_abc123",
+    )
+
+    payload = _decode_join_token(token)
+    assert payload is not None
+    assert payload["k"] == "mur_abc123"
+    assert "s" not in payload  # secret not included when api_key present
+
+
+def test_decode_join_token_invalid_prefix():
+    """Tokens without murmur:// prefix are rejected."""
+    from murmur.cli import _decode_join_token
+
+    result = _decode_join_token("https://not-a-token")
+    assert result is None
+
+
+def test_decode_join_token_expired(monkeypatch):
+    """Expired tokens are rejected."""
+    import base64
+    import json
+    import time
+
+    from murmur.cli import _decode_join_token
+
+    # Create token that expired 1 hour ago
+    payload = {
+        "r": "https://relay.example.com",
+        "n": "test-room",
+        "s": "secret",
+        "e": int(time.time()) - 3600,
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    token = f"murmur://{encoded}"
+
+    result = _decode_join_token(token)
+    assert result is None
+
+
+def test_decode_join_token_malformed():
+    """Malformed base64 or JSON is rejected."""
+    from murmur.cli import _decode_join_token
+
+    result = _decode_join_token("murmur://not-valid-base64!!!")
+    assert result is None
+
+
+def test_cmd_share_no_relay_configured(capsys, monkeypatch):
+    """Share fails gracefully when no relay URL configured."""
+    from murmur.cli import _cmd_share
+
+    monkeypatch.setattr("murmur.cli.RELAY_URL", "")
+
+    args = MagicMock()
+    args.room = "test-room"
+    args.ttl = 7
+
+    _cmd_share(args)
+
+    captured = capsys.readouterr()
+    assert "Relay URL not configured" in captured.out
+
+
+def test_cmd_share_no_auth_configured(capsys, monkeypatch):
+    """Share fails gracefully when no auth configured."""
+    from murmur.cli import _cmd_share
+
+    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://localhost:8080")
+    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "")
+    monkeypatch.setattr("murmur.cli.API_KEY", "")
+
+    args = MagicMock()
+    args.room = "test-room"
+    args.ttl = 7
+
+    _cmd_share(args)
+
+    captured = capsys.readouterr()
+    assert "No auth configured" in captured.out
+
+
+def test_cmd_quickjoin_invalid_token(capsys):
+    """Quickjoin rejects invalid tokens."""
+    from murmur.cli import _cmd_quickjoin
+
+    args = MagicMock()
+    args.token = "not-a-valid-token"
+    args.name = "test-agent"
+
+    _cmd_quickjoin(args)
+
+    captured = capsys.readouterr()
+    assert "Invalid or expired token" in captured.out
+
+
+def test_cmd_quickjoin_missing_fields(capsys):
+    """Quickjoin rejects tokens with missing required fields."""
+    import base64
+    import json
+    import time
+
+    from murmur.cli import _cmd_quickjoin
+
+    # Token without room field
+    payload = {
+        "r": "https://relay.example.com",
+        "e": int(time.time()) + 3600,
+        "s": "secret",
+        # missing "n" (room)
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    token = f"murmur://{encoded}"
+
+    args = MagicMock()
+    args.token = token
+    args.name = "test-agent"
+
+    _cmd_quickjoin(args)
+
+    captured = capsys.readouterr()
+    assert "Token missing required fields" in captured.out
