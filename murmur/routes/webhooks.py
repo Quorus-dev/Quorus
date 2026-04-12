@@ -26,7 +26,7 @@ async def register_webhook(
             status_code=403, detail="Cannot register webhook for another user",
         )
     svc = request.app.state.webhook_service
-    await svc.register_dm(_tid(auth), req.instance_name, req.callback_url)
+    await svc.register_dm(_tid(auth), req.instance_name, req.callback_url, req.secret)
     await request.app.state.backends.participants.add(_tid(auth), req.instance_name)
     return {"status": "registered"}
 
@@ -77,7 +77,9 @@ async def register_room_webhook(
         raise HTTPException(
             status_code=409, detail="Webhook URL already registered for this room",
         )
-    await webhook_svc.register_room(_tid(auth), rid, req.callback_url, registered_by)
+    await webhook_svc.register_room(
+        _tid(auth), rid, req.callback_url, registered_by, req.secret
+    )
     return {
         "status": "registered",
         "room": room_data.get("name", ""),
@@ -102,7 +104,12 @@ async def list_room_webhooks(
                 status_code=403, detail="Must be a room member to view webhooks",
             )
     webhook_svc = request.app.state.webhook_service
-    return await webhook_svc.list_room(_tid(auth), rid)
+    hooks = await webhook_svc.list_room(_tid(auth), rid)
+    # Strip secrets from response — never expose webhook signing keys
+    return [
+        {"url": h["url"], "registered_by": h.get("registered_by", "")}
+        for h in hooks
+    ]
 
 
 @router.delete("/rooms/{room_id}/webhooks")

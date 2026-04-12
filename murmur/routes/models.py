@@ -24,6 +24,7 @@ class SendMessageRequest(BaseModel):
 class RegisterWebhookRequest(BaseModel):
     instance_name: str
     callback_url: str
+    secret: str = ""  # Per-webhook HMAC secret (optional, falls back to global)
 
     @field_validator("instance_name")
     @classmethod
@@ -111,6 +112,7 @@ class DestroyRoomRequest(BaseModel):
 class RoomWebhookRequest(BaseModel):
     callback_url: str
     registered_by: str
+    secret: str = ""  # Per-webhook HMAC secret (optional, falls back to global)
 
     @field_validator("registered_by")
     @classmethod
