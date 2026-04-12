@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 02:15 EDT
+Last updated: 2026-04-12 03:00 EDT
 
 ---
 
@@ -64,7 +64,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 - Discord-style invite pages at GET /invite/{room}
 - Integration guides for Codex, Cursor, Gemini, Ollama
 
-**Tests:** 611 passing, all green + 9 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 611 passing, all green + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -84,7 +84,8 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 | HTTP client + auto ACK | At-most-once | Messages deleted before caller processes — **footgun** |
 | MCP tools | At-least-once to MCP server | ACK happens after formatting, before tool result reaches Claude |
 | SSE | Live notifications only | Not durable — use for real-time UX, not delivery |
-| Webhooks | Best-effort | In-memory queue, no DLQ persistence |
+| Webhooks (in-memory) | Best-effort | In-memory queue, no DLQ persistence |
+| Webhooks (durable) | At-least-once | Redis Streams queue with ACK/NACK + DLQ |
 
 ### Blockers for Production SaaS
 
@@ -94,7 +95,7 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 | ~~Critical~~ | ~~Auto-ACK default is a footgun~~ | ✅ `ack=manual` is now the default |
 | ~~Critical~~ | ~~No idempotency on send~~ | ✅ `Idempotency-Key` header support |
 | ~~High~~ | ~~Redis persistence undefined~~ | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
-| **High** | Webhook queue is in-memory | Crashes lose queued jobs and DLQ |
+| ~~High~~ | ~~Webhook queue is in-memory~~ | ✅ Durable Redis Streams queue with ACK/NACK + DLQ |
 | ~~High~~ | ~~No per-tenant quotas/backpressure~~ | ✅ MAX_RECIPIENT_DEPTH quota (default 10000) |
 | **High** | Room fan-out is write-amplified | N members = N queue writes per message |
 | **Medium** | No migration/rebuild story for Redis | Key schema changes are operationally risky |
@@ -106,10 +107,10 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 
 ### Next Priorities
 
-1. Durable webhook queue (Redis Streams instead of in-memory)
-2. Decide data authority: Redis durable vs Postgres source of truth
-3. Room fan-out optimization (Redis pub/sub or shared streams)
-4. Account-based auth with immutable IDs
+1. Decide data authority: Redis durable vs Postgres source of truth
+2. Room fan-out optimization (Redis pub/sub or shared streams)
+3. Account-based auth with immutable IDs
+4. Delivery/audit ledger for message tracing
 
 ---
 
@@ -123,6 +124,8 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 
 | Date       | Commit  | What                                               |
 | ---------- | ------- | -------------------------------------------------- |
+| 2026-04-12 | f338b56 | Durable webhook queue with Redis Streams           |
+| 2026-04-12 | de39ef1 | Rename mcp.py to mcp_server.py (avoid shadowing)   |
 | 2026-04-12 | 400fd7c | Production Redis config (AOF, auth, noeviction)    |
 | 2026-04-12 | 4ff1b43 | Surface ACK failures in MCP check_messages         |
 | 2026-04-12 | 261bc89 | Per-webhook secrets + timestamped HMAC signatures  |
