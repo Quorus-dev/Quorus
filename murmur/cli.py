@@ -1914,6 +1914,212 @@ def _cmd_join(args):
     console.print(f"  murmur chat {room}")
 
 
+# ---------------------------------------------------------------------------
+# murmur share <room> — generate a portable join token
+# ---------------------------------------------------------------------------
+
+
+def _encode_join_token(relay_url: str, room: str, secret: str = "", api_key: str = "") -> str:
+    """Create a portable join token (base64-encoded JSON)."""
+    import base64
+    import time
+
+    payload = {
+        "r": relay_url,
+        "n": room,
+        "e": int(time.time()) + 86400 * 7,  # expires in 7 days
+    }
+    if api_key:
+        payload["k"] = api_key
+    else:
+        payload["s"] = secret
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    return f"murmur://{encoded}"
+
+
+def _decode_join_token(token: str) -> dict | None:
+    """Decode a join token. Returns None if invalid."""
+    import base64
+    import time
+
+    if not token.startswith("murmur://"):
+        return None
+    try:
+        encoded = token[9:]  # strip "murmur://"
+        payload = json.loads(base64.urlsafe_b64decode(encoded).decode())
+        # Check expiry
+        if payload.get("e", 0) < time.time():
+            return None
+        return payload
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+
+def _cmd_share(args):
+    """Generate a portable join token for a room."""
+    room = args.room
+    ttl_days = getattr(args, "ttl", 7)
+
+    if not RELAY_URL:
+        console.print("[red]Relay URL not configured.[/red]")
+        console.print("[dim]Run: murmur init <name> --secret <secret>[/dim]")
+        return
+
+    if not RELAY_SECRET and not API_KEY:
+        console.print("[red]No auth configured.[/red]")
+        console.print("[dim]Run: murmur init <name> --secret <secret>[/dim]")
+        return
+
+    # Verify room exists
+    try:
+        resp = httpx.get(
+            f"{RELAY_URL}/rooms",
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        rooms = resp.json()
+        target = next((r for r in rooms if r["name"] == room), None)
+        if not target:
+            console.print(f"[red]Room '{room}' not found.[/red]")
+            return
+    except httpx.ConnectError:
+        _relay_unreachable()
+        return
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error: {e.response.status_code}[/red]")
+        return
+
+    # Generate token
+    import time
+    import base64
+
+    payload = {
+        "r": RELAY_URL,
+        "n": room,
+        "e": int(time.time()) + 86400 * ttl_days,
+    }
+    if API_KEY:
+        payload["k"] = API_KEY
+    else:
+        payload["s"] = RELAY_SECRET
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    token = f"murmur://{encoded}"
+
+    console.print(f"[bold green]Join token for '{room}'[/bold green]")
+    console.print("")
+    console.print(f"[cyan]{token}[/cyan]")
+    console.print("")
+    console.print(f"[dim]Expires in {ttl_days} days. Share with agents to join.[/dim]")
+    console.print("")
+    console.print("Recipient runs:")
+    console.print(f"  [bold]murmur quickjoin {token[:50]}...[/bold]")
+
+
+def _cmd_quickjoin(args):
+    """Join a room using a portable token (zero config)."""
+    token = args.token
+    name = args.name
+
+    # Decode token
+    payload = _decode_join_token(token)
+    if not payload:
+        console.print("[red]Invalid or expired token.[/red]")
+        return
+
+    relay_url = payload.get("r", "")
+    room = payload.get("n", "")
+    secret = payload.get("s", "")
+    api_key = payload.get("k", "")
+
+    if not relay_url or not room:
+        console.print("[red]Token missing required fields.[/red]")
+        return
+
+    console.print(f"[bold]Joining room: {room}[/bold]")
+    console.print(f"  Relay: {relay_url}")
+    console.print(f"  Name: {name}")
+    console.print("")
+
+    # Reuse join logic
+    repo_dir = Path(__file__).resolve().parent.parent
+    murmur_dir = Path(__file__).resolve().parent
+
+    # 1. Write config
+    config_dir = Path.home() / "mcp-tunnel"
+    config_dir.mkdir(exist_ok=True)
+    config = {
+        "relay_url": relay_url,
+        "instance_name": name,
+        "poll_mode": "sse",
+        "push_notification_method": "notifications/claude/channel",
+        "push_notification_channel": "mcp-tunnel",
+    }
+    if api_key:
+        config["api_key"] = api_key
+    else:
+        config["relay_secret"] = secret
+    config_path = config_dir / "config.json"
+    config_path.write_text(json.dumps(config, indent=2))
+    config_path.chmod(0o600)
+    console.print(f"[green]Config written to {config_path}[/green]")
+
+    # 2. Register MCP server
+    claude_config_path = Path.home() / ".claude.json"
+    if claude_config_path.exists():
+        try:
+            claude_config = json.loads(claude_config_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            claude_config = {}
+    else:
+        claude_config = {}
+
+    if "mcpServers" not in claude_config:
+        claude_config["mcpServers"] = {}
+
+    claude_config["mcpServers"]["murmur"] = {
+        "type": "stdio",
+        "command": "uv",
+        "args": [
+            "run", "--directory", str(repo_dir),
+            "python", str(murmur_dir / "mcp_server.py"),
+        ],
+        "env": {},
+    }
+    claude_config_path.write_text(json.dumps(claude_config, indent=2))
+    console.print("[green]MCP server registered[/green]")
+
+    # 3. Join the room
+    async def _do_join():
+        headers = {"Authorization": f"Bearer {api_key or secret}"}
+        async with httpx.AsyncClient() as client:
+            try:
+                rooms_resp = await client.get(f"{relay_url}/rooms", headers=headers)
+                rooms_resp.raise_for_status()
+                rooms_list = rooms_resp.json()
+                target = next((r for r in rooms_list if r["name"] == room), None)
+                if not target:
+                    console.print(f"[red]Room '{room}' not found.[/red]")
+                    return
+                resp = await client.post(
+                    f"{relay_url}/rooms/{target['id']}/join",
+                    json={"participant": name},
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                console.print(f"[green]Joined '{room}' as '{name}'[/green]")
+            except httpx.ConnectError:
+                console.print(f"[red]Cannot connect to {relay_url}[/red]")
+
+    asyncio.run(_do_join())
+
+    console.print("")
+    console.print("[yellow]Restart Claude Code to pick up MCP server.[/yellow]")
+    console.print("")
+    console.print("Start chatting:")
+    console.print(f"  murmur chat {room}")
+
+
 def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
     """Create agent workspace and launch Claude Code in a new terminal tab."""
     agents_dir = Path.home() / "murmur-agents"
@@ -3655,6 +3861,16 @@ def main():
     )
     p_invite_token.add_argument("room", help="Room name")
 
+    p_share = sub.add_parser("share", help="Generate a portable join token for a room")
+    p_share.add_argument("room", help="Room name")
+    p_share.add_argument("--ttl", type=int, default=7, help="Token expiry in days (default: 7)")
+
+    p_quickjoin = sub.add_parser(
+        "quickjoin", help="Join a room using a portable token (zero config)"
+    )
+    p_quickjoin.add_argument("token", help="Join token (murmur://...)")
+    p_quickjoin.add_argument("--name", required=True, help="Your participant name")
+
     p_kick = sub.add_parser("kick", help="Kick a participant from a room (admin)")
     p_kick.add_argument("room", help="Room name")
     p_kick.add_argument("name", help="Participant to kick")
@@ -3772,6 +3988,8 @@ def main():
         "version": _cmd_version,
         "logs": _cmd_logs,
         "join": _cmd_join,
+        "share": _cmd_share,
+        "quickjoin": _cmd_quickjoin,
         "kick": _cmd_kick,
         "destroy": _cmd_destroy,
         "rename": _cmd_rename,
