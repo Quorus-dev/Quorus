@@ -87,6 +87,45 @@ jobs:
           REDIS_URL: redis://localhost:6379
           PYTHONWARNINGS: default
 
+  test-postgres:
+    name: Tests (Postgres integration)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: murmur
+          POSTGRES_PASSWORD: murmur
+          POSTGRES_DB: murmur_test
+        options: >-
+          --health-cmd "pg_isready -U murmur"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[test]"
+
+      - name: Run Postgres integration tests
+        run: pytest tests/test_postgres_integration.py -v --tb=short
+        env:
+          MURMUR_SECRET: ci-test-secret
+          DATABASE_URL: postgresql+asyncpg://murmur:murmur@localhost:5432/murmur_test
+          PYTHONWARNINGS: default
+
   website:
     name: Website (lint + build)
     runs-on: ubuntu-latest
