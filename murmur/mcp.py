@@ -290,20 +290,23 @@ async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str, str | None]
         return [], "", _relay_error_message(e)
 
 
-async def _ack_relay_messages(ack_token: str) -> None:
-    """ACK messages after successful processing."""
+async def _ack_relay_messages(ack_token: str) -> bool:
+    """ACK messages after successful processing. Returns True on success."""
     if not ack_token:
-        return
+        return True
     try:
         client = _get_http_client()
-        await client.post(
+        resp = await client.post(
             f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
             json={"ack_token": ack_token},
             headers=_auth_headers(),
             timeout=5,
         )
+        resp.raise_for_status()
+        return True
     except Exception:
         logger.warning("Failed to ACK messages", exc_info=True)
+        return False
 
 
 async def _background_poll(stop_event: asyncio.Event) -> None:
@@ -591,11 +594,19 @@ async def _check_messages(context: Context | None = None) -> str:
 
     # Format response, then ACK — messages are confirmed processed
     result = "\n".join(_format_message(msg) for msg in messages)
-    # ACK the direct fetch token (if any)
-    await _ack_relay_messages(ack_token)
-    # ACK deferred tokens from background/auto-poll buffered messages
+
+    # ACK all tokens and track failures
+    ack_failed = False
+    if ack_token:
+        if not await _ack_relay_messages(ack_token):
+            ack_failed = True
     for token in deferred_tokens:
-        await _ack_relay_messages(token)
+        if not await _ack_relay_messages(token):
+            ack_failed = True
+
+    if ack_failed:
+        result += "\n\n⚠️ WARNING: ACK failed — these messages may be redelivered."
+
     return result
 
 
