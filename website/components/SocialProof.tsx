@@ -1,52 +1,72 @@
 "use client";
 import { motion } from "framer-motion";
 
-const WORKS_WITH = [
+const ITEMS = [
   { name: "Claude Code", dot: "bg-violet-400" },
   { name: "Cursor", dot: "bg-blue-400" },
   { name: "OpenAI Codex", dot: "bg-green-400" },
   { name: "Gemini", dot: "bg-cyan-400" },
   { name: "Ollama", dot: "bg-orange-400" },
+  { name: "Antigravity", dot: "bg-pink-400" },
+  { name: "Open Interpreter", dot: "bg-emerald-400" },
   { name: "Any HTTP client", dot: "bg-white/40" },
 ];
 
+// Triple for seamless loop
+const TRACK = [...ITEMS, ...ITEMS, ...ITEMS];
+
+function Pill({ name, dot }: { name: string; dot: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-white/[0.07] bg-white/[0.03] text-xs text-white/45 font-medium whitespace-nowrap shrink-0">
+      <span className={`w-1.5 h-1.5 rounded-full ${dot} opacity-75`} />
+      {name}
+    </span>
+  );
+}
+
 export default function SocialProof() {
   return (
-    <section className="relative py-10 overflow-hidden">
-      {/* Top/bottom fade */}
+    <section className="relative py-12 overflow-hidden">
+      {/* Edge fades */}
       <div
-        className="absolute inset-0 pointer-events-none"
+        className="absolute inset-y-0 left-0 w-28 pointer-events-none z-10"
         style={{
           background:
-            "linear-gradient(90deg, rgba(6,6,10,0.8) 0%, transparent 15%, transparent 85%, rgba(6,6,10,0.8) 100%)",
+            "linear-gradient(90deg, var(--background) 0%, transparent 100%)",
         }}
       />
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/8 to-transparent" />
-      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-white/8 to-transparent" />
+      <div
+        className="absolute inset-y-0 right-0 w-28 pointer-events-none z-10"
+        style={{
+          background:
+            "linear-gradient(270deg, var(--background) 0%, transparent 100%)",
+        }}
+      />
 
-      <div className="max-w-7xl mx-auto px-6">
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-10">
-          <span className="text-xs text-white/20 shrink-0 font-mono tracking-widest uppercase">
-            Works with
-          </span>
-          <div className="w-px h-4 bg-white/10 hidden sm:block" />
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            {WORKS_WITH.map((item, i) => (
-              <motion.span
-                key={item.name}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.07, duration: 0.4 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/6 bg-white/[0.025] text-xs text-white/45 hover:text-white/70 hover:border-white/12 transition-all duration-200 font-medium"
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${item.dot} opacity-70`}
-                />
-                {item.name}
-              </motion.span>
-            ))}
-          </div>
-        </div>
+      {/* Divider lines */}
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/[0.07] to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-white/[0.07] to-transparent" />
+
+      {/* Label */}
+      <p className="text-center text-[10px] text-white/20 font-mono tracking-[0.2em] uppercase mb-6">
+        Works with every AI agent
+      </p>
+
+      {/* Marquee track */}
+      <div className="relative flex overflow-hidden">
+        <motion.div
+          className="flex gap-3"
+          animate={{ x: ["0%", "-33.333%"] }}
+          transition={{
+            duration: 28,
+            repeat: Infinity,
+            ease: "linear",
+          }}
+        >
+          {TRACK.map((item, i) => (
+            <Pill key={`${item.name}-${i}`} name={item.name} dot={item.dot} />
+          ))}
+        </motion.div>
       </div>
     </section>
   );
