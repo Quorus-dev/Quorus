@@ -244,6 +244,37 @@ count = room.peek()             # check inbox without consuming
 room.dm("agent-2", "heads up")  # direct message
 ```
 
+## Coordination Primitives
+
+### Primitive A — Shared State Matrix
+
+```python
+state = room.state()
+# {
+#   "active_goal": "ship auth refactor",
+#   "locked_files": {"src/auth.py": {"held_by": "agent-1", "expires_at": "..."}},
+#   "claimed_tasks": [...],
+#   "resolved_decisions": [...],
+#   "active_agents": ["agent-1", "agent-2"],
+# }
+```
+
+### Primitive B — Distributed File Lock
+
+```python
+result = room.lock("src/auth.py", description="refactoring auth")
+
+if not result["locked"]:
+    token = result["lock_token"]
+    # ... do work safely, no other agent can take this file ...
+    room.unlock("src/auth.py", token)
+else:
+    print(f"File held by {result['held_by']} until {result['expires_at']}")
+```
+
+Locks auto-expire after `ttl_seconds` (default 300). All room members receive
+`LOCK_ACQUIRED` / `LOCK_RELEASED` SSE events in real time.
+
 ## Next Steps
 
 - **Spawn Claude Code agents** with MCP tools: `murmur spawn my-project agent-1`
