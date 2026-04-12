@@ -90,7 +90,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 ## Production Readiness
 
-**Current rating:** Private demo 9.0/10 | Public alpha 7.8/10 | Production SaaS 6.0/10
+**Current rating:** Private demo 9.0/10 | Public alpha 8.0/10 | Production SaaS 6.5/10
 
 ### Delivery Guarantees
 
@@ -111,16 +111,18 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` + atomic SET NX reservation        |
 | ~~Critical~~ | ~~Room state not membership-scoped~~         | ✅ require_room_member() on all state/lock endpoints    |
 | ~~Critical~~ | ~~Distributed locks are process-local~~      | ✅ RedisRoomStateBackend + Lua scripts (acquire/release/expire) |
+| ~~Critical~~ | ~~Web console proxy SSRF~~                   | ✅ Block private IPs, localhost, metadata; RELAY_ALLOWLIST env |
 | ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
 | ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH + atomic MAXLEN on XADD          |
 | ~~High~~     | ~~Usage/participant endpoints leak data~~    | ✅ Scoped by auth level (admin vs user)                 |
-| ~~High~~     | ~~Room fan-out not atomic~~                  | ✅ Postgres-first ordering + Lua quota-check + reject   |
+| ~~High~~     | ~~Room fan-out not atomic~~                  | ✅ Postgres-first + non-fatal fan-out errors with logging |
 | ~~High~~     | ~~SSE receives internal wakeup messages~~    | ✅ Filter {"wake":true} in SSE queue handler            |
 | ~~High~~     | ~~Idempotency key not bound to body~~        | ✅ Same key + different body returns 409 Conflict       |
 | ~~High~~     | ~~Lock expiry uses ISO string parsing~~      | ✅ expires_at_epoch numeric timestamp in Lua            |
 | ~~High~~     | ~~MAXLEN causes silent message loss~~        | ✅ Lua XLEN check + reject (true backpressure)          |
-| **Medium**   | No migration/rebuild story for Redis         | Key schema changes are operationally risky              |
+| ~~High~~     | ~~Console stores credentials in session~~    | ✅ API key in memory only, security warning, opt-in persist |
+| ~~Medium~~   | ~~No migration story for Redis tasks~~       | ✅ Legacy tasks without expires_at_epoch auto-expired   |
 | ~~Medium~~   | ~~Webhook signing too weak~~                 | ✅ Timestamped HMAC + per-webhook secrets               |
 | ~~Medium~~   | ~~SSRF TOCTOU at webhook delivery~~          | ✅ Re-validate DNS at delivery time                     |
 | ~~Medium~~   | ~~Postgres history loses room names~~        | ✅ Denormalized room_name column (migration 005)        |
@@ -128,14 +130,15 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 | ~~Medium~~   | ~~MCP swallows ACK failures~~                | ✅ Warning shown when ACK fails                         |
 | **Medium**   | Auth is name-oriented, not account-based     | No immutable IDs, no revocation                         |
 | ~~Medium~~   | ~~Dashboard puts credentials in URL~~        | ✅ Token stored in sessionStorage, URL cleared          |
+| **Medium**   | Webhook SSRF policy-based only               | httpx re-resolves DNS; needs egress network policy      |
 | **Low**      | Operational metrics thin                     | Need stream depth, pending age, redelivery counts       |
 
 ### Next Priorities
 
-1. Decide data authority: Redis durable vs Postgres source of truth
-2. Room fan-out optimization (Redis pub/sub or shared streams)
-3. Account-based auth with immutable IDs
-4. Delivery/audit ledger for message tracing
+1. Delivery/audit ledger for message tracing
+2. Account-based auth with immutable IDs
+3. Network-level egress filtering for webhooks
+4. Full outbox pattern for transactional room send
 
 ---
 
@@ -149,16 +152,16 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
+| 2026-04-12 | e294225 | fix: make room fan-out failures non-fatal after history commit            |
+| 2026-04-12 | f2983ee | fix: console credential handling — no sessionStorage for keys, warning    |
+| 2026-04-12 | d6464e6 | fix: add engines field requiring Node 20.9+ for website                   |
+| 2026-04-12 | 70269f1 | fix: expire legacy Redis tasks without expires_at_epoch                   |
+| 2026-04-12 | 4eb07ff | fix: harden relay proxy against SSRF (block private IPs, allowlist)       |
 | 2026-04-12 | 01618a8 | feat: warm first-run wizard for murmur begin (conversational, auto-detect)|
 | 2026-04-12 | f4c2673 | feat: add /console link to doctor output and README                       |
 | 2026-04-12 | cc71538 | docs: update CONTEXT.md with critical fixes                               |
 | 2026-04-12 | fe398ce | fix: denormalize room_name in Postgres history (migration 005)            |
 | 2026-04-12 | af83ffd | fix: Lua XLEN quota-check + reject (true backpressure, no message loss)   |
-| 2026-04-12 | 3eac852 | fix: expires_at_epoch for accurate lock expiry in Lua scripts             |
-| 2026-04-12 | 0970b92 | test: Redis integration tests for locks, expiry, backpressure (867 total) |
-| 2026-04-12 | b03edd6 | fix: Postgres-first room send + atomic MAXLEN backpressure                |
-| 2026-04-12 | 71983c6 | fix: atomic task expiry + ORM FK mismatch                                 |
-| 2026-04-12 | e422b09 | fix: atomic distributed locks + idempotency 409 on body mismatch          |
 
 ---
 
