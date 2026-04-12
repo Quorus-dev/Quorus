@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 03:00 EDT
+Last updated: 2026-04-12 07:00 EDT
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-04-12 03:00 EDT
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (700 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (713 tests passing) — dev merged to main on 2026-04-12.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
 
@@ -69,7 +69,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 - Discord-style invite pages at GET /invite/{room}
 - Integration guides for Codex, Cursor, Gemini, Ollama
 
-**Tests:** 700 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 713 passing + 14 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -95,13 +95,14 @@ murmur init <your-name> --relay <url> --secret <secret>
 | ------------ | -------------------------------------------- | ------------------------------------------------------- |
 | ~~Critical~~ | ~~No real Redis/Postgres integration tests~~ | ✅ 14 integration tests with testcontainers             |
 | ~~Critical~~ | ~~Auto-ACK default is a footgun~~            | ✅ `ack=manual` is now the default                      |
-| ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` header support                     |
+| ~~Critical~~ | ~~No idempotency on send~~                   | ✅ `Idempotency-Key` + atomic SET NX reservation        |
 | ~~High~~     | ~~Redis persistence undefined~~              | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
-| ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue with ACK/NACK + DLQ      |
+| ~~High~~     | ~~Webhook queue is in-memory~~               | ✅ Durable Redis Streams queue + exponential backoff    |
 | ~~High~~     | ~~No per-tenant quotas/backpressure~~        | ✅ MAX_RECIPIENT_DEPTH quota (default 10000)            |
 | **High**     | Room fan-out is write-amplified              | N members = N queue writes per message                  |
 | **Medium**   | No migration/rebuild story for Redis         | Key schema changes are operationally risky              |
 | ~~Medium~~   | ~~Webhook signing too weak~~                 | ✅ Timestamped HMAC + per-webhook secrets               |
+| ~~Medium~~   | ~~SSRF TOCTOU at webhook delivery~~          | ✅ Re-validate DNS at delivery time                     |
 | **Medium**   | No delivery/audit ledger                     | "What happened to message X?" has no answer             |
 | ~~Medium~~   | ~~MCP swallows ACK failures~~                | ✅ Warning shown when ACK fails                         |
 | **Medium**   | Auth is name-oriented, not account-based     | No immutable IDs, no revocation                         |
@@ -126,16 +127,16 @@ murmur init <your-name> --relay <url> --secret <secret>
 
 | Date       | Commit  | What                                                          |
 | ---------- | ------- | ------------------------------------------------------------- |
+| 2026-04-12 | c86bb05 | SSRF TOCTOU fix — re-validate URLs at webhook delivery time   |
+| 2026-04-12 | ed95df5 | Per-webhook secrets in routes + strip secrets from list API   |
+| 2026-04-12 | 839f83c | Webhook retry with exponential backoff                        |
+| 2026-04-12 | 6deb7a2 | Atomic idempotency with SET NX prevents race conditions       |
+| 2026-04-12 | dccb872 | Room fan-out respects per-recipient queue depth quota         |
 | 2026-04-12 | merge   | dev → main: Primitives A/B/C, SSE-only push, usage, 700 tests |
 | 2026-04-12 | f338b56 | Durable webhook queue with Redis Streams                      |
 | 2026-04-12 | de39ef1 | Rename mcp.py to mcp_server.py (avoid shadowing)              |
 | 2026-04-12 | 400fd7c | Production Redis config (AOF, auth, noeviction)               |
 | 2026-04-12 | 4ff1b43 | Surface ACK failures in MCP check_messages                    |
-| 2026-04-12 | 261bc89 | Per-webhook secrets + timestamped HMAC signatures             |
-| 2026-04-12 | d6f6004 | Per-recipient queue depth quota (MAX_RECIPIENT_DEPTH)         |
-| 2026-04-12 | 6cb9200 | Redis integration tests with testcontainers                   |
-| 2026-04-12 | ce2ab69 | Idempotency-Key header support for sends                      |
-| 2026-04-11 | 9b40539 | SSE-only push: removed polling, lazy default, auto_poll tools |
 
 ---
 
