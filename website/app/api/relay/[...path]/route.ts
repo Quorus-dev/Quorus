@@ -1,5 +1,5 @@
 /**
- * Relay proxy — forwards browser requests to any Murmur relay, avoiding CORS.
+ * Relay proxy — forwards browser requests to Murmur relays, avoiding CORS.
  *
  * The browser passes:
  *   x-relay-url: https://your-relay.railway.app
@@ -8,18 +8,104 @@
  * This handler strips those headers, builds the real upstream URL, and
  * proxies the request with Authorization: Bearer <key>.
  *
- * SSRF protection: blocks cloud metadata endpoints.
+ * SSRF protection:
+ *   - Blocks cloud metadata endpoints
+ *   - Blocks private/reserved IP ranges (RFC1918, loopback, link-local)
+ *   - Blocks localhost variants
+ *   - Validates hostname against allowlist if RELAY_ALLOWLIST is set
  */
 
 import { NextRequest, NextResponse } from "next/server";
 
-// Cloud metadata endpoints — always blocked
+// Cloud metadata hostnames — always blocked
 const BLOCKED_HOSTS = new Set([
-  "169.254.169.254",
   "metadata.google.internal",
   "metadata.internal",
-  "100.100.100.200",
+  "metadata.aws.internal",
+  "instance-data",
+  "localhost",
+  "localhost.localdomain",
 ]);
+
+// Relay allowlist from environment (comma-separated hostnames)
+// If set, only these relay hosts are allowed
+const RELAY_ALLOWLIST: Set<string> | null = (() => {
+  const envVal = process.env.RELAY_ALLOWLIST;
+  if (!envVal) return null;
+  return new Set(envVal.split(",").map((h) => h.trim().toLowerCase()));
+})();
+
+/**
+ * Check if an IP address is in a private/reserved range.
+ * Blocks: loopback, private (RFC1918), link-local, multicast, etc.
+ */
+function isPrivateOrReservedIP(ip: string): boolean {
+  // IPv4 checks
+  const ipv4Match = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [, a, b, c, d] = ipv4Match.map(Number);
+    // Validate octets
+    if ([a, b, c, d].some((n) => n > 255)) return true;
+
+    // Loopback: 127.0.0.0/8
+    if (a === 127) return true;
+    // Private: 10.0.0.0/8
+    if (a === 10) return true;
+    // Private: 172.16.0.0/12
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    // Private: 192.168.0.0/16
+    if (a === 192 && b === 168) return true;
+    // Link-local: 169.254.0.0/16 (includes cloud metadata 169.254.169.254)
+    if (a === 169 && b === 254) return true;
+    // Multicast: 224.0.0.0/4
+    if (a >= 224 && a <= 239) return true;
+    // Reserved: 240.0.0.0/4
+    if (a >= 240) return true;
+    // This host: 0.0.0.0/8
+    if (a === 0) return true;
+    // Shared address space: 100.64.0.0/10 (CGNAT, includes 100.100.100.200)
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    // Documentation: 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
+    if (a === 192 && b === 0 && c === 2) return true;
+    if (a === 198 && b === 51 && c === 100) return true;
+    if (a === 203 && b === 0 && c === 113) return true;
+  }
+
+  // IPv6 checks
+  const ipLower = ip.toLowerCase();
+  // Loopback: ::1
+  if (ipLower === "::1" || ipLower === "0:0:0:0:0:0:0:1") return true;
+  // Unspecified: ::
+  if (ipLower === "::" || ipLower === "0:0:0:0:0:0:0:0") return true;
+  // Link-local: fe80::/10
+  if (ipLower.startsWith("fe8") || ipLower.startsWith("fe9") ||
+      ipLower.startsWith("fea") || ipLower.startsWith("feb")) return true;
+  // Unique local: fc00::/7 (fd00::/8 commonly used)
+  if (ipLower.startsWith("fc") || ipLower.startsWith("fd")) return true;
+  // IPv4-mapped IPv6: ::ffff:x.x.x.x
+  const v4mappedMatch = ipLower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (v4mappedMatch) {
+    return isPrivateOrReservedIP(v4mappedMatch[1]);
+  }
+
+  return false;
+}
+
+/**
+ * Check if a hostname looks like an IP address (numeric or bracket notation).
+ */
+function extractIPFromHostname(hostname: string): string | null {
+  // Plain IPv4
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
+    return hostname;
+  }
+  // Bracketed IPv6: [::1]
+  const bracketMatch = hostname.match(/^\[(.+)\]$/);
+  if (bracketMatch) return bracketMatch[1];
+  // Plain IPv6 (uncommon in URLs but check anyway)
+  if (hostname.includes(":")) return hostname;
+  return null;
+}
 
 function buildTarget(
   relayUrl: string,
@@ -29,8 +115,28 @@ function buildTarget(
   try {
     const base = relayUrl.replace(/\/+$/, "");
     const url = new URL(`${base}/${segments.join("/")}${search}`);
+
+    // Protocol check
     if (!["http:", "https:"].includes(url.protocol)) return null;
-    if (BLOCKED_HOSTS.has(url.hostname)) return null;
+
+    const hostLower = url.hostname.toLowerCase();
+
+    // Blocked hostname check
+    if (BLOCKED_HOSTS.has(hostLower)) return null;
+
+    // Allowlist check (if configured)
+    if (RELAY_ALLOWLIST && !RELAY_ALLOWLIST.has(hostLower)) {
+      console.warn(`[relay-proxy] Blocked: ${hostLower} not in allowlist`);
+      return null;
+    }
+
+    // IP address check — block private/reserved ranges
+    const maybeIP = extractIPFromHostname(url.hostname);
+    if (maybeIP && isPrivateOrReservedIP(maybeIP)) {
+      console.warn(`[relay-proxy] Blocked private/reserved IP: ${maybeIP}`);
+      return null;
+    }
+
     return url;
   } catch {
     return null;
