@@ -169,6 +169,101 @@ class Room:
         """Reply to a specific message."""
         return self.send(content, reply_to=message_id)
 
+    def lock(
+        self,
+        file_path: str,
+        description: str = "",
+        ttl_seconds: int = 300,
+    ) -> dict:
+        """Acquire a distributed file lock (Primitive B).
+
+        Returns a dict with:
+          - ``{"locked": False, "lock_token": str, "expires_at": str}`` if granted
+          - ``{"locked": True, "held_by": str, "expires_at": str}`` if taken
+
+        Usage:
+            result = room.lock("src/auth.py", description="refactoring auth")
+            if not result["locked"]:
+                token = result["lock_token"]
+                # ... do work ...
+                room.unlock("src/auth.py", token)
+        """
+        resp = httpx.post(
+            f"{self.relay}/rooms/{self.room}/lock",
+            json={
+                "file_path": file_path,
+                "claimed_by": self.name,
+                "description": description,
+                "ttl_seconds": ttl_seconds,
+            },
+            headers=self._get_auth_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 401 and self.api_key:
+            self._jwt = None
+            resp = httpx.post(
+                f"{self.relay}/rooms/{self.room}/lock",
+                json={
+                    "file_path": file_path,
+                    "claimed_by": self.name,
+                    "description": description,
+                    "ttl_seconds": ttl_seconds,
+                },
+                headers=self._get_auth_headers(),
+                timeout=10,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def unlock(self, file_path: str, lock_token: str) -> dict:
+        """Release a previously acquired file lock (Primitive B).
+
+        Raises ``httpx.HTTPStatusError`` on 403 (wrong token) or
+        404 (no lock exists for the path).
+
+        Usage:
+            room.unlock("src/auth.py", lock_token)
+        """
+        resp = httpx.request(
+            "DELETE",
+            f"{self.relay}/rooms/{self.room}/lock/{file_path}",
+            json={"lock_token": lock_token},
+            headers=self._get_auth_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 401 and self.api_key:
+            self._jwt = None
+            resp = httpx.request(
+                "DELETE",
+                f"{self.relay}/rooms/{self.room}/lock/{file_path}",
+                json={"lock_token": lock_token},
+                headers=self._get_auth_headers(),
+                timeout=10,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def state(self) -> dict:
+        """Get the Shared State Matrix for this room (Primitive A).
+
+        Returns goal, locked_files, claimed_tasks, decisions, active agents,
+        message count, and last activity timestamp.
+        """
+        resp = httpx.get(
+            f"{self.relay}/rooms/{self.room}/state",
+            headers=self._get_auth_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 401 and self.api_key:
+            self._jwt = None
+            resp = httpx.get(
+                f"{self.relay}/rooms/{self.room}/state",
+                headers=self._get_auth_headers(),
+                timeout=10,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
     def on_message(self, callback: Callable[[dict], None]) -> None:
         """Register a callback for incoming messages.
 

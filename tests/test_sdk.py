@@ -269,6 +269,160 @@ class TestRoomContextManager:
                     assert room.room == "test"
 
 
+class TestRoomLock:
+    def test_lock_granted(self):
+        """lock() should return {locked: False, lock_token, expires_at} when available."""
+        with patch("murmur.sdk.httpx.post") as mock_post:
+            granted_resp = MagicMock()
+            granted_resp.status_code = 200
+            granted_resp.json.return_value = {
+                "locked": False,
+                "lock_token": "tok-123",
+                "expires_at": "2026-04-11T00:05:00Z",
+            }
+            granted_resp.raise_for_status = MagicMock()
+            mock_post.return_value = granted_resp
+
+            room = Room("test", relay="http://t", secret="s", name="a")
+            result = room.lock("src/auth.py", description="refactoring")
+
+            assert result["locked"] is False
+            assert result["lock_token"] == "tok-123"
+
+    def test_lock_taken(self):
+        """lock() should return {locked: True, held_by, expires_at} when taken."""
+        with patch("murmur.sdk.httpx.post") as mock_post:
+            taken_resp = MagicMock()
+            taken_resp.status_code = 200
+            taken_resp.json.return_value = {
+                "locked": True,
+                "held_by": "other-agent",
+                "expires_at": "2026-04-11T00:05:00Z",
+            }
+            taken_resp.raise_for_status = MagicMock()
+            mock_post.return_value = taken_resp
+
+            room = Room("test", relay="http://t", secret="s", name="a")
+            result = room.lock("src/auth.py")
+
+            assert result["locked"] is True
+            assert result["held_by"] == "other-agent"
+
+    def test_lock_refreshes_jwt_on_401(self):
+        """lock() should refresh JWT and retry on 401."""
+        with patch("murmur.sdk.httpx.post") as mock_post:
+            unauth_resp = MagicMock()
+            unauth_resp.status_code = 401
+
+            ok_resp = MagicMock()
+            ok_resp.status_code = 200
+            ok_resp.json.return_value = {"locked": False, "lock_token": "tok-abc", "expires_at": "2026-04-11T00:05:00Z"}
+            ok_resp.raise_for_status = MagicMock()
+
+            exchange_resp = MagicMock()
+            exchange_resp.raise_for_status = MagicMock()
+            exchange_resp.json.return_value = {"token": "jwt-tok"}
+
+            # Order: Room._exchange_jwt, MurmurClient._exchange_jwt, lock attempt (401),
+            # lock 401-branch _exchange_jwt, lock retry (ok)
+            mock_post.side_effect = [exchange_resp, exchange_resp, unauth_resp, exchange_resp, ok_resp]
+
+            room = Room("test", relay="http://t", api_key="mct_test", name="a")
+            result = room.lock("src/auth.py")
+
+            assert result["lock_token"] == "tok-abc"
+
+    def test_unlock_success(self):
+        """unlock() should return released dict."""
+        with patch("murmur.sdk.httpx.request") as mock_req:
+            ok_resp = MagicMock()
+            ok_resp.status_code = 200
+            ok_resp.json.return_value = {"released": True, "file_path": "src/auth.py"}
+            ok_resp.raise_for_status = MagicMock()
+            mock_req.return_value = ok_resp
+
+            room = Room("test", relay="http://t", secret="s", name="a")
+            result = room.unlock("src/auth.py", "tok-123")
+
+            assert result["released"] is True
+            assert result["file_path"] == "src/auth.py"
+
+    def test_unlock_refreshes_jwt_on_401(self):
+        """unlock() should refresh JWT and retry on 401."""
+        with patch("murmur.sdk.httpx.post") as mock_post, \
+             patch("murmur.sdk.httpx.request") as mock_req:
+            exchange_resp = MagicMock()
+            exchange_resp.raise_for_status = MagicMock()
+            exchange_resp.json.return_value = {"token": "jwt-tok"}
+            # Room._exchange_jwt + MurmurClient._exchange_jwt on init,
+            # then one more on 401-retry in unlock()
+            mock_post.side_effect = [exchange_resp, exchange_resp, exchange_resp]
+
+            unauth_resp = MagicMock()
+            unauth_resp.status_code = 401
+
+            ok_resp = MagicMock()
+            ok_resp.status_code = 200
+            ok_resp.json.return_value = {"released": True, "file_path": "src/auth.py"}
+            ok_resp.raise_for_status = MagicMock()
+
+            mock_req.side_effect = [unauth_resp, ok_resp]
+
+            room = Room("test", relay="http://t", api_key="mct_test", name="a")
+            result = room.unlock("src/auth.py", "tok-123")
+
+            assert result["released"] is True
+
+    def test_state_returns_dict(self):
+        """state() should return the room's state matrix."""
+        with patch("murmur.sdk.httpx.get") as mock_get:
+            ok_resp = MagicMock()
+            ok_resp.status_code = 200
+            ok_resp.json.return_value = {
+                "goal": "ship v1",
+                "claimed_tasks": [],
+                "locked_files": {},
+                "decisions": [],
+                "active_agents": ["a"],
+                "message_count": 5,
+                "last_activity": "2026-04-11T00:00:00Z",
+            }
+            ok_resp.raise_for_status = MagicMock()
+            mock_get.return_value = ok_resp
+
+            room = Room("test", relay="http://t", secret="s", name="a")
+            result = room.state()
+
+            assert result["goal"] == "ship v1"
+            assert result["active_agents"] == ["a"]
+
+    def test_state_refreshes_jwt_on_401(self):
+        """state() should refresh JWT and retry on 401."""
+        with patch("murmur.sdk.httpx.post") as mock_post, \
+             patch("murmur.sdk.httpx.get") as mock_get:
+            exchange_resp = MagicMock()
+            exchange_resp.raise_for_status = MagicMock()
+            exchange_resp.json.return_value = {"token": "jwt-tok"}
+            # Room._exchange_jwt + MurmurClient._exchange_jwt on init,
+            # then one more on 401-retry in state()
+            mock_post.side_effect = [exchange_resp, exchange_resp, exchange_resp]
+
+            unauth_resp = MagicMock()
+            unauth_resp.status_code = 401
+
+            ok_resp = MagicMock()
+            ok_resp.status_code = 200
+            ok_resp.json.return_value = {"goal": None, "claimed_tasks": [], "locked_files": {}, "decisions": []}
+            ok_resp.raise_for_status = MagicMock()
+
+            mock_get.side_effect = [unauth_resp, ok_resp]
+
+            room = Room("test", relay="http://t", api_key="mct_test", name="a")
+            result = room.state()
+
+            assert "claimed_tasks" in result
+
+
 class TestRoomListener:
     def test_on_message_registers_callback(self):
         """on_message should add callback to listeners."""
