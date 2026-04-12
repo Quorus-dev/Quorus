@@ -85,7 +85,7 @@ export default function Architecture() {
   const inboxes = ["agent-1 inbox", "agent-2 inbox", "agent-3 inbox"];
 
   return (
-    <section className="py-32 px-6 relative overflow-hidden">
+    <section className="py-32 px-6 relative overflow-hidden" id="architecture">
       {/* Background */}
       <div className="absolute inset-0 grid-bg opacity-40" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-violet-600/5 blur-[100px] rounded-full pointer-events-none" />

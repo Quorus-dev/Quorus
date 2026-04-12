@@ -1,11 +1,11 @@
 @import "tailwindcss";
 
 :root {
-  --background: #000000;
+  --background: #06060a;
   --foreground: #ffffff;
   --muted: #888888;
-  --border: #1a1a1a;
-  --surface: #0d0d0d;
+  --border: #1a1a2e;
+  --surface: #0d0d18;
   --accent: #7c3aed;
   --accent2: #06b6d4;
   --code-bg: #0d1117;
@@ -19,11 +19,35 @@
 }
 
 * {
-  border-color: var(--border);
+  border-color: rgba(255, 255, 255, 0.06);
 }
 
 html {
   scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 58, 237, 0.3) transparent;
+}
+
+html::-webkit-scrollbar {
+  width: 6px;
+}
+
+html::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html::-webkit-scrollbar-thumb {
+  background: rgba(124, 58, 237, 0.25);
+  border-radius: 3px;
+}
+
+html::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 58, 237, 0.45);
+}
+
+::selection {
+  background: rgba(124, 58, 237, 0.35);
+  color: #fff;
 }
 
 body {
@@ -31,74 +55,111 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-/* Gradient text utility */
+/* ─── Global grain overlay ─────────────────────────────────────────────────── */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+  opacity: 0.038;
+  pointer-events: none;
+  z-index: 9999;
+  mix-blend-mode: overlay;
+}
+
+/* ─── Gradient text ─────────────────────────────────────────────────────────── */
 .gradient-text {
-  background: linear-gradient(135deg, #ffffff 0%, #a78bfa 50%, #67e8f9 100%);
+  background: linear-gradient(
+    120deg,
+    #ffffff 0%,
+    #e4d4ff 30%,
+    #a78bfa 55%,
+    #7c3aed 75%,
+    #06b6d4 100%
+  );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .gradient-text-subtle {
-  background: linear-gradient(135deg, #ffffff 0%, #c4b5fd 100%);
+  background: linear-gradient(120deg, #ffffff 0%, #ddd6fe 50%, #c4b5fd 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* Grid background */
+/* ─── Grid background ───────────────────────────────────────────────────────── */
 .grid-bg {
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 60px 60px;
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
 
-/* Glow effects */
+/* ─── Glow effects ──────────────────────────────────────────────────────────── */
 .glow-purple {
-  box-shadow: 0 0 40px rgba(124, 58, 237, 0.3);
+  box-shadow:
+    0 0 40px rgba(124, 58, 237, 0.35),
+    0 0 80px rgba(124, 58, 237, 0.1);
 }
 
 .glow-cyan {
-  box-shadow: 0 0 40px rgba(6, 182, 212, 0.2);
+  box-shadow:
+    0 0 40px rgba(6, 182, 212, 0.25),
+    0 0 80px rgba(6, 182, 212, 0.08);
 }
 
-/* Code block */
+/* ─── Code block ────────────────────────────────────────────────────────────── */
 .code-block {
   background: var(--code-bg);
-  border: 1px solid #30363d;
+  border: 1px solid rgba(48, 54, 61, 0.8);
   border-radius: 12px;
   font-family: var(--font-geist-mono), monospace;
 }
 
-/* Animate pulse dot */
+/* ─── Pulse dot ─────────────────────────────────────────────────────────────── */
 @keyframes pulse-dot {
   0%,
   100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.3;
+    opacity: 0.25;
   }
 }
 
 .pulse-dot {
-  animation: pulse-dot 2s ease-in-out infinite;
+  animation: pulse-dot 2.2s ease-in-out infinite;
 }
 
-/* Shimmer animation for hero */
-@keyframes shimmer {
+/* ─── Shimmer sweep ─────────────────────────────────────────────────────────── */
+@keyframes shimmer-sweep {
   0% {
-    background-position: -200% center;
+    transform: translateX(-100%);
   }
   100% {
-    background-position: 200% center;
+    transform: translateX(200%);
   }
 }
 
-/* Scroll fade in */
+.shimmer-sweep {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(167, 139, 250, 0.12) 50%,
+    transparent 100%
+  );
+  animation: shimmer-sweep 3.5s ease infinite;
+}
+
+/* ─── Scroll fade in ────────────────────────────────────────────────────────── */
 @keyframes fade-up {
   from {
     opacity: 0;
@@ -114,7 +175,7 @@ body {
   animation: fade-up 0.6s ease-out forwards;
 }
 
-/* Terminal cursor */
+/* ─── Terminal cursor ───────────────────────────────────────────────────────── */
 @keyframes blink {
   0%,
   100% {
@@ -129,49 +190,40 @@ body {
   animation: blink 1s step-end infinite;
 }
 
-/* Bento card gradient border */
+/* ─── Bento card gradient border ────────────────────────────────────────────── */
 .card-gradient-border {
   background:
-    linear-gradient(#0d0d0d, #0d0d0d) padding-box,
+    linear-gradient(#0d0d18, #0d0d18) padding-box,
     linear-gradient(
         135deg,
-        rgba(124, 58, 237, 0.4),
-        rgba(6, 182, 212, 0.1),
-        rgba(124, 58, 237, 0.1)
+        rgba(124, 58, 237, 0.45),
+        rgba(6, 182, 212, 0.12),
+        rgba(124, 58, 237, 0.15)
       )
       border-box;
   border: 1px solid transparent;
   transition:
     background 0.3s ease,
-    box-shadow 0.3s ease;
+    box-shadow 0.4s ease;
 }
 
 .card-gradient-border:hover {
   background:
-    linear-gradient(#111111, #111111) padding-box,
+    linear-gradient(#0f0f1e, #0f0f1e) padding-box,
     linear-gradient(
         135deg,
-        rgba(124, 58, 237, 0.7),
-        rgba(6, 182, 212, 0.4),
-        rgba(124, 58, 237, 0.3)
+        rgba(124, 58, 237, 0.8),
+        rgba(6, 182, 212, 0.5),
+        rgba(167, 139, 250, 0.4)
       )
       border-box;
-  box-shadow: 0 0 40px rgba(124, 58, 237, 0.08);
+  box-shadow:
+    0 0 60px rgba(124, 58, 237, 0.2),
+    0 0 120px rgba(124, 58, 237, 0.06),
+    inset 0 1px 0 rgba(167, 139, 250, 0.1);
 }
 
-@keyframes gradient-rotate {
-  0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
-  }
-}
-
-/* Noise texture overlay */
+/* ─── Noise texture overlay (for specific elements) ─────────────────────────── */
 .noise::after {
   content: "";
   position: absolute;
@@ -179,4 +231,27 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
   pointer-events: none;
   border-radius: inherit;
+}
+
+/* ─── Announcement bar shimmer ──────────────────────────────────────────────── */
+@keyframes bar-shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.announcement-glow {
+  background: linear-gradient(
+    90deg,
+    rgba(109, 40, 217, 0.12) 0%,
+    rgba(124, 58, 237, 0.2) 40%,
+    rgba(139, 92, 246, 0.25) 50%,
+    rgba(124, 58, 237, 0.2) 60%,
+    rgba(109, 40, 217, 0.12) 100%
+  );
+  background-size: 200% 100%;
+  animation: bar-shimmer 4s ease infinite;
 }

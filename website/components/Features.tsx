@@ -151,13 +151,13 @@ const FEATURES = [
 const accentMap = {
   violet: {
     icon: "text-violet-400",
-    bg: "bg-violet-500/10",
-    spotlightColor: "rgba(124,58,237,0.10)",
+    bg: "bg-violet-500/15",
+    spotlightColor: "rgba(124,58,237,0.2)",
   },
   cyan: {
     icon: "text-cyan-400",
-    bg: "bg-cyan-500/10",
-    spotlightColor: "rgba(6,182,212,0.10)",
+    bg: "bg-cyan-500/15",
+    spotlightColor: "rgba(6,182,212,0.2)",
   },
 };
 
