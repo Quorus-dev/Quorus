@@ -137,24 +137,49 @@ def _first_launch_setup(console: Console) -> dict:
     # Connection test with warm feedback
     console.print()
     console.print("  Connecting...", end="")
+    relay_ok = False
     try:
         r = httpx.get(f"{relay_url}/health", timeout=5)
         if r.status_code == 200:
             console.print(" [bold green]✓[/bold green]")
+            relay_ok = True
         else:
             console.print(f" [yellow]relay returned {r.status_code}[/yellow]")
     except Exception:
+        console.print(" [yellow]not reachable.[/yellow]")
+
+    # If relay is down and it's the default local URL, offer to start it
+    if not relay_ok and relay_url == DEFAULT_RELAY:
+        console.print()
         console.print(
-            " [yellow]couldn't reach the relay.[/yellow]\n"
-            "\n"
-            "  [dim]Is it running? Start it with:[/dim]\n"
-            "  [dim]  RELAY_SECRET=x python -m murmur.relay[/dim]"
+            "  [dim]No relay found at localhost:8080.[/dim]\n"
+            "  [dim]That's fine — you can start one in a separate terminal:[/dim]\n"
+        )
+        console.print(
+            "  [bold bright_cyan]  murmur relay[/bold bright_cyan]"
+            "  [dim]  # or:  python -m murmur.relay[/dim]"
+        )
+        console.print()
+        console.print(
+            "  [dim]Config saved. Run [bold]murmur begin[/bold] again after"
+            " starting the relay.[/dim]"
+        )
+    elif not relay_ok:
+        console.print()
+        console.print(
+            f"  [dim]Couldn't reach {relay_url}.[/dim]\n"
+            "  [dim]Config saved — run [bold]murmur begin[/bold] when the relay is up.[/dim]"
         )
 
     _write_config(name, relay_url, secret)
-    console.print()
-    console.print("  [green]You're in.[/green] Type [bold]help[/bold] to see what you can do.\n")
-    time.sleep(0.6)
+
+    if relay_ok:
+        console.print()
+        console.print(
+            "  [green]You're in.[/green] "
+            "Type [bold]help[/bold] to see what you can do.\n"
+        )
+        time.sleep(0.4)
 
     return {"relay_url": relay_url, "instance_name": name, "relay_secret": secret}
 
