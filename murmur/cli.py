@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -1766,13 +1767,66 @@ def _cmd_invite_link(args):
     console.print("[dim]Replace YOUR_NAME with the agent/user's name.[/dim]")
 
 
-def _cmd_join(args):
-    """One-liner to join a room: writes config, registers MCP, joins the room."""
-    name = args.name
-    relay_url = args.relay_url
-    secret = getattr(args, "secret", None) or ""
-    api_key = getattr(args, "api_key", None) or ""
+def _make_join_token(room: str, relay_url: str, secret: str) -> str:
+    """Encode room join details into a portable murm_join_ token."""
+    payload = json.dumps({"relay_url": relay_url, "secret": secret, "room": room})
+    b64 = base64.urlsafe_b64encode(payload.encode()).decode()
+    return f"murm_join_{b64}"
+
+
+def _parse_join_token(token: str) -> dict:
+    """Decode a murm_join_ token back to {relay_url, secret, room}."""
+    if not token.startswith("murm_join_"):
+        raise ValueError("Not a valid join token (expected murm_join_ prefix)")
+    b64 = token[len("murm_join_"):]
+    try:
+        payload = base64.urlsafe_b64decode(b64.encode()).decode()
+        data = json.loads(payload)
+    except Exception as exc:
+        raise ValueError(f"Failed to decode join token: {exc}") from exc
+    for key in ("relay_url", "secret", "room"):
+        if key not in data:
+            raise ValueError(f"Join token missing required field: {key}")
+    return data
+
+
+def _cmd_invite_token(args):
+    """Generate a compact, copy-pasteable join token for a room."""
     room = args.room
+    token = _make_join_token(room, RELAY_URL, RELAY_SECRET)
+    console.print(f"[bold]Join token for room '{room}':[/bold]")
+    console.print("")
+    console.print(f"  {token}")
+    console.print("")
+    console.print("[dim]Share this token with any agent. They run:[/dim]")
+    console.print(f"[dim]  murmur join <token> --name THEIR_NAME[/dim]")
+
+
+def _cmd_join(args):
+    """One-liner to join a room: writes config, registers MCP, joins the room.
+
+    Accepts either explicit flags (--relay, --secret, --room) OR a murm_join_
+    token as the first positional argument for instant, zero-config onboarding.
+    """
+    # --- Token-based join path ---
+    token = getattr(args, "token", None)
+    if token and token.startswith("murm_join_"):
+        try:
+            decoded = _parse_join_token(token)
+        except ValueError as exc:
+            console.print(f"[red]Invalid join token: {exc}[/red]")
+            return
+        relay_url = decoded["relay_url"]
+        secret = decoded["secret"]
+        room = decoded["room"]
+        api_key = ""
+    else:
+        relay_url = getattr(args, "relay_url", None) or ""
+        secret = getattr(args, "secret", None) or ""
+        api_key = getattr(args, "api_key", None) or ""
+        room = getattr(args, "room", None) or ""
+
+    name = args.name
     repo_dir = Path(__file__).resolve().parent.parent
     murmur_dir = Path(__file__).resolve().parent
 
@@ -3578,13 +3632,28 @@ def main():
 
     sub.add_parser("usage", help="Show global relay usage stats")
 
-    p_join = sub.add_parser("join", help="One-liner to join a room")
+    p_join = sub.add_parser(
+        "join",
+        help="Join a room — pass a murm_join_ token or explicit flags",
+    )
     p_join.add_argument("--name", required=True, help="Your participant name")
-    p_join.add_argument("--relay", dest="relay_url", required=True, help="Relay URL")
-    p_join_auth = p_join.add_mutually_exclusive_group(required=True)
+    p_join.add_argument(
+        "token",
+        nargs="?",
+        default=None,
+        help="Join token (murm_join_…). When provided, --relay/--secret/--room are not needed.",
+    )
+    p_join.add_argument("--relay", dest="relay_url", default=None, help="Relay URL")
+    p_join_auth = p_join.add_mutually_exclusive_group(required=False)
     p_join_auth.add_argument("--secret", help="Shared secret (legacy auth)")
     p_join_auth.add_argument("--api-key", help="API key (production auth)")
-    p_join.add_argument("--room", required=True, help="Room to join")
+    p_join.add_argument("--room", default=None, help="Room to join")
+
+    p_invite_token = sub.add_parser(
+        "invite-token",
+        help="Generate a one-line join token to share with agents",
+    )
+    p_invite_token.add_argument("room", help="Room name")
 
     p_kick = sub.add_parser("kick", help="Kick a participant from a room (admin)")
     p_kick.add_argument("room", help="Room name")
@@ -3709,6 +3778,7 @@ def main():
         "add-agent": _cmd_add_agent,
         "connect": _cmd_connect,
         "invite-link": _cmd_invite_link,
+        "invite-token": _cmd_invite_token,
         "spawn": _cmd_spawn,
         "spawn-multiple": _cmd_spawn_multiple,
         "quickstart": _cmd_quickstart,
