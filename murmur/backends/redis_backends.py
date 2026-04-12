@@ -1312,10 +1312,77 @@ class RedisRoomStateBackend:
     return {2, nil}  -- Successfully released
     """
 
+    # Lua script: atomic task expiry with token-verified lock cleanup
+    # Returns: JSON array of expired task IDs
+    # Only removes a lock if the stored token matches the expired task's token
+    _LUA_EXPIRE_TASKS = """
+    local tasks_key = KEYS[1]
+    local locks_key = KEYS[2]
+    local now_ts = tonumber(ARGV[1])
+
+    local tasks = redis.call('LRANGE', tasks_key, 0, -1)
+    if #tasks == 0 then
+        return '[]'
+    end
+
+    local expired_ids = {}
+    local live_tasks = {}
+
+    for _, task_json in ipairs(tasks) do
+        local task = cjson.decode(task_json)
+        local expires_at = task.expires_at
+        local exp_ts = nil
+
+        -- Parse ISO8601 timestamp (simplified: extract epoch from string)
+        -- Format: 2026-04-12T12:34:56.789+00:00 or similar
+        if expires_at then
+            -- Use Lua pattern to extract date/time components
+            local y, mo, d, h, mi, s = expires_at:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+            if y then
+                -- Approximate conversion (assumes UTC, ignores leap seconds)
+                local days = (tonumber(y) - 1970) * 365 + (tonumber(mo) - 1) * 30 + tonumber(d)
+                exp_ts = days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
+            end
+        end
+
+        if exp_ts and exp_ts < now_ts then
+            -- Task expired
+            table.insert(expired_ids, task.id)
+
+            -- Only delete lock if token still matches (prevents race with new acquisition)
+            local file_path = task.file_path
+            local task_token = task.lock_token
+            if file_path and task_token then
+                local lock_json = redis.call('HGET', locks_key, file_path)
+                if lock_json then
+                    local lock = cjson.decode(lock_json)
+                    if lock.lock_token == task_token then
+                        redis.call('HDEL', locks_key, file_path)
+                    end
+                end
+            end
+        else
+            -- Task still valid
+            table.insert(live_tasks, task_json)
+        end
+    end
+
+    -- Rebuild tasks list atomically
+    if #expired_ids > 0 then
+        redis.call('DEL', tasks_key)
+        if #live_tasks > 0 then
+            redis.call('RPUSH', tasks_key, unpack(live_tasks))
+        end
+    end
+
+    return cjson.encode(expired_ids)
+    """
+
     def __init__(self, r: Redis) -> None:
         self._r = r
         self._acquire_script = None
         self._release_script = None
+        self._expire_script = None
 
     async def _get_acquire_script(self):
         """Lazily register the acquire lock Lua script."""
@@ -1328,6 +1395,12 @@ class RedisRoomStateBackend:
         if self._release_script is None:
             self._release_script = self._r.register_script(self._LUA_RELEASE_LOCK)
         return self._release_script
+
+    async def _get_expire_script(self):
+        """Lazily register the task expiry Lua script."""
+        if self._expire_script is None:
+            self._expire_script = self._r.register_script(self._LUA_EXPIRE_TASKS)
+        return self._expire_script
 
     def _key(self, tid: str, rid: str, suffix: str) -> str:
         return f"t:{tid}:room_state:{rid}:{suffix}"
@@ -1506,43 +1579,27 @@ class RedisRoomStateBackend:
     async def expire_tasks(
         self, tenant_id: str, room_id: str
     ) -> list[str]:
-        """Remove and return IDs of tasks whose TTL has elapsed."""
+        """Remove and return IDs of tasks whose TTL has elapsed.
+
+        Uses a Lua script for atomicity — only removes a lock if the stored
+        token matches the expired task's token. This prevents race conditions
+        where a new lock is acquired between reading and deleting.
+        """
         tasks_key = self._key(tenant_id, room_id, "tasks")
         locks_key = self._key(tenant_id, room_id, "locks")
 
-        tasks_raw = await self._r.lrange(tasks_key, 0, -1)
-        if not tasks_raw:
-            return []
+        script = await self._get_expire_script()
+        now_ts = int(time.time())
 
-        now = time.time()
-        expired_ids: list[str] = []
-        live_tasks: list[str] = []
-        expired_paths: list[str] = []
+        result = await script(
+            keys=[tasks_key, locks_key],
+            args=[now_ts],
+        )
 
-        for t in tasks_raw:
-            task = json.loads(t)
-            try:
-                exp = datetime.fromisoformat(task["expires_at"]).timestamp()
-                if exp < now:
-                    expired_ids.append(task["id"])
-                    fp = task.get("file_path")
-                    if fp:
-                        expired_paths.append(fp)
-                else:
-                    live_tasks.append(t)
-            except (KeyError, ValueError):
-                live_tasks.append(t)
-
-        if expired_ids:
-            pipe = self._r.pipeline()
-            pipe.delete(tasks_key)
-            if live_tasks:
-                pipe.rpush(tasks_key, *live_tasks)
-            if expired_paths:
-                pipe.hdel(locks_key, *expired_paths)
-            await pipe.execute()
-
-        return expired_ids
+        # Result is JSON array of expired task IDs
+        if result:
+            return json.loads(result)
+        return []
 
 
 # -- Convenience bundle -----------------------------------------------------
