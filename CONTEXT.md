@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 01:30 EDT
+Last updated: 2026-04-12 02:15 EDT
 
 ---
 
@@ -64,7 +64,7 @@ murmur init <your-name> --relay <url> --secret <secret>
 - Discord-style invite pages at GET /invite/{room}
 - Integration guides for Codex, Cursor, Gemini, Ollama
 
-**Tests:** 608 passing, all green. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
+**Tests:** 611 passing, all green + 9 Redis integration tests. 272 security tests. Stress tested: 281 msg/s, p50=3.6ms.
 
 **Public relay:** Active via localhost.run tunnel (URL shared privately)
 
@@ -90,28 +90,26 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 
 | Priority | Issue | Status |
 |----------|-------|--------|
-| **Critical** | No real Redis/Postgres integration tests | Tests use in-memory backend |
-| **Critical** | Auto-ACK default is a footgun | `ack=auto` should not be default for external clients |
-| **Critical** | No idempotency on send | Client retries create duplicates |
-| **High** | Redis persistence undefined | No AOF, maxmemory policy, backups in compose |
+| ~~Critical~~ | ~~No real Redis/Postgres integration tests~~ | ✅ 9 integration tests with testcontainers |
+| ~~Critical~~ | ~~Auto-ACK default is a footgun~~ | ✅ `ack=manual` is now the default |
+| ~~Critical~~ | ~~No idempotency on send~~ | ✅ `Idempotency-Key` header support |
+| ~~High~~ | ~~Redis persistence undefined~~ | ✅ `docker-compose.prod.yml` with AOF, auth, noeviction |
 | **High** | Webhook queue is in-memory | Crashes lose queued jobs and DLQ |
-| **High** | No per-tenant quotas/backpressure | Stuck consumer grows Redis indefinitely |
+| ~~High~~ | ~~No per-tenant quotas/backpressure~~ | ✅ MAX_RECIPIENT_DEPTH quota (default 10000) |
 | **High** | Room fan-out is write-amplified | N members = N queue writes per message |
 | **Medium** | No migration/rebuild story for Redis | Key schema changes are operationally risky |
-| **Medium** | Webhook signing too weak | No timestamp, no per-webhook secrets |
+| ~~Medium~~ | ~~Webhook signing too weak~~ | ✅ Timestamped HMAC + per-webhook secrets |
 | **Medium** | No delivery/audit ledger | "What happened to message X?" has no answer |
-| **Medium** | MCP swallows ACK failures | Users see messages then duplicates without knowing why |
+| ~~Medium~~ | ~~MCP swallows ACK failures~~ | ✅ Warning shown when ACK fails |
 | **Medium** | Auth is name-oriented, not account-based | No immutable IDs, no revocation |
 | **Low** | Operational metrics thin | Need stream depth, pending age, redelivery counts |
 
 ### Next Priorities
 
-1. Real Redis integration tests (testcontainers)
-2. Make `ack=manual` the default, rename auto to `ack=server`
-3. Add `Idempotency-Key` header support
-4. Decide data authority: Redis durable vs Postgres source of truth
-5. Durable webhook queue (Redis Streams)
-6. Production Redis config (AOF, auth, TLS, quotas)
+1. Durable webhook queue (Redis Streams instead of in-memory)
+2. Decide data authority: Redis durable vs Postgres source of truth
+3. Room fan-out optimization (Redis pub/sub or shared streams)
+4. Account-based auth with immutable IDs
 
 ---
 
@@ -125,16 +123,16 @@ Manual ACK can provide client-confirmed delivery for callers that explicitly ACK
 
 | Date       | Commit  | What                                               |
 | ---------- | ------- | -------------------------------------------------- |
+| 2026-04-12 | 400fd7c | Production Redis config (AOF, auth, noeviction)    |
+| 2026-04-12 | 4ff1b43 | Surface ACK failures in MCP check_messages         |
+| 2026-04-12 | 261bc89 | Per-webhook secrets + timestamped HMAC signatures  |
+| 2026-04-12 | d6f6004 | Per-recipient queue depth quota (MAX_RECIPIENT_DEPTH) |
+| 2026-04-12 | 6cb9200 | Redis integration tests with testcontainers        |
+| 2026-04-12 | ce2ab69 | Idempotency-Key header support for sends           |
+| 2026-04-12 | 3a61c83 | Make ack=manual the default for message fetches    |
 | 2026-04-12 | baca2c1 | ReceiveResult.ack() raises AckError on failure     |
 | 2026-04-12 | d3f77a4 | MCP auto-poll defers ACK until consumption         |
 | 2026-04-12 | 781e971 | Per-message ACK for chunked messages covers all    |
-| 2026-04-12 | 8d1e13a | Atomic requeue eliminates chunk crash window       |
-| 2026-04-11 | 73f2d05 | Catch specific Redis exceptions                    |
-| 2026-04-11 | 1e24989 | Only ACK held-back chunks, leave ready pending     |
-| 2026-04-11 | 700559c | Clients ACK after processing, not before           |
-| 2026-04-11 | 881f034 | Default all clients to manual ACK                  |
-| 2026-04-11 | a204db8 | Room membership reverse index in Redis             |
-| 2026-04-11 | c02144d | Show HN + Twitter launch drafts                    |
 
 ---
 
