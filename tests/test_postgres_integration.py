@@ -49,10 +49,12 @@ def postgres_container():
 @pytest.fixture(scope="module")
 def database_url(postgres_container):
     """Get asyncpg connection URL from the container."""
-    # testcontainers returns psycopg2 URL; convert to asyncpg
+    import re
+
     url = postgres_container.get_connection_url()
-    # postgresql://user:pass@host:port/db -> postgresql+asyncpg://...
-    return url.replace("postgresql://", "postgresql+asyncpg://")
+    # testcontainers may return postgresql://, postgresql+psycopg2://, etc.
+    # Normalize to postgresql+asyncpg:// for SQLAlchemy async engine.
+    return re.sub(r"^postgresql(\+\w+)?://", "postgresql+asyncpg://", url)
 
 
 @pytest.fixture(scope="module")
