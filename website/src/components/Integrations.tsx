@@ -224,7 +224,7 @@ const INTEGRATION_CARDS = [
     tag: "Zero Lock-in",
     title: "Switch anytime",
     desc: "Swap agents mid-sprint. The relay persists. History, state, and locks survive without replay.",
-    code: `relay.rooms — durable, agent-agnostic`,
+    code: `relay.rooms - durable, agent-agnostic`,
   },
 ];
 

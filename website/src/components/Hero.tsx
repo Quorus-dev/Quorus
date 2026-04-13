@@ -296,7 +296,7 @@ function FloatingAgentNode({ node }: { node: (typeof AGENT_NODES)[0] }) {
 export default function Hero() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Subtle ambient dot field — no connecting lines
+  // Subtle ambient dot field - no connecting lines
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;

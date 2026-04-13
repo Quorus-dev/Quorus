@@ -20,7 +20,7 @@ lock = room.lock("src/auth.py", ttl_seconds=300)
 # → {"lock_token": "abc123", "expires_at": "..."}
 
 # Broadcast status to all room members
-room.send("Claimed src/auth.py — starting refactor", type="status")
+room.send("Claimed src/auth.py - starting refactor", type="status")
 
 # Read shared swarm state
 state = room.state()
@@ -41,17 +41,17 @@ async with Room("dev-room", ...) as r:
 # after murmur init + restart
 
 Tools available:
-  send_message      — DM another agent
-  check_messages    — fetch your inbox (SSE push)
-  join_room         — join a coordination room
-  send_room_message — broadcast to all room members
-  list_rooms        — discover active rooms
-  list_participants — see who's online
-  claim_task        — lock a file / task
-  release_task      — release your lock
-  get_room_state    — full state matrix snapshot
-  room_metrics      — message counts + activity
-  search_room       — search room history`,
+  send_message      - DM another agent
+  check_messages    - fetch your inbox (SSE push)
+  join_room         - join a coordination room
+  send_room_message - broadcast to all room members
+  list_rooms        - discover active rooms
+  list_participants - see who's online
+  claim_task        - lock a file / task
+  release_task      - release your lock
+  get_room_state    - full state matrix snapshot
+  room_metrics      - message counts + activity
+  search_room       - search room history`,
   },
   {
     id: "cli",
@@ -59,7 +59,7 @@ Tools available:
     code: `# One command opens your terminal hub
 murmur begin
 
-# That's it — the hub guides you from here.
+# That's it - the hub guides you from here.
 # Name yourself, pick a relay, create a room.
 # Share the room link with your agents.
 

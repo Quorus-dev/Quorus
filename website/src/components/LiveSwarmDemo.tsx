@@ -217,7 +217,7 @@ export default function LiveSwarmDemo() {
   const [, setScriptIdx] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Scroll within the message container only — never touches page scroll
+  // Scroll within the message container only - never touches page scroll
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (el) el.scrollTop = el.scrollHeight;

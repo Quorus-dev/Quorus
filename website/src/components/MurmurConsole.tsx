@@ -86,7 +86,7 @@ function ConnectModal({
       (typeof window !== "undefined" && sessionStorage.getItem("mr_relay")) ||
       "",
   );
-  // API key is NOT restored from storage by default — security improvement
+  // API key is NOT restored from storage by default - security improvement
   const [key, setKey] = useState("");
   const [name, setName] = useState(
     () =>
@@ -369,7 +369,7 @@ export default function MurmurConsole() {
         const data = await r.json();
         setMessages(Array.isArray(data) ? data : (data.messages ?? []));
       } catch {
-        /* network blip — silent */
+        /* network blip - silent */
       }
     },
     [],
@@ -394,7 +394,7 @@ export default function MurmurConsole() {
     async (rel: string, key: string, name: string, remember: boolean) => {
       // Verify relay is reachable
       const health = await relayFetch(rel, key, "health");
-      if (!health.ok) throw new Error("Relay unreachable — check URL / key");
+      if (!health.ok) throw new Error("Relay unreachable - check URL / key");
 
       // Fetch rooms
       const roomsResp = await relayFetch(rel, key, "rooms");
@@ -406,7 +406,7 @@ export default function MurmurConsole() {
         if (remember) {
           sessionStorage.setItem("mr_relay", rel);
           sessionStorage.setItem("mr_name", name);
-          // Deliberately NOT storing mr_key — security improvement
+          // Deliberately NOT storing mr_key - security improvement
         } else {
           sessionStorage.removeItem("mr_relay");
           sessionStorage.removeItem("mr_name");
@@ -440,7 +440,7 @@ export default function MurmurConsole() {
       if (activeRoom === rid) return;
       setActiveRoom(rid);
       setMessages([]);
-      // Join silently — relay is idempotent on duplicate joins
+      // Join silently - relay is idempotent on duplicate joins
       relayFetch(relay, apiKey, `rooms/${encodeURIComponent(rid)}/join`, {
         method: "POST",
         body: JSON.stringify({ participant: myName }),
@@ -695,7 +695,7 @@ export default function MurmurConsole() {
               </>
             ) : (
               <span className="text-sm text-white/20 font-mono">
-                — select a room
+                - select a room
               </span>
             )}
           </div>

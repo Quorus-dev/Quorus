@@ -196,7 +196,7 @@ function WaitlistForm() {
     e.preventDefault();
     if (!email.trim()) return;
     setLoading(true);
-    // Simulate a brief submit delay — no backend needed for now.
+    // Simulate a brief submit delay - no backend needed for now.
     setTimeout(() => {
       setLoading(false);
       setSubmitted(true);

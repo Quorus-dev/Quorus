@@ -62,7 +62,7 @@ export default function CTA() {
           teams now.
         </motion.p>
 
-        {/* Form — elevated card treatment */}
+        {/* Form - elevated card treatment */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -70,7 +70,7 @@ export default function CTA() {
           transition={{ duration: 0.6, delay: 0.24 }}
           className="relative mb-8"
         >
-          {/* Card — animated gradient border */}
+          {/* Card - animated gradient border */}
           <div className="animated-border rounded-2xl bg-[#0a0a1a]/90 backdrop-blur-sm p-6">
             <Waitlist
               size="lg"
