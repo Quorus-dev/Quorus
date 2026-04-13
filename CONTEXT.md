@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-12 09:15 UTC
+Last updated: 2026-04-13 05:15 UTC
 
 ---
 
@@ -92,38 +92,38 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 **Current rating:**
 
-| Stage | Score | Notes |
-|-------|-------|-------|
-| Trusted private demo | 9.1/10 | Solid for internal/team use |
-| Controlled public alpha | 7.8/10 | Ready with published limitations |
-| Paid early access | 7.0/10 | Needs clear limits, no hard SLA |
-| Serious production SaaS | 6.3/10 | Blockers below must be resolved |
-| High-scale (millions) | 4.3/10 | Needs load tests, sharding, chaos engineering |
+| Stage                   | Score  | Notes                                         |
+| ----------------------- | ------ | --------------------------------------------- |
+| Trusted private demo    | 9.1/10 | Solid for internal/team use                   |
+| Controlled public alpha | 7.8/10 | Ready with published limitations              |
+| Paid early access       | 7.0/10 | Needs clear limits, no hard SLA               |
+| Serious production SaaS | 6.3/10 | Blockers below must be resolved               |
+| High-scale (millions)   | 4.3/10 | Needs load tests, sharding, chaos engineering |
 
 ### Delivery Guarantees (Honest Assessment)
 
-| Path                     | Guarantee                   | Caveats                                                         |
-| ------------------------ | --------------------------- | --------------------------------------------------------------- |
-| HTTP client + manual ACK | At-least-once to caller     | Only for DM inbox path; caller must call `result.ack()`         |
+| Path                     | Guarantee                   | Caveats                                                                    |
+| ------------------------ | --------------------------- | -------------------------------------------------------------------------- |
+| HTTP client + manual ACK | At-least-once to caller     | Only for DM inbox path; caller must call `result.ack()`                    |
 | Room messages            | Best-effort fan-out         | Postgres-first, but fan-out can fail after commit (fallback: poll history) |
-| MCP tools                | At-least-once to MCP server | ACK before tool result reaches Claude                           |
-| SSE                      | Live notifications only     | **Not durable** — use for UX, not delivery guarantees           |
-| Webhooks                 | At-least-once (queue)       | Redis Streams + DLQ, but app-level SSRF checks only             |
+| MCP tools                | At-least-once to MCP server | ACK before tool result reaches Claude                                      |
+| SSE                      | Live notifications only     | **Not durable** — use for UX, not delivery guarantees                      |
+| Webhooks                 | At-least-once (queue)       | Redis Streams + DLQ, but app-level SSRF checks only                        |
 
 **Key limitation:** No transactional outbox. Room send can commit to history but fail fan-out. This is documented eventual consistency, not a delivery guarantee.
 
 ### Remaining Blockers for Production SaaS
 
-| Priority | Issue | Impact | Path to Fix |
-|----------|-------|--------|-------------|
-| **High** | Console accepts shared secrets | Not SaaS-ready auth model | First-party auth or key-only |
-| **High** | Webhook SSRF app-level only | httpx re-resolves DNS; no egress enforcement | Egress proxy or network policy |
-| **High** | No load/chaos testing | Unproven concurrency envelope | k6/locust tests, failure injection |
-| **Medium** | Signup abuse controls | 5/hr IP limit only; no email verify/CAPTCHA | Add verification, tenant quotas |
-| **Medium** | Thin operational metrics | No fan-out failures, DLQ age, ACK lag metrics | Domain-specific Prometheus counters |
-| **Medium** | No runbooks/alerts | Ops flying blind | Document failure modes, set thresholds |
-| **Medium** | No admin tools | No DLQ replay, user suspension, stuck queue fix | Admin CLI/API |
-| **Low** | Simple RBAC | No org roles, key scopes, service accounts | Expand role model |
+| Priority   | Issue                          | Impact                                          | Path to Fix                            |
+| ---------- | ------------------------------ | ----------------------------------------------- | -------------------------------------- |
+| **High**   | Console accepts shared secrets | Not SaaS-ready auth model                       | First-party auth or key-only           |
+| **High**   | Webhook SSRF app-level only    | httpx re-resolves DNS; no egress enforcement    | Egress proxy or network policy         |
+| **High**   | No load/chaos testing          | Unproven concurrency envelope                   | k6/locust tests, failure injection     |
+| **Medium** | Signup abuse controls          | 5/hr IP limit only; no email verify/CAPTCHA     | Add verification, tenant quotas        |
+| **Medium** | Thin operational metrics       | No fan-out failures, DLQ age, ACK lag metrics   | Domain-specific Prometheus counters    |
+| **Medium** | No runbooks/alerts             | Ops flying blind                                | Document failure modes, set thresholds |
+| **Medium** | No admin tools                 | No DLQ replay, user suspension, stuck queue fix | Admin CLI/API                          |
+| **Low**    | Simple RBAC                    | No org roles, key scopes, service accounts      | Expand role model                      |
 
 ### Resolved Issues (for reference)
 
@@ -139,7 +139,7 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 - ✅ Timestamped HMAC webhook signing
 - ✅ API key in memory only, never sessionStorage
 - ✅ **Transactional outbox** — atomic Postgres writes + background worker fan-out (USE_OUTBOX=true)
-- ✅ **Audit ledger** — message lifecycle events (MESSAGE_CREATED → FANOUT_* → DELIVERED); API at /v1/audit/*
+- ✅ **Audit ledger** — message lifecycle events (MESSAGE*CREATED → FANOUT*_ → DELIVERED); API at /v1/audit/_
 - ✅ **Account-based identity** — participant_id in JWT claims + migration 008 adds FK columns to tables
 
 ### What This Means
@@ -166,20 +166,24 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 ## Recent Changes
 
-| Date       | Commit  | What                                                                      |
-| ---------- | ------- | ------------------------------------------------------------------------- |
-| 2026-04-12 | 5436cfd | fix: murmur join preserves config when no flags provided                  |
-| 2026-04-12 | 5d74dbc | feat: account-based identity — participant_id in JWTs, migration 008     |
-| 2026-04-12 | (pending) | feat: audit ledger — message lifecycle events with API at /v1/audit/*  |
+| Date       | Commit    | What                                                                     |
+| ---------- | --------- | ------------------------------------------------------------------------ |
+| 2026-04-13 | cd67ddc   | feat: real CLI demos in AgentShowcase — official screenshots/GIFs        |
+| 2026-04-13 | f3881b2   | feat: use real brand logos instead of fake SVGs                          |
+| 2026-04-13 | 674c314   | fix: remove fake stats, fix page jumping, correct integrations           |
+| 2026-04-13 | d8a96c4   | feat: update TUI accent to teal (#14b8a6)                                |
+| 2026-04-12 | 5436cfd   | fix: murmur join preserves config when no flags provided                 |
+| 2026-04-12 | 5d74dbc   | feat: account-based identity — participant_id in JWTs, migration 008     |
+| 2026-04-12 | (pending) | feat: audit ledger — message lifecycle events with API at /v1/audit/\*   |
 | 2026-04-12 | (pending) | feat: transactional outbox — atomic Postgres + background worker fan-out |
-| 2026-04-12 | fd741e5 | refactor: migrate website from Next.js to Vite — removes proxy SSRF risk |
-| 2026-04-12 | 5250d7b | fix: DNS rebinding protection in relay proxy (resolve before fetch)       |
-| 2026-04-12 | 2f2abfb | ci: add Postgres integration tests and CI job (migrations + CRUD)         |
-| 2026-04-12 | 00eebad | ci: add website lint and build job                                        |
-| 2026-04-12 | 679fa13 | fix: add .nvmrc and .node-version for Node 20 enforcement                 |
-| 2026-04-12 | 9f7ee4f | fix: fail closed if RELAY_ALLOWLIST unset in production                   |
-| 2026-04-12 | e294225 | fix: make room fan-out failures non-fatal after history commit            |
-| 2026-04-12 | f2983ee | fix: console credential handling — no sessionStorage for keys, warning    |
+| 2026-04-12 | fd741e5   | refactor: migrate website from Next.js to Vite — removes proxy SSRF risk |
+| 2026-04-12 | 5250d7b   | fix: DNS rebinding protection in relay proxy (resolve before fetch)      |
+| 2026-04-12 | 2f2abfb   | ci: add Postgres integration tests and CI job (migrations + CRUD)        |
+| 2026-04-12 | 00eebad   | ci: add website lint and build job                                       |
+| 2026-04-12 | 679fa13   | fix: add .nvmrc and .node-version for Node 20 enforcement                |
+| 2026-04-12 | 9f7ee4f   | fix: fail closed if RELAY_ALLOWLIST unset in production                  |
+| 2026-04-12 | e294225   | fix: make room fan-out failures non-fatal after history commit           |
+| 2026-04-12 | f2983ee   | fix: console credential handling — no sessionStorage for keys, warning   |
 
 ---
 
