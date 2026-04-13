@@ -12,16 +12,16 @@ const PROOF = [
 
 export default function CTA() {
   return (
-    <section id="waitlist" className="relative py-32 px-6 overflow-hidden">
-      {/* Subtle grid */}
-      <div className="absolute inset-0 grid-bg opacity-20" />
-
+    <section
+      id="waitlist"
+      className="relative py-32 px-6 overflow-hidden bg-[#faf9f7]"
+    >
       {/* Ambient gradient */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 60% 50% at 50% 100%, rgba(20,184,166,0.1) 0%, transparent 70%)",
+            "radial-gradient(ellipse 60% 50% at 50% 100%, rgba(20,184,166,0.06) 0%, transparent 70%)",
         }}
       />
 
@@ -36,7 +36,7 @@ export default function CTA() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 text-xs text-teal-300 mb-8 font-mono"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-teal-600/30 bg-teal-500/10 text-xs text-teal-700 mb-8 font-mono"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-teal-400 pulse-dot" />
               Private beta · We review every application
@@ -50,9 +50,9 @@ export default function CTA() {
               transition={{ duration: 0.6, delay: 0.08 }}
               className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.05] mb-6"
             >
-              <span className="text-white">Your agents.</span>
+              <span className="text-gray-900">Your agents.</span>
               <br />
-              <span className="gradient-text">Finally connected.</span>
+              <span className="text-teal-600">Finally connected.</span>
             </motion.h2>
 
             <motion.p
@@ -60,7 +60,7 @@ export default function CTA() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.6, delay: 0.16 }}
-              className="text-white/50 text-lg mb-10 leading-relaxed max-w-md mx-auto lg:mx-0"
+              className="text-gray-500 text-lg mb-10 leading-relaxed max-w-md mx-auto lg:mx-0"
             >
               Murmur gives your AI swarms rooms, shared state, and real-time
               coordination. Any model, any machine.
@@ -74,15 +74,15 @@ export default function CTA() {
               transition={{ duration: 0.6, delay: 0.24 }}
               className="mb-8"
             >
-              <div className="rounded-2xl bg-[#0a0a1a]/80 backdrop-blur-sm p-5 border border-white/[0.08] max-w-md mx-auto lg:mx-0">
+              <div className="rounded-2xl bg-white p-5 border border-gray-200 shadow-lg max-w-md mx-auto lg:mx-0">
                 <Waitlist
                   size="lg"
                   className="w-full"
                   label="Request early access"
                 />
-                <p className="text-xs text-white/20 mt-3 flex items-center justify-center lg:justify-start gap-3">
+                <p className="text-xs text-gray-400 mt-3 flex items-center justify-center lg:justify-start gap-3">
                   <span>No spam, ever.</span>
-                  <span className="w-px h-3 bg-white/10" />
+                  <span className="w-px h-3 bg-gray-200" />
                   <span>Unsubscribe anytime.</span>
                 </p>
               </div>
@@ -103,7 +103,7 @@ export default function CTA() {
                   whileInView={{ opacity: 1, scale: 1 }}
                   viewport={{ once: true }}
                   transition={{ delay: 0.4 + i * 0.06 }}
-                  className="px-3 py-1 rounded-full border border-white/8 bg-white/[0.03] text-xs text-white/30 font-mono"
+                  className="px-3 py-1 rounded-full border border-gray-200 bg-white text-xs text-gray-500 font-mono shadow-sm"
                 >
                   {p}
                 </motion.span>
@@ -142,7 +142,7 @@ export default function CTA() {
           transition={{ duration: 0.6, delay: 0.4 }}
           className="lg:hidden mt-16"
         >
-          <p className="text-center text-[10px] font-mono text-white/25 mb-4 tracking-widest uppercase">
+          <p className="text-center text-[10px] font-mono text-gray-400 mb-4 tracking-widest uppercase">
             Murmur TUI preview
           </p>
           <TerminalAnimation />

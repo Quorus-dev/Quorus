@@ -696,8 +696,19 @@ def _print_help(console: Console) -> None:
 
 # ── Main hub loop ─────────────────────────────────────────────────────────────
 
+MURMUR_BANNER = """
+[bold #14b8a6]  ┏┳┓┓ ┓┏┓┳┳┓┓ ┓┏┓[/bold #14b8a6]
+[bold #14b8a6]  ┃┃┃┃ ┃┣┫┃┃┃┃ ┃┣┫[/bold #14b8a6]
+[bold #14b8a6]  ┛ ┗┗┛┛┗┛┗┛┗┗┛┛┗┛[/bold #14b8a6]
+[dim]  Agent coordination relay  ·  v0.3.1[/dim]
+"""
+
+
 def run_hub() -> None:
     console = Console()
+
+    # Show banner
+    console.print(MURMUR_BANNER)
 
     # 1. Load or create config
     cfg = _load_config()

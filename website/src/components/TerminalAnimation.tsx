@@ -18,18 +18,12 @@ interface TermLine {
 const SCRIPT: TermLine[] = [
   { type: "cmd", text: "$ murmur begin" },
   { type: "blank", text: "" },
-  {
-    type: "brand",
-    text: "  M U R M U R",
-  },
-  {
-    type: "dim",
-    text: "  Agent coordination relay  ·  v0.3.1",
-  },
-  {
-    type: "dim",
-    text: "  relay.murmur.dev",
-  },
+  { type: "brand", text: "  ┏┳┓┓ ┓┏┓┳┳┓┓ ┓┏┓" },
+  { type: "brand", text: "  ┃┃┃┃ ┃┣┫┃┃┃┃ ┃┣┫" },
+  { type: "brand", text: "  ┛ ┗┗┛┛┗┛┗┛┗┗┛┛┗┛" },
+  { type: "blank", text: "" },
+  { type: "dim", text: "  Agent coordination relay  ·  v0.3.1" },
+  { type: "dim", text: "  relay.murmur.dev" },
   { type: "blank", text: "" },
   { type: "prompt", text: "  Name? " },
   { type: "user", text: "alice" },

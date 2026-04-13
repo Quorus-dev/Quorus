@@ -47,9 +47,9 @@ export default function Waitlist({
           animate={{ opacity: 1, y: 0 }}
           className={`flex flex-col items-center gap-2 ${className}`}
         >
-          <div className="flex items-center gap-2.5 px-5 py-3 rounded-xl bg-green-500/10 border border-green-500/20">
+          <div className="flex items-center gap-2.5 px-5 py-3 rounded-xl bg-green-50 border border-green-200">
             <svg
-              className="w-4 h-4 text-green-400 shrink-0"
+              className="w-4 h-4 text-green-600 shrink-0"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -61,11 +61,11 @@ export default function Waitlist({
                 d="M5 13l4 4L19 7"
               />
             </svg>
-            <span className="text-sm text-green-300 font-medium">
+            <span className="text-sm text-green-700 font-medium">
               You&apos;re on the list.
             </span>
           </div>
-          <p className="text-xs text-white/30">
+          <p className="text-xs text-gray-500">
             We review every application. We&apos;ll be in touch.
           </p>
         </motion.div>
@@ -83,7 +83,7 @@ export default function Waitlist({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder={placeholder}
-            className={`flex-1 ${pad} ${text} rounded-xl bg-white/[0.05] border border-white/10 text-white placeholder:text-white/25 outline-none focus:border-teal-500/50 focus:ring-2 focus:ring-teal-500/10 transition-all duration-200`}
+            className={`flex-1 ${pad} ${text} rounded-xl bg-gray-50 border border-gray-200 text-gray-900 placeholder:text-gray-400 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 transition-all duration-200`}
           />
           <button
             type="submit"

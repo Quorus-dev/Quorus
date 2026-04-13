@@ -258,22 +258,22 @@ export default function LiveSwarmDemo() {
   }, []);
 
   return (
-    <section className="py-28 px-6 relative overflow-hidden">
+    <section className="py-28 px-6 relative overflow-hidden bg-[#faf9f7]">
       {/* Section background wash */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-violet-600/[0.025] to-transparent pointer-events-none" />
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet-500/20 to-transparent" />
-      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-violet-500/15 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-teal-100/30 to-transparent pointer-events-none" />
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-gray-300/50 to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-gray-300/50 to-transparent" />
 
       <div className="max-w-5xl mx-auto">
         <FadeUp>
           <div className="text-center mb-14">
-            <p className="text-xs font-mono text-teal-400 mb-3 tracking-widest uppercase">
+            <p className="text-xs font-mono text-teal-600 mb-3 tracking-widest uppercase">
               See it in action
             </p>
-            <h2 className="text-4xl md:text-6xl font-bold tracking-tight text-white mb-4">
+            <h2 className="text-4xl md:text-6xl font-bold tracking-tight text-gray-900 mb-4">
               Four agents. One room. Zero conflicts.
             </h2>
-            <p className="text-white/55 text-lg max-w-xl mx-auto">
+            <p className="text-gray-500 text-lg max-w-xl mx-auto">
               Claude Code, Cursor, Codex, and Gemini coordinate a real auth
               refactor. Any model, zero duplicated work.
             </p>

@@ -586,7 +586,7 @@ function TiltCard({ children, className = "", spotlightColor }: TiltCardProps) {
         onMouseLeave={handleMouseLeave}
         onMouseEnter={handleMouseEnter}
         style={{ rotateX, rotateY, transformStyle: "preserve-3d" }}
-        className="card-gradient-border relative rounded-2xl p-6 h-full overflow-hidden cursor-default transition-shadow duration-300"
+        className="relative rounded-2xl p-6 h-full overflow-hidden cursor-default transition-shadow duration-300 bg-white border border-gray-200 shadow-sm hover:shadow-md"
       >
         {/* Spotlight overlay */}
         <div
@@ -613,7 +613,7 @@ function TiltCard({ children, className = "", spotlightColor }: TiltCardProps) {
 
 export default function Features() {
   return (
-    <section className="py-40 px-6 section-ambient" id="features">
+    <section className="py-40 px-6 bg-[#faf9f7]" id="features">
       <div className="max-w-7xl mx-auto">
         {/* Section divider above */}
         <div className="section-divider mb-20" />
@@ -626,13 +626,13 @@ export default function Features() {
           transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
           className="text-center mb-20"
         >
-          <p className="text-xs font-mono text-teal-400 mb-4 tracking-widest uppercase">
+          <p className="text-xs font-mono text-teal-600 mb-4 tracking-widest uppercase">
             Primitives
           </p>
-          <h2 className="text-6xl md:text-7xl font-bold tracking-tight mb-5">
+          <h2 className="text-6xl md:text-7xl font-bold tracking-tight mb-5 text-gray-900">
             Everything your swarm needs
           </h2>
-          <p className="text-white/55 text-lg max-w-xl mx-auto">
+          <p className="text-gray-500 text-lg max-w-xl mx-auto">
             Six primitives. One relay. Unlimited coordination.
           </p>
         </motion.div>
@@ -660,10 +660,10 @@ export default function Features() {
                   </motion.div>
 
                   {/* Title + desc */}
-                  <h3 className="text-base font-semibold text-white mb-2">
+                  <h3 className="text-base font-semibold text-gray-900 mb-2">
                     {f.title}
                   </h3>
-                  <p className="text-sm text-white/55 leading-relaxed">
+                  <p className="text-sm text-gray-500 leading-relaxed">
                     {f.desc}
                   </p>
 

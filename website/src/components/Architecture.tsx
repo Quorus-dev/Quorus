@@ -229,14 +229,16 @@ function ArchDiagram() {
 
 export default function Architecture() {
   return (
-    <section className="py-32 px-6 relative overflow-hidden" id="architecture">
+    <section
+      className="py-32 px-6 relative overflow-hidden bg-[#faf9f7]"
+      id="architecture"
+    >
       {/* Background */}
-      <div className="absolute inset-0 grid-bg opacity-40" />
       <div
         className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[420px] rounded-full pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(20,184,166,0.05) 0%, transparent 70%)",
+            "radial-gradient(ellipse, rgba(20,184,166,0.08) 0%, transparent 70%)",
           filter: "blur(80px)",
         }}
       />
@@ -244,13 +246,13 @@ export default function Architecture() {
       <div className="relative max-w-6xl mx-auto">
         <FadeUp>
           <div className="text-center mb-16">
-            <p className="text-sm font-mono text-teal-400 mb-3 tracking-widest uppercase">
+            <p className="text-sm font-mono text-teal-600 mb-3 tracking-widest uppercase">
               Architecture
             </p>
-            <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
+            <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4 text-gray-900">
               Dead simple by design
             </h2>
-            <p className="text-white/55 text-lg max-w-xl mx-auto">
+            <p className="text-gray-500 text-lg max-w-xl mx-auto">
               One relay at the center. Every agent on the ring. No broker
               lock-in.
             </p>
@@ -275,7 +277,7 @@ export default function Architecture() {
                     duration: 0.45,
                     ease: "easeOut",
                   }}
-                  className="flex items-center gap-4 px-4 py-3.5 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:border-white/[0.1] transition-colors group cursor-default"
+                  className="flex items-center gap-4 px-4 py-3.5 rounded-xl border border-gray-200 bg-white hover:border-gray-300 transition-colors group cursor-default shadow-sm"
                 >
                   <div
                     className="w-2 h-2 rounded-full shrink-0 transition-transform group-hover:scale-125"
@@ -285,10 +287,10 @@ export default function Architecture() {
                     }}
                   />
                   <div className="flex-1 min-w-0">
-                    <span className="text-sm font-semibold text-white font-mono">
+                    <span className="text-sm font-semibold text-gray-900 font-mono">
                       {item.label}
                     </span>
-                    <span className="text-xs text-white/50 ml-2 group-hover:text-white/70 transition-colors">
+                    <span className="text-xs text-gray-500 ml-2 group-hover:text-gray-700 transition-colors">
                       {item.desc}
                     </span>
                   </div>
@@ -309,7 +311,7 @@ export default function Architecture() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ delay: 0.3 + i * 0.1, duration: 0.45 }}
-                  className="text-center px-3 py-4 rounded-xl border border-white/[0.05] bg-white/[0.015]"
+                  className="text-center px-3 py-4 rounded-xl border border-gray-200 bg-white shadow-sm"
                 >
                   <div className="text-xl font-bold gradient-text-subtle tabular-nums">
                     <Counter
@@ -318,7 +320,7 @@ export default function Architecture() {
                       decimals={s.decimals}
                     />
                   </div>
-                  <div className="text-[10px] text-white/25 mt-1 font-mono">
+                  <div className="text-[10px] text-gray-400 mt-1 font-mono">
                     {s.label}
                   </div>
                 </motion.div>
