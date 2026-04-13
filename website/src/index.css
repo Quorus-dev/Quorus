@@ -58,8 +58,9 @@ h1,
 h2,
 h3,
 h4 {
-  letter-spacing: -0.025em;
+  letter-spacing: -0.03em;
   text-wrap: balance;
+  font-weight: 700;
 }
 
 /* Global grain overlay */
@@ -76,22 +77,16 @@ body::before {
   mix-blend-mode: overlay;
 }
 
-/* Gradient text — white → warm gold */
+/* Gradient text — clean warm amber */
 .gradient-text {
-  background: linear-gradient(
-    135deg,
-    #ffffff 0%,
-    #fef9c3 25%,
-    #fcd34d 55%,
-    #d97706 100%
-  );
+  background: linear-gradient(135deg, #fef3c7 0%, #fbbf24 45%, #d97706 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .gradient-text-subtle {
-  background: linear-gradient(135deg, #ffffff 0%, #fef3c7 45%, #fcd34d 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #fef3c7 60%, #fbbf24 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -200,36 +195,17 @@ body::before {
   animation: blink 1s step-end infinite;
 }
 
-/* Card gradient border — amber */
+/* Card gradient border — clean, no glow */
 .card-gradient-border {
-  background:
-    linear-gradient(#0d0d18, #0d0d18) padding-box,
-    linear-gradient(
-        135deg,
-        rgba(217, 119, 6, 0.4),
-        rgba(251, 191, 36, 0.08),
-        rgba(217, 119, 6, 0.12)
-      )
-      border-box;
-  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   transition:
-    background 0.3s ease,
-    box-shadow 0.4s ease;
+    background 0.25s ease,
+    border-color 0.25s ease;
 }
 .card-gradient-border:hover {
-  background:
-    linear-gradient(#0f0f18, #0f0f18) padding-box,
-    linear-gradient(
-        135deg,
-        rgba(217, 119, 6, 0.75),
-        rgba(251, 191, 36, 0.4),
-        rgba(180, 83, 9, 0.35)
-      )
-      border-box;
-  box-shadow:
-    0 0 60px rgba(217, 119, 6, 0.18),
-    0 0 120px rgba(217, 119, 6, 0.05),
-    inset 0 1px 0 rgba(251, 191, 36, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(217, 119, 6, 0.3);
 }
 
 /* Announcement bar shimmer */
@@ -267,32 +243,10 @@ body::before {
   border-radius: 2px;
 }
 
-/* Animated border — amber */
-@keyframes border-spin {
-  0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
-  }
-}
+/* Elevated border — clean static gradient */
 .animated-border {
-  background:
-    linear-gradient(#0d0d18, #0d0d18) padding-box,
-    linear-gradient(
-        135deg,
-        rgba(217, 119, 6, 0.55),
-        rgba(251, 191, 36, 0.45),
-        rgba(180, 83, 9, 0.5),
-        rgba(217, 119, 6, 0.55)
-      )
-      border-box;
-  background-size: 300% 300%;
-  border: 1px solid transparent;
-  animation: border-spin 4s ease infinite;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(217, 119, 6, 0.25);
 }
 
 /* Text shimmer — gold sweep, used on hero word */

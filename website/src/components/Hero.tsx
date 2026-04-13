@@ -1,5 +1,3 @@
-
-
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
@@ -302,7 +300,7 @@ function FloatingAgentNode({ node }: { node: (typeof AGENT_NODES)[0] }) {
 export default function Hero() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Particle field
+  // Subtle ambient dot field — no connecting lines
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -316,14 +314,13 @@ export default function Hero() {
     resize();
     window.addEventListener("resize", resize);
 
-    const particles = Array.from({ length: 55 }, () => ({
+    const particles = Array.from({ length: 30 }, () => ({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height,
-      vx: (Math.random() - 0.5) * 0.25,
-      vy: (Math.random() - 0.5) * 0.25,
-      size: Math.random() * 1.8 + 0.4,
-      alpha: Math.random() * 0.35 + 0.08,
-      hue: Math.random() > 0.4 ? 270 : 285,
+      vx: (Math.random() - 0.5) * 0.15,
+      vy: (Math.random() - 0.5) * 0.15,
+      size: Math.random() * 1.2 + 0.3,
+      alpha: Math.random() * 0.18 + 0.04,
     }));
 
     let animFrame: number;
@@ -338,23 +335,8 @@ export default function Hero() {
         if (p.y > canvas.height) p.y = 0;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${p.hue}, 85%, 72%, ${p.alpha})`;
+        ctx.fillStyle = `rgba(251,191,36,${p.alpha})`;
         ctx.fill();
-      }
-      for (let i = 0; i < particles.length; i++) {
-        for (let j = i + 1; j < particles.length; j++) {
-          const dx = particles[i].x - particles[j].x;
-          const dy = particles[i].y - particles[j].y;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          if (d < 90) {
-            ctx.beginPath();
-            ctx.moveTo(particles[i].x, particles[i].y);
-            ctx.lineTo(particles[j].x, particles[j].y);
-            ctx.strokeStyle = `rgba(217,119,6,${0.07 * (1 - d / 90)})`;
-            ctx.lineWidth = 0.5;
-            ctx.stroke();
-          }
-        }
       }
       animFrame = requestAnimationFrame(draw);
     };
@@ -376,95 +358,16 @@ export default function Hero() {
         className="absolute inset-0 w-full h-full pointer-events-none"
       />
 
-      {/* ── Background glow stack ── */}
-      {/* Big violet orb — center-top */}
-      <motion.div
-        className="absolute pointer-events-none"
-        style={{
-          width: 900,
-          height: 650,
-          top: "-5%",
-          left: "50%",
-          translateX: "-50%",
-          background:
-            "radial-gradient(ellipse, rgba(217,119,6,0.38) 0%, rgba(180,83,9,0.14) 45%, transparent 70%)",
-          filter: "blur(50px)",
-        }}
-        animate={{
-          scale: [1, 1.06, 0.97, 1.03, 1],
-          opacity: [0.85, 1, 0.88, 1, 0.85],
-        }}
-        transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
-      />
-      {/* Inner tight headline halo */}
+      {/* ── Single clean ambient gradient ── */}
       <div
         className="absolute pointer-events-none"
         style={{
-          width: 600,
-          height: 360,
-          top: "12%",
-          left: "50%",
-          transform: "translateX(-50%)",
+          width: "100%",
+          height: "70%",
+          top: 0,
+          left: 0,
           background:
-            "radial-gradient(ellipse, rgba(245,158,11,0.22) 0%, transparent 70%)",
-          filter: "blur(70px)",
-        }}
-      />
-      {/* Left accent — violet variant */}
-      <motion.div
-        className="absolute pointer-events-none"
-        style={{
-          width: 480,
-          height: 380,
-          top: "28%",
-          left: "2%",
-          background:
-            "radial-gradient(ellipse, rgba(180,83,9,0.12) 0%, transparent 70%)",
-          filter: "blur(45px)",
-        }}
-        animate={{
-          scale: [1, 1.18, 1, 1.08, 1],
-          x: [0, 18, 0, -10, 0],
-          opacity: [0.4, 0.7, 0.5, 0.75, 0.4],
-        }}
-        transition={{
-          duration: 14,
-          repeat: Infinity,
-          ease: "easeInOut",
-          delay: 1.5,
-        }}
-      />
-      {/* Pink/magenta right accent — new warmth */}
-      <motion.div
-        className="absolute pointer-events-none"
-        style={{
-          width: 320,
-          height: 280,
-          top: "20%",
-          right: "5%",
-          background:
-            "radial-gradient(ellipse, rgba(236,72,153,0.10) 0%, transparent 70%)",
-          filter: "blur(40px)",
-        }}
-        animate={{ scale: [1, 1.15, 0.92, 1.18, 1], y: [0, -20, 10, -8, 0] }}
-        transition={{
-          duration: 14,
-          repeat: Infinity,
-          ease: "easeInOut",
-          delay: 3,
-        }}
-      />
-      {/* Bottom beam — horizontal streak */}
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          height: 1,
-          width: "80%",
-          top: "58%",
-          left: "10%",
-          background:
-            "linear-gradient(90deg, transparent 0%, rgba(217,119,6,0.35) 25%, rgba(251,191,36,0.55) 50%, rgba(217,119,6,0.35) 75%, transparent 100%)",
-          boxShadow: "0 0 60px 12px rgba(217,119,6,0.18)",
+            "radial-gradient(ellipse 65% 55% at 50% 0%, rgba(217,119,6,0.14) 0%, transparent 70%)",
         }}
       />
 
@@ -486,18 +389,29 @@ export default function Hero() {
           Private beta · Limited spots open now
         </motion.div>
 
-        {/* ── HEADLINE — much bigger ── */}
+        {/* ── HEADLINE ── */}
         <motion.h1
-          className="font-bold tracking-tight leading-[0.95] mb-7"
-          style={{ fontSize: "clamp(46px, 7.5vw, 96px)" }}
+          className="font-bold tracking-[-0.03em] leading-[0.92] mb-8"
+          style={{ fontSize: "clamp(52px, 8.5vw, 108px)" }}
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.75, delay: 0.08 }}
         >
-          <span className="block text-white">
-            The <span className="text-shimmer">Communication</span>
+          <span className="block text-white/95">
+            The{" "}
+            <span
+              style={{
+                background:
+                  "linear-gradient(135deg, #fef3c7 0%, #fbbf24 50%, #d97706 100%)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                backgroundClip: "text",
+              }}
+            >
+              Communication
+            </span>
           </span>
-          <span className="block text-white">
+          <span className="block text-white/95">
             Layer for <TypewriterWord />
           </span>
         </motion.h1>

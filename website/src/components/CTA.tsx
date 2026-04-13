@@ -1,4 +1,3 @@
-
 import { motion } from "framer-motion";
 import Waitlist from "./Waitlist";
 
@@ -13,44 +12,15 @@ const PROOF = [
 export default function CTA() {
   return (
     <section id="waitlist" className="relative py-40 px-6 overflow-hidden">
-      {/* Deep background layers */}
-      <div className="absolute inset-0 grid-bg opacity-30" />
+      {/* Subtle grid */}
+      <div className="absolute inset-0 grid-bg opacity-20" />
 
-      {/* Converging radial grid — creates a dramatic focal point */}
+      {/* Single clean ambient gradient */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(217,119,6,0.12) 0%, transparent 70%)",
-        }}
-      />
-
-      {/* Multi-layer glow stack */}
-      <div
-        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] rounded-full blur-[140px] pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(ellipse, rgba(217,119,6,0.22) 0%, rgba(180,83,9,0.08) 50%, transparent 70%)",
-        }}
-      />
-      <div
-        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[500px] h-[300px] rounded-full blur-[80px] pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(ellipse, rgba(245,158,11,0.3) 0%, transparent 70%)",
-        }}
-      />
-      <div
-        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[200px] h-[150px] rounded-full blur-[40px] pointer-events-none"
-        style={{ background: "rgba(251,191,36,0.25)" }}
-      />
-
-      {/* Vignette */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 50% at 50% 50%, transparent 40%, rgba(6,6,10,0.6) 100%)",
+            "radial-gradient(ellipse 60% 50% at 50% 100%, rgba(217,119,6,0.1) 0%, transparent 70%)",
         }}
       />
 
