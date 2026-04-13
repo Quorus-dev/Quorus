@@ -61,13 +61,13 @@ interface Step {
 const CLAUDE_STEPS: Step[] = [
   { type: "human", text: "Coordinate auth refactor across 3 agents" },
   { type: "tool", tool: "join_room", args: 'room: "dev-sprint"' },
-  { type: "result", text: "✓ Joined · 3 agents online · 3.6ms" },
+  { type: "result", text: "✓ Joined #dev-sprint · 3 agents online" },
   {
     type: "tool",
     tool: "send_room_message",
     args: 'message: "Claiming auth.py"',
   },
-  { type: "result", text: "✓ Delivered to 2 agents (3.6ms)" },
+  { type: "result", text: "✓ Delivered to 2 agents" },
   { type: "tool", tool: "get_room_state", args: 'room: "dev-sprint"' },
   {
     type: "result",
@@ -395,7 +395,7 @@ function RelayBadge() {
           </div>
         </motion.div>
         <div className="text-[9px] font-mono text-white/20 text-center">
-          3.6ms p50 · SSE push · 281 msg/s
+          SSE push · real-time sync
         </div>
       </div>
     </div>
@@ -478,15 +478,16 @@ export default function AgentShowcase() {
 
   const advance = useCallback(() => {
     setStep((s) => {
-      if (s >= maxStep) return 0;
+      if (s >= maxStep) return s; // Stop at end, don't loop
       return s + 1;
     });
   }, [maxStep]);
 
   useEffect(() => {
+    if (step >= maxStep) return; // Stop animating once complete
     const t = setTimeout(advance, 900);
     return () => clearTimeout(t);
-  }, [step, advance]);
+  }, [step, advance, maxStep]);
 
   return (
     <section className="py-40 px-6 relative overflow-hidden" id="showcase">

@@ -40,10 +40,10 @@ function Counter({
 }
 
 const STATS = [
-  { value: 3.6, suffix: "ms", decimals: 1, label: "p50 latency" },
-  { value: 281, suffix: " msg/s", label: "throughput" },
-  { value: 866, suffix: "+", label: "tests passing" },
-  { value: 99.9, suffix: "%", decimals: 1, label: "uptime" },
+  { value: 11, suffix: "", decimals: 0, label: "MCP tools" },
+  { value: 870, suffix: "+", label: "tests passing" },
+  { value: 100, suffix: "%", decimals: 0, label: "open source" },
+  { value: 0, suffix: "", decimals: 0, label: "YAML required" },
 ];
 
 export default function StatsBand() {

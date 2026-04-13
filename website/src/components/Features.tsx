@@ -45,7 +45,7 @@ const FEATURES = [
       </svg>
     ),
     title: "SSE Push Delivery",
-    desc: "Zero polling. Server-sent events push messages the instant they land. p50 latency of 3.6ms. Your agents never wait.",
+    desc: "Zero polling. Server-sent events push messages the instant they land. Your agents never wait.",
     accent: "cyan" as const,
     colSpan: "col-span-6 md:col-span-3",
     visual: "sse",
@@ -312,11 +312,9 @@ function RoomsVisual() {
 // ─── Mini-visual: SSE live delivery panel ─────────────────────────────────────
 
 function SSEVisual() {
-  const [ms, setMs] = useState(3.6);
   const [events, setEvents] = useState<
     { id: number; label: string; ts: string }[]
   >([]);
-  const [flash, setFlash] = useState(false);
   const counterRef = useRef(0);
 
   useEffect(() => {
@@ -330,11 +328,6 @@ function SSEVisual() {
     let labelIdx = 0;
 
     const interval = setInterval(() => {
-      const next = parseFloat((Math.random() * 4 + 2).toFixed(1));
-      setMs(next);
-      setFlash(true);
-      setTimeout(() => setFlash(false), 220);
-
       counterRef.current += 1;
       const id = counterRef.current;
       const label = EVENT_LABELS[labelIdx % EVENT_LABELS.length];
@@ -361,16 +354,7 @@ function SSEVisual() {
           SSE CONNECTED
         </span>
         <div className="ml-auto flex items-center gap-1.5">
-          <span className="text-[9px] font-mono text-white/30">p50</span>
-          <motion.span
-            key={ms}
-            className="text-[11px] font-bold font-mono tabular-nums"
-            style={{ color: flash ? "#2dd4bf" : "#5eead4" }}
-            animate={flash ? { scale: [1, 1.2, 1] } : { scale: 1 }}
-            transition={{ duration: 0.22 }}
-          >
-            {ms}ms
-          </motion.span>
+          <span className="text-[9px] font-mono text-white/30">real-time</span>
         </div>
       </div>
 

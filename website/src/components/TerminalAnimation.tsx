@@ -49,7 +49,7 @@ const SCRIPT: TermLine[] = [
   { type: "user", text: "" },
   { type: "blank", text: "" },
   { type: "output", text: "  Connecting to relay..." },
-  { type: "teal", text: "  ✓ Connected  ·  3.6ms  ·  SSE active" },
+  { type: "teal", text: "  ✓ Connected  ·  SSE active" },
   { type: "blank", text: "" },
   { type: "teal", text: "  ┌─ Active rooms ──────────────────────────┐" },
   { type: "teal", text: "  │  ▶ #dev-sprint      3 agents  ● live   │" },

@@ -42,7 +42,8 @@ except ImportError:
 # ── Constants ──────────────────────────────────────────────────────────────────
 POLL_S = 2
 MAX_MSG = 40
-CONFIG_DIR = Path.home() / "mcp-tunnel"
+CONFIG_DIR = Path.home() / ".murmur"
+LEGACY_CONFIG_DIR = Path.home() / "mcp-tunnel"  # Previous default
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
 PUBLIC_RELAY = "https://murmur-ai.dev"  # Fallback public relay
@@ -69,11 +70,17 @@ def _sender_color(name: str) -> str:
 # ── Config ────────────────────────────────────────────────────────────────────
 
 def _load_config() -> Optional[dict]:
-    """Return config dict if it exists, else None."""
-    if not CONFIG_FILE.exists():
-        return None
+    """Return config dict if it exists, else None. Checks legacy path too."""
+    config_file = CONFIG_FILE
+    if not config_file.exists():
+        # Check legacy path
+        legacy_file = LEGACY_CONFIG_DIR / "config.json"
+        if legacy_file.exists():
+            config_file = legacy_file
+        else:
+            return None
     try:
-        return json.loads(CONFIG_FILE.read_text())
+        return json.loads(config_file.read_text())
     except (json.JSONDecodeError, OSError):
         return None
 

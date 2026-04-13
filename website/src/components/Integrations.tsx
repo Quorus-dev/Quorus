@@ -1,6 +1,51 @@
 import { motion } from "framer-motion";
 
-// ── Tool logos ────────────────────────────────────────────────────────────────
+// ── AI Agent platform logos ───────────────────────────────────────────────────
+
+const AnthropicLogo = () => (
+  <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
+    <path
+      d="M18.87 7H14.5L7 25h4.5l1.6-4h7.8l1.6 4H27L18.87 7zm-4.2 10.5L16.7 11l2.03 6.5h-4.06z"
+      fill="#d97757"
+    />
+  </svg>
+);
+
+const OpenAILogo = () => (
+  <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
+    <path
+      d="M28.2 13.1a7.7 7.7 0 0 0-.66-6.32 7.8 7.8 0 0 0-8.38-3.74A7.8 7.8 0 0 0 13.3 1a7.8 7.8 0 0 0-7.43 5.4 7.8 7.8 0 0 0-5.2 3.77 7.8 7.8 0 0 0 .96 9.14 7.8 7.8 0 0 0 .66 6.32 7.8 7.8 0 0 0 8.38 3.74A7.8 7.8 0 0 0 16.54 31a7.8 7.8 0 0 0 7.44-5.4 7.8 7.8 0 0 0 5.2-3.77 7.8 7.8 0 0 0-.98-9.13z"
+      fill="#10a37f"
+    />
+  </svg>
+);
+
+const GoogleLogo = () => (
+  <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
+    <path
+      d="M30.3 16.3c0-1.1-.1-2.1-.3-3.1H16v5.8h8.1a6.9 6.9 0 0 1-3 4.6v3.8h4.8c2.8-2.6 4.4-6.4 4.4-11.1z"
+      fill="#4285f4"
+    />
+    <path
+      d="M16 31c4.1 0 7.5-1.4 10-3.7l-4.8-3.8c-1.4.9-3.1 1.5-5.2 1.5-4 0-7.3-2.7-8.5-6.3H2.6v3.9A15 15 0 0 0 16 31z"
+      fill="#34a853"
+    />
+    <path
+      d="M7.5 18.7A9 9 0 0 1 7 16c0-.9.2-1.8.5-2.7V9.4H2.6A15 15 0 0 0 1 16c0 2.4.6 4.7 1.6 6.6l4.9-3.9z"
+      fill="#fbbc05"
+    />
+    <path
+      d="M16 7c2.3 0 4.3.8 5.9 2.3l4.4-4.4C23.5 2.4 20 1 16 1A15 15 0 0 0 2.6 9.4l4.9 3.9C8.7 9.7 12 7 16 7z"
+      fill="#ea4335"
+    />
+  </svg>
+);
+
+const CursorLogo = () => (
+  <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
+    <path d="M6 4l20 12-10.5 2.5L12 28 6 4z" fill="#60a5fa" />
+  </svg>
+);
 
 const GitHubLogo = () => (
   <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
@@ -11,152 +56,95 @@ const GitHubLogo = () => (
   </svg>
 );
 
-const SlackLogo = () => (
-  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
-    <path d="M9 8a2 2 0 1 1-2-2h2v2z" fill="#e01e5a" />
-    <path d="M10 8a2 2 0 0 1 2-2v5h-2V8z" fill="#e01e5a" />
-    <path d="M15 10a2 2 0 1 1 2 2h-2v-2z" fill="#36c5f0" />
-    <path d="M14 11a2 2 0 0 1-2 2H7v-2h7z" fill="#36c5f0" />
-    <path d="M16 15a2 2 0 1 1-2 2v-2h2z" fill="#2eb67d" />
-    <path d="M14 16a2 2 0 0 1-2 2v-5h2v3z" fill="#2eb67d" />
-    <path d="M9 14a2 2 0 1 1-2-2h2v2z" fill="#ecb22e" />
-    <path d="M10 15a2 2 0 0 1 2-2v5h-2v-3z" fill="#ecb22e" />
+const AiderLogo = () => (
+  <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
+    <rect x="4" y="4" width="24" height="24" rx="4" fill="#22c55e" />
+    <path d="M16 8l6 12H10l6-12z" fill="#000" fillOpacity="0.3" />
+    <text
+      x="16"
+      y="22"
+      textAnchor="middle"
+      fill="#fff"
+      fontSize="10"
+      fontWeight="bold"
+      fontFamily="monospace"
+    >
+      A
+    </text>
   </svg>
 );
 
-const NotionLogo = () => (
-  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
-    <path
-      d="M4.5 3h10.7l4.8 4.8V21H4.5V3z"
-      stroke="#e2e8f0"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M14.5 3v5.5H20"
-      stroke="#e2e8f0"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M8 10h8M8 13h6M8 16h4"
-      stroke="#e2e8f0"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-    />
+const ContinueLogo = () => (
+  <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
+    <circle cx="16" cy="16" r="12" fill="#8b5cf6" />
+    <path d="M13 11l8 5-8 5V11z" fill="#fff" />
   </svg>
 );
 
-const LinearLogo = () => (
-  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
-    <path d="M4 4l16 8-8 8L4 4z" fill="#5e6ad2" />
-    <path d="M4 4l8 16" stroke="#5e6ad2" strokeWidth="1.5" />
+const WindsurfLogo = () => (
+  <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
+    <path d="M6 24c4-8 8-12 12-12s8 4 8 8-4 8-8 8-8-4-12 4z" fill="#0ea5e9" />
+    <path d="M6 24c4-8 8-12 12-12" stroke="#fff" strokeWidth="2" />
   </svg>
 );
 
-const JiraLogo = () => (
-  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
-    <path
-      d="M12 2L4 12l8 10 8-10L12 2z"
-      fill="none"
-      stroke="#0052cc"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-    />
-    <path d="M12 2l4 5-4 5-4-5 4-5z" fill="#0052cc" />
-  </svg>
-);
+// ── Agent platform data ───────────────────────────────────────────────────────
 
-const FigmaLogo = () => (
-  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
-    <rect x="8" y="2" width="8" height="6" rx="2" fill="#f24e1e" />
-    <rect x="8" y="9" width="8" height="6" rx="2" fill="#ff7262" />
-    <rect x="8" y="16" width="8" height="6" rx="2" fill="#0acf83" />
-    <circle cx="16" cy="12" r="4" fill="#1abcfe" />
-    <rect
-      x="8"
-      y="2"
-      width="8"
-      height="6"
-      rx="2"
-      fill="#f24e1e"
-      opacity="0.8"
-    />
-  </svg>
-);
-
-const GDriveLogo = () => (
-  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
-    <path d="M12 4L4 18h8l8-14z" fill="none" />
-    <path d="M4 18l4-7h12l-4 7H4z" fill="#4285f4" />
-    <path d="M8 11L12 4l4 7H8z" fill="#fbbc04" />
-    <path d="M16 11l4 7H8l4-7h4z" fill="#0f9d58" />
-  </svg>
-);
-
-const VercelLogo = () => (
-  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
-    <path d="M12 3L22 21H2L12 3z" fill="#e2e8f0" />
-  </svg>
-);
-
-// ── Tool logo data ────────────────────────────────────────────────────────────
-
-interface ToolLogo {
+interface AgentPlatform {
   name: string;
   logo: React.ReactNode;
   bg: string;
   border: string;
 }
 
-const TOOL_LOGOS: ToolLogo[] = [
+const AGENT_PLATFORMS: AgentPlatform[] = [
   {
-    name: "GitHub",
+    name: "Claude Code",
+    logo: <AnthropicLogo />,
+    bg: "bg-[#1a0e0a]",
+    border: "border-[#d97757]/30",
+  },
+  {
+    name: "Codex CLI",
+    logo: <OpenAILogo />,
+    bg: "bg-[#0a1510]",
+    border: "border-[#10a37f]/30",
+  },
+  {
+    name: "Gemini CLI",
+    logo: <GoogleLogo />,
+    bg: "bg-[#0a0e1a]",
+    border: "border-[#4285f4]/30",
+  },
+  {
+    name: "Cursor",
+    logo: <CursorLogo />,
+    bg: "bg-[#0a0e14]",
+    border: "border-[#60a5fa]/30",
+  },
+  {
+    name: "Copilot",
     logo: <GitHubLogo />,
     bg: "bg-[#0d0d0d]",
     border: "border-white/15",
   },
   {
-    name: "Slack",
-    logo: <SlackLogo />,
-    bg: "bg-[#1a0a10]",
-    border: "border-[#e01e5a]/25",
+    name: "Aider",
+    logo: <AiderLogo />,
+    bg: "bg-[#0a140a]",
+    border: "border-[#22c55e]/30",
   },
   {
-    name: "Notion",
-    logo: <NotionLogo />,
-    bg: "bg-[#0d0d0d]",
-    border: "border-white/15",
+    name: "Continue",
+    logo: <ContinueLogo />,
+    bg: "bg-[#0f0a14]",
+    border: "border-[#8b5cf6]/30",
   },
   {
-    name: "Linear",
-    logo: <LinearLogo />,
-    bg: "bg-[#0a0b1a]",
-    border: "border-[#5e6ad2]/30",
-  },
-  {
-    name: "Jira",
-    logo: <JiraLogo />,
-    bg: "bg-[#0a0e1a]",
-    border: "border-[#0052cc]/30",
-  },
-  {
-    name: "Figma",
-    logo: <FigmaLogo />,
-    bg: "bg-[#1a0e0a]",
-    border: "border-[#f24e1e]/25",
-  },
-  {
-    name: "Google Drive",
-    logo: <GDriveLogo />,
-    bg: "bg-[#0a0e1a]",
-    border: "border-[#4285f4]/25",
-  },
-  {
-    name: "Vercel",
-    logo: <VercelLogo />,
-    bg: "bg-[#0d0d0d]",
-    border: "border-white/15",
+    name: "Windsurf",
+    logo: <WindsurfLogo />,
+    bg: "bg-[#0a1014]",
+    border: "border-[#0ea5e9]/30",
   },
 ];
 
@@ -201,7 +189,7 @@ const INTEGRATION_CARDS = [
       </svg>
     ),
     tag: "REST Fallback",
-    title: "Plain HTTP, always",
+    title: "Plain HTTP works too",
     desc: "No MCP support? Any agent that can make an HTTP request can join a room and coordinate.",
     code: `POST /rooms/{id}/messages`,
   },
@@ -222,22 +210,22 @@ const INTEGRATION_CARDS = [
       </svg>
     ),
     tag: "Zero Lock-in",
-    title: "Switch anytime",
-    desc: "Swap agents mid-sprint. The relay persists. History, state, and locks survive without replay.",
-    code: `relay.rooms - durable, agent-agnostic`,
+    title: "Switch agents anytime",
+    desc: "Swap agents mid-sprint. The relay persists. History, state, and locks survive.",
+    code: `# durable, agent-agnostic rooms`,
   },
 ];
 
-// ── Tool badge ────────────────────────────────────────────────────────────────
+// ── Agent badge ───────────────────────────────────────────────────────────────
 
-function ToolBadge({ tool }: { tool: ToolLogo }) {
+function AgentBadge({ agent }: { agent: AgentPlatform }) {
   return (
     <div
-      className={`flex flex-col items-center gap-2 px-4 py-3 rounded-xl border ${tool.bg} ${tool.border} min-w-[72px] cursor-default select-none hover:scale-105 transition-transform duration-200`}
+      className={`flex flex-col items-center gap-2 px-4 py-3 rounded-xl border ${agent.bg} ${agent.border} min-w-[80px] cursor-default select-none hover:scale-105 transition-transform duration-200`}
     >
-      <div className="w-6 h-6">{tool.logo}</div>
-      <span className="text-[9px] font-mono text-white/35 text-center leading-tight">
-        {tool.name}
+      <div className="w-7 h-7">{agent.logo}</div>
+      <span className="text-[9px] font-mono text-white/40 text-center leading-tight">
+        {agent.name}
       </span>
     </div>
   );
@@ -246,10 +234,10 @@ function ToolBadge({ tool }: { tool: ToolLogo }) {
 // ── Stats row ─────────────────────────────────────────────────────────────────
 
 const STATS = [
-  { value: "9", label: "agent platforms" },
-  { value: "250+", label: "teams" },
-  { value: "3.6ms", label: "p50 latency" },
-  { value: "866+", label: "tests passing" },
+  { value: "11", label: "MCP tools" },
+  { value: "8+", label: "agent platforms" },
+  { value: "870+", label: "tests passing" },
+  { value: "MIT", label: "license" },
 ];
 
 // ── Main section ──────────────────────────────────────────────────────────────
@@ -265,113 +253,96 @@ export default function Integrations() {
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-50px" }}
-          transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
-          className="text-center mb-14"
+          viewport={{ once: true }}
+          transition={{ duration: 0.6 }}
+          className="text-center mb-16"
         >
           <p className="text-xs font-mono text-teal-400 mb-4 tracking-widest uppercase">
-            Integrations
+            Works with every agent
           </p>
           <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-5">
-            Every tool your agents use,
+            Any harness. Any model.
             <br />
-            available in every room.
+            <span className="gradient-text">One shared room.</span>
           </h2>
-          <p className="text-white/50 text-base max-w-lg mx-auto">
-            Murmur coordinates the agents. The agents coordinate around your
-            tools. No adapters needed.
+          <p className="text-white/50 text-lg max-w-2xl mx-auto leading-relaxed">
+            Claude Code, Cursor, Codex, Gemini, Copilot, Aider, Continue,
+            Windsurf. If it speaks MCP or HTTP, it can join the swarm.
           </p>
         </motion.div>
 
-        {/* Tool logos grid */}
+        {/* Agent platform badges */}
         <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.5, delay: 0.1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
           className="flex flex-wrap justify-center gap-3 mb-20"
         >
-          {TOOL_LOGOS.map((tool, i) => (
+          {AGENT_PLATFORMS.map((agent, i) => (
             <motion.div
-              key={tool.name}
-              initial={{ opacity: 0, scale: 0.9 }}
-              whileInView={{ opacity: 1, scale: 1 }}
+              key={agent.name}
+              initial={{ opacity: 0, y: 12 }}
+              whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              transition={{ duration: 0.3, delay: i * 0.05 }}
+              transition={{ duration: 0.4, delay: 0.1 + i * 0.05 }}
             >
-              <ToolBadge tool={tool} />
+              <AgentBadge agent={agent} />
             </motion.div>
           ))}
         </motion.div>
 
         {/* Feature cards */}
-        <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-60px" }}
-          transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
-          className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-16"
-        >
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-20">
           {INTEGRATION_CARDS.map((card, i) => (
             <motion.div
               key={card.tag}
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 24 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              transition={{ delay: i * 0.1, duration: 0.5 }}
-              className="card-gradient-border group rounded-2xl p-6 flex flex-col gap-4 hover:border-teal-500/30 transition-all duration-300"
+              transition={{ duration: 0.5, delay: i * 0.1 }}
+              className="card-gradient-border rounded-2xl p-6"
             >
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-teal-500/10 text-teal-400 group-hover:bg-teal-500/15 transition-colors duration-200">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-9 h-9 rounded-lg bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400">
                   {card.icon}
                 </div>
-                <span className="text-xs font-mono text-teal-400/80 tracking-widest uppercase">
+                <span className="text-[10px] font-mono text-teal-400/70 tracking-widest uppercase">
                   {card.tag}
                 </span>
               </div>
-
-              <div>
-                <h3 className="text-base font-semibold text-white mb-1.5">
-                  {card.title}
-                </h3>
-                <p className="text-sm text-white/50 leading-relaxed">
-                  {card.desc}
-                </p>
-              </div>
-
-              <div className="mt-auto rounded-lg bg-black/50 border border-white/[0.06] px-3 py-2">
-                <code className="text-[11px] font-mono text-teal-300/80 break-all">
+              <h3 className="text-lg font-semibold text-white mb-2">
+                {card.title}
+              </h3>
+              <p className="text-sm text-white/45 leading-relaxed mb-4">
+                {card.desc}
+              </p>
+              <div className="px-3 py-2 rounded-lg bg-black/40 border border-white/[0.06]">
+                <code className="text-[11px] font-mono text-teal-300/70">
                   {card.code}
                 </code>
               </div>
             </motion.div>
           ))}
-        </motion.div>
+        </div>
 
         {/* Stats row */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-          className="flex flex-wrap justify-center items-center gap-8 py-8 border-t border-white/[0.05]"
+          transition={{ duration: 0.5 }}
+          className="flex flex-wrap justify-center gap-8 md:gap-16"
         >
-          {STATS.map((stat, i) => (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0 }}
-              whileInView={{ opacity: 1 }}
-              viewport={{ once: true }}
-              transition={{ delay: i * 0.08, duration: 0.4 }}
-              className="text-center"
-            >
-              <div className="text-2xl font-bold gradient-text-subtle tabular-nums">
+          {STATS.map((stat) => (
+            <div key={stat.label} className="text-center">
+              <div className="text-3xl font-bold text-white mb-1">
                 {stat.value}
               </div>
-              <div className="text-[11px] font-mono text-white/30 mt-0.5">
+              <div className="text-[10px] font-mono text-white/30 tracking-widest uppercase">
                 {stat.label}
               </div>
-            </motion.div>
+            </div>
           ))}
         </motion.div>
       </div>

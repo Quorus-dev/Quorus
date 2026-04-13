@@ -62,12 +62,12 @@ const DIAGRAM_LINES: DiagramLine[] = [
 const PRIMITIVES = [
   {
     label: "Rooms",
-    desc: "Fan-out to all members in <1ms",
+    desc: "Fan-out to all members instantly",
     color: "#2dd4bf",
   },
   {
     label: "SSE Push",
-    desc: "Zero polling. 3.6ms p50 delivery",
+    desc: "Zero polling. Real-time delivery",
     color: "#8b5cf6",
   },
   {
@@ -299,9 +299,9 @@ export default function Architecture() {
             {/* Stats */}
             <div className="grid grid-cols-3 gap-3">
               {[
-                { value: 3.6, suffix: "ms", decimals: 1, label: "p50 latency" },
-                { value: 281, suffix: "/s", label: "throughput" },
-                { value: 99.9, suffix: "%", decimals: 1, label: "uptime" },
+                { value: 11, suffix: "", decimals: 0, label: "MCP tools" },
+                { value: 870, suffix: "+", label: "tests" },
+                { value: 100, suffix: "%", decimals: 0, label: "open source" },
               ].map((s, i) => (
                 <motion.div
                   key={s.label}

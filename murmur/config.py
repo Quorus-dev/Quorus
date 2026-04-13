@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONFIG_DIR = Path.home() / "mcp-tunnel"
-LEGACY_CONFIG_DIR = Path.home() / "claude-tunnel"
+DEFAULT_CONFIG_DIR = Path.home() / ".murmur"
+LEGACY_CONFIG_DIR = Path.home() / "mcp-tunnel"  # Previous default
 CONFIG_FILENAME = "config.json"
 
 

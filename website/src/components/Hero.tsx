@@ -73,7 +73,7 @@ const CLAUDE_CODE_STEPS: TermStep[] = [
     args: 'message: "Claiming auth.py"',
     delay: 800,
   },
-  { type: "tool-result", text: "✓ Delivered to 2 agents (3.6ms)", delay: 1200 },
+  { type: "tool-result", text: "✓ Delivered to 2 agents", delay: 1200 },
   {
     type: "tool-call",
     tool: "get_room_state",
@@ -202,7 +202,7 @@ function HeroTerminal() {
         <div className="px-4 py-2 border-t border-white/[0.04] flex items-center gap-2">
           <span className="text-[10px] font-mono text-teal-400/50 flex items-center gap-1.5">
             <span className="w-1 h-1 rounded-full bg-teal-400/50" />
-            murmur relay · 3.6ms p50
+            murmur relay · connected
           </span>
         </div>
       </div>

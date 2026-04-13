@@ -2,9 +2,9 @@ import { motion } from "framer-motion";
 import Waitlist from "./Waitlist";
 
 const PROOF = [
-  "866+ tests",
-  "3.6ms p50",
-  "281 msg/s",
+  "11 MCP tools",
+  "870+ tests",
+  "MIT license",
   "Any model",
   "Any machine",
 ];
