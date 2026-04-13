@@ -64,7 +64,7 @@ def event_loop():
 
 
 @pytest.fixture(scope="module")
-async def migrated_db(database_url, event_loop):
+def migrated_db(database_url):
     """Run Alembic migrations on the test database."""
     import os
 

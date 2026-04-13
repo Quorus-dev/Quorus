@@ -74,7 +74,12 @@ async function relayFetch(
 function ConnectModal({
   onConnect,
 }: {
-  onConnect: (relay: string, key: string, name: string, remember: boolean) => Promise<void>;
+  onConnect: (
+    relay: string,
+    key: string,
+    name: string,
+    remember: boolean,
+  ) => Promise<void>;
 }) {
   const [relay, setRelay] = useState(
     () =>
@@ -194,8 +199,9 @@ function ConnectModal({
             {/* Security notice */}
             <div className="px-3 py-2.5 rounded-lg bg-amber-500/[0.06] border border-amber-500/15">
               <p className="text-[11px] text-amber-400/80 leading-relaxed">
-                <span className="font-semibold">Security note:</span> Your API key is sent through
-                this server to your relay. Only connect to relays you control.
+                <span className="font-semibold">Security note:</span> Your API
+                key is sent through this server to your relay. Only connect to
+                relays you control.
               </p>
             </div>
 
@@ -450,7 +456,9 @@ export default function MurmurConsole() {
       const r = await relayFetch(relay, apiKey, "rooms");
       if (!r.ok) return;
       setRooms(await r.json());
-    } catch {}
+    } catch {
+      // network errors are silently ignored for UI refresh
+    }
   }, [relay, apiKey]);
 
   const sendMessage = useCallback(
@@ -484,7 +492,9 @@ export default function MurmurConsole() {
             }),
           },
         );
-      } catch {}
+      } catch {
+        // send failure is silently ignored; optimistic message already shown
+      }
       setSending(false);
       setTimeout(() => inputRef.current?.focus(), 10);
     },
