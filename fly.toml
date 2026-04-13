@@ -1,0 +1,64 @@
+# Fly.io deployment config for Murmur relay
+# Deploy: fly deploy
+# Scale:  fly scale count 2  (later, when you need it)
+# Logs:   fly logs
+# SSH:    fly ssh console
+
+app = "murmur-relay"
+primary_region = "iad"  # Ashburn — change to your closest region (sjc, lhr, fra, syd, etc.)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  LOG_LEVEL = "INFO"
+  # Production auth — legacy RELAY_SECRET disabled by default when DATABASE_URL set
+  ALLOW_LEGACY_AUTH = "false"
+  # Transactional outbox for atomic writes + reliable fan-out
+  USE_OUTBOX = "true"
+  # At-least-once delivery
+  VISIBILITY_TIMEOUT_SECONDS = "60"
+  IDEMPOTENCY_TTL_SECONDS = "300"
+  # Webhook egress allowlist — tighten per tenant
+  RELAY_ALLOWLIST = ""
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # ----- AUTOSCALING DISABLED -----
+  # Exactly ONE machine. Fly will never spawn more without an explicit
+  # `fly scale count N` command. `auto_start_machines` only restarts the
+  # single existing machine if it stops — it does NOT create new ones.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Hard concurrency cap — if traffic exceeds this, requests queue/503
+  # rather than triggering any scaling behavior.
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 1000
+    soft_limit = 800
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  # $5-6/mo, handles ~500 agents comfortably
+  size = "shared-cpu-1x"
+  memory = "1gb"
+  # Upgrade path when you hit CPU saturation (~500 msg/s per instance):
+  #   size = "performance-1x"  # dedicated CPU, ~$30/mo, ~2-3k agents
+  #   memory = "2gb"
+
+# Persistent volume for SQLite fallback data (MESSAGES_FILE)
+# Not strictly needed once Postgres is wired up, but safe to have
+[mounts]
+  source = "murmur_data"
+  destination = "/app/data"
