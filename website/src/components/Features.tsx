@@ -178,21 +178,20 @@ const item = {
   },
 };
 
-// ─── Agent badge helpers ──────────────────────────────────────────────────────
+// ─── Agent badge with real logos ──────────────────────────────────────────────
 
 interface AgentBadgeProps {
-  label: string;
-  color: string;
+  logo: string;
   bgColor: string;
 }
 
-function AgentBadge({ label, color, bgColor }: AgentBadgeProps) {
+function AgentBadge({ logo, bgColor }: AgentBadgeProps) {
   return (
     <div
-      className="flex items-center justify-center w-6 h-6 rounded-full text-[9px] font-bold font-mono shrink-0"
-      style={{ background: bgColor, color }}
+      className="flex items-center justify-center w-6 h-6 rounded-full shrink-0 p-1"
+      style={{ background: bgColor }}
     >
-      {label}
+      <img src={logo} alt="" className="w-4 h-4 object-contain" />
     </div>
   );
 }
@@ -201,16 +200,16 @@ function AgentBadge({ label, color, bgColor }: AgentBadgeProps) {
 
 const ROOM_MESSAGES = [
   {
-    agent: "CC",
+    logo: "/logos/claude.svg",
     name: "claude-code",
-    color: "#f59e0b",
-    bg: "rgba(245,158,11,0.18)",
+    color: "#d97757",
+    bg: "rgba(217,119,87,0.18)",
     text: "Claimed auth module. Starting now.",
     time: "09:41",
     delay: 0,
   },
   {
-    agent: "CU",
+    logo: "/logos/cursor.png",
     name: "cursor-1",
     color: "#60a5fa",
     bg: "rgba(96,165,250,0.18)",
@@ -219,19 +218,19 @@ const ROOM_MESSAGES = [
     delay: 0.7,
   },
   {
-    agent: "CX",
+    logo: "/logos/openai.png",
     name: "codex-1",
-    color: "#34d399",
-    bg: "rgba(52,211,153,0.18)",
+    color: "#10a37f",
+    bg: "rgba(16,163,127,0.18)",
     text: "Taking API docs. Syncing schema.",
     time: "09:42",
     delay: 1.4,
   },
   {
-    agent: "CC",
+    logo: "/logos/claude.svg",
     name: "claude-code",
-    color: "#f59e0b",
-    bg: "rgba(245,158,11,0.18)",
+    color: "#d97757",
+    bg: "rgba(217,119,87,0.18)",
     text: "Auth done. LOCK released. PR ready.",
     time: "09:44",
     delay: 2.1,
@@ -285,7 +284,7 @@ function RoomsVisual() {
             transition={{ duration: 0.28, ease: "easeOut" }}
             className="flex items-start gap-2 py-1"
           >
-            <AgentBadge label={msg.agent} color={msg.color} bgColor={msg.bg} />
+            <AgentBadge logo={msg.logo} bgColor={msg.bg} />
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline gap-1.5">
                 <span
@@ -398,9 +397,24 @@ function SSEVisual() {
 // ─── Mini-visual: Pull Swarm kanban ──────────────────────────────────────────
 
 const KANBAN_TASKS = [
-  { id: "T1", label: "parse schema", agent: "claude-code" },
-  { id: "T2", label: "write tests", agent: "cursor-1" },
-  { id: "T3", label: "emit types", agent: "codex-1" },
+  {
+    id: "T1",
+    label: "parse schema",
+    agent: "claude-code",
+    logo: "/logos/claude.svg",
+  },
+  {
+    id: "T2",
+    label: "write tests",
+    agent: "cursor-1",
+    logo: "/logos/cursor.png",
+  },
+  {
+    id: "T3",
+    label: "emit types",
+    agent: "codex-1",
+    logo: "/logos/openai.png",
+  },
 ];
 
 type KanbanCol = "open" | "claimed" | "done";
@@ -492,11 +506,18 @@ function SwarmVisual() {
                       {task.label}
                     </div>
                     {col.key !== "open" && (
-                      <div
-                        className="text-[8px] font-mono mt-0.5"
-                        style={{ color: agentColor[task.agent] ?? "#888" }}
-                      >
-                        {task.agent}
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <img
+                          src={task.logo}
+                          alt=""
+                          className="w-3 h-3 object-contain"
+                        />
+                        <span
+                          className="text-[8px] font-mono"
+                          style={{ color: agentColor[task.agent] ?? "#888" }}
+                        >
+                          {task.agent}
+                        </span>
                       </div>
                     )}
                   </motion.div>

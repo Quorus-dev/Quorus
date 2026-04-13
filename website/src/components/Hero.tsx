@@ -87,10 +87,14 @@ const CLAUDE_CODE_STEPS: TermStep[] = [
   },
 ];
 
-const AnthropicMark = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-    <path d="M12 2L2 20h4l2-4h8l2 4h4L12 2zm0 5l3 7H9l3-7z" fill="#d97757" />
-  </svg>
+const ClaudeLogo = () => (
+  <img
+    src="/logos/claude.svg"
+    alt="Claude"
+    width={14}
+    height={14}
+    className="object-contain"
+  />
 );
 
 function HeroTerminal() {
@@ -134,7 +138,7 @@ function HeroTerminal() {
             <span className="w-3 h-3 rounded-full bg-[#28c840]" />
           </div>
           <div className="flex-1 flex items-center justify-center gap-2">
-            <AnthropicMark />
+            <ClaudeLogo />
             <span className="text-[11px] font-mono text-white/40">
               Claude Code
             </span>
@@ -210,86 +214,7 @@ function HeroTerminal() {
   );
 }
 
-// ── Floating agent nodes (desktop only) ───────────────────────────────────────
-
-const AGENT_NODES = [
-  {
-    id: "a1",
-    label: "claude-code",
-    status: "building auth…",
-    locked: true,
-    x: -310,
-    y: -40,
-    delay: 0,
-  },
-  {
-    id: "a2",
-    label: "cursor-1",
-    status: "reviewing PR",
-    locked: false,
-    x: 310,
-    y: -50,
-    delay: 0.3,
-  },
-  {
-    id: "a3",
-    label: "codex-1",
-    status: "tests passing",
-    locked: false,
-    x: 0,
-    y: 200,
-    delay: 0.6,
-  },
-];
-
-function FloatingAgentNode({ node }: { node: (typeof AGENT_NODES)[0] }) {
-  // Outer div handles positioning + centering (static CSS, no Framer Motion transforms)
-  // Inner motion.div handles fade-in + float (no transform conflicts)
-  return (
-    <div
-      className="absolute hidden xl:block pointer-events-none"
-      style={{
-        left: `calc(50% + ${node.x}px)`,
-        top: `calc(50% + ${node.y}px)`,
-        transform: "translate(-50%, -50%)",
-      }}
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.8, y: 0 }}
-        animate={{
-          opacity: 1,
-          scale: 1,
-          y: [0, -10, 0],
-        }}
-        transition={{
-          opacity: { delay: 1.4 + node.delay, duration: 0.7, ease: "easeOut" },
-          scale: { delay: 1.4 + node.delay, duration: 0.7, ease: "easeOut" },
-          y: {
-            delay: 1.6 + node.delay,
-            duration: 3.2 + node.delay * 0.5,
-            repeat: Infinity,
-            ease: "easeInOut",
-            repeatType: "mirror",
-          },
-        }}
-        className="px-3 py-2 rounded-xl border border-white/[0.09] bg-black/60 backdrop-blur-xl text-xs font-mono min-w-[148px] shadow-xl shadow-black/50"
-      >
-        <div className="flex items-center justify-between gap-2 mb-1">
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-dot shrink-0" />
-            <span className="text-white/75 font-semibold">{node.label}</span>
-          </div>
-          {node.locked && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 text-amber-300">
-              locked
-            </span>
-          )}
-        </div>
-        <span className="text-white/30 text-[10px]">{node.status}</span>
-      </motion.div>
-    </div>
-  );
-}
+// Floating nodes removed - they were overlapping with text and causing visual clutter
 
 // ── Main Hero ─────────────────────────────────────────────────────────────────
 
@@ -366,11 +291,6 @@ export default function Hero() {
             "radial-gradient(ellipse 65% 55% at 50% 0%, rgba(20,184,166,0.12) 0%, transparent 70%)",
         }}
       />
-
-      {/* Floating agent nodes */}
-      {AGENT_NODES.map((node) => (
-        <FloatingAgentNode key={node.id} node={node} />
-      ))}
 
       {/* ── Main content ── */}
       <div className="relative z-10 flex flex-col items-center text-center px-6 w-full max-w-6xl mx-auto pt-48">
