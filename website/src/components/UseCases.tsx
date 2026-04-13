@@ -37,7 +37,7 @@ export default function UseCases() {
       <div className="max-w-7xl mx-auto">
         <FadeUp>
           <div className="text-center mb-16">
-            <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
+            <p className="text-sm font-mono text-amber-400 mb-3 tracking-widest uppercase">
               Use Cases
             </p>
             <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
@@ -55,16 +55,16 @@ export default function UseCases() {
               key={c.title}
               className={`flex flex-col rounded-2xl border overflow-hidden transition-all duration-300 ${
                 c.accent === "violet"
-                  ? "border-violet-500/20 hover:border-violet-500/40 hover:shadow-[0_0_40px_rgba(124,58,237,0.08)]"
-                  : "border-violet-500/20 hover:border-violet-500/40 hover:shadow-[0_0_40px_rgba(124,58,237,0.08)]"
+                  ? "border-amber-500/20 hover:border-amber-500/40 hover:shadow-[0_0_40px_rgba(217,119,6,0.08)]"
+                  : "border-amber-500/20 hover:border-amber-500/40 hover:shadow-[0_0_40px_rgba(217,119,6,0.08)]"
               } bg-white/[0.02]`}
             >
               <div className="p-6 flex-1">
                 <span
                   className={`inline-block px-2.5 py-1 rounded-full text-xs font-mono mb-4 ${
                     c.accent === "violet"
-                      ? "bg-violet-500/15 text-violet-300"
-                      : "bg-violet-500/15 text-violet-300"
+                      ? "bg-amber-500/15 text-amber-300"
+                      : "bg-amber-500/15 text-amber-300"
                   }`}
                 >
                   {c.tag}

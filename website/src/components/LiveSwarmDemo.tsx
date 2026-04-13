@@ -1,5 +1,3 @@
-
-
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FadeUp from "./FadeUp";
@@ -139,8 +137,8 @@ function TypeBadge({ type }: { type: Message["type"] }) {
   if (type === "chat") return null;
   const map: Record<string, string> = {
     claim: "bg-amber-500/15 text-amber-300 border-amber-500/20",
-    lock: "bg-violet-500/15 text-violet-300 border-violet-500/20",
-    status: "bg-violet-500/15 text-violet-300 border-violet-500/20",
+    lock: "bg-amber-500/15 text-amber-300 border-amber-500/20",
+    status: "bg-amber-500/15 text-amber-300 border-amber-500/20",
     done: "bg-green-500/15 text-green-300 border-green-500/20",
   };
   return (

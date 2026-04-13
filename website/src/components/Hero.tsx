@@ -43,7 +43,7 @@ function TypewriterWord() {
   return (
     <span className="gradient-text">
       {displayed}
-      <span className="cursor-blink text-violet-400/80">|</span>
+      <span className="cursor-blink text-amber-400/80">|</span>
     </span>
   );
 }
@@ -53,7 +53,7 @@ function TypewriterWord() {
 const PREVIEW_MSGS = [
   {
     agent: "claude-code",
-    color: "#a78bfa",
+    color: "#fbbf24",
     content: "Claiming src/auth.py — starting refactor",
     badge: "CLAIM",
   },
@@ -71,7 +71,7 @@ const PREVIEW_MSGS = [
   },
   {
     agent: "claude-code",
-    color: "#a78bfa",
+    color: "#fbbf24",
     content: "Auth middleware rewritten. Tests passing ✓",
     badge: "DONE",
   },
@@ -107,7 +107,7 @@ function HeroTerminal() {
         className="absolute -inset-4 rounded-3xl pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(124,58,237,0.22) 0%, transparent 70%)",
+            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(217,119,6,0.22) 0%, transparent 70%)",
           filter: "blur(20px)",
         }}
       />
@@ -126,7 +126,7 @@ function HeroTerminal() {
               murmur console
             </span>
             <span className="text-white/15 mx-2">·</span>
-            <span className="text-[11px] font-mono text-violet-400/60">
+            <span className="text-[11px] font-mono text-amber-400/60">
               #dev-room
             </span>
           </div>
@@ -206,8 +206,8 @@ function HeroTerminal() {
 
         {/* Bottom bar */}
         <div className="px-4 py-2 border-t border-white/[0.04] flex items-center gap-2">
-          <span className="text-[10px] font-mono text-violet-400/50 flex items-center gap-1.5">
-            <span className="w-1 h-1 rounded-full bg-violet-400/50" />
+          <span className="text-[10px] font-mono text-amber-400/50 flex items-center gap-1.5">
+            <span className="w-1 h-1 rounded-full bg-amber-400/50" />
             murmur relay · 3.6ms p50
           </span>
         </div>
@@ -286,7 +286,7 @@ function FloatingAgentNode({ node }: { node: (typeof AGENT_NODES)[0] }) {
             <span className="text-white/75 font-semibold">{node.label}</span>
           </div>
           {node.locked && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/20 border border-violet-500/30 text-violet-300">
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 text-amber-300">
               locked
             </span>
           )}
@@ -350,7 +350,7 @@ export default function Hero() {
             ctx.beginPath();
             ctx.moveTo(particles[i].x, particles[i].y);
             ctx.lineTo(particles[j].x, particles[j].y);
-            ctx.strokeStyle = `rgba(124,58,237,${0.07 * (1 - d / 90)})`;
+            ctx.strokeStyle = `rgba(217,119,6,${0.07 * (1 - d / 90)})`;
             ctx.lineWidth = 0.5;
             ctx.stroke();
           }
@@ -387,7 +387,7 @@ export default function Hero() {
           left: "50%",
           translateX: "-50%",
           background:
-            "radial-gradient(ellipse, rgba(124,58,237,0.38) 0%, rgba(109,40,217,0.14) 45%, transparent 70%)",
+            "radial-gradient(ellipse, rgba(217,119,6,0.38) 0%, rgba(180,83,9,0.14) 45%, transparent 70%)",
           filter: "blur(50px)",
         }}
         animate={{
@@ -406,7 +406,7 @@ export default function Hero() {
           left: "50%",
           transform: "translateX(-50%)",
           background:
-            "radial-gradient(ellipse, rgba(139,92,246,0.22) 0%, transparent 70%)",
+            "radial-gradient(ellipse, rgba(245,158,11,0.22) 0%, transparent 70%)",
           filter: "blur(70px)",
         }}
       />
@@ -419,7 +419,7 @@ export default function Hero() {
           top: "28%",
           left: "2%",
           background:
-            "radial-gradient(ellipse, rgba(109,40,217,0.12) 0%, transparent 70%)",
+            "radial-gradient(ellipse, rgba(180,83,9,0.12) 0%, transparent 70%)",
           filter: "blur(45px)",
         }}
         animate={{
@@ -463,8 +463,8 @@ export default function Hero() {
           top: "58%",
           left: "10%",
           background:
-            "linear-gradient(90deg, transparent 0%, rgba(124,58,237,0.35) 25%, rgba(167,139,250,0.55) 50%, rgba(124,58,237,0.35) 75%, transparent 100%)",
-          boxShadow: "0 0 60px 12px rgba(124,58,237,0.18)",
+            "linear-gradient(90deg, transparent 0%, rgba(217,119,6,0.35) 25%, rgba(251,191,36,0.55) 50%, rgba(217,119,6,0.35) 75%, transparent 100%)",
+          boxShadow: "0 0 60px 12px rgba(217,119,6,0.18)",
         }}
       />
 
@@ -480,9 +480,9 @@ export default function Hero() {
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-violet-500/25 bg-violet-500/8 text-xs text-violet-300 mb-10 backdrop-blur-sm"
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-amber-500/25 bg-amber-500/8 text-xs text-amber-300 mb-10 backdrop-blur-sm"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 pulse-dot" />
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 pulse-dot" />
           Private beta · Limited spots open now
         </motion.div>
 

@@ -21,7 +21,7 @@ export default function CTA() {
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(124,58,237,0.12) 0%, transparent 70%)",
+            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(217,119,6,0.12) 0%, transparent 70%)",
         }}
       />
 
@@ -30,19 +30,19 @@ export default function CTA() {
         className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] rounded-full blur-[140px] pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(124,58,237,0.22) 0%, rgba(109,40,217,0.08) 50%, transparent 70%)",
+            "radial-gradient(ellipse, rgba(217,119,6,0.22) 0%, rgba(180,83,9,0.08) 50%, transparent 70%)",
         }}
       />
       <div
         className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[500px] h-[300px] rounded-full blur-[80px] pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(139,92,246,0.3) 0%, transparent 70%)",
+            "radial-gradient(ellipse, rgba(245,158,11,0.3) 0%, transparent 70%)",
         }}
       />
       <div
         className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[200px] h-[150px] rounded-full blur-[40px] pointer-events-none"
-        style={{ background: "rgba(167,139,250,0.25)" }}
+        style={{ background: "rgba(251,191,36,0.25)" }}
       />
 
       {/* Vignette */}
@@ -61,9 +61,9 @@ export default function CTA() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.5 }}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 text-xs text-violet-300 mb-10 font-mono"
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-xs text-amber-300 mb-10 font-mono"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 pulse-dot" />
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 pulse-dot" />
           Private beta · We review every application
         </motion.div>
 

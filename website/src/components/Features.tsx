@@ -150,14 +150,14 @@ const FEATURES = [
 
 const accentMap = {
   violet: {
-    icon: "text-violet-400",
-    bg: "bg-violet-500/15",
-    spotlightColor: "rgba(124,58,237,0.2)",
+    icon: "text-amber-400",
+    bg: "bg-amber-500/15",
+    spotlightColor: "rgba(217,119,6,0.2)",
   },
   cyan: {
-    icon: "text-violet-300",
-    bg: "bg-violet-400/12",
-    spotlightColor: "rgba(139,92,246,0.18)",
+    icon: "text-amber-300",
+    bg: "bg-amber-400/12",
+    spotlightColor: "rgba(245,158,11,0.18)",
   },
 };
 
@@ -198,7 +198,7 @@ function RoomsVisual() {
           y1="40"
           x2="100"
           y2="40"
-          stroke="rgba(124,58,237,0.5)"
+          stroke="rgba(217,119,6,0.5)"
           strokeWidth="1.5"
           strokeDasharray="4 3"
           animate={{ strokeDashoffset: [0, -14] }}
@@ -210,7 +210,7 @@ function RoomsVisual() {
           y1="40"
           x2="170"
           y2="18"
-          stroke="rgba(124,58,237,0.5)"
+          stroke="rgba(217,119,6,0.5)"
           strokeWidth="1.5"
           strokeDasharray="4 3"
           animate={{ strokeDashoffset: [0, -14] }}
@@ -227,7 +227,7 @@ function RoomsVisual() {
           y1="40"
           x2="170"
           y2="62"
-          stroke="rgba(124,58,237,0.5)"
+          stroke="rgba(217,119,6,0.5)"
           strokeWidth="1.5"
           strokeDasharray="4 3"
           animate={{ strokeDashoffset: [0, -14] }}
@@ -242,7 +242,7 @@ function RoomsVisual() {
 
       {/* Agent A */}
       <motion.div
-        className="absolute flex items-center justify-center w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/40 text-violet-400 text-[10px] font-mono"
+        className="absolute flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 text-[10px] font-mono"
         style={{ left: "10%", top: "50%", transform: "translateY(-50%)" }}
         animate={{ scale: [1, 1.08, 1] }}
         transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
@@ -252,14 +252,14 @@ function RoomsVisual() {
 
       {/* Hub */}
       <motion.div
-        className="absolute flex items-center justify-center w-10 h-10 rounded-full bg-violet-600/30 border border-violet-500/60 text-violet-300 text-[10px] font-mono"
+        className="absolute flex items-center justify-center w-10 h-10 rounded-full bg-amber-600/30 border border-amber-500/60 text-amber-300 text-[10px] font-mono"
         style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
         animate={{
           scale: [1, 1.06, 1],
           boxShadow: [
-            "0 0 0px rgba(124,58,237,0.3)",
-            "0 0 16px rgba(124,58,237,0.5)",
-            "0 0 0px rgba(124,58,237,0.3)",
+            "0 0 0px rgba(217,119,6,0.3)",
+            "0 0 16px rgba(217,119,6,0.5)",
+            "0 0 0px rgba(217,119,6,0.3)",
           ],
         }}
         transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
@@ -269,7 +269,7 @@ function RoomsVisual() {
 
       {/* Agent B */}
       <motion.div
-        className="absolute flex items-center justify-center w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/40 text-violet-400 text-[10px] font-mono"
+        className="absolute flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 text-[10px] font-mono"
         style={{ right: "10%", top: "18%" }}
         animate={{ scale: [1, 1.08, 1] }}
         transition={{
@@ -284,7 +284,7 @@ function RoomsVisual() {
 
       {/* Agent C */}
       <motion.div
-        className="absolute flex items-center justify-center w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/40 text-violet-400 text-[10px] font-mono"
+        className="absolute flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 text-[10px] font-mono"
         style={{ right: "10%", bottom: "18%" }}
         animate={{ scale: [1, 1.08, 1] }}
         transition={{
@@ -320,7 +320,7 @@ function SSEVisual() {
     <div className="flex items-center gap-3 mt-4">
       {/* Indicator dot */}
       <motion.div
-        className="w-2 h-2 rounded-full bg-violet-400"
+        className="w-2 h-2 rounded-full bg-amber-400"
         animate={{ opacity: [1, 0.3, 1] }}
         transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
       />
@@ -328,7 +328,7 @@ function SSEVisual() {
       <motion.div
         key={ms}
         className="font-mono font-bold text-lg tabular-nums"
-        style={{ color: flash ? "#a78bfa" : "#c4b5fd" }}
+        style={{ color: flash ? "#fbbf24" : "#fcd34d" }}
         animate={flash ? { scale: [1, 1.25, 1] } : { scale: 1 }}
         transition={{ duration: 0.22 }}
       >
@@ -377,8 +377,8 @@ function SwarmVisual() {
 
   const statusColor: Record<TaskStatus, string> = {
     open: "text-white/40 border-white/10",
-    claimed: "text-violet-300 border-violet-500/40",
-    done: "text-violet-400 border-violet-500/40",
+    claimed: "text-amber-300 border-amber-500/40",
+    done: "text-amber-400 border-amber-500/40",
   };
 
   const statusLabel: Record<TaskStatus, string> = {
@@ -508,7 +508,7 @@ export default function Features() {
           transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
           className="text-center mb-16"
         >
-          <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
+          <p className="text-sm font-mono text-amber-400 mb-3 tracking-widest uppercase">
             Primitives
           </p>
           <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">

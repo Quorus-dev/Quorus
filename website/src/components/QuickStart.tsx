@@ -29,7 +29,7 @@ export default function QuickStart() {
       <div className="max-w-6xl mx-auto">
         <FadeUp>
           <div className="text-center mb-16">
-            <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
+            <p className="text-sm font-mono text-amber-400 mb-3 tracking-widest uppercase">
               How it works
             </p>
             <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
@@ -49,14 +49,14 @@ export default function QuickStart() {
                 key={step.n}
                 className={`relative flex gap-6 p-6 rounded-2xl border transition-all group ${
                   step.highlight
-                    ? "border-violet-500/30 bg-violet-500/[0.04] hover:border-violet-500/50"
+                    ? "border-amber-500/30 bg-amber-500/[0.04] hover:border-amber-500/50"
                     : "border-white/8 bg-white/[0.01] hover:border-white/12"
                 }`}
               >
                 <div
                   className={`shrink-0 text-5xl font-bold font-mono select-none transition-colors ${
                     step.highlight
-                      ? "text-violet-500/20 group-hover:text-violet-500/30"
+                      ? "text-amber-500/20 group-hover:text-amber-500/30"
                       : "text-white/5 group-hover:text-white/8"
                   }`}
                 >
@@ -82,7 +82,7 @@ export default function QuickStart() {
                     .getElementById("waitlist")
                     ?.scrollIntoView({ behavior: "smooth" })
                 }
-                className="inline-flex items-center gap-2 text-sm text-violet-400 hover:text-violet-300 transition-colors font-medium"
+                className="inline-flex items-center gap-2 text-sm text-amber-400 hover:text-amber-300 transition-colors font-medium"
               >
                 Request early access
                 <svg

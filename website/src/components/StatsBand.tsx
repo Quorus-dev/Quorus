@@ -54,7 +54,7 @@ export default function StatsBand() {
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 60% 100% at 50% 50%, rgba(124,58,237,0.03) 0%, transparent 70%)",
+            "radial-gradient(ellipse 60% 100% at 50% 50%, rgba(217,119,6,0.03) 0%, transparent 70%)",
         }}
       />
 

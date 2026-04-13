@@ -4,7 +4,7 @@ export default function Footer() {
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
         {/* Logo */}
         <div className="flex items-center gap-2.5">
-          <div className="w-2 h-2 rounded-full bg-violet-500" />
+          <div className="w-2 h-2 rounded-full bg-amber-500" />
           <span className="font-mono text-base font-semibold text-white/70">
             murmur
           </span>

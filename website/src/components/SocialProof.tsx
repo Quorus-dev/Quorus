@@ -2,7 +2,7 @@
 import { motion } from "framer-motion";
 
 const ITEMS = [
-  { name: "Claude Code", dot: "bg-violet-400" },
+  { name: "Claude Code", dot: "bg-amber-400" },
   { name: "Cursor", dot: "bg-blue-400" },
   { name: "OpenAI Codex", dot: "bg-green-400" },
   { name: "Gemini", dot: "bg-indigo-400" },
