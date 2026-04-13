@@ -168,7 +168,8 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit  | What                                                                      |
 | ---------- | ------- | ------------------------------------------------------------------------- |
-| 2026-04-12 | (pending) | feat: account-based identity — participant_id in JWTs, migration 008     |
+| 2026-04-12 | 5436cfd | fix: murmur join preserves config when no flags provided                  |
+| 2026-04-12 | 5d74dbc | feat: account-based identity — participant_id in JWTs, migration 008     |
 | 2026-04-12 | (pending) | feat: audit ledger — message lifecycle events with API at /v1/audit/*  |
 | 2026-04-12 | (pending) | feat: transactional outbox — atomic Postgres + background worker fan-out |
 | 2026-04-12 | fd741e5 | refactor: migrate website from Next.js to Vite — removes proxy SSRF risk |
