@@ -21,7 +21,7 @@ type Message = {
 // ── Color system ──────────────────────────────────────────────────────────────
 
 const PALETTE = [
-  "#a78bfa", // violet
+  "#2dd4bf", // violet
   "#22d3ee", // cyan
   "#34d399", // emerald
   "#f59e0b", // amber
@@ -135,8 +135,8 @@ function ConnectModal({
           {/* Logo */}
           <div className="flex items-center gap-2.5 mb-8">
             <div className="relative flex items-center justify-center">
-              <div className="w-2 h-2 rounded-full bg-violet-500 pulse-dot" />
-              <div className="absolute w-4 h-4 rounded-full bg-violet-500/20 animate-ping" />
+              <div className="w-2 h-2 rounded-full bg-teal-500 pulse-dot" />
+              <div className="absolute w-4 h-4 rounded-full bg-teal-500/20 animate-ping" />
             </div>
             <span className="font-mono text-base font-semibold text-white tracking-tight">
               murmur
@@ -165,7 +165,7 @@ function ConnectModal({
                 onChange={(e) => setRelay(e.target.value)}
                 placeholder="https://your-relay.railway.app"
                 required
-                className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/8 text-white text-sm font-mono placeholder:text-white/18 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/15 transition-all"
+                className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/8 text-white text-sm font-mono placeholder:text-white/18 outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/15 transition-all"
               />
             </div>
 
@@ -178,7 +178,7 @@ function ConnectModal({
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
                 placeholder="sk-… or relay secret"
-                className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/8 text-white text-sm font-mono placeholder:text-white/18 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/15 transition-all"
+                className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/8 text-white text-sm font-mono placeholder:text-white/18 outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/15 transition-all"
               />
             </div>
 
@@ -192,13 +192,13 @@ function ConnectModal({
                 onChange={(e) => setName(e.target.value)}
                 placeholder="arav"
                 required
-                className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/8 text-white text-sm font-mono placeholder:text-white/18 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/15 transition-all"
+                className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/8 text-white text-sm font-mono placeholder:text-white/18 outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/15 transition-all"
               />
             </div>
 
             {/* Security notice */}
-            <div className="px-3 py-2.5 rounded-lg bg-violet-500/[0.06] border border-violet-500/15">
-              <p className="text-[11px] text-violet-400/80 leading-relaxed">
+            <div className="px-3 py-2.5 rounded-lg bg-teal-500/[0.06] border border-teal-500/15">
+              <p className="text-[11px] text-teal-400/80 leading-relaxed">
                 <span className="font-semibold">Security note:</span> Your API
                 key is sent through this server to your relay. Only connect to
                 relays you control.
@@ -211,7 +211,7 @@ function ConnectModal({
                 type="checkbox"
                 checked={remember}
                 onChange={(e) => setRemember(e.target.checked)}
-                className="w-4 h-4 rounded bg-white/[0.04] border border-white/15 text-violet-500 focus:ring-violet-500/30 cursor-pointer"
+                className="w-4 h-4 rounded bg-white/[0.04] border border-white/15 text-teal-500 focus:ring-teal-500/30 cursor-pointer"
               />
               <span className="text-xs text-white/40 group-hover:text-white/55 transition-colors">
                 Remember connection for this session
@@ -234,7 +234,7 @@ function ConnectModal({
             <button
               type="submit"
               disabled={loading || !relay || !name}
-              className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 active:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-all hover:shadow-lg hover:shadow-violet-500/20 mt-2"
+              className="w-full py-3 rounded-xl bg-teal-600 hover:bg-teal-500 active:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-all hover:shadow-lg hover:shadow-teal-500/20 mt-2"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -270,7 +270,7 @@ function ConnectModal({
               No relay?{" "}
               <a
                 href="/#quickstart"
-                className="text-violet-400 hover:text-violet-300 transition-colors"
+                className="text-teal-400 hover:text-teal-300 transition-colors"
               >
                 Deploy one in 60 seconds →
               </a>
@@ -538,8 +538,8 @@ export default function MurmurConsole() {
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
       <header className="shrink-0 h-11 border-b border-white/[0.06] flex items-center px-4 gap-3 bg-[#08081a]/80 backdrop-blur-xl z-10">
         <a href="/" className="flex items-center gap-2 group">
-          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 pulse-dot" />
-          <span className="font-mono text-sm font-semibold text-white group-hover:text-violet-300 transition-colors">
+          <span className="w-1.5 h-1.5 rounded-full bg-teal-500 pulse-dot" />
+          <span className="font-mono text-sm font-semibold text-white group-hover:text-teal-300 transition-colors">
             murmur
           </span>
         </a>
@@ -599,13 +599,13 @@ export default function MurmurConsole() {
                     onClick={() => selectRoom(rid)}
                     className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all duration-150 ${
                       isActive
-                        ? "bg-violet-500/12 border border-violet-500/20 text-violet-300"
+                        ? "bg-teal-500/12 border border-teal-500/20 text-teal-300"
                         : "border border-transparent hover:bg-white/[0.03] text-white/45 hover:text-white/75"
                     }`}
                   >
                     <span
                       className={`w-1.5 h-1.5 rounded-full shrink-0 transition-colors ${
-                        isActive ? "bg-violet-400 pulse-dot" : "bg-white/15"
+                        isActive ? "bg-teal-400 pulse-dot" : "bg-white/15"
                       }`}
                     />
                     <span className="text-[13px] font-mono truncate flex-1">
@@ -614,7 +614,7 @@ export default function MurmurConsole() {
                     {cnt > 0 && (
                       <span
                         className={`text-[10px] font-mono shrink-0 ${
-                          isActive ? "text-violet-400/60" : "text-white/20"
+                          isActive ? "text-teal-400/60" : "text-white/20"
                         }`}
                       >
                         {cnt}
@@ -676,7 +676,7 @@ export default function MurmurConsole() {
           <div className="shrink-0 h-11 border-b border-white/[0.06] flex items-center px-5 gap-3 bg-[#07071a]/50">
             {activeRoom ? (
               <>
-                <span className="w-1.5 h-1.5 rounded-full bg-violet-400/70 pulse-dot" />
+                <span className="w-1.5 h-1.5 rounded-full bg-teal-400/70 pulse-dot" />
                 <span className="text-sm font-mono font-semibold text-white/80">
                   #{activeRoom}
                 </span>
@@ -755,14 +755,14 @@ export default function MurmurConsole() {
                     }
                   }}
                   placeholder={`Message #${activeRoom}…`}
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/8 text-sm text-white placeholder:text-white/18 outline-none focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/10 transition-all font-mono"
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/8 text-sm text-white placeholder:text-white/18 outline-none focus:border-teal-500/40 focus:ring-1 focus:ring-teal-500/10 transition-all font-mono"
                   disabled={sending}
                   autoComplete="off"
                 />
                 <button
                   type="submit"
                   disabled={!draft.trim() || sending}
-                  className="px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 active:bg-violet-700 disabled:opacity-35 disabled:cursor-not-allowed text-white text-sm font-medium transition-all hover:shadow-lg hover:shadow-violet-500/20 shrink-0"
+                  className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 active:bg-teal-700 disabled:opacity-35 disabled:cursor-not-allowed text-white text-sm font-medium transition-all hover:shadow-lg hover:shadow-teal-500/20 shrink-0"
                 >
                   Send
                 </button>

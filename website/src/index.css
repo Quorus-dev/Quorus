@@ -8,9 +8,9 @@
   --muted: #7a7987;
   --border: #1a1a2e;
   --surface: #0d0d1c;
-  --accent: #7c6af0; /* PRIMARY: violet/indigo */
-  --accent2: #a78bfa; /* SECONDARY: lighter violet */
-  --accent-soft: #5b21b6; /* TERTIARY: deep violet */
+  --accent: #14b8a6; /* PRIMARY: violet/indigo */
+  --accent2: #2dd4bf; /* SECONDARY: lighter violet */
+  --accent-soft: #0f766e; /* TERTIARY: deep violet */
   --cream: #f4f2ea; /* NEW: warm cream for light sections */
   --cream-surface: #eae8df; /* NEW: slightly deeper cream */
   --code-bg: #0d1117;
@@ -82,14 +82,14 @@ body::before {
 
 /* Gradient text — violet/indigo */
 .gradient-text {
-  background: linear-gradient(135deg, #ede9fe 0%, #a78bfa 45%, #7c6af0 100%);
+  background: linear-gradient(135deg, #ccfbf1 0%, #2dd4bf 45%, #14b8a6 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .gradient-text-subtle {
-  background: linear-gradient(135deg, #ffffff 0%, #ede9fe 60%, #a78bfa 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #ccfbf1 60%, #2dd4bf 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -264,11 +264,11 @@ body::before {
 .text-shimmer {
   background: linear-gradient(
     90deg,
-    #7c6af0 0%,
-    #c4b5fd 28%,
+    #14b8a6 0%,
+    #5eead4 28%,
     #ffffff 50%,
-    #c4b5fd 72%,
-    #7c6af0 100%
+    #5eead4 72%,
+    #14b8a6 100%
   );
   background-size: 200% auto;
   -webkit-background-clip: text;

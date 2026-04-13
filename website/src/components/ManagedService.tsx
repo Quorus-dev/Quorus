@@ -90,7 +90,7 @@ const item = {
 function CheckIcon({ accent }: { accent: Plan["accent"] }) {
   const color =
     accent === "violet"
-      ? "text-violet-400"
+      ? "text-teal-400"
       : accent === "cyan"
         ? "text-cyan-400"
         : "text-white/50";
@@ -116,7 +116,7 @@ function CheckIcon({ accent }: { accent: Plan["accent"] }) {
 
 function PlanCard({ plan }: { plan: Plan }) {
   const borderClass = plan.highlight
-    ? "border border-violet-500/50 bg-gradient-to-b from-violet-950/30 to-black/60 shadow-lg shadow-violet-500/10"
+    ? "border border-teal-500/50 bg-gradient-to-b from-violet-950/30 to-black/60 shadow-lg shadow-teal-500/10"
     : "card-gradient-border";
 
   return (
@@ -126,12 +126,12 @@ function PlanCard({ plan }: { plan: Plan }) {
       >
         {/* Highlight glow */}
         {plan.highlight && (
-          <div className="pointer-events-none absolute -top-16 left-1/2 -translate-x-1/2 w-48 h-48 bg-violet-600/20 blur-[80px] rounded-full" />
+          <div className="pointer-events-none absolute -top-16 left-1/2 -translate-x-1/2 w-48 h-48 bg-teal-600/20 blur-[80px] rounded-full" />
         )}
 
         {/* Popular badge */}
         {plan.highlight && (
-          <div className="absolute top-4 right-4 px-2.5 py-1 rounded-full bg-violet-500/20 border border-violet-500/30 text-[10px] font-mono text-violet-300 tracking-wider uppercase">
+          <div className="absolute top-4 right-4 px-2.5 py-1 rounded-full bg-teal-500/20 border border-teal-500/30 text-[10px] font-mono text-teal-300 tracking-wider uppercase">
             Most popular
           </div>
         )}
@@ -174,7 +174,7 @@ function PlanCard({ plan }: { plan: Plan }) {
           href="#waitlist"
           className={
             plan.highlight
-              ? "block text-center px-6 py-3 rounded-full bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-all duration-200 hover:shadow-lg hover:shadow-violet-500/25"
+              ? "block text-center px-6 py-3 rounded-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium transition-all duration-200 hover:shadow-lg hover:shadow-teal-500/25"
               : "block text-center px-6 py-3 rounded-full border border-white/10 hover:border-white/20 bg-white/5 hover:bg-white/8 text-white text-sm font-medium transition-all duration-200"
           }
         >
@@ -211,9 +211,9 @@ function WaitlistForm() {
         transition={{ duration: 0.4, ease: [0.21, 0.47, 0.32, 0.98] }}
         className="flex flex-col items-center gap-3 py-6"
       >
-        <div className="w-10 h-10 rounded-full bg-violet-500/20 border border-violet-500/40 flex items-center justify-center">
+        <div className="w-10 h-10 rounded-full bg-teal-500/20 border border-teal-500/40 flex items-center justify-center">
           <svg
-            className="w-5 h-5 text-violet-400"
+            className="w-5 h-5 text-teal-400"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -246,12 +246,12 @@ function WaitlistForm() {
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="you@example.com"
-        className="flex-1 px-4 py-3 rounded-full bg-white/5 border border-white/10 text-white text-sm placeholder:text-white/30 outline-none focus:border-violet-500/60 focus:ring-2 focus:ring-violet-500/20 transition-all duration-200"
+        className="flex-1 px-4 py-3 rounded-full bg-white/5 border border-white/10 text-white text-sm placeholder:text-white/30 outline-none focus:border-teal-500/60 focus:ring-2 focus:ring-teal-500/20 transition-all duration-200"
       />
       <button
         type="submit"
         disabled={loading}
-        className="px-6 py-3 rounded-full bg-violet-600 hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium transition-all duration-200 hover:shadow-lg hover:shadow-violet-500/25 whitespace-nowrap"
+        className="px-6 py-3 rounded-full bg-teal-600 hover:bg-teal-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium transition-all duration-200 hover:shadow-lg hover:shadow-teal-500/25 whitespace-nowrap"
       >
         {loading ? "Joining…" : "Join waitlist"}
       </button>
@@ -266,7 +266,7 @@ export default function ManagedService() {
     <section className="py-32 px-6 relative overflow-hidden" id="hosted">
       {/* Background elements */}
       <div className="absolute inset-0 grid-bg opacity-20" />
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-violet-600/6 blur-[140px] rounded-full pointer-events-none" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-teal-600/6 blur-[140px] rounded-full pointer-events-none" />
 
       <div className="relative max-w-6xl mx-auto">
         {/* Header */}
@@ -314,7 +314,7 @@ export default function ManagedService() {
           transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
           className="card-gradient-border rounded-2xl p-10 text-center max-w-2xl mx-auto"
         >
-          <p className="text-xs font-mono text-violet-400 uppercase tracking-widest mb-3">
+          <p className="text-xs font-mono text-teal-400 uppercase tracking-widest mb-3">
             Early access
           </p>
           <h3 className="text-2xl font-bold text-white mb-3">

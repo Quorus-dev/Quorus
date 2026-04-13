@@ -64,7 +64,7 @@ export default function Testimonials() {
                 {Array.from({ length: 5 }).map((_, j) => (
                   <svg
                     key={j}
-                    className="w-3.5 h-3.5 text-violet-400/70"
+                    className="w-3.5 h-3.5 text-teal-400/70"
                     fill="currentColor"
                     viewBox="0 0 20 20"
                   >
@@ -81,7 +81,7 @@ export default function Testimonials() {
                 <div
                   className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold font-mono shrink-0 ${
                     t.color === "violet"
-                      ? "bg-violet-500/20 text-violet-300"
+                      ? "bg-teal-500/20 text-teal-300"
                       : "bg-cyan-500/20 text-cyan-300"
                   }`}
                 >
@@ -93,7 +93,7 @@ export default function Testimonials() {
                   </div>
                   <div className="text-xs text-white/30 truncate">
                     {t.role} <span className="text-white/15">·</span>{" "}
-                    <span className="text-violet-400/60">{t.tag}</span>
+                    <span className="text-teal-400/60">{t.tag}</span>
                   </div>
                 </div>
               </div>

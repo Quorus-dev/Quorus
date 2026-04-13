@@ -29,7 +29,7 @@ export default function QuickStart() {
 
         <FadeUp>
           <div className="text-center mb-20">
-            <p className="text-xs font-mono text-violet-400 mb-4 tracking-widest uppercase">
+            <p className="text-xs font-mono text-teal-400 mb-4 tracking-widest uppercase">
               How it works
             </p>
             <h2 className="text-6xl md:text-7xl font-bold tracking-tight mb-5">
@@ -49,7 +49,7 @@ export default function QuickStart() {
               className="absolute left-[28px] top-8 bottom-8 w-px pointer-events-none"
               style={{
                 background:
-                  "linear-gradient(180deg, rgba(124,106,240,0.6) 0%, rgba(124,106,240,0.2) 60%, transparent 100%)",
+                  "linear-gradient(180deg, rgba(20,184,166,0.6) 0%, rgba(20,184,166,0.2) 60%, transparent 100%)",
               }}
             />
 
@@ -70,16 +70,16 @@ export default function QuickStart() {
                 <div className="relative shrink-0 flex flex-col items-center">
                   {/* Circle marker on the timeline */}
                   <div
-                    className="relative z-10 w-14 h-14 rounded-full flex items-center justify-center border border-violet-500/30 bg-violet-500/[0.06] group-hover:border-violet-500/60 group-hover:bg-violet-500/[0.1] transition-all duration-300"
+                    className="relative z-10 w-14 h-14 rounded-full flex items-center justify-center border border-teal-500/30 bg-teal-500/[0.06] group-hover:border-teal-500/60 group-hover:bg-teal-500/[0.1] transition-all duration-300"
                     style={{
-                      boxShadow: "0 0 0 0px rgba(124,106,240,0)",
+                      boxShadow: "0 0 0 0px rgba(20,184,166,0)",
                     }}
                   >
                     <span
                       className="text-2xl font-bold font-mono tracking-tight"
                       style={{
                         background:
-                          "linear-gradient(135deg, #ede9fe 0%, #a78bfa 50%, #7c6af0 100%)",
+                          "linear-gradient(135deg, #ccfbf1 0%, #2dd4bf 50%, #14b8a6 100%)",
                         WebkitBackgroundClip: "text",
                         WebkitTextFillColor: "transparent",
                         backgroundClip: "text",
@@ -92,7 +92,7 @@ export default function QuickStart() {
 
                 {/* Content */}
                 <div className="flex-1 min-w-0 pt-3 pb-2">
-                  <h3 className="text-xl font-semibold text-white mb-2 group-hover:text-violet-50 transition-colors duration-200">
+                  <h3 className="text-xl font-semibold text-white mb-2 group-hover:text-teal-50 transition-colors duration-200">
                     {step.title}
                   </h3>
                   <p className="text-sm text-white/55 leading-relaxed">
@@ -109,7 +109,7 @@ export default function QuickStart() {
                     .getElementById("waitlist")
                     ?.scrollIntoView({ behavior: "smooth" })
                 }
-                className="inline-flex items-center gap-2 text-sm text-violet-400 hover:text-violet-300 transition-colors font-medium"
+                className="inline-flex items-center gap-2 text-sm text-teal-400 hover:text-teal-300 transition-colors font-medium"
               >
                 Request early access
                 <svg
@@ -137,7 +137,7 @@ export default function QuickStart() {
                 className="absolute -inset-[1px] rounded-2xl pointer-events-none z-0"
                 style={{
                   background:
-                    "linear-gradient(135deg, rgba(124,106,240,0.5) 0%, rgba(139,92,246,0.2) 40%, rgba(124,106,240,0.08) 100%)",
+                    "linear-gradient(135deg, rgba(20,184,166,0.5) 0%, rgba(20,184,166,0.2) 40%, rgba(20,184,166,0.08) 100%)",
                 }}
               />
               {/* Ambient glow behind terminal */}
@@ -145,7 +145,7 @@ export default function QuickStart() {
                 className="absolute -inset-6 rounded-3xl pointer-events-none z-[-1]"
                 style={{
                   background:
-                    "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(124,106,240,0.08), transparent)",
+                    "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(20,184,166,0.08), transparent)",
                 }}
               />
               <div className="relative z-10 rounded-2xl overflow-hidden">

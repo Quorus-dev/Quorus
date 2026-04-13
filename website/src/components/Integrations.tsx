@@ -1,92 +1,166 @@
 import { motion } from "framer-motion";
 
-// ─── Agent data ───────────────────────────────────────────────────────────────
+// ── Tool logos ────────────────────────────────────────────────────────────────
 
-interface Agent {
-  initial: string;
+const GitHubLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+    <path
+      d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.49.5.09.68-.22.68-.48v-1.69c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.1-1.46-1.1-1.46-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.56 9.56 0 0 1 12 6.8c.85 0 1.71.11 2.51.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10.01 10.01 0 0 0 22 12C22 6.48 17.52 2 12 2z"
+      fill="#e2e8f0"
+    />
+  </svg>
+);
+
+const SlackLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+    <path d="M9 8a2 2 0 1 1-2-2h2v2z" fill="#e01e5a" />
+    <path d="M10 8a2 2 0 0 1 2-2v5h-2V8z" fill="#e01e5a" />
+    <path d="M15 10a2 2 0 1 1 2 2h-2v-2z" fill="#36c5f0" />
+    <path d="M14 11a2 2 0 0 1-2 2H7v-2h7z" fill="#36c5f0" />
+    <path d="M16 15a2 2 0 1 1-2 2v-2h2z" fill="#2eb67d" />
+    <path d="M14 16a2 2 0 0 1-2 2v-5h2v3z" fill="#2eb67d" />
+    <path d="M9 14a2 2 0 1 1-2-2h2v2z" fill="#ecb22e" />
+    <path d="M10 15a2 2 0 0 1 2-2v5h-2v-3z" fill="#ecb22e" />
+  </svg>
+);
+
+const NotionLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+    <path
+      d="M4.5 3h10.7l4.8 4.8V21H4.5V3z"
+      stroke="#e2e8f0"
+      strokeWidth="1.5"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M14.5 3v5.5H20"
+      stroke="#e2e8f0"
+      strokeWidth="1.5"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M8 10h8M8 13h6M8 16h4"
+      stroke="#e2e8f0"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+const LinearLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+    <path d="M4 4l16 8-8 8L4 4z" fill="#5e6ad2" />
+    <path d="M4 4l8 16" stroke="#5e6ad2" strokeWidth="1.5" />
+  </svg>
+);
+
+const JiraLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+    <path
+      d="M12 2L4 12l8 10 8-10L12 2z"
+      fill="none"
+      stroke="#0052cc"
+      strokeWidth="1.5"
+      strokeLinejoin="round"
+    />
+    <path d="M12 2l4 5-4 5-4-5 4-5z" fill="#0052cc" />
+  </svg>
+);
+
+const FigmaLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+    <rect x="8" y="2" width="8" height="6" rx="2" fill="#f24e1e" />
+    <rect x="8" y="9" width="8" height="6" rx="2" fill="#ff7262" />
+    <rect x="8" y="16" width="8" height="6" rx="2" fill="#0acf83" />
+    <circle cx="16" cy="12" r="4" fill="#1abcfe" />
+    <rect
+      x="8"
+      y="2"
+      width="8"
+      height="6"
+      rx="2"
+      fill="#f24e1e"
+      opacity="0.8"
+    />
+  </svg>
+);
+
+const GDriveLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+    <path d="M12 4L4 18h8l8-14z" fill="none" />
+    <path d="M4 18l4-7h12l-4 7H4z" fill="#4285f4" />
+    <path d="M8 11L12 4l4 7H8z" fill="#fbbc04" />
+    <path d="M16 11l4 7H8l4-7h4z" fill="#0f9d58" />
+  </svg>
+);
+
+const VercelLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+    <path d="M12 3L22 21H2L12 3z" fill="#e2e8f0" />
+  </svg>
+);
+
+// ── Tool logo data ────────────────────────────────────────────────────────────
+
+interface ToolLogo {
   name: string;
-  subtitle: string;
-  color: string;
+  logo: React.ReactNode;
   bg: string;
   border: string;
 }
 
-const AGENTS: Agent[] = [
+const TOOL_LOGOS: ToolLogo[] = [
   {
-    initial: "CC",
-    name: "Claude Code",
-    subtitle: "Anthropic",
-    color: "#f59e0b",
-    bg: "rgba(245,158,11,0.12)",
-    border: "rgba(245,158,11,0.25)",
+    name: "GitHub",
+    logo: <GitHubLogo />,
+    bg: "bg-[#0d0d0d]",
+    border: "border-white/15",
   },
   {
-    initial: "CU",
-    name: "Cursor",
-    subtitle: "Any model",
-    color: "#60a5fa",
-    bg: "rgba(96,165,250,0.12)",
-    border: "rgba(96,165,250,0.25)",
+    name: "Slack",
+    logo: <SlackLogo />,
+    bg: "bg-[#1a0a10]",
+    border: "border-[#e01e5a]/25",
   },
   {
-    initial: "CX",
-    name: "Codex",
-    subtitle: "OpenAI",
-    color: "#34d399",
-    bg: "rgba(52,211,153,0.12)",
-    border: "rgba(52,211,153,0.25)",
+    name: "Notion",
+    logo: <NotionLogo />,
+    bg: "bg-[#0d0d0d]",
+    border: "border-white/15",
   },
   {
-    initial: "GC",
-    name: "Gemini CLI",
-    subtitle: "Google",
-    color: "#a78bfa",
-    bg: "rgba(167,139,250,0.12)",
-    border: "rgba(167,139,250,0.25)",
+    name: "Linear",
+    logo: <LinearLogo />,
+    bg: "bg-[#0a0b1a]",
+    border: "border-[#5e6ad2]/30",
   },
   {
-    initial: "AI",
-    name: "Aider",
-    subtitle: "Any model",
-    color: "#fb923c",
-    bg: "rgba(251,146,60,0.12)",
-    border: "rgba(251,146,60,0.25)",
+    name: "Jira",
+    logo: <JiraLogo />,
+    bg: "bg-[#0a0e1a]",
+    border: "border-[#0052cc]/30",
   },
   {
-    initial: "CL",
-    name: "Cline",
-    subtitle: "Any model",
-    color: "#e879f9",
-    bg: "rgba(232,121,249,0.12)",
-    border: "rgba(232,121,249,0.25)",
+    name: "Figma",
+    logo: <FigmaLogo />,
+    bg: "bg-[#1a0e0a]",
+    border: "border-[#f24e1e]/25",
   },
   {
-    initial: "CO",
-    name: "Continue",
-    subtitle: "Any model",
-    color: "#38bdf8",
-    bg: "rgba(56,189,248,0.12)",
-    border: "rgba(56,189,248,0.25)",
+    name: "Google Drive",
+    logo: <GDriveLogo />,
+    bg: "bg-[#0a0e1a]",
+    border: "border-[#4285f4]/25",
   },
   {
-    initial: "DV",
-    name: "Devin",
-    subtitle: "Cognition",
-    color: "#f472b6",
-    bg: "rgba(244,114,182,0.12)",
-    border: "rgba(244,114,182,0.25)",
-  },
-  {
-    initial: "GH",
-    name: "GitHub Copilot",
-    subtitle: "Microsoft",
-    color: "#a3e635",
-    bg: "rgba(163,230,53,0.12)",
-    border: "rgba(163,230,53,0.25)",
+    name: "Vercel",
+    logo: <VercelLogo />,
+    bg: "bg-[#0d0d0d]",
+    border: "border-white/15",
   },
 ];
 
-// ─── Integration detail cards ─────────────────────────────────────────────────
+// ── Integration feature cards ─────────────────────────────────────────────────
 
 const INTEGRATION_CARDS = [
   {
@@ -128,7 +202,7 @@ const INTEGRATION_CARDS = [
     ),
     tag: "REST Fallback",
     title: "Plain HTTP, always",
-    desc: "No MCP support? No problem. Any agent that can make an HTTP request can join a room and coordinate.",
+    desc: "No MCP support? Any agent that can make an HTTP request can join a room and coordinate.",
     code: `POST /rooms/{id}/messages`,
   },
   {
@@ -149,95 +223,38 @@ const INTEGRATION_CARDS = [
     ),
     tag: "Zero Lock-in",
     title: "Switch anytime",
-    desc: "Swap agents mid-sprint. The relay persists. History, state, and locks survive agent changes without replay.",
+    desc: "Swap agents mid-sprint. The relay persists. History, state, and locks survive without replay.",
     code: `relay.rooms — durable, agent-agnostic`,
   },
 ];
 
-// ─── Agent card ───────────────────────────────────────────────────────────────
+// ── Tool badge ────────────────────────────────────────────────────────────────
 
-function AgentCard({ agent }: { agent: Agent }) {
+function ToolBadge({ tool }: { tool: ToolLogo }) {
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 rounded-xl border shrink-0 cursor-default select-none transition-all duration-200 hover:scale-[1.02]"
-      style={{
-        background: agent.bg,
-        borderColor: agent.border,
-        minWidth: "168px",
-      }}
+      className={`flex flex-col items-center gap-2 px-4 py-3 rounded-xl border ${tool.bg} ${tool.border} min-w-[72px] cursor-default select-none hover:scale-105 transition-transform duration-200`}
     >
-      <div
-        className="flex items-center justify-center w-8 h-8 rounded-lg text-xs font-bold font-mono shrink-0"
-        style={{
-          background: `${agent.bg}`,
-          color: agent.color,
-          border: `1px solid ${agent.border}`,
-        }}
-      >
-        {agent.initial}
-      </div>
-      <div>
-        <div className="text-sm font-semibold text-white leading-tight">
-          {agent.name}
-        </div>
-        <div className="text-[10px] font-mono text-white/40 mt-0.5">
-          {agent.subtitle}
-        </div>
-      </div>
+      <div className="w-6 h-6">{tool.logo}</div>
+      <span className="text-[9px] font-mono text-white/35 text-center leading-tight">
+        {tool.name}
+      </span>
     </div>
   );
 }
 
-// ─── Marquee row ──────────────────────────────────────────────────────────────
+// ── Stats row ─────────────────────────────────────────────────────────────────
 
-interface MarqueeRowProps {
-  agents: Agent[];
-  reverse?: boolean;
-}
+const STATS = [
+  { value: "9", label: "agent platforms" },
+  { value: "250+", label: "teams" },
+  { value: "3.6ms", label: "p50 latency" },
+  { value: "866+", label: "tests passing" },
+];
 
-function MarqueeRow({ agents, reverse = false }: MarqueeRowProps) {
-  const doubled = [...agents, ...agents];
-  return (
-    <div className="relative overflow-hidden">
-      {/* Fade edges */}
-      <div
-        className="absolute inset-y-0 left-0 w-24 z-10 pointer-events-none"
-        style={{
-          background: "linear-gradient(90deg, #08080f 0%, transparent 100%)",
-        }}
-      />
-      <div
-        className="absolute inset-y-0 right-0 w-24 z-10 pointer-events-none"
-        style={{
-          background: "linear-gradient(270deg, #08080f 0%, transparent 100%)",
-        }}
-      />
-
-      <motion.div
-        className="flex gap-3 py-2"
-        animate={{ x: reverse ? ["0%", "50%"] : ["0%", "-50%"] }}
-        transition={{
-          duration: 32,
-          repeat: Infinity,
-          ease: "linear",
-          repeatType: "loop",
-        }}
-        style={{ width: "max-content" }}
-      >
-        {doubled.map((agent, i) => (
-          <AgentCard key={`${agent.name}-${i}`} agent={agent} />
-        ))}
-      </motion.div>
-    </div>
-  );
-}
-
-// ─── Main section ─────────────────────────────────────────────────────────────
+// ── Main section ──────────────────────────────────────────────────────────────
 
 export default function Integrations() {
-  const row1 = AGENTS;
-  const row2 = [...AGENTS].reverse();
-
   return (
     <section className="py-40 px-6 overflow-hidden" id="integrations">
       <div className="max-w-7xl mx-auto">
@@ -250,33 +267,50 @@ export default function Integrations() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-50px" }}
           transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
-          className="text-center mb-16"
+          className="text-center mb-14"
         >
-          <p className="text-xs font-mono text-violet-400 mb-4 tracking-widest uppercase">
+          <p className="text-xs font-mono text-teal-400 mb-4 tracking-widest uppercase">
             Integrations
           </p>
-          <h2 className="text-6xl md:text-7xl font-bold tracking-tight mb-5">
-            Works with every AI agent
+          <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-5">
+            Every tool your agents use,
+            <br />
+            available in every room.
           </h2>
-          <p className="text-white/55 text-lg max-w-xl mx-auto">
-            If it can send a message, it can join a room. Protocol-first,
-            agent-agnostic.
+          <p className="text-white/50 text-base max-w-lg mx-auto">
+            Murmur coordinates the agents. The agents coordinate around your
+            tools. No adapters needed.
           </p>
         </motion.div>
 
-        {/* Marquee rows */}
-        <div className="flex flex-col gap-3 mb-20">
-          <MarqueeRow agents={row1} />
-          <MarqueeRow agents={row2} reverse />
-        </div>
+        {/* Tool logos grid */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+          className="flex flex-wrap justify-center gap-3 mb-20"
+        >
+          {TOOL_LOGOS.map((tool, i) => (
+            <motion.div
+              key={tool.name}
+              initial={{ opacity: 0, scale: 0.9 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.3, delay: i * 0.05 }}
+            >
+              <ToolBadge tool={tool} />
+            </motion.div>
+          ))}
+        </motion.div>
 
-        {/* Integration detail cards */}
+        {/* Feature cards */}
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-60px" }}
           transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
-          className="grid grid-cols-1 md:grid-cols-3 gap-4"
+          className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-16"
         >
           {INTEGRATION_CARDS.map((card, i) => (
             <motion.div
@@ -285,19 +319,17 @@ export default function Integrations() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.1, duration: 0.5 }}
-              className="card-gradient-border group rounded-2xl p-6 flex flex-col gap-4 hover:border-violet-500/30 transition-all duration-300"
+              className="card-gradient-border group rounded-2xl p-6 flex flex-col gap-4 hover:border-teal-500/30 transition-all duration-300"
             >
-              {/* Tag + icon */}
               <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-violet-500/10 text-violet-400 group-hover:bg-violet-500/15 transition-colors duration-200">
+                <div className="p-2.5 rounded-xl bg-teal-500/10 text-teal-400 group-hover:bg-teal-500/15 transition-colors duration-200">
                   {card.icon}
                 </div>
-                <span className="text-xs font-mono text-violet-400/80 tracking-widest uppercase">
+                <span className="text-xs font-mono text-teal-400/80 tracking-widest uppercase">
                   {card.tag}
                 </span>
               </div>
 
-              {/* Title + desc */}
               <div>
                 <h3 className="text-base font-semibold text-white mb-1.5">
                   {card.title}
@@ -307,11 +339,37 @@ export default function Integrations() {
                 </p>
               </div>
 
-              {/* Code snippet */}
               <div className="mt-auto rounded-lg bg-black/50 border border-white/[0.06] px-3 py-2">
-                <code className="text-[11px] font-mono text-violet-300/80 break-all">
+                <code className="text-[11px] font-mono text-teal-300/80 break-all">
                   {card.code}
                 </code>
+              </div>
+            </motion.div>
+          ))}
+        </motion.div>
+
+        {/* Stats row */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5, delay: 0.2 }}
+          className="flex flex-wrap justify-center items-center gap-8 py-8 border-t border-white/[0.05]"
+        >
+          {STATS.map((stat, i) => (
+            <motion.div
+              key={stat.label}
+              initial={{ opacity: 0 }}
+              whileInView={{ opacity: 1 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.08, duration: 0.4 }}
+              className="text-center"
+            >
+              <div className="text-2xl font-bold gradient-text-subtle tabular-nums">
+                {stat.value}
+              </div>
+              <div className="text-[11px] font-mono text-white/30 mt-0.5">
+                {stat.label}
               </div>
             </motion.div>
           ))}

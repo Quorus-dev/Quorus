@@ -30,10 +30,10 @@ export default function Nav() {
         {/* Logo */}
         <a href="/" className="flex items-center gap-2 group shrink-0">
           <div className="relative w-2 h-2">
-            <div className="w-2 h-2 rounded-full bg-violet-500 pulse-dot" />
-            <div className="absolute inset-0 rounded-full bg-violet-500 opacity-30 scale-[2.5] pulse-dot" />
+            <div className="w-2 h-2 rounded-full bg-teal-500 pulse-dot" />
+            <div className="absolute inset-0 rounded-full bg-teal-500 opacity-30 scale-[2.5] pulse-dot" />
           </div>
-          <span className="font-mono text-sm font-semibold tracking-tight text-white group-hover:text-violet-300 transition-colors">
+          <span className="font-mono text-sm font-semibold tracking-tight text-white group-hover:text-teal-300 transition-colors">
             murmur
           </span>
         </a>
@@ -70,7 +70,7 @@ export default function Nav() {
           )}
           <button
             onClick={() => smoothScroll("waitlist")}
-            className={`rounded-full font-medium bg-violet-600 hover:bg-violet-500 text-white transition-all duration-200 hover:shadow-[0_0_20px_rgba(124,106,240,0.4)] ${
+            className={`rounded-full font-medium bg-teal-600 hover:bg-teal-500 text-white transition-all duration-200 hover:shadow-[0_0_20px_rgba(20,184,166,0.4)] ${
               scrolled ? "text-xs px-3.5 py-1.5" : "text-sm px-4 py-2"
             }`}
           >

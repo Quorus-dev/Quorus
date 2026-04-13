@@ -1,6 +1,14 @@
 import { useState, useEffect } from "react";
 
-type LineType = "cmd" | "prompt" | "user" | "output" | "blank";
+type LineType =
+  | "cmd"
+  | "brand"
+  | "prompt"
+  | "user"
+  | "output"
+  | "teal"
+  | "dim"
+  | "blank";
 
 interface TermLine {
   type: LineType;
@@ -10,41 +18,61 @@ interface TermLine {
 const SCRIPT: TermLine[] = [
   { type: "cmd", text: "$ murmur begin" },
   { type: "blank", text: "" },
-  { type: "output", text: "  murmur  ·  agent coordination hub" },
+  {
+    type: "brand",
+    text: "  ███╗   ███╗██╗   ██╗██████╗ ███╗   ███╗██╗   ██╗██████╗",
+  },
+  {
+    type: "brand",
+    text: "  ████╗ ████║██║   ██║██╔══██╗████╗ ████║██║   ██║██╔══██╗",
+  },
+  {
+    type: "brand",
+    text: "  ██╔████╔██║██║   ██║██████╔╝██╔████╔██║██║   ██║██████╔╝",
+  },
+  {
+    type: "brand",
+    text: "  ██║╚██╔╝██║██║   ██║██╔══██╗██║╚██╔╝██║██║   ██║██╔══██╗",
+  },
+  {
+    type: "brand",
+    text: "  ██║ ╚═╝ ██║╚██████╔╝██║  ██║██║ ╚═╝ ██║╚██████╔╝██║  ██║",
+  },
+  {
+    type: "dim",
+    text: "  Agent coordination relay  ·  v0.3.1  ·  relay.murmur.dev",
+  },
   { type: "blank", text: "" },
-  { type: "output", text: "  Welcome. Let's get you set up in 30 seconds." },
-  { type: "blank", text: "" },
-  { type: "prompt", text: "  What's your name? " },
+  { type: "prompt", text: "  Name? " },
   { type: "user", text: "alice" },
-  { type: "prompt", text: "  Relay URL? (Enter for localhost:8080) " },
-  { type: "user", text: "" },
-  { type: "prompt", text: "  Relay secret? (Enter to skip) " },
+  { type: "prompt", text: "  Relay URL? (↵ for localhost:8080) " },
   { type: "user", text: "" },
   { type: "blank", text: "" },
-  { type: "output", text: "  Connecting... ✓" },
+  { type: "output", text: "  Connecting to relay..." },
+  { type: "teal", text: "  ✓ Connected  ·  3.6ms  ·  SSE active" },
   { type: "blank", text: "" },
-  { type: "output", text: "  You're in. Type help to see what you can do." },
+  { type: "teal", text: "  ┌─ Active rooms ──────────────────────────┐" },
+  { type: "teal", text: "  │  ▶ #dev-sprint      3 agents  ● live   │" },
+  { type: "teal", text: "  │    #design-review   1 agent             │" },
+  { type: "teal", text: "  │    #qa-room         2 agents            │" },
+  { type: "teal", text: "  └──────────────────────────────────────────┘" },
   { type: "blank", text: "" },
-  { type: "output", text: "  ┌─ Rooms ──────────────────────────┐" },
-  { type: "output", text: "  │  ▶ #dev-room    3 👥            │" },
-  { type: "output", text: "  │    #design      1 👥            │" },
-  { type: "output", text: "  └───────────────────────────────────┘" },
+  { type: "dim", text: "  Type  help  to see available MCP tools." },
   { type: "blank", text: "" },
-  { type: "cmd", text: "[alice]> " },
+  { type: "cmd", text: "[alice@dev-sprint]> " },
 ];
 
-const CHAR_DELAY = 28;
-const LINE_PAUSE = 380;
-const USER_PAUSE = 220;
+const CHAR_DELAY = 22;
+const LINE_PAUSE = 320;
+const USER_PAUSE = 180;
 
 export default function TerminalAnimation() {
   const [rendered, setRendered] = useState<string[]>([]);
-  const [cursorLine, setCursorLine] = useState(0);
+  const [, setCursorLine] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     const lines: string[] = [];
-
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
     const typeChars = async (
@@ -59,7 +87,7 @@ export default function TerminalAnimation() {
     };
 
     (async () => {
-      await sleep(600);
+      await sleep(500);
       for (let i = 0; i < SCRIPT.length; i++) {
         if (cancelled) return;
         const line = SCRIPT[i];
@@ -72,33 +100,36 @@ export default function TerminalAnimation() {
           continue;
         }
 
-        if (line.type === "output") {
+        if (
+          line.type === "brand" ||
+          line.type === "output" ||
+          line.type === "teal" ||
+          line.type === "dim"
+        ) {
           lines.push(line.text);
           setRendered([...lines]);
           setCursorLine(i);
-          await sleep(LINE_PAUSE);
+          // Brand lines appear fast, others normal pace
+          await sleep(line.type === "brand" ? 80 : LINE_PAUSE);
           continue;
         }
 
-        // cmd / prompt / user — type character by character
         lines.push("");
         const idx = lines.length - 1;
 
         if (line.type === "user") {
-          // Show the previous prompt + typed answer
           const prevIdx = lines.length - 2;
           const prevText = SCRIPT[i - 1]?.text ?? "";
-          const fullAnswer = line.text || "";
+          const answer = line.text || "";
 
-          if (fullAnswer.length === 0) {
-            // Just press Enter — show prompt + "(default)"
+          if (answer.length === 0) {
             lines[prevIdx] = prevText + "(default)";
             setRendered([...lines]);
             await sleep(USER_PAUSE);
-            lines.splice(idx, 1); // remove the empty slot we added
+            lines.splice(idx, 1);
             setRendered([...lines]);
           } else {
-            await typeChars(fullAnswer, (partial) => {
+            await typeChars(answer, (partial) => {
               lines[prevIdx] = prevText + partial;
               setRendered([...lines]);
             });
@@ -106,13 +137,12 @@ export default function TerminalAnimation() {
             setRendered([...lines]);
           }
         } else {
-          // cmd or prompt
           await typeChars(line.text, (partial) => {
             lines[idx] = partial;
             setCursorLine(i);
             setRendered([...lines]);
           });
-          if (line.type === "cmd" && i === SCRIPT.length - 1) break; // leave cursor at last line
+          if (line.type === "cmd" && i === SCRIPT.length - 1) break;
           await sleep(LINE_PAUSE);
         }
       }
@@ -125,61 +155,91 @@ export default function TerminalAnimation() {
 
   return (
     <div className="relative w-full">
-      <div className="relative rounded-2xl border border-violet-500/25 bg-black/50 overflow-hidden backdrop-blur-sm">
-        {/* Title bar */}
-        <div className="flex items-center gap-2 px-4 py-3 bg-white/[0.03] border-b border-white/8">
+      <div className="relative rounded-2xl border border-teal-500/25 bg-[#050a09] overflow-hidden backdrop-blur-sm">
+        {/* Mac-style title bar */}
+        <div className="flex items-center gap-2 px-4 py-3 bg-white/[0.03] border-b border-white/[0.06]">
           <div className="flex gap-1.5">
-            <div className="w-3 h-3 rounded-full bg-red-500/60" />
-            <div className="w-3 h-3 rounded-full bg-yellow-500/60" />
-            <div className="w-3 h-3 rounded-full bg-green-500/60" />
+            <div className="w-3 h-3 rounded-full bg-red-500/70" />
+            <div className="w-3 h-3 rounded-full bg-yellow-500/70" />
+            <div className="w-3 h-3 rounded-full bg-green-500/70" />
           </div>
-          <div className="ml-2 text-xs text-white/30 font-mono">
-            murmur terminal
+          <div className="flex-1 flex items-center justify-center gap-2">
+            {/* Murmur teal dot */}
+            <div className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
+            <span className="text-[11px] text-teal-400/70 font-mono tracking-widest">
+              murmur
+            </span>
+            <span className="text-white/15 text-[11px] font-mono">·</span>
+            <span className="text-[11px] text-white/25 font-mono">alice</span>
+          </div>
+          <div className="text-[10px] text-white/20 font-mono">
+            relay.murmur.dev
           </div>
         </div>
 
-        {/* Content */}
-        <div className="px-5 py-5 font-mono text-sm min-h-[320px] space-y-0.5">
+        {/* Terminal content */}
+        <div className="px-5 py-4 font-mono text-[12px] min-h-[340px] space-y-[2px] overflow-hidden">
           {rendered.map((line, i) => {
-            const isCmd = line.startsWith("$");
-            const isSection =
-              line.trimStart().startsWith("┌") ||
-              line.trimStart().startsWith("│") ||
-              line.trimStart().startsWith("└");
-            const isYou = i === cursorLine && line.startsWith("  You're in");
-            const isConnecting = line.includes("Connecting...");
+            const scriptType = SCRIPT[i]?.type ?? "output";
+            const isLastCmd =
+              i === rendered.length - 1 && line.startsWith("[alice");
 
+            if (scriptType === "brand") {
+              return (
+                <div key={i} className="leading-tight">
+                  <span className="text-teal-500/60 text-[9px]">{line}</span>
+                </div>
+              );
+            }
+            if (scriptType === "teal") {
+              return (
+                <div key={i} className="leading-relaxed">
+                  <span className="text-teal-400">{line}</span>
+                </div>
+              );
+            }
+            if (scriptType === "dim") {
+              return (
+                <div key={i} className="leading-relaxed">
+                  <span className="text-white/25">{line}</span>
+                </div>
+              );
+            }
+            if (scriptType === "cmd") {
+              return (
+                <div
+                  key={i}
+                  className="leading-relaxed flex items-center gap-0"
+                >
+                  <span className="text-teal-300/90">{line}</span>
+                  {isLastCmd && (
+                    <span className="inline-block w-2 h-[1em] bg-teal-400 opacity-80 animate-pulse align-text-bottom ml-0.5" />
+                  )}
+                </div>
+              );
+            }
+            if (line === "") return <div key={i}>&nbsp;</div>;
+            if (line.includes("Connecting")) {
+              return (
+                <div key={i} className="leading-relaxed">
+                  <span className="text-yellow-400/70">{line}</span>
+                </div>
+              );
+            }
             return (
               <div key={i} className="leading-relaxed">
-                {isCmd ? (
-                  <span className="text-green-400">{line}</span>
-                ) : isSection ? (
-                  <span className="text-violet-400/70">{line}</span>
-                ) : isConnecting ? (
-                  <span className="text-yellow-400/80">{line}</span>
-                ) : isYou ? (
-                  <span className="text-green-400">{line}</span>
-                ) : line.includes("What's") ||
-                  line.includes("Relay") ||
-                  line.includes("secret") ? (
-                  <span className="text-white/70">{line}</span>
-                ) : line === "" ? (
-                  <span>&nbsp;</span>
-                ) : (
-                  <span className="text-white/50">{line}</span>
-                )}
+                <span className="text-white/55">{line}</span>
               </div>
             );
           })}
-
-          {/* Blinking cursor on last cmd line */}
-          <span className="inline-block w-2 h-4 bg-violet-400 opacity-80 animate-pulse align-text-bottom" />
         </div>
 
-        <div className="absolute inset-0 pointer-events-none rounded-2xl shadow-[inset_0_0_30px_rgba(124,106,240,0.06)]" />
+        {/* Inner glow */}
+        <div className="absolute inset-0 pointer-events-none rounded-2xl shadow-[inset_0_0_40px_rgba(20,184,166,0.05)]" />
       </div>
 
-      <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-64 h-16 bg-violet-500/[0.12] blur-2xl rounded-full" />
+      {/* Under glow */}
+      <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-64 h-16 bg-teal-500/[0.10] blur-2xl rounded-full" />
     </div>
   );
 }

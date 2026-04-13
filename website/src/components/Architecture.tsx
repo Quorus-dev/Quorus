@@ -43,22 +43,27 @@ function Counter({
   );
 }
 
-/* ─── Hub diagram data ────────────────────────────────────────────────────── */
+/* ─── Architecture diagram lines ──────────────────────────────────────────── */
 
-const RING_AGENTS = [
-  { label: "Claude Code", color: "#a78bfa", angle: -90 },
-  { label: "Cursor", color: "#60a5fa", angle: -30 },
-  { label: "OpenAI Codex", color: "#34d399", angle: 30 },
-  { label: "Gemini", color: "#fb923c", angle: 90 },
-  { label: "Ollama", color: "#f472b6", angle: 150 },
-  { label: "Any HTTP", color: "#94a3b8", angle: 210 },
+interface DiagramLine {
+  label: string;
+  color: string;
+  prefix: string;
+}
+
+const DIAGRAM_LINES: DiagramLine[] = [
+  { label: "Claude Code", color: "#d97757", prefix: "CC" },
+  { label: "Cursor", color: "#60a5fa", prefix: "CU" },
+  { label: "Codex", color: "#10a37f", prefix: "CX" },
 ];
+
+/* ─── Primitives ──────────────────────────────────────────────────────────── */
 
 const PRIMITIVES = [
   {
     label: "Rooms",
     desc: "Fan-out to all members in <1ms",
-    color: "#a78bfa",
+    color: "#2dd4bf",
   },
   {
     label: "SSE Push",
@@ -68,185 +73,154 @@ const PRIMITIVES = [
   {
     label: "Shared State",
     desc: "GET /state: full swarm snapshot",
-    color: "#7c6af0",
+    color: "#14b8a6",
   },
   {
     label: "Mutex Locks",
     desc: "TTL-gated. Auto-expire on crash",
-    color: "#5b21b6",
+    color: "#0f766e",
   },
 ];
 
-/* ─── Hub & spoke SVG diagram ─────────────────────────────────────────────── */
+/* ─── Text architecture diagram ──────────────────────────────────────────── */
 
-function HubDiagram() {
-  const W = 480;
-  const H = 360;
-  const cx = W / 2;
-  const cy = H / 2;
-  const radius = 148;
+function ArchDiagram() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true });
+  const [visibleLines, setVisibleLines] = useState(0);
 
-  const nodes = RING_AGENTS.map((a) => {
-    const rad = (a.angle * Math.PI) / 180;
-    return {
-      ...a,
-      x: cx + radius * Math.cos(rad),
-      y: cy + radius * Math.sin(rad),
-    };
-  });
+  const lines = [
+    {
+      text: "Claude Code ──┐",
+      highlights: [{ from: 0, to: 11, color: "#d97757" }],
+    },
+    {
+      text: "Cursor ────────┼──► murmur relay ◄──► SSE push ──► all agents",
+      highlights: [
+        { from: 0, to: 6, color: "#60a5fa" },
+        { from: 19, to: 31, color: "#2dd4bf" },
+        { from: 37, to: 45, color: "#14b8a6" },
+        { from: 51, to: 61, color: "#34d399" },
+      ],
+    },
+    {
+      text: "Codex ─────────┘         │",
+      highlights: [{ from: 0, to: 5, color: "#10a37f" }],
+    },
+    {
+      text: "                    shared state",
+      highlights: [{ from: 20, to: 32, color: "#2dd4bf" }],
+    },
+    {
+      text: "                    mutex locks",
+      highlights: [{ from: 20, to: 31, color: "#8b5cf6" }],
+    },
+    {
+      text: "                    room fanout",
+      highlights: [{ from: 20, to: 31, color: "#14b8a6" }],
+    },
+  ];
+
+  useEffect(() => {
+    if (!inView) return;
+    let i = 0;
+    const interval = setInterval(() => {
+      i++;
+      setVisibleLines(i);
+      if (i >= lines.length) clearInterval(interval);
+    }, 180);
+    return () => clearInterval(interval);
+  }, [inView, lines.length]);
+
+  function renderLine(line: (typeof lines)[0], lineIdx: number) {
+    const text = line.text;
+    const hl = line.highlights;
+
+    // Build segments
+    const segments: { text: string; color: string }[] = [];
+    let cursor = 0;
+
+    const sorted = [...hl].sort((a, b) => a.from - b.from);
+    for (const h of sorted) {
+      if (cursor < h.from) {
+        segments.push({
+          text: text.slice(cursor, h.from),
+          color: "rgba(255,255,255,0.35)",
+        });
+      }
+      segments.push({ text: text.slice(h.from, h.to), color: h.color });
+      cursor = h.to;
+    }
+    if (cursor < text.length) {
+      segments.push({
+        text: text.slice(cursor),
+        color: "rgba(255,255,255,0.35)",
+      });
+    }
+
+    return (
+      <motion.div
+        key={lineIdx}
+        initial={{ opacity: 0, x: -8 }}
+        animate={
+          lineIdx < visibleLines ? { opacity: 1, x: 0 } : { opacity: 0, x: -8 }
+        }
+        transition={{ duration: 0.25 }}
+        className="leading-relaxed"
+      >
+        {segments.map((seg, si) => (
+          <span key={si} style={{ color: seg.color }}>
+            {seg.text}
+          </span>
+        ))}
+      </motion.div>
+    );
+  }
 
   return (
-    <div className="w-full">
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="w-full h-auto"
-        style={{ maxHeight: 340, overflow: "visible" }}
-      >
-        <defs>
-          <radialGradient id="rg-relay" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#7c6af0" stopOpacity="0.38" />
-            <stop offset="100%" stopColor="#7c6af0" stopOpacity="0.06" />
-          </radialGradient>
-          <filter id="glow-node" x="-100%" y="-100%" width="300%" height="300%">
-            <feGaussianBlur stdDeviation="3.5" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
+    <div
+      ref={ref}
+      className="rounded-2xl border border-teal-500/20 bg-[#07070f] p-6 lg:p-8 font-mono text-[13px] leading-7 overflow-x-auto"
+    >
+      <div className="flex items-center gap-2 mb-5 pb-4 border-b border-white/[0.05]">
+        <div className="flex gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-full bg-red-500/50" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50" />
+          <div className="w-2.5 h-2.5 rounded-full bg-green-500/50" />
+        </div>
+        <span className="text-[10px] text-white/20 font-mono ml-2">
+          architecture.txt
+        </span>
+      </div>
 
-        {/* Animated dashed connection lines */}
-        {nodes.map((n, i) => (
-          <line
-            key={`line-${n.label}`}
-            x1={n.x}
-            y1={n.y}
-            x2={cx}
-            y2={cy}
-            stroke={n.color}
-            strokeWidth="0.85"
-            strokeOpacity="0.22"
-            strokeDasharray="3 6"
+      <div className="space-y-0.5 whitespace-pre">
+        {lines.map((line, i) => renderLine(line, i))}
+      </div>
+
+      {/* Agent badges row */}
+      <div className="flex gap-3 mt-6 pt-5 border-t border-white/[0.05] flex-wrap">
+        {DIAGRAM_LINES.map((agent) => (
+          <div
+            key={agent.label}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-mono"
+            style={{
+              borderColor: `${agent.color}30`,
+              background: `${agent.color}0a`,
+              color: agent.color,
+            }}
           >
-            <animate
-              attributeName="stroke-dashoffset"
-              values={i % 2 === 0 ? "0;-27" : "0;27"}
-              dur={`${1.1 + i * 0.1}s`}
-              repeatCount="indefinite"
-              calcMode="linear"
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ background: agent.color }}
             />
-          </line>
+            {agent.label}
+          </div>
         ))}
-
-        {/* Relay outer pulse ring */}
-        <circle
-          cx={cx}
-          cy={cy}
-          r="52"
-          fill="none"
-          stroke="rgba(124,106,240,0.18)"
-          strokeWidth="1"
-        >
-          <animate
-            attributeName="r"
-            values="52;70;52"
-            dur="3s"
-            repeatCount="indefinite"
-          />
-          <animate
-            attributeName="opacity"
-            values="0.5;0;0.5"
-            dur="3s"
-            repeatCount="indefinite"
-          />
-        </circle>
-
-        {/* Relay core */}
-        <circle
-          cx={cx}
-          cy={cy}
-          r="44"
-          fill="url(#rg-relay)"
-          stroke="rgba(124,106,240,0.4)"
-          strokeWidth="1"
-        />
-        <circle cx={cx} cy={cy} r="34" fill="rgba(124,106,240,0.18)" />
-
-        {/* Live indicator */}
-        <circle cx={cx + 28} cy={cy - 28} r="3.5" fill="#4ade80">
-          <animate
-            attributeName="opacity"
-            values="1;0.3;1"
-            dur="2.2s"
-            repeatCount="indefinite"
-          />
-        </circle>
-
-        <text
-          x={cx}
-          y={cy - 4}
-          textAnchor="middle"
-          fill="#c4b5fd"
-          fontSize="11"
-          fontFamily="ui-monospace, monospace"
-          fontWeight="700"
-        >
-          murmur
-        </text>
-        <text
-          x={cx}
-          y={cy + 11}
-          textAnchor="middle"
-          fill="rgba(196,181,253,0.42)"
-          fontSize="8.5"
-          fontFamily="ui-monospace, monospace"
-        >
-          relay
-        </text>
-
-        {/* Agent nodes */}
-        {nodes.map((n, i) => (
-          <motion.g
-            key={n.label}
-            initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            viewport={{ once: true }}
-            transition={{ delay: 0.25 + i * 0.1, duration: 0.7 }}
-          >
-            {/* Node background */}
-            <circle
-              cx={n.x}
-              cy={n.y}
-              r="24"
-              fill={`${n.color}12`}
-              stroke={`${n.color}28`}
-              strokeWidth="1"
-            />
-            {/* Node dot with glow */}
-            <circle
-              cx={n.x}
-              cy={n.y}
-              r="5"
-              fill={n.color}
-              opacity="0.9"
-              filter="url(#glow-node)"
-            />
-            {/* Label */}
-            <text
-              x={n.x}
-              y={n.y + 38}
-              textAnchor="middle"
-              fill={n.color}
-              fontSize="7.5"
-              fontFamily="ui-monospace, monospace"
-              opacity="0.7"
-            >
-              {n.label}
-            </text>
-          </motion.g>
-        ))}
-      </svg>
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-teal-500/20 bg-teal-500/[0.06] text-[10px] font-mono text-teal-300">
+          <span className="w-1.5 h-1.5 rounded-full bg-teal-400 shrink-0" />
+          murmur relay
+        </div>
+      </div>
     </div>
   );
 }
@@ -262,7 +236,7 @@ export default function Architecture() {
         className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[420px] rounded-full pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(124,106,240,0.05) 0%, transparent 70%)",
+            "radial-gradient(ellipse, rgba(20,184,166,0.05) 0%, transparent 70%)",
           filter: "blur(80px)",
         }}
       />
@@ -270,7 +244,7 @@ export default function Architecture() {
       <div className="relative max-w-6xl mx-auto">
         <FadeUp>
           <div className="text-center mb-16">
-            <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
+            <p className="text-sm font-mono text-teal-400 mb-3 tracking-widest uppercase">
               Architecture
             </p>
             <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
@@ -284,10 +258,8 @@ export default function Architecture() {
         </FadeUp>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
-          {/* Hub diagram */}
-          <div className="rounded-2xl border border-white/[0.07] bg-[#0b0b14] p-6 lg:p-10 flex items-center justify-center">
-            <HubDiagram />
-          </div>
+          {/* Text architecture diagram */}
+          <ArchDiagram />
 
           {/* Primitives list + stats */}
           <div className="space-y-8">

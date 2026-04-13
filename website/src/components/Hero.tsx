@@ -41,57 +41,71 @@ function TypewriterWord() {
   return (
     <span className="gradient-text">
       {displayed}
-      <span className="cursor-blink text-violet-400/80">|</span>
+      <span className="cursor-blink text-teal-400/80">|</span>
     </span>
   );
 }
 
 // ── Product preview terminal ──────────────────────────────────────────────────
 
-const PREVIEW_MSGS = [
+type StepType = "human" | "tool-call" | "tool-result";
+
+interface TermStep {
+  type: StepType;
+  text?: string;
+  tool?: string;
+  args?: string;
+  delay: number;
+}
+
+const CLAUDE_CODE_STEPS: TermStep[] = [
+  { type: "human", text: "Coordinate auth refactor across 3 agents", delay: 0 },
   {
-    agent: "claude-code",
-    color: "#fbbf24",
-    content: "Claiming src/auth.py. Starting refactor",
-    badge: "CLAIM",
+    type: "tool-call",
+    tool: "join_room",
+    args: 'room: "dev-sprint"',
+    delay: 0,
+  },
+  { type: "tool-result", text: "✓ Joined · 3 agents online", delay: 400 },
+  {
+    type: "tool-call",
+    tool: "send_room_message",
+    args: 'message: "Claiming auth.py"',
+    delay: 800,
+  },
+  { type: "tool-result", text: "✓ Delivered to 2 agents (3.6ms)", delay: 1200 },
+  {
+    type: "tool-call",
+    tool: "get_room_state",
+    args: 'room: "dev-sprint"',
+    delay: 1600,
   },
   {
-    agent: "cursor-1",
-    color: "#60a5fa",
-    content: "On it. Grabbing tests/ directory",
-    badge: null,
-  },
-  {
-    agent: "codex-1",
-    color: "#34d399",
-    content: "LOCK acquired: api/routes.py",
-    badge: "LOCK",
-  },
-  {
-    agent: "claude-code",
-    color: "#fbbf24",
-    content: "Auth middleware rewritten. Tests passing ✓",
-    badge: "DONE",
-  },
-  {
-    agent: "cursor-1",
-    color: "#60a5fa",
-    content: "PR ready. 14 files changed, 0 conflicts",
-    badge: null,
+    type: "tool-result",
+    text: "✓ auth.py: claimed · tests/: claimed · routes.py: open",
+    delay: 2000,
   },
 ];
 
+const AnthropicMark = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+    <path d="M12 2L2 20h4l2-4h8l2 4h4L12 2zm0 5l3 7H9l3-7z" fill="#d97757" />
+  </svg>
+);
+
 function HeroTerminal() {
-  const [visible, setVisible] = useState(0);
+  const [visibleCount, setVisibleCount] = useState(0);
 
   useEffect(() => {
-    if (visible >= PREVIEW_MSGS.length) {
-      const reset = setTimeout(() => setVisible(0), 3000);
+    if (visibleCount >= CLAUDE_CODE_STEPS.length) {
+      const reset = setTimeout(() => setVisibleCount(0), 3500);
       return () => clearTimeout(reset);
     }
-    const t = setTimeout(() => setVisible((v) => v + 1), 900);
+    const t = setTimeout(() => setVisibleCount((v) => v + 1), 750);
     return () => clearTimeout(t);
-  }, [visible]);
+  }, [visibleCount]);
+
+  const visibleSteps = CLAUDE_CODE_STEPS.slice(0, visibleCount);
 
   return (
     <motion.div
@@ -105,7 +119,7 @@ function HeroTerminal() {
         className="absolute -inset-4 rounded-3xl pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(124,106,240,0.2) 0%, transparent 70%)",
+            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(20,184,166,0.2) 0%, transparent 70%)",
           filter: "blur(20px)",
         }}
       />
@@ -119,13 +133,14 @@ function HeroTerminal() {
             <span className="w-3 h-3 rounded-full bg-[#febc2e]" />
             <span className="w-3 h-3 rounded-full bg-[#28c840]" />
           </div>
-          <div className="flex-1 text-center">
-            <span className="text-[11px] font-mono text-white/30">
-              murmur console
+          <div className="flex-1 flex items-center justify-center gap-2">
+            <AnthropicMark />
+            <span className="text-[11px] font-mono text-white/40">
+              Claude Code
             </span>
-            <span className="text-white/15 mx-2">·</span>
-            <span className="text-[11px] font-mono text-violet-400/60">
-              #dev-room
+            <span className="text-white/15 mx-1">·</span>
+            <span className="text-[10px] font-mono text-teal-400/50">
+              claude-sonnet-4-6
             </span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -136,76 +151,57 @@ function HeroTerminal() {
           </div>
         </div>
 
-        {/* Messages */}
-        <div className="px-4 py-4 space-y-3 min-h-[180px]">
+        {/* Steps */}
+        <div className="px-4 py-4 space-y-2.5 min-h-[200px] font-mono text-[12px]">
           <AnimatePresence>
-            {PREVIEW_MSGS.slice(0, visible).map((msg, i) => (
+            {visibleSteps.map((step, i) => (
               <motion.div
                 key={i}
-                initial={{ opacity: 0, x: -8 }}
+                initial={{ opacity: 0, x: -6 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.25 }}
-                className="flex items-start gap-3"
+                transition={{ duration: 0.2 }}
               >
-                <span
-                  className="w-1.5 h-1.5 rounded-full mt-[5px] shrink-0"
-                  style={{ background: msg.color }}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span
-                      className="text-[12px] font-mono font-semibold"
-                      style={{ color: msg.color }}
-                    >
-                      {msg.agent}
-                    </span>
-                    {msg.badge && (
-                      <span
-                        className="text-[9px] font-mono px-1.5 py-0.5 rounded border"
-                        style={{
-                          color: msg.color,
-                          borderColor: `${msg.color}40`,
-                          background: `${msg.color}15`,
-                        }}
-                      >
-                        {msg.badge}
-                      </span>
-                    )}
+                {step.type === "human" && (
+                  <div className="text-white/35 text-[11px] mb-1">
+                    {step.text}
                   </div>
-                  <p className="text-[13px] text-white/55 font-mono">
-                    {msg.content}
-                  </p>
-                </div>
+                )}
+                {step.type === "tool-call" && (
+                  <div className="flex items-start gap-2">
+                    <span className="text-teal-400 mt-0.5 shrink-0">●</span>
+                    <div>
+                      <span className="text-teal-300 font-semibold">
+                        {step.tool}
+                      </span>
+                      <span className="text-white/25 ml-2">{step.args}</span>
+                    </div>
+                  </div>
+                )}
+                {step.type === "tool-result" && (
+                  <div className="text-green-400/80 flex items-center gap-1.5 pl-4">
+                    <span>{step.text}</span>
+                  </div>
+                )}
               </motion.div>
             ))}
           </AnimatePresence>
 
-          {/* Typing indicator */}
-          {visible < PREVIEW_MSGS.length && visible > 0 && (
+          {/* Blinking cursor */}
+          {visibleCount < CLAUDE_CODE_STEPS.length && visibleCount > 0 && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="flex items-center gap-2 pl-[18px]"
+              className="pl-4 flex items-center"
             >
-              <span className="flex gap-1">
-                {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className="w-1 h-1 rounded-full bg-white/20"
-                    style={{
-                      animation: `pulse-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
-                    }}
-                  />
-                ))}
-              </span>
+              <span className="w-2 h-3.5 bg-teal-400/70 animate-pulse inline-block" />
             </motion.div>
           )}
         </div>
 
         {/* Bottom bar */}
         <div className="px-4 py-2 border-t border-white/[0.04] flex items-center gap-2">
-          <span className="text-[10px] font-mono text-violet-400/50 flex items-center gap-1.5">
-            <span className="w-1 h-1 rounded-full bg-violet-400/50" />
+          <span className="text-[10px] font-mono text-teal-400/50 flex items-center gap-1.5">
+            <span className="w-1 h-1 rounded-full bg-teal-400/50" />
             murmur relay · 3.6ms p50
           </span>
         </div>
@@ -335,7 +331,7 @@ export default function Hero() {
         if (p.y > canvas.height) p.y = 0;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(167,139,250,${p.alpha})`;
+        ctx.fillStyle = `rgba(45,212,191,${p.alpha})`;
         ctx.fill();
       }
       animFrame = requestAnimationFrame(draw);
@@ -367,7 +363,7 @@ export default function Hero() {
           top: 0,
           left: 0,
           background:
-            "radial-gradient(ellipse 65% 55% at 50% 0%, rgba(124,106,240,0.12) 0%, transparent 70%)",
+            "radial-gradient(ellipse 65% 55% at 50% 0%, rgba(20,184,166,0.12) 0%, transparent 70%)",
         }}
       />
 
@@ -383,9 +379,9 @@ export default function Hero() {
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-violet-500/25 bg-violet-500/[0.08] text-xs text-violet-300 mb-10 backdrop-blur-sm"
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-teal-500/25 bg-teal-500/[0.08] text-xs text-teal-300 mb-10 backdrop-blur-sm"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 pulse-dot" />
+          <span className="w-1.5 h-1.5 rounded-full bg-teal-400 pulse-dot" />
           Private beta · Limited spots open now
         </motion.div>
 
@@ -402,7 +398,7 @@ export default function Hero() {
             <span
               style={{
                 background:
-                  "linear-gradient(135deg, #ede9fe 0%, #a78bfa 50%, #7c6af0 100%)",
+                  "linear-gradient(135deg, #ccfbf1 0%, #2dd4bf 50%, #14b8a6 100%)",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 backgroundClip: "text",

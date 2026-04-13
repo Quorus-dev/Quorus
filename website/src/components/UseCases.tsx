@@ -36,7 +36,7 @@ export default function UseCases() {
       <div className="max-w-7xl mx-auto">
         <FadeUp>
           <div className="text-center mb-16">
-            <p className="text-sm font-mono text-violet-500 mb-3 tracking-widest uppercase">
+            <p className="text-sm font-mono text-teal-500 mb-3 tracking-widest uppercase">
               Use Cases
             </p>
             <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4 text-[#0d0d1c]">
@@ -52,10 +52,10 @@ export default function UseCases() {
           {CASES.map((c) => (
             <div
               key={c.title}
-              className="flex flex-col rounded-2xl border overflow-hidden transition-all duration-300 border-black/[0.08] hover:border-violet-500/30 hover:shadow-[0_4px_24px_rgba(124,106,240,0.1)] bg-white"
+              className="flex flex-col rounded-2xl border overflow-hidden transition-all duration-300 border-black/[0.08] hover:border-teal-500/30 hover:shadow-[0_4px_24px_rgba(20,184,166,0.1)] bg-white"
             >
               <div className="p-6 flex-1">
-                <span className="inline-block px-2.5 py-1 rounded-full text-xs font-mono mb-4 bg-violet-500/10 text-violet-600">
+                <span className="inline-block px-2.5 py-1 rounded-full text-xs font-mono mb-4 bg-teal-500/10 text-teal-600">
                   {c.tag}
                 </span>
                 <h3 className="text-lg font-semibold text-[#0d0d1c] mb-2">

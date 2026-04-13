@@ -54,7 +54,7 @@ export default function StatsBand() {
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(124,106,240,0.06), transparent)",
+            "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(20,184,166,0.06), transparent)",
         }}
       />
 
@@ -74,7 +74,7 @@ export default function StatsBand() {
                 className="text-5xl md:text-6xl font-bold tabular-nums tracking-tight"
                 style={{
                   background:
-                    "linear-gradient(135deg, #ede9fe 0%, #a78bfa 45%, #7c6af0 100%)",
+                    "linear-gradient(135deg, #ccfbf1 0%, #2dd4bf 45%, #14b8a6 100%)",
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
                   backgroundClip: "text",

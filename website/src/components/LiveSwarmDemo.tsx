@@ -6,9 +6,9 @@ import FadeUp from "./FadeUp";
 
 const AGENTS = {
   "claude-code": {
-    color: "text-violet-400",
-    bg: "bg-violet-500/20",
-    dot: "bg-violet-400",
+    color: "text-teal-400",
+    bg: "bg-teal-500/20",
+    dot: "bg-teal-400",
     abbr: "CC",
   },
   "cursor-1": {
@@ -136,9 +136,9 @@ function AgentBadge({ agent }: { agent: AgentKey }) {
 function TypeBadge({ type }: { type: Message["type"] }) {
   if (type === "chat") return null;
   const map: Record<string, string> = {
-    claim: "bg-violet-500/15 text-violet-300 border-violet-500/20",
-    lock: "bg-violet-500/15 text-violet-300 border-violet-500/20",
-    status: "bg-violet-500/15 text-violet-300 border-violet-500/20",
+    claim: "bg-teal-500/15 text-teal-300 border-teal-500/20",
+    lock: "bg-teal-500/15 text-teal-300 border-teal-500/20",
+    status: "bg-teal-500/15 text-teal-300 border-teal-500/20",
     done: "bg-green-500/15 text-green-300 border-green-500/20",
   };
   return (
@@ -267,7 +267,7 @@ export default function LiveSwarmDemo() {
       <div className="max-w-5xl mx-auto">
         <FadeUp>
           <div className="text-center mb-14">
-            <p className="text-xs font-mono text-violet-400 mb-3 tracking-widest uppercase">
+            <p className="text-xs font-mono text-teal-400 mb-3 tracking-widest uppercase">
               See it in action
             </p>
             <h2 className="text-4xl md:text-6xl font-bold tracking-tight text-white mb-4">
@@ -352,7 +352,7 @@ export default function LiveSwarmDemo() {
             </div>
 
             {/* Under-glow */}
-            <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 w-2/3 h-10 bg-violet-600/15 blur-2xl rounded-full pointer-events-none" />
+            <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 w-2/3 h-10 bg-teal-600/15 blur-2xl rounded-full pointer-events-none" />
           </div>
         </FadeUp>
       </div>

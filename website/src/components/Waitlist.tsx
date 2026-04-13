@@ -83,12 +83,12 @@ export default function Waitlist({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder={placeholder}
-            className={`flex-1 ${pad} ${text} rounded-xl bg-white/[0.05] border border-white/10 text-white placeholder:text-white/25 outline-none focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/10 transition-all duration-200`}
+            className={`flex-1 ${pad} ${text} rounded-xl bg-white/[0.05] border border-white/10 text-white placeholder:text-white/25 outline-none focus:border-teal-500/50 focus:ring-2 focus:ring-teal-500/10 transition-all duration-200`}
           />
           <button
             type="submit"
             disabled={status === "loading"}
-            className={`${pad} ${text} rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium transition-all duration-200 hover:shadow-lg hover:shadow-violet-500/20 whitespace-nowrap`}
+            className={`${pad} ${text} rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium transition-all duration-200 hover:shadow-lg hover:shadow-teal-500/20 whitespace-nowrap`}
           >
             {status === "loading" ? (
               <span className="flex items-center gap-2 justify-center">
