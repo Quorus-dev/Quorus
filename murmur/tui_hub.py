@@ -49,7 +49,7 @@ PUBLIC_RELAY = "https://murmur-ai.dev"  # Fallback public relay
 
 # Accent palette for senders
 _ACCENT_COLORS = [
-    "bright_cyan", "bright_magenta", "bright_yellow", "bright_green",
+    "#14b8a6", "bright_magenta", "bright_yellow", "bright_green",
     "bright_blue", "bright_red", "orange3", "medium_purple1",
 ]
 _sender_color_cache: dict[str, str] = {}
@@ -132,7 +132,7 @@ def _first_launch_setup(console: Console) -> dict:
     console.print()
     console.print(Panel(
         Text.from_markup(
-            "  [bold bright_cyan]murmur[/bold bright_cyan]"
+            "  [bold #14b8a6]murmur[/bold #14b8a6]"
             "  [dim]·[/dim]"
             "  [dim]agent coordination hub[/dim]  "
         ),
@@ -297,7 +297,7 @@ def _first_launch_setup(console: Console) -> dict:
             "  [dim]No relay running yet. Start one in another terminal:[/dim]\n"
         )
         console.print(
-            "    [bold bright_cyan]murmur relay[/bold bright_cyan]\n"
+            "    [bold #14b8a6]murmur relay[/bold #14b8a6]\n"
         )
         console.print(
             "  [dim]Then run [bold]murmur begin[/bold] again. Config saved.[/dim]"
@@ -559,7 +559,7 @@ def _render_header(relay_url: str, agent_name: str, connected: bool, status: str
     # Strip protocol for display brevity
     display_relay = relay_url.replace("http://", "").replace("https://", "")
     header_text = Text()
-    header_text.append("  murmur", style="bold bright_cyan")
+    header_text.append("  murmur", style="bold #14b8a6")
     header_text.append("  ·  ", style="dim")
     header_text.append(agent_name, style=f"bold {_sender_color(agent_name)}")
     header_text.append("  ·  ", style="dim")
@@ -591,8 +591,8 @@ def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
 
         is_selected = i == selected_idx
         if is_selected:
-            t.append("▶ ", style="bold bright_cyan")
-            t.append(f"#{name}", style="bold bright_cyan")
+            t.append("▶ ", style="bold #14b8a6")
+            t.append(f"#{name}", style="bold #14b8a6")
         else:
             t.append("  ", style="")
             t.append(f"#{name}", style="dim")
@@ -617,7 +617,7 @@ def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
         return Panel(
             no_msg,
             title=f"[bold]#{room_name}[/bold]",
-            border_style="bright_cyan",
+            border_style="#14b8a6",
             padding=(0, 1),
         )
 
@@ -649,7 +649,7 @@ def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
     return Panel(
         lines,
         title=f"[bold]#{room_name}[/bold]",
-        border_style="bright_cyan",
+        border_style="#14b8a6",
         padding=(0, 1),
         subtitle="[dim]Enter send  Ctrl+C quit[/dim]",
     )
@@ -683,7 +683,7 @@ def _print_help(console: Console) -> None:
         ("<anything else>", "sent as a chat message to the active room"),
     ]
     for cmd, desc in rows:
-        console.print(f"  [bold bright_cyan]{cmd:<30}[/bold bright_cyan]  [dim]{desc}[/dim]")
+        console.print(f"  [bold #14b8a6]{cmd:<30}[/bold #14b8a6]  [dim]{desc}[/dim]")
     console.print()
 
 
@@ -924,7 +924,7 @@ def run_hub() -> None:
                     console.print()
                     console.print(f"  [bold]Invite '{invitee}' to #{rname}[/bold]")
                     console.print("  [dim]Share this token:[/dim]")
-                    console.print(f"  [bright_cyan]{token}[/bright_cyan]")
+                    console.print(f"  [#14b8a6]{token}[/#14b8a6]")
                     console.print(f"  [dim]They run: murmur join {token} --name {invitee}[/dim]")
                     console.print()
                     state.set_status_bar(f"Token generated for #{rname}")
