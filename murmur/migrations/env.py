@@ -8,7 +8,13 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from murmur.admin.models import Base
+# Import every ORM module so its tables register on Base.metadata.
+# Required for Alembic autogenerate to see the full schema; runtime
+# migrations don't strictly need it but the import is cheap.
+import murmur.admin.models  # noqa: E402,F401
+import murmur.models.audit  # noqa: E402,F401
+import murmur.models.outbox  # noqa: E402,F401
+from murmur.storage.base import Base
 
 target_metadata = Base.metadata
 

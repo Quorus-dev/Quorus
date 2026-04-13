@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-13 06:30 UTC
+Last updated: 2026-04-13 (post-monorepo refactor, website polish)
 
 ---
 
@@ -11,9 +11,25 @@ Last updated: 2026-04-13 06:30 UTC
 
 Murmur (package: murmur-ai) is the universal communication substrate for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (869 tests passing) — dev merged to main on 2026-04-12.
+**Branch:** `main` (872 tests passing) — monorepo refactor landed 2026-04-13.
 
 **Package:** `pip install "murmur-ai @ git+https://github.com/Aarya2004/murmur.git"`
+
+**Repo layout (monorepo as of 2026-04-13):**
+
+```
+murmur/                   # core: relay server (the umbrella package, name 'murmur-ai')
+packages/
+  sdk/  → murmur_sdk      # client library (Room, MurmurClient) — httpx only
+  cli/  → murmur_cli      # CLI commands (murmur ...) — depends on sdk + tui
+  mcp/  → murmur_mcp      # MCP server (FastMCP tools) — httpx + mcp SDK
+  tui/  → murmur_tui      # 'murmur begin' Rich terminal hub — httpx + rich
+```
+
+`murmur/sdk.py`, `murmur/cli.py`, `murmur/mcp_server.py`, `murmur/tui_hub.py`,
+`murmur/integrations/http_agent.py`, `murmur/decorators.py`, `murmur/watcher.py`
+are now re-export shims so all historical `from murmur.X import Y` imports
+keep working.
 
 **Setup (3 commands):**
 
@@ -168,11 +184,13 @@ murmur init <your-name> --relay-url <url> --secret <secret>
 
 | Date       | Commit    | What                                                                     |
 | ---------- | --------- | ------------------------------------------------------------------------ |
+| 2026-04-13 | (pending) | refactor: monorepo split — sdk/cli/mcp/tui extracted to packages/        |
 | 2026-04-13 | 6a9f307   | feat: 2-2 alternating dark/light sections + MURMUR ASCII branding        |
 | 2026-04-13 | cd67ddc   | feat: real CLI demos in AgentShowcase — official screenshots/GIFs        |
 | 2026-04-13 | f3881b2   | feat: use real brand logos instead of fake SVGs                          |
 | 2026-04-13 | 674c314   | fix: remove fake stats, fix page jumping, correct integrations           |
 | 2026-04-13 | d8a96c4   | feat: update TUI accent to teal (#14b8a6)                                |
+| 2026-04-13 | 73383cb   | chore: add fly.io deployment config                                      |
 | 2026-04-12 | 5436cfd   | fix: murmur join preserves config when no flags provided                 |
 | 2026-04-12 | 5d74dbc   | feat: account-based identity — participant_id in JWTs, migration 008     |
 | 2026-04-12 | (pending) | feat: audit ledger — message lifecycle events with API at /v1/audit/\*   |

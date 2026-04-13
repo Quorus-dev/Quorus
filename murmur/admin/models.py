@@ -14,7 +14,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from murmur.storage.base import Base
 
 
 def _utcnow() -> datetime:
@@ -25,8 +27,9 @@ def _new_uuid() -> str:
     return str(uuid.uuid4())
 
 
-class Base(DeclarativeBase):
-    pass
+# Re-exported here for backward compatibility — historical callers imported
+# ``Base`` from this module before it moved to ``murmur.storage.base``.
+__all__ = ["Base"]
 
 
 # ---------------------------------------------------------------------------

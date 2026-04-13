@@ -11,7 +11,7 @@ from sqlalchemy import DateTime, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from murmur.admin.models import Base
+from murmur.storage.base import Base
 
 
 class AuditEvent(str, Enum):
