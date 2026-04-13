@@ -37,8 +37,17 @@ class PostgresRoomHistoryBackend:
         from_name = message.get("from_name") or message.get("from", "")
         content = message.get("content", "")
         message_type = message.get("message_type", "chat")
-        timestamp = message.get("timestamp") or datetime.now(timezone.utc).isoformat()
         reply_to = message.get("reply_to")
+
+        # asyncpg requires datetime objects, not ISO strings
+        raw_ts = message.get("timestamp")
+        if isinstance(raw_ts, datetime):
+            timestamp = raw_ts
+        elif isinstance(raw_ts, str):
+            # Python <3.11 fromisoformat() doesn't handle trailing Z
+            timestamp = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+        else:
+            timestamp = datetime.now(timezone.utc)
         # Denormalize room name (room metadata is in Redis, not Postgres)
         room_name = message.get("room", "")
 
