@@ -13,38 +13,38 @@ const AGENT_PLATFORMS: AgentPlatform[] = [
   {
     name: "Claude Code",
     logo: "/logos/claude.svg",
-    bg: "bg-[#1a0e0a]",
-    border: "border-[#d97757]/30",
+    bg: "bg-white",
+    border: "border-[#d97757]/40",
   },
   {
     name: "Codex CLI",
     logo: "/logos/openai.png",
-    bg: "bg-[#0a1510]",
-    border: "border-[#10a37f]/30",
+    bg: "bg-gray-900", // Dark bg for light logo
+    border: "border-gray-700",
   },
   {
     name: "Gemini CLI",
     logo: "/logos/gemini.png",
-    bg: "bg-[#0a0e1a]",
-    border: "border-[#4285f4]/30",
+    bg: "bg-white",
+    border: "border-[#4285f4]/40",
   },
   {
     name: "Cursor",
     logo: "/logos/cursor.png",
-    bg: "bg-[#0a0e14]",
-    border: "border-[#60a5fa]/30",
+    bg: "bg-white",
+    border: "border-[#60a5fa]/40",
   },
   {
     name: "Copilot",
     logo: "/logos/copilot.png",
-    bg: "bg-[#161b22]",
-    border: "border-white/25",
+    bg: "bg-gray-900", // Dark bg for light logo
+    border: "border-gray-700",
   },
   {
     name: "Windsurf",
     logo: "/logos/windsurf.svg",
-    bg: "bg-[#0a1014]",
-    border: "border-[#0ea5e9]/30",
+    bg: "bg-white",
+    border: "border-[#0ea5e9]/40",
   },
 ];
 
@@ -119,14 +119,19 @@ const INTEGRATION_CARDS = [
 // ── Agent badge with real logo ────────────────────────────────────────────────
 
 function AgentBadge({ agent }: { agent: AgentPlatform }) {
+  const isDark = agent.bg.includes("gray-900");
   return (
-    <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-xl border border-gray-200 bg-white min-w-[80px] cursor-default select-none hover:scale-105 hover:shadow-md transition-all duration-200 shadow-sm">
+    <div
+      className={`flex flex-col items-center gap-2 px-4 py-3 rounded-xl border ${agent.bg} ${agent.border} min-w-[80px] cursor-default select-none hover:scale-105 hover:shadow-md transition-all duration-200 shadow-sm`}
+    >
       <img
         src={agent.logo}
         alt={agent.name}
         className="w-7 h-7 object-contain"
       />
-      <span className="text-[9px] font-mono text-gray-500 text-center leading-tight">
+      <span
+        className={`text-[9px] font-mono text-center leading-tight ${isDark ? "text-white/70" : "text-gray-500"}`}
+      >
         {agent.name}
       </span>
     </div>
