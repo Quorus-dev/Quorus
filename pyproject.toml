@@ -80,7 +80,7 @@ markers = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["murmur", "packages/sdk/murmur_sdk"]
+packages = ["murmur", "packages/sdk/murmur_sdk", "packages/tui/murmur_tui"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
