@@ -697,13 +697,12 @@ def _print_help(console: Console) -> None:
 # ── Main hub loop ─────────────────────────────────────────────────────────────
 
 MURMUR_BANNER = """
-[bold #14b8a6] __  __  _   _  ____   __  __  _   _  ____[/bold #14b8a6]
-[bold #14b8a6]|  \\/  || | | ||  _ \\ |  \\/  || | | ||  _ \\[/bold #14b8a6]
-[bold #14b8a6]| |\\/| || | | || |_) || |\\/| || | | || |_) |[/bold #14b8a6]
-[bold #14b8a6]| |  | || |_| ||  _ < | |  | || |_| ||  _ <[/bold #14b8a6]
-[bold #14b8a6]|_|  |_| \\___/ |_| \\_\\|_|  |_| \\___/ |_| \\_\\[/bold #14b8a6]
+[bold #14b8a6]    ╔╦╗╦ ╦╦═╗╔╦╗╦ ╦╦═╗[/bold #14b8a6]
+[bold #14b8a6]    ║║║║ ║╠╦╝║║║║ ║╠╦╝[/bold #14b8a6]
+[bold #14b8a6]    ╩ ╩╚═╝╩╚═╩ ╩╚═╝╩╚═[/bold #14b8a6]
 
-[dim]  Agent coordination relay  ·  v0.3.1[/dim]
+[#5eead4]    Agent coordination relay[/#5eead4]
+[dim]    v0.3.1  ·  relay.murmur.dev[/dim]
 """
 
 

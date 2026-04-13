@@ -3,10 +3,16 @@ import { useState, useEffect } from "react";
 type LineType =
   | "cmd"
   | "brand"
+  | "tagline"
   | "prompt"
   | "user"
   | "output"
-  | "teal"
+  | "success"
+  | "info"
+  | "room-header"
+  | "room-active"
+  | "room-item"
+  | "room-footer"
   | "dim"
   | "blank";
 
@@ -18,28 +24,28 @@ interface TermLine {
 const SCRIPT: TermLine[] = [
   { type: "cmd", text: "$ murmur begin" },
   { type: "blank", text: "" },
-  { type: "brand", text: " __  __  _   _  ____   __  __  _   _  ____ " },
-  { type: "brand", text: "|  \\/  || | | ||  _ \\ |  \\/  || | | ||  _ \\" },
-  { type: "brand", text: "| |\\/| || | | || |_) || |\\/| || | | || |_) |" },
-  { type: "brand", text: "| |  | || |_| ||  _ < | |  | || |_| ||  _ <" },
-  { type: "brand", text: "|_|  |_| \\___/ |_| \\_\\|_|  |_| \\___/ |_| \\_\\" },
+  { type: "brand", text: "    ╔╦╗╦ ╦╦═╗╔╦╗╦ ╦╦═╗" },
+  { type: "brand", text: "    ║║║║ ║╠╦╝║║║║ ║╠╦╝" },
+  { type: "brand", text: "    ╩ ╩╚═╝╩╚═╩ ╩╚═╝╩╚═" },
   { type: "blank", text: "" },
-  { type: "dim", text: "  Agent coordination relay  ·  v0.3.1" },
+  { type: "tagline", text: "    Agent coordination relay" },
+  { type: "dim", text: "    v0.3.1  ·  relay.murmur.dev" },
   { type: "blank", text: "" },
-  { type: "prompt", text: "  Name? " },
+  { type: "prompt", text: "  ❯ Name: " },
   { type: "user", text: "alice" },
   { type: "blank", text: "" },
-  { type: "output", text: "  Connecting to relay..." },
-  { type: "teal", text: "  ✓ Connected  ·  SSE active" },
+  { type: "output", text: "  ◐ Connecting to relay..." },
+  { type: "success", text: "  ✓ Connected · SSE stream active" },
   { type: "blank", text: "" },
-  { type: "teal", text: "  ┌─ Active rooms ─────────────────────┐" },
-  { type: "teal", text: "  │  ▶ #dev-sprint     3 agents  live │" },
-  { type: "teal", text: "  │    #design-review  1 agent        │" },
-  { type: "teal", text: "  └───────────────────────────────────┘" },
+  { type: "room-header", text: "  ╭─ Active Rooms ───────────────────╮" },
+  { type: "room-active", text: "  │  ● #dev-sprint    3 agents      │" },
+  { type: "room-item", text: "  │    #design-review 1 agent       │" },
+  { type: "room-item", text: "  │    #backend-sync  2 agents      │" },
+  { type: "room-footer", text: "  ╰─────────────────────────────────╯" },
   { type: "blank", text: "" },
-  { type: "dim", text: "  Type  help  to see available MCP tools." },
+  { type: "info", text: "  ℹ Type help for available commands" },
   { type: "blank", text: "" },
-  { type: "cmd", text: "[alice@dev-sprint]> " },
+  { type: "cmd", text: "  alice@dev-sprint ❯ " },
 ];
 
 const CHAR_DELAY = 22;
@@ -80,17 +86,24 @@ export default function TerminalAnimation() {
           continue;
         }
 
-        if (
-          line.type === "brand" ||
-          line.type === "output" ||
-          line.type === "teal" ||
-          line.type === "dim"
-        ) {
+        const instantTypes = [
+          "brand",
+          "tagline",
+          "output",
+          "success",
+          "info",
+          "room-header",
+          "room-active",
+          "room-item",
+          "room-footer",
+          "dim",
+        ];
+        if (instantTypes.includes(line.type)) {
           lines.push(line.text);
           setRendered([...lines]);
           setCursorLine(i);
           // Brand lines appear fast, others normal pace
-          await sleep(line.type === "brand" ? 80 : LINE_PAUSE);
+          await sleep(line.type === "brand" ? 60 : LINE_PAUSE);
           continue;
         }
 
@@ -166,17 +179,52 @@ export default function TerminalAnimation() {
 
             if (scriptType === "brand") {
               return (
-                <div key={i} className="leading-[1.15]">
-                  <span className="text-teal-400 text-[14px] font-bold tracking-tight">
+                <div key={i} className="leading-[1.2]">
+                  <span className="text-teal-400 text-[15px] font-bold">
                     {line}
                   </span>
                 </div>
               );
             }
-            if (scriptType === "teal") {
+            if (scriptType === "tagline") {
+              return (
+                <div key={i} className="leading-relaxed">
+                  <span className="text-teal-300/80 text-[11px]">{line}</span>
+                </div>
+              );
+            }
+            if (scriptType === "success") {
+              return (
+                <div key={i} className="leading-relaxed">
+                  <span className="text-green-400">{line}</span>
+                </div>
+              );
+            }
+            if (scriptType === "info") {
+              return (
+                <div key={i} className="leading-relaxed">
+                  <span className="text-blue-400/70">{line}</span>
+                </div>
+              );
+            }
+            if (scriptType === "room-header" || scriptType === "room-footer") {
+              return (
+                <div key={i} className="leading-relaxed">
+                  <span className="text-white/30">{line}</span>
+                </div>
+              );
+            }
+            if (scriptType === "room-active") {
               return (
                 <div key={i} className="leading-relaxed">
                   <span className="text-teal-400">{line}</span>
+                </div>
+              );
+            }
+            if (scriptType === "room-item") {
+              return (
+                <div key={i} className="leading-relaxed">
+                  <span className="text-white/40">{line}</span>
                 </div>
               );
             }
@@ -200,14 +248,14 @@ export default function TerminalAnimation() {
                 </div>
               );
             }
-            if (line === "") return <div key={i}>&nbsp;</div>;
-            if (line.includes("Connecting")) {
+            if (scriptType === "output") {
               return (
                 <div key={i} className="leading-relaxed">
                   <span className="text-yellow-400/70">{line}</span>
                 </div>
               );
             }
+            if (line === "") return <div key={i}>&nbsp;</div>;
             return (
               <div key={i} className="leading-relaxed">
                 <span className="text-white/55">{line}</span>
