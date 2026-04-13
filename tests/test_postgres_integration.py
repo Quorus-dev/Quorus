@@ -115,9 +115,22 @@ async def history_backend(migrated_db):
 
 
 @pytest.fixture
-def tenant_id():
-    """Generate a unique tenant ID for test isolation."""
-    return f"test-tenant-{uuid.uuid4().hex[:8]}"
+async def tenant_id(history_backend):
+    """Generate a unique tenant ID and insert it into tenants for FK compliance."""
+    from sqlalchemy import text
+
+    from murmur.storage.postgres import get_db_session
+
+    tid = f"test-tenant-{uuid.uuid4().hex[:8]}"
+    async with get_db_session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO tenants (id, slug, display_name)"
+                " VALUES (:id, :slug, :name)"
+            ),
+            {"id": tid, "slug": tid, "name": tid},
+        )
+    yield tid
 
 
 @pytest.fixture
