@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 
 type LineType = "cmd" | "prompt" | "user" | "output" | "blank";
@@ -84,9 +83,6 @@ export default function TerminalAnimation() {
         // cmd / prompt / user — type character by character
         lines.push("");
         const idx = lines.length - 1;
-
-        const prefix =
-          line.type === "user" ? (SCRIPT[i - 1]?.text ?? "") : line.text;
 
         if (line.type === "user") {
           // Show the previous prompt + typed answer

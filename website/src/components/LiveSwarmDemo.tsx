@@ -214,7 +214,7 @@ function TypingIndicator({ agent }: { agent: AgentKey }) {
 export default function LiveSwarmDemo() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [typing, setTyping] = useState<AgentKey | null>(null);
-  const [scriptIdx, setScriptIdx] = useState(0);
+  const [_scriptIdx, setScriptIdx] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Scroll within the message container only — never touches page scroll

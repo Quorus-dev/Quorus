@@ -17,3 +17,8 @@ ROADMAP.md
 docs/launch/
 .mcp.json
 .murmur/
+.vercel
+*.mcp.*.json
+website/vite.config.d.ts
+website/vite.config.js
+website/*.tsbuildinfo

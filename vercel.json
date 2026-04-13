@@ -1,6 +1,9 @@
 {
-  "framework": "nextjs",
   "buildCommand": "cd website && npm run build",
-  "outputDirectory": "website/.next",
-  "installCommand": "cd website && npm install"
+  "outputDirectory": "website/dist",
+  "installCommand": "cd website && npm install",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/website/api/$1" },
+    { "source": "/((?!api/).*)", "destination": "/website/dist/index.html" }
+  ]
 }
