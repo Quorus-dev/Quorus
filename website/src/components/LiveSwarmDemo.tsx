@@ -258,7 +258,7 @@ export default function LiveSwarmDemo() {
   }, []);
 
   return (
-    <section className="py-28 px-6 relative overflow-hidden bg-[#faf9f7]">
+    <section className="py-28 px-6 relative overflow-hidden bg-white">
       {/* Section background wash */}
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-teal-100/30 to-transparent pointer-events-none" />
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-gray-300/50 to-transparent" />

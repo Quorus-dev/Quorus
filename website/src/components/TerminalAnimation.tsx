@@ -18,26 +18,43 @@ interface TermLine {
 const SCRIPT: TermLine[] = [
   { type: "cmd", text: "$ murmur begin" },
   { type: "blank", text: "" },
-  { type: "brand", text: "  ┏┳┓┓ ┓┏┓┳┳┓┓ ┓┏┓" },
-  { type: "brand", text: "  ┃┃┃┃ ┃┣┫┃┃┃┃ ┃┣┫" },
-  { type: "brand", text: "  ┛ ┗┗┛┛┗┛┗┛┗┗┛┛┗┛" },
+  {
+    type: "brand",
+    text: "  ███╗   ███╗ ██╗   ██╗ ██████╗  ███╗   ███╗ ██╗   ██╗ ██████╗  ",
+  },
+  {
+    type: "brand",
+    text: "  ████╗ ████║ ██║   ██║ ██╔══██╗ ████╗ ████║ ██║   ██║ ██╔══██╗ ",
+  },
+  {
+    type: "brand",
+    text: "  ██╔████╔██║ ██║   ██║ ██████╔╝ ██╔████╔██║ ██║   ██║ ██████╔╝ ",
+  },
+  {
+    type: "brand",
+    text: "  ██║╚██╔╝██║ ██║   ██║ ██╔══██╗ ██║╚██╔╝██║ ██║   ██║ ██╔══██╗ ",
+  },
+  {
+    type: "brand",
+    text: "  ██║ ╚═╝ ██║ ╚██████╔╝ ██║  ██║ ██║ ╚═╝ ██║ ╚██████╔╝ ██║  ██║ ",
+  },
+  {
+    type: "brand",
+    text: "  ╚═╝     ╚═╝  ╚═════╝  ╚═╝  ╚═╝ ╚═╝     ╚═╝  ╚═════╝  ╚═╝  ╚═╝ ",
+  },
   { type: "blank", text: "" },
   { type: "dim", text: "  Agent coordination relay  ·  v0.3.1" },
-  { type: "dim", text: "  relay.murmur.dev" },
   { type: "blank", text: "" },
   { type: "prompt", text: "  Name? " },
   { type: "user", text: "alice" },
-  { type: "prompt", text: "  Relay URL? (↵ for localhost:8080) " },
-  { type: "user", text: "" },
   { type: "blank", text: "" },
   { type: "output", text: "  Connecting to relay..." },
   { type: "teal", text: "  ✓ Connected  ·  SSE active" },
   { type: "blank", text: "" },
-  { type: "teal", text: "  ┌─ Active rooms ──────────────────────────┐" },
-  { type: "teal", text: "  │  ▶ #dev-sprint      3 agents  ● live   │" },
-  { type: "teal", text: "  │    #design-review   1 agent             │" },
-  { type: "teal", text: "  │    #qa-room         2 agents            │" },
-  { type: "teal", text: "  └──────────────────────────────────────────┘" },
+  { type: "teal", text: "  ┌─ Active rooms ─────────────────────┐" },
+  { type: "teal", text: "  │  ▶ #dev-sprint     3 agents  live │" },
+  { type: "teal", text: "  │    #design-review  1 agent        │" },
+  { type: "teal", text: "  └───────────────────────────────────┘" },
   { type: "blank", text: "" },
   { type: "dim", text: "  Type  help  to see available MCP tools." },
   { type: "blank", text: "" },
@@ -168,8 +185,10 @@ export default function TerminalAnimation() {
 
             if (scriptType === "brand") {
               return (
-                <div key={i} className="leading-tight">
-                  <span className="text-teal-500/60 text-[9px]">{line}</span>
+                <div key={i} className="leading-[1.1]">
+                  <span className="text-teal-400 text-[11px] font-bold">
+                    {line}
+                  </span>
                 </div>
               );
             }

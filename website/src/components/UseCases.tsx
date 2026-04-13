@@ -33,7 +33,7 @@ murmur say review-room "PR #142 ready for review"
 export default function UseCases() {
   return (
     <section
-      className="py-40 px-6 relative overflow-hidden bg-[#faf9f7]"
+      className="py-40 px-6 relative overflow-hidden bg-white"
       id="usecases"
     >
       <div className="relative max-w-7xl mx-auto">

@@ -14,7 +14,7 @@ export default function CTA() {
   return (
     <section
       id="waitlist"
-      className="relative py-32 px-6 overflow-hidden bg-[#faf9f7]"
+      className="relative py-32 px-6 overflow-hidden bg-white"
     >
       {/* Ambient gradient */}
       <div

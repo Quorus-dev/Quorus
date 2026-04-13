@@ -16,8 +16,8 @@ const TRACK = [...ITEMS, ...ITEMS, ...ITEMS];
 
 function Pill({ name, dot }: { name: string; dot: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-gray-200 bg-white text-xs text-gray-600 font-medium whitespace-nowrap shrink-0 shadow-sm">
-      <span className={`w-1.5 h-1.5 rounded-full ${dot} opacity-90`} />
+    <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-white/[0.07] bg-white/[0.03] text-xs text-white/45 font-medium whitespace-nowrap shrink-0">
+      <span className={`w-1.5 h-1.5 rounded-full ${dot} opacity-75`} />
       {name}
     </span>
   );
@@ -25,27 +25,29 @@ function Pill({ name, dot }: { name: string; dot: string }) {
 
 export default function SocialProof() {
   return (
-    <section className="relative py-12 overflow-hidden bg-[#faf9f7]">
+    <section className="relative py-12 overflow-hidden">
       {/* Edge fades */}
       <div
         className="absolute inset-y-0 left-0 w-28 pointer-events-none z-10"
         style={{
-          background: "linear-gradient(90deg, #faf9f7 0%, transparent 100%)",
+          background:
+            "linear-gradient(90deg, var(--background) 0%, transparent 100%)",
         }}
       />
       <div
         className="absolute inset-y-0 right-0 w-28 pointer-events-none z-10"
         style={{
-          background: "linear-gradient(270deg, #faf9f7 0%, transparent 100%)",
+          background:
+            "linear-gradient(270deg, var(--background) 0%, transparent 100%)",
         }}
       />
 
       {/* Divider lines */}
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-gray-300/50 to-transparent" />
-      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-gray-300/50 to-transparent" />
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/[0.07] to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-white/[0.07] to-transparent" />
 
       {/* Label */}
-      <p className="text-center text-[10px] text-gray-400 font-mono tracking-[0.2em] uppercase mb-6">
+      <p className="text-center text-[10px] text-white/20 font-mono tracking-[0.2em] uppercase mb-6">
         Works with every AI agent
       </p>
 

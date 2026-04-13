@@ -230,7 +230,7 @@ function ArchDiagram() {
 export default function Architecture() {
   return (
     <section
-      className="py-32 px-6 relative overflow-hidden bg-[#faf9f7]"
+      className="py-32 px-6 relative overflow-hidden bg-white"
       id="architecture"
     >
       {/* Background */}
