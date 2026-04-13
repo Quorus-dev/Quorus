@@ -101,10 +101,8 @@ function HeroTerminal() {
   const [visibleCount, setVisibleCount] = useState(0);
 
   useEffect(() => {
-    if (visibleCount >= CLAUDE_CODE_STEPS.length) {
-      const reset = setTimeout(() => setVisibleCount(0), 3500);
-      return () => clearTimeout(reset);
-    }
+    // Stop at the end - don't loop (looping causes page scroll jank)
+    if (visibleCount >= CLAUDE_CODE_STEPS.length) return;
     const t = setTimeout(() => setVisibleCount((v) => v + 1), 750);
     return () => clearTimeout(t);
   }, [visibleCount]);
