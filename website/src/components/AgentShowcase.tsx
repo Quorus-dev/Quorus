@@ -6,36 +6,36 @@ import { useState, useEffect } from "react";
 interface CLIDemo {
   name: string;
   logo: string;
-  demoImage: string;
+  demoMedia: string;
   color: string;
-  isGif?: boolean;
+  isVideo?: boolean;
 }
 
 const CLI_DEMOS: CLIDemo[] = [
   {
     name: "Claude Code",
     logo: "/logos/claude.svg",
-    demoImage: "/cli/claude-code-demo.gif",
+    demoMedia: "/cli/claude-code-demo.gif",
     color: "#d97757",
-    isGif: true,
   },
   {
     name: "Codex CLI",
     logo: "/logos/openai.png",
-    demoImage: "/cli/codex-splash.png",
+    demoMedia: "/cli/codex-splash.png",
     color: "#10a37f",
   },
   {
     name: "Gemini CLI",
     logo: "/logos/gemini.png",
-    demoImage: "/cli/gemini-screenshot.png",
+    demoMedia: "/cli/gemini-screenshot.png",
     color: "#4285f4",
   },
   {
     name: "Cursor",
     logo: "/logos/cursor.png",
-    demoImage: "/cli/cursor-demo.png",
+    demoMedia: "/cli/cursor-demo.mp4",
     color: "#60a5fa",
+    isVideo: true,
   },
 ];
 
@@ -81,14 +81,25 @@ function CLICard({ demo, index }: { demo: CLIDemo; index: number }) {
           </div>
         </div>
 
-        {/* Demo image - larger */}
+        {/* Demo media - larger */}
         <div className="aspect-[16/10] overflow-hidden bg-black">
-          <img
-            src={demo.demoImage}
-            alt={`${demo.name} demo`}
-            className="w-full h-full object-cover object-top"
-            loading="lazy"
-          />
+          {demo.isVideo ? (
+            <video
+              src={demo.demoMedia}
+              className="w-full h-full object-cover object-top"
+              autoPlay
+              loop
+              muted
+              playsInline
+            />
+          ) : (
+            <img
+              src={demo.demoMedia}
+              alt={`${demo.name} demo`}
+              className="w-full h-full object-cover object-top"
+              loading="lazy"
+            />
+          )}
         </div>
 
         {/* Connection status */}
@@ -100,7 +111,7 @@ function CLICard({ demo, index }: { demo: CLIDemo; index: number }) {
             </span>
           </div>
           <span className="text-[10px] font-mono text-white/25">
-            {demo.isGif ? "live" : "ready"}
+            {demo.isVideo ? "live" : "ready"}
           </span>
         </div>
       </div>
