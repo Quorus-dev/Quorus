@@ -24,9 +24,30 @@ interface TermLine {
 const SCRIPT: TermLine[] = [
   { type: "cmd", text: "$ murmur begin" },
   { type: "blank", text: "" },
-  { type: "brand", text: "    ╔╦╗╦ ╦╦═╗╔╦╗╦ ╦╦═╗" },
-  { type: "brand", text: "    ║║║║ ║╠╦╝║║║║ ║╠╦╝" },
-  { type: "brand", text: "    ╩ ╩╚═╝╩╚═╩ ╩╚═╝╩╚═" },
+  {
+    type: "brand",
+    text: " ███╗   ███╗ ██╗   ██╗ ██████╗  ███╗   ███╗ ██╗   ██╗ ██████╗",
+  },
+  {
+    type: "brand",
+    text: " ████╗ ████║ ██║   ██║ ██╔══██╗ ████╗ ████║ ██║   ██║ ██╔══██╗",
+  },
+  {
+    type: "brand",
+    text: " ██╔████╔██║ ██║   ██║ ██████╔╝ ██╔████╔██║ ██║   ██║ ██████╔╝",
+  },
+  {
+    type: "brand",
+    text: " ██║╚██╔╝██║ ██║   ██║ ██╔══██╗ ██║╚██╔╝██║ ██║   ██║ ██╔══██╗",
+  },
+  {
+    type: "brand",
+    text: " ██║ ╚═╝ ██║ ╚██████╔╝ ██║  ██║ ██║ ╚═╝ ██║ ╚██████╔╝ ██║  ██║",
+  },
+  {
+    type: "brand",
+    text: " ╚═╝     ╚═╝  ╚═════╝  ╚═╝  ╚═╝ ╚═╝     ╚═╝  ╚═════╝  ╚═╝  ╚═╝",
+  },
   { type: "blank", text: "" },
   { type: "tagline", text: "    Agent coordination relay" },
   { type: "dim", text: "    v0.3.1  ·  relay.murmur.dev" },
