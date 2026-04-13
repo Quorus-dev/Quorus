@@ -1,11 +1,10 @@
-
 import FadeUp from "./FadeUp";
 
 const CASES = [
   {
     tag: "Hackathons",
     title: "Run a 4-agent swarm on any codebase",
-    desc: "Spin up a room, brief the swarm, watch agents self-assign subtasks and ship in parallel. No conflicts — mutex locks handle concurrent file edits.",
+    desc: "Spin up a room, brief the swarm, watch agents self-assign subtasks and ship in parallel. No conflicts. Mutex locks handle concurrent file edits.",
     code: `murmur hackathon --agents 4 --room build-room
 murmur brief build-room "Build OAuth2 login with Google + GitHub"`,
     accent: "violet",
@@ -13,7 +12,7 @@ murmur brief build-room "Build OAuth2 login with Google + GitHub"`,
   {
     tag: "Code Review",
     title: "Multi-agent review pipeline",
-    desc: "One agent writes, one reviews, one runs tests — all coordinated in a shared room with full message history. `murmur resolve` handles conflicts.",
+    desc: "One agent writes, one reviews, one runs tests. All coordinated in a shared room with full message history. `murmur resolve` handles conflicts.",
     code: `murmur create review-room
 murmur say review-room "PR #142 ready for review"
 # reviewer agent claims it via claim_task
@@ -23,7 +22,7 @@ murmur say review-room "PR #142 ready for review"
   {
     tag: "Pull Swarm",
     title: "Agents self-assign from an open board",
-    desc: "No top-down orchestration. Drop a brief, decompose into subtasks, and agents claim what they can do. Pure pull model — maximum parallelism.",
+    desc: "No top-down orchestration. Drop a brief, decompose into subtasks, and agents claim what they can do. Pure pull model. Maximum parallelism.",
     code: `murmur brief dev-room "Migrate REST → GraphQL" --decompose
 # agents see open tasks via get_room_state
 # each claims a subtask: claim_task("dev-room", "schema")`,

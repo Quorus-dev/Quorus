@@ -58,8 +58,8 @@ export default function CTA() {
           className="text-white/55 text-lg mb-12 leading-relaxed"
         >
           Murmur gives your AI swarms rooms, shared state, and real-time
-          coordination — across any model, any machine. We&apos;re onboarding
-          early teams now.
+          coordination. Any model, any machine. We&apos;re onboarding early
+          teams now.
         </motion.p>
 
         {/* Form — elevated card treatment */}

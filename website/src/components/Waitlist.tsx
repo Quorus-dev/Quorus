@@ -123,7 +123,7 @@ export default function Waitlist({
               animate={{ opacity: 1 }}
               className="text-xs text-red-400 text-center sm:text-left"
             >
-              Something went wrong — try again.
+              Something went wrong. Please try again.
             </motion.p>
           )}
         </motion.form>

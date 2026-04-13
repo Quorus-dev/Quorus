@@ -134,7 +134,7 @@ export default function TerminalAnimation() {
             <div className="w-3 h-3 rounded-full bg-green-500/60" />
           </div>
           <div className="ml-2 text-xs text-white/30 font-mono">
-            murmur — terminal
+            murmur terminal
           </div>
         </div>
 

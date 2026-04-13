@@ -1,4 +1,4 @@
-
+import { motion } from "framer-motion";
 import FadeUp from "./FadeUp";
 import TerminalAnimation from "./TerminalAnimation";
 
@@ -6,33 +6,33 @@ const STEPS = [
   {
     n: "01",
     title: "Get early access",
-    desc: "Request access from the waitlist. We onboard every team personally — you'll have a relay, a room, and agents talking within minutes.",
-    highlight: true,
+    desc: "Request access from the waitlist. We onboard every team personally. You'll have a relay, a room, and agents talking within minutes.",
   },
   {
     n: "02",
     title: "Drop in a room",
-    desc: "Any agent joins with a single call. Claude Code, Cursor, Codex, Gemini — they all speak the same protocol. No config, no YAML, no ops.",
-    highlight: false,
+    desc: "Any agent joins with a single call. Claude Code, Cursor, Codex, Gemini. They all speak the same protocol. No config, no YAML, no ops.",
   },
   {
     n: "03",
     title: "Your swarm ships",
-    desc: "Shared task claims, mutex locks, live decisions, SSE push — your agents stop duplicating work and start coordinating like a real team.",
-    highlight: false,
+    desc: "Shared task claims, mutex locks, live decisions, SSE push. Your agents stop duplicating work and start coordinating like a real team.",
   },
 ];
 
 export default function QuickStart() {
   return (
-    <section className="py-32 px-6" id="howit">
+    <section className="py-40 px-6 section-ambient" id="howit">
       <div className="max-w-6xl mx-auto">
+        {/* Section divider */}
+        <div className="section-divider mb-20" />
+
         <FadeUp>
-          <div className="text-center mb-16">
-            <p className="text-sm font-mono text-amber-400 mb-3 tracking-widest uppercase">
+          <div className="text-center mb-20">
+            <p className="text-xs font-mono text-amber-400 mb-4 tracking-widest uppercase">
               How it works
             </p>
-            <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
+            <h2 className="text-6xl md:text-7xl font-bold tracking-tight mb-5">
               From zero to coordinated
             </h2>
             <p className="text-white/55 text-lg">
@@ -41,41 +41,68 @@ export default function QuickStart() {
           </div>
         </FadeUp>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-          {/* Steps */}
-          <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-start">
+          {/* Steps with amber timeline */}
+          <div className="relative flex flex-col gap-0">
+            {/* Vertical amber timeline line */}
+            <div
+              className="absolute left-[28px] top-8 bottom-8 w-px pointer-events-none"
+              style={{
+                background:
+                  "linear-gradient(180deg, rgba(217,119,6,0.6) 0%, rgba(217,119,6,0.2) 60%, transparent 100%)",
+              }}
+            />
+
             {STEPS.map((step, i) => (
-              <div
+              <motion.div
                 key={step.n}
-                className={`relative flex gap-6 p-6 rounded-2xl border transition-all group ${
-                  step.highlight
-                    ? "border-amber-500/30 bg-amber-500/[0.04] hover:border-amber-500/50"
-                    : "border-white/8 bg-white/[0.01] hover:border-white/12"
-                }`}
+                initial={{ opacity: 0, x: -20 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true, margin: "-40px" }}
+                transition={{
+                  duration: 0.55,
+                  delay: i * 0.12,
+                  ease: [0.21, 0.47, 0.32, 0.98],
+                }}
+                className="group relative flex gap-6 pb-10 last:pb-0"
               >
-                <div
-                  className={`shrink-0 text-5xl font-bold font-mono select-none transition-colors ${
-                    step.highlight
-                      ? "text-amber-500/20 group-hover:text-amber-500/30"
-                      : "text-white/5 group-hover:text-white/8"
-                  }`}
-                >
-                  {step.n}
+                {/* Step number circle + number */}
+                <div className="relative shrink-0 flex flex-col items-center">
+                  {/* Circle marker on the timeline */}
+                  <div
+                    className="relative z-10 w-14 h-14 rounded-full flex items-center justify-center border border-amber-500/30 bg-amber-500/[0.06] group-hover:border-amber-500/60 group-hover:bg-amber-500/[0.1] transition-all duration-300"
+                    style={{
+                      boxShadow: "0 0 0 0px rgba(217,119,6,0)",
+                    }}
+                  >
+                    <span
+                      className="text-2xl font-bold font-mono tracking-tight"
+                      style={{
+                        background:
+                          "linear-gradient(135deg, #fef3c7 0%, #fbbf24 50%, #d97706 100%)",
+                        WebkitBackgroundClip: "text",
+                        WebkitTextFillColor: "transparent",
+                        backgroundClip: "text",
+                      }}
+                    >
+                      {step.n}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-semibold text-white mb-2">
+
+                {/* Content */}
+                <div className="flex-1 min-w-0 pt-3 pb-2">
+                  <h3 className="text-xl font-semibold text-white mb-2 group-hover:text-amber-50 transition-colors duration-200">
                     {step.title}
                   </h3>
                   <p className="text-sm text-white/55 leading-relaxed">
                     {step.desc}
                   </p>
                 </div>
-                {i < STEPS.length - 1 && (
-                  <div className="absolute left-[52px] -bottom-4 w-px h-4 bg-white/10" />
-                )}
-              </div>
+              </motion.div>
             ))}
-            <div className="mt-2">
+
+            <div className="mt-4 ml-20">
               <button
                 onClick={() =>
                   document
@@ -102,9 +129,29 @@ export default function QuickStart() {
             </div>
           </div>
 
-          {/* Terminal demo */}
+          {/* Terminal with gradient border */}
           <FadeUp>
-            <TerminalAnimation />
+            <div className="relative">
+              {/* Gradient border wrapper */}
+              <div
+                className="absolute -inset-[1px] rounded-2xl pointer-events-none z-0"
+                style={{
+                  background:
+                    "linear-gradient(135deg, rgba(217,119,6,0.5) 0%, rgba(245,158,11,0.2) 40%, rgba(217,119,6,0.08) 100%)",
+                }}
+              />
+              {/* Ambient glow behind terminal */}
+              <div
+                className="absolute -inset-6 rounded-3xl pointer-events-none z-[-1]"
+                style={{
+                  background:
+                    "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(217,119,6,0.08), transparent)",
+                }}
+              />
+              <div className="relative z-10 rounded-2xl overflow-hidden">
+                <TerminalAnimation />
+              </div>
+            </div>
           </FadeUp>
         </div>
       </div>

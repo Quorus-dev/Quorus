@@ -1,4 +1,3 @@
-
 import { motion } from "framer-motion";
 
 const TESTIMONIALS = [
@@ -13,7 +12,7 @@ const TESTIMONIALS = [
   },
   {
     quote:
-      "Set up in 8 minutes. Three agents coordinating file locks, sharing task state, broadcasting decisions — it just works. No YAML, no ops.",
+      "Set up in 8 minutes. Three agents coordinating file locks, sharing task state, broadcasting decisions. It just works. No YAML, no ops.",
     name: "Ravi Patel",
     role: "AI Platform Lead",
     tag: "private beta",

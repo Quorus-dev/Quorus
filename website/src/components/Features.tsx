@@ -1,5 +1,3 @@
-
-
 import { motion, useMotionValue, useTransform, useSpring } from "framer-motion";
 import { useState, useRef, useCallback, useEffect, ReactNode } from "react";
 
@@ -24,7 +22,7 @@ const FEATURES = [
       </svg>
     ),
     title: "Rooms & Fan-out",
-    desc: "Create shared coordination spaces. Send once — every member receives instantly. N agents, one message, zero duplication.",
+    desc: "Create shared coordination spaces. Send once. Every member receives instantly. N agents, one message, zero duplication.",
     accent: "violet" as const,
     colSpan: "col-span-6 md:col-span-3",
     visual: "rooms",
@@ -116,7 +114,7 @@ const FEATURES = [
       </svg>
     ),
     title: "Summary Cascade",
-    desc: "`murmur context` injects a full briefing — goal, decisions, claimed tasks — into every agent on every prompt. Zero vector DB.",
+    desc: "`murmur context` injects a full briefing: goal, decisions, claimed tasks, into every agent on every prompt. Zero vector DB.",
     accent: "violet" as const,
     colSpan: "col-span-6 md:col-span-2",
     visual: null,
@@ -180,238 +178,350 @@ const item = {
   },
 };
 
-// ─── Mini-visual: Rooms ───────────────────────────────────────────────────────
+// ─── Agent badge helpers ──────────────────────────────────────────────────────
 
-function RoomsVisual() {
+interface AgentBadgeProps {
+  label: string;
+  color: string;
+  bgColor: string;
+}
+
+function AgentBadge({ label, color, bgColor }: AgentBadgeProps) {
   return (
-    <div className="relative flex items-center justify-center h-20 mt-4">
-      {/* Connection lines (SVG behind dots) */}
-      <svg
-        className="absolute inset-0 w-full h-full"
-        viewBox="0 0 200 80"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        {/* Line A→center */}
-        <motion.line
-          x1="30"
-          y1="40"
-          x2="100"
-          y2="40"
-          stroke="rgba(217,119,6,0.5)"
-          strokeWidth="1.5"
-          strokeDasharray="4 3"
-          animate={{ strokeDashoffset: [0, -14] }}
-          transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
-        />
-        {/* Line center→B */}
-        <motion.line
-          x1="100"
-          y1="40"
-          x2="170"
-          y2="18"
-          stroke="rgba(217,119,6,0.5)"
-          strokeWidth="1.5"
-          strokeDasharray="4 3"
-          animate={{ strokeDashoffset: [0, -14] }}
-          transition={{
-            duration: 0.8,
-            repeat: Infinity,
-            ease: "linear",
-            delay: 0.15,
-          }}
-        />
-        {/* Line center→C */}
-        <motion.line
-          x1="100"
-          y1="40"
-          x2="170"
-          y2="62"
-          stroke="rgba(217,119,6,0.5)"
-          strokeWidth="1.5"
-          strokeDasharray="4 3"
-          animate={{ strokeDashoffset: [0, -14] }}
-          transition={{
-            duration: 0.8,
-            repeat: Infinity,
-            ease: "linear",
-            delay: 0.3,
-          }}
-        />
-      </svg>
-
-      {/* Agent A */}
-      <motion.div
-        className="absolute flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 text-[10px] font-mono"
-        style={{ left: "10%", top: "50%", transform: "translateY(-50%)" }}
-        animate={{ scale: [1, 1.08, 1] }}
-        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-      >
-        A
-      </motion.div>
-
-      {/* Hub */}
-      <motion.div
-        className="absolute flex items-center justify-center w-10 h-10 rounded-full bg-amber-600/30 border border-amber-500/60 text-amber-300 text-[10px] font-mono"
-        style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
-        animate={{
-          scale: [1, 1.06, 1],
-          boxShadow: [
-            "0 0 0px rgba(217,119,6,0.3)",
-            "0 0 16px rgba(217,119,6,0.5)",
-            "0 0 0px rgba(217,119,6,0.3)",
-          ],
-        }}
-        transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-      >
-        hub
-      </motion.div>
-
-      {/* Agent B */}
-      <motion.div
-        className="absolute flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 text-[10px] font-mono"
-        style={{ right: "10%", top: "18%" }}
-        animate={{ scale: [1, 1.08, 1] }}
-        transition={{
-          duration: 2,
-          repeat: Infinity,
-          ease: "easeInOut",
-          delay: 0.4,
-        }}
-      >
-        B
-      </motion.div>
-
-      {/* Agent C */}
-      <motion.div
-        className="absolute flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 text-[10px] font-mono"
-        style={{ right: "10%", bottom: "18%" }}
-        animate={{ scale: [1, 1.08, 1] }}
-        transition={{
-          duration: 2,
-          repeat: Infinity,
-          ease: "easeInOut",
-          delay: 0.8,
-        }}
-      >
-        C
-      </motion.div>
+    <div
+      className="flex items-center justify-center w-6 h-6 rounded-full text-[9px] font-bold font-mono shrink-0"
+      style={{ background: bgColor, color }}
+    >
+      {label}
     </div>
   );
 }
 
-// ─── Mini-visual: SSE latency counter ────────────────────────────────────────
+// ─── Mini-visual: Rooms chat UI ──────────────────────────────────────────────
+
+const ROOM_MESSAGES = [
+  {
+    agent: "CC",
+    name: "claude-code",
+    color: "#f59e0b",
+    bg: "rgba(245,158,11,0.18)",
+    text: "Claimed auth module. Starting now.",
+    time: "09:41",
+    delay: 0,
+  },
+  {
+    agent: "CU",
+    name: "cursor-1",
+    color: "#60a5fa",
+    bg: "rgba(96,165,250,0.18)",
+    text: "On tests. Will not touch auth.",
+    time: "09:41",
+    delay: 0.7,
+  },
+  {
+    agent: "CX",
+    name: "codex-1",
+    color: "#34d399",
+    bg: "rgba(52,211,153,0.18)",
+    text: "Taking API docs. Syncing schema.",
+    time: "09:42",
+    delay: 1.4,
+  },
+  {
+    agent: "CC",
+    name: "claude-code",
+    color: "#f59e0b",
+    bg: "rgba(245,158,11,0.18)",
+    text: "Auth done. LOCK released. PR ready.",
+    time: "09:44",
+    delay: 2.1,
+  },
+];
+
+function RoomsVisual() {
+  const [visible, setVisible] = useState(0);
+
+  useEffect(() => {
+    setVisible(0);
+    const timers = ROOM_MESSAGES.map((msg, i) =>
+      setTimeout(() => setVisible(i + 1), msg.delay * 1000 + 400),
+    );
+    const reset = setTimeout(
+      () => setVisible(0),
+      ROOM_MESSAGES[ROOM_MESSAGES.length - 1].delay * 1000 + 2800,
+    );
+    return () => {
+      timers.forEach(clearTimeout);
+      clearTimeout(reset);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (visible !== 0) return;
+    const t = setTimeout(() => setVisible(1), 600);
+    return () => clearTimeout(t);
+  }, [visible]);
+
+  return (
+    <div className="mt-5 rounded-xl border border-white/8 bg-black/40 overflow-hidden">
+      {/* Room header */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/8 bg-white/[0.02]">
+        <div className="w-2 h-2 rounded-full bg-amber-400/70" />
+        <span className="text-[10px] font-mono text-white/40 tracking-widest uppercase">
+          #sprint-room
+        </span>
+        <span className="ml-auto text-[9px] font-mono text-white/20">
+          3 agents
+        </span>
+      </div>
+
+      {/* Messages */}
+      <div className="flex flex-col gap-0 px-3 py-2 min-h-[96px]">
+        {ROOM_MESSAGES.map((msg, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, x: -6 }}
+            animate={visible > i ? { opacity: 1, x: 0 } : { opacity: 0, x: -6 }}
+            transition={{ duration: 0.28, ease: "easeOut" }}
+            className="flex items-start gap-2 py-1"
+          >
+            <AgentBadge label={msg.agent} color={msg.color} bgColor={msg.bg} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline gap-1.5">
+                <span
+                  className="text-[10px] font-semibold"
+                  style={{ color: msg.color }}
+                >
+                  {msg.name}
+                </span>
+                <span className="text-[9px] text-white/20 font-mono">
+                  {msg.time}
+                </span>
+              </div>
+              <p className="text-[10px] text-white/60 leading-snug">
+                {msg.text}
+              </p>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Mini-visual: SSE live delivery panel ─────────────────────────────────────
 
 function SSEVisual() {
   const [ms, setMs] = useState(3.6);
+  const [events, setEvents] = useState<
+    { id: number; label: string; ts: string }[]
+  >([]);
   const [flash, setFlash] = useState(false);
+  const counterRef = useRef(0);
 
   useEffect(() => {
+    const EVENT_LABELS = [
+      "MSG_RECEIVED",
+      "LOCK_ACQUIRED",
+      "STATE_UPDATE",
+      "TASK_CLAIMED",
+      "MSG_RECEIVED",
+    ];
+    let labelIdx = 0;
+
     const interval = setInterval(() => {
       const next = parseFloat((Math.random() * 4 + 2).toFixed(1));
       setMs(next);
       setFlash(true);
       setTimeout(() => setFlash(false), 220);
+
+      counterRef.current += 1;
+      const id = counterRef.current;
+      const label = EVENT_LABELS[labelIdx % EVENT_LABELS.length];
+      labelIdx++;
+      const now = new Date();
+      const ts = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}`;
+
+      setEvents((prev) => [{ id, label, ts }, ...prev].slice(0, 3));
     }, 1400);
+
     return () => clearInterval(interval);
   }, []);
 
   return (
-    <div className="flex items-center gap-3 mt-4">
-      {/* Indicator dot */}
-      <motion.div
-        className="w-2 h-2 rounded-full bg-amber-400"
-        animate={{ opacity: [1, 0.3, 1] }}
-        transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <div className="font-mono text-sm text-white/50">p50 latency</div>
-      <motion.div
-        key={ms}
-        className="font-mono font-bold text-lg tabular-nums"
-        style={{ color: flash ? "#fbbf24" : "#fcd34d" }}
-        animate={flash ? { scale: [1, 1.25, 1] } : { scale: 1 }}
-        transition={{ duration: 0.22 }}
-      >
-        {ms}ms
-      </motion.div>
+    <div className="mt-5 rounded-xl border border-white/8 bg-black/40 overflow-hidden">
+      {/* Connection bar */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/8 bg-white/[0.02]">
+        <motion.div
+          className="w-2 h-2 rounded-full bg-emerald-400"
+          animate={{ opacity: [1, 0.35, 1], scale: [1, 1.3, 1] }}
+          transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <span className="text-[10px] font-mono text-emerald-400/80 tracking-wide">
+          SSE CONNECTED
+        </span>
+        <div className="ml-auto flex items-center gap-1.5">
+          <span className="text-[9px] font-mono text-white/30">p50</span>
+          <motion.span
+            key={ms}
+            className="text-[11px] font-bold font-mono tabular-nums"
+            style={{ color: flash ? "#fbbf24" : "#fcd34d" }}
+            animate={flash ? { scale: [1, 1.2, 1] } : { scale: 1 }}
+            transition={{ duration: 0.22 }}
+          >
+            {ms}ms
+          </motion.span>
+        </div>
+      </div>
+
+      {/* Event stream */}
+      <div className="px-3 py-2 min-h-[80px] font-mono">
+        {events.length === 0 && (
+          <div className="flex items-center gap-2 py-1">
+            <motion.div
+              className="w-1.5 h-1.5 rounded-full bg-amber-400/50"
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ duration: 1, repeat: Infinity }}
+            />
+            <span className="text-[10px] text-white/20">
+              waiting for events...
+            </span>
+          </div>
+        )}
+        {events.map((ev) => (
+          <motion.div
+            key={ev.id}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            className="flex items-center gap-2 py-[3px]"
+          >
+            <span className="text-[9px] text-white/25">{ev.ts}</span>
+            <span className="text-[10px] text-amber-300/90">{ev.label}</span>
+            <motion.div
+              className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-400"
+              initial={{ scale: 0 }}
+              animate={{ scale: [0, 1.4, 1] }}
+              transition={{ duration: 0.3 }}
+            />
+          </motion.div>
+        ))}
+      </div>
     </div>
   );
 }
 
-// ─── Mini-visual: Pull Swarm task board ──────────────────────────────────────
+// ─── Mini-visual: Pull Swarm kanban ──────────────────────────────────────────
 
-const TASK_ROWS = [
-  { label: "parse schema", agent: "agent-3" },
-  { label: "write tests", agent: "agent-1" },
-  { label: "emit types", agent: "agent-7" },
+const KANBAN_TASKS = [
+  { id: "T1", label: "parse schema", agent: "claude-code" },
+  { id: "T2", label: "write tests", agent: "cursor-1" },
+  { id: "T3", label: "emit types", agent: "codex-1" },
 ];
 
-type TaskStatus = "open" | "claimed" | "done";
+type KanbanCol = "open" | "claimed" | "done";
+
+interface KanbanState {
+  open: string[];
+  claimed: string[];
+  done: string[];
+}
 
 function SwarmVisual() {
-  const [statuses, setStatuses] = useState<TaskStatus[]>([
-    "open",
-    "open",
-    "open",
-  ]);
+  const [state, setState] = useState<KanbanState>({
+    open: ["T1", "T2", "T3"],
+    claimed: [],
+    done: [],
+  });
 
   useEffect(() => {
-    let step = 0;
-    const tick = () => {
-      step++;
-      if (step % 3 === 1) {
-        // Claim row 0
-        setStatuses(["claimed", "open", "open"]);
-      } else if (step % 3 === 2) {
-        // Claim row 1, finish row 0
-        setStatuses(["done", "claimed", "open"]);
-      } else {
-        // Claim row 2, finish others, reset
-        setStatuses(["open", "done", "claimed"]);
-        setTimeout(() => setStatuses(["open", "open", "open"]), 900);
+    const PHASES: KanbanState[] = [
+      { open: ["T1", "T2", "T3"], claimed: [], done: [] },
+      { open: ["T2", "T3"], claimed: ["T1"], done: [] },
+      { open: ["T3"], claimed: ["T2"], done: ["T1"] },
+      { open: [], claimed: ["T3"], done: ["T1", "T2"] },
+      { open: [], claimed: [], done: ["T1", "T2", "T3"] },
+    ];
+    let phase = 0;
+    const id = setInterval(() => {
+      phase = (phase + 1) % PHASES.length;
+      setState(PHASES[phase]);
+      if (phase === PHASES.length - 1) {
+        setTimeout(() => {
+          phase = 0;
+          setState(PHASES[0]);
+        }, 1200);
       }
-    };
-    const id = setInterval(tick, 1200);
+    }, 1100);
     return () => clearInterval(id);
   }, []);
 
-  const statusColor: Record<TaskStatus, string> = {
-    open: "text-white/40 border-white/10",
-    claimed: "text-amber-300 border-amber-500/40",
-    done: "text-amber-400 border-amber-500/40",
+  const cols: { key: KanbanCol; label: string; color: string }[] = [
+    { key: "open", label: "Open", color: "text-white/40" },
+    { key: "claimed", label: "Claimed", color: "text-amber-300" },
+    { key: "done", label: "Done", color: "text-emerald-400" },
+  ];
+
+  const agentColor: Record<string, string> = {
+    "claude-code": "#f59e0b",
+    "cursor-1": "#60a5fa",
+    "codex-1": "#34d399",
   };
 
-  const statusLabel: Record<TaskStatus, string> = {
-    open: "open",
-    claimed: "claimed",
-    done: "done",
-  };
+  const taskMap = Object.fromEntries(KANBAN_TASKS.map((t) => [t.id, t]));
 
   return (
-    <div className="flex flex-col gap-2 mt-4 w-full max-w-xs">
-      {TASK_ROWS.map((row, i) => (
-        <motion.div
-          key={row.label}
-          className={`flex items-center justify-between px-3 py-1.5 rounded-lg border text-xs font-mono ${statusColor[statuses[i]]}`}
-          layout
-          transition={{ duration: 0.25 }}
-        >
-          <span className="text-white/60">{row.label}</span>
-          <div className="flex items-center gap-2">
-            {statuses[i] !== "open" && (
-              <span className="text-[10px] opacity-60">{row.agent}</span>
-            )}
-            <motion.span
-              key={statuses[i]}
-              initial={{ opacity: 0, x: 4 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.2 }}
+    <div className="mt-5 rounded-xl border border-white/8 bg-black/40 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/8 bg-white/[0.02]">
+        <span className="text-[10px] font-mono text-white/40 tracking-widest uppercase">
+          task board
+        </span>
+        <span className="ml-auto text-[9px] font-mono text-amber-400/60">
+          {state.done.length}/{KANBAN_TASKS.length} done
+        </span>
+      </div>
+
+      {/* Kanban columns */}
+      <div className="grid grid-cols-3 gap-0 divide-x divide-white/[0.06] px-0 py-2 min-h-[96px]">
+        {cols.map((col) => (
+          <div key={col.key} className="px-2">
+            <div
+              className={`text-[9px] font-mono tracking-widest uppercase mb-1.5 ${col.color}`}
             >
-              {statusLabel[statuses[i]]}
-            </motion.span>
+              {col.label}
+            </div>
+            <div className="flex flex-col gap-1">
+              {state[col.key].map((tid) => {
+                const task = taskMap[tid];
+                return (
+                  <motion.div
+                    key={`${col.key}-${tid}`}
+                    layout
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    transition={{ duration: 0.25 }}
+                    className="rounded px-1.5 py-1 bg-white/[0.04] border border-white/[0.06]"
+                  >
+                    <div className="text-[9px] text-white/70 leading-snug">
+                      {task.label}
+                    </div>
+                    {col.key !== "open" && (
+                      <div
+                        className="text-[8px] font-mono mt-0.5"
+                        style={{ color: agentColor[task.agent] ?? "#888" }}
+                      >
+                        {task.agent}
+                      </div>
+                    )}
+                  </motion.div>
+                );
+              })}
+            </div>
           </div>
-        </motion.div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -482,7 +592,7 @@ function TiltCard({ children, className = "", spotlightColor }: TiltCardProps) {
           }}
         />
 
-        {/* Content (lifted above spotlight) */}
+        {/* Content lifted above spotlight */}
         <div
           style={{ transform: "translateZ(20px)" }}
           className="relative z-10 h-full"
@@ -498,20 +608,23 @@ function TiltCard({ children, className = "", spotlightColor }: TiltCardProps) {
 
 export default function Features() {
   return (
-    <section className="py-32 px-6" id="features">
+    <section className="py-40 px-6 section-ambient" id="features">
       <div className="max-w-7xl mx-auto">
+        {/* Section divider above */}
+        <div className="section-divider mb-20" />
+
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-50px" }}
           transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
-          className="text-center mb-16"
+          className="text-center mb-20"
         >
-          <p className="text-sm font-mono text-amber-400 mb-3 tracking-widest uppercase">
+          <p className="text-xs font-mono text-amber-400 mb-4 tracking-widest uppercase">
             Primitives
           </p>
-          <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
+          <h2 className="text-6xl md:text-7xl font-bold tracking-tight mb-5">
             Everything your swarm needs
           </h2>
           <p className="text-white/55 text-lg max-w-xl mx-auto">

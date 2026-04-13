@@ -67,7 +67,7 @@ const PRIMITIVES = [
   },
   {
     label: "Shared State",
-    desc: "GET /state — full swarm snapshot",
+    desc: "GET /state: full swarm snapshot",
     color: "#d97706",
   },
   {

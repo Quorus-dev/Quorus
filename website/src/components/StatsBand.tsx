@@ -1,4 +1,3 @@
-
 import { useRef, useEffect, useState } from "react";
 import { useInView, motion } from "framer-motion";
 
@@ -49,12 +48,13 @@ const STATS = [
 
 export default function StatsBand() {
   return (
-    <section className="relative py-14 overflow-hidden border-y border-white/[0.05]">
+    <section className="relative py-20 overflow-hidden border-y border-white/[0.05]">
+      {/* Ambient glow */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 60% 100% at 50% 50%, rgba(217,119,6,0.03) 0%, transparent 70%)",
+            "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(217,119,6,0.06), transparent)",
         }}
       />
 
@@ -63,20 +63,30 @@ export default function StatsBand() {
           {STATS.map((stat, i) => (
             <motion.div
               key={stat.label}
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: 16 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              transition={{ delay: i * 0.1, duration: 0.5, ease: "easeOut" }}
-              className="flex flex-col items-center text-center gap-2"
+              transition={{ delay: i * 0.1, duration: 0.55, ease: "easeOut" }}
+              className="flex flex-col items-center text-center gap-3"
             >
-              <div className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight text-white">
+              {/* Big amber-gradient number */}
+              <div
+                className="text-5xl md:text-6xl font-bold tabular-nums tracking-tight"
+                style={{
+                  background:
+                    "linear-gradient(135deg, #fef3c7 0%, #fbbf24 45%, #d97706 100%)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundClip: "text",
+                }}
+              >
                 <Counter
                   value={stat.value}
                   suffix={stat.suffix}
                   decimals={stat.decimals}
                 />
               </div>
-              <div className="text-xs text-white/30 font-mono tracking-widest uppercase">
+              <div className="text-[10px] text-white/30 font-mono tracking-widest uppercase">
                 {stat.label}
               </div>
             </motion.div>

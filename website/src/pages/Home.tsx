@@ -3,6 +3,7 @@ import Hero from "../components/Hero";
 import StatsBand from "../components/StatsBand";
 import SocialProof from "../components/SocialProof";
 import Features from "../components/Features";
+import Integrations from "../components/Integrations";
 import LiveSwarmDemo from "../components/LiveSwarmDemo";
 import Architecture from "../components/Architecture";
 import CodeDemo from "../components/CodeDemo";
@@ -19,6 +20,7 @@ export default function Home() {
       <StatsBand />
       <SocialProof />
       <Features />
+      <Integrations />
       <LiveSwarmDemo />
       <Architecture />
       <CodeDemo />

@@ -52,13 +52,13 @@ const PREVIEW_MSGS = [
   {
     agent: "claude-code",
     color: "#fbbf24",
-    content: "Claiming src/auth.py — starting refactor",
+    content: "Claiming src/auth.py. Starting refactor",
     badge: "CLAIM",
   },
   {
     agent: "cursor-1",
     color: "#60a5fa",
-    content: "On it — grabbing tests/ directory",
+    content: "On it. Grabbing tests/ directory",
     badge: null,
   },
   {
@@ -76,7 +76,7 @@ const PREVIEW_MSGS = [
   {
     agent: "cursor-1",
     color: "#60a5fa",
-    content: "PR ready — 14 files changed, 0 conflicts",
+    content: "PR ready. 14 files changed, 0 conflicts",
     badge: null,
   },
 ];
@@ -377,7 +377,7 @@ export default function Hero() {
       ))}
 
       {/* ── Main content ── */}
-      <div className="relative z-10 flex flex-col items-center text-center px-6 w-full max-w-6xl mx-auto pt-36">
+      <div className="relative z-10 flex flex-col items-center text-center px-6 w-full max-w-6xl mx-auto pt-48">
         {/* Badge */}
         <motion.div
           initial={{ opacity: 0, y: -12 }}
@@ -423,8 +423,7 @@ export default function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.18 }}
         >
-          Claude Code, Cursor, Codex, Gemini — any agent, any model, any
-          machine.
+          Claude Code, Cursor, Codex, Gemini. Any agent, any model, any machine.
           <br className="hidden md:block" />
           Rooms, SSE push, shared state, distributed locks.{" "}
           <span className="text-white/80">Zero config.</span>

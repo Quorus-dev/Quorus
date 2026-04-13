@@ -285,6 +285,45 @@ body::before {
   );
 }
 
+/* Section ambient — faint amber radial bleed for key sections */
+.section-ambient {
+  position: relative;
+}
+.section-ambient::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 80% 60% at 50% 50%,
+    rgba(217, 119, 6, 0.06),
+    transparent
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+.section-ambient > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Marquee animation — used by Integrations marquee rows */
+@keyframes marquee-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes marquee-right {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 /* Spotlight */
 .spotlight {
   position: relative;

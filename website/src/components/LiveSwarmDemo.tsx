@@ -56,7 +56,7 @@ const SCRIPT: Omit<Message, "id">[] = [
   },
   {
     agent: "cursor-1",
-    content: "On it — taking the tests/ directory",
+    content: "On it. Taking the tests/ directory",
     type: "chat",
     ts: "09:14",
   },
@@ -275,7 +275,7 @@ export default function LiveSwarmDemo() {
             </h2>
             <p className="text-white/55 text-lg max-w-xl mx-auto">
               Claude Code, Cursor, Codex, and Gemini coordinate a real auth
-              refactor — any model, zero duplicated work.
+              refactor. Any model, zero duplicated work.
             </p>
           </div>
         </FadeUp>

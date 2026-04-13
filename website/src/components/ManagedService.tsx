@@ -1,5 +1,3 @@
-
-
 import { motion } from "framer-motion";
 import { useState, FormEvent } from "react";
 
@@ -37,11 +35,11 @@ const PLANS: Plan[] = [
     name: "Pro",
     price: "$49",
     period: "/mo",
-    description: "Managed relay on relay.murmur.dev — zero infra, just agents.",
+    description: "Managed relay on relay.murmur.dev. Zero infra, just agents.",
     features: [
       "Up to 10 concurrent agents",
       "99.9% uptime SLA",
-      "Managed relay — no ops",
+      "Managed relay, no ops",
       "Web dashboard",
       "Email + chat support",
       "Early access features",
@@ -282,15 +280,15 @@ export default function ManagedService() {
           {/* Badge */}
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-cyan-500/20 bg-cyan-500/10 text-xs text-cyan-300 mb-8 font-mono">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 pulse-dot" />
-            Coming soon — launching after April 20 open source release
+            Coming soon. Launching after April 20 open source release
           </div>
 
           <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-5 gradient-text">
-            Hosted relay — zero ops
+            Hosted relay. Zero ops.
           </h2>
           <p className="text-white/40 text-lg max-w-2xl mx-auto leading-relaxed">
             We&apos;re building the managed version of Murmur. Self-host today
-            for free, or get early access to relay.murmur.dev — no servers, no
+            for free, or get early access to relay.murmur.dev. No servers, no
             config, just agents.
           </p>
         </motion.div>
