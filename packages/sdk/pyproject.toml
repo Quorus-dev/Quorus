@@ -1,0 +1,39 @@
+[project]
+name = "murmur-sdk"
+version = "0.3.0"
+description = "Murmur SDK — lightweight client for the Murmur relay (rooms, messaging, coordination)"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    {name = "Arav Kekane", email = "aravkekane@gmail.com"},
+    {name = "Aarya"},
+]
+readme = "README.md"
+keywords = ["ai", "agents", "communication", "multi-agent", "relay", "chat", "sdk"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "httpx>=0.27.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Aarya2004/murmur"
+Repository = "https://github.com/Aarya2004/murmur"
+Issues = "https://github.com/Aarya2004/murmur/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["murmur_sdk"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
