@@ -20,7 +20,7 @@ export default function CTA() {
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 60% 50% at 50% 100%, rgba(217,119,6,0.1) 0%, transparent 70%)",
+            "radial-gradient(ellipse 60% 50% at 50% 100%, rgba(124,106,240,0.1) 0%, transparent 70%)",
         }}
       />
 
@@ -31,9 +31,9 @@ export default function CTA() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.5 }}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-xs text-amber-300 mb-10 font-mono"
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 text-xs text-violet-300 mb-10 font-mono"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 pulse-dot" />
+          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 pulse-dot" />
           Private beta · We review every application
         </motion.div>
 

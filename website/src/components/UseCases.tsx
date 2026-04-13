@@ -23,7 +23,7 @@ murmur say review-room "PR #142 ready for review"
     tag: "Pull Swarm",
     title: "Agents self-assign from an open board",
     desc: "No top-down orchestration. Drop a brief, decompose into subtasks, and agents claim what they can do. Pure pull model. Maximum parallelism.",
-    code: `murmur brief dev-room "Migrate REST → GraphQL" --decompose
+    code: `murmur brief dev-room "Migrate REST -> GraphQL" --decompose
 # agents see open tasks via get_room_state
 # each claims a subtask: claim_task("dev-room", "schema")`,
     accent: "violet",
@@ -32,17 +32,17 @@ murmur say review-room "PR #142 ready for review"
 
 export default function UseCases() {
   return (
-    <section className="py-32 px-6" id="usecases">
+    <section className="py-40 px-6 section-cream" id="usecases">
       <div className="max-w-7xl mx-auto">
         <FadeUp>
           <div className="text-center mb-16">
-            <p className="text-sm font-mono text-amber-400 mb-3 tracking-widest uppercase">
+            <p className="text-sm font-mono text-violet-500 mb-3 tracking-widest uppercase">
               Use Cases
             </p>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
+            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4 text-[#0d0d1c]">
               Built for real coordination
             </h2>
-            <p className="text-white/40 text-lg max-w-xl mx-auto">
+            <p className="text-black/50 text-lg max-w-xl mx-auto">
               Not a toy. Used to build itself.
             </p>
           </div>
@@ -52,31 +52,21 @@ export default function UseCases() {
           {CASES.map((c) => (
             <div
               key={c.title}
-              className={`flex flex-col rounded-2xl border overflow-hidden transition-all duration-300 ${
-                c.accent === "violet"
-                  ? "border-amber-500/20 hover:border-amber-500/40 hover:shadow-[0_0_40px_rgba(217,119,6,0.08)]"
-                  : "border-amber-500/20 hover:border-amber-500/40 hover:shadow-[0_0_40px_rgba(217,119,6,0.08)]"
-              } bg-white/[0.02]`}
+              className="flex flex-col rounded-2xl border overflow-hidden transition-all duration-300 border-black/[0.08] hover:border-violet-500/30 hover:shadow-[0_4px_24px_rgba(124,106,240,0.1)] bg-white"
             >
               <div className="p-6 flex-1">
-                <span
-                  className={`inline-block px-2.5 py-1 rounded-full text-xs font-mono mb-4 ${
-                    c.accent === "violet"
-                      ? "bg-amber-500/15 text-amber-300"
-                      : "bg-amber-500/15 text-amber-300"
-                  }`}
-                >
+                <span className="inline-block px-2.5 py-1 rounded-full text-xs font-mono mb-4 bg-violet-500/10 text-violet-600">
                   {c.tag}
                 </span>
-                <h3 className="text-lg font-semibold text-white mb-2">
+                <h3 className="text-lg font-semibold text-[#0d0d1c] mb-2">
                   {c.title}
                 </h3>
-                <p className="text-sm text-white/40 leading-relaxed">
+                <p className="text-sm text-black/60 leading-relaxed">
                   {c.desc}
                 </p>
               </div>
-              <div className="code-block mx-4 mb-4 p-4 rounded-xl">
-                <pre className="text-xs font-mono text-green-400/80 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+              <div className="bg-[#0d1117] rounded-xl mx-4 mb-4 p-4 overflow-x-auto">
+                <pre className="text-xs font-mono text-green-400/90 whitespace-pre-wrap leading-relaxed">
                   {c.code}
                 </pre>
               </div>

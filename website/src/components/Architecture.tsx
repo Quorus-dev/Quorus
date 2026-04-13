@@ -58,22 +58,22 @@ const PRIMITIVES = [
   {
     label: "Rooms",
     desc: "Fan-out to all members in <1ms",
-    color: "#fbbf24",
+    color: "#a78bfa",
   },
   {
     label: "SSE Push",
     desc: "Zero polling. 3.6ms p50 delivery",
-    color: "#f59e0b",
+    color: "#8b5cf6",
   },
   {
     label: "Shared State",
     desc: "GET /state: full swarm snapshot",
-    color: "#d97706",
+    color: "#7c6af0",
   },
   {
     label: "Mutex Locks",
     desc: "TTL-gated. Auto-expire on crash",
-    color: "#b45309",
+    color: "#5b21b6",
   },
 ];
 
@@ -104,8 +104,8 @@ function HubDiagram() {
       >
         <defs>
           <radialGradient id="rg-relay" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#d97706" stopOpacity="0.38" />
-            <stop offset="100%" stopColor="#d97706" stopOpacity="0.06" />
+            <stop offset="0%" stopColor="#7c6af0" stopOpacity="0.38" />
+            <stop offset="100%" stopColor="#7c6af0" stopOpacity="0.06" />
           </radialGradient>
           <filter id="glow-node" x="-100%" y="-100%" width="300%" height="300%">
             <feGaussianBlur stdDeviation="3.5" result="blur" />
@@ -145,7 +145,7 @@ function HubDiagram() {
           cy={cy}
           r="52"
           fill="none"
-          stroke="rgba(217,119,6,0.18)"
+          stroke="rgba(124,106,240,0.18)"
           strokeWidth="1"
         >
           <animate
@@ -168,10 +168,10 @@ function HubDiagram() {
           cy={cy}
           r="44"
           fill="url(#rg-relay)"
-          stroke="rgba(217,119,6,0.4)"
+          stroke="rgba(124,106,240,0.4)"
           strokeWidth="1"
         />
-        <circle cx={cx} cy={cy} r="34" fill="rgba(217,119,6,0.18)" />
+        <circle cx={cx} cy={cy} r="34" fill="rgba(124,106,240,0.18)" />
 
         {/* Live indicator */}
         <circle cx={cx + 28} cy={cy - 28} r="3.5" fill="#4ade80">
@@ -187,7 +187,7 @@ function HubDiagram() {
           x={cx}
           y={cy - 4}
           textAnchor="middle"
-          fill="#fcd34d"
+          fill="#c4b5fd"
           fontSize="11"
           fontFamily="ui-monospace, monospace"
           fontWeight="700"
@@ -198,7 +198,7 @@ function HubDiagram() {
           x={cx}
           y={cy + 11}
           textAnchor="middle"
-          fill="rgba(252,211,77,0.42)"
+          fill="rgba(196,181,253,0.42)"
           fontSize="8.5"
           fontFamily="ui-monospace, monospace"
         >
@@ -262,7 +262,7 @@ export default function Architecture() {
         className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[420px] rounded-full pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse, rgba(217,119,6,0.05) 0%, transparent 70%)",
+            "radial-gradient(ellipse, rgba(124,106,240,0.05) 0%, transparent 70%)",
           filter: "blur(80px)",
         }}
       />
@@ -270,7 +270,7 @@ export default function Architecture() {
       <div className="relative max-w-6xl mx-auto">
         <FadeUp>
           <div className="text-center mb-16">
-            <p className="text-sm font-mono text-amber-400 mb-3 tracking-widest uppercase">
+            <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
               Architecture
             </p>
             <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">

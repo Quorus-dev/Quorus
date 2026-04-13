@@ -41,7 +41,7 @@ function TypewriterWord() {
   return (
     <span className="gradient-text">
       {displayed}
-      <span className="cursor-blink text-amber-400/80">|</span>
+      <span className="cursor-blink text-violet-400/80">|</span>
     </span>
   );
 }
@@ -105,7 +105,7 @@ function HeroTerminal() {
         className="absolute -inset-4 rounded-3xl pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(217,119,6,0.22) 0%, transparent 70%)",
+            "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(124,106,240,0.2) 0%, transparent 70%)",
           filter: "blur(20px)",
         }}
       />
@@ -124,7 +124,7 @@ function HeroTerminal() {
               murmur console
             </span>
             <span className="text-white/15 mx-2">·</span>
-            <span className="text-[11px] font-mono text-amber-400/60">
+            <span className="text-[11px] font-mono text-violet-400/60">
               #dev-room
             </span>
           </div>
@@ -204,8 +204,8 @@ function HeroTerminal() {
 
         {/* Bottom bar */}
         <div className="px-4 py-2 border-t border-white/[0.04] flex items-center gap-2">
-          <span className="text-[10px] font-mono text-amber-400/50 flex items-center gap-1.5">
-            <span className="w-1 h-1 rounded-full bg-amber-400/50" />
+          <span className="text-[10px] font-mono text-violet-400/50 flex items-center gap-1.5">
+            <span className="w-1 h-1 rounded-full bg-violet-400/50" />
             murmur relay · 3.6ms p50
           </span>
         </div>
@@ -335,7 +335,7 @@ export default function Hero() {
         if (p.y > canvas.height) p.y = 0;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(251,191,36,${p.alpha})`;
+        ctx.fillStyle = `rgba(167,139,250,${p.alpha})`;
         ctx.fill();
       }
       animFrame = requestAnimationFrame(draw);
@@ -367,7 +367,7 @@ export default function Hero() {
           top: 0,
           left: 0,
           background:
-            "radial-gradient(ellipse 65% 55% at 50% 0%, rgba(217,119,6,0.14) 0%, transparent 70%)",
+            "radial-gradient(ellipse 65% 55% at 50% 0%, rgba(124,106,240,0.12) 0%, transparent 70%)",
         }}
       />
 
@@ -383,9 +383,9 @@ export default function Hero() {
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-amber-500/25 bg-amber-500/8 text-xs text-amber-300 mb-10 backdrop-blur-sm"
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-violet-500/25 bg-violet-500/[0.08] text-xs text-violet-300 mb-10 backdrop-blur-sm"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 pulse-dot" />
+          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 pulse-dot" />
           Private beta · Limited spots open now
         </motion.div>
 
@@ -402,7 +402,7 @@ export default function Hero() {
             <span
               style={{
                 background:
-                  "linear-gradient(135deg, #fef3c7 0%, #fbbf24 50%, #d97706 100%)",
+                  "linear-gradient(135deg, #ede9fe 0%, #a78bfa 50%, #7c6af0 100%)",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 backgroundClip: "text",

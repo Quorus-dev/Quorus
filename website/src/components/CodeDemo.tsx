@@ -1,5 +1,3 @@
-
-
 import { useState } from "react";
 import FadeUp from "./FadeUp";
 
@@ -80,8 +78,8 @@ function CodeLine({ line }: { line: string }) {
   if (line.startsWith("from ") || line.startsWith("import ")) {
     return (
       <span>
-        <span className="text-amber-400">{line.split(" ")[0]} </span>
-        <span className="text-amber-300">
+        <span className="text-violet-400">{line.split(" ")[0]} </span>
+        <span className="text-violet-300">
           {line.slice(line.indexOf(" ") + 1)}
         </span>
       </span>
@@ -97,7 +95,7 @@ function CodeLine({ line }: { line: string }) {
             </span>
           ) : (
             <span key={i}>
-              <span className="text-amber-400">await </span>
+              <span className="text-violet-400">await </span>
               <span className="text-white/80">{part}</span>
             </span>
           ),
@@ -111,7 +109,7 @@ function CodeLine({ line }: { line: string }) {
       <span>
         <span className="text-white/80">{key}</span>
         <span className="text-white/40">:</span>
-        <span className="text-amber-300">{rest.join(":")}</span>
+        <span className="text-violet-300">{rest.join(":")}</span>
       </span>
     );
   }
@@ -127,7 +125,7 @@ export default function CodeDemo() {
       <div className="max-w-5xl mx-auto">
         <FadeUp>
           <div className="text-center mb-12">
-            <p className="text-sm font-mono text-amber-400 mb-3 tracking-widest uppercase">
+            <p className="text-sm font-mono text-violet-400 mb-3 tracking-widest uppercase">
               SDK & Tools
             </p>
             <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">

@@ -148,14 +148,14 @@ const FEATURES = [
 
 const accentMap = {
   violet: {
-    icon: "text-amber-400",
-    bg: "bg-amber-500/15",
-    spotlightColor: "rgba(217,119,6,0.2)",
+    icon: "text-violet-400",
+    bg: "bg-violet-500/15",
+    spotlightColor: "rgba(124,106,240,0.2)",
   },
   cyan: {
-    icon: "text-amber-300",
-    bg: "bg-amber-400/12",
-    spotlightColor: "rgba(245,158,11,0.18)",
+    icon: "text-violet-300",
+    bg: "bg-violet-400/[0.12]",
+    spotlightColor: "rgba(139,92,246,0.18)",
   },
 };
 
@@ -266,7 +266,7 @@ function RoomsVisual() {
     <div className="mt-5 rounded-xl border border-white/8 bg-black/40 overflow-hidden">
       {/* Room header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/8 bg-white/[0.02]">
-        <div className="w-2 h-2 rounded-full bg-amber-400/70" />
+        <div className="w-2 h-2 rounded-full bg-violet-400/70" />
         <span className="text-[10px] font-mono text-white/40 tracking-widest uppercase">
           #sprint-room
         </span>
@@ -365,7 +365,7 @@ function SSEVisual() {
           <motion.span
             key={ms}
             className="text-[11px] font-bold font-mono tabular-nums"
-            style={{ color: flash ? "#fbbf24" : "#fcd34d" }}
+            style={{ color: flash ? "#a78bfa" : "#c4b5fd" }}
             animate={flash ? { scale: [1, 1.2, 1] } : { scale: 1 }}
             transition={{ duration: 0.22 }}
           >
@@ -379,7 +379,7 @@ function SSEVisual() {
         {events.length === 0 && (
           <div className="flex items-center gap-2 py-1">
             <motion.div
-              className="w-1.5 h-1.5 rounded-full bg-amber-400/50"
+              className="w-1.5 h-1.5 rounded-full bg-violet-400/50"
               animate={{ opacity: [0.5, 1, 0.5] }}
               transition={{ duration: 1, repeat: Infinity }}
             />
@@ -397,7 +397,7 @@ function SSEVisual() {
             className="flex items-center gap-2 py-[3px]"
           >
             <span className="text-[9px] text-white/25">{ev.ts}</span>
-            <span className="text-[10px] text-amber-300/90">{ev.label}</span>
+            <span className="text-[10px] text-violet-300/90">{ev.label}</span>
             <motion.div
               className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-400"
               initial={{ scale: 0 }}
@@ -458,7 +458,7 @@ function SwarmVisual() {
 
   const cols: { key: KanbanCol; label: string; color: string }[] = [
     { key: "open", label: "Open", color: "text-white/40" },
-    { key: "claimed", label: "Claimed", color: "text-amber-300" },
+    { key: "claimed", label: "Claimed", color: "text-violet-300" },
     { key: "done", label: "Done", color: "text-emerald-400" },
   ];
 
@@ -477,7 +477,7 @@ function SwarmVisual() {
         <span className="text-[10px] font-mono text-white/40 tracking-widest uppercase">
           task board
         </span>
-        <span className="ml-auto text-[9px] font-mono text-amber-400/60">
+        <span className="ml-auto text-[9px] font-mono text-violet-400/60">
           {state.done.length}/{KANBAN_TASKS.length} done
         </span>
       </div>
@@ -621,7 +621,7 @@ export default function Features() {
           transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
           className="text-center mb-20"
         >
-          <p className="text-xs font-mono text-amber-400 mb-4 tracking-widest uppercase">
+          <p className="text-xs font-mono text-violet-400 mb-4 tracking-widest uppercase">
             Primitives
           </p>
           <h2 className="text-6xl md:text-7xl font-bold tracking-tight mb-5">

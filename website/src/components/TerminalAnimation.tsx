@@ -125,7 +125,7 @@ export default function TerminalAnimation() {
 
   return (
     <div className="relative w-full">
-      <div className="relative rounded-2xl border border-amber-500/25 bg-black/50 overflow-hidden backdrop-blur-sm">
+      <div className="relative rounded-2xl border border-violet-500/25 bg-black/50 overflow-hidden backdrop-blur-sm">
         {/* Title bar */}
         <div className="flex items-center gap-2 px-4 py-3 bg-white/[0.03] border-b border-white/8">
           <div className="flex gap-1.5">
@@ -154,7 +154,7 @@ export default function TerminalAnimation() {
                 {isCmd ? (
                   <span className="text-green-400">{line}</span>
                 ) : isSection ? (
-                  <span className="text-amber-400/70">{line}</span>
+                  <span className="text-violet-400/70">{line}</span>
                 ) : isConnecting ? (
                   <span className="text-yellow-400/80">{line}</span>
                 ) : isYou ? (
@@ -173,13 +173,13 @@ export default function TerminalAnimation() {
           })}
 
           {/* Blinking cursor on last cmd line */}
-          <span className="inline-block w-2 h-4 bg-amber-400 opacity-80 animate-pulse align-text-bottom" />
+          <span className="inline-block w-2 h-4 bg-violet-400 opacity-80 animate-pulse align-text-bottom" />
         </div>
 
-        <div className="absolute inset-0 pointer-events-none rounded-2xl shadow-[inset_0_0_30px_rgba(217,119,6,0.06)]" />
+        <div className="absolute inset-0 pointer-events-none rounded-2xl shadow-[inset_0_0_30px_rgba(124,106,240,0.06)]" />
       </div>
 
-      <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-64 h-16 bg-amber-500/12 blur-2xl rounded-full" />
+      <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-64 h-16 bg-violet-500/[0.12] blur-2xl rounded-full" />
     </div>
   );
 }

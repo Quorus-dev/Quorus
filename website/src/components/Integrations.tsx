@@ -203,13 +203,13 @@ function MarqueeRow({ agents, reverse = false }: MarqueeRowProps) {
       <div
         className="absolute inset-y-0 left-0 w-24 z-10 pointer-events-none"
         style={{
-          background: "linear-gradient(90deg, #06060a 0%, transparent 100%)",
+          background: "linear-gradient(90deg, #08080f 0%, transparent 100%)",
         }}
       />
       <div
         className="absolute inset-y-0 right-0 w-24 z-10 pointer-events-none"
         style={{
-          background: "linear-gradient(270deg, #06060a 0%, transparent 100%)",
+          background: "linear-gradient(270deg, #08080f 0%, transparent 100%)",
         }}
       />
 
@@ -252,7 +252,7 @@ export default function Integrations() {
           transition={{ duration: 0.6, ease: [0.21, 0.47, 0.32, 0.98] }}
           className="text-center mb-16"
         >
-          <p className="text-xs font-mono text-amber-400 mb-4 tracking-widest uppercase">
+          <p className="text-xs font-mono text-violet-400 mb-4 tracking-widest uppercase">
             Integrations
           </p>
           <h2 className="text-6xl md:text-7xl font-bold tracking-tight mb-5">
@@ -285,14 +285,14 @@ export default function Integrations() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.1, duration: 0.5 }}
-              className="card-gradient-border group rounded-2xl p-6 flex flex-col gap-4 hover:border-amber-500/30 transition-all duration-300"
+              className="card-gradient-border group rounded-2xl p-6 flex flex-col gap-4 hover:border-violet-500/30 transition-all duration-300"
             >
               {/* Tag + icon */}
               <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 group-hover:bg-amber-500/15 transition-colors duration-200">
+                <div className="p-2.5 rounded-xl bg-violet-500/10 text-violet-400 group-hover:bg-violet-500/15 transition-colors duration-200">
                   {card.icon}
                 </div>
-                <span className="text-xs font-mono text-amber-400/80 tracking-widest uppercase">
+                <span className="text-xs font-mono text-violet-400/80 tracking-widest uppercase">
                   {card.tag}
                 </span>
               </div>
@@ -309,7 +309,7 @@ export default function Integrations() {
 
               {/* Code snippet */}
               <div className="mt-auto rounded-lg bg-black/50 border border-white/[0.06] px-3 py-2">
-                <code className="text-[11px] font-mono text-amber-300/80 break-all">
+                <code className="text-[11px] font-mono text-violet-300/80 break-all">
                   {card.code}
                 </code>
               </div>
