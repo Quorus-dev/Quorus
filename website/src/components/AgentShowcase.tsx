@@ -1,52 +1,24 @@
 import { motion } from "framer-motion";
 import { useEffect, useState, useCallback } from "react";
 
-// ── Brand SVG logos ───────────────────────────────────────────────────────────
+// ── Real logo image components ────────────────────────────────────────────────
 
-const AnthropicMark = ({ size = 16 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
-    <path
-      d="M18.87 7H14.5L7 25h4.5l1.6-4h7.8l1.6 4H27L18.87 7zm-4.2 10.5L16.7 11l2.03 6.5h-4.06z"
-      fill="#d97757"
-    />
-  </svg>
-);
-
-const OpenAIMark = ({ size = 16 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
-    <path
-      d="M28.2 13.1a7.7 7.7 0 0 0-.66-6.32 7.8 7.8 0 0 0-8.38-3.74A7.8 7.8 0 0 0 13.3 1a7.8 7.8 0 0 0-7.43 5.4 7.8 7.8 0 0 0-5.2 3.77 7.8 7.8 0 0 0 .96 9.14 7.8 7.8 0 0 0 .66 6.32 7.8 7.8 0 0 0 8.38 3.74A7.8 7.8 0 0 0 16.54 31a7.8 7.8 0 0 0 7.44-5.4 7.8 7.8 0 0 0 5.2-3.77 7.8 7.8 0 0 0-.98-9.13zM16.54 29a5.77 5.77 0 0 1-3.7-1.34l.18-.1 6.13-3.54a1 1 0 0 0 .5-.87v-8.65l2.59 1.5a.09.09 0 0 1 .05.07v7.16A5.83 5.83 0 0 1 16.54 29zm-12.5-5.34a5.77 5.77 0 0 1-.69-3.9l.18.11 6.14 3.54a1 1 0 0 0 1 0l7.49-4.33v2.99a.1.1 0 0 1-.04.08L11.9 25.7a5.83 5.83 0 0 1-7.86-2.04zm-1.63-13.5a5.77 5.77 0 0 1 3.02-2.55v7.27a1 1 0 0 0 .5.87l7.49 4.32-2.59 1.5a.1.1 0 0 1-.1 0L4.92 17.4a5.83 5.83 0 0 1-.51-7.24zm21.29 5L16.2 10.8l2.59-1.49a.1.1 0 0 1 .1 0l5.82 3.36a5.82 5.82 0 0 1-.9 10.5v-7.27a1 1 0 0 0-.5-.87zm2.58-3.93l-.18-.11-6.13-3.54a1 1 0 0 0-1 0l-7.5 4.33V8.92a.1.1 0 0 1 .04-.08l5.82-3.36a5.83 5.83 0 0 1 8.95 6.04v-.01zm-16.25 5.34L7.44 15.1a.1.1 0 0 1-.05-.07V7.87a5.83 5.83 0 0 1 9.56-4.47l-.18.1-6.13 3.54a1 1 0 0 0-.5.87v8.65l-2.6-1.5zm1.4-3.02L13.5 16l-2.5-1.45v-2.9l2.5-1.44 2.5 1.44v2.9l-2.5 1.45z"
-      fill="#10a37f"
-    />
-  </svg>
-);
-
-const GoogleMark = ({ size = 16 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
-    <path
-      d="M30.3 16.3c0-1.1-.1-2.1-.3-3.1H16v5.8h8.1a6.9 6.9 0 0 1-3 4.6v3.8h4.8c2.8-2.6 4.4-6.4 4.4-11.1z"
-      fill="#4285f4"
-    />
-    <path
-      d="M16 31c4.1 0 7.5-1.4 10-3.7l-4.8-3.8c-1.4.9-3.1 1.5-5.2 1.5-4 0-7.3-2.7-8.5-6.3H2.6v3.9A15 15 0 0 0 16 31z"
-      fill="#34a853"
-    />
-    <path
-      d="M7.5 18.7A9 9 0 0 1 7 16c0-.9.2-1.8.5-2.7V9.4H2.6A15 15 0 0 0 1 16c0 2.4.6 4.7 1.6 6.6l4.9-3.9z"
-      fill="#fbbc05"
-    />
-    <path
-      d="M16 7c2.3 0 4.3.8 5.9 2.3l4.4-4.4C23.5 2.4 20 1 16 1A15 15 0 0 0 2.6 9.4l4.9 3.9C8.7 9.7 12 7 16 7z"
-      fill="#ea4335"
-    />
-  </svg>
-);
-
-const CursorMark = ({ size = 16 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
-    <path d="M6 4l20 12-10.5 2.5L12 28 6 4z" fill="#60a5fa" />
-    <path d="M15.5 18.5L12 28l3.5-9.5z" fill="#93c5fd" opacity="0.5" />
-  </svg>
+const LogoImage = ({
+  src,
+  alt,
+  size = 16,
+}: {
+  src: string;
+  alt: string;
+  size?: number;
+}) => (
+  <img
+    src={src}
+    alt={alt}
+    width={size}
+    height={size}
+    className="object-contain"
+  />
 );
 
 // ── Panel: Claude Code MCP output ────────────────────────────────────────────
@@ -81,7 +53,7 @@ function ClaudeCodePanel({ step }: { step: number }) {
     <div className="rounded-2xl border border-white/[0.08] bg-[#0c0c0c] overflow-hidden h-full flex flex-col shadow-xl shadow-black/40">
       {/* Header: actual Claude Code look */}
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/[0.07] bg-[#d97757]/[0.06]">
-        <AnthropicMark size={15} />
+        <LogoImage src="/logos/claude.svg" alt="Claude" size={15} />
         <span className="text-[11px] font-semibold text-[#d97757]/90 tracking-wide">
           Claude Code
         </span>
@@ -167,7 +139,7 @@ function GeminiPanel({ step }: { step: number }) {
   return (
     <div className="rounded-2xl border border-white/[0.08] bg-[#0a0c10] overflow-hidden h-full flex flex-col shadow-xl shadow-black/40">
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/[0.07] bg-[#4285f4]/[0.06]">
-        <GoogleMark size={14} />
+        <LogoImage src="/logos/gemini.png" alt="Gemini" size={14} />
         <span className="text-[11px] font-semibold text-[#4285f4]/90 tracking-wide">
           Gemini CLI
         </span>
@@ -243,7 +215,7 @@ function CodexPanel({ step }: { step: number }) {
   return (
     <div className="rounded-2xl border border-white/[0.08] bg-[#090c0a] overflow-hidden h-full flex flex-col shadow-xl shadow-black/40">
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/[0.07] bg-[#10a37f]/[0.06]">
-        <OpenAIMark size={14} />
+        <LogoImage src="/logos/openai.png" alt="OpenAI" size={14} />
         <span className="text-[11px] font-semibold text-[#10a37f]/90 tracking-wide">
           Codex CLI
         </span>
@@ -315,7 +287,7 @@ function CursorPanel({ step }: { step: number }) {
   return (
     <div className="rounded-2xl border border-white/[0.08] bg-[#0a0e14] overflow-hidden h-full flex flex-col shadow-xl shadow-black/40">
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/[0.07] bg-[#60a5fa]/[0.06]">
-        <CursorMark size={14} />
+        <LogoImage src="/logos/cursor.png" alt="Cursor" size={14} />
         <span className="text-[11px] font-semibold text-[#60a5fa]/90 tracking-wide">
           Cursor
         </span>
@@ -407,25 +379,25 @@ function RelayBadge() {
 const AGENTS = [
   {
     name: "Claude Code",
-    icon: <AnthropicMark size={22} />,
+    icon: <LogoImage src="/logos/claude.svg" alt="Claude" size={22} />,
     color: "#d97757",
     bg: "#1a0e0a",
   },
   {
     name: "Gemini CLI",
-    icon: <GoogleMark size={22} />,
+    icon: <LogoImage src="/logos/gemini.png" alt="Gemini" size={22} />,
     color: "#4285f4",
     bg: "#0a0e1a",
   },
   {
     name: "Codex CLI",
-    icon: <OpenAIMark size={22} />,
+    icon: <LogoImage src="/logos/openai.png" alt="OpenAI" size={22} />,
     color: "#10a37f",
     bg: "#0a1512",
   },
   {
     name: "Cursor",
-    icon: <CursorMark size={22} />,
+    icon: <LogoImage src="/logos/cursor.png" alt="Cursor" size={22} />,
     color: "#60a5fa",
     bg: "#0a0e18",
   },
