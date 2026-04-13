@@ -10,6 +10,13 @@ primary_region = "iad"  # Ashburn — change to your closest region (sjc, lhr, f
 [build]
   dockerfile = "Dockerfile"
 
+# Run Alembic migrations before each deploy's main machine rollout.
+# Fly spins up a temporary VM with the new image, runs this command, and only
+# promotes the new image to the app machine if it succeeds. Fails fast on
+# broken migrations without touching the running relay.
+[deploy]
+  release_command = "alembic upgrade head"
+
 [env]
   PORT = "8080"
   LOG_LEVEL = "INFO"
