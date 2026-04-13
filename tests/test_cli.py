@@ -2083,3 +2083,111 @@ def test_cmd_quickjoin_missing_fields(capsys):
 
     captured = capsys.readouterr()
     assert "Token missing required fields" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for murmur join config corruption bug
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_join_preserves_config_when_no_flags(tmp_path, monkeypatch, capsys):
+    """Join without flags should use existing config, not corrupt it."""
+    from murmur.cli import _cmd_join
+
+    # Set up existing config
+    config_dir = tmp_path / "mcp-tunnel"
+    config_dir.mkdir()
+    config_path = config_dir / "config.json"
+    original_config = {
+        "relay_url": "http://existing-relay:8080",
+        "instance_name": "existing-user",
+        "relay_secret": "existing-secret",
+        "poll_mode": "sse",
+    }
+    config_path.write_text(json.dumps(original_config))
+
+    # Monkeypatch to use tmp config
+    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://existing-relay:8080")
+    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "existing-secret")
+    monkeypatch.setattr("murmur.cli.API_KEY", "")
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    # Mock the HTTP client
+    mock_client = _mock_client(200, [{"id": "r1", "name": "dev-room"}])
+    monkeypatch.setattr("murmur.cli._get_client", lambda: mock_client)
+
+    args = MagicMock()
+    args.name = "test-agent"
+    args.token = None
+    args.relay_url = None  # No explicit flag
+    args.secret = None  # No explicit flag
+    args.api_key = None  # No explicit flag
+    args.room = "dev-room"
+
+    _cmd_join(args)
+
+    # Config should NOT have been overwritten
+    saved_config = json.loads(config_path.read_text())
+    assert saved_config["relay_url"] == "http://existing-relay:8080"
+    assert saved_config["relay_secret"] == "existing-secret"
+
+
+def test_cmd_join_requires_room(capsys, monkeypatch):
+    """Join without room flag should show error, not crash."""
+    from murmur.cli import _cmd_join
+
+    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://existing-relay:8080")
+    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "existing-secret")
+
+    args = MagicMock()
+    args.name = "test-agent"
+    args.token = None
+    args.relay_url = None
+    args.secret = None
+    args.api_key = None
+    args.room = None  # Missing room
+
+    _cmd_join(args)
+
+    captured = capsys.readouterr()
+    assert "Room is required" in captured.out
+
+
+def test_cmd_join_with_explicit_flags_rewrites_config(tmp_path, monkeypatch, capsys):
+    """Join with explicit --relay flag should rewrite config."""
+    from murmur.cli import _cmd_join
+
+    # Set up existing config
+    config_dir = tmp_path / "mcp-tunnel"
+    config_dir.mkdir()
+    config_path = config_dir / "config.json"
+    original_config = {
+        "relay_url": "http://old-relay:8080",
+        "instance_name": "old-user",
+        "relay_secret": "old-secret",
+    }
+    config_path.write_text(json.dumps(original_config))
+
+    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://old-relay:8080")
+    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "old-secret")
+    monkeypatch.setattr("murmur.cli.API_KEY", "")
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    # Mock the HTTP client
+    mock_client = _mock_client(200, [{"id": "r1", "name": "dev-room"}])
+    monkeypatch.setattr("murmur.cli._get_client", lambda: mock_client)
+
+    args = MagicMock()
+    args.name = "new-agent"
+    args.token = None
+    args.relay_url = "http://new-relay:8080"  # Explicit flag
+    args.secret = "new-secret"  # Explicit flag
+    args.api_key = None
+    args.room = "dev-room"
+
+    _cmd_join(args)
+
+    # Config SHOULD have been overwritten with new values
+    saved_config = json.loads(config_path.read_text())
+    assert saved_config["relay_url"] == "http://new-relay:8080"
+    assert saved_config["relay_secret"] == "new-secret"

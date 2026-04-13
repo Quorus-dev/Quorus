@@ -1899,9 +1899,14 @@ def _cmd_join(args):
 
     Accepts either explicit flags (--relay, --secret, --room) OR a murm_join_
     token as the first positional argument for instant, zero-config onboarding.
+
+    If no flags are provided and config already exists, just joins the room
+    without rewriting config or re-registering MCP.
     """
-    # --- Token-based join path ---
+    # --- Token-based join path (always rewrites config) ---
     token = getattr(args, "token", None)
+    rewrite_config = False
+
     if token and token.startswith("murm_join_"):
         try:
             decoded = _parse_join_token(token)
@@ -1912,59 +1917,79 @@ def _cmd_join(args):
         secret = decoded["secret"]
         room = decoded["room"]
         api_key = ""
+        rewrite_config = True  # Token join always sets up fresh config
     else:
-        relay_url = getattr(args, "relay_url", None) or ""
-        secret = getattr(args, "secret", None) or ""
-        api_key = getattr(args, "api_key", None) or ""
-        room = getattr(args, "room", None) or ""
+        # Fall back to existing config when flags are not provided
+        arg_relay = getattr(args, "relay_url", None)
+        arg_secret = getattr(args, "secret", None)
+        arg_api_key = getattr(args, "api_key", None)
+        arg_room = getattr(args, "room", None)
+
+        relay_url = arg_relay if arg_relay else RELAY_URL
+        secret = arg_secret if arg_secret else RELAY_SECRET
+        api_key = arg_api_key if arg_api_key else API_KEY
+        room = arg_room if arg_room else ""
+
+        # Only rewrite config if explicit flags were provided
+        rewrite_config = bool(arg_relay or arg_secret or arg_api_key)
+
+    if not room:
+        console.print("[red]Room is required. Use --room or provide a join token.[/red]")
+        return
+
+    if not relay_url:
+        console.print("[red]Relay URL is required. Use --relay or run 'murmur init' first.[/red]")
+        return
 
     name = args.name
     repo_dir = Path(__file__).resolve().parent.parent
     murmur_dir = Path(__file__).resolve().parent
-
-    # 1. Write config
     config_dir = Path.home() / "mcp-tunnel"
-    config_dir.mkdir(exist_ok=True)
-    config = {
-        "relay_url": relay_url,
-        "instance_name": name,
-        "poll_mode": "sse",
-        "push_notification_method": "notifications/claude/channel",
-        "push_notification_channel": "mcp-tunnel",
-    }
-    if api_key:
-        config["api_key"] = api_key
-    else:
-        config["relay_secret"] = secret
     config_path = config_dir / "config.json"
-    config_path.write_text(json.dumps(config, indent=2))
-    config_path.chmod(0o600)
-    console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
-    # 2. Register MCP server with Claude Code
-    claude_config_path = Path.home() / ".claude.json"
-    if claude_config_path.exists():
-        try:
-            claude_config = json.loads(claude_config_path.read_text())
-        except (json.JSONDecodeError, ValueError):
+    # 1. Write config only if needed (token join, explicit flags, or no config exists)
+    if rewrite_config or not config_path.exists():
+        config_dir.mkdir(exist_ok=True)
+        config = {
+            "relay_url": relay_url,
+            "instance_name": name,
+            "poll_mode": "sse",
+            "push_notification_method": "notifications/claude/channel",
+            "push_notification_channel": "mcp-tunnel",
+        }
+        if api_key:
+            config["api_key"] = api_key
+        else:
+            config["relay_secret"] = secret
+        config_path.write_text(json.dumps(config, indent=2))
+        config_path.chmod(0o600)
+        console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
+
+    # 2. Register MCP server with Claude Code (only if setting up fresh)
+    if rewrite_config or not config_path.exists():
+        claude_config_path = Path.home() / ".claude.json"
+        if claude_config_path.exists():
+            try:
+                claude_config = json.loads(claude_config_path.read_text())
+            except (json.JSONDecodeError, ValueError):
+                claude_config = {}
+        else:
             claude_config = {}
-    else:
-        claude_config = {}
 
-    if "mcpServers" not in claude_config:
-        claude_config["mcpServers"] = {}
+        if "mcpServers" not in claude_config:
+            claude_config["mcpServers"] = {}
 
-    claude_config["mcpServers"]["murmur"] = {
-        "type": "stdio",
-        "command": "uv",
-        "args": [
-            "run", "--directory", str(repo_dir),
-            "python", str(murmur_dir / "mcp_server.py"),
-        ],
-        "env": {},
-    }
-    claude_config_path.write_text(json.dumps(claude_config, indent=2))
-    console.print("[green]MCP server registered in ~/.claude.json[/green]")
+        claude_config["mcpServers"]["murmur"] = {
+            "type": "stdio",
+            "command": "uv",
+            "args": [
+                "run", "--directory", str(repo_dir),
+                "python", str(murmur_dir / "mcp_server.py"),
+            ],
+            "env": {},
+        }
+        claude_config_path.write_text(json.dumps(claude_config, indent=2))
+        console.print("[green]MCP server registered in ~/.claude.json[/green]")
 
     # 3. Join the room
     async def _do_join():
@@ -1996,11 +2021,14 @@ def _cmd_join(args):
     asyncio.run(_do_join())
 
     console.print("")
-    console.print(f"[bold]Setup complete for: {name}[/bold]")
-    console.print(f"  Relay: {relay_url}")
-    console.print(f"  Room: {room}")
-    console.print("")
-    console.print("[yellow]Restart Claude Code to pick up the MCP server.[/yellow]")
+    if rewrite_config:
+        console.print(f"[bold]Setup complete for: {name}[/bold]")
+        console.print(f"  Relay: {relay_url}")
+        console.print(f"  Room: {room}")
+        console.print("")
+        console.print("[yellow]Restart Claude Code to pick up the MCP server.[/yellow]")
+    else:
+        console.print(f"[bold]Joined room: {room}[/bold]")
     console.print("")
     console.print("Start chatting:")
     console.print(f"  murmur chat {room}")
