@@ -47,7 +47,7 @@ Repository = "https://github.com/Aarya2004/murmur"
 Issues = "https://github.com/Aarya2004/murmur/issues"
 
 [project.scripts]
-murmur = "murmur.cli:main"
+murmur = "murmur_cli.cli:main"
 murmur-relay = "murmur.relay:main"
 murmur-analytics = "murmur.analytics:main"
 
@@ -80,7 +80,7 @@ markers = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["murmur", "packages/sdk/murmur_sdk", "packages/tui/murmur_tui", "packages/mcp/murmur_mcp"]
+packages = ["murmur", "packages/sdk/murmur_sdk", "packages/tui/murmur_tui", "packages/mcp/murmur_mcp", "packages/cli/murmur_cli"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
