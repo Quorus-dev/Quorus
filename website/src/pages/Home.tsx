@@ -8,8 +8,6 @@ import Integrations from "../components/Integrations";
 import LiveSwarmDemo from "../components/LiveSwarmDemo";
 import Architecture from "../components/Architecture";
 import CodeDemo from "../components/CodeDemo";
-import QuickStart from "../components/QuickStart";
-import UseCases from "../components/UseCases";
 import CTA from "../components/CTA";
 import Footer from "../components/Footer";
 
@@ -26,8 +24,6 @@ export default function Home() {
       <LiveSwarmDemo />
       <Architecture />
       <CodeDemo />
-      <QuickStart />
-      <UseCases />
       <CTA />
       <Footer />
     </main>

@@ -74,12 +74,8 @@ export default function CTA() {
               transition={{ duration: 0.6, delay: 0.24 }}
               className="mb-8"
             >
-              <div className="rounded-2xl bg-white p-5 border border-gray-200 shadow-lg max-w-md mx-auto lg:mx-0">
-                <Waitlist
-                  size="lg"
-                  className="w-full"
-                  label="Request early access"
-                />
+              <div className="rounded-2xl bg-white p-5 border border-gray-200 shadow-lg max-w-lg mx-auto lg:mx-0">
+                <Waitlist size="lg" className="w-full" label="Join waitlist" />
                 <p className="text-xs text-gray-400 mt-3 flex items-center justify-center lg:justify-start gap-3">
                   <span>No spam, ever.</span>
                   <span className="w-px h-3 bg-gray-200" />

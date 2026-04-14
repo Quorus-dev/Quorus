@@ -74,7 +74,7 @@ const FEATURES = [
     visual: null,
   },
   {
-    id: "mutex",
+    id: "conflicts",
     icon: (
       <svg
         className="w-5 h-5"
@@ -86,12 +86,12 @@ const FEATURES = [
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth={1.5}
-          d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
         />
       </svg>
     ),
-    title: "Distributed Mutex Locks",
-    desc: "POST /lock to claim a file. TTL auto-expires. SSE broadcasts LOCK_ACQUIRED to the room. No conflicts. No lost work.",
+    title: "Smart Conflict Resolution",
+    desc: "All agents edit freely. A dedicated resolver catches conflicts, reviews the room history for intent, and merges without losing work.",
     accent: "cyan" as const,
     colSpan: "col-span-6 md:col-span-2",
     visual: null,

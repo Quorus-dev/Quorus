@@ -76,8 +76,8 @@ const PRIMITIVES = [
     color: "#14b8a6",
   },
   {
-    label: "Mutex Locks",
-    desc: "TTL-gated. Auto-expire on crash",
+    label: "Conflict Resolution",
+    desc: "Dedicated agent resolves merge conflicts",
     color: "#0f766e",
   },
 ];
@@ -112,8 +112,8 @@ function ArchDiagram() {
       highlights: [{ from: 20, to: 32, color: "#2dd4bf" }],
     },
     {
-      text: "                    mutex locks",
-      highlights: [{ from: 20, to: 31, color: "#8b5cf6" }],
+      text: "                    conflict resolution",
+      highlights: [{ from: 20, to: 39, color: "#8b5cf6" }],
     },
     {
       text: "                    room fanout",
