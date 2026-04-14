@@ -4,47 +4,35 @@ import { motion } from "framer-motion";
 
 interface AgentPlatform {
   name: string;
-  logo: string; // Path to real logo file
-  bg: string;
-  border: string;
+  logo: string;
+  logoBg?: string; // Optional dark background for light logos
 }
 
 const AGENT_PLATFORMS: AgentPlatform[] = [
   {
     name: "Claude Code",
     logo: "/logos/claude.svg",
-    bg: "bg-white",
-    border: "border-gray-200",
   },
   {
     name: "Codex CLI",
     logo: "/logos/openai.png",
-    bg: "bg-white",
-    border: "border-gray-200",
+    logoBg: "bg-gray-900", // OpenAI logo is white, needs dark bg
   },
   {
     name: "Gemini CLI",
     logo: "/logos/gemini.png",
-    bg: "bg-white",
-    border: "border-gray-200",
   },
   {
     name: "Cursor",
     logo: "/logos/cursor.png",
-    bg: "bg-white",
-    border: "border-gray-200",
   },
   {
     name: "Copilot",
     logo: "/logos/copilot.png",
-    bg: "bg-white",
-    border: "border-gray-200",
   },
   {
     name: "Windsurf",
     logo: "/logos/windsurf.svg",
-    bg: "bg-white",
-    border: "border-gray-200",
   },
 ];
 
@@ -121,11 +109,15 @@ const INTEGRATION_CARDS = [
 function AgentBadge({ agent }: { agent: AgentPlatform }) {
   return (
     <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-xl border border-gray-200 bg-white min-w-[80px] cursor-default select-none hover:scale-105 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200 shadow-sm">
-      <img
-        src={agent.logo}
-        alt={agent.name}
-        className="w-7 h-7 object-contain"
-      />
+      <div
+        className={`w-8 h-8 rounded-lg flex items-center justify-center ${agent.logoBg || ""}`}
+      >
+        <img
+          src={agent.logo}
+          alt={agent.name}
+          className="w-6 h-6 object-contain"
+        />
+      </div>
       <span className="text-[9px] font-mono text-center leading-tight text-gray-500">
         {agent.name}
       </span>
