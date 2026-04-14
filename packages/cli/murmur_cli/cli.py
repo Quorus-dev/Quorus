@@ -1424,7 +1424,7 @@ def _cmd_watch_daemon(args):
 
 async def _watch_context(room_name: str, context_path: Path | None = None) -> None:
     """Background watcher: write room context to .murmur/context.md via SSE events."""
-    from murmur.watcher import Watcher
+    from murmur_cli.watcher import Watcher
 
     if context_path is None:
         context_path = Path.cwd() / ".murmur" / "context.md"

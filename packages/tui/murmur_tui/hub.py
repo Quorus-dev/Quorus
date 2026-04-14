@@ -932,8 +932,11 @@ def run_hub() -> None:
                     console.print()
                     try:
                         input("  [Press Enter to return to the hub] ")
-                    except (EOFError, KeyboardInterrupt):
-                        pass
+                    except EOFError:
+                        pass  # stdin closed — just continue; don't hang
+                    # KeyboardInterrupt intentionally propagates so Ctrl-C at
+                    # the invite prompt exits the hub (same UX as the main
+                    # input loop), caught by the outer try/except.
                     state.set_status_bar(f"Token generated for #{rname}")
                 else:
                     state.set_status_bar("No active room. Join one first.")
