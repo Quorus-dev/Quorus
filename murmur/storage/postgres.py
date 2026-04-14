@@ -39,9 +39,21 @@ def get_database_url() -> str:
 
 
 async def init_engine(database_url: str | None = None) -> None:
-    """Create the async engine and session factory. Call once at startup."""
+    """Create the async engine and session factory. Call once at startup.
+
+    The URL is always passed through :func:`normalize_database_url` so callers
+    can hand us raw libpq-style connection strings (e.g. Neon's
+    ``postgresql://...?sslmode=require``) without worrying about asyncpg's
+    narrower query-param vocabulary.
+    """
     global _engine, _session_factory
-    url = database_url or get_database_url()
+    raw = database_url or os.environ.get("DATABASE_URL", "")
+    if not raw:
+        raise RuntimeError(
+            "DATABASE_URL is not set. "
+            "Set it to a postgresql:// or postgresql+asyncpg:// connection string."
+        )
+    url = normalize_database_url(raw)
     _engine = create_async_engine(
         url,
         pool_size=10,
