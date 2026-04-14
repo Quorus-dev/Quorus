@@ -2,7 +2,6 @@
 
 import asyncio
 import os
-import re
 
 from alembic import context
 from sqlalchemy import pool
@@ -15,6 +14,7 @@ import murmur.admin.models  # noqa: E402,F401
 import murmur.models.audit  # noqa: E402,F401
 import murmur.models.outbox  # noqa: E402,F401
 from murmur.storage.base import Base
+from murmur.storage.postgres import normalize_database_url
 
 target_metadata = Base.metadata
 
@@ -23,8 +23,7 @@ def get_url() -> str:
     url = os.environ.get("DATABASE_URL", "")
     if not url:
         raise RuntimeError("DATABASE_URL must be set for migrations")
-    # Normalize to asyncpg driver — handles postgresql://, postgresql+psycopg2://, etc.
-    return re.sub(r"^postgresql(\+\w+)?://", "postgresql+asyncpg://", url)
+    return normalize_database_url(url)
 
 
 def run_migrations_offline() -> None:

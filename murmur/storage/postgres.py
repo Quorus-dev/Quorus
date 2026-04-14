@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -12,15 +13,29 @@ _engine = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
+def normalize_database_url(url: str) -> str:
+    """Make a raw DATABASE_URL safe for the asyncpg driver.
+
+    Handles two common incompatibilities:
+    - Non-asyncpg schemes (``postgresql://``, ``postgresql+psycopg2://``) are
+      rewritten to ``postgresql+asyncpg://``.
+    - libpq-style ``sslmode=require`` (what Neon/Supabase/Render emit) is
+      translated to ``ssl=require``, which asyncpg + SQLAlchemy understand.
+    """
+    url = re.sub(r"^postgresql(\+\w+)?://", "postgresql+asyncpg://", url)
+    url = url.replace("sslmode=", "ssl=")
+    return url
+
+
 def get_database_url() -> str:
-    """Return the DATABASE_URL from environment, or raise."""
+    """Return the normalized DATABASE_URL from environment, or raise."""
     url = os.environ.get("DATABASE_URL", "")
     if not url:
         raise RuntimeError(
             "DATABASE_URL is not set. "
             "Set it to a postgresql+asyncpg:// connection string."
         )
-    return url
+    return normalize_database_url(url)
 
 
 async def init_engine(database_url: str | None = None) -> None:
