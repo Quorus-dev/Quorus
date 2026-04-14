@@ -17,10 +17,8 @@ export default function Nav() {
   // Always use dark pill style when scrolled for consistency
   return (
     <div
-      className={`fixed z-50 transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] ${
-        scrolled
-          ? "top-4 left-1/2 -translate-x-1/2"
-          : "top-4 left-1/2 -translate-x-1/2"
+      className={`fixed z-50 transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] left-1/2 -translate-x-1/2 ${
+        scrolled ? "top-4" : "top-14"
       }`}
     >
       <div className="flex items-center transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] rounded-full border border-white/[0.11] bg-[#06060a]/95 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.07)] px-4 py-2 gap-4">

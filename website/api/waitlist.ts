@@ -1,9 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { neon } from "@neondatabase/serverless";
 
-export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse
-) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -12,6 +10,21 @@ export default async function handler(
 
   if (!email || !email.includes("@") || email.length > 254) {
     return res.status(400).json({ error: "Invalid email" });
+  }
+
+  // Store in database
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) {
+    try {
+      const sql = neon(databaseUrl);
+      await sql`
+        INSERT INTO waitlist (email, created_at)
+        VALUES (${email}, NOW())
+        ON CONFLICT (email) DO NOTHING
+      `;
+    } catch (err) {
+      console.error("[waitlist] db error:", err);
+    }
   }
 
   // Respond immediately — do the email work in the background
