@@ -147,7 +147,7 @@ function QuorusRelayBadge() {
             />
             <div className="text-center">
               <div className="text-teal-300 text-lg font-bold tracking-widest">
-                MURMUR
+                QUORUS
               </div>
               <div className="text-[10px] text-white/30 font-mono -mt-0.5">
                 relay
