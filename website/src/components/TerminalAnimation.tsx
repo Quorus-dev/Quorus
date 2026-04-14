@@ -200,11 +200,18 @@ export default function TerminalAnimation() {
 
             if (scriptType === "brand") {
               return (
-                <div key={i} className="leading-[1.2]">
-                  <span className="text-teal-400 text-[15px] font-bold">
-                    {line}
-                  </span>
-                </div>
+                <pre
+                  key={i}
+                  className="leading-[1.15] m-0 p-0 text-teal-400 font-bold"
+                  style={{
+                    fontFamily: '"JetBrains Mono", monospace',
+                    fontSize: "10px",
+                    letterSpacing: "0",
+                    whiteSpace: "pre",
+                  }}
+                >
+                  {line}
+                </pre>
               );
             }
             if (scriptType === "tagline") {
