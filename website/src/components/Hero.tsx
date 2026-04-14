@@ -311,22 +311,20 @@ export default function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.75, delay: 0.08 }}
         >
-          <span className="block text-white/95">
-            The{" "}
-            <span
-              style={{
-                background:
-                  "linear-gradient(135deg, #ccfbf1 0%, #2dd4bf 50%, #14b8a6 100%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-              }}
-            >
-              Communication
-            </span>
+          <span
+            className="block"
+            style={{
+              background:
+                "linear-gradient(135deg, #ccfbf1 0%, #2dd4bf 50%, #14b8a6 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+            }}
+          >
+            Quorus
           </span>
-          <span className="block text-white/95">
-            Layer for <TypewriterWord />
+          <span className="block text-white/95 text-[0.55em]">
+            Coordination Layer for <TypewriterWord />
           </span>
         </motion.h1>
 
