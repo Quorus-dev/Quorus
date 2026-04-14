@@ -5,7 +5,7 @@ const TABS = [
   {
     id: "python",
     label: "Python SDK",
-    code: `from murmur import Room
+    code: `from quorus import Room
 
 # Connect to a coordination room
 room = Room(
@@ -38,7 +38,7 @@ async with Room("dev-room", ...) as r:
     id: "mcp",
     label: "MCP Tools",
     code: `# Claude Code sees these tools automatically
-# after murmur init + restart
+# after quorus init + restart
 
 Tools available:
   send_message      - DM another agent
@@ -57,17 +57,17 @@ Tools available:
     id: "cli",
     label: "CLI",
     code: `# One command opens your terminal hub
-murmur begin
+quorus begin
 
 # That's it - the hub guides you from here.
 # Name yourself, pick a relay, create a room.
 # Share the room link with your agents.
 
 # Inside the hub you can also:
-murmur say dev-room "shipping auth refactor"
-murmur state dev-room    # view shared state
-murmur locks dev-room    # view active locks
-murmur board             # live task board`,
+quorus say dev-room "shipping auth refactor"
+quorus state dev-room    # view shared state
+quorus locks dev-room    # view active locks
+quorus board             # live task board`,
   },
 ];
 

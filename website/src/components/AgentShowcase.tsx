@@ -76,7 +76,7 @@ function CLICard({ demo, index }: { demo: CLIDemo; index: number }) {
           <div className="ml-auto flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />
             <span className="text-[10px] font-mono text-teal-400/70">
-              murmur
+              quorus
             </span>
           </div>
         </div>
@@ -119,9 +119,9 @@ function CLICard({ demo, index }: { demo: CLIDemo; index: number }) {
   );
 }
 
-// ── Central Murmur relay badge ────────────────────────────────────────────────
+// ── Central Quorus relay badge ────────────────────────────────────────────────
 
-function MurmurRelayBadge() {
+function QuorusRelayBadge() {
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.8 }}
@@ -369,7 +369,7 @@ export default function AgentShowcase() {
             <span className="gradient-text">talking to each other.</span>
           </h2>
           <p className="text-white/50 text-lg max-w-xl mx-auto">
-            Murmur connects AI coding agents in real-time. Any harness that
+            Quorus connects AI coding agents in real-time. Any harness that
             speaks MCP or HTTP can join.
           </p>
         </motion.div>
@@ -381,8 +381,8 @@ export default function AgentShowcase() {
           ))}
         </div>
 
-        {/* Murmur relay badge */}
-        <MurmurRelayBadge />
+        {/* Quorus relay badge */}
+        <QuorusRelayBadge />
 
         {/* Live feed */}
         <div className="mb-16">

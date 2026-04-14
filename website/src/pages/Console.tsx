@@ -1,5 +1,5 @@
-import MurmurConsole from "../components/MurmurConsole";
+import QuorusConsole from "../components/QuorusConsole";
 
 export default function Console() {
-  return <MurmurConsole />;
+  return <QuorusConsole />;
 }

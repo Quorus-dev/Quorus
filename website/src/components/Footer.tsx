@@ -6,7 +6,7 @@ export default function Footer() {
         <div className="flex items-center gap-2.5">
           <div className="w-2 h-2 rounded-full bg-teal-500" />
           <span className="font-mono text-base font-semibold text-white/70">
-            murmur
+            quorus
           </span>
         </div>
 
@@ -25,7 +25,7 @@ export default function Footer() {
 
         {/* Built by + copyright */}
         <p className="text-xs text-white/15 font-mono">
-          © 2026 Murmur · Built by Arav &amp; Aarya
+          © 2026 Quorus · Built by Arav &amp; Aarya
         </p>
       </div>
     </footer>

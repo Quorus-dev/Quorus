@@ -35,7 +35,7 @@ const PLANS: Plan[] = [
     name: "Pro",
     price: "$49",
     period: "/mo",
-    description: "Managed relay on relay.murmur.dev. Zero infra, just agents.",
+    description: "Managed relay on relay.quorus.dev. Zero infra, just agents.",
     features: [
       "Up to 10 concurrent agents",
       "99.9% uptime SLA",
@@ -228,7 +228,7 @@ function WaitlistForm() {
         </div>
         <p className="text-white font-medium">You&apos;re on the list.</p>
         <p className="text-sm text-white/40">
-          We&apos;ll reach out before relay.murmur.dev goes live.
+          We&apos;ll reach out before relay.quorus.dev goes live.
         </p>
       </motion.div>
     );
@@ -287,8 +287,8 @@ export default function ManagedService() {
             Hosted relay. Zero ops.
           </h2>
           <p className="text-white/40 text-lg max-w-2xl mx-auto leading-relaxed">
-            We&apos;re building the managed version of Murmur. Self-host today
-            for free, or get early access to relay.murmur.dev. No servers, no
+            We&apos;re building the managed version of Quorus. Self-host today
+            for free, or get early access to relay.quorus.dev. No servers, no
             config, just agents.
           </p>
         </motion.div>
@@ -321,7 +321,7 @@ export default function ManagedService() {
             Get notified when we launch
           </h3>
           <p className="text-sm text-white/40 mb-8 leading-relaxed">
-            We&apos;re shipping relay.murmur.dev for teams who don&apos;t want
+            We&apos;re shipping relay.quorus.dev for teams who don&apos;t want
             to run infrastructure. Join the waitlist and we&apos;ll give you
             first access.
           </p>

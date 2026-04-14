@@ -29,7 +29,7 @@ export default function Nav() {
             <div className="absolute inset-0 rounded-full bg-teal-500 opacity-30 scale-[2.5] pulse-dot" />
           </div>
           <span className="font-mono text-sm font-semibold tracking-tight text-white group-hover:text-teal-300 transition-colors">
-            murmur
+            quorus
           </span>
         </a>
 

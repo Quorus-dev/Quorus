@@ -114,7 +114,7 @@ const FEATURES = [
       </svg>
     ),
     title: "Summary Cascade",
-    desc: "`murmur context` injects a full briefing: goal, decisions, claimed tasks, into every agent on every prompt. Zero vector DB.",
+    desc: "`quorus context` injects a full briefing: goal, decisions, claimed tasks, into every agent on every prompt. Zero vector DB.",
     accent: "violet" as const,
     colSpan: "col-span-6 md:col-span-2",
     visual: null,

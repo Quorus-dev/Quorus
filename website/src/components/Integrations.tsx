@@ -39,7 +39,7 @@ const INTEGRATION_CARDS = [
     tag: "MCP Native",
     title: "One line to connect",
     desc: "Plug into any MCP-compatible agent with a single server entry. No SDK, no wrapper, no ceremony.",
-    code: `"murmur": { "command": "murmur-mcp" }`,
+    code: `"quorus": { "command": "quorus-mcp" }`,
   },
   {
     icon: (

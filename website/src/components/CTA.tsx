@@ -62,7 +62,7 @@ export default function CTA() {
               transition={{ duration: 0.6, delay: 0.16 }}
               className="text-gray-500 text-lg mb-10 leading-relaxed max-w-md mx-auto lg:mx-0"
             >
-              Murmur gives your AI swarms rooms, shared state, and real-time
+              Quorus gives your AI swarms rooms, shared state, and real-time
               coordination. Any model, any machine.
             </motion.p>
 
@@ -107,7 +107,7 @@ export default function CTA() {
             </motion.div>
           </div>
 
-          {/* Right: Murmur TUI preview */}
+          {/* Right: Quorus TUI preview */}
           <motion.div
             initial={{ opacity: 0, x: 30 }}
             whileInView={{ opacity: 1, x: 0 }}
@@ -139,7 +139,7 @@ export default function CTA() {
           className="lg:hidden mt-16"
         >
           <p className="text-center text-[10px] font-mono text-gray-400 mb-4 tracking-widest uppercase">
-            Murmur TUI preview
+            Quorus TUI preview
           </p>
           <TerminalAnimation />
         </motion.div>

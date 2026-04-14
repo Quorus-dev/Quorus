@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 const TESTIMONIALS = [
   {
     quote:
-      "We run Claude Code, Cursor, and Codex agents in parallel on every PR. Murmur is the only thing that keeps them from stepping on each other.",
+      "We run Claude Code, Cursor, and Codex agents in parallel on every PR. Quorus is the only thing that keeps them from stepping on each other.",
     name: "Maya Chen",
     role: "Staff Engineer",
     tag: "private beta",

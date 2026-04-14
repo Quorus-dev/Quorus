@@ -22,35 +22,35 @@ interface TermLine {
 }
 
 const SCRIPT: TermLine[] = [
-  { type: "cmd", text: "$ murmur begin" },
+  { type: "cmd", text: "$ quorus begin" },
   { type: "blank", text: "" },
   {
     type: "brand",
-    text: " ███╗   ███╗ ██╗   ██╗ ██████╗  ███╗   ███╗ ██╗   ██╗ ██████╗",
+    text: "  ██████╗  ██╗   ██╗  ██████╗  ██████╗  ██╗   ██╗ ███████╗",
   },
   {
     type: "brand",
-    text: " ████╗ ████║ ██║   ██║ ██╔══██╗ ████╗ ████║ ██║   ██║ ██╔══██╗",
+    text: " ██╔═══██╗ ██║   ██║ ██╔═══██╗ ██╔══██╗ ██║   ██║ ██╔════╝",
   },
   {
     type: "brand",
-    text: " ██╔████╔██║ ██║   ██║ ██████╔╝ ██╔████╔██║ ██║   ██║ ██████╔╝",
+    text: " ██║   ██║ ██║   ██║ ██║   ██║ ██████╔╝ ██║   ██║ ███████╗",
   },
   {
     type: "brand",
-    text: " ██║╚██╔╝██║ ██║   ██║ ██╔══██╗ ██║╚██╔╝██║ ██║   ██║ ██╔══██╗",
+    text: " ██║▄▄ ██║ ██║   ██║ ██║   ██║ ██╔══██╗ ██║   ██║ ╚════██║",
   },
   {
     type: "brand",
-    text: " ██║ ╚═╝ ██║ ╚██████╔╝ ██║  ██║ ██║ ╚═╝ ██║ ╚██████╔╝ ██║  ██║",
+    text: " ╚██████╔╝ ╚██████╔╝ ╚██████╔╝ ██║  ██║ ╚██████╔╝ ███████║",
   },
   {
     type: "brand",
-    text: " ╚═╝     ╚═╝  ╚═════╝  ╚═╝  ╚═╝ ╚═╝     ╚═╝  ╚═════╝  ╚═╝  ╚═╝",
+    text: "  ╚══▀▀═╝   ╚═════╝   ╚═════╝  ╚═╝  ╚═╝  ╚═════╝  ╚══════╝",
   },
   { type: "blank", text: "" },
   { type: "tagline", text: "    Agent coordination relay" },
-  { type: "dim", text: "    v0.3.1  ·  relay.murmur.dev" },
+  { type: "dim", text: "    v0.3.1  ·  relay.quorus.dev" },
   { type: "blank", text: "" },
   { type: "prompt", text: "  ❯ Name: " },
   { type: "user", text: "alice" },
@@ -178,16 +178,16 @@ export default function TerminalAnimation() {
             <div className="w-3 h-3 rounded-full bg-green-500/70" />
           </div>
           <div className="flex-1 flex items-center justify-center gap-2">
-            {/* Murmur teal dot */}
+            {/* Quorus teal dot */}
             <div className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
             <span className="text-[11px] text-teal-400/70 font-mono tracking-widest">
-              murmur
+              quorus
             </span>
             <span className="text-white/15 text-[11px] font-mono">·</span>
             <span className="text-[11px] text-white/25 font-mono">alice</span>
           </div>
           <div className="text-[10px] text-white/20 font-mono">
-            relay.murmur.dev
+            relay.quorus.dev
           </div>
         </div>
 

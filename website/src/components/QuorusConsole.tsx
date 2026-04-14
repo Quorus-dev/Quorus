@@ -139,7 +139,7 @@ function ConnectModal({
               <div className="absolute w-4 h-4 rounded-full bg-teal-500/20 animate-ping" />
             </div>
             <span className="font-mono text-base font-semibold text-white tracking-tight">
-              murmur
+              quorus
             </span>
             <span className="text-[11px] text-white/25 font-mono px-1.5 py-0.5 rounded border border-white/8 bg-white/3">
               console
@@ -335,7 +335,7 @@ function MsgRow({ msg, myName }: { msg: Message; myName: string }) {
 
 // ── Main console ──────────────────────────────────────────────────────────────
 
-export default function MurmurConsole() {
+export default function QuorusConsole() {
   const [relay, setRelay] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [myName, setMyName] = useState("");
@@ -540,7 +540,7 @@ export default function MurmurConsole() {
         <a href="/" className="flex items-center gap-2 group">
           <span className="w-1.5 h-1.5 rounded-full bg-teal-500 pulse-dot" />
           <span className="font-mono text-sm font-semibold text-white group-hover:text-teal-300 transition-colors">
-            murmur
+            quorus
           </span>
         </a>
         <span className="text-white/15 text-xs">/</span>

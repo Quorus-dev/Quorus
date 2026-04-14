@@ -95,7 +95,7 @@ function ArchDiagram() {
       highlights: [{ from: 0, to: 11, color: "#d97757" }],
     },
     {
-      text: "Cursor ────────┼──► murmur relay ◄──► SSE push ──► all agents",
+      text: "Cursor ────────┼──► quorus relay ◄──► SSE push ──► all agents",
       highlights: [
         { from: 0, to: 6, color: "#60a5fa" },
         { from: 19, to: 31, color: "#2dd4bf" },
@@ -218,7 +218,7 @@ function ArchDiagram() {
         ))}
         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-teal-500/20 bg-teal-500/[0.06] text-[10px] font-mono text-teal-300">
           <span className="w-1.5 h-1.5 rounded-full bg-teal-400 shrink-0" />
-          murmur relay
+          quorus relay
         </div>
       </div>
     </div>

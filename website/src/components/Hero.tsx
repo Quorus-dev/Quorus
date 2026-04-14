@@ -204,7 +204,7 @@ function HeroTerminal() {
         <div className="px-4 py-2 border-t border-white/[0.04] flex items-center gap-2">
           <span className="text-[10px] font-mono text-teal-400/50 flex items-center gap-1.5">
             <span className="w-1 h-1 rounded-full bg-teal-400/50" />
-            murmur relay · connected
+            quorus relay · connected
           </span>
         </div>
       </div>
