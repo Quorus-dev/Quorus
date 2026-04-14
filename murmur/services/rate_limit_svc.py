@@ -25,9 +25,18 @@ class RateLimitService:
         )
 
     async def check_with_limit(
-        self, tenant_id: str, sender: str, max_count: int
+        self,
+        tenant_id: str,
+        sender: str,
+        max_count: int,
+        window: int | None = None,
     ) -> bool:
-        """Like ``check`` but with a caller-specified per-endpoint max_count."""
+        """Like ``check`` but with a caller-specified max_count and optional window.
+
+        Pass ``window`` (in seconds) when an endpoint needs a different cadence
+        than the default — e.g. signup uses 3600s (5 attempts per hour per IP),
+        while message sends use the service's default short window.
+        """
         return await self._backend.check_and_increment(
-            tenant_id, sender, self._window, max_count
+            tenant_id, sender, window if window is not None else self._window, max_count
         )
