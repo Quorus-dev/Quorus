@@ -156,7 +156,7 @@ export default function CodeDemo() {
                   className={`px-3 py-1 rounded-md text-xs font-mono transition-all ${
                     active === t.id
                       ? "bg-white/10 text-white"
-                      : "text-white/30 hover:text-white/60"
+                      : "text-white/50 hover:text-white/70"
                   }`}
                 >
                   {t.label}

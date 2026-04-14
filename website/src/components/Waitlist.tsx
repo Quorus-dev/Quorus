@@ -107,7 +107,7 @@ export default function Waitlist({
           <button
             type="submit"
             disabled={status === "loading"}
-            className={`${pad} ${text} rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium transition-all duration-200 hover:shadow-lg hover:shadow-teal-500/20 whitespace-nowrap`}
+            className={`${pad} ${text} rounded-xl bg-teal-700 hover:bg-teal-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium transition-all duration-200 hover:shadow-lg hover:shadow-teal-500/20 whitespace-nowrap`}
           >
             {status === "loading" ? (
               <span className="flex items-center gap-2 justify-center">

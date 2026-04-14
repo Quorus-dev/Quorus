@@ -47,7 +47,7 @@ export default function SocialProof() {
       <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-white/[0.07] to-transparent" />
 
       {/* Label */}
-      <p className="text-center text-[10px] text-white/20 font-mono tracking-[0.2em] uppercase mb-6">
+      <p className="text-center text-[10px] text-white/50 font-mono tracking-[0.2em] uppercase mb-6">
         Works with every AI agent
       </p>
 
