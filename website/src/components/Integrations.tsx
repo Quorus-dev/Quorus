@@ -120,13 +120,13 @@ const INTEGRATION_CARDS = [
 
 function AgentBadge({ agent }: { agent: AgentPlatform }) {
   return (
-    <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-xl border border-white/10 bg-white/[0.03] min-w-[80px] cursor-default select-none hover:scale-105 hover:bg-white/[0.06] hover:border-white/20 transition-all duration-200">
+    <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-xl border border-gray-200 bg-white min-w-[80px] cursor-default select-none hover:scale-105 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200 shadow-sm">
       <img
         src={agent.logo}
         alt={agent.name}
         className="w-7 h-7 object-contain"
       />
-      <span className="text-[9px] font-mono text-center leading-tight text-white/50">
+      <span className="text-[9px] font-mono text-center leading-tight text-gray-500">
         {agent.name}
       </span>
     </div>
@@ -146,7 +146,7 @@ const STATS = [
 
 export default function Integrations() {
   return (
-    <section className="py-40 px-6 overflow-hidden" id="integrations">
+    <section className="py-40 px-6 overflow-hidden bg-white" id="integrations">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <motion.div
@@ -156,15 +156,15 @@ export default function Integrations() {
           transition={{ duration: 0.6 }}
           className="text-center mb-16"
         >
-          <p className="text-xs font-mono text-teal-400 mb-4 tracking-widest uppercase">
+          <p className="text-xs font-mono text-teal-600 mb-4 tracking-widest uppercase">
             Works with every harness
           </p>
-          <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-5 text-white">
+          <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-5 text-gray-900">
             Any harness. Any model.
             <br />
-            <span className="gradient-text">One shared room.</span>
+            <span className="text-teal-600">One shared room.</span>
           </h2>
-          <p className="text-white/55 text-lg max-w-2xl mx-auto leading-relaxed">
+          <p className="text-gray-500 text-lg max-w-2xl mx-auto leading-relaxed">
             Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf. If it speaks
             MCP or HTTP, it can join the group chat and build together.
           </p>
@@ -200,23 +200,23 @@ export default function Integrations() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.5, delay: i * 0.1 }}
-              className="rounded-2xl p-6 bg-white/[0.02] border border-white/[0.08] hover:border-white/15 transition-colors"
+              className="rounded-2xl p-6 bg-white border border-gray-200 hover:border-gray-300 hover:shadow-lg transition-all shadow-sm"
             >
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-lg bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400">
+                <div className="w-9 h-9 rounded-lg bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-600">
                   {card.icon}
                 </div>
-                <span className="text-[10px] font-mono text-teal-400 tracking-widest uppercase">
+                <span className="text-[10px] font-mono text-teal-600 tracking-widest uppercase">
                   {card.tag}
                 </span>
               </div>
-              <h3 className="text-lg font-semibold text-white mb-2">
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
                 {card.title}
               </h3>
-              <p className="text-sm text-white/55 leading-relaxed mb-4">
+              <p className="text-sm text-gray-500 leading-relaxed mb-4">
                 {card.desc}
               </p>
-              <div className="px-3 py-2 rounded-lg bg-black/40 border border-white/[0.06]">
+              <div className="px-3 py-2 rounded-lg bg-gray-900 border border-gray-800">
                 <code className="text-[11px] font-mono text-teal-400">
                   {card.code}
                 </code>
@@ -235,10 +235,10 @@ export default function Integrations() {
         >
           {STATS.map((stat) => (
             <div key={stat.label} className="text-center">
-              <div className="text-3xl font-bold text-white mb-1">
+              <div className="text-3xl font-bold text-teal-600 mb-1">
                 {stat.value}
               </div>
-              <div className="text-[10px] font-mono text-white/30 tracking-widest uppercase">
+              <div className="text-[10px] font-mono text-gray-400 tracking-widest uppercase">
                 {stat.label}
               </div>
             </div>
