@@ -350,7 +350,12 @@ export default function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.26 }}
         >
-          <Waitlist size="lg" label="Request access" className="w-full" />
+          <Waitlist
+            size="lg"
+            label="Request access"
+            variant="dark"
+            className="w-full"
+          />
         </motion.div>
 
         {/* Capability pills */}

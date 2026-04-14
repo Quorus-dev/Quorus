@@ -6,11 +6,13 @@ export default function Waitlist({
   className = "",
   placeholder = "you@example.com",
   label = "Request access",
+  variant = "light",
 }: {
   size?: "sm" | "md" | "lg";
   className?: string;
   placeholder?: string;
   label?: string;
+  variant?: "light" | "dark";
 }) {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">(
@@ -38,6 +40,21 @@ export default function Waitlist({
   const pad = size === "lg" ? "px-5 py-4" : "px-4 py-3";
   const text = size === "lg" ? "text-base" : "text-sm";
 
+  const inputStyles =
+    variant === "dark"
+      ? "bg-white/[0.06] border-white/[0.12] text-white placeholder:text-white/30 focus:border-teal-500/50 focus:bg-white/[0.08]"
+      : "bg-gray-50 border-gray-200 text-gray-900 placeholder:text-gray-400 focus:border-teal-500";
+
+  const successStyles =
+    variant === "dark"
+      ? "bg-teal-500/10 border-teal-500/30"
+      : "bg-green-50 border-green-200";
+
+  const successTextStyles =
+    variant === "dark" ? "text-teal-400" : "text-green-700";
+
+  const subtextStyles = variant === "dark" ? "text-white/40" : "text-gray-500";
+
   return (
     <AnimatePresence mode="wait">
       {status === "done" ? (
@@ -47,9 +64,11 @@ export default function Waitlist({
           animate={{ opacity: 1, y: 0 }}
           className={`flex flex-col items-center gap-2 ${className}`}
         >
-          <div className="flex items-center gap-2.5 px-5 py-3 rounded-xl bg-green-50 border border-green-200">
+          <div
+            className={`flex items-center gap-2.5 px-5 py-3 rounded-xl border ${successStyles}`}
+          >
             <svg
-              className="w-4 h-4 text-green-600 shrink-0"
+              className={`w-4 h-4 shrink-0 ${successTextStyles}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -61,11 +80,11 @@ export default function Waitlist({
                 d="M5 13l4 4L19 7"
               />
             </svg>
-            <span className="text-sm text-green-700 font-medium">
+            <span className={`text-sm font-medium ${successTextStyles}`}>
               You&apos;re on the list.
             </span>
           </div>
-          <p className="text-xs text-gray-500">
+          <p className={`text-xs ${subtextStyles}`}>
             We review every application. We&apos;ll be in touch.
           </p>
         </motion.div>
@@ -83,7 +102,7 @@ export default function Waitlist({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder={placeholder}
-            className={`flex-1 ${pad} ${text} rounded-xl bg-gray-50 border border-gray-200 text-gray-900 placeholder:text-gray-400 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 transition-all duration-200`}
+            className={`flex-1 ${pad} ${text} rounded-xl border outline-none focus:ring-2 focus:ring-teal-500/20 transition-all duration-200 ${inputStyles}`}
           />
           <button
             type="submit"
