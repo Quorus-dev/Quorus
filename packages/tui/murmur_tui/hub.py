@@ -921,12 +921,19 @@ def run_hub() -> None:
                     import json as _json
                     payload = _json.dumps({"relay_url": relay_url, "secret": secret, "room": rname})
                     token = "murm_join_" + _b64.urlsafe_b64encode(payload.encode()).decode()
+                    # Print above the TUI frame and block until the user confirms —
+                    # otherwise the next loop iteration redraws the frame and the
+                    # token scrolls off-screen before they can copy it.
                     console.print()
                     console.print(f"  [bold]Invite '{invitee}' to #{rname}[/bold]")
                     console.print("  [dim]Share this token:[/dim]")
                     console.print(f"  [#14b8a6]{token}[/#14b8a6]")
                     console.print(f"  [dim]They run: murmur join {token} --name {invitee}[/dim]")
                     console.print()
+                    try:
+                        input("  [Press Enter to return to the hub] ")
+                    except (EOFError, KeyboardInterrupt):
+                        pass
                     state.set_status_bar(f"Token generated for #{rname}")
                 else:
                     state.set_status_bar("No active room. Join one first.")
