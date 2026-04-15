@@ -21,7 +21,6 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 try:
@@ -39,6 +38,8 @@ except ImportError:
     print("rich not installed — pip install rich")
     sys.exit(1)
 
+from quorus.config import ConfigManager, resolve_config_dir
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 # Render cadence — how fast the main loop redraws after input/state change.
 # Keep small so the panel view feels live.
@@ -51,24 +52,7 @@ POLL_S = RENDER_TICK_S
 MAX_MSG = 40
 SSE_RECONNECT_S = 2  # backoff between dropped-stream reconnects
 
-
-def _resolve_config_dir() -> Path:
-    """Honor QUORUS_CONFIG_DIR / MCP_TUNNEL_CONFIG_DIR — same precedence
-    as the CLI's ``_config_dir()`` helper. Without this the TUI silently
-    reads ~/.quorus/config.json regardless of what the calling shell set,
-    which makes multi-profile / teammate testing impossible."""
-    import os as _os
-
-    override = (
-        _os.environ.get("QUORUS_CONFIG_DIR")
-        or _os.environ.get("MCP_TUNNEL_CONFIG_DIR")
-    )
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / ".quorus"
-
-
-CONFIG_DIR = _resolve_config_dir()
+CONFIG_DIR = resolve_config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
 PUBLIC_RELAY = "https://quorus.dev"  # Fallback public relay
@@ -100,38 +84,24 @@ def _sender_color(name: str) -> str:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-def _load_config() -> Optional[dict]:
-    """Return config dict if it exists, else None."""
-    if not CONFIG_FILE.exists():
-        return None
-    try:
-        return json.loads(CONFIG_FILE.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def _write_config(
+def _save_instance_config(
     name: str,
     relay_url: str,
     secret: str = "",
     api_key: str = "",
 ) -> None:
-    CONFIG_DIR.mkdir(exist_ok=True)
-    config = {
-        "relay_url": relay_url.rstrip("/"),
-        "instance_name": name,
-        "relay_secret": secret,
-        "api_key": api_key,
-        "poll_mode": "sse",
-        "push_notification_method": "notifications/claude/channel",
-        "push_notification_channel": "quorus",
-    }
-    # Atomic 0600 write — no TOCTOU window between write and chmod.
-    import os as _os
-    flags = _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC
-    fd = _os.open(str(CONFIG_FILE), flags, 0o600)
-    with _os.fdopen(fd, "w") as f:
-        json.dump(config, f, indent=2)
+    """Persist the TUI's instance config through the shared ConfigManager."""
+    ConfigManager(CONFIG_FILE).save(
+        {
+            "relay_url": relay_url.rstrip("/"),
+            "instance_name": name,
+            "relay_secret": secret,
+            "api_key": api_key,
+            "poll_mode": "sse",
+            "push_notification_method": "notifications/claude/channel",
+            "push_notification_channel": "quorus",
+        }
+    )
 
 
 def _signup(relay_url: str, name: str, workspace: str) -> dict | None:
@@ -407,7 +377,7 @@ def _first_launch_setup(console: Console) -> dict:
         )
 
     # Save config
-    _write_config(name, relay_url, secret=secret, api_key=api_key)
+    _save_instance_config(name, relay_url, secret=secret, api_key=api_key)
 
     if relay_ok:
         console.print()
@@ -1006,7 +976,7 @@ def run_hub() -> None:
     console = Console()
 
     # 1. Load or create config
-    cfg = _load_config()
+    cfg = ConfigManager(CONFIG_FILE).load() or None
     if cfg is None:
         cfg = _first_launch_setup(console)
 
