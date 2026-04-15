@@ -578,6 +578,15 @@ class HubState:
         self.status: str = "Connecting..."
         self.connected: bool = False
         self.status_bar_msg: str = ""
+        self.help_visible: bool = False
+
+    def toggle_help(self) -> None:
+        with self._lock:
+            self.help_visible = not self.help_visible
+
+    def is_help_visible(self) -> bool:
+        with self._lock:
+            return self.help_visible
 
     # Rooms
     def set_rooms(self, rooms: list[dict]) -> None:
@@ -952,22 +961,167 @@ def _render_input_bar(agent_name: str, status_msg: str) -> Panel:
 
 
 def _print_help(console: Console) -> None:
-    """Print plain-English command reference."""
+    """Print the help overlay — keybinds, slash commands, plain-English forms."""
     console.print()
-    console.print("  [bold]Commands[/bold]\n")
+    console.print("  [bold #14b8a6]Keybinds[/]")
+    kb_rows = [
+        ("↑ / ↓", "switch between rooms"),
+        ("Enter", "send the typed message"),
+        ("?", "show/hide this help"),
+        ("Ctrl+C", "quit the hub"),
+    ]
+    for kb, desc in kb_rows:
+        console.print(
+            f"  [bold #a78bfa]{kb:<14}[/]  [dim]{desc}[/]"
+        )
+
+    console.print()
+    console.print("  [bold #14b8a6]Slash commands[/]")
+    for verb, meta in SLASH_COMMANDS.items():
+        console.print(
+            f"  [bold #14b8a6]{verb:<14}[/]  [dim]{meta[0]}[/]"
+        )
+
+    console.print()
+    console.print("  [bold #14b8a6]Plain English[/]  [dim](aliases for slash commands)[/]")
     rows = [
-        ("create <name>", "create a new room"),
-        ("new room called <name>", "same as create"),
-        ("join <room>", "switch to that room"),
-        ("go to <room>", "same as join"),
-        ("invite <name>", "show join token for current room"),
-        ("help", "show this message"),
-        ("quit / exit", "close the hub"),
-        ("<anything else>", "sent as a chat message to the active room"),
+        ("create <name>",            "create a new room"),
+        ("join <room>",              "switch to that room"),
+        ("invite <name>",            "show join token for current room"),
+        ("quit / exit",              "close the hub"),
+        ("<anything else>",          "sent as a chat message to the active room"),
     ]
     for cmd, desc in rows:
-        console.print(f"  [bold #14b8a6]{cmd:<30}[/bold #14b8a6]  [dim]{desc}[/dim]")
+        console.print(
+            f"  [bold #14b8a6]{cmd:<30}[/]  [dim]{desc}[/]"
+        )
     console.print()
+
+
+# ── Slash commands ────────────────────────────────────────────────────────────
+# Single source of truth for the slash-command table. Each entry:
+#   "/verb": (one-line description, handler)
+# Handler signature:
+#   handler(arg, state, relay_url, secret, agent_name, console) -> True | "__QUIT__"
+
+def _slash_help(arg, state, relay_url, secret, agent_name, console):
+    del arg, relay_url, secret, agent_name
+    _print_help(console)
+    return True
+
+
+def _slash_rooms(arg, state, relay_url, secret, agent_name, console):
+    del arg, agent_name
+    rooms = _fetch_rooms(relay_url, secret)
+    if rooms:
+        state.set_rooms(rooms)
+        state.set_status_bar(f"{len(rooms)} room(s) loaded")
+    else:
+        state.set_status_bar("no rooms (or relay unreachable)")
+    return True
+
+
+def _slash_join(arg, state, relay_url, secret, agent_name, console):
+    del console
+    target = arg.strip().lstrip("#")
+    if not target:
+        state.set_status_bar("usage: /join <room>")
+        return True
+    rooms_snap = state.get_rooms()
+    match = next(
+        (r for r in rooms_snap if r.get("name", "").lower() == target.lower()),
+        None,
+    )
+    if not match:
+        state.set_status_bar(f"room '{target}' not found — try /rooms")
+        return True
+    state.select_by_name(match["name"])
+    _join_room(relay_url, secret, match["name"], agent_name)
+    _load_history_into(state, relay_url, secret, match["name"])
+    state.set_status_bar(f"joined #{match['name']}")
+    return True
+
+
+def _slash_create(arg, state, relay_url, secret, agent_name, console):
+    del console
+    name = arg.strip().lstrip("#")
+    if not name or not re.match(r"^[A-Za-z0-9_\-]+$", name):
+        state.set_status_bar("usage: /create <name>  (letters/numbers/- only)")
+        return True
+    status, _room = _create_room(relay_url, secret, name, agent_name)
+    if status == "ok":
+        state.set_status_bar(f"created #{name}")
+        state.set_rooms(_fetch_rooms(relay_url, secret))
+        state.select_by_name(name)
+        _join_room(relay_url, secret, name, agent_name)
+        _load_history_into(state, relay_url, secret, name)
+    else:
+        state.set_status_bar(_create_error_msg(name, status, relay_url))
+    return True
+
+
+def _slash_invite(arg, state, relay_url, secret, agent_name, console):
+    del arg, relay_url, secret, agent_name
+    selected = state.get_selected_room()
+    if not selected:
+        state.set_status_bar("no room selected — use /join <room> first")
+        return True
+    # The existing "invite <name>" regex path does the real token mint. Here
+    # we just nudge the user toward the CLI / existing flow.
+    state.set_status_bar(
+        f"run: quorus share {selected.get('name','')} — "
+        "copies a portable invite token"
+    )
+    return True
+
+
+def _slash_status(arg, state, relay_url, secret, agent_name, console):
+    del arg, secret, agent_name, console
+    connected, label = state.get_connection()
+    state.set_status_bar(
+        f"{'connected' if connected else 'offline'} · {label} · {relay_url}"
+    )
+    return True
+
+
+def _slash_clear(arg, state, relay_url, secret, agent_name, console):
+    del arg, relay_url, secret, agent_name, console
+    state.set_messages([])
+    state.set_status_bar("chat cleared")
+    return True
+
+
+def _slash_quit(arg, state, relay_url, secret, agent_name, console):
+    del arg, state, relay_url, secret, agent_name, console
+    return "__QUIT__"
+
+
+SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
+    "/help":   ("show keybinds + all commands",        _slash_help),
+    "/rooms":  ("refresh the room list",               _slash_rooms),
+    "/join":   ("/join <room> — switch rooms",         _slash_join),
+    "/create": ("/create <name> — make a new room",    _slash_create),
+    "/invite": ("show how to share the current room",  _slash_invite),
+    "/status": ("connection + relay info",             _slash_status),
+    "/clear":  ("clear the chat pane",                 _slash_clear),
+    "/quit":   ("close the hub",                       _slash_quit),
+}
+
+
+def _dispatch_slash(
+    verb: str,
+    arg: str,
+    state: "HubState",
+    relay_url: str,
+    secret: str,
+    agent_name: str,
+    console: "Console",
+):
+    entry = SLASH_COMMANDS.get(verb)
+    if entry is None:
+        return False
+    _desc, handler = entry
+    return handler(arg, state, relay_url, secret, agent_name, console)
 
 
 # ── Main hub loop ─────────────────────────────────────────────────────────────
@@ -1123,9 +1277,29 @@ def run_hub() -> None:
             if cmd_lower in ("quit", "exit", "q"):
                 break
 
-            # help
-            if cmd_lower == "help":
+            # help — plain word or "?" shortcut
+            if cmd_lower in ("help", "?"):
                 _print_help(console)
+                last_render = 0
+                continue
+
+            # Slash-command dispatcher (Discord / Slack style). Runs BEFORE the
+            # plain-English regex block so the two don't fight over short tokens.
+            if cmd.startswith("/"):
+                parts = cmd.split(None, 1)
+                verb = parts[0].lower()
+                arg = parts[1] if len(parts) > 1 else ""
+                handled = _dispatch_slash(
+                    verb, arg, state, relay_url, secret, agent_name, console,
+                )
+                if handled == "__QUIT__":
+                    break
+                if handled:
+                    last_render = 0
+                    continue
+                state.set_status_bar(
+                    f"unknown command: {verb} — try /help"
+                )
                 last_render = 0
                 continue
 

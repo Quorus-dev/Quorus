@@ -672,11 +672,15 @@ from quorus.admin.routes import router as admin_router  # noqa: E402
 from quorus.auth.routes import router as auth_router  # noqa: E402
 from quorus.dashboard import router as dashboard_router  # noqa: E402
 from quorus.routes import router as relay_router  # noqa: E402
+from quorus.routes.admin_dashboard import router as admin_dashboard_router  # noqa: E402
+from quorus.routes.admin_metrics import router as admin_metrics_router  # noqa: E402
 
 app.include_router(relay_router)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(dashboard_router)
+app.include_router(admin_metrics_router)
+app.include_router(admin_dashboard_router)
 
 
 # ---------------------------------------------------------------------------

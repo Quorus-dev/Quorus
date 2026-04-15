@@ -2048,6 +2048,156 @@ def _cmd_usage(args):
     asyncio.run(_usage())
 
 
+async def _stats(days: int, emit_json: bool) -> None:
+    """Hit /admin/metrics and render a founder-facing dashboard."""
+    from quorus_cli import ui
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{RELAY_URL}/admin/metrics",
+                headers=_auth_headers(),
+                params={"days": days},
+            )
+    except httpx.ConnectError:
+        ui.error_with_retry("Can't reach the relay", relay_url=RELAY_URL)
+        sys.exit(2)
+
+    if r.status_code in (401, 403):
+        ui.error(
+            "Admin-only endpoint",
+            hint="this command needs RELAY_SECRET or an admin API key",
+        )
+        sys.exit(3)
+    try:
+        r.raise_for_status()
+    except httpx.HTTPStatusError:
+        ui.error_with_retry(
+            f"Server returned HTTP {r.status_code}", relay_url=RELAY_URL,
+        )
+        sys.exit(1)
+
+    data = r.json()
+    if emit_json:
+        console.print(json.dumps(data, indent=2))
+        return
+
+    ui.banner()
+    ui.heading("relay analytics")
+
+    mode = data.get("mode", "limited")
+    if mode == "limited":
+        ui.warn(
+            "Postgres not configured — running in limited mode",
+            hint="workspace / DAU / WAU / MAU will show as '—'",
+        )
+        console.print()
+
+    # Headline cards — 4 columns via a single-row Rich Table
+    from rich.table import Table
+    headline = Table.grid(padding=(0, 2), expand=True)
+    for _ in range(4):
+        headline.add_column(justify="left")
+    ws = data.get("total_workspaces")
+    ws_str = f"{ws:,}" if isinstance(ws, int) else "—"
+    au = data.get("active_users") or {}
+    headline.add_row(
+        _stat_cell("workspaces", ws_str),
+        _stat_cell("DAU", _fmt_count(au.get("dau"))),
+        _stat_cell("WAU", _fmt_count(au.get("wau"))),
+        _stat_cell("MAU", _fmt_count(au.get("mau"))),
+    )
+    console.print(headline)
+
+    # Messages sparkline
+    messages = data.get("messages") or {}
+    per_day = messages.get("per_day") or []
+    total_30d = messages.get("total_30d") or 0
+    console.print()
+    console.print(
+        f"  [muted]messages · last {days} days[/]   "
+        f"[bold]{total_30d:,}[/]"
+    )
+    console.print(f"  {_ascii_sparkline(per_day)}")
+
+    # Top workspaces
+    top = data.get("top_workspaces") or []
+    if top:
+        console.print()
+        table = Table(
+            title="[heading]top workspaces · 30d[/]",
+            title_justify="left",
+            border_style="dim",
+            show_header=True,
+            header_style="muted",
+        )
+        table.add_column("slug", style="primary")
+        table.add_column("name")
+        table.add_column("msgs", justify="right")
+        table.add_column("last active", justify="right", style="muted")
+        for row in top:
+            table.add_row(
+                row.get("slug", "—"),
+                row.get("display_name") or "—",
+                f"{int(row.get('msgs_30d', 0)):,}",
+                _humanize_last_active(row.get("last_active_at")),
+            )
+        console.print(table)
+
+    ui.footer(f"Dashboard: {RELAY_URL}/admin/dashboard")
+
+
+def _stat_cell(label: str, value: str) -> str:
+    return (
+        f"[muted]{label}[/]\n"
+        f"[bold]{value}[/]"
+    )
+
+
+def _fmt_count(n) -> str:
+    if n is None:
+        return "—"
+    return f"{int(n):,}"
+
+
+def _ascii_sparkline(per_day: list[dict]) -> str:
+    if not per_day:
+        return "[dim]no data yet[/]"
+    counts = [int(item.get("count", 0)) for item in per_day]
+    max_c = max(counts) or 1
+    bars = " ▁▂▃▄▅▆▇█"
+    out = "".join(
+        bars[min(len(bars) - 1, int((c / max_c) * (len(bars) - 1)))]
+        for c in counts
+    )
+    return f"[accent]{out}[/]"
+
+
+def _humanize_last_active(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    try:
+        from datetime import datetime, timezone
+
+        ts = iso.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        delta = datetime.now(timezone.utc) - dt
+        secs = int(delta.total_seconds())
+    except (ValueError, TypeError):
+        return "—"
+    if secs < 60:
+        return "just now"
+    if secs < 3600:
+        return f"{secs // 60}m ago"
+    if secs < 86400:
+        return f"{secs // 3600}h ago"
+    return f"{secs // 86400}d ago"
+
+
+def _cmd_stats(args):
+    asyncio.run(_stats(days=args.days, emit_json=args.json))
+
+
 def _cmd_init(args):
     """One-command setup: write config, auto-register MCP with every installed
     MCP-compatible client (Claude Code, Claude Desktop, Cursor, Windsurf,
@@ -4481,6 +4631,7 @@ def _print_grouped_help():
             ("logs",               "Per-participant activity log"),
             ("metrics <room>",     "Room activity analytics"),
             ("usage",              "Tenant-wide usage metrics"),
+            ("stats",              "Admin analytics (signups, DAU, top workspaces)"),
             ("export <room>",      "Export room history (json/md)"),
             ("kick <room> <who>",  "Remove a member from a room"),
             ("rename <room> <new>","Rename a room"),
@@ -4519,7 +4670,50 @@ def main():
     )
     sub = parser.add_subparsers(dest="command")
 
-    p_init = sub.add_parser("init", help="One-command setup")
+    # ── Help block template — used on the high-traffic commands so each one's
+    # `--help` shows a synopsis, a description, an example, and the exit
+    # codes the script can return. Others fall back to plain argparse text.
+    from argparse import RawDescriptionHelpFormatter
+
+    _EXIT_CODES = {
+        0: "success",
+        1: "generic error",
+        2: "relay unreachable",
+        3: "auth failure",
+        4: "not found",
+        5: "validation error",
+    }
+
+    def _help_block(
+        synopsis: str,
+        description: str,
+        example: str,
+        help_text: str | None = None,
+    ) -> dict:
+        epilog = (
+            f"Example:\n  {example}\n\n"
+            + "Exit codes:\n"
+            + "\n".join(f"  {c}  {d}" for c, d in _EXIT_CODES.items())
+        )
+        return {
+            "help": help_text or synopsis,
+            "description": f"{synopsis}\n\n{description}",
+            "epilog": epilog,
+            "formatter_class": RawDescriptionHelpFormatter,
+        }
+
+    p_init = sub.add_parser("init", **_help_block(
+        synopsis="One-command setup — writes config and registers MCP.",
+        description=(
+            "Writes ~/.quorus/config.json (0600), then auto-registers the "
+            "Quorus MCP server with every installed MCP-compatible client "
+            "(Claude Code, Claude Desktop, Cursor, Windsurf, Gemini CLI, "
+            "Opencode). For OpenAI Codex or other HTTP agents, use "
+            "`quorus connect` after init."
+        ),
+        example="quorus init alice --secret dev",
+        help_text="One-command setup (name + relay + secret)",
+    ))
     p_init.add_argument("name", help="Your participant name")
     p_init.add_argument("--relay-url", default="http://localhost:8080", help="Relay URL")
     p_init.add_argument(
@@ -4531,12 +4725,37 @@ def main():
     p_init_auth.add_argument("--secret", help="Shared secret (legacy auth)")
     p_init_auth.add_argument("--api-key", help="API key (production auth)")
 
-    p_relay = sub.add_parser("relay", help="Start the relay server")
+    p_relay = sub.add_parser("relay", **_help_block(
+        synopsis="Start the Quorus relay server locally.",
+        description=(
+            "Boots a FastAPI relay on the chosen port. Reads RELAY_SECRET "
+            "from your quorus config first, then from the environment. "
+            "Intended for local development and self-hosted deployments."
+        ),
+        example="quorus relay --port 8080",
+        help_text="Start the relay server locally",
+    ))
     p_relay.add_argument("--port", type=int, default=8080, help="Port")
 
-    sub.add_parser("rooms", help="List all rooms")
+    sub.add_parser("rooms", **_help_block(
+        synopsis="List all rooms visible to your account.",
+        description=(
+            "Admins see every room on the relay. Regular users see only "
+            "rooms they are a member of."
+        ),
+        example="quorus rooms",
+        help_text="List all rooms",
+    ))
 
-    p_create = sub.add_parser("create", help="Create a room")
+    p_create = sub.add_parser("create", **_help_block(
+        synopsis="Create a new coordination room.",
+        description=(
+            "Rooms are the unit of isolation — each one has its own members, "
+            "message history, and shared state (tasks, locks, decisions)."
+        ),
+        example="quorus create design-review",
+        help_text="Create a room",
+    ))
     p_create.add_argument("name", help="Room name")
 
     p_invite = sub.add_parser(
@@ -4550,7 +4769,15 @@ def main():
     p_members = sub.add_parser("members", help="List room members")
     p_members.add_argument("room", help="Room name")
 
-    p_say = sub.add_parser("say", help="Send message to a room")
+    p_say = sub.add_parser("say", **_help_block(
+        synopsis="Send a message to a room.",
+        description=(
+            "The message fans out to every member of the room in real time "
+            "via SSE and is appended to room history."
+        ),
+        example='quorus say dev "shipping today"',
+        help_text="Send message to a room",
+    ))
     p_say.add_argument("room", help="Room name")
     p_say.add_argument("message", help="Message content")
 
@@ -4619,10 +4846,27 @@ def main():
         help="Max messages to export (default 1000)"
     )
 
-    sub.add_parser("ps", help="Show agent presence (online/offline)")
+    sub.add_parser("ps", **_help_block(
+        synopsis="Show which agents are online right now.",
+        description=(
+            "Lists every agent the relay has seen recently, with last-seen "
+            "timestamp and current status (online / idle / offline)."
+        ),
+        example="quorus ps",
+        help_text="Show agent presence (online/offline)",
+    ))
     sub.add_parser("status", help="Show relay health and stats")
 
-    p_doctor = sub.add_parser("doctor", help="Diagnose setup issues")
+    p_doctor = sub.add_parser("doctor", **_help_block(
+        synopsis="Diagnose your Quorus setup.",
+        description=(
+            "Walks every required check (config present, relay reachable, "
+            "auth working, MCP server registered, rooms visible) and "
+            "prints a green/red matrix. Use --verbose for the full detail."
+        ),
+        example="quorus doctor -v",
+        help_text="Diagnose setup issues",
+    ))
     p_doctor.add_argument("--verbose", "-v", action="store_true", help="Show extra details")
     sub.add_parser("version", help="Show quorus-ai version")
     sub.add_parser("logs", help="Show relay activity and per-participant stats")
@@ -4684,6 +4928,26 @@ def main():
 
     sub.add_parser("usage", help="Show global relay usage stats")
 
+    p_stats = sub.add_parser("stats", **_help_block(
+        synopsis="Relay-wide admin analytics.",
+        description=(
+            "Signups, DAU/WAU/MAU, messages per day, and the top 10 "
+            "workspaces by 30-day message volume. Admin-only — requires "
+            "RELAY_SECRET or an admin API key. Also available as a web "
+            "dashboard at {RELAY_URL}/admin/dashboard."
+        ),
+        example="quorus stats --days 7",
+        help_text="Admin-only global analytics",
+    ))
+    p_stats.add_argument(
+        "--days", type=int, default=30,
+        help="Window for per-day messages (1-90, default 30)",
+    )
+    p_stats.add_argument(
+        "--json", action="store_true",
+        help="Emit raw JSON instead of rendered output",
+    )
+
     p_join = sub.add_parser(
         "join",
         help="Join a room — pass a quorus_join_ (or legacy murm_join_) token or explicit flags",
@@ -4707,13 +4971,29 @@ def main():
     )
     p_invite_token.add_argument("room", help="Room name")
 
-    p_share = sub.add_parser("share", help="Generate a portable join token for a room")
+    p_share = sub.add_parser("share", **_help_block(
+        synopsis="Generate a portable invite token for a room.",
+        description=(
+            "Produces a `quorus://…` token that encodes the relay URL, "
+            "room name, and credentials. Share the token; teammates run "
+            "`quorus quickjoin` and agents run `quorus connect`."
+        ),
+        example="quorus share design-review --ttl 7",
+        help_text="Generate a portable join token for a room",
+    ))
     p_share.add_argument("room", help="Room name")
     p_share.add_argument("--ttl", type=int, default=7, help="Token expiry in days (default: 7)")
 
-    p_quickjoin = sub.add_parser(
-        "quickjoin", help="Join a room using a portable token (zero config)"
-    )
+    p_quickjoin = sub.add_parser("quickjoin", **_help_block(
+        synopsis="Join a room from a portable `quorus://` token.",
+        description=(
+            "Zero-config onboarding for teammates. Decodes the token, "
+            "writes local config, registers the MCP server with every "
+            "installed client, and joins the room as the given name."
+        ),
+        example="quorus quickjoin quorus://… --name bob",
+        help_text="Join a room using a portable token (zero config)",
+    ))
     p_quickjoin.add_argument("token", help="Join token (quorus://...)")
     p_quickjoin.add_argument("--name", required=True, help="Your participant name")
 
@@ -4820,7 +5100,15 @@ def main():
         "decision", nargs=argparse.REMAINDER, help="Decision text"
     )
 
-    sub.add_parser("begin", help="Open the Quorus hub (interactive TUI)")
+    sub.add_parser("begin", **_help_block(
+        synopsis="Open the interactive Quorus TUI.",
+        description=(
+            "Full-screen hub with rooms, live chat via SSE, and slash "
+            "commands. Identical to running `quorus` with no subcommand."
+        ),
+        example="quorus begin",
+        help_text="Open the Quorus hub (interactive TUI)",
+    ))
 
     args = parser.parse_args()
     if not args.command:
@@ -4869,6 +5157,7 @@ def main():
         "state": _cmd_room_state,
         "locks": _cmd_room_locks,
         "usage": _cmd_usage,
+        "stats": _cmd_stats,
         "brief": _cmd_brief,
         "board": _cmd_board,
         "setup-swarm": _cmd_setup_swarm,
