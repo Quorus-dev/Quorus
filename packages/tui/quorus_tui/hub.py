@@ -31,7 +31,6 @@ except ImportError:
 
 try:
     from rich.console import Console
-    from rich.panel import Panel
     from rich.prompt import Prompt
     from rich.text import Text
 except ImportError:
@@ -63,29 +62,23 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
 PUBLIC_RELAY = "https://quorus.dev"  # Fallback public relay
 
-# Accent palette for senders — teal/amber/purple only, matches ui.py spec
-_ACCENT_COLORS = [
-    "#14b8a6",  # teal (primary)
-    "#a78bfa",  # purple (agent)
-    "#fbbf24",  # amber (room)
-    "#2dd4bf",  # teal-light
-    "#5eead4",  # mint
-    "#f59e0b",  # warning amber
-    "#10b981",  # success
-    "#0d9488",  # teal-deep
-]
-_sender_color_cache: dict[str, str] = {}
-_color_index = 0
-_color_lock = threading.Lock()
+# Sender palette — the 3 semantic colors from ui.py, nothing else.
+# Names hash deterministically so the same sender is always the same
+# color across runs. `agent` (purple) is reserved for the viewer's own
+# messages, so senders cycle over the remaining two.
+_SENDER_COLORS = ("primary", "room", "accent")
 
 
 def _sender_color(name: str) -> str:
-    global _color_index
-    with _color_lock:
-        if name not in _sender_color_cache:
-            _sender_color_cache[name] = _ACCENT_COLORS[_color_index % len(_ACCENT_COLORS)]
-            _color_index += 1
-    return _sender_color_cache[name]
+    """Deterministic sender → theme-token color. Same input always
+    yields the same output — no global cycling state, no collisions
+    across restarts. Uses a stable hash (not Python's PYTHONHASHSEED-
+    salted built-in) so `@arav` is the same color for everyone."""
+    import hashlib as _h
+
+    digest = _h.blake2s(name.encode("utf-8"), digest_size=2).digest()
+    bucket = int.from_bytes(digest, "big") % len(_SENDER_COLORS)
+    return _SENDER_COLORS[bucket]
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -851,139 +844,146 @@ def _sse_loop(
 
 
 # ── Renderers ─────────────────────────────────────────────────────────────────
+# Flat, borderless layout. No Panels. Color + indentation carry the
+# hierarchy. Each renderer returns a `ConsoleRenderable` that the main
+# loop prints directly.
 
-def _render_header(relay_url: str, agent_name: str, connected: bool, status: str) -> Panel:
+
+def _render_header(
+    relay_url: str, agent_name: str, connected: bool, status: str,
+) -> Text:
+    """One-line header: `quorus · @name · host · ⏵ status`.
+
+    No panel, no border — a `Rule(style="dim")` is printed beneath it
+    by the main loop for the only piece of structure this view needs.
+    """
+    from rich.text import Text as _Text
+
+    display_relay = (
+        relay_url.replace("http://", "").replace("https://", "")
+    )
     dot_style = "bold success" if connected else "bold error"
-    # Strip protocol for display brevity
-    display_relay = relay_url.replace("http://", "").replace("https://", "")
-    header_text = Text()
-    header_text.append("  quorus", style="bold primary")
-    header_text.append("  ·  ", style="dim")
-    # Agent name always in purple (#a78bfa) with @ prefix — matches ui.fmt_agent()
-    header_text.append(f"@{agent_name}", style="bold agent")
-    header_text.append("  ·  ", style="dim")
-    header_text.append(display_relay, style="muted")
-    header_text.append("   ", style="muted")
-    # Always ⏵ — color conveys state (green when connected, red when offline)
-    header_text.append("⏵", style=dot_style)
-    header_text.append(f" {status}" if status else "", style="muted")
-    return Panel(header_text, border_style="primary", padding=(0, 1))
+    header = _Text()
+    header.append("  quorus", style="bold primary")
+    header.append("  ·  ", style="dim")
+    header.append(f"@{agent_name}", style="bold agent")
+    header.append("  ·  ", style="dim")
+    header.append(display_relay, style="muted")
+    header.append("  ", style="muted")
+    header.append("⏵", style=dot_style)
+    if status:
+        header.append(f" {status}", style="muted")
+    return header
 
 
-def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
+def _render_room_strip(rooms: list[dict], selected_idx: int) -> Text:
+    """Inline horizontal room strip: `  #dev · #design · #ops`.
+
+    Active room in bold amber, others in dim. Middle-dot divider.
+    Empty state lives on its own line so the layout never collapses
+    vertically below this anchor.
+    """
+    strip = Text()
     if not rooms:
-        return Panel(
-            Text.from_markup(
-                "  [dim]No rooms yet. Press [bold]n[/bold] to create one.[/dim]"
-            ),
-            title="[bold]Rooms[/bold]",
-            border_style="dim",
+        strip.append(
+            "  · no rooms yet · press [bold]n[/] to create one ·",
+        )
+        return Text.from_markup(
+            "  [dim]· no rooms yet · press [bold]n[/] to create one ·[/]"
         )
 
-    t = Text()
+    strip.append("  ", style="")
     for i, room in enumerate(rooms):
         name = room.get("name") or room.get("id", "?")
-        members = room.get("members", [])
-        member_count = len(members) if isinstance(members, list) else members
-
         is_selected = i == selected_idx
         if is_selected:
-            t.append(" ❯ ", style="bold primary")
-            t.append(f"#{name}", style="bold room")
-            t.append(f"  {member_count} agents", style="muted")
+            strip.append(f"#{name}", style="bold room")
         else:
-            t.append("   ", style="")
-            t.append(f"#{name}", style="room")  # dim amber, always
-            t.append(f"  {member_count} agents", style="dim")
-        t.append("\n")
-
-    return Panel(
-        t,
-        title="[bold primary]Rooms[/]",
-        border_style="dim",
-        padding=(0, 1),
-        subtitle="[dim]↑↓ switch · n new[/]",
-    )
+            strip.append(f"#{name}", style="dim")
+        if i < len(rooms) - 1:
+            strip.append("  ·  ", style="dim")
+    return strip
 
 
-def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
-    # No-room state — render honestly instead of faking a "#general" title.
+def _format_message_line(msg: dict, my_name: str) -> Text:
+    """Render one chat line as bare indented text.
+
+    Format: `  [HH:MM]  @sender  content`. Own messages use the agent
+    (purple) color for the name; others hash into 3 theme colors.
+    """
+    sender = msg.get("from_name") or msg.get("sender", "?")
+    content = msg.get("content", "")
+    ts_raw = msg.get("timestamp", "")
+    mtype = msg.get("message_type", "chat")
+
+    try:
+        # Expect ISO 8601; take HH:MM directly.
+        hhmm = ts_raw[11:16] if len(ts_raw) >= 16 else ts_raw[:5]
+    except Exception:
+        hhmm = "??:??"
+
+    is_me = sender == my_name
+    sender_color = "agent" if is_me else _sender_color(sender)
+
+    line = Text()
+    line.append("  ", style="")
+    line.append(f"[{hhmm}]", style="dim")
+    line.append("  ", style="")
+    line.append(f"@{sender}", style=f"bold {sender_color}")
+    if mtype not in ("chat", ""):
+        line.append(f" [{mtype}]", style="muted italic")
+    line.append("  ", style="")
+    line.append(content, style="white" if is_me else "muted")
+    return line
+
+
+def _render_chat_feed(
+    messages: list[dict], room_name: str, my_name: str,
+) -> list[Text]:
+    """Flat message feed — returns a list of lines for the main loop to
+    print in order. No Panel, no border.
+
+    Empty states (no room / no messages in room) return 1-3 muted hint
+    lines centered in the feed column.
+    """
     if not room_name:
-        no_room = Text.from_markup(
-            "\n  [dim]No room yet. Type [bold]/create <name>[/] "
-            "or press [bold]n[/] to make one.[/]"
-        )
-        return Panel(
-            no_room,
-            title="[dim]no room[/]",
-            border_style="dim",
-            padding=(0, 1),
-        )
+        return [
+            Text.from_markup(
+                "  [dim]·[/]  [dim]no room yet[/]  [dim]·[/]"
+            ),
+            Text.from_markup(
+                "  [dim]press[/] [bold]n[/] [dim]or type[/] "
+                "[accent]/create <name>[/]"
+            ),
+        ]
     if not messages:
-        no_msg = Text.from_markup(
-            f"\n  [dim]No messages in #{room_name} yet. Say something![/dim]"
-        )
-        return Panel(
-            no_msg,
-            title=f"[bold]#{room_name}[/bold]",
-            border_style="primary",
-            padding=(0, 1),
-        )
-
-    lines = Text()
-    for msg in messages:
-        sender = msg.get("from_name") or msg.get("sender", "?")
-        content = msg.get("content", "")
-        ts_raw = msg.get("timestamp", "")
-        mtype = msg.get("message_type", "chat")
-
-        try:
-            ts = ts_raw[:16].replace("T", " ")
-        except Exception:
-            ts = "??:??"
-
-        lines.append(f"[{ts}] ", style="dim")
-
-        is_me = sender == my_name
-        # @sender in purple for you, sender's accent for others — always @-prefixed
-        sender_color = "agent" if is_me else _sender_color(sender)
-        lines.append(f"@{sender}", style=f"bold {sender_color}")
-
-        if mtype not in ("chat", ""):
-            lines.append(f" [{mtype}]", style="muted italic")
-
-        lines.append(": ", style="muted")
-        # Message body: bright for you, regular for others — no bright_white/grey15
-        lines.append(content + "\n", style="#f0ede8" if is_me else "#cbd5e1")
-
-    return Panel(
-        lines,
-        title=f"[bold]#{room_name}[/bold]",
-        border_style="primary",
-        padding=(0, 1),
-        subtitle="[dim]Enter send  Ctrl+C quit[/dim]",
-    )
+        return [
+            Text.from_markup(
+                f"  [dim]·[/]  [dim]no messages in[/] [bold room]#{room_name}[/] "
+                "[dim]yet[/]  [dim]·[/]"
+            ),
+            Text.from_markup("  [dim]say something to get the room started.[/]"),
+        ]
+    return [_format_message_line(m, my_name) for m in messages]
 
 
-def _render_input_bar(agent_name: str, status_msg: str) -> Panel:
-    content = Text()
-    content.append("❯ ", style="bold primary")
-    if status_msg:
-        # Color by message type: errors red, success green, else amber (info)
-        lower = status_msg.lower()
-        if any(w in lower for w in ("error", "failed", "couldn't", "can't")):
-            style = "error"
-        elif any(w in lower for w in ("joined", "created", "sent", "ok")):
-            style = "success"
-        else:
-            style = "warning italic"
-        content.append(status_msg, style=style)
+def _render_status_line(status_msg: str) -> Text | None:
+    """Transient status line that appears ABOVE the prompt on the last
+    redraw. Returns None if there's nothing to show (so the main loop
+    can skip printing a blank line)."""
+    if not status_msg:
+        return None
+    lower = status_msg.lower()
+    if any(w in lower for w in ("error", "failed", "couldn't", "can't")):
+        style = "error"
+    elif any(w in lower for w in ("joined", "created", "sent", "ok")):
+        style = "success"
     else:
-        content.append(
-            "type a message · /help for commands · ctrl+c to quit",
-            style="dim",
-        )
-    return Panel(content, border_style="primary", padding=(0, 1))
+        style = "muted italic"
+    line = Text()
+    line.append("  · ", style="dim")
+    line.append(status_msg, style=style)
+    return line
 
 
 def _print_help(console: Console) -> None:
@@ -1253,25 +1253,35 @@ def run_hub() -> None:
                 msgs_snap = state.get_messages()
                 status_bar = state.get_status_bar()
 
-                console.clear()
-                console.print(_render_header(relay_url, agent_name, connected, conn_status))
-                console.print()
+                from rich.rule import Rule as _Rule
 
-                # Side-by-side: rooms (left) and chat (right) — approximated with stacked layout
-                # Rich Layout requires Live; in non-Live mode we stack vertically for compatibility
-                # with wide terminals we use a simple two-column trick via columns
                 selected_idx: int
                 with state._lock:
                     selected_idx = state.selected_room_idx
 
-                console.print(_render_room_list(rooms_snap, selected_idx))
+                console.clear()
+                # Header row + single hairline rule. No border box.
+                console.print(
+                    _render_header(relay_url, agent_name, connected, conn_status)
+                )
+                console.print(_Rule(style="dim"))
+                # Inline room strip (horizontal, not a sidebar).
+                console.print(_render_room_strip(rooms_snap, selected_idx))
                 console.print()
-                console.print(_render_chat(msgs_snap, room_name, agent_name))
+                # Flat chat feed — one line per message, no panel.
+                for feed_line in _render_chat_feed(
+                    msgs_snap, room_name, agent_name,
+                ):
+                    console.print(feed_line)
                 console.print()
-                console.print(_render_input_bar(agent_name, status_bar))
+                # Transient status line (if any) above the bare prompt.
+                status_line = _render_status_line(status_bar)
+                if status_line is not None:
+                    console.print(status_line)
                 last_render = now
 
-            # Prompt for input
+            # Bare prompt — no panel, no border. Color from the primary
+            # theme token so it matches the rest of the TUI.
             try:
                 line = input("❯ ").strip()
             except (EOFError, KeyboardInterrupt):
