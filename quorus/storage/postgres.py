@@ -7,10 +7,21 @@ import re
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 _engine = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+
+# Workaround for SQLAlchemy asyncpg dialect bug: it passes 'channel_binding'
+# directly to asyncpg.connect() which doesn't accept it as a keyword argument.
+_FILTERED_CONNECT_ARGS = {"channel_binding"}
+
+
+def _filter_connect_args(dialect, conn_rec, cargs, cparams):
+    """Remove unsupported connect args that SQLAlchemy's asyncpg dialect adds."""
+    for key in _FILTERED_CONNECT_ARGS:
+        cparams.pop(key, None)
 
 
 def normalize_database_url(url: str) -> str:
@@ -61,6 +72,8 @@ async def init_engine(database_url: str | None = None) -> None:
         pool_pre_ping=True,
         echo=os.environ.get("SQL_ECHO", "").lower() in ("1", "true"),
     )
+    # Filter out channel_binding before asyncpg.connect() is called
+    event.listen(_engine.sync_engine, "do_connect", _filter_connect_args)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
 

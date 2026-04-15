@@ -4,8 +4,8 @@ import asyncio
 import os
 
 from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy import event, pool
+from sqlalchemy.ext.asyncio import create_async_engine
 
 # Import every ORM module so its tables register on Base.metadata.
 # Required for Alembic autogenerate to see the full schema; runtime
@@ -17,6 +17,10 @@ from quorus.storage.base import Base
 from quorus.storage.postgres import normalize_database_url
 
 target_metadata = Base.metadata
+
+# Workaround for SQLAlchemy asyncpg dialect bug: it passes 'channel_binding'
+# directly to asyncpg.connect() which doesn't accept it as a keyword argument.
+_FILTERED_CONNECT_ARGS = {"channel_binding"}
 
 
 def get_url() -> str:
@@ -44,16 +48,20 @@ def do_run_migrations(connection) -> None:
         context.run_migrations()
 
 
+def _filter_connect_args(dialect, conn_rec, cargs, cparams):
+    """Remove unsupported connect args that SQLAlchemy's asyncpg dialect adds."""
+    for key in _FILTERED_CONNECT_ARGS:
+        cparams.pop(key, None)
+
+
 async def run_async_migrations() -> None:
     """Run migrations in 'online' mode with an async engine."""
-    config_section = context.config.get_section(context.config.config_ini_section, {})
-    config_section["sqlalchemy.url"] = get_url()
+    url = get_url()
 
-    connectable = async_engine_from_config(
-        config_section,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = create_async_engine(url, poolclass=pool.NullPool)
+
+    # Filter out channel_binding before asyncpg.connect() is called
+    event.listen(connectable.sync_engine, "do_connect", _filter_connect_args)
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
