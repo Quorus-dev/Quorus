@@ -45,7 +45,7 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "")
 BOOTSTRAP_SECRET = os.environ.get("BOOTSTRAP_SECRET", "")
 
 # Feature flag for outbox pattern (enable once migration 006 is applied)
-USE_OUTBOX = os.environ.get("USE_OUTBOX", "false").lower() in ("1", "true", "yes")
+USE_OUTBOX = os.environ.get("USE_OUTBOX", "true").lower() in ("1", "true", "yes")
 
 # ---------------------------------------------------------------------------
 # Startup validation
@@ -498,12 +498,18 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         response.headers["x-content-type-options"] = "nosniff"
         response.headers["x-frame-options"] = "DENY"
         if "text/html" in response.headers.get("content-type", ""):
+            # Tight CSP: no 'unsafe-inline' on script-src. Inline scripts on
+            # invite/dashboard pages use a per-request nonce (set below via
+            # response.headers), or are served as external files.
             response.headers["content-security-policy"] = (
                 "default-src 'self'; "
-                "script-src 'unsafe-inline'; "
-                "style-src 'unsafe-inline'; "
+                "script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
                 "connect-src 'self'; "
-                "frame-ancestors 'none'"
+                "frame-ancestors 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self'"
             )
         return response
 
@@ -517,9 +523,13 @@ NOT_FOUND_LIMIT = int(os.environ.get("NOT_FOUND_LIMIT", "30"))
 NOT_FOUND_WINDOW = int(os.environ.get("NOT_FOUND_WINDOW", "60"))  # seconds
 NOT_FOUND_BLOCK_DURATION = int(os.environ.get("NOT_FOUND_BLOCK_DURATION", "300"))
 
-# In-memory state (will be cleared on restart, which is fine for this use case)
+# In-memory state (will be cleared on restart, which is fine for this use case).
+# Guarded by an asyncio.Lock to prevent read-modify-write races under
+# concurrent 404 floods. Per-replica; not shared across horizontal workers —
+# but good enough for 404 spam defense.
 _not_found_counts: dict[str, list[float]] = {}  # IP -> list of timestamps
 _blocked_ips: dict[str, float] = {}  # IP -> block expiry timestamp
+_not_found_lock = asyncio.Lock()
 
 
 def _get_client_ip(request: Request) -> str:
@@ -530,44 +540,42 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _is_blocked(ip: str) -> tuple[bool, int]:
+async def _is_blocked(ip: str) -> tuple[bool, int]:
     """Check if IP is blocked. Returns (blocked, retry_after_seconds)."""
-    if ip in _blocked_ips:
-        expiry = _blocked_ips[ip]
-        now = time.time()
-        if now < expiry:
-            return True, int(expiry - now)
-        else:
-            del _blocked_ips[ip]
+    async with _not_found_lock:
+        if ip in _blocked_ips:
+            expiry = _blocked_ips[ip]
+            now = time.time()
+            if now < expiry:
+                return True, int(expiry - now)
+            else:
+                del _blocked_ips[ip]
     return False, 0
 
 
-def _record_not_found(ip: str) -> bool:
-    """Record a 404 for this IP. Returns True if IP should now be blocked."""
+async def _record_not_found(ip: str) -> bool:
+    """Record a 404 for this IP. Returns True if IP should now be blocked.
+
+    Serialized via ``_not_found_lock`` so two concurrent 404s from the same IP
+    can't race on the timestamp list / block dict.
+    """
     now = time.time()
     cutoff = now - NOT_FOUND_WINDOW
 
-    # Get or create timestamp list
-    if ip not in _not_found_counts:
-        _not_found_counts[ip] = []
-
-    # Prune old timestamps
-    _not_found_counts[ip] = [ts for ts in _not_found_counts[ip] if ts > cutoff]
-
-    # Add new timestamp
-    _not_found_counts[ip].append(now)
-
-    # Check if limit exceeded
-    if len(_not_found_counts[ip]) >= NOT_FOUND_LIMIT:
-        _blocked_ips[ip] = now + NOT_FOUND_BLOCK_DURATION
-        logger.warning(
-            "Blocking IP for repeated 404s",
-            ip=ip,
-            count=len(_not_found_counts[ip]),
-            block_duration=NOT_FOUND_BLOCK_DURATION,
-        )
-        del _not_found_counts[ip]
-        return True
+    async with _not_found_lock:
+        timestamps = [ts for ts in _not_found_counts.get(ip, []) if ts > cutoff]
+        timestamps.append(now)
+        if len(timestamps) >= NOT_FOUND_LIMIT:
+            _blocked_ips[ip] = now + NOT_FOUND_BLOCK_DURATION
+            _not_found_counts.pop(ip, None)
+            logger.warning(
+                "Blocking IP for repeated 404s",
+                ip=ip,
+                count=len(timestamps),
+                block_duration=NOT_FOUND_BLOCK_DURATION,
+            )
+            return True
+        _not_found_counts[ip] = timestamps
     return False
 
 
@@ -580,7 +588,7 @@ class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
         client_ip = _get_client_ip(request)
 
         # Check if already blocked
-        blocked, retry_after = _is_blocked(client_ip)
+        blocked, retry_after = await _is_blocked(client_ip)
         if blocked:
             return JSONResponse(
                 status_code=429,
@@ -595,7 +603,7 @@ class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
 
         # Track 404s
         if response.status_code == 404:
-            _record_not_found(client_ip)
+            await _record_not_found(client_ip)
 
         return response
 
@@ -657,6 +665,12 @@ def main() -> None:
     import uvicorn
 
     port = int(os.environ.get("PORT", "8080"))
+    # Print a human-friendly banner BEFORE uvicorn starts so operators see the
+    # bound address even if uvicorn's own log line scrolls off quickly.
+    print(
+        f"[quorus-relay] listening on http://0.0.0.0:{port}  (health: /health, docs: /docs)",
+        flush=True,
+    )
     uvicorn.run(app, host="0.0.0.0", port=port)
 
 

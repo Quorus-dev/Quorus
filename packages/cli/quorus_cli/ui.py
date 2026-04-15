@@ -45,7 +45,14 @@ THEME = Theme(
     }
 )
 
-console = Console(theme=THEME, highlight=False)
+def _no_color() -> bool:
+    """Honor the NO_COLOR spec (https://no-color.org/)."""
+    import os
+
+    return bool(os.environ.get("NO_COLOR")) or os.environ.get("TERM") == "dumb"
+
+
+console = Console(theme=THEME, highlight=False, no_color=_no_color())
 
 # ── Icons ────────────────────────────────────────────────────────────────────
 ICON_OK = "✓"

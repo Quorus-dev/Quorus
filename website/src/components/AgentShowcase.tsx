@@ -98,6 +98,7 @@ function CLICard({ demo, index }: { demo: CLIDemo; index: number }) {
               alt={`${demo.name} demo`}
               className="w-full h-full object-cover object-top"
               loading="lazy"
+              decoding="async"
             />
           )}
         </div>
@@ -320,7 +321,7 @@ const CAPABILITIES = [
       </svg>
     ),
     title: "Real-time Sync",
-    desc: "SSE push delivers messages instantly. Zero polling, sub-100ms latency.",
+    desc: "SSE push delivers messages as they arrive. Zero polling.",
   },
   {
     icon: (

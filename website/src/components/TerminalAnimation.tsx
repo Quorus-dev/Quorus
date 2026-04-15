@@ -204,7 +204,7 @@ export default function TerminalAnimation() {
                   key={i}
                   className="leading-[1.15] m-0 p-0 text-teal-400 font-bold"
                   style={{
-                    fontFamily: '"JetBrains Mono", monospace',
+                    fontFamily: '"Geist Mono", ui-monospace, monospace',
                     fontSize: "10px",
                     letterSpacing: "0",
                     whiteSpace: "pre",

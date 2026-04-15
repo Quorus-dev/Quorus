@@ -46,58 +46,65 @@ class AuditService:
         room_name: str | None = None,
         details: dict[str, Any] | None = None,
         error: str | None = None,
+        session: Any | None = None,
     ) -> None:
         """Record an audit event.
 
-        This is fire-and-forget — failures are logged but don't block.
-        """
-        try:
-            async with get_db_session() as session:
-                event = AuditLedger(
-                    tenant_id=tenant_id,
-                    message_id=message_id,
-                    event_type=event_type.value
-                    if isinstance(event_type, AuditEvent)
-                    else event_type,
-                    actor=actor,
-                    target=target,
-                    room_id=room_id,
-                    room_name=room_name,
-                    details=details,
-                    error=error,
-                )
-                session.add(event)
+        Exceptions propagate. Per CLAUDE.md Lessons Learned ("Audit Service
+        Must Propagate Exceptions"): if audit write fails and business commit
+        succeeds, that's an unaudited PHI mutation — compliance breach. The
+        caller is expected to wrap business logic + this call in a single
+        transaction so they either both succeed or both fail.
 
-            logger.debug(
-                "Audit event recorded",
-                message_id=str(message_id),
-                event_type=event_type,
-                actor=actor,
-            )
-        except Exception as e:
-            # Audit failures are non-fatal — log and continue
-            logger.warning(
-                "Failed to record audit event",
-                message_id=str(message_id),
-                event_type=event_type,
-                error=str(e),
-            )
+        ``session`` parameter: when provided, we add the event to that session
+        instead of opening a new one. This prevents split-brain where an outer
+        worker session rolls back but the nested audit session already
+        committed (see outbox_svc usage).
+        """
+        event = AuditLedger(
+            tenant_id=tenant_id,
+            message_id=message_id,
+            event_type=event_type.value
+            if isinstance(event_type, AuditEvent)
+            else event_type,
+            actor=actor,
+            target=target,
+            room_id=room_id,
+            room_name=room_name,
+            details=details,
+            error=error,
+        )
+
+        if session is not None:
+            # Caller owns the transaction — join it.
+            session.add(event)
+        else:
+            async with get_db_session() as new_session:
+                new_session.add(event)
+
+        logger.debug(
+            "Audit event recorded",
+            message_id=str(message_id),
+            event_type=event_type,
+            actor=actor,
+        )
 
     async def record_batch(
         self,
         tenant_id: str,
         message_id: uuid.UUID,
         events: list[dict],
+        session: Any | None = None,
     ) -> None:
-        """Record multiple audit events for a message.
+        """Record multiple audit events for a message. Exceptions propagate.
 
-        Each event dict should have: event_type, and optionally:
-        actor, target, room_id, room_name, details, error
+        ``session`` param: see ``record()`` — same split-brain-prevention
+        semantics.
         """
-        try:
-            async with get_db_session() as session:
-                for event_data in events:
-                    event = AuditLedger(
+        def _add(sess: Any) -> None:
+            for event_data in events:
+                sess.add(
+                    AuditLedger(
                         tenant_id=tenant_id,
                         message_id=message_id,
                         event_type=event_data.get("event_type"),
@@ -108,19 +115,19 @@ class AuditService:
                         details=event_data.get("details"),
                         error=event_data.get("error"),
                     )
-                    session.add(event)
+                )
 
-            logger.debug(
-                "Audit events recorded",
-                message_id=str(message_id),
-                count=len(events),
-            )
-        except Exception as e:
-            logger.warning(
-                "Failed to record audit events",
-                message_id=str(message_id),
-                error=str(e),
-            )
+        if session is not None:
+            _add(session)
+        else:
+            async with get_db_session() as new_session:
+                _add(new_session)
+
+        logger.debug(
+            "Audit events recorded",
+            message_id=str(message_id),
+            count=len(events),
+        )
 
     async def get_message_timeline(
         self,

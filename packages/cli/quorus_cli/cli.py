@@ -725,9 +725,10 @@ async def _history(room_name: str, limit: int = 50):
         if not messages:
             console.print(f"[dim]No messages in {room_name}[/dim]")
             return
+        n = len(messages)
         console.print(
             f"[bold]History for {room_name}[/bold] "
-            f"({len(messages)} messages)\n"
+            f"({n} message{'s' if n != 1 else ''})\n"
         )
         for msg in messages:
             console.print(_format_chat_msg(msg))
@@ -1111,6 +1112,7 @@ def _cmd_connect(args):
         "ollama": _connect_ollama,
         "claude": _connect_claude,
         "gemini": _connect_gemini,
+        "windsurf": _connect_windsurf,
         "http": _connect_http,
     }
 
@@ -1330,6 +1332,60 @@ Check messages after every task. Use CLAIM: prefix for file/task locks. Post STA
     console.print(
         f"\n[green]{name} joined room '{room}'. "
         "Restart Gemini CLI to activate MCP.[/green]"
+    )
+
+
+def _connect_windsurf(
+    room: str, name: str, relay_url: str, secret: str, quorus_dir: str,
+) -> None:
+    """Generate Windsurf (Codeium) MCP config.
+
+    Windsurf reads MCP servers from ``~/.codeium/windsurf/mcp_config.json``.
+    Same shape as Cursor — just a different file location.
+    """
+    from quorus_cli import ui
+
+    ui.heading("Windsurf Agent Setup")
+    ui.console.print(f"  Agent:  [agent]@{name}[/]")
+    ui.console.print(f"  Room:   [room]#{room}[/]")
+    ui.console.print()
+
+    mcp_config = json.dumps(
+        {
+            "mcpServers": {
+                "quorus": {
+                    "command": "quorus-mcp",
+                    "env": {
+                        "INSTANCE_NAME": name,
+                        "RELAY_URL": relay_url,
+                        "RELAY_SECRET": secret,
+                    },
+                }
+            }
+        },
+        indent=2,
+    )
+
+    ui.console.print(
+        "[bold]1. Add to ~/.codeium/windsurf/mcp_config.json:[/bold]\n"
+    )
+    ui.console.print(mcp_config, highlight=False, markup=False)
+
+    ui.console.print("\n[bold]2. Add to your Windsurf rules:[/bold]\n")
+    rules = (
+        f"You are {name} in Quorus room #{room}. Use MCP tools:\n"
+        "- check_messages() — read new messages\n"
+        f'- send_room_message(room_id="{room}", content="...", '
+        'message_type="chat")\n'
+        "- list_rooms() — see available rooms\n"
+        "- claim_task(...) / release_task(...) — coordinate on files\n"
+        "Check messages after every task. Claim with CLAIM:. "
+        "Post STATUS: when done."
+    )
+    ui.console.print(rules, highlight=False, markup=False)
+    ui.console.print(
+        f"\n[success]{name} joined room '{room}'. Reload Windsurf to "
+        "activate MCP.[/success]"
     )
 
 
@@ -1842,9 +1898,16 @@ def _cmd_init(args):
         )
         sys.exit(1)
 
-    # 1. Write config (warn if overwriting)
-    config_dir = _config_dir()
-    config_dir.mkdir(exist_ok=True)
+    # 1. Write config (warn if overwriting). Prefer explicit --config-dir arg
+    # over env var, which in turn beats the default ~/.quorus location.
+    cli_override = getattr(args, "config_dir", None)
+    # isinstance check: MagicMock-based tests set args.config_dir to a mock
+    # via attribute access, and `if cli_override:` would be truthy on a mock.
+    if isinstance(cli_override, str) and cli_override:
+        config_dir = Path(cli_override).expanduser()
+    else:
+        config_dir = _config_dir()
+    config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "config.json"
     if config_path.exists():
         console.print(
@@ -4093,6 +4156,11 @@ def main():
     p_init = sub.add_parser("init", help="One-command setup")
     p_init.add_argument("name", help="Your participant name")
     p_init.add_argument("--relay-url", default="http://localhost:8080", help="Relay URL")
+    p_init.add_argument(
+        "--config-dir",
+        default=None,
+        help="Override config dir (default: ~/.quorus; also honors $QUORUS_CONFIG_DIR)",
+    )
     p_init_auth = p_init.add_mutually_exclusive_group(required=True)
     p_init_auth.add_argument("--secret", help="Shared secret (legacy auth)")
     p_init_auth.add_argument("--api-key", help="API key (production auth)")
@@ -4304,7 +4372,7 @@ def main():
     )
     p_connect.add_argument(
         "platform",
-        choices=["codex", "cursor", "ollama", "claude", "gemini", "http"],
+        choices=["codex", "cursor", "ollama", "claude", "gemini", "windsurf", "http"],
         help="Agent platform (http = generic curl/HTTP for any AI that can make requests)",
     )
     p_connect.add_argument("room", help="Room name")

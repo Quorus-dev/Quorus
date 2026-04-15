@@ -41,7 +41,7 @@ function Counter({
 
 const STATS = [
   { value: 11, suffix: "", decimals: 0, label: "MCP tools" },
-  { value: 870, suffix: "+", label: "tests passing" },
+  { value: 5, suffix: "", decimals: 0, label: "agent platforms" },
   { value: 100, suffix: "%", decimals: 0, label: "open source" },
   { value: 0, suffix: "", decimals: 0, label: "YAML required" },
 ];

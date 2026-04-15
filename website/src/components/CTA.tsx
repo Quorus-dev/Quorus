@@ -2,13 +2,7 @@ import { motion } from "framer-motion";
 import Waitlist from "./Waitlist";
 import TerminalAnimation from "./TerminalAnimation";
 
-const PROOF = [
-  "11 MCP tools",
-  "870+ tests",
-  "MIT license",
-  "Any model",
-  "Any machine",
-];
+const PROOF = ["11 MCP tools", "MIT license", "Any model", "Any machine"];
 
 export default function CTA() {
   return (

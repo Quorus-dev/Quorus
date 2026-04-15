@@ -5,12 +5,32 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     envVars:
+      # Set these in the Render dashboard before first deploy.
+      # generateValue=true means Render mints a 256-bit hex value once.
       - key: RELAY_SECRET
         generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: BOOTSTRAP_SECRET
+        generateValue: true
+      # Required for multi-tenant / durable history:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      # Operational defaults:
       - key: PORT
         value: "8080"
       - key: MESSAGES_FILE
         value: /app/data/messages.json
+      - key: USE_OUTBOX
+        value: "true"
+      - key: ALLOW_LEGACY_AUTH
+        value: "false"
+      - key: CORS_ORIGINS
+        value: https://www.quorus.dev,https://quorus.dev
+      - key: LOG_LEVEL
+        value: INFO
     healthCheckPath: /health
     disk:
       name: quorus-data

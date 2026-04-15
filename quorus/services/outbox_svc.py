@@ -188,7 +188,8 @@ class OutboxWorker:
                 actor=self._worker_id,
                 room_id=entry.room_id,
                 room_name=entry.room_name,
-            )
+                                session=session,
+                )
 
         try:
             # Get room members
@@ -211,7 +212,8 @@ class OutboxWorker:
                         room_id=entry.room_id,
                         room_name=entry.room_name,
                         details={"members": 0, "delivered": 0},
-                    )
+                                        session=session,
+                )
                 return
 
             # Build fan-out messages
@@ -237,7 +239,8 @@ class OutboxWorker:
                             room_id=entry.room_id,
                             room_name=entry.room_name,
                             error="Queue full",
-                        )
+                                            session=session,
+                )
                     else:
                         await self._audit.record(
                             tenant_id=entry.tenant_id,
@@ -246,7 +249,8 @@ class OutboxWorker:
                             target=recipient,
                             room_id=entry.room_id,
                             room_name=entry.room_name,
-                        )
+                                            session=session,
+                )
 
             # Push to SSE and notify callbacks
             for recipient, msg in fanout_messages.items():
@@ -264,7 +268,8 @@ class OutboxWorker:
                         target=recipient,
                         room_id=entry.room_id,
                         room_name=entry.room_name,
-                    )
+                                        session=session,
+                )
 
             # Send webhook notification
             history_msg = {
@@ -301,6 +306,7 @@ class OutboxWorker:
                         "delivered": delivered,
                         "rejected": list(rejected) if rejected else [],
                     },
+                                    session=session,
                 )
 
             logger.info(
@@ -324,6 +330,7 @@ class OutboxWorker:
                     room_name=entry.room_name,
                     error=str(e),
                     details={"retry_count": entry.retry_count},
+                                    session=session,
                 )
             await self._handle_failure(session, entry, str(e))
 

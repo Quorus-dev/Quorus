@@ -22,3 +22,4 @@ docs/launch/
 website/vite.config.d.ts
 website/vite.config.js
 website/*.tsbuildinfo
+MagicMock/

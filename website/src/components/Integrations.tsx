@@ -106,8 +106,8 @@ function AgentBadge({ agent }: { agent: AgentPlatform }) {
 
 const STATS = [
   { value: "11", label: "MCP tools" },
-  { value: "6+", label: "agent platforms" },
-  { value: "870+", label: "tests passing" },
+  { value: "5", label: "agent platforms" },
+  { value: "100%", label: "open source" },
   { value: "MIT", label: "license" },
 ];
 

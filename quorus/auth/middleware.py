@@ -8,10 +8,18 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+import jwt
 from fastapi import HTTPException, Request
 from sqlalchemy import select
 
 from quorus.auth.tokens import decode_jwt
+
+
+def _client_ip_for_log(request: Request) -> str:
+    """Return a safe client identifier for logging (never trust XFF blindly)."""
+    if request.client:
+        return request.client.host
+    return "unknown"
 
 logger = logging.getLogger("quorus.auth")
 
@@ -117,8 +125,21 @@ async def verify_auth(request: Request) -> AuthContext:
         )
     except HTTPException:
         raise  # Re-raise revocation 401
-    except Exception:
-        pass  # Not a valid JWT — try legacy fallback
+    except jwt.ExpiredSignatureError:
+        logger.warning("JWT expired", extra={"client": _client_ip_for_log(request)})
+    except jwt.InvalidTokenError as exc:
+        logger.warning(
+            "JWT invalid",
+            extra={
+                "reason": exc.__class__.__name__,
+                "client": _client_ip_for_log(request),
+            },
+        )
+    except Exception as exc:
+        logger.warning(
+            "JWT decode unexpected error",
+            extra={"reason": str(exc), "client": _client_ip_for_log(request)},
+        )
 
     # Legacy fallback: RELAY_SECRET as Bearer token
     if RELAY_SECRET and hmac.compare_digest(token, RELAY_SECRET):

@@ -34,9 +34,20 @@ async def create_sse_token(
     recipient = body.get("recipient", "")
     if not recipient:
         raise HTTPException(status_code=400, detail="recipient is required")
-    if auth.sub and recipient != auth.sub:
+    # Bind SSE tokens to the requesting identity. Under JWT: recipient MUST
+    # match auth.sub. Under legacy (RELAY_SECRET as admin), only explicit admin
+    # role can mint tokens for other recipients — prevents cross-user stream
+    # hijack when ALLOW_LEGACY_AUTH is on.
+    if auth.sub:
+        if recipient != auth.sub:
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot create SSE token for another user",
+            )
+    elif auth.is_legacy and auth.role != "admin":
         raise HTTPException(
-            status_code=403, detail="Cannot create SSE token for another user",
+            status_code=403,
+            detail="Legacy auth without admin cannot mint SSE tokens",
         )
     svc = request.app.state.sse_service
     token = await svc.create_token(_tid(auth), recipient, SSE_TOKEN_TTL)

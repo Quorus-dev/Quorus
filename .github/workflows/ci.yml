@@ -50,6 +50,8 @@ jobs:
         run: pytest -q -m "not integration" --tb=short
         env:
           RELAY_SECRET: test-secret
+          JWT_SECRET: test-jwt-secret-that-is-at-least-32-chars
+          BOOTSTRAP_SECRET: test-bootstrap-secret-32-chars-min
           PYTHONWARNINGS: default
 
   test-redis:
@@ -84,6 +86,8 @@ jobs:
         run: pytest tests/test_redis_integration.py -v --tb=short
         env:
           RELAY_SECRET: test-secret
+          JWT_SECRET: test-jwt-secret-that-is-at-least-32-chars
+          BOOTSTRAP_SECRET: test-bootstrap-secret-32-chars-min
           REDIS_URL: redis://localhost:6379
           PYTHONWARNINGS: default
 
@@ -123,6 +127,8 @@ jobs:
         run: pytest tests/test_postgres_integration.py -v --tb=short
         env:
           RELAY_SECRET: test-secret
+          JWT_SECRET: test-jwt-secret-that-is-at-least-32-chars
+          BOOTSTRAP_SECRET: test-bootstrap-secret-32-chars-min
           DATABASE_URL: postgresql+asyncpg://quorus:quorus@localhost:5432/quorus_test
           PYTHONWARNINGS: default
 

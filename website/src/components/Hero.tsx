@@ -219,12 +219,18 @@ function HeroTerminal() {
 export default function Hero() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Subtle ambient dot field - no connecting lines
+  // Subtle ambient dot field. Respect prefers-reduced-motion (accessibility)
+  // and pause when the hero scrolls out of view (battery + INP).
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    const prefersReducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (prefersReducedMotion) return; // Render a static canvas, no animation.
 
     const resize = () => {
       canvas.width = canvas.offsetWidth;
@@ -242,8 +248,10 @@ export default function Hero() {
       alpha: Math.random() * 0.18 + 0.04,
     }));
 
+    let running = true;
     let animFrame: number;
     const draw = () => {
+      if (!running) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       for (const p of particles) {
         p.x += p.vx;
@@ -259,10 +267,29 @@ export default function Hero() {
       }
       animFrame = requestAnimationFrame(draw);
     };
+
+    // Pause when the canvas leaves the viewport (battery, INP)
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries[0]?.isIntersecting ?? true;
+        if (visible && !running) {
+          running = true;
+          draw();
+        } else if (!visible) {
+          running = false;
+          cancelAnimationFrame(animFrame);
+        }
+      },
+      { threshold: 0 },
+    );
+    observer.observe(canvas);
+
     draw();
     return () => {
+      running = false;
       cancelAnimationFrame(animFrame);
       window.removeEventListener("resize", resize);
+      observer.disconnect();
     };
   }, []);
 
