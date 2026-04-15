@@ -9,10 +9,10 @@ By the end you will have a working script you can adapt to any multi-agent workf
 - Python 3.10+
 - Two terminals open
 
-## Step 1: Install Murmur
+## Step 1: Install Quorus
 
 ```bash
-pip install quorus
+pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"
 ```
 
 ## Step 2: Start the Relay
