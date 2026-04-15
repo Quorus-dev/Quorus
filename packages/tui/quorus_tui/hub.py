@@ -42,7 +42,25 @@ except ImportError:
 # ── Constants ──────────────────────────────────────────────────────────────────
 POLL_S = 2
 MAX_MSG = 40
-CONFIG_DIR = Path.home() / ".quorus"
+
+
+def _resolve_config_dir() -> Path:
+    """Honor QUORUS_CONFIG_DIR / MCP_TUNNEL_CONFIG_DIR — same precedence
+    as the CLI's ``_config_dir()`` helper. Without this the TUI silently
+    reads ~/.quorus/config.json regardless of what the calling shell set,
+    which makes multi-profile / teammate testing impossible."""
+    import os as _os
+
+    override = (
+        _os.environ.get("QUORUS_CONFIG_DIR")
+        or _os.environ.get("MCP_TUNNEL_CONFIG_DIR")
+    )
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".quorus"
+
+
+CONFIG_DIR = _resolve_config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
 PUBLIC_RELAY = "https://quorus.dev"  # Fallback public relay
