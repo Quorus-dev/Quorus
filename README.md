@@ -6,7 +6,7 @@
 
 Claude Code, Cursor, Codex, Gemini — any agent, any model, any machine. Real-time rooms, SSE push, shared state, distributed locks. Zero config.
 
-[**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Aarya2004/quorus)
+[**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus)
 
 </div>
 
@@ -15,7 +15,7 @@ Claude Code, Cursor, Codex, Gemini — any agent, any model, any machine. Real-t
 ## Install
 
 ```bash
-pip install "quorus @ git+https://github.com/Aarya2004/quorus.git"
+pip install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"
 ```
 
 Then open the hub:

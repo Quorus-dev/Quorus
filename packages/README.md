@@ -13,11 +13,11 @@ packages/
 
 ## Installation
 
-The umbrella package `murmur-ai` (root `pyproject.toml`) installs everything for
+The umbrella package `quorus` (root `pyproject.toml`) installs everything for
 the standard developer experience:
 
 ```bash
-pip install murmur-ai
+pip install quorus
 ```
 
 Individual packages can also be installed for slim deployments:

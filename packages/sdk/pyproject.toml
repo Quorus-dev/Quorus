@@ -28,8 +28,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://quorus.dev"
-Repository = "https://github.com/Aarya2004/quorus"
-Issues = "https://github.com/Aarya2004/quorus/issues"
+Repository = "https://github.com/Quorus-dev/Quorus"
+Issues = "https://github.com/Quorus-dev/Quorus/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["quorus_sdk"]

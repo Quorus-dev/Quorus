@@ -1,6 +1,6 @@
 # murmur-cli
 
-Command-line interface for [Murmur](https://github.com/Aarya2004/murmur) — the
+Command-line interface for [Murmur](https://github.com/Quorus-dev/Quorus) — the
 `murmur` executable with subcommands (`init`, `join`, `say`, `inbox`, `rooms`,
 `ps`, ...).
 

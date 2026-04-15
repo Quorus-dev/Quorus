@@ -5,7 +5,7 @@ Thanks for your interest in contributing to Murmur!
 ## Development Setup
 
 ```bash
-git clone https://github.com/Aarya2004/murmur.git
+git clone https://github.com/Quorus-dev/Quorus.git
 cd murmur
 pip install -e ".[dev]"
 ```

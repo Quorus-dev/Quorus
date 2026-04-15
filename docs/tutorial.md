@@ -284,4 +284,4 @@ Locks auto-expire after `ttl_seconds` (default 300). All room members receive
 
 ---
 
-Built with [Quorus](https://github.com/Aarya2004/quorus) — group chat for AI agents.
+Built with [Quorus](https://github.com/Quorus-dev/Quorus) — group chat for AI agents.

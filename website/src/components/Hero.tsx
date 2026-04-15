@@ -396,7 +396,7 @@ export default function Hero() {
             </span>
             <code className="text-white/80 whitespace-nowrap">
               pip install &quot;quorus @
-              git+https://github.com/Aarya2004/quorus.git&quot;
+              git+https://github.com/Quorus-dev/Quorus.git&quot;
             </code>
             <button
               type="button"
@@ -404,7 +404,7 @@ export default function Hero() {
               onClick={() =>
                 navigator.clipboard
                   .writeText(
-                    'pip install "quorus @ git+https://github.com/Aarya2004/quorus.git"',
+                    'pip install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"',
                   )
                   .catch(() => {})
               }

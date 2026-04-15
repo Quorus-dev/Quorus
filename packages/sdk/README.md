@@ -1,6 +1,6 @@
 # murmur-sdk
 
-Lightweight Python SDK for the [Murmur](https://github.com/Aarya2004/murmur) relay — rooms, messaging, and coordination primitives for AI agents.
+Lightweight Python SDK for the [Murmur](https://github.com/Quorus-dev/Quorus) relay — rooms, messaging, and coordination primitives for AI agents.
 
 This package is a standalone, dependency-light slice of Murmur. It only
 depends on `httpx` and contains the public `Room` class plus the underlying

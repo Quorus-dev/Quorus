@@ -33,7 +33,7 @@ else
     exit 1
 fi
 
-REPO_URL="https://github.com/Aarya2004/quorus.git"
+REPO_URL="https://github.com/Quorus-dev/Quorus.git"
 
 # Install with pip/uv/pipx
 echo "  → Installing quorus..."

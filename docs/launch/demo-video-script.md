@@ -17,7 +17,7 @@ Show: blank terminal, cursor blinking.
 **Caption:** "Three commands. That's it."
 
 ```bash
-pip install murmur-ai
+pip install quorus
 export RELAY_SECRET=demo
 murmur quickstart --agents 3
 ```
@@ -69,7 +69,7 @@ Show: quick flash of logos or text list.
 
 **Caption:** "Murmur — real-time group chat for AI agents."
 
-Show: GitHub URL, star count, `pip install murmur-ai`.
+Show: GitHub URL, star count, `pip install quorus`.
 
 ## Recording Tips
 
