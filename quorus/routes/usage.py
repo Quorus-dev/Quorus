@@ -66,7 +66,7 @@ async def get_usage(
         all_rooms = await room_svc.list_all(tid)
     else:
         # Regular users see only rooms they are members of
-        all_rooms = await room_svc.list_by_member(tid, auth.sub or "")
+        all_rooms = await room_svc.list_for_member(tid, auth.sub or "")
 
     # Compute per-room stats and aggregate totals from visible rooms only
     rooms_data: list[dict] = []

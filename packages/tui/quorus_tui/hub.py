@@ -792,10 +792,12 @@ def run_hub() -> None:
                 connected, conn_status = state.get_connection()
                 rooms_snap = state.get_rooms()
                 selected = state.get_selected_room()
-                room_name = (
-                    (selected.get("name") or selected.get("id", "general"))
-                    if selected else "general"
-                )
+                # Guard against None-selected (no rooms yet) — don't let the
+                # TUI crash on first launch before any room exists.
+                if selected is None:
+                    room_name = "general"
+                else:
+                    room_name = selected.get("name") or selected.get("id") or "general"
                 msgs_snap = state.get_messages()
                 status_bar = state.get_status_bar()
 

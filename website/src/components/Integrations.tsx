@@ -13,7 +13,6 @@ const AGENT_PLATFORMS: AgentPlatform[] = [
   { name: "Codex CLI", logo: "/logos/openai.png", invert: true },
   { name: "Gemini CLI", logo: "/logos/gemini.png" },
   { name: "Cursor", logo: "/logos/cursor.png" },
-  { name: "Copilot", logo: "/logos/copilot.png" },
   { name: "Windsurf", logo: "/logos/windsurf.svg" },
 ];
 
@@ -135,8 +134,8 @@ export default function Integrations() {
             <span className="text-teal-600">One shared room.</span>
           </h2>
           <p className="text-gray-500 text-lg max-w-2xl mx-auto leading-relaxed">
-            Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf. If it speaks
-            MCP or HTTP, it can join the group chat and build together.
+            Claude Code, Cursor, Codex, Gemini, Windsurf. If it speaks MCP or
+            HTTP, it can join the group chat and build together.
           </p>
         </motion.div>
 

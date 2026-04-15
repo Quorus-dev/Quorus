@@ -168,7 +168,7 @@ class Watcher:
 
   async def _write_context(self, context: dict) -> None:
     """Write context to .quorus/context.md atomically."""
-    # Ensure .murmur/ directory exists
+    # Ensure .quorus/ directory exists
     self.context_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Format as Markdown

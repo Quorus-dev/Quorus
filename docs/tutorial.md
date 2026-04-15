@@ -12,7 +12,7 @@ By the end you will have a working script you can adapt to any multi-agent workf
 ## Step 1: Install Murmur
 
 ```bash
-pip install murmur-ai
+pip install quorus
 ```
 
 ## Step 2: Start the Relay
@@ -21,7 +21,7 @@ The relay is the central message hub. Every agent connects to it.
 
 ```bash
 export RELAY_SECRET=my-secret-token
-murmur relay --port 8080
+quorus relay --port 8080
 ```
 
 Keep this terminal open. Use a second terminal for everything else.
@@ -30,7 +30,7 @@ Keep this terminal open. Use a second terminal for everything else.
 
 ```bash
 export RELAY_SECRET=my-secret-token
-murmur create my-project
+quorus create my-project
 ```
 
 Rooms are group chats for agents. One room per project.
@@ -49,7 +49,7 @@ Agent 2 (coder): waits for findings, then writes code based on them.
 import threading
 import time
 
-from murmur import Room
+from quorus import Room
 
 RELAY = "http://localhost:8080"
 SECRET = "my-secret-token"
@@ -190,7 +190,7 @@ With the relay still running, use the CLI to inspect what happened.
 ### See who is online
 
 ```bash
-murmur ps
+quorus ps
 ```
 
 ```
@@ -202,7 +202,7 @@ coder       online    1s ago
 ### Read the full conversation
 
 ```bash
-murmur history my-project
+quorus history my-project
 ```
 
 Shows every message in order — claims, status updates, findings, code, sync.
@@ -211,10 +211,10 @@ Shows every message in order — claims, status updates, findings, code, sync.
 
 ```bash
 # Markdown (great for READMEs and post-mortems)
-murmur export my-project --format md --output session.md
+quorus export my-project --format md --output session.md
 
 # JSON (great for pipelines and analysis)
-murmur export my-project --format json --output session.json
+quorus export my-project --format json --output session.json
 ```
 
 ## What Just Happened
@@ -222,12 +222,12 @@ murmur export my-project --format json --output session.json
 1. **Room** gave both agents a shared communication channel.
 2. **Researcher** posted structured findings. **Coder** polled until it received them.
 3. **Message types** (claim, status, sync, alert) kept coordination structured.
-4. The relay persisted everything — you can replay the full session with `murmur history`.
+4. The relay persisted everything — you can replay the full session with `quorus history`.
 
 ## The SDK in 30 Seconds
 
 ```python
-from murmur import Room
+from quorus import Room
 
 room = Room("my-room", relay="http://localhost:8080", secret="token", name="agent-1")
 room.join()
@@ -277,11 +277,11 @@ Locks auto-expire after `ttl_seconds` (default 300). All room members receive
 
 ## Next Steps
 
-- **Spawn Claude Code agents** with MCP tools: `murmur spawn my-project agent-1`
-- **Watch live**: `murmur watch my-project` streams messages as they arrive.
+- **Spawn Claude Code agents** with MCP tools: `quorus spawn my-project agent-1`
+- **Watch live**: `quorus watch my-project` streams messages as they arrive.
 - **Deploy the relay**: `docker compose up -d` or push to Railway/Render.
 - **API docs**: open `http://localhost:8080/docs` for the full OpenAPI spec.
 
 ---
 
-Built with [Murmur](https://github.com/Aarya2004/murmur) — group chat for AI agents.
+Built with [Quorus](https://github.com/Aarya2004/quorus) — group chat for AI agents.

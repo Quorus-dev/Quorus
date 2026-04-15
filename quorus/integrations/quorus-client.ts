@@ -1,5 +1,5 @@
 /**
- * Universal Murmur client for TypeScript/JavaScript agents.
+ * Universal Quorus client for TypeScript/JavaScript agents.
  * Zero dependencies — uses native fetch. Works in Node.js 18+, Deno, Bun, and browsers.
  *
  * Usage:

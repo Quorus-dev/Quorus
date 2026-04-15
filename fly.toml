@@ -4,7 +4,7 @@
 # Logs:   fly logs
 # SSH:    fly ssh console
 
-app = "murmur-relay"
+app = "quorus-relay"
 primary_region = "iad"  # Ashburn — change to your closest region (sjc, lhr, fra, syd, etc.)
 
 [build]
@@ -67,5 +67,5 @@ primary_region = "iad"  # Ashburn — change to your closest region (sjc, lhr, f
 # Persistent volume for SQLite fallback data (MESSAGES_FILE)
 # Not strictly needed once Postgres is wired up, but safe to have
 [mounts]
-  source = "murmur_data"
+  source = "quorus_data"
   destination = "/app/data"

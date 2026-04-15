@@ -1178,11 +1178,7 @@ def _connect_cursor(
     mcp_config = json.dumps({
         "mcpServers": {
             "quorus": {
-                "command": "uv",
-                "args": [
-                    "run", "--directory", quorus_dir,
-                    "python", f"{quorus_dir}/quorus/mcp_server.py",
-                ],
+                "command": "quorus-mcp",
                 "env": {
                     "INSTANCE_NAME": name,
                     "RELAY_URL": relay_url,
@@ -1290,11 +1286,7 @@ def _connect_gemini(
     mcp_config = json.dumps({
         "mcpServers": {
             "quorus": {
-                "command": "uv",
-                "args": [
-                    "run", "--directory", quorus_dir,
-                    "python", f"{quorus_dir}/quorus/mcp_server.py",
-                ],
+                "command": "quorus-mcp",
                 "env": {
                     "INSTANCE_NAME": name,
                     "RELAY_URL": relay_url,
@@ -2900,8 +2892,9 @@ def _cmd_doctor(args):
     # 2. Relay URL configured
     check(
         "Relay URL configured",
-        bool(RELAY_URL) and RELAY_URL != "http://localhost:8080" or True,
-        detail=RELAY_URL,
+        bool(RELAY_URL),
+        detail=RELAY_URL or "(unset)",
+        fix="Run: quorus init <name> --secret <secret>",
     )
 
     # 3. Secret configured

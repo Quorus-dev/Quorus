@@ -1,6 +1,0 @@
-{
-  "buildCommand": "cd website && npm run build",
-  "outputDirectory": "website/dist",
-  "installCommand": "cd website && npm install",
-  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
-}

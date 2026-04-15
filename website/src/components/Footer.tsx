@@ -11,20 +11,29 @@ export default function Footer() {
         </div>
 
         {/* Links */}
-        <div className="flex items-center gap-6 text-sm text-white/25">
-          <a href="#features" className="hover:text-white/60 transition-colors">
+        <div className="flex items-center gap-6 text-sm text-white/55">
+          <a
+            href="#features"
+            className="hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
+          >
             Features
           </a>
-          <a href="#howit" className="hover:text-white/60 transition-colors">
-            How it works
+          <a
+            href="#architecture"
+            className="hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
+          >
+            Architecture
           </a>
-          <a href="#waitlist" className="hover:text-white/60 transition-colors">
+          <a
+            href="#waitlist"
+            className="hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
+          >
             Join waitlist
           </a>
         </div>
 
         {/* Built by + copyright */}
-        <p className="text-xs text-white/15 font-mono">
+        <p className="text-xs text-white/40 font-mono">
           © 2026 Quorus · Built by Arav &amp; Aarya
         </p>
       </div>

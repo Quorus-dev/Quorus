@@ -1,9 +1,9 @@
 """Decorator-based API for building Quorus-connected agents.
 
 Usage:
-    import quorus.decorators as murmur
+    from quorus.decorators import Agent
 
-    agent = murmur.Agent("https://relay.example.com", "secret", "my-agent")
+    agent = Agent("https://relay.example.com", "secret", "my-agent")
 
     @agent.on_message("dev-room")
     def handle(msg):

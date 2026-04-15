@@ -16,12 +16,12 @@ uv run pytest tests/ -v
 # 2. Clean build
 rm -rf dist/
 uv build
-# Creates dist/murmur_ai-{version}.tar.gz and .whl
+# Creates dist/quorus-{version}.tar.gz and .whl
 
 # 3. Test install in clean env
 uv venv /tmp/publish-test
-uv pip install --python /tmp/publish-test/bin/python dist/murmur_ai-*.whl
-/tmp/publish-test/bin/murmur --help
+uv pip install --python /tmp/publish-test/bin/python dist/quorus-*.whl
+/tmp/publish-test/bin/quorus --help
 rm -rf /tmp/publish-test
 ```
 
@@ -40,18 +40,18 @@ twine upload dist/*
 
 ```bash
 # Wait 1-2 minutes for PyPI to index
-pip install murmur-ai
-murmur --help
-python -c "from murmur.integrations.http_agent import MurmurClient; print('OK')"
+pip install quorus
+quorus --help
+python -c "from quorus_sdk.http_agent import QuorusClient; print('OK')"
 ```
 
 ## Version Bump
 
-Edit `murmur/__init__.py` and `pyproject.toml` version field, then rebuild and publish.
+Edit `quorus/__init__.py` and `pyproject.toml` version field, then rebuild and publish.
 
 ## TestPyPI (dry run)
 
 ```bash
 uv publish --publish-url https://test.pypi.org/legacy/ --token pypi-YOUR-TEST-TOKEN
-pip install -i https://test.pypi.org/simple/ murmur-ai
+pip install -i https://test.pypi.org/simple/ quorus
 ```

@@ -15,7 +15,7 @@ restartPolicyMaxRetries = 10
 #   DATABASE_URL        auto-injected by Railway Postgres plugin
 #   REDIS_URL           auto-injected by Railway Redis plugin
 #   RELAY_SECRET        generate: openssl rand -hex 32
-#   CORS_ORIGINS        https://murmur-ai-website.vercel.app
+#   CORS_ORIGINS        https://www.quorus.dev,https://quorus.dev
 #   LOG_LEVEL           WARNING
 #   ALLOW_LEGACY_AUTH   false
 #
