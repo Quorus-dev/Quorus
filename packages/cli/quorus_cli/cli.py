@@ -455,13 +455,13 @@ def _cmd_rooms(args):
 
     table = Table(
         title="[heading]Rooms[/]",
-        border_style="primary",
-        header_style="bold primary",
+        border_style=ui.PRIMARY,
+        header_style=f"bold {ui.PRIMARY}",
         title_justify="left",
         show_edge=True,
     )
-    table.add_column("Room", style="room bold")
-    table.add_column("Members", style="muted")
+    table.add_column("Room", style=f"bold {ui.ROOM}")
+    table.add_column("Members", style=ui.MUTED)
     table.add_column("ID", style="dim")
     for r in rooms:
         members_list = r.get("members", [])
