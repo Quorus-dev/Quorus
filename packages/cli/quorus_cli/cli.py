@@ -41,40 +41,18 @@ def _relay_unreachable(url: str = "") -> None:
 
 
 def _config_dir() -> Path:
-    """Return the config dir, honoring QUORUS_CONFIG_DIR / MCP_TUNNEL_CONFIG_DIR.
-
-    Falls back to ``~/.quorus``. Used by commands that WRITE config (init,
-    connect, join, add-agent) so they stay in sync with ``resolve_config_file``
-    which is used to READ config.
-    """
-    override = (
-        os.environ.get("QUORUS_CONFIG_DIR")
-        or os.environ.get("MCP_TUNNEL_CONFIG_DIR")
-    )
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / ".quorus"
+    """Return the active config directory. Thin wrapper around
+    ``quorus.config.resolve_config_dir()`` so every module agrees on which
+    directory holds the config."""
+    from quorus.config import resolve_config_dir
+    return resolve_config_dir()
 
 
 def _write_sensitive_json(path: Path, data: dict) -> None:
-    """Write JSON config atomically with 0600 perms (no TOCTOU window).
-
-    Using `path.write_text` then `chmod(0600)` leaves a window where the
-    file is readable by other users on shared hosts. Create with the
-    right mode from the start using os.open.
-    """
-    import os as _os
-    flags = _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC
-    fd = _os.open(str(path), flags, 0o600)
-    try:
-        with _os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-    except BaseException:
-        try:
-            _os.close(fd)
-        except OSError:
-            pass
-        raise
+    """Write config atomically with 0600 perms. Delegates to
+    ``quorus.config.ConfigManager`` so CLI and TUI share one code path."""
+    from quorus.config import ConfigManager
+    ConfigManager(path).save(data)
 
 
 def _get_client() -> httpx.AsyncClient:
