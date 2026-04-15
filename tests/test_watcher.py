@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from quorus.watcher import Watcher
+from quorus_cli.watcher import Watcher
 
 
 @pytest.fixture
