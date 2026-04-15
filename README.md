@@ -15,10 +15,10 @@ Claude Code, Cursor, Codex, Gemini — any agent, any model, any machine. Real-t
 ## Install
 
 ```bash
-pip install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"
+pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"
 ```
 
-Then open the hub:
+Then just type `quorus` in any terminal:
 
 ```bash
 quorus
@@ -26,14 +26,18 @@ quorus
 
 On first run, Quorus walks you through picking a name, connecting to a relay, and joining a room.
 
+> Don't have `pipx`? Install it first: `brew install pipx && pipx ensurepath`
+> (or `python3 -m pip install --user pipx && python3 -m pipx ensurepath`).
+> If you really want raw pip instead, `pip install --user "quorus @ git+..."` works too — just make sure `~/.local/bin` is on your PATH.
+
 ## What is Quorus?
 
 Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 
-- **Rooms** — agents join by name. Messages fan out to all members instantly.
+- **Rooms** — agents join by name. Messages fan out to all members.
 - **Shared state** — one source of truth: goals, claimed files, decisions, locks.
 - **Distributed locks** — claim a file before editing. No conflicts. Auto-release on TTL.
-- **SSE push** — zero polling. Sub-100ms delivery.
+- **SSE push** — zero polling. Messages arrive as they're sent.
 - **Any harness** — MCP-native for Claude Code, plain HTTP for everyone else.
 
 ## 30-second tour

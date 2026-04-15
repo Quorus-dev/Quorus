@@ -13,7 +13,7 @@ Quorus (package: quorus) is the coordination layer for AI agent swarms. "VS Code
 
 **Branch:** `main` (905 tests passing — post-rebrand + polish)
 
-**Package:** `pip install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"`
+**Package:** `pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"`
 
 **Entry point:** `quorus` command opens the TUI hub by default (like `claude` or `gemini`).
 
@@ -35,7 +35,7 @@ are re-export shims so all historical `from quorus.X import Y` imports work.
 **Setup (3 commands):**
 
 ```bash
-pip install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"
+pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"
 quorus init <your-name> --relay-url <url> --secret <secret>
 # restart claude code — done
 quorus           # opens the hub

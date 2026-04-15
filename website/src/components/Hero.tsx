@@ -395,7 +395,7 @@ export default function Hero() {
               $
             </span>
             <code className="text-white/80 whitespace-nowrap">
-              pip install &quot;quorus @
+              pipx install &quot;quorus @
               git+https://github.com/Quorus-dev/Quorus.git&quot;
             </code>
             <button
@@ -404,7 +404,7 @@ export default function Hero() {
               onClick={() =>
                 navigator.clipboard
                   .writeText(
-                    'pip install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"',
+                    'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"',
                   )
                   .catch(() => {})
               }
@@ -426,9 +426,9 @@ export default function Hero() {
               </svg>
             </button>
           </div>
-          <p className="text-center text-[11px] text-white/35 mt-2 font-mono">
-            Then run <span className="text-teal-400">quorus</span> · v0.4.0 beta
-            · MIT licensed
+          <p className="text-center text-[11px] text-white/45 mt-2 font-mono">
+            Then just type <span className="text-teal-400">quorus</span> in your
+            terminal · v0.4.0 beta · MIT
           </p>
         </motion.div>
 

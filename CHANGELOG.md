@@ -78,7 +78,7 @@ optional`) so the opt-in hook doesn't read as failure.
 
 ### Known limitations (beta-framed)
 
-- Not on PyPI yet — install via `pip install "quorus @ git+..."`.
+- Not on PyPI yet — install via `pipx install "quorus @ git+..."`.
 - Load/chaos tests not yet run. Concurrency envelope unknown.
 - Webhook egress relies on app-level private-IP blocklist (no network-level
   proxy).
