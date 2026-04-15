@@ -40,3 +40,26 @@ class RateLimitService:
         return await self._backend.check_and_increment(
             tenant_id, sender, window if window is not None else self._window, max_count
         )
+
+    async def is_rate_limited(
+        self,
+        tenant_id: str,
+        sender: str,
+        max_count: int,
+        window: int | None = None,
+    ) -> bool:
+        """Check if sender is rate limited (read-only, does not increment)."""
+        return await self._backend.is_rate_limited(
+            tenant_id, sender, window if window is not None else self._window, max_count
+        )
+
+    async def record(
+        self,
+        tenant_id: str,
+        sender: str,
+        window: int | None = None,
+    ) -> None:
+        """Record an event without checking the limit."""
+        await self._backend.record(
+            tenant_id, sender, window if window is not None else self._window
+        )

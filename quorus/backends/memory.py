@@ -541,6 +541,28 @@ class InMemoryRateLimitBackend:
             self._buckets[key].append(now)
             return True
 
+    async def is_rate_limited(
+        self, tenant_id: str, sender: str, window: int, max_count: int
+    ) -> bool:
+        """Return True if count >= max_count (read-only)."""
+        now = time.time()
+        cutoff = now - window
+        async with self._lock:
+            key = (tenant_id, sender)
+            self._buckets[key] = [t for t in self._buckets[key] if t > cutoff]
+            return len(self._buckets[key]) >= max_count
+
+    async def record(
+        self, tenant_id: str, sender: str, window: int
+    ) -> None:
+        """Increment counter without checking limit."""
+        now = time.time()
+        cutoff = now - window
+        async with self._lock:
+            key = (tenant_id, sender)
+            self._buckets[key] = [t for t in self._buckets[key] if t > cutoff]
+            self._buckets[key].append(now)
+
     def clear(self) -> None:
         self._buckets.clear()
 

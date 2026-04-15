@@ -64,6 +64,28 @@ redis.call('EXPIRE', key, window)
 return 1
 """
 
+# Lua: read-only check if rate limited (does not increment)
+_RATE_CHECK_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local max_count = tonumber(ARGV[3])
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+local count = redis.call('ZCARD', key)
+return count >= max_count and 1 or 0
+"""
+
+# Lua: increment counter without checking limit
+_RATE_RECORD_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+redis.call('ZADD', key, now, now .. ':' .. math.random(1000000))
+redis.call('EXPIRE', key, window)
+return 1
+"""
+
 # Lua: atomic room create (check name not taken, then create)
 # KEYS[1]=name_index, KEYS[2]=meta_key, KEYS[3]=members_key, KEYS[4]=room_index
 # ARGV[1]=room_name, ARGV[2]=room_id, ARGV[n...]=meta field/value pairs
@@ -781,6 +803,8 @@ class RedisRateLimitBackend:
     def __init__(self, r: Redis) -> None:
         self._r = r
         self._script = r.register_script(_RATE_LIMIT_LUA)
+        self._check_script = r.register_script(_RATE_CHECK_LUA)
+        self._record_script = r.register_script(_RATE_RECORD_LUA)
 
     def _key(self, tid: str, sender: str) -> str:
         return f"t:{tid}:rate:{sender}"
@@ -793,6 +817,25 @@ class RedisRateLimitBackend:
             args=[time.time(), window, max_count],
         ))
         return bool(result)
+
+    async def is_rate_limited(
+        self, tenant_id: str, sender: str, window: int, max_count: int
+    ) -> bool:
+        """Return True if count >= max_count (read-only)."""
+        result = await _with_timeout(self._check_script(
+            keys=[self._key(tenant_id, sender)],
+            args=[time.time(), window, max_count],
+        ))
+        return bool(result)
+
+    async def record(
+        self, tenant_id: str, sender: str, window: int
+    ) -> None:
+        """Increment counter without checking limit."""
+        await _with_timeout(self._record_script(
+            keys=[self._key(tenant_id, sender)],
+            args=[time.time(), window],
+        ))
 
 
 # -- SSE tokens -------------------------------------------------------------

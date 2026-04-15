@@ -295,6 +295,18 @@ class RateLimitBackend(Protocol):
         """Return ``True`` if the request is allowed, ``False`` if rate-limited."""
         ...
 
+    async def is_rate_limited(
+        self, tenant_id: str, sender: str, window: int, max_count: int
+    ) -> bool:
+        """Return ``True`` if count >= max_count (read-only, does not increment)."""
+        ...
+
+    async def record(
+        self, tenant_id: str, sender: str, window: int
+    ) -> None:
+        """Increment the counter without checking the limit."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # SSE tokens
