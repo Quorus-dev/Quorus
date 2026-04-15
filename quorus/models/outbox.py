@@ -66,9 +66,15 @@ class MessageOutbox(Base):
     )
 
     def to_fanout_message(self, recipient: str, timestamp: str) -> dict:
-        """Build a fan-out message dict for a recipient."""
+        """Build a fan-out message dict for a recipient.
+
+        ``id`` is the per-delivery UUID used for queue-level dedup, while
+        ``message_id`` is the canonical ID shared across recipients —
+        clients use it to dedup SSE pushes against history fetches.
+        """
         return {
             "id": str(uuid.uuid4()),
+            "message_id": str(self.message_id),
             "from_name": self.sender,
             "to": recipient,
             "room": self.room_name,

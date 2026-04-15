@@ -40,8 +40,11 @@ except ImportError:
     sys.exit(1)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-POLL_S = 2
+# SSE push is the primary delivery path — poll is a slow reconciliation fallback
+# so the TUI still catches up if the SSE stream drops (message IDs are de-duped).
+POLL_S = 10
 MAX_MSG = 40
+SSE_RECONNECT_S = 2  # backoff between dropped-stream reconnects
 
 
 def _resolve_config_dir() -> Path:
@@ -478,7 +481,13 @@ def _fetch_rooms(relay: str, secret: str) -> list[dict]:
         return []
 
 
-def _fetch_history(relay: str, secret: str, room: str) -> list[dict]:
+def _fetch_history(relay: str, secret: str, room: str) -> list[dict] | None:
+    """Fetch room history. Returns list on success, None on error.
+
+    None is a sentinel for 'couldn't fetch' so the caller can preserve
+    existing state rather than clobbering it with []. Without this,
+    transient 429s or network blips wipe the user's chat pane.
+    """
     try:
         r = httpx.get(
             f"{relay}/rooms/{room}/history",
@@ -489,12 +498,24 @@ def _fetch_history(relay: str, secret: str, room: str) -> list[dict]:
         if r.status_code == 200:
             data = r.json()
             return data if isinstance(data, list) else data.get("messages", [])
-        return []
+        return None
     except Exception:
-        return []
+        return None
 
 
-def _send_message(relay: str, secret: str, room: str, sender: str, content: str) -> bool:
+def _load_history_into(state: "HubState", relay: str, secret: str, room: str) -> None:
+    """Fetch and apply room history, leaving existing state intact on failure."""
+    msgs = _fetch_history(relay, secret, room)
+    if msgs is not None:
+        state.set_messages(msgs)
+
+
+def _send_message(
+    relay: str, secret: str, room: str, sender: str, content: str,
+) -> Optional[str]:
+    """Send a chat message. Returns the server-assigned message ID on success,
+    else None. The ID lets the caller dedup its own optimistic echo against
+    the real message coming back through SSE / history."""
     try:
         r = httpx.post(
             f"{relay}/rooms/{room}/messages",
@@ -502,9 +523,16 @@ def _send_message(relay: str, secret: str, room: str, sender: str, content: str)
             json={"from_name": sender, "content": content, "message_type": "chat"},
             timeout=5,
         )
-        return r.status_code in (200, 201)
+        if r.status_code in (200, 201):
+            try:
+                data = r.json()
+                mid = data.get("id") or data.get("message_id") or ""
+                return str(mid) if mid else ""
+            except (ValueError, TypeError):
+                return ""
+        return None
     except Exception:
-        return False
+        return None
 
 
 def _join_room(relay: str, secret: str, room: str, participant: str) -> None:
@@ -543,6 +571,10 @@ class HubState:
         self._lock = threading.Lock()
         self.rooms: list[dict] = []
         self.messages: list[dict] = []
+        # Dedup set of recently-seen message IDs. Prevents SSE push + history
+        # refetch from double-rendering the same message. Bounded to 2*MAX_MSG.
+        self._seen_ids: list[str] = []
+        self._seen_set: set[str] = set()
         self.selected_room_idx: int = 0
         self.status: str = "Connecting..."
         self.connected: bool = False
@@ -582,9 +614,30 @@ class HubState:
                     return
 
     # Messages
+    def _track_id(self, mid: str) -> None:
+        """Record a message ID in the dedup set, evicting the oldest if full."""
+        if not mid or mid in self._seen_set:
+            return
+        self._seen_set.add(mid)
+        self._seen_ids.append(mid)
+        if len(self._seen_ids) > MAX_MSG * 2:
+            evicted = self._seen_ids.pop(0)
+            self._seen_set.discard(evicted)
+
+    @staticmethod
+    def _dedup_key(msg: dict) -> str:
+        """Prefer message_id (canonical, shared across SSE/history) over id
+        (per-delivery UUID in fan-out payloads)."""
+        return str(msg.get("message_id") or msg.get("id") or "")
+
     def set_messages(self, msgs: list[dict]) -> None:
         with self._lock:
             self.messages = msgs[-MAX_MSG:]
+            # Rebuild dedup set from the authoritative history snapshot
+            self._seen_ids.clear()
+            self._seen_set.clear()
+            for m in self.messages:
+                self._track_id(self._dedup_key(m))
 
     def get_messages(self) -> list[dict]:
         with self._lock:
@@ -592,9 +645,22 @@ class HubState:
 
     def append_message(self, msg: dict) -> None:
         with self._lock:
+            key = self._dedup_key(msg)
+            if key and key in self._seen_set:
+                return  # already rendered
             self.messages.append(msg)
             if len(self.messages) > MAX_MSG:
                 self.messages.pop(0)
+            self._track_id(key)
+
+    def selected_room_name(self) -> str:
+        """Return the currently-selected room name, or empty string."""
+        with self._lock:
+            if not self.rooms:
+                return ""
+            idx = max(0, min(self.selected_room_idx, len(self.rooms) - 1))
+            r = self.rooms[idx]
+            return r.get("name") or r.get("id") or ""
 
     # Connection
     def set_connected(self, connected: bool, status: str) -> None:
@@ -619,7 +685,8 @@ class HubState:
 # ── Background poller ─────────────────────────────────────────────────────────
 
 def _poll_loop(relay: str, secret: str, state: HubState, stop_event: threading.Event) -> None:
-    """Poll relay for rooms + messages every POLL_S seconds."""
+    """Slow reconciliation poll — SSE push handles real-time delivery. This
+    exists only to recover from dropped streams and reconcile missed messages."""
     while not stop_event.is_set():
         try:
             rooms = _fetch_rooms(relay, secret)
@@ -634,11 +701,91 @@ def _poll_loop(relay: str, secret: str, state: HubState, stop_event: threading.E
                 room_name = selected.get("name") or selected.get("id", "")
                 if room_name:
                     msgs = _fetch_history(relay, secret, room_name)
-                    state.set_messages(msgs)
+                    if msgs is not None:
+                        state.set_messages(msgs)
         except Exception:
             state.set_connected(False, "Relay unreachable")
 
         stop_event.wait(POLL_S)
+
+
+# ── Real-time push (SSE) ──────────────────────────────────────────────────────
+
+def _mint_sse_token(relay: str, secret: str, recipient: str) -> Optional[str]:
+    """Exchange bearer auth for a short-lived SSE stream token."""
+    try:
+        r = httpx.post(
+            f"{relay}/stream/token",
+            headers=_auth_headers(secret),
+            json={"recipient": recipient},
+            timeout=5,
+        )
+        if r.status_code == 200:
+            return r.json().get("token")
+    except Exception:
+        pass
+    return None
+
+
+def _sse_loop(
+    relay: str,
+    secret: str,
+    recipient: str,
+    state: HubState,
+    stop_event: threading.Event,
+) -> None:
+    """Subscribe to SSE push and apply messages as they arrive.
+
+    Runs in a daemon thread. On disconnect (network blip, relay restart,
+    token expiry) it reconnects with a short backoff. Messages are applied
+    to the current selected room only — cross-room chatter is filtered out.
+    """
+    while not stop_event.is_set():
+        token = _mint_sse_token(relay, secret, recipient)
+        if not token:
+            # Either auth failed (give the poll loop the 'unreachable' label)
+            # or the relay is down. Wait and retry.
+            stop_event.wait(SSE_RECONNECT_S)
+            continue
+
+        url = f"{relay}/stream/{recipient}?token={token}"
+        try:
+            with httpx.stream("GET", url, timeout=None) as resp:
+                if resp.status_code != 200:
+                    stop_event.wait(SSE_RECONNECT_S)
+                    continue
+                state.set_connected(True, "Live")
+                event_name = ""
+                data_buf: list[str] = []
+                for line in resp.iter_lines():
+                    if stop_event.is_set():
+                        return
+                    if not line:
+                        # Event boundary — dispatch the buffered event
+                        if event_name == "message" and data_buf:
+                            raw = "\n".join(data_buf)
+                            try:
+                                msg = json.loads(raw)
+                            except (json.JSONDecodeError, ValueError):
+                                msg = None
+                            if isinstance(msg, dict):
+                                msg_room = msg.get("room", "")
+                                if msg_room and msg_room == state.selected_room_name():
+                                    state.append_message(msg)
+                        event_name = ""
+                        data_buf = []
+                        continue
+                    if line.startswith(":"):
+                        continue  # keepalive comment
+                    if line.startswith("event:"):
+                        event_name = line[len("event:"):].strip()
+                    elif line.startswith("data:"):
+                        data_buf.append(line[len("data:"):].lstrip())
+        except Exception:
+            # Stream dropped — reconnect after a backoff
+            pass
+
+        stop_event.wait(SSE_RECONNECT_S)
 
 
 # ── Renderers ─────────────────────────────────────────────────────────────────
@@ -836,11 +983,13 @@ def run_hub() -> None:
         if first_room:
             _join_room(relay_url, secret, first_room, agent_name)
             msgs = _fetch_history(relay_url, secret, first_room)
-            state.set_messages(msgs)
+            if msgs is not None:
+                state.set_messages(msgs)
     else:
         state.set_connected(False, "No rooms yet")
 
-    # 4. Start background poller
+    # 4. Start SSE push listener (primary) + slow reconciliation poller (fallback).
+    # SSE delivers messages in <100ms; poll is a 10s safety net for dropped streams.
     stop_event = threading.Event()
     poller = threading.Thread(
         target=_poll_loop,
@@ -848,6 +997,12 @@ def run_hub() -> None:
         daemon=True,
     )
     poller.start()
+    sse_listener = threading.Thread(
+        target=_sse_loop,
+        args=(relay_url, secret, agent_name, state, stop_event),
+        daemon=True,
+    )
+    sse_listener.start()
 
     # 5. Main interactive loop
     # Rich Live doesn't support input() — we use clear+redraw + input() pattern
@@ -922,7 +1077,7 @@ def run_hub() -> None:
                     rname = selected.get("name") or selected.get("id", "")
                     if rname:
                         _join_room(relay_url, secret, rname, agent_name)
-                        state.set_messages(_fetch_history(relay_url, secret, rname))
+                        _load_history_into(state, relay_url, secret, rname)
                 last_render = 0
                 continue
 
@@ -933,7 +1088,7 @@ def run_hub() -> None:
                     rname = selected.get("name") or selected.get("id", "")
                     if rname:
                         _join_room(relay_url, secret, rname, agent_name)
-                        state.set_messages(_fetch_history(relay_url, secret, rname))
+                        _load_history_into(state, relay_url, secret, rname)
                 last_render = 0
                 continue
 
@@ -952,7 +1107,7 @@ def run_hub() -> None:
                 if match:
                     state.select_by_name(match["name"])
                     _join_room(relay_url, secret, match["name"], agent_name)
-                    state.set_messages(_fetch_history(relay_url, secret, match["name"]))
+                    _load_history_into(state, relay_url, secret, match["name"])
                     state.set_status_bar(f"Joined #{match['name']}")
                 else:
                     state.set_status_bar(f"Room '{target}' not found.")
@@ -977,7 +1132,7 @@ def run_hub() -> None:
                         state.set_rooms(new_rooms)
                         state.select_by_name(new_name)
                         _join_room(relay_url, secret, new_name, agent_name)
-                        state.set_messages(_fetch_history(relay_url, secret, new_name))
+                        _load_history_into(state, relay_url, secret, new_name)
                     else:
                         state.set_status_bar("Failed to create room.")
                 else:
@@ -997,7 +1152,7 @@ def run_hub() -> None:
                         state.set_rooms(new_rooms)
                         state.select_by_name(new_name_raw)
                         _join_room(relay_url, secret, new_name_raw, agent_name)
-                        state.set_messages(_fetch_history(relay_url, secret, new_name_raw))
+                        _load_history_into(state, relay_url, secret, new_name_raw)
                     else:
                         state.set_status_bar(f"Couldn't create '{new_name_raw}' — already exists?")
                 else:
@@ -1051,16 +1206,27 @@ def run_hub() -> None:
                 last_render = 0
                 continue
 
-            ok = _send_message(relay_url, secret, room_name, agent_name, cmd)
-            if ok:
+            sent_id = _send_message(relay_url, secret, room_name, agent_name, cmd)
+            if sent_id is not None:
                 state.set_status_bar("")
-                # Optimistic local echo
-                state.append_message({
+                # Optimistic local echo — render immediately, don't wait for SSE
+                # round-trip. The server-assigned ID pre-arms the dedup set so
+                # when SSE (or the reconciliation poll) redelivers the same
+                # message, it won't render twice.
+                echo = {
                     "from_name": agent_name,
                     "content": cmd,
                     "message_type": "chat",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                    "room": room_name,
+                }
+                if sent_id:
+                    # Store both keys so dedup matches whether SSE pushes the
+                    # fan-out form (message_id) or history returns the canonical
+                    # form (id).
+                    echo["id"] = sent_id
+                    echo["message_id"] = sent_id
+                state.append_message(echo)
             else:
                 state.set_status_bar(
                     "Couldn't reach the relay. Is it running? "

@@ -111,10 +111,11 @@ async def get_room_history(
     tid = _tid(auth)
     await require_room_member(request, auth, tid, room_id)
 
-    # Rate limit: 20/min — history returns up to 200 messages
+    # Rate limit: 120/min — history is the TUI's polling path (~2s cadence).
+    # 20/min blocked legitimate multi-user UX and caused silent 429 wipes.
     caller = auth.sub or "anon"
     rate_limit_svc = request.app.state.rate_limit_service
-    if not await rate_limit_svc.check_with_limit(tid, f"history:{caller}", 20):
+    if not await rate_limit_svc.check_with_limit(tid, f"history:{caller}", 120):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     svc = request.app.state.room_msg_service

@@ -103,6 +103,48 @@ class TestHubState:
         assert msgs[-1]["content"] == "new"
         assert msgs[0]["content"] == "1"  # oldest evicted
 
+    def test_append_message_dedups_on_message_id(self):
+        s = HubState()
+        # SSE push arrives first with fan-out id + canonical message_id
+        s.append_message({
+            "id": "delivery-1",
+            "message_id": "canonical-1",
+            "content": "hello",
+        })
+        # History refetch returns the same logical message with canonical id only
+        s.append_message({"id": "canonical-1", "content": "hello"})
+        msgs = s.get_messages()
+        assert len(msgs) == 1
+        assert msgs[0]["content"] == "hello"
+
+    def test_append_message_dedups_on_id(self):
+        s = HubState()
+        s.append_message({"id": "abc", "content": "a"})
+        s.append_message({"id": "abc", "content": "a-duplicate"})
+        msgs = s.get_messages()
+        assert len(msgs) == 1
+        assert msgs[0]["content"] == "a"
+
+    def test_set_messages_primes_dedup_set(self):
+        s = HubState()
+        s.set_messages([
+            {"id": "m1", "content": "one"},
+            {"id": "m2", "content": "two"},
+        ])
+        # Subsequent SSE push with the same id should be ignored
+        s.append_message({"id": "m2", "content": "two-echo"})
+        msgs = s.get_messages()
+        assert len(msgs) == 2
+        assert [m["content"] for m in msgs] == ["one", "two"]
+
+    def test_selected_room_name(self):
+        s = HubState()
+        assert s.selected_room_name() == ""
+        s.set_rooms([{"id": "r1", "name": "dev"}, {"id": "r2", "name": "ops"}])
+        assert s.selected_room_name() == "dev"
+        s.select_next()
+        assert s.selected_room_name() == "ops"
+
     def test_set_connected(self):
         s = HubState()
         s.set_connected(True, "Connected")

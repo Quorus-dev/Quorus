@@ -269,6 +269,7 @@ class RoomMessageService:
         for recipient in members:
             fan_out_msg = {
                 "id": str(uuid.uuid4()),
+                "message_id": message_id,
                 "from_name": sender,
                 "to": recipient,
                 "room": room_name,
