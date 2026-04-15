@@ -179,8 +179,16 @@ def fmt_agent(name: str) -> str:
     return f"[agent]@{clean}[/]"
 
 
-def fmt_status_bar(room: str, agent_count: int, relay_host: str, streaming: bool = True) -> str:
+def fmt_status_bar(
+    room: str, agent_count: int, relay_host: str, streaming: bool = True
+) -> str:
     """Render the status bar as a styled string (consumer decides placement)."""
-    live = f"[success]{ICON_DOT_LIVE}[/] streaming" if streaming else f"[error]{ICON_DOT_LIVE}[/] offline"
+    if streaming:
+        live = f"[success]{ICON_DOT_LIVE}[/] streaming"
+    else:
+        live = f"[error]{ICON_DOT_LIVE}[/] offline"
     sep = f" [dim]{ICON_BULLET}[/] "
-    return f" {fmt_room(room)}{sep}[muted]{agent_count} agents online[/]{sep}[muted]{relay_host}[/]{sep}{live}"
+    return (
+        f" {fmt_room(room)}{sep}[muted]{agent_count} agents online[/]"
+        f"{sep}[muted]{relay_host}[/]{sep}{live}"
+    )

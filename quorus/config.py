@@ -26,15 +26,26 @@ def as_bool(value: Any, default: bool = False) -> bool:
 
 
 def resolve_config_file() -> Path:
-    config_dir_override = os.environ.get("QUORUS_CONFIG_DIR") or os.environ.get("MCP_TUNNEL_CONFIG_DIR")
+    config_dir_override = (
+        os.environ.get("QUORUS_CONFIG_DIR")
+        or os.environ.get("MCP_TUNNEL_CONFIG_DIR")
+    )
     if config_dir_override:
         return Path(config_dir_override).expanduser() / CONFIG_FILENAME
 
     # Prefer module-level constants when they've been monkeypatched in tests;
     # fall back to `Path.home()` at call time otherwise so this works under
     # runtime HOME changes (e.g., `sudo -E`).
-    default_dir = DEFAULT_CONFIG_DIR if "DEFAULT_CONFIG_DIR" in globals() else (Path.home() / ".quorus")
-    legacy_dir = LEGACY_CONFIG_DIR if "LEGACY_CONFIG_DIR" in globals() else (Path.home() / "mcp-tunnel")
+    default_dir = (
+        DEFAULT_CONFIG_DIR
+        if "DEFAULT_CONFIG_DIR" in globals()
+        else (Path.home() / ".quorus")
+    )
+    legacy_dir = (
+        LEGACY_CONFIG_DIR
+        if "LEGACY_CONFIG_DIR" in globals()
+        else (Path.home() / "mcp-tunnel")
+    )
     default_file = default_dir / CONFIG_FILENAME
     legacy_file = legacy_dir / CONFIG_FILENAME
     legacy_murmur_file = Path.home() / ".murmur" / CONFIG_FILENAME

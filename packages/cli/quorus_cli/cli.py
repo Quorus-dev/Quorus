@@ -486,7 +486,7 @@ def _cmd_create(args):
         elif e.response.status_code == 401:
             ui.error("Not authenticated", hint="run: quorus init <name> --secret <s>")
         else:
-            ui.error(f"Could not create room", hint=f"server returned HTTP {e.response.status_code}")
+            ui.error("Could not create room", hint=f"server returned HTTP {e.response.status_code}")
         sys.exit(1)
     except httpx.ConnectError:
         _relay_unreachable()
@@ -502,7 +502,7 @@ def _cmd_invite(args):
             f"Invited {len(args.participants)} agent(s) to [room]#{args.room}[/]"
         )
     except httpx.HTTPStatusError as e:
-        ui.error(f"Invite failed", hint=f"HTTP {e.response.status_code}")
+        ui.error("Invite failed", hint=f"HTTP {e.response.status_code}")
         sys.exit(1)
     except httpx.ConnectError:
         _relay_unreachable()
@@ -532,7 +532,7 @@ def _cmd_say(args):
         elif e.response.status_code == 403:
             ui.error(f"Not a member of #{args.room}", hint=f"join first: quorus join {args.room}")
         else:
-            ui.error(f"Send failed", hint=f"HTTP {e.response.status_code}")
+            ui.error("Send failed", hint=f"HTTP {e.response.status_code}")
         sys.exit(1)
     except httpx.ConnectError:
         _relay_unreachable()
@@ -546,7 +546,7 @@ def _cmd_dm(args):
             asyncio.run(_dm(args.to, args.message))
         ui.success(f"DM sent to [agent]@{args.to}[/]")
     except httpx.HTTPStatusError as e:
-        ui.error(f"DM failed", hint=f"HTTP {e.response.status_code}")
+        ui.error("DM failed", hint=f"HTTP {e.response.status_code}")
         sys.exit(1)
     except httpx.ConnectError:
         _relay_unreachable()
@@ -2853,7 +2853,6 @@ def _cmd_hackathon(args):
 def _cmd_doctor(args):
     """Diagnose common setup issues."""
     from quorus.config import resolve_config_file
-
     from quorus_cli import ui
 
     checks_passed = 0
@@ -3052,10 +3051,15 @@ def _cmd_doctor(args):
             )
         except Exception:
             pass
+    hook_detail = (
+        "quorus inbox + context injected on every prompt"
+        if hook_enabled
+        else "opt-in feature"
+    )
     check(
         "Hook auto-inject",
         hook_enabled,
-        detail="quorus inbox + context injected on every prompt" if hook_enabled else "opt-in feature",
+        detail=hook_detail,
         fix="Run: quorus hook enable",
         optional=True,
     )
@@ -3097,7 +3101,7 @@ def _cmd_doctor(args):
 
     # Show web console link
     ui.console.print(
-        f"\n  [muted]Tip: Monitor your swarm at [/][accent][link=https://quorus.dev]quorus.dev[/link][/]"
+        "\n  [muted]Tip: Monitor your swarm at [/][accent][link=https://quorus.dev]quorus.dev[/link][/]"
     )
 
 
@@ -3146,7 +3150,6 @@ def _cmd_relay(args):
 
 def _cmd_version(args):
     from quorus import __version__
-
     from quorus_cli import ui
 
     ui.banner(version=__version__)
@@ -4058,10 +4061,10 @@ def _print_grouped_help():
             ui.console.print(f"  [accent]{cmd:<22}[/] [muted]{desc}[/]")
 
     ui.console.print(
-        f"\n[dim]Run 'quorus <command> --help' for command-specific options.[/]"
+        "\n[dim]Run 'quorus <command> --help' for command-specific options.[/]"
     )
     ui.console.print(
-        f"[dim]Docs: https://quorus.dev[/]\n"
+        "[dim]Docs: https://quorus.dev[/]\n"
     )
 
 
