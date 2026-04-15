@@ -12,12 +12,17 @@ Usage::
 from __future__ import annotations
 
 import os
+import time
 
 from redis.asyncio import Redis
 
 _redis: Redis | None = None
 
 _DEFAULT_URL = "redis://localhost:6379/0"
+
+# Health check cache to reduce PING commands
+_health_cache: dict[str, float] = {"ok": False, "checked_at": 0.0}
+_HEALTH_CACHE_TTL = 30.0  # Cache health status for 30 seconds
 
 
 async def init_redis(url: str | None = None) -> Redis:
@@ -50,11 +55,24 @@ def get_redis() -> Redis:
 
 
 async def check_redis() -> bool:
-    """Return ``True`` if the Redis connection is healthy."""
+    """Return ``True`` if the Redis connection is healthy.
+
+    Caches the result for _HEALTH_CACHE_TTL seconds to reduce PING commands.
+    """
+    global _health_cache
+    now = time.monotonic()
+
+    # Return cached result if still fresh
+    if now - _health_cache["checked_at"] < _HEALTH_CACHE_TTL:
+        return bool(_health_cache["ok"])
+
     if _redis is None:
+        _health_cache = {"ok": False, "checked_at": now}
         return False
     try:
         await _redis.ping()
+        _health_cache = {"ok": True, "checked_at": now}
+        return True
     except Exception:
+        _health_cache = {"ok": False, "checked_at": now}
         return False
-    return True
