@@ -111,11 +111,19 @@ def _save_instance_config(
 
 
 def _signup(relay_url: str, name: str, workspace: str) -> dict | None:
-    """Call the self-service signup endpoint. Returns response dict or None on error."""
+    """Call the self-service signup endpoint. Returns response dict or None on error.
+
+    The relay only returns the raw API key when the caller identifies as a
+    local-setup client via ``X-Quorus-Setup-Local: 1``. Without that header the
+    server responds with ``api_key: None`` for security, which used to leave
+    the TUI with no auth material after signup. See
+    ``quorus/auth/routes.py`` signup handler for the contract.
+    """
     try:
         r = httpx.post(
             f"{relay_url.rstrip('/')}/v1/auth/signup",
             json={"name": name, "workspace": workspace},
+            headers={"X-Quorus-Setup-Local": "1"},
             timeout=10,
         )
         if r.status_code == 200:
@@ -351,17 +359,31 @@ def _first_launch_setup(console: Console) -> dict:
                         console.print(f"\n  [dim]Error: {result['error']}[/dim]")
                 else:
                     console.print(" [bold green]✓[/bold green]")
-                    api_key = result.get("api_key", "")
-                    relay_ok = True
-
-                    console.print()
-                    console.print(
-                        f"  [green]Account created![/green] Workspace: [bold]{workspace}[/bold]\n"
-                    )
-                    console.print(
-                        "  [yellow]Save your API key — it won't be shown again:[/yellow]\n"
-                    )
-                    console.print(f"    [bold]{api_key}[/bold]\n")
+                    api_key = result.get("api_key") or ""
+                    if not api_key:
+                        # Server returned a 200 but no key. Shouldn't happen
+                        # now that `_signup` sends X-Quorus-Setup-Local=1, but
+                        # guard in case a proxy strips it or the server
+                        # changes contract. Fail loud rather than write a
+                        # useless config silently.
+                        console.print()
+                        console.print(
+                            "  [red]Signup succeeded but the server returned no API key.[/]"
+                        )
+                        console.print(
+                            "  [dim]Run [bold]quorus doctor[/] to diagnose, or retry.[/]"
+                        )
+                    else:
+                        relay_ok = True
+                        console.print()
+                        console.print(
+                            f"  [green]Account created.[/] Workspace: "
+                            f"[bold]{workspace}[/]"
+                        )
+                        console.print(
+                            "  [dim]Config + key saved to ~/.quorus/config.json[/]"
+                        )
+                        console.print()
 
     # If still not connected and chose local, guide them
     if not relay_ok and relay_url == DEFAULT_RELAY:
@@ -935,6 +957,18 @@ def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
 
 
 def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
+    # No-room state — render honestly instead of faking a "#general" title.
+    if not room_name:
+        no_room = Text.from_markup(
+            "\n  [dim]No room yet. Type [bold]/create <name>[/] "
+            "or press [bold]n[/] to make one.[/]"
+        )
+        return Panel(
+            no_room,
+            title="[dim]no room[/]",
+            border_style="dim",
+            padding=(0, 1),
+        )
     if not messages:
         no_msg = Text.from_markup(
             f"\n  [dim]No messages in #{room_name} yet. Say something![/dim]"
@@ -1185,51 +1219,33 @@ def run_hub() -> None:
     # Exchange API key for JWT if needed
     secret = _get_auth_token(relay_url, raw_secret)
 
-    # 2. Initial room load
+    # 2. Initial room load — auto-create a starter room if this is a blank
+    # slate so the user lands in a live chat instead of a dead hub.
     console.print(f"\n  [dim]Connecting to {relay_url}...[/dim]")
     rooms = _fetch_rooms(relay_url, secret)
     if not rooms:
-        # Offer to create a default room for first-time users
-        console.print("  [dim]No rooms yet.[/dim]")
-        console.print()
-        create_default = Prompt.ask(
-            "  Create a room to get started?",
-            choices=["y", "n"],
-            default="y",
-        )
-        if create_default.lower() == "y":
-            room_name = Prompt.ask(
-                "  Room name",
-                default="general",
-            ).strip()
-            if room_name and re.match(r"^[A-Za-z0-9_\-]+$", room_name):
-                status, _ = _create_room(relay_url, secret, room_name, agent_name)
-                if status == "ok":
-                    console.print(f"  [green]Room '{room_name}' created![/green]")
-                    rooms = _fetch_rooms(relay_url, secret)
-                elif status == "conflict":
-                    console.print(
-                        f"  [yellow]Room '{room_name}' already exists — "
-                        "pick a different name.[/yellow]"
-                    )
-                elif status == "auth":
-                    console.print(
-                        "  [red]Not authenticated.[/red] "
-                        "[dim]Run: quorus doctor[/dim]"
-                    )
-                elif status == "unreachable":
-                    console.print(
-                        f"  [red]Can't reach relay at {relay_url}.[/red] "
-                        "[dim]Is it running? Try: quorus relay[/dim]"
-                    )
-                else:
-                    console.print(
-                        f"  [red]Couldn't create — {status}.[/red]"
-                    )
-        if not rooms:
+        starter = "general"
+        status, _ = _create_room(relay_url, secret, starter, agent_name)
+        if status == "ok":
             console.print(
-                "  [dim]Type [bold]create <name>[/bold] anytime to make a room.[/dim]"
+                f"  [dim]Created starter room [room]#{starter}[/] — you can add more anytime.[/]"
             )
+            rooms = _fetch_rooms(relay_url, secret)
+        elif status == "conflict":
+            # Someone else made a room named `general` in the same tenant —
+            # silently refetch rather than surface a confusing "exists" error.
+            rooms = _fetch_rooms(relay_url, secret)
+        elif status == "auth":
+            console.print(
+                "  [red]Not authenticated.[/] "
+                "[dim]Run: quorus doctor[/]"
+            )
+        elif status == "unreachable":
+            console.print(
+                f"  [red]Can't reach relay at {relay_url}.[/] "
+                "[dim]Is it running? Try: quorus relay[/]"
+            )
+        # Any other failure → render the empty-state hint from the panel.
 
     # 3. Set up shared state
     state = HubState()
@@ -1277,12 +1293,13 @@ def run_hub() -> None:
                 connected, conn_status = state.get_connection()
                 rooms_snap = state.get_rooms()
                 selected = state.get_selected_room()
-                # Guard against None-selected (no rooms yet) — don't let the
-                # TUI crash on first launch before any room exists.
+                # Empty string signals "no room selected" to the chat
+                # renderer; it uses that to show an honest empty-state
+                # instead of lying with a fake "#general" title.
                 if selected is None:
-                    room_name = "general"
+                    room_name = ""
                 else:
-                    room_name = selected.get("name") or selected.get("id") or "general"
+                    room_name = selected.get("name") or selected.get("id") or ""
                 msgs_snap = state.get_messages()
                 status_bar = state.get_status_bar()
 
