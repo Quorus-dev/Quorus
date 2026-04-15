@@ -31,10 +31,34 @@ _cached_jwt: str | None = None
 
 def _relay_unreachable(url: str = "") -> None:
     """Print a helpful error when the relay is not reachable."""
+    from quorus_cli import ui
+
     target = url or RELAY_URL
-    console.print(f"[red]Cannot connect to relay at {target}[/red]")
-    console.print("[dim]  Is the relay running? Try: quorus relay[/dim]")
-    console.print("[dim]  Check config: quorus doctor[/dim]")
+    ui.error(
+        f"Cannot connect to relay at [primary]{target}[/]",
+        hint="start it with [accent]quorus relay[/] — or run [accent]quorus doctor[/]",
+    )
+
+
+def _write_sensitive_json(path: Path, data: dict) -> None:
+    """Write JSON config atomically with 0600 perms (no TOCTOU window).
+
+    Using `path.write_text` then `chmod(0600)` leaves a window where the
+    file is readable by other users on shared hosts. Create with the
+    right mode from the start using os.open.
+    """
+    import os as _os
+    flags = _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC
+    fd = _os.open(str(path), flags, 0o600)
+    try:
+        with _os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+    except BaseException:
+        try:
+            _os.close(fd)
+        except OSError:
+            pass
+        raise
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -416,49 +440,117 @@ def _cmd_chat(args):
 
 
 def _cmd_rooms(args):
-    rooms = asyncio.run(_list_rooms())
+    from quorus_cli import ui
+    try:
+        with ui.spinner("Fetching rooms"):
+            rooms = asyncio.run(_list_rooms())
+    except httpx.ConnectError:
+        _relay_unreachable()
+        sys.exit(1)
+
     if not rooms:
-        console.print("[dim]No rooms yet.[/dim]")
+        ui.info("No rooms yet")
+        ui.console.print("  [muted]Create one: [accent]quorus create <name>[/][/]")
         return
-    table = Table(title="Rooms")
-    table.add_column("Name", style="bold")
-    table.add_column("Members")
+
+    table = Table(
+        title="[heading]Rooms[/]",
+        border_style="primary",
+        header_style="bold primary",
+        title_justify="left",
+        show_edge=True,
+    )
+    table.add_column("Room", style="room bold")
+    table.add_column("Members", style="muted")
     table.add_column("ID", style="dim")
     for r in rooms:
-        table.add_row(r["name"], ", ".join(r["members"]), r["id"])
-    console.print(table)
+        members_list = r.get("members", [])
+        member_str = ", ".join(f"@{m}" for m in members_list) if members_list else "—"
+        table.add_row(
+            f"#{r['name']}",
+            member_str,
+            r["id"][:8],
+        )
+    ui.console.print(table)
 
 
 def _cmd_create(args):
-    room = asyncio.run(_create_room(args.name))
-    console.print(
-        f"[green]Created room '{room['name']}' (id: {room['id']})[/green]"
-    )
+    from quorus_cli import ui
+    try:
+        with ui.spinner(f"Creating room #{args.name}"):
+            room = asyncio.run(_create_room(args.name))
+        ui.success(f"Created room [room]#{room['name']}[/]", hint=f"id: {room['id'][:8]}")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 409:
+            ui.error(f"Room '{args.name}' already exists", hint="pick a different name")
+        elif e.response.status_code == 401:
+            ui.error("Not authenticated", hint="run: quorus init <name> --secret <s>")
+        else:
+            ui.error(f"Could not create room", hint=f"server returned HTTP {e.response.status_code}")
+        sys.exit(1)
+    except httpx.ConnectError:
+        _relay_unreachable()
+        sys.exit(1)
 
 
 def _cmd_invite(args):
-    asyncio.run(_invite(args.room, args.participants))
+    from quorus_cli import ui
+    try:
+        with ui.spinner(f"Inviting to #{args.room}"):
+            asyncio.run(_invite(args.room, args.participants))
+        ui.success(
+            f"Invited {len(args.participants)} agent(s) to [room]#{args.room}[/]"
+        )
+    except httpx.HTTPStatusError as e:
+        ui.error(f"Invite failed", hint=f"HTTP {e.response.status_code}")
+        sys.exit(1)
+    except httpx.ConnectError:
+        _relay_unreachable()
+        sys.exit(1)
 
 
 def _cmd_members(args):
+    from quorus_cli import ui
     members = asyncio.run(_members(args.room))
     if not members:
-        console.print(
-            f"[dim]Room '{args.room}' not found or empty.[/dim]"
-        )
+        ui.warn(f"Room '{args.room}' not found or empty", hint="list rooms: quorus rooms")
         return
+    ui.heading(f"Members of #{args.room}")
     for m in members:
-        console.print(f"  {m}")
+        ui.console.print(f"  [agent]@{m}[/]")
 
 
 def _cmd_say(args):
-    asyncio.run(_say(args.room, args.message))
-    console.print(f"[green]Sent to {args.room}[/green]")
+    from quorus_cli import ui
+    try:
+        with ui.spinner(f"Sending to #{args.room}"):
+            asyncio.run(_say(args.room, args.message))
+        ui.success(f"Message sent to [room]#{args.room}[/]")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            ui.error(f"Room '{args.room}' not found", hint="list rooms: quorus rooms")
+        elif e.response.status_code == 403:
+            ui.error(f"Not a member of #{args.room}", hint=f"join first: quorus join {args.room}")
+        else:
+            ui.error(f"Send failed", hint=f"HTTP {e.response.status_code}")
+        sys.exit(1)
+    except httpx.ConnectError:
+        _relay_unreachable()
+        sys.exit(1)
 
 
 def _cmd_dm(args):
-    asyncio.run(_dm(args.to, args.message))
-    console.print(f"[green]DM sent to {args.to}[/green]")
+    from quorus_cli import ui
+    try:
+        with ui.spinner(f"Sending DM to @{args.to}"):
+            asyncio.run(_dm(args.to, args.message))
+        ui.success(f"DM sent to [agent]@{args.to}[/]")
+    except httpx.HTTPStatusError as e:
+        ui.error(f"DM failed", hint=f"HTTP {e.response.status_code}")
+        sys.exit(1)
+    except httpx.ConnectError:
+        _relay_unreachable()
+        sys.exit(1)
 
 
 def _cmd_inbox(args):
@@ -531,7 +623,7 @@ def _cmd_inbox(args):
 
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
-MURMUR_HOOK_CONFIG = {
+QUORUS_HOOK_CONFIG = {
     "matcher": ".*",
     "hooks": [
         {
@@ -585,7 +677,7 @@ def _cmd_hook(args):
         if quorus_exists:
             console.print("[yellow]Hook already enabled.[/yellow]")
             return
-        hooks_list.append(MURMUR_HOOK_CONFIG)
+        hooks_list.append(QUORUS_HOOK_CONFIG)
         CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         CLAUDE_SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
         console.print("[green]Hook enabled.[/green]")
@@ -1704,6 +1796,10 @@ def _cmd_usage(args):
 
 def _cmd_init(args):
     """One-command setup: write config, register MCP server with Claude Code."""
+    from quorus_cli import ui
+
+    ui.banner()
+
     name = args.name.strip()
     relay_url = (args.relay_url or "").strip().rstrip("/")
     secret = getattr(args, "secret", None) or ""
@@ -1711,32 +1807,35 @@ def _cmd_init(args):
     # 0. Validate inputs
     import re as _re
     if not name:
-        console.print("[red]Error: name cannot be empty.[/red]")
+        ui.error("Name cannot be empty", hint="pass your agent name as the first argument")
         sys.exit(1)
     if len(name) > 64:
-        console.print("[red]Error: name must be 64 characters or fewer.[/red]")
+        ui.error("Name must be 64 characters or fewer")
         sys.exit(1)
     if not _re.match(r"^[A-Za-z0-9_\-]+$", name):
-        console.print(
-            f"[red]Error: name '{name}' contains invalid characters.[/red]\n"
-            "  Use only letters, numbers, hyphens, and underscores. No spaces."
+        ui.error(
+            f"Name '{name}' contains invalid characters",
+            hint="use only letters, numbers, hyphens, and underscores",
         )
         sys.exit(1)
 
     parsed = urlparse(relay_url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        console.print(
-            f"[red]Error: invalid relay URL '{relay_url}'.[/red]\n"
-            "Expected format: http://localhost:8080 or https://relay.example.com"
+        ui.error(
+            f"Invalid relay URL '{relay_url}'",
+            hint="expected http://localhost:8080 or https://relay.example.com",
         )
         sys.exit(1)
 
     if not api_key and not secret:
-        console.print("[red]Error: --secret or --api-key is required.[/red]")
+        ui.error(
+            "Either --secret or --api-key is required",
+            hint="see: quorus init --help",
+        )
         sys.exit(1)
 
     # 1. Write config (warn if overwriting)
-    config_dir = Path.home() / "mcp-tunnel"
+    config_dir = Path.home() / ".quorus"
     config_dir.mkdir(exist_ok=True)
     config_path = config_dir / "config.json"
     if config_path.exists():
@@ -1749,14 +1848,14 @@ def _cmd_init(args):
         "instance_name": name,
         "poll_mode": "sse",
         "push_notification_method": "notifications/claude/channel",
-        "push_notification_channel": "mcp-tunnel",
+        "push_notification_channel": "quorus",
     }
     if api_key:
         config["api_key"] = api_key
     else:
         config["relay_secret"] = secret
-    config_path.write_text(json.dumps(config, indent=2))
-    config_path.chmod(0o600)  # API keys / secrets are sensitive
+    _write_sensitive_json(config_path, config)
+    # (atomic 0600 write via _write_sensitive_json)
     console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
     # 2. Build MCP server command — prefer `uv run`, fall back to `python -m`
@@ -1832,18 +1931,17 @@ def _cmd_init(args):
         )
 
     # 5. Summary
-    console.print("")
-    console.print(f"[bold]Quorus initialized for: {name}[/bold]")
-    console.print(f"  Relay:      {relay_url}")
-    console.print(f"  Config:     {config_path}")
-    console.print(f"  MCP server: {mcp_command} {' '.join(mcp_args)}")
-    console.print("")
-    console.print("[yellow]Restart Claude Code to pick up the MCP server.[/yellow]")
-    console.print("")
-    console.print("Next steps:")
-    console.print("  quorus create <room-name>       # Create a coordination room")
-    console.print("  quorus join <room-name>          # Join the room")
-    console.print("  quorus doctor                   # Verify everything is wired up")
+    ui.console.print()
+    ui.success(f"Quorus initialized for [agent]{name}[/]")
+    ui.console.print(f"  [muted]Relay:[/]      [primary]{relay_url}[/]")
+    ui.console.print(f"  [muted]Config:[/]     [dim]{config_path}[/]")
+    ui.console.print(f"  [muted]MCP server:[/] [dim]{mcp_command} {' '.join(mcp_args)}[/]")
+    ui.warn("Restart Claude Code to pick up the MCP server")
+    ui.hint_next_steps([
+        "quorus create <room-name>   — create a coordination room",
+        "quorus begin                — open the interactive hub",
+        "quorus doctor               — verify everything is wired up",
+    ])
 
 
 def _cmd_invite_link(args):
@@ -1859,18 +1957,25 @@ def _cmd_invite_link(args):
     console.print("[dim]Replace YOUR_NAME with the agent/user's name.[/dim]")
 
 
+_JOIN_TOKEN_PREFIX = "quorus_join_"
+_LEGACY_JOIN_PREFIX = "murm_join_"  # accept legacy tokens for migration
+
+
 def _make_join_token(room: str, relay_url: str, secret: str) -> str:
-    """Encode room join details into a portable murm_join_ token."""
+    """Encode room join details into a portable quorus_join_ token."""
     payload = json.dumps({"relay_url": relay_url, "secret": secret, "room": room})
     b64 = base64.urlsafe_b64encode(payload.encode()).decode()
-    return f"murm_join_{b64}"
+    return f"{_JOIN_TOKEN_PREFIX}{b64}"
 
 
 def _parse_join_token(token: str) -> dict:
-    """Decode a murm_join_ token back to {relay_url, secret, room}."""
-    if not token.startswith("murm_join_"):
-        raise ValueError("Not a valid join token (expected murm_join_ prefix)")
-    b64 = token[len("murm_join_"):]
+    """Decode a quorus_join_ (or legacy murm_join_) token."""
+    if token.startswith(_JOIN_TOKEN_PREFIX):
+        b64 = token[len(_JOIN_TOKEN_PREFIX):]
+    elif token.startswith(_LEGACY_JOIN_PREFIX):
+        b64 = token[len(_LEGACY_JOIN_PREFIX):]
+    else:
+        raise ValueError("Not a valid join token (expected quorus_join_ prefix)")
     try:
         payload = base64.urlsafe_b64decode(b64.encode()).decode()
         data = json.loads(payload)
@@ -1944,7 +2049,7 @@ def _cmd_join(args):
     name = args.name
     repo_dir = Path(__file__).resolve().parent.parent
     quorus_dir = Path(__file__).resolve().parent
-    config_dir = Path.home() / "mcp-tunnel"
+    config_dir = Path.home() / ".quorus"
     config_path = config_dir / "config.json"
 
     # 1. Write config only if needed (token join, explicit flags, or no config exists)
@@ -1955,14 +2060,14 @@ def _cmd_join(args):
             "instance_name": name,
             "poll_mode": "sse",
             "push_notification_method": "notifications/claude/channel",
-            "push_notification_channel": "mcp-tunnel",
+            "push_notification_channel": "quorus",
         }
         if api_key:
             config["api_key"] = api_key
         else:
             config["relay_secret"] = secret
-        config_path.write_text(json.dumps(config, indent=2))
-        config_path.chmod(0o600)
+        _write_sensitive_json(config_path, config)
+        # (atomic 0600 write via _write_sensitive_json)
         console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
     # 2. Register MCP server with Claude Code (only if setting up fresh)
@@ -2166,22 +2271,22 @@ def _cmd_quickjoin(args):
     quorus_dir = Path(__file__).resolve().parent
 
     # 1. Write config
-    config_dir = Path.home() / "mcp-tunnel"
+    config_dir = Path.home() / ".quorus"
     config_dir.mkdir(exist_ok=True)
     config = {
         "relay_url": relay_url,
         "instance_name": name,
         "poll_mode": "sse",
         "push_notification_method": "notifications/claude/channel",
-        "push_notification_channel": "mcp-tunnel",
+        "push_notification_channel": "quorus",
     }
     if api_key:
         config["api_key"] = api_key
     else:
         config["relay_secret"] = secret
     config_path = config_dir / "config.json"
-    config_path.write_text(json.dumps(config, indent=2))
-    config_path.chmod(0o600)
+    _write_sensitive_json(config_path, config)
+    # (atomic 0600 write via _write_sensitive_json)
     console.print(f"[green]Config written to {config_path}[/green]")
 
     # 2. Register MCP server
@@ -2242,6 +2347,24 @@ def _cmd_quickjoin(args):
 
 def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
     """Create agent workspace and launch Claude Code in a new terminal tab."""
+    # Validate name: letters, digits, hyphen, underscore — defense against
+    # AppleScript/shell injection in Terminal spawning below.
+    import re as _re
+    if not _re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
+        from quorus_cli import ui
+        ui.error(
+            f"Invalid agent name '{name}'",
+            hint="use only letters, digits, hyphen, underscore (1-64 chars)",
+        )
+        sys.exit(1)
+    if not _re.fullmatch(r"[A-Za-z0-9_-]{1,64}", room):
+        from quorus_cli import ui
+        ui.error(
+            f"Invalid room name '{room}'",
+            hint="use only letters, digits, hyphen, underscore (1-64 chars)",
+        )
+        sys.exit(1)
+
     agents_dir = Path.home() / "quorus-agents"
     workspace = agents_dir / name
     quorus_dir = Path(__file__).resolve().parent
@@ -2598,7 +2721,7 @@ def _cmd_quickstart(args):
         sys.exit(1)
 
     # 2. Write config for the human user
-    config_dir = Path.home() / "mcp-tunnel"
+    config_dir = Path.home() / ".quorus"
     config_dir.mkdir(exist_ok=True)
     config = {
         "relay_url": relay_url,
@@ -2606,7 +2729,7 @@ def _cmd_quickstart(args):
         "instance_name": "human",
         "enable_background_polling": True,
         "push_notification_method": "notifications/claude/channel",
-        "push_notification_channel": "mcp-tunnel",
+        "push_notification_channel": "quorus",
     }
     (config_dir / "config.json").write_text(json.dumps(config, indent=2))
 
@@ -2727,6 +2850,8 @@ def _cmd_doctor(args):
     """Diagnose common setup issues."""
     from quorus.config import resolve_config_file
 
+    from quorus_cli import ui
+
     checks_passed = 0
     checks_total = 0
     verbose = args.verbose
@@ -2736,17 +2861,17 @@ def _cmd_doctor(args):
         checks_total += 1
         if ok:
             checks_passed += 1
-            console.print(f"  [green]OK[/green]  {name}")
+            ui.console.print(f"  [success]{ui.ICON_OK}[/]  {name}")
         else:
-            console.print(f"  [red]FAIL[/red] {name}")
+            ui.console.print(f"  [error]{ui.ICON_FAIL}[/]  [error]{name}[/]")
             if detail:
-                console.print(f"        {detail}")
+                ui.console.print(f"       [muted]{detail}[/]")
             if fix:
-                console.print(f"        [yellow]Fix: {fix}[/yellow]")
+                ui.console.print(f"       [muted]fix:[/] [accent]{fix}[/]")
         if verbose and detail and ok:
-            console.print(f"        {detail}")
+            ui.console.print(f"       [dim]{detail}[/]")
 
-    console.print("[bold]Quorus Doctor[/bold]\n")
+    ui.heading("Quorus Doctor")
 
     # 1. Config file
     config_file = resolve_config_file()
@@ -2937,16 +3062,21 @@ def _cmd_doctor(args):
         except Exception:
             pass
 
-    console.print(f"\n[bold]{checks_passed}/{checks_total} checks passed[/bold]")
+    ui.console.print()
+    pct = int(checks_passed * 100 / checks_total) if checks_total else 0
+    color = "success" if pct == 100 else ("warning" if pct >= 70 else "error")
+    ui.console.print(
+        f"  [{color}]{checks_passed}/{checks_total} checks passed[/] "
+        f"[muted]({pct}%)[/]"
+    )
     if checks_passed == checks_total:
-        console.print("[green]Everything looks good![/green]")
+        ui.success("You're all set — try: quorus begin")
     else:
-        console.print("[yellow]Fix the issues above to get started.[/yellow]")
+        ui.warn("Fix the issues above to get started")
 
     # Show web console link
-    console.print(
-        "\n[dim]Tip: Monitor your swarm in the browser at "
-        "[link=https://quorus-ai.dev/console]quorus-ai.dev/console[/link][/dim]"
+    ui.console.print(
+        f"\n  [muted]Tip: Monitor your swarm at [/][accent][link=https://quorus.dev]quorus.dev[/link][/]"
     )
 
 
@@ -2954,7 +3084,7 @@ def _cmd_relay(args):
     """Start the relay server."""
     repo_dir = Path(__file__).resolve().parent.parent
     port = args.port
-    config_path = Path.home() / "mcp-tunnel" / "config.json"
+    config_path = Path.home() / ".quorus" / "config.json"
 
     # Read secret from config if it exists
     secret = ""
@@ -2995,7 +3125,13 @@ def _cmd_relay(args):
 
 def _cmd_version(args):
     from quorus import __version__
-    console.print(f"quorus-ai {__version__}")
+
+    from quorus_cli import ui
+
+    ui.banner(version=__version__)
+    ui.info(f"Relay URL: [primary]{RELAY_URL}[/]")
+    ui.info(f"Instance:  [agent]{INSTANCE_NAME}[/]")
+    ui.info(f"Config:    [muted]{_config.get('config_file', '~/.quorus/config.json')}[/]")
 
 
 def _cmd_logs(args):
@@ -3839,9 +3975,85 @@ def _cmd_begin(args):
     run_hub()
 
 
+def _print_grouped_help():
+    """Custom help output with commands grouped by category."""
+    from quorus import __version__
+    from quorus_cli import ui
+
+    ui.banner(version=__version__)
+
+    groups = [
+        ("GET STARTED", [
+            ("init <name>",        "One-command setup (name + relay + secret)"),
+            ("begin",              "Open the interactive hub (default if no command)"),
+            ("doctor",             "Diagnose setup issues"),
+            ("version",            "Show version, relay, and config"),
+        ]),
+        ("ROOMS & MESSAGING", [
+            ("rooms",              "List all rooms"),
+            ("create <name>",      "Create a room"),
+            ("join <room>",        "Join a room"),
+            ("chat <room>",        "Interactive chat in a room"),
+            ("say <room> <msg>",   "Send a message to a room"),
+            ("dm <name> <msg>",    "Direct message another agent"),
+            ("inbox",              "Check pending messages"),
+            ("history <room>",     "Show room message history"),
+            ("search <room> <q>",  "Search room history"),
+        ]),
+        ("COORDINATION", [
+            ("state <room>",       "Show shared state (goal, locks, tasks)"),
+            ("locks <room>",       "Show active file locks"),
+            ("context [--room R]", "Get a briefing of current room context"),
+            ("decision <room> <t>","Record an architectural decision"),
+            ("resolve",            "AI-powered merge conflict resolution"),
+            ("board",              "Live swarm task board"),
+        ]),
+        ("AGENTS & SWARMS", [
+            ("ps",                 "Show agent presence (online/offline)"),
+            ("spawn <name>",       "Create agent workspace + launch Claude Code"),
+            ("add-agent",          "Interactive wizard to add an agent"),
+            ("quickstart",         "One-command demo (solo swarm)"),
+            ("hackathon",          "Two-room hackathon setup"),
+            ("share <room>",       "Generate a portable join token"),
+            ("quickjoin <token>",  "Join with zero config from token"),
+        ]),
+        ("OPS & ADMIN", [
+            ("relay",              "Start the relay server locally"),
+            ("status",             "Relay health and stats"),
+            ("logs",               "Per-participant activity log"),
+            ("metrics <room>",     "Room activity analytics"),
+            ("usage",              "Tenant-wide usage metrics"),
+            ("export <room>",      "Export room history (json/md)"),
+            ("kick <room> <who>",  "Remove a member from a room"),
+            ("rename <room> <new>","Rename a room"),
+            ("destroy <room>",     "Delete a room"),
+            ("hook enable",        "Auto-inject inbox on UserPromptSubmit"),
+        ]),
+    ]
+
+    for title, items in groups:
+        ui.console.print(f"\n[heading]{title}[/]")
+        for cmd, desc in items:
+            ui.console.print(f"  [accent]{cmd:<22}[/] [muted]{desc}[/]")
+
+    ui.console.print(
+        f"\n[dim]Run 'quorus <command> --help' for command-specific options.[/]"
+    )
+    ui.console.print(
+        f"[dim]Docs: https://quorus.dev[/]\n"
+    )
+
+
 def main():
+    # Intercept top-level --help / -h for custom grouped output
+    if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help", "help"):
+        _print_grouped_help()
+        return
+
     parser = argparse.ArgumentParser(
-        prog="quorus", description="Quorus — Coordination layer for AI agent swarms"
+        prog="quorus",
+        description="Quorus — Coordination layer for AI agent swarms",
+        add_help=True,
     )
     sub = parser.add_subparsers(dest="command")
 

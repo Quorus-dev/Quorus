@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: murmur-relay
+    name: quorus-relay
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: free
@@ -13,6 +13,6 @@ services:
         value: /app/data/messages.json
     healthCheckPath: /health
     disk:
-      name: murmur-data
+      name: quorus-data
       mountPath: /app/data
       sizeGB: 1

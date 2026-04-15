@@ -1,4 +1,4 @@
-"""Quorus Watcher — background daemon that writes room context to .murmur/context.md.
+"""Quorus Watcher — background daemon that writes room context to .quorus/context.md.
 
 Context includes:
 - Room state (active agents, claimed tasks, locked files, decisions)
@@ -8,7 +8,7 @@ Context includes:
 The watcher is event-driven via SSE — writes context.md when messages arrive,
 locks are acquired/released, or other room events occur.
 
-Each agent maintains its own local .murmur/context.md (repo-scoped, not shared).
+Each agent maintains its own local .quorus/context.md (repo-scoped, not shared).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ logger = structlog.get_logger("quorus.watcher")
 
 
 class Watcher:
-  """Event-driven background task that updates .murmur/context.md via SSE."""
+  """Event-driven background task that updates .quorus/context.md via SSE."""
 
   def __init__(
       self,
@@ -41,7 +41,7 @@ class Watcher:
     self.room_name = room_name
     self.agent_name = agent_name
     self.sse_token = sse_token
-    self.context_path = context_path or Path.cwd() / ".murmur" / "context.md"
+    self.context_path = context_path or Path.cwd() / ".quorus" / "context.md"
     self._running = False
     self._task: asyncio.Task | None = None
     self._backoff_delay = 1  # Initial backoff in seconds
@@ -167,7 +167,7 @@ class Watcher:
     return context
 
   async def _write_context(self, context: dict) -> None:
-    """Write context to .murmur/context.md atomically."""
+    """Write context to .quorus/context.md atomically."""
     # Ensure .murmur/ directory exists
     self.context_path.parent.mkdir(parents=True, exist_ok=True)
 

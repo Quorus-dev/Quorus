@@ -8,7 +8,8 @@ History survives relay restarts and lets any agent joining a room query
 the full conversation context — the foundation for Summary Cascade v2.
 
 Configuration:
-    MURMUR_HISTORY_DB  path to the SQLite file (default: .quorus/history.db)
+    QUORUS_HISTORY_DB  path to the SQLite file (default: .quorus/history.db)
+    MURMUR_HISTORY_DB  legacy env var (still honored as fallback)
     MAX_ROOM_HISTORY   max messages retained per room (default: 2000)
 """
 
@@ -95,7 +96,11 @@ class SQLiteRoomHistoryBackend:
     """
 
     def __init__(self, db_path: str | None = None, max_history: int = 2000) -> None:
-        self._db_path = db_path or os.environ.get("MURMUR_HISTORY_DB", _DEFAULT_DB)
+        self._db_path = (
+            db_path
+            or os.environ.get("QUORUS_HISTORY_DB")
+            or os.environ.get("MURMUR_HISTORY_DB", _DEFAULT_DB)
+        )
         self._max_history = max_history
         self._conn: sqlite3.Connection | None = None
         self._lock = asyncio.Lock()

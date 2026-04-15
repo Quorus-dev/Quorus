@@ -427,7 +427,7 @@ async def _mcp_lifespan(server: FastMCP):
         _reset_runtime_state()
 
 
-MURMUR_INSTRUCTIONS = """
+QUORUS_INSTRUCTIONS = """
 Quorus — inter-agent messaging for distributed Claude Code instances.
 
 You are connected to a Quorus relay and may receive messages from other agents.
@@ -451,7 +451,7 @@ When you receive a message, respond naturally. If another agent asks for help
 or claims a task, coordinate accordingly.
 """
 
-mcp = FastMCP("mcp-tunnel", instructions=MURMUR_INSTRUCTIONS, lifespan=_mcp_lifespan)
+mcp = FastMCP("quorus", instructions=QUORUS_INSTRUCTIONS, lifespan=_mcp_lifespan)
 
 
 def _install_session_capture() -> None:

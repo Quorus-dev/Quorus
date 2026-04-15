@@ -92,10 +92,14 @@ def _write_config(
         "api_key": api_key,
         "poll_mode": "sse",
         "push_notification_method": "notifications/claude/channel",
-        "push_notification_channel": "mcp-tunnel",
+        "push_notification_channel": "quorus",
     }
-    CONFIG_FILE.write_text(json.dumps(config, indent=2))
-    CONFIG_FILE.chmod(0o600)
+    # Atomic 0600 write — no TOCTOU window between write and chmod.
+    import os as _os
+    flags = _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC
+    fd = _os.open(str(CONFIG_FILE), flags, 0o600)
+    with _os.fdopen(fd, "w") as f:
+        json.dump(config, f, indent=2)
 
 
 def _signup(relay_url: str, name: str, workspace: str) -> dict | None:
@@ -129,18 +133,25 @@ def _try_connect(url: str, timeout: float = 3) -> bool:
 
 def _first_launch_setup(console: Console) -> dict:
     """Interactive first-launch wizard. Returns config dict."""
-    console.print()
-    console.print(Panel(
-        Text.from_markup(
-            "  [bold #14b8a6]quorus[/bold #14b8a6]"
-            "  [dim]·[/dim]"
-            "  [dim]agent coordination hub[/dim]  "
-        ),
-        border_style="dim",
-        padding=(0, 1),
-    ))
-    console.print()
-    console.print("  Welcome! Let's get you coordinating with other agents.\n")
+    try:
+        from quorus_cli import ui as _ui
+        _ui.banner()
+        _ui.info("Let's get you connected to a swarm. This takes ~30 seconds.")
+        console.print()
+    except Exception:
+        # Fallback if ui module unavailable
+        console.print()
+        console.print(Panel(
+            Text.from_markup(
+                "  [bold #14b8a6]quorus[/bold #14b8a6]"
+                "  [dim]·[/dim]"
+                "  [dim]coordination for agent swarms[/dim]  "
+            ),
+            border_style="#14b8a6",
+            padding=(0, 1),
+        ))
+        console.print()
+        console.print("  Welcome! Let's get you coordinating with other agents.\n")
 
     # Name — conversational, plain English
     console.print("  [dim]First, pick a name that others will see in rooms.[/dim]\n")
@@ -555,18 +566,20 @@ def _poll_loop(relay: str, secret: str, state: HubState, stop_event: threading.E
 # ── Renderers ─────────────────────────────────────────────────────────────────
 
 def _render_header(relay_url: str, agent_name: str, connected: bool, status: str) -> Panel:
-    dot = "[bold green]●[/bold green]" if connected else "[bold red]●[/bold red]"
+    dot_icon = "⏵" if connected else "◌"
+    dot_style = "bold #10b981" if connected else "bold #ef4444"
     # Strip protocol for display brevity
     display_relay = relay_url.replace("http://", "").replace("https://", "")
     header_text = Text()
     header_text.append("  quorus", style="bold #14b8a6")
-    header_text.append("  ·  ", style="dim")
-    header_text.append(agent_name, style=f"bold {_sender_color(agent_name)}")
-    header_text.append("  ·  ", style="dim")
-    header_text.append(display_relay, style="dim")
-    header_text.append("  ", style="dim")
-    header_text.append_text(Text.from_markup(dot))
-    return Panel(header_text, border_style="dim", padding=(0, 1))
+    header_text.append("  ·  ", style="#475569")
+    header_text.append(f"@{agent_name}", style=f"bold {_sender_color(agent_name)}")
+    header_text.append("  ·  ", style="#475569")
+    header_text.append(display_relay, style="#64748b")
+    header_text.append("   ", style="#64748b")
+    header_text.append(dot_icon, style=dot_style)
+    header_text.append(f" {status}" if status else "", style="#64748b")
+    return Panel(header_text, border_style="#14b8a6", padding=(0, 1))
 
 
 def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
@@ -583,31 +596,23 @@ def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
         members = room.get("members", [])
         member_count = len(members) if isinstance(members, list) else members
 
-        ts_raw = room.get("last_activity") or room.get("updated_at") or ""
-        try:
-            ts = ts_raw[:16].replace("T", " ") if ts_raw else ""
-        except Exception:
-            ts = ""
-
         is_selected = i == selected_idx
         if is_selected:
-            t.append("▶ ", style="bold #14b8a6")
-            t.append(f"#{name}", style="bold #14b8a6")
+            t.append(" ❯ ", style="bold #14b8a6")
+            t.append(f"#{name}", style="bold #fbbf24")
+            t.append(f"  {member_count} agents", style="#64748b")
         else:
-            t.append("  ", style="")
-            t.append(f"#{name}", style="dim")
-
-        t.append(f"  {member_count}👥", style="dim")
-        if ts:
-            t.append(f"  {ts}", style="dim")
+            t.append("   ", style="")
+            t.append(f"#{name}", style="#94a3b8")
+            t.append(f"  {member_count} agents", style="#475569")
         t.append("\n")
 
     return Panel(
         t,
-        title="[bold]Rooms[/bold]",
-        border_style="dim",
+        title="[bold #14b8a6]Rooms[/]",
+        border_style="#1e293b",
         padding=(0, 1),
-        subtitle="[dim]↑↓ navigate  n new[/dim]",
+        subtitle="[#475569]↑↓ switch · n new[/]",
     )
 
 
@@ -657,15 +662,15 @@ def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
 
 def _render_input_bar(agent_name: str, status_msg: str) -> Panel:
     content = Text()
-    content.append("> ", style="bold dim")
+    content.append("❯ ", style="bold #14b8a6")
     if status_msg:
-        content.append(status_msg, style="dim italic")
+        content.append(status_msg, style="#f59e0b italic")
     else:
         content.append(
-            "type a message, or: join <room> · create <name> · invite <name> · help · quit",
-            style="dim",
+            "type a message · /help for commands · ctrl+c to quit",
+            style="#475569",
         )
-    return Panel(content, border_style="dim", padding=(0, 1))
+    return Panel(content, border_style="#14b8a6", padding=(0, 1))
 
 
 def _print_help(console: Console) -> None:
@@ -920,7 +925,7 @@ def run_hub() -> None:
                     import base64 as _b64
                     import json as _json
                     payload = _json.dumps({"relay_url": relay_url, "secret": secret, "room": rname})
-                    token = "murm_join_" + _b64.urlsafe_b64encode(payload.encode()).decode()
+                    token = "quorus_join_" + _b64.urlsafe_b64encode(payload.encode()).decode()
                     # Print above the TUI frame and block until the user confirms —
                     # otherwise the next loop iteration redraws the frame and the
                     # token scrolls off-screen before they can copy it.

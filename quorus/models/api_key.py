@@ -2,8 +2,10 @@
 
 No ORM dependency — pure dataclasses. Wired to asyncpg in the auth service layer.
 
-Key format: murm_sk_<64 hex chars>  (72 chars total)
+Key format: quorus_sk_<64 hex chars>  (74 chars total)
 Storage:    key_prefix (first 8 hex chars) + key_hash (bcrypt(sha256(raw)))
+
+Legacy keys issued under the murm_sk_ prefix are still accepted on verify.
 """
 
 from __future__ import annotations
@@ -30,7 +32,9 @@ def _new_uuid() -> str:
 
 
 # Public key prefix — registerable with GitHub Secret Scanning / GitGuardian.
-_KEY_PREFIX = 'murm_sk_'
+_KEY_PREFIX = 'quorus_sk_'
+# Legacy prefix from pre-rebrand (still accepted on verify for backward compat).
+_LEGACY_KEY_PREFIX = 'murm_sk_'
 # 32 random bytes → 64 hex chars → 256 bits of entropy.
 _KEY_ENTROPY_BYTES = 32
 # Number of hex chars used as the lookup prefix stored in the DB.
@@ -83,7 +87,7 @@ class APIKey:
         - ``raw_key`` is the full plaintext key — return this to the user ONCE,
           then discard. It is never stored.
 
-        Key format: murm_sk_<64 hex chars>
+        Key format: quorus_sk_<64 hex chars>
 
         Hashing: bcrypt(sha256(raw_key), rounds=12)
         SHA-256 pre-hashing is required because bcrypt silently truncates input
@@ -134,13 +138,17 @@ class APIKey:
     def extract_prefix(raw_key: str) -> str:
         """Extract the 8-char lookup prefix from a raw key.
 
-        Raises ValueError if the key does not match the murm_sk_ format.
+        Accepts both ``quorus_sk_`` (current) and ``murm_sk_`` (legacy) prefixes.
+        Raises ValueError if the key does not match either format.
         """
-        if not raw_key.startswith(_KEY_PREFIX):
+        if raw_key.startswith(_KEY_PREFIX):
+            rest = raw_key[len(_KEY_PREFIX):]
+        elif raw_key.startswith(_LEGACY_KEY_PREFIX):
+            rest = raw_key[len(_LEGACY_KEY_PREFIX):]
+        else:
             raise ValueError(
                 f'Invalid API key format — expected {_KEY_PREFIX}... prefix'
             )
-        rest = raw_key[len(_KEY_PREFIX):]
         if len(rest) < _PREFIX_CHARS:
             raise ValueError('Invalid API key format — key too short')
         return rest[:_PREFIX_CHARS]

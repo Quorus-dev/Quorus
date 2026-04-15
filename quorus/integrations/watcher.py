@@ -22,14 +22,27 @@ import httpx
 
 
 def _notify_macos(title: str, body: str) -> None:
-    """Show macOS system notification."""
+    """Show macOS system notification.
+
+    AppleScript is built as a parameterized script that reads title/body from
+    stdin — NEVER string-interpolate user content into the AppleScript source,
+    which would be a shell injection vector (CVE-class: command injection via
+    untrusted SSE message content).
+    """
     if sys.platform != "darwin":
         return
     try:
+        # Pass title and body via argv; AppleScript reads them via `item N of argv`
+        # so shell metacharacters in the content cannot break out of the string.
+        script = (
+            'on run argv\n'
+            '  display notification (item 2 of argv) with title (item 1 of argv)\n'
+            'end run'
+        )
         subprocess.run(
-            ["osascript", "-e",
-             f'display notification "{body}" with title "{title}"'],
-            capture_output=True, timeout=5,
+            ["osascript", "-e", script, "--", title, body],
+            capture_output=True,
+            timeout=5,
         )
     except Exception:
         pass

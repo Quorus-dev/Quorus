@@ -3,14 +3,14 @@
  * Zero dependencies — uses native fetch. Works in Node.js 18+, Deno, Bun, and browsers.
  *
  * Usage:
- *   const client = new MurmurClient("https://your-relay.example.com", "secret", "my-agent");
+ *   const client = new QuorusClient("https://your-relay.example.com", "secret", "my-agent");
  *   await client.join("dev-room");
  *   await client.send("dev-room", "Hello from any agent!");
  *   const messages = await client.receive();
  *   const history = await client.history("dev-room");
  */
 
-export class MurmurClient {
+export class QuorusClient {
   private relayUrl: string;
   private headers: Record<string, string>;
   readonly name: string;

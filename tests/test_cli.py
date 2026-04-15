@@ -103,8 +103,8 @@ def test_cli_version(capsys):
 
     _cmd_version(MagicMock())
     captured = capsys.readouterr()
-    assert "quorus-ai" in captured.out
-    assert "0.3.0" in captured.out
+    assert "quorus" in captured.out
+    assert "0.4.0" in captured.out
 
 
 def test_cli_logs(capsys):
@@ -228,7 +228,7 @@ def test_cli_doctor_mcp_registration_detected(capsys, tmp_path):
 
     captured = capsys.readouterr()
     assert "MCP server registered" in captured.out
-    assert "OK" in captured.out  # Check passes when quorus is registered
+    assert "✓" in captured.out  # Check passes when quorus is registered
 
 
 def test_cli_doctor_mcp_registration_not_found(capsys, tmp_path):
@@ -274,7 +274,7 @@ def test_cli_doctor_mcp_registration_not_found(capsys, tmp_path):
 
     captured = capsys.readouterr()
     assert "MCP server registered" in captured.out
-    assert "FAIL" in captured.out
+    assert "✗" in captured.out
 
 
 # ── export command tests ────────────────────────────────────────────────
@@ -1072,12 +1072,12 @@ def test_cmd_hook_enable_already_enabled(capsys, tmp_path):
     """Hook enable when already enabled should show warning."""
     import json
 
-    from quorus.cli import MURMUR_HOOK_CONFIG, _cmd_hook
+    from quorus.cli import QUORUS_HOOK_CONFIG, _cmd_hook
 
     settings_path = tmp_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True)
     settings_path.write_text(json.dumps({
-        "hooks": {"UserPromptSubmit": [MURMUR_HOOK_CONFIG]}
+        "hooks": {"UserPromptSubmit": [QUORUS_HOOK_CONFIG]}
     }))
 
     with patch("quorus.cli.CLAUDE_SETTINGS_PATH", settings_path):
@@ -1093,12 +1093,12 @@ def test_cmd_hook_disable_removes_hook(capsys, tmp_path):
     """Hook disable should remove the quorus hook from settings."""
     import json
 
-    from quorus.cli import MURMUR_HOOK_CONFIG, _cmd_hook
+    from quorus.cli import QUORUS_HOOK_CONFIG, _cmd_hook
 
     settings_path = tmp_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True)
     settings_path.write_text(json.dumps({
-        "hooks": {"UserPromptSubmit": [MURMUR_HOOK_CONFIG]}
+        "hooks": {"UserPromptSubmit": [QUORUS_HOOK_CONFIG]}
     }))
 
     with patch("quorus.cli.CLAUDE_SETTINGS_PATH", settings_path):
@@ -1119,12 +1119,12 @@ def test_cmd_hook_status_when_enabled(capsys, tmp_path):
     """Hook status should show enabled when hook exists."""
     import json
 
-    from quorus.cli import MURMUR_HOOK_CONFIG, _cmd_hook
+    from quorus.cli import QUORUS_HOOK_CONFIG, _cmd_hook
 
     settings_path = tmp_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True)
     settings_path.write_text(json.dumps({
-        "hooks": {"UserPromptSubmit": [MURMUR_HOOK_CONFIG]}
+        "hooks": {"UserPromptSubmit": [QUORUS_HOOK_CONFIG]}
     }))
 
     with patch("quorus.cli.CLAUDE_SETTINGS_PATH", settings_path):
@@ -1608,9 +1608,9 @@ def test_decision_room_not_found(capsys):
 
 def test_hook_command_includes_both_inbox_and_context():
     """Enabled hook should run both inbox and context for auto-injection."""
-    from quorus.cli import MURMUR_HOOK_CONFIG
+    from quorus.cli import QUORUS_HOOK_CONFIG
 
-    all_commands = " ".join(h["command"] for h in MURMUR_HOOK_CONFIG["hooks"])
+    all_commands = " ".join(h["command"] for h in QUORUS_HOOK_CONFIG["hooks"])
     assert "quorus inbox" in all_commands
     assert "quorus context" in all_commands
     assert "--quiet" in all_commands
@@ -1834,7 +1834,7 @@ def test_cmd_init_happy_path(tmp_path, monkeypatch):
     args = _make_init_args()
     _cmd_init(args)
 
-    config_path = tmp_path / "mcp-tunnel" / "config.json"
+    config_path = tmp_path / ".quorus" / "config.json"
     assert config_path.exists()
     cfg = json.loads(config_path.read_text())
     assert cfg["relay_url"] == "http://localhost:8080"
@@ -1909,7 +1909,7 @@ def test_cmd_init_warns_on_relay_unreachable(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "Warning" in captured.out or "warning" in captured.out.lower()
     # config should still be written
-    assert (tmp_path / "mcp-tunnel" / "config.json").exists()
+    assert (tmp_path / ".quorus" / "config.json").exists()
 
 
 def test_cmd_init_warns_on_existing_config(tmp_path, monkeypatch, capsys):
@@ -1923,7 +1923,7 @@ def test_cmd_init_warns_on_existing_config(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("quorus.cli.httpx.get", lambda *a, **kw: mock_resp)
 
     # Create existing config
-    config_dir = tmp_path / "mcp-tunnel"
+    config_dir = tmp_path / ".quorus"
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text('{"relay_url": "http://old:8080"}')
 
@@ -2095,7 +2095,7 @@ def test_cmd_join_preserves_config_when_no_flags(tmp_path, monkeypatch, capsys):
     from quorus.cli import _cmd_join
 
     # Set up existing config
-    config_dir = tmp_path / "mcp-tunnel"
+    config_dir = tmp_path / ".quorus"
     config_dir.mkdir()
     config_path = config_dir / "config.json"
     original_config = {
@@ -2158,7 +2158,7 @@ def test_cmd_join_with_explicit_flags_rewrites_config(tmp_path, monkeypatch, cap
     from quorus.cli import _cmd_join
 
     # Set up existing config
-    config_dir = tmp_path / "mcp-tunnel"
+    config_dir = tmp_path / ".quorus"
     config_dir.mkdir()
     config_path = config_dir / "config.json"
     original_config = {

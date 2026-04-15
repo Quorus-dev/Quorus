@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Murmur Quick Setup
+# Quorus Quick Setup
 # Usage: ./setup.sh <your-name> [relay-url] [secret]
 #
 # Examples:
@@ -11,61 +11,50 @@ set -e
 
 NAME="${1:?Usage: ./setup.sh <your-name> [relay-url] [secret]}"
 RELAY_URL="${2:-http://localhost:8080}"
-SECRET="${3:-murmur-hack}"
+SECRET="${3:-quorus-dev}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "Setting up Murmur for: $NAME"
+echo "Setting up Quorus for: $NAME"
 echo "  Relay: $RELAY_URL"
 echo ""
 
-# Write config
-mkdir -p ~/mcp-tunnel
-cat > ~/mcp-tunnel/config.json <<EOF
+# Write config with restrictive perms
+mkdir -p ~/.quorus
+umask 077
+cat > ~/.quorus/config.json <<EOF
 {
   "relay_url": "$RELAY_URL",
   "relay_secret": "$SECRET",
   "instance_name": "$NAME",
   "enable_background_polling": true,
   "push_notification_method": "notifications/claude/channel",
-  "push_notification_channel": "mcp-tunnel"
+  "push_notification_channel": "quorus"
 }
 EOF
-echo "Config written to ~/mcp-tunnel/config.json"
+chmod 0600 ~/.quorus/config.json
+echo "Config written to ~/.quorus/config.json"
 
-# Show Claude Code MCP config to paste
 echo ""
 echo "Add this to your Claude Code MCP settings:"
 echo ""
-echo "  Name: murmur"
-echo "  Command: uv run --directory $SCRIPT_DIR python $SCRIPT_DIR/murmur/mcp_server.py"
+echo "  Name: quorus"
+echo "  Command: uv run --directory $SCRIPT_DIR python -m quorus.mcp_server"
 echo ""
-echo "Or add to ~/.claude/claude_desktop_config.json:"
-echo ""
+echo "Or add to ~/.claude.json:"
 cat <<EOF
 {
   "mcpServers": {
-    "murmur": {
+    "quorus": {
       "command": "uv",
-      "args": ["run", "--directory", "$SCRIPT_DIR", "python", "$SCRIPT_DIR/murmur/mcp_server.py"]
+      "args": ["run", "--directory", "$SCRIPT_DIR", "python", "-m", "quorus.mcp_server"]
     }
   }
 }
 EOF
 
 echo ""
-echo "Done! Start the relay with:"
-echo "  cd $SCRIPT_DIR && RELAY_SECRET=$SECRET uv run murmur-relay"
+echo "Start the relay:"
+echo "  cd $SCRIPT_DIR && RELAY_SECRET=$SECRET uv run quorus-relay"
 echo ""
-echo "Launch Claude Code with instant push (recommended):"
-echo "  claude --channels server:murmur"
-echo ""
-echo "Then in Claude Code, your agent has these tools:"
-echo "  send_message, check_messages, list_participants"
-echo "  send_room_message, join_room, list_rooms"
-echo "  claim_task, release_task, get_room_state"
-echo ""
-echo "CLI commands:"
-echo "  murmur create <room-name>"
-echo "  murmur invite <room> <name1> <name2> ..."
-echo "  murmur watch <room>"
-echo "  murmur say <room> \"message\""
+echo "Or just open the hub:"
+echo "  quorus"

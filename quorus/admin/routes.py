@@ -121,20 +121,35 @@ class NewKeyResponse(KeyResponse):
 
 
 def _verify_bootstrap(request: Request) -> None:
-    """Verify the Bootstrap-Secret header."""
+    """Verify the Bootstrap-Secret header using constant-time comparison.
+
+    Using `==` leaks secret bytes via response timing, enabling remote
+    recovery of BOOTSTRAP_SECRET. `hmac.compare_digest` is constant-time.
+    """
+    import hmac
+
     if not BOOTSTRAP_SECRET:
         raise HTTPException(
             status_code=503,
             detail="BOOTSTRAP_SECRET not configured — cannot create tenants",
         )
     provided = request.headers.get("Bootstrap-Secret", "")
-    if provided != BOOTSTRAP_SECRET:
+    if not hmac.compare_digest(provided.encode(), BOOTSTRAP_SECRET.encode()):
         raise HTTPException(status_code=403, detail="Invalid bootstrap secret")
 
 
 @router.post("/tenants", response_model=TenantResponse)
 async def create_tenant(req: CreateTenantRequest, request: Request):
     """Create a new tenant. Requires Bootstrap-Secret header."""
+    # Rate-limit by IP so a leaked/brute-forced Bootstrap-Secret can't be
+    # amplified into unlimited tenant creation (storage exhaustion DoS).
+    client_ip = request.headers.get("X-Real-IP") or (
+        request.client.host if request.client else "unknown"
+    )
+    rate_svc = request.app.state.rate_limit_service
+    if not await rate_svc.check_with_limit("public", f"tenant_create:{client_ip}", 5):
+        raise HTTPException(status_code=429, detail="Too many tenant creation attempts")
+
     _verify_bootstrap(request)
 
     async with get_db_session() as session:

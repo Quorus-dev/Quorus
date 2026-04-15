@@ -5,7 +5,7 @@ services:
       - "${PORT:-8080}:8080"
     environment:
       RELAY_SECRET: ${RELAY_SECRET:-}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://murmur:murmur@postgres:5432/murmur}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://quorus:quorus@postgres:5432/quorus}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required for JWT signing (min 32 chars)}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
@@ -40,14 +40,14 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: murmur
-      POSTGRES_USER: murmur
+      POSTGRES_DB: quorus
+      POSTGRES_USER: quorus
       # Change this password in production!
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-murmur}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quorus}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U murmur"]
+      test: ["CMD-SHELL", "pg_isready -U quorus"]
       interval: 5s
       timeout: 3s
       retries: 5

@@ -1,0 +1,186 @@
+"""Shared UI primitives for the Quorus CLI and TUI.
+
+Centralizes the theme, banner, icons, and helper renderers so every
+command renders with the same palette and tone. Import `console` from
+here instead of creating local Console instances.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from typing import Iterator
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.theme import Theme
+
+# ── Palette ──────────────────────────────────────────────────────────────────
+# Truecolor hex values — truncated to rich named colors where needed.
+PRIMARY = "#14b8a6"
+PRIMARY_DEEP = "#0d9488"
+PRIMARY_LIGHT = "#2dd4bf"
+PRIMARY_MINT = "#5eead4"
+MUTED = "#64748b"
+DIM = "#475569"
+SUCCESS = "#10b981"
+WARNING = "#f59e0b"
+ERROR = "#ef4444"
+AGENT = "#a78bfa"
+ROOM = "#fbbf24"
+
+THEME = Theme(
+    {
+        "primary": PRIMARY,
+        "accent": PRIMARY_MINT,
+        "muted": MUTED,
+        "dim": DIM,
+        "success": SUCCESS,
+        "warning": WARNING,
+        "error": ERROR,
+        "agent": AGENT,
+        "room": ROOM,
+        "prompt": f"bold {PRIMARY}",
+        "heading": f"bold {PRIMARY}",
+    }
+)
+
+console = Console(theme=THEME, highlight=False)
+
+# ── Icons ────────────────────────────────────────────────────────────────────
+ICON_OK = "✓"
+ICON_FAIL = "✗"
+ICON_INFO = "→"
+ICON_WARN = "!"
+ICON_PROMPT = "❯"
+ICON_BULLET = "·"
+ICON_DOT_LIVE = "⏵"
+
+# ── Banner ───────────────────────────────────────────────────────────────────
+_BANNER_LINES = [
+    " ██████╗ ██╗   ██╗ ██████╗ ██████╗ ██╗   ██╗███████╗",
+    "██╔═══██╗██║   ██║██╔═══██╗██╔══██╗██║   ██║██╔════╝",
+    "██║   ██║██║   ██║██║   ██║██████╔╝██║   ██║███████╗",
+    "██║▄▄ ██║██║   ██║██║   ██║██╔══██╗██║   ██║╚════██║",
+    "╚██████╔╝╚██████╔╝╚██████╔╝██║  ██║╚██████╔╝███████║",
+    " ╚══▀▀═╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝",
+]
+
+_TINY_BANNER = "quorus"
+
+_GRADIENT = [PRIMARY_DEEP, PRIMARY, PRIMARY_LIGHT, PRIMARY_MINT]
+
+
+def _gradient_text(line: str) -> Text:
+    """Apply horizontal gradient across each non-space char."""
+    text = Text()
+    n = len(_GRADIENT)
+    printable_chars = [c for c in line if c != " "]
+    total = max(1, len(printable_chars))
+    idx = 0
+    for ch in line:
+        if ch == " ":
+            text.append(ch)
+            continue
+        color = _GRADIENT[min(n - 1, idx * n // total)]
+        text.append(ch, style=color)
+        idx += 1
+    return text
+
+
+def banner(version: str = "0.4.0", tagline: bool = True) -> None:
+    """Print the Quorus banner with teal gradient."""
+    width = console.size.width
+    if width < 60:
+        console.print(f"[bold primary]{_TINY_BANNER}[/] [muted]v{version}[/]")
+        if tagline:
+            console.print("[muted]coordination for agent swarms[/]")
+        console.print()
+        return
+    console.print()
+    for line in _BANNER_LINES:
+        console.print(_gradient_text(line))
+    if tagline:
+        console.print(
+            f"[muted]          coordination for agent swarms · v{version}[/]"
+        )
+    console.print()
+
+
+# ── Status primitives ────────────────────────────────────────────────────────
+def success(msg: str, hint: str | None = None) -> None:
+    console.print(f"[success]{ICON_OK}[/] {msg}")
+    if hint:
+        console.print(f"  [muted]{hint}[/]")
+
+
+def error(msg: str, hint: str | None = None) -> None:
+    console.print(f"[error]{ICON_FAIL}[/] {msg}")
+    if hint:
+        console.print(f"  [muted]hint: {hint}[/]")
+
+
+def info(msg: str) -> None:
+    console.print(f"[primary]{ICON_INFO}[/] {msg}")
+
+
+def warn(msg: str, hint: str | None = None) -> None:
+    console.print(f"[warning]{ICON_WARN}[/] {msg}")
+    if hint:
+        console.print(f"  [muted]{hint}[/]")
+
+
+def heading(title: str) -> None:
+    console.print()
+    console.rule(f"[heading]{title}[/]", style="primary", align="left")
+
+
+def footer(hint: str) -> None:
+    console.print(f"\n[dim]{hint}[/]")
+
+
+def hint_next_steps(steps: list[str]) -> None:
+    """Render a 'Next steps' panel after a successful setup command."""
+    body = "\n".join(f"[primary]{ICON_INFO}[/] {s}" for s in steps)
+    console.print(
+        Panel(
+            body,
+            title="[heading]Next steps[/]",
+            border_style="primary",
+            padding=(1, 2),
+            title_align="left",
+        )
+    )
+
+
+# ── Spinner ──────────────────────────────────────────────────────────────────
+@contextmanager
+def spinner(text: str) -> Iterator[None]:
+    """Braille spinner in teal while a block of work runs."""
+    with console.status(f"[primary]{text}[/]", spinner="dots", spinner_style="primary"):
+        yield
+
+
+# ── Prompt ───────────────────────────────────────────────────────────────────
+def prompt_symbol() -> str:
+    return f"[prompt]{ICON_PROMPT}[/]"
+
+
+# ── Formatters ───────────────────────────────────────────────────────────────
+def fmt_room(name: str) -> str:
+    """#room-name in amber."""
+    clean = name.lstrip("#")
+    return f"[room]#{clean}[/]"
+
+
+def fmt_agent(name: str) -> str:
+    """@agent-name in purple."""
+    clean = name.lstrip("@")
+    return f"[agent]@{clean}[/]"
+
+
+def fmt_status_bar(room: str, agent_count: int, relay_host: str, streaming: bool = True) -> str:
+    """Render the status bar as a styled string (consumer decides placement)."""
+    live = f"[success]{ICON_DOT_LIVE}[/] streaming" if streaming else f"[error]{ICON_DOT_LIVE}[/] offline"
+    sep = f" [dim]{ICON_BULLET}[/] "
+    return f" {fmt_room(room)}{sep}[muted]{agent_count} agents online[/]{sep}[muted]{relay_host}[/]{sep}{live}"

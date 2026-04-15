@@ -169,7 +169,7 @@ def test_load_config_returns_none_on_invalid_json(tmp_path, monkeypatch):
 
 
 def test_write_config(tmp_path, monkeypatch):
-    cfg_dir = tmp_path / "mcp-tunnel"
+    cfg_dir = tmp_path / ".quorus"
     cfg_file = cfg_dir / "config.json"
     monkeypatch.setattr(tui_hub, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(tui_hub, "CONFIG_FILE", cfg_file)
@@ -187,7 +187,7 @@ def test_write_config(tmp_path, monkeypatch):
 
 
 def test_write_config_strips_trailing_slash(tmp_path, monkeypatch):
-    cfg_dir = tmp_path / "mcp-tunnel"
+    cfg_dir = tmp_path / ".quorus"
     cfg_file = cfg_dir / "config.json"
     monkeypatch.setattr(tui_hub, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(tui_hub, "CONFIG_FILE", cfg_file)

@@ -131,10 +131,16 @@ async def invite_page(
     invite_token = invite_svc.create_token(
         tenant_id=tid, room_id=room_id, issuer=issuer, role="member",
     )
-    html = _INVITE_TMPL.substitute(
-        room_name=room_name, relay_url=relay_url, token=invite_token,
+    # HTML-escape every value. Even though room_name is validated against
+    # [A-Za-z0-9_-], relay_url comes from request.base_url which honors the
+    # Host header — an attacker could set Host: x"<script>… to inject XSS.
+    import html as _html
+    html_body = _INVITE_TMPL.substitute(
+        room_name=_html.escape(room_name),
+        relay_url=_html.escape(relay_url, quote=True),
+        token=_html.escape(invite_token, quote=True),
     )
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=html_body)
 
 
 @router.post("/invite/{room_name}/join")
@@ -143,6 +149,17 @@ async def invite_join(
     req: InviteJoinRequest,
     request: Request,
 ):
+    # Rate-limit by source IP. This endpoint is unauthenticated (a valid invite
+    # token is enough to call it) — without a limiter, a stolen token could be
+    # replayed to enumerate occupancy or DoS join slots up to MAX_ROOM_MEMBERS.
+    client_ip = request.headers.get("X-Real-IP") or (
+        request.client.host if request.client else "unknown"
+    )
+    rate_svc = request.app.state.rate_limit_service
+    # Use tenant_id="public" since no auth yet; IP is the key.
+    if not await rate_svc.check_with_limit("public", f"invite_join:{client_ip}", 10):
+        raise HTTPException(status_code=429, detail="Too many join attempts")
+
     invite_svc = request.app.state.invite_service
     # Verify the JWT invite token — raises HTTPException(403) on failure
     claims = invite_svc.verify_token(req.token)

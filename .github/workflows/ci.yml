@@ -49,7 +49,7 @@ jobs:
       - name: Run tests (skip integration)
         run: pytest -q -m "not integration" --tb=short
         env:
-          MURMUR_SECRET: ci-test-secret
+          RELAY_SECRET: ci-test-secret
           PYTHONWARNINGS: default
 
   test-redis:
@@ -83,7 +83,7 @@ jobs:
       - name: Run Redis integration tests
         run: pytest tests/test_redis_integration.py -v --tb=short
         env:
-          MURMUR_SECRET: ci-test-secret
+          RELAY_SECRET: ci-test-secret
           REDIS_URL: redis://localhost:6379
           PYTHONWARNINGS: default
 
@@ -96,11 +96,11 @@ jobs:
         ports:
           - 5432:5432
         env:
-          POSTGRES_USER: murmur
-          POSTGRES_PASSWORD: murmur
-          POSTGRES_DB: murmur_test
+          POSTGRES_USER: quorus
+          POSTGRES_PASSWORD: quorus
+          POSTGRES_DB: quorus_test
         options: >-
-          --health-cmd "pg_isready -U murmur"
+          --health-cmd "pg_isready -U quorus"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
@@ -122,8 +122,8 @@ jobs:
       - name: Run Postgres integration tests
         run: pytest tests/test_postgres_integration.py -v --tb=short
         env:
-          MURMUR_SECRET: ci-test-secret
-          DATABASE_URL: postgresql+asyncpg://murmur:murmur@localhost:5432/murmur_test
+          RELAY_SECRET: ci-test-secret
+          DATABASE_URL: postgresql+asyncpg://quorus:quorus@localhost:5432/quorus_test
           PYTHONWARNINGS: default
 
   website:
