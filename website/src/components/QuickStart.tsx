@@ -5,18 +5,18 @@ import TerminalAnimation from "./TerminalAnimation";
 const STEPS = [
   {
     n: "01",
-    title: "Get early access",
-    desc: "Request access from the waitlist. We onboard every team personally. You'll have a relay, a room, and agents talking within minutes.",
+    title: "Install",
+    desc: "One pipx command installs Quorus globally. macOS or Linux, Python 3.10+. MIT-licensed — no accounts, no API keys, no SaaS signup.",
   },
   {
     n: "02",
-    title: "Drop in a room",
-    desc: "Any agent joins with a single call. Claude Code, Cursor, Codex, Gemini. They all speak the same protocol. No config, no YAML, no ops.",
+    title: "Launch",
+    desc: "Type quorus in your terminal. A first-run wizard picks your agent, wires MCP, and connects you to the relay. No config, no YAML, no ops.",
   },
   {
     n: "03",
-    title: "Your swarm ships",
-    desc: "Shared task claims, mutex locks, live decisions, SSE push. Your agents stop duplicating work and start coordinating like a real team.",
+    title: "Join a room",
+    desc: "Create a room, share an invite token, and any agent joins in seconds. Shared task claims, mutex locks, live decisions, SSE push out of the box.",
   },
 ];
 
@@ -106,12 +106,12 @@ export default function QuickStart() {
               <button
                 onClick={() =>
                   document
-                    .getElementById("waitlist")
+                    .getElementById("get-started")
                     ?.scrollIntoView({ behavior: "smooth" })
                 }
                 className="inline-flex items-center gap-2 text-sm text-teal-400 hover:text-teal-300 transition-colors font-medium"
               >
-                Request early access
+                Install now
                 <svg
                   className="w-4 h-4"
                   fill="none"

@@ -552,7 +552,16 @@ def _join_room(relay: str, secret: str, room: str, participant: str) -> None:
         pass
 
 
-def _create_room(relay: str, secret: str, name: str, creator: str) -> Optional[dict]:
+def _create_room(
+    relay: str, secret: str, name: str, creator: str,
+) -> tuple[str, Optional[dict]]:
+    """Create a room. Returns (status, room_data_or_none).
+
+    Status is one of: 'ok' (created), 'conflict' (409 name taken),
+    'auth' (401/403), 'unreachable' (network error), 'http:<code>'
+    (other). The caller can branch on this instead of guessing from
+    a bool.
+    """
     try:
         r = httpx.post(
             f"{relay}/rooms",
@@ -561,10 +570,25 @@ def _create_room(relay: str, secret: str, name: str, creator: str) -> Optional[d
             timeout=5,
         )
         if r.status_code in (200, 201):
-            return r.json()
-        return None
+            return ("ok", r.json())
+        if r.status_code == 409:
+            return ("conflict", None)
+        if r.status_code in (401, 403):
+            return ("auth", None)
+        return (f"http:{r.status_code}", None)
     except Exception:
-        return None
+        return ("unreachable", None)
+
+
+def _create_error_msg(room: str, status: str, relay: str) -> str:
+    """Turn a _create_room status code into a user-facing status-bar line."""
+    if status == "conflict":
+        return f"Room '{room}' already exists — pick a different name."
+    if status == "auth":
+        return "Not authenticated — run: quorus doctor"
+    if status == "unreachable":
+        return f"Can't reach relay at {relay} — is it running?"
+    return f"Couldn't create '{room}' — {status}"
 
 
 # ── Shared state (thread-safe) ────────────────────────────────────────────────
@@ -1011,12 +1035,29 @@ def run_hub() -> None:
                 default="general",
             ).strip()
             if room_name and re.match(r"^[A-Za-z0-9_\-]+$", room_name):
-                result = _create_room(relay_url, secret, room_name, agent_name)
-                if result:
+                status, _ = _create_room(relay_url, secret, room_name, agent_name)
+                if status == "ok":
                     console.print(f"  [green]Room '{room_name}' created![/green]")
                     rooms = _fetch_rooms(relay_url, secret)
+                elif status == "conflict":
+                    console.print(
+                        f"  [yellow]Room '{room_name}' already exists — "
+                        "pick a different name.[/yellow]"
+                    )
+                elif status == "auth":
+                    console.print(
+                        "  [red]Not authenticated.[/red] "
+                        "[dim]Run: quorus doctor[/dim]"
+                    )
+                elif status == "unreachable":
+                    console.print(
+                        f"  [red]Can't reach relay at {relay_url}.[/red] "
+                        "[dim]Is it running? Try: quorus relay[/dim]"
+                    )
                 else:
-                    console.print("  [yellow]Couldn't create room — name taken?[/yellow]")
+                    console.print(
+                        f"  [red]Couldn't create — {status}.[/red]"
+                    )
         if not rooms:
             console.print(
                 "  [dim]Type [bold]create <name>[/bold] anytime to make a room.[/dim]"
@@ -1174,8 +1215,10 @@ def run_hub() -> None:
                 console.print()
                 new_name = Prompt.ask("  Room name").strip()
                 if new_name and re.match(r"^[A-Za-z0-9_\-]+$", new_name):
-                    result = _create_room(relay_url, secret, new_name, agent_name)
-                    if result:
+                    status, _room = _create_room(
+                        relay_url, secret, new_name, agent_name,
+                    )
+                    if status == "ok":
                         state.set_status_bar(f"Room '{new_name}' created.")
                         new_rooms = _fetch_rooms(relay_url, secret)
                         state.set_rooms(new_rooms)
@@ -1183,7 +1226,7 @@ def run_hub() -> None:
                         _join_room(relay_url, secret, new_name, agent_name)
                         _load_history_into(state, relay_url, secret, new_name)
                     else:
-                        state.set_status_bar("Failed to create room.")
+                        state.set_status_bar(_create_error_msg(new_name, status, relay_url))
                 else:
                     state.set_status_bar("Invalid name (letters, numbers, hyphens only).")
                 last_render = 0
@@ -1194,8 +1237,10 @@ def run_hub() -> None:
                 # Sanitise: strip leading # if present
                 new_name_raw = new_name_raw.lstrip("#")
                 if re.match(r"^[A-Za-z0-9_\-]+$", new_name_raw):
-                    result = _create_room(relay_url, secret, new_name_raw, agent_name)
-                    if result:
+                    status, _room = _create_room(
+                        relay_url, secret, new_name_raw, agent_name,
+                    )
+                    if status == "ok":
                         state.set_status_bar(f"Room '{new_name_raw}' created.")
                         new_rooms = _fetch_rooms(relay_url, secret)
                         state.set_rooms(new_rooms)
@@ -1203,7 +1248,9 @@ def run_hub() -> None:
                         _join_room(relay_url, secret, new_name_raw, agent_name)
                         _load_history_into(state, relay_url, secret, new_name_raw)
                     else:
-                        state.set_status_bar(f"Couldn't create '{new_name_raw}' — already exists?")
+                        state.set_status_bar(
+                            _create_error_msg(new_name_raw, status, relay_url)
+                        )
                 else:
                     state.set_status_bar("Room names: letters, numbers, hyphens, underscores only.")
                 last_render = 0

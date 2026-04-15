@@ -25,10 +25,10 @@ export default function Footer() {
             Architecture
           </a>
           <a
-            href="#waitlist"
+            href="#get-started"
             className="hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
           >
-            Join waitlist
+            Get started
           </a>
         </div>
 

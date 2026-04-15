@@ -199,3 +199,92 @@ def fmt_status_bar(
         f" {fmt_room(room)}{sep}[muted]{agent_count} agents online[/]"
         f"{sep}[muted]{relay_host}[/]{sep}{live}"
     )
+
+
+# ── Extended primitives ──────────────────────────────────────────────────────
+# New helpers used across CLI commands so nothing has to build panels or
+# raw markup ad-hoc. Add new call sites here instead of at the call sites.
+
+
+def code(snippet: str, *, lang: str = "bash") -> None:
+    """Indented, tinted command block — use for copyable shell lines.
+
+    Renders as a single line: `  $ <command>` with the prompt in primary
+    and the command in mint. `lang` is accepted for future syntax
+    highlighting; currently shell-style only.
+    """
+    del lang
+    body = Text()
+    body.append("  ")
+    body.append("$ ", style=f"bold {PRIMARY}")
+    body.append(snippet, style=PRIMARY_MINT)
+    console.print(body)
+
+
+def steps(items: list[str], *, title: str | None = None) -> None:
+    """Numbered, indented steps in a muted panel.
+
+    Unlike `hint_next_steps` which uses arrow bullets, this primitive
+    renders an ordered list (1. 2. 3.) for step-by-step instructions.
+    """
+    lines = "\n".join(f"[primary]{i}.[/] {s}" for i, s in enumerate(items, 1))
+    console.print(
+        Panel(
+            lines,
+            title=f"[heading]{title}[/]" if title else None,
+            border_style="dim",
+            padding=(1, 2),
+            title_align="left",
+        )
+    )
+
+
+def token_box(token: str, *, label: str = "Token", expires_in: str | None = None) -> None:
+    """Prominent token display — teal border, token in accent.
+
+    Use for share/invite output so the token is visually distinct from
+    plain code blocks. Pass `expires_in` as a human string
+    (e.g. "7 days") — rendered below the token in muted text.
+    """
+    body = Text()
+    body.append(f"  {label}\n", style=f"bold {PRIMARY}")
+    body.append(f"  {token}\n", style=PRIMARY_MINT)
+    if expires_in:
+        body.append(f"\n  expires in {expires_in}", style=MUTED)
+    console.print(
+        Panel(
+            body,
+            border_style="primary",
+            padding=(1, 1),
+        )
+    )
+
+
+def error_with_retry(msg: str, relay_url: str | None = None) -> None:
+    """Error + contextual hint. Pings relay to pick 'relay down' vs 'retry'.
+
+    When a relay_url is provided, this does a short /health probe to
+    decide whether the underlying cause is likely network or a real
+    relay-side error, and picks the hint accordingly.
+    """
+    console.print(f"[error]{ICON_FAIL}[/] {msg}")
+    if not relay_url:
+        return
+    try:
+        import httpx
+
+        r = httpx.get(f"{relay_url.rstrip('/')}/health", timeout=2)
+        if r.status_code == 200:
+            console.print(
+                f"  [muted]hint: retry — relay is up at {relay_url}[/]"
+            )
+            return
+    except Exception:
+        pass
+    console.print(
+        f"  [muted]hint: relay at {relay_url} is unreachable[/]"
+    )
+    console.print(
+        "  [muted]      start it with[/] [accent]quorus relay[/]"
+        "[muted], or run[/] [accent]quorus doctor[/]"
+    )

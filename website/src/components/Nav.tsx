@@ -52,10 +52,10 @@ export default function Nav() {
         {/* Right actions */}
         <div className="flex items-center gap-2 shrink-0">
           <button
-            onClick={() => smoothScroll("waitlist")}
+            onClick={() => smoothScroll("get-started")}
             className="rounded-full font-medium bg-teal-700 hover:bg-teal-600 text-white transition-all duration-200 hover:shadow-[0_0_20px_rgba(20,184,166,0.4)] text-xs px-3.5 py-1.5"
           >
-            Join beta
+            Get started
           </button>
         </div>
       </div>

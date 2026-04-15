@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
-import Waitlist from "./Waitlist";
+import CodeBlock from "./CodeBlock";
 
 // ── Typewriter ────────────────────────────────────────────────────────────────
 
@@ -369,69 +369,44 @@ export default function Hero() {
           <span className="text-white/80">Zero config.</span>
         </motion.p>
 
-        {/* Waitlist */}
-        <motion.div
-          className="w-full max-w-md mb-6"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.26 }}
-        >
-          <Waitlist
-            size="lg"
-            label="Request access"
-            variant="dark"
-            className="w-full"
-          />
-        </motion.div>
-
         {/* Install command — copyable */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.32 }}
-          className="w-full max-w-2xl mb-6"
+          transition={{ duration: 0.6, delay: 0.26 }}
+          className="w-full max-w-2xl mb-2"
         >
-          <div className="group flex items-center gap-3 px-4 py-3 rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-sm font-mono text-xs sm:text-sm overflow-x-auto">
-            <span className="text-teal-400 shrink-0" aria-hidden="true">
-              $
-            </span>
-            <code className="text-white/80 whitespace-nowrap">
-              pipx install &quot;quorus @
-              git+https://github.com/Quorus-dev/Quorus.git&quot;
-            </code>
-            <button
-              type="button"
-              aria-label="Copy install command"
-              onClick={() =>
-                navigator.clipboard
-                  .writeText(
-                    'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"',
-                  )
-                  .catch(() => {})
-              }
-              className="ml-auto shrink-0 text-white/40 hover:text-teal-300 transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                />
-              </svg>
-            </button>
-          </div>
+          <CodeBlock command='pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"' />
           <p className="text-center text-[11px] text-white/45 mt-2 font-mono">
             Then just type <span className="text-teal-400">quorus</span> in your
             terminal · v0.4.0 beta · MIT
           </p>
         </motion.div>
+
+        {/* Scroll hint to get-started section */}
+        <motion.a
+          href="#get-started"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.34 }}
+          className="inline-flex items-center gap-1.5 mt-6 text-sm text-white/45 hover:text-teal-300 transition-colors font-mono"
+        >
+          <span>3-step setup</span>
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.5}
+              d="M19 14l-7 7m0 0l-7-7m7 7V3"
+            />
+          </svg>
+        </motion.a>
 
         {/* Capability pills */}
         <motion.div

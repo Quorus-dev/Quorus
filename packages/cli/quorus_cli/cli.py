@@ -2578,31 +2578,54 @@ def _cmd_share(args):
     token = f"quorus://{encoded}"
 
     from quorus_cli import ui
+    from rich.columns import Columns
+    from rich.panel import Panel
 
     ui.heading(f"Invite to #{room}")
-    ui.console.print(
-        f"  [muted]Expires in {ttl_days} days. Share with teammates + agents.[/]\n"
+    ui.token_box(token, label="Share token", expires_in=f"{ttl_days} days")
+    ui.console.print()
+
+    # Short token preview for readable panel copy
+    tok_preview = token if len(token) <= 24 else token[:20] + "…"
+
+    human = Panel(
+        (
+            "[muted]They install Quorus, then run:[/]\n\n"
+            f"[accent]quorus quickjoin {tok_preview}[/]\n"
+            "[accent]  --name <their-name>[/]"
+        ),
+        title="[heading]Human[/]",
+        border_style="primary",
+        title_align="left",
+        padding=(1, 2),
     )
-    ui.console.print("  [bold]Token:[/]")
-    ui.console.print(f"  [accent]{token}[/]\n")
-    ui.console.print(
-        "  [heading]Your teammate (human) pastes this after installing Quorus:[/]\n"
+    tui_panel = Panel(
+        (
+            "[muted]Inside the Quorus TUI:[/]\n\n"
+            "[accent]quorus[/]\n"
+            "[muted]then choose[/] [primary]1. Paste invite token[/]"
+        ),
+        title="[heading]TUI[/]",
+        border_style="primary",
+        title_align="left",
+        padding=(1, 2),
     )
-    ui.console.print(f"  [primary]quorus quickjoin {token} --name <their-name>[/]\n")
-    ui.console.print("  [heading]Or, inside the Quorus TUI:[/]\n")
-    ui.console.print(
-        "  [primary]quorus[/] → first-run wizard → [bold]1[/] Paste an invite token\n"
+    agent = Panel(
+        (
+            "[muted]Wire any AI agent in:[/]\n\n"
+            "[accent]quorus connect claude[/]\n"
+            f"[accent]  --room {room}[/]\n"
+            "[accent]  --name <agent>[/]"
+        ),
+        title="[heading]Agent[/]",
+        border_style="agent",
+        title_align="left",
+        padding=(1, 2),
     )
-    ui.console.print(
-        "  [heading]To add their AI agent (Claude Code, Cursor, Gemini, etc.) "
-        "to the same room:[/]\n"
-    )
-    ui.console.print(
-        f"  [primary]quorus connect <platform> --room {room} --name <agent-name>[/]\n"
-    )
-    ui.console.print(
-        "  [muted]Platforms: claude · cursor · gemini · windsurf · opencode · "
-        "cline · continue · antigravity · codex · aider · ollama · http[/]"
+    ui.console.print(Columns([human, tui_panel, agent], equal=True, expand=True))
+    ui.footer(
+        "Agents: claude · cursor · gemini · windsurf · opencode · "
+        "cline · continue · antigravity · codex · aider · ollama"
     )
 
 
@@ -2704,15 +2727,23 @@ def _cmd_quickjoin(args):
     asyncio.run(_do_join())
 
     from quorus_cli import ui
+    from rich.panel import Panel
+    from rich.text import Text
 
     ui.console.print()
-    ui.success(f"Joined [room]#{room}[/] as [agent]@{name}[/]")
+    welcome = Text()
+    welcome.append("  Welcome ", style="primary")
+    welcome.append(f"@{name}", style=f"bold {ui.AGENT}")
+    welcome.append(" to ", style="primary")
+    welcome.append(f"#{room}", style=f"bold {ui.ROOM}")
+    ui.console.print(
+        Panel(welcome, border_style="primary", padding=(0, 1))
+    )
     ui.hint_next_steps([
-        f"quorus                     — open the TUI and start chatting in #{room}",
-        f"quorus chat {room}           — quick-chat mode (CLI only)",
-        f"quorus connect <platform> --room {room} --name <agent-name>",
-        "    ↑ wires your AI agent (Claude Code, Cursor, Gemini, etc.) "
-        "into the same room",
+        f"Open the hub:           [accent]quorus[/]",
+        f"Send a message:         [accent]quorus say {room} 'hello'[/]",
+        f"See who's here:         [accent]quorus ps[/]",
+        f"Wire in an AI agent:    [accent]quorus connect <platform> --room {room} --name <agent>[/]",
     ])
 
 
@@ -2872,10 +2903,26 @@ def _cmd_add_agent(args):
             try:
                 asyncio.run(_create_room(room))
                 console.print(f"[green]Created room '{room}'[/green]")
-            except Exception:
-                console.print(
-                    f"[yellow]Could not create room '{room}'"
-                    " — it may already exist[/yellow]"
+            except httpx.HTTPStatusError as _exc:
+                if _exc.response.status_code == 409:
+                    from quorus_cli import ui
+                    ui.warn(
+                        f"Room '{room}' already exists",
+                        hint="pick a different name or: quorus rooms",
+                    )
+                elif _exc.response.status_code in (401, 403):
+                    from quorus_cli import ui
+                    ui.error("Not authenticated", hint="run: quorus doctor")
+                else:
+                    from quorus_cli import ui
+                    ui.error_with_retry(
+                        f"Couldn't create '{room}' (HTTP {_exc.response.status_code})",
+                        relay_url=RELAY_URL,
+                    )
+            except httpx.ConnectError:
+                from quorus_cli import ui
+                ui.error_with_retry(
+                    f"Couldn't create '{room}'", relay_url=RELAY_URL,
                 )
     else:
         room = Prompt.ask("[bold]Room name[/bold]", default="quorus-dev")
@@ -3111,13 +3158,27 @@ def _cmd_quickstart(args):
         json={"name": room_name, "created_by": "human"},
         headers=headers,
     )
-    if r.status_code == 200:
+    if r.status_code in (200, 201):
         r.json()  # validate response
-        console.print(f"  [green]Room '{room_name}' created[/green]")
+        from quorus_cli import ui as _ui
+        _ui.success(f"Created [room]#{room_name}[/]")
     elif r.status_code == 409:
-        console.print(f"  [yellow]Room '{room_name}' already exists[/yellow]")
+        from quorus_cli import ui as _ui
+        _ui.warn(
+            f"Room '{room_name}' already exists",
+            hint="continuing with existing room",
+        )
+    elif r.status_code in (401, 403):
+        from quorus_cli import ui as _ui
+        _ui.error("Not authenticated", hint="check your relay secret")
+        relay_proc.terminate()
+        sys.exit(3)
     else:
-        console.print(f"[red]Failed to create room: {r.text}[/red]")
+        from quorus_cli import ui as _ui
+        _ui.error(
+            f"Couldn't create room (HTTP {r.status_code})",
+            hint=r.text[:120] if r.text else None,
+        )
         relay_proc.terminate()
         sys.exit(1)
 
@@ -3174,12 +3235,21 @@ def _cmd_hackathon(args):
             json={"name": room_name, "created_by": INSTANCE_NAME},
             headers=headers,
         )
-        if r.status_code == 200:
-            console.print(f"  [green]Room '{room_name}' created[/green]")
+        if r.status_code in (200, 201):
+            from quorus_cli import ui as _ui
+            _ui.success(f"Created [room]#{room_name}[/]")
         elif r.status_code == 409:
-            console.print(f"  [yellow]Room '{room_name}' already exists[/yellow]")
+            from quorus_cli import ui as _ui
+            _ui.warn(
+                f"Room '{room_name}' already exists",
+                hint="continuing with existing room",
+            )
         else:
-            console.print(f"  [red]Failed to create room: {r.text}[/red]")
+            from quorus_cli import ui as _ui
+            _ui.error(
+                f"Couldn't create '{room_name}' (HTTP {r.status_code})",
+                hint=r.text[:120] if r.text else None,
+            )
             continue
 
         # Join human to room
@@ -4374,6 +4444,24 @@ def _print_grouped_help():
 
     ui.banner(version=__version__)
 
+    # Quickstart — the three-line path for somebody who's never used quorus.
+    ui.console.print("[heading]QUICKSTART[/]")
+    ui.console.print(
+        "  [dim]1.[/] [accent]quorus init alice --secret dev[/]"
+        "   [muted]# one-time setup[/]"
+    )
+    ui.console.print(
+        "  [dim]2.[/] [accent]quorus create design[/]"
+        "             [muted]# make a room[/]"
+    )
+    ui.console.print(
+        "  [dim]3.[/] [accent]quorus share design[/]"
+        "              [muted]# invite humans + agents[/]"
+    )
+    ui.console.print(
+        "\n  [dim]Or just run[/] [accent]quorus[/] [dim]to open the interactive hub.[/]"
+    )
+
     groups = [
         ("GET STARTED", [
             ("init <name>",        "One-command setup (name + relay + secret)"),
@@ -4428,11 +4516,15 @@ def _print_grouped_help():
         for cmd, desc in items:
             ui.console.print(f"  [accent]{cmd:<22}[/] [muted]{desc}[/]")
 
+    ui.console.print()
+    ui.console.print(f"[dim]Docs      [/][primary]https://quorus.dev[/]")
     ui.console.print(
-        "\n[dim]Run 'quorus <command> --help' for command-specific options.[/]"
+        "[dim]Issues    [/][primary]https://github.com/Quorus-dev/Quorus/issues[/]"
     )
+    ui.console.print(f"[dim]Version   [/][muted]quorus {__version__}[/]")
     ui.console.print(
-        "[dim]Docs: https://quorus.dev[/]\n"
+        "\n[dim]Run[/] [accent]quorus <command> --help[/]"
+        " [dim]for command-specific options.[/]\n"
     )
 
 
