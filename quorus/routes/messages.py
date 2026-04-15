@@ -10,6 +10,7 @@ import os
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, require_identity, verify_auth
+from quorus.backends.redis_backends import BackendError
 from quorus.routes.models import AckRequest, SendMessageRequest
 
 router = APIRouter()
@@ -72,10 +73,18 @@ async def send_message(
     svc = request.app.state.message_service
     try:
         result = await svc.send_dm(tid, sender, msg.to, msg.content)
-    except Exception:
-        # Release the pending key so retries aren't blocked by 409
+    except (HTTPException, BackendError):
+        # Release the pending key so retries aren't blocked by 409.
+        # Swallow cleanup failures so they don't mask the original error.
         if idempotency_cache_key:
-            await backends.idempotency.delete(tid, idempotency_cache_key)
+            try:
+                await backends.idempotency.delete(tid, idempotency_cache_key)
+            except Exception as cleanup_exc:
+                _logger.warning(
+                    "Failed to release idempotency key %s: %s",
+                    idempotency_cache_key,
+                    cleanup_exc,
+                )
         raise
 
     # Store result in idempotency cache (replaces pending marker)
