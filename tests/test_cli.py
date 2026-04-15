@@ -103,8 +103,9 @@ def test_cli_version(capsys):
 
     _cmd_version(MagicMock())
     captured = capsys.readouterr()
-    assert "quorus" in captured.out
+    # The banner uses ASCII art, so check for version and key text (case-insensitive)
     assert "0.4.0" in captured.out
+    assert "coordination" in captured.out.lower() or "swarm" in captured.out.lower()
 
 
 def test_cli_logs(capsys):
@@ -1820,6 +1821,7 @@ def test_cmd_init_happy_path(tmp_path, monkeypatch):
     from quorus.cli import _cmd_init
 
     monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
     # uv available
     monkeypatch.setattr("quorus.cli.shutil.which", lambda _: "/usr/bin/uv")
     # relay reachable
@@ -1856,6 +1858,7 @@ def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, ca
     from quorus.cli import _cmd_init
 
     monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
     monkeypatch.setattr("quorus.cli.shutil.which", lambda _: None)
     mock_resp = MagicMock()
     mock_resp.status_code = 200
@@ -1899,6 +1902,7 @@ def test_cmd_init_warns_on_relay_unreachable(tmp_path, monkeypatch, capsys):
     from quorus.cli import _cmd_init
 
     monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
     monkeypatch.setattr("quorus.cli.shutil.which", lambda _: "/usr/bin/uv")
     monkeypatch.setattr(
         "quorus.cli.httpx.get", lambda *a, **kw: (_ for _ in ()).throw(Exception("timeout"))
@@ -1917,6 +1921,7 @@ def test_cmd_init_warns_on_existing_config(tmp_path, monkeypatch, capsys):
     from quorus.cli import _cmd_init
 
     monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
     monkeypatch.setattr("quorus.cli.shutil.which", lambda _: "/usr/bin/uv")
     mock_resp = MagicMock()
     mock_resp.status_code = 200
@@ -2172,6 +2177,7 @@ def test_cmd_join_with_explicit_flags_rewrites_config(tmp_path, monkeypatch, cap
     monkeypatch.setattr("quorus.cli.RELAY_SECRET", "old-secret")
     monkeypatch.setattr("quorus.cli.API_KEY", "")
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(config_dir))
 
     # Mock the HTTP client
     mock_client = _mock_client(200, [{"id": "r1", "name": "dev-room"}])

@@ -7,9 +7,8 @@ from quorus import tui_hub
 from quorus.tui_hub import (
     HubState,
     _auth_headers,
-    _load_config,
+    _save_instance_config,
     _sender_color,
-    _write_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -185,38 +184,18 @@ class TestHubState:
 
 
 # ---------------------------------------------------------------------------
-# Config helpers
+# Config helpers (via _save_instance_config)
 # ---------------------------------------------------------------------------
 
 
-def test_load_config_returns_none_when_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(tui_hub, "CONFIG_FILE", tmp_path / "nonexistent.json")
-    assert _load_config() is None
-
-
-def test_load_config_returns_dict(tmp_path, monkeypatch):
-    cfg_file = tmp_path / "config.json"
-    cfg_file.write_text('{"relay_url": "http://localhost:8080", "instance_name": "bot"}')
-    monkeypatch.setattr(tui_hub, "CONFIG_FILE", cfg_file)
-    result = _load_config()
-    assert result["relay_url"] == "http://localhost:8080"
-    assert result["instance_name"] == "bot"
-
-
-def test_load_config_returns_none_on_invalid_json(tmp_path, monkeypatch):
-    cfg_file = tmp_path / "config.json"
-    cfg_file.write_text("not-json{{{")
-    monkeypatch.setattr(tui_hub, "CONFIG_FILE", cfg_file)
-    assert _load_config() is None
-
-
-def test_write_config(tmp_path, monkeypatch):
+def test_save_instance_config(tmp_path, monkeypatch):
+    """_save_instance_config writes config through ConfigManager."""
     cfg_dir = tmp_path / ".quorus"
     cfg_file = cfg_dir / "config.json"
     monkeypatch.setattr(tui_hub, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(tui_hub, "CONFIG_FILE", cfg_file)
 
-    _write_config("mybot", "http://relay:8080", "topsecret")
+    _save_instance_config("mybot", "http://relay:8080", "topsecret")
 
     assert cfg_file.exists()
     cfg = json.loads(cfg_file.read_text())
@@ -228,13 +207,14 @@ def test_write_config(tmp_path, monkeypatch):
     assert oct(cfg_file.stat().st_mode)[-3:] == "600"
 
 
-def test_write_config_strips_trailing_slash(tmp_path, monkeypatch):
+def test_save_instance_config_strips_trailing_slash(tmp_path, monkeypatch):
+    """Trailing slash on relay URL is stripped before saving."""
     cfg_dir = tmp_path / ".quorus"
     cfg_file = cfg_dir / "config.json"
     monkeypatch.setattr(tui_hub, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(tui_hub, "CONFIG_FILE", cfg_file)
 
-    _write_config("bot", "http://relay:8080/", "secret")
+    _save_instance_config("bot", "http://relay:8080/", "secret")
 
     cfg = json.loads(cfg_file.read_text())
     assert not cfg["relay_url"].endswith("/")
