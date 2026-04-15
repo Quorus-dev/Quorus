@@ -523,10 +523,9 @@ NOT_FOUND_LIMIT = int(os.environ.get("NOT_FOUND_LIMIT", "30"))
 NOT_FOUND_WINDOW = int(os.environ.get("NOT_FOUND_WINDOW", "60"))  # seconds
 NOT_FOUND_BLOCK_DURATION = int(os.environ.get("NOT_FOUND_BLOCK_DURATION", "300"))
 
-# In-memory state (will be cleared on restart, which is fine for this use case).
+# In-memory fallback state (used when Redis is not configured).
 # Guarded by an asyncio.Lock to prevent read-modify-write races under
-# concurrent 404 floods. Per-replica; not shared across horizontal workers —
-# but good enough for 404 spam defense.
+# concurrent 404 floods. Per-replica; not shared across horizontal workers.
 _not_found_counts: dict[str, list[float]] = {}  # IP -> list of timestamps
 _blocked_ips: dict[str, float] = {}  # IP -> block expiry timestamp
 _not_found_lock = asyncio.Lock()
@@ -540,8 +539,8 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-async def _is_blocked(ip: str) -> tuple[bool, int]:
-    """Check if IP is blocked. Returns (blocked, retry_after_seconds)."""
+async def _is_blocked_memory(ip: str) -> tuple[bool, int]:
+    """In-memory: check if IP is blocked. Returns (blocked, retry_after_seconds)."""
     async with _not_found_lock:
         if ip in _blocked_ips:
             expiry = _blocked_ips[ip]
@@ -553,12 +552,8 @@ async def _is_blocked(ip: str) -> tuple[bool, int]:
     return False, 0
 
 
-async def _record_not_found(ip: str) -> bool:
-    """Record a 404 for this IP. Returns True if IP should now be blocked.
-
-    Serialized via ``_not_found_lock`` so two concurrent 404s from the same IP
-    can't race on the timestamp list / block dict.
-    """
+async def _record_not_found_memory(ip: str) -> bool:
+    """In-memory: record a 404 for this IP. Returns True if IP should now be blocked."""
     now = time.time()
     cutoff = now - NOT_FOUND_WINDOW
 
@@ -580,30 +575,59 @@ async def _record_not_found(ip: str) -> bool:
 
 
 class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
-    """Block clients that repeatedly hit non-existent resources (404 spam)."""
+    """Block clients that repeatedly hit non-existent resources (404 spam).
+
+    Uses RateLimitService (Redis-backed) when available; falls back to
+    in-memory tracking for single-process / in_memory mode.
+    """
 
     async def dispatch(self, request: Request, call_next):
         from starlette.responses import JSONResponse
 
         client_ip = _get_client_ip(request)
 
-        # Check if already blocked
-        blocked, retry_after = await _is_blocked(client_ip)
-        if blocked:
-            return JSONResponse(
-                status_code=429,
-                content={
-                    "detail": "Too many requests to non-existent resources. "
-                    "Please verify your room/resource IDs."
-                },
-                headers={"Retry-After": str(retry_after)},
+        # Try Redis-backed rate limiter if available
+        rate_limit_svc = getattr(request.app.state, "rate_limit_service", None)
+        use_redis = rate_limit_svc is not None and REDIS_URL
+
+        if use_redis:
+            # Use RateLimitService: returns False when limit is exceeded
+            allowed = await rate_limit_svc.check_with_limit(
+                "global", f"404:{client_ip}", NOT_FOUND_LIMIT, window=NOT_FOUND_WINDOW
             )
+            if not allowed:
+                logger.warning(
+                    "Blocking IP for repeated 404s (Redis)",
+                    ip=client_ip,
+                    limit=NOT_FOUND_LIMIT,
+                    window=NOT_FOUND_WINDOW,
+                )
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "detail": "Too many requests to non-existent resources. "
+                        "Please verify your room/resource IDs."
+                    },
+                    headers={"Retry-After": str(NOT_FOUND_BLOCK_DURATION)},
+                )
+        else:
+            # In-memory fallback
+            blocked, retry_after = await _is_blocked_memory(client_ip)
+            if blocked:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "detail": "Too many requests to non-existent resources. "
+                        "Please verify your room/resource IDs."
+                    },
+                    headers={"Retry-After": str(retry_after)},
+                )
 
         response = await call_next(request)
 
-        # Track 404s
-        if response.status_code == 404:
-            await _record_not_found(client_ip)
+        # Track 404s (in-memory mode only; Redis mode tracks via check_with_limit above)
+        if response.status_code == 404 and not use_redis:
+            await _record_not_found_memory(client_ip)
 
         return response
 
