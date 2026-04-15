@@ -40,9 +40,14 @@ except ImportError:
     sys.exit(1)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-# SSE push is the primary delivery path — poll is a slow reconciliation fallback
-# so the TUI still catches up if the SSE stream drops (message IDs are de-duped).
-POLL_S = 10
+# Render cadence — how fast the main loop redraws after input/state change.
+# Keep small so the panel view feels live.
+RENDER_TICK_S = 2
+# History reconciliation poll — slow fallback that catches up missed SSE
+# pushes (e.g. after a dropped stream). Bounded by server rate limits.
+HISTORY_POLL_S = 10
+# Legacy name kept for the render-cadence check below.
+POLL_S = RENDER_TICK_S
 MAX_MSG = 40
 SSE_RECONNECT_S = 2  # backoff between dropped-stream reconnects
 
@@ -706,7 +711,7 @@ def _poll_loop(relay: str, secret: str, state: HubState, stop_event: threading.E
         except Exception:
             state.set_connected(False, "Relay unreachable")
 
-        stop_event.wait(POLL_S)
+        stop_event.wait(HISTORY_POLL_S)
 
 
 # ── Real-time push (SSE) ──────────────────────────────────────────────────────
@@ -727,11 +732,42 @@ def _mint_sse_token(relay: str, secret: str, recipient: str) -> Optional[str]:
     return None
 
 
+def _print_inline_message(console: Console, msg: dict, my_name: str) -> None:
+    """Print one chat line directly to stdout.
+
+    The main render loop is blocked on input() — so panel redraws only
+    happen after Enter. To make incoming messages feel instant, the SSE
+    thread prints them here as they arrive. The next full redraw still
+    shows them in the chat pane too (dedup prevents doubles).
+    """
+    sender = msg.get("from_name", "?")
+    content = msg.get("content", "")
+    ts_raw = msg.get("timestamp", "")
+    try:
+        hhmm = ts_raw[11:16] if len(ts_raw) >= 16 else ""
+    except Exception:
+        hhmm = ""
+    # Skip our own echoed messages — we already showed the optimistic echo.
+    if sender == my_name:
+        return
+    sender_style = _sender_color(sender)
+    line = Text()
+    if hhmm:
+        line.append(f"  [{hhmm}] ", style="#64748b")
+    else:
+        line.append("  ", style="#64748b")
+    line.append(f"@{sender}", style=f"bold {sender_style}")
+    line.append(": ", style="#475569")
+    line.append(content, style="white")
+    console.print(line)
+
+
 def _sse_loop(
     relay: str,
     secret: str,
     recipient: str,
     state: HubState,
+    console: Console,
     stop_event: threading.Event,
 ) -> None:
     """Subscribe to SSE push and apply messages as they arrive.
@@ -739,6 +775,8 @@ def _sse_loop(
     Runs in a daemon thread. On disconnect (network blip, relay restart,
     token expiry) it reconnects with a short backoff. Messages are applied
     to the current selected room only — cross-room chatter is filtered out.
+    Messages also print inline so the user sees them without waiting for
+    the main loop to redraw.
     """
     while not stop_event.is_set():
         token = _mint_sse_token(relay, secret, recipient)
@@ -771,7 +809,14 @@ def _sse_loop(
                             if isinstance(msg, dict):
                                 msg_room = msg.get("room", "")
                                 if msg_room and msg_room == state.selected_room_name():
+                                    # Only print if we haven't seen this id —
+                                    # avoids double-print when the inline echo
+                                    # is already on screen.
+                                    key = HubState._dedup_key(msg)
+                                    is_new = not key or key not in state._seen_set
                                     state.append_message(msg)
+                                    if is_new:
+                                        _print_inline_message(console, msg, recipient)
                         event_name = ""
                         data_buf = []
                         continue
@@ -1003,7 +1048,7 @@ def run_hub() -> None:
     poller.start()
     sse_listener = threading.Thread(
         target=_sse_loop,
-        args=(relay_url, secret, agent_name, state, stop_event),
+        args=(relay_url, secret, agent_name, state, console, stop_event),
         daemon=True,
     )
     sse_listener.start()
