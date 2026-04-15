@@ -85,10 +85,32 @@ class MessageService:
         self._rate_limit = rate_limit
         self._max_message_size = max_message_size
         self._notification = notification
-        # Long-poll wakeup events keyed by (tenant_id, recipient)
+        # Long-poll wakeup events keyed by (tenant_id, recipient). Bounded
+        # LRU-ish cap prevents unbounded growth on long-running replicas with
+        # many transient recipient names (bots, test accounts). Evicted keys
+        # simply lose their wakeup event — next waiter re-creates on access.
         self._events: dict[tuple[str, str], asyncio.Event] = defaultdict(
             asyncio.Event
         )
+        self._events_max = int(os.environ.get("MESSAGE_EVENTS_MAX", "10000"))
+
+    def _gc_events_if_needed(self) -> None:
+        """Drop oldest keys if the events dict exceeds the cap."""
+        if len(self._events) <= self._events_max:
+            return
+        # Keep the most recently inserted half. Python 3.7+ dicts preserve
+        # insertion order, so iterating and dropping the head is fine.
+        to_drop = len(self._events) - (self._events_max // 2)
+        for key in list(self._events.keys())[:to_drop]:
+            ev = self._events.pop(key, None)
+            # Best-effort unsubscribe for cross-replica handlers
+            handler = getattr(ev, "_notify_handler", None)
+            channel = getattr(ev, "_notify_channel", None)
+            if handler and channel and self._notification:
+                try:
+                    self._notification.unsubscribe(channel, handler)
+                except Exception:
+                    pass
 
     def _event_key(
         self, tenant_id: str, recipient: str
@@ -102,6 +124,7 @@ class MessageService:
         NotificationService so other replicas wake their long-pollers.
         """
         self._events[self._event_key(tenant_id, recipient)].set()
+        self._gc_events_if_needed()
         if self._notification:
             from quorus.services.notification_svc import NotificationService as NS
 

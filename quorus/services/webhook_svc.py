@@ -71,6 +71,10 @@ class WebhookService:
         self._dlq: list[WebhookJob] = []
         self._worker_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        # Scheduled retry timers — tracked so we can cancel on shutdown
+        # and avoid firing into a stopped worker (which would otherwise
+        # produce ghost double-delivery after a restart window).
+        self._retry_timers: set[asyncio.TimerHandle] = set()
         # Delivery stats (in-memory counters; durable backend has its own)
         self._stats = {
             "total_enqueued": 0,
@@ -89,6 +93,11 @@ class WebhookService:
     async def close(self) -> None:
         """Stop the worker and close the HTTP client."""
         self._stop_event.set()
+        # Cancel any pending retry timers so they don't fire into a
+        # stopped (or newly restarted) worker.
+        for handle in list(self._retry_timers):
+            handle.cancel()
+        self._retry_timers.clear()
         if self._worker_task and not self._worker_task.done():
             self._worker_task.cancel()
             try:
@@ -463,8 +472,15 @@ class WebhookService:
                         delay,
                         exc,
                     )
-                    asyncio.get_running_loop().call_later(
+                    handle = asyncio.get_running_loop().call_later(
                         delay, self._requeue_job, job
+                    )
+                    self._retry_timers.add(handle)
+                    # Drop the handle reference once it fires so the set
+                    # doesn't accumulate dead entries.
+                    asyncio.get_running_loop().call_later(
+                        delay + 0.1,
+                        lambda h=handle: self._retry_timers.discard(h),
                     )
                 else:
                     # Dead letter — max retries exhausted

@@ -709,15 +709,15 @@ async def search_room(
         params["sender"] = sender
     if message_type:
         params["message_type"] = message_type
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{RELAY_URL}/rooms/{room_id}/search",
-            params=params,
-            headers=_auth_headers(),
-            timeout=10,
-        )
-        resp.raise_for_status()
-        results = resp.json()
+    client = _get_http_client()
+    resp = await client.get(
+        f"{RELAY_URL}/rooms/{room_id}/search",
+        params=params,
+        headers=_auth_headers(),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    results = resp.json()
     if not results:
         return "No matching messages."
     lines = []
@@ -738,15 +738,17 @@ async def room_metrics(room_id: str) -> str:
     Args:
         room_id: The room name or ID
     """
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{RELAY_URL}/rooms/{room_id}/history",
-            params={"limit": 1000},
-            headers=_auth_headers(),
-            timeout=10,
-        )
-        resp.raise_for_status()
-        messages = resp.json()
+    client = _get_http_client()
+    resp = await client.get(
+        f"{RELAY_URL}/rooms/{room_id}/history",
+        # Relay caps history at 200 (room_msg_svc); sending a smaller limit
+        # avoids silently undercounting for busy rooms + saves bytes.
+        params={"limit": 200},
+        headers=_auth_headers(),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    messages = resp.json()
 
     if not messages:
         return f"No messages in {room_id}."

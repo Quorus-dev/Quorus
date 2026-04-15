@@ -11,7 +11,9 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: true,
+    // Don't ship sourcemaps publicly. Flip back to "hidden" or true only
+    // when wiring Sentry / similar upload-at-deploy-time pipelines.
+    sourcemap: false,
   },
   server: {
     port: 3000,

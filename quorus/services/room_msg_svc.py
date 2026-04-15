@@ -145,7 +145,8 @@ class RoomMessageService:
             "reply_to": reply_to,
         }
 
-        # Write history + outbox atomically
+        # Write history + outbox + audit atomically — all in one session so
+        # the ledger can't claim "created" for a message that rolled back.
         async with get_db_session() as session:
             # Append to history
             await self._history.append(tenant_id, room_id, history_msg)
@@ -163,29 +164,31 @@ class RoomMessageService:
             )
             session.add(outbox_entry)
 
-        # Record audit events (best-effort, fire-and-forget)
-        if self._audit:
-            await self._audit.record(
-                tenant_id=tenant_id,
-                message_id=message_id,
-                event_type=AuditEvent.MESSAGE_CREATED,
-                actor=sender,
-                room_id=room_id,
-                room_name=room_name,
-                details={
-                    "message_type": message_type,
-                    "reply_to": reply_to,
-                    "member_count": len(members),
-                },
-            )
-            await self._audit.record(
-                tenant_id=tenant_id,
-                message_id=message_id,
-                event_type=AuditEvent.MESSAGE_QUEUED,
-                actor=sender,
-                room_id=room_id,
-                room_name=room_name,
-            )
+            # Record audit events in the same transaction
+            if self._audit:
+                await self._audit.record(
+                    tenant_id=tenant_id,
+                    message_id=message_id,
+                    event_type=AuditEvent.MESSAGE_CREATED,
+                    actor=sender,
+                    room_id=room_id,
+                    room_name=room_name,
+                    details={
+                        "message_type": message_type,
+                        "reply_to": reply_to,
+                        "member_count": len(members),
+                    },
+                    session=session,
+                )
+                await self._audit.record(
+                    tenant_id=tenant_id,
+                    message_id=message_id,
+                    event_type=AuditEvent.MESSAGE_QUEUED,
+                    actor=sender,
+                    room_id=room_id,
+                    room_name=room_name,
+                    session=session,
+                )
 
         # Track analytics (best-effort)
         try:
