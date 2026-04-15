@@ -17,6 +17,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from quorus.config import load_config
+from quorus_cli import ui as _ui
 
 console = Console()
 _config = load_config()
@@ -123,7 +124,7 @@ async def _invite(room_name: str, participants: list[str]) -> None:
         rooms = await _list_rooms_with_client(client)
         room = next((r for r in rooms if r["name"] == room_name), None)
         if not room:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
             return
         for p in participants:
             resp = await client.post(
@@ -192,7 +193,7 @@ async def _watch(room_name: str) -> None:
     rooms = await _list_rooms()
     room = next((r for r in rooms if r["name"] == room_name), None)
     if not room:
-        console.print(f"[red]Room '{room_name}' not found[/red]")
+        _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         return
 
     console.print(f"[bold]Watching room: {room_name}[/bold]")
@@ -336,7 +337,7 @@ async def _chat(room_name: str) -> None:
     rooms = await _list_rooms()
     room = next((r for r in rooms if r["name"] == room_name), None)
     if not room:
-        console.print(f"[red]Room '{room_name}' not found[/red]")
+        _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         return
 
     room_id = room["id"]
@@ -382,7 +383,7 @@ async def _chat(room_name: str) -> None:
                         event_data = ""
         except (httpx.RemoteProtocolError, httpx.ReadError):
             if not stop_event.is_set():
-                chat_console.print("[red]Connection lost. Reconnecting...[/red]")
+                chat_console.print("[error]Connection lost. Reconnecting…[/]")
         finally:
             await client.aclose()
 
@@ -669,13 +670,13 @@ def _cmd_hook(args):
 
     if action == "enable":
         if quorus_exists:
-            console.print("[yellow]Hook already enabled.[/yellow]")
+            _ui.warn("Hook already enabled")
             return
         hooks_list.append(QUORUS_HOOK_CONFIG)
         CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         CLAUDE_SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
         console.print("[green]Hook enabled.[/green]")
-        console.print("[yellow]Restart Claude Code to activate.[/yellow]")
+        _ui.info("Restart Claude Code to activate")
         return
 
     if action == "disable":
@@ -714,9 +715,9 @@ async def _history(room_name: str, limit: int = 50):
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            console.print(f"[red]Error: {e.response.status_code}[/red]")
+            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -754,7 +755,7 @@ async def _export(
                 lines.append(f"- `{ts}` **{sender}**{tag} {content}")
             body = "\n".join(lines) + "\n"
         else:
-            console.print(f"[red]Unknown format: {fmt} (use json or md)[/red]")
+            _ui.error(f"Unknown format: {fmt}", hint="use json or md")
             return
 
         if output:
@@ -768,9 +769,9 @@ async def _export(
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            console.print(f"[red]Error: {e.response.status_code}[/red]")
+            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -846,7 +847,7 @@ async def _ps() -> None:
     except httpx.ConnectError:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error: {e.response.status_code}[/red]")
+        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -902,9 +903,9 @@ async def _search(
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            console.print(f"[red]Error: {e.response.status_code}[/red]")
+            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -1064,9 +1065,9 @@ async def _metrics(room_name: str) -> None:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            console.print(f"[red]Error: {e.response.status_code}[/red]")
+            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -1100,7 +1101,7 @@ def _cmd_connect(args):
     }
 
     if platform not in generators:
-        console.print(f"[red]Unknown platform: {platform}[/red]")
+        _ui.error(f"Unknown platform: {platform}")
         console.print(
             f"[dim]Supported: {', '.join(generators)}[/dim]"
         )
@@ -1632,7 +1633,7 @@ async def _kick(room_name: str, participant: str) -> None:
         rooms_list = await _list_rooms_with_client(client)
         room = next((r for r in rooms_list if r["name"] == room_name), None)
         if not room:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
             return
         resp = await client.post(
             f"{RELAY_URL}/rooms/{room['id']}/kick",
@@ -1645,7 +1646,7 @@ async def _kick(room_name: str, participant: str) -> None:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
-        console.print(f"[red]{detail}[/red]")
+        _ui.error(str({detail}))
     finally:
         await client.aclose()
 
@@ -1657,7 +1658,7 @@ async def _destroy(room_name: str) -> None:
         rooms_list = await _list_rooms_with_client(client)
         room = next((r for r in rooms_list if r["name"] == room_name), None)
         if not room:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
             return
         resp = await client.request(
             "DELETE",
@@ -1671,7 +1672,7 @@ async def _destroy(room_name: str) -> None:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
-        console.print(f"[red]{detail}[/red]")
+        _ui.error(str({detail}))
     finally:
         await client.aclose()
 
@@ -1683,7 +1684,7 @@ async def _rename(room_name: str, new_name: str) -> None:
         rooms_list = await _list_rooms_with_client(client)
         room = next((r for r in rooms_list if r["name"] == room_name), None)
         if not room:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
             return
         resp = await client.patch(
             f"{RELAY_URL}/rooms/{room['id']}",
@@ -1696,7 +1697,7 @@ async def _rename(room_name: str, new_name: str) -> None:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
-        console.print(f"[red]{detail}[/red]")
+        _ui.error(str({detail}))
     finally:
         await client.aclose()
 
@@ -1908,9 +1909,9 @@ async def _room_state(room_name: str) -> None:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            console.print(f"[red]Error: {e.response.status_code}[/red]")
+            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -1976,9 +1977,9 @@ async def _room_locks(room_name: str) -> None:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            console.print(f"[red]Room '{room_name}' not found[/red]")
+            _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            console.print(f"[red]Error: {e.response.status_code}[/red]")
+            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -2039,7 +2040,7 @@ async def _usage() -> None:
     except httpx.ConnectError:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error: {e.response.status_code}[/red]")
+        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -2490,7 +2491,7 @@ def _cmd_join(args):
         try:
             decoded = _parse_join_token(token)
         except ValueError as exc:
-            console.print(f"[red]Invalid join token: {exc}[/red]")
+            _ui.error(f"Invalid join token: {exc}")
             return
         relay_url = decoded["relay_url"]
         secret = decoded["secret"]
@@ -2513,11 +2514,11 @@ def _cmd_join(args):
         rewrite_config = bool(arg_relay or arg_secret or arg_api_key)
 
     if not room:
-        console.print("[red]Room is required. Use --room or provide a join token.[/red]")
+        _ui.error("Room is required", hint="pass --room or a join token")
         return
 
     if not relay_url:
-        console.print("[red]Relay URL is required. Use --relay or run 'quorus init' first.[/red]")
+        _ui.error("Relay URL is required", hint="pass --relay or run: quorus init")
         return
 
     name = args.name
@@ -2583,7 +2584,10 @@ def _cmd_join(args):
             rooms_list = rooms_resp.json()
             target = next((r for r in rooms_list if r["name"] == room), None)
             if not target:
-                console.print(f"[red]Room '{room}' not found on relay.[/red]")
+                _ui.error(
+                    f"Room '{room}' not found on relay",
+                    hint="paste a share token: quorus quickjoin <token>",
+                )
                 return
             resp = await client.post(
                 f"{relay_url}/rooms/{target['id']}/join",
@@ -2593,7 +2597,7 @@ def _cmd_join(args):
             resp.raise_for_status()
             console.print(f"[green]Joined room '{room}' as '{name}'[/green]")
         except httpx.ConnectError:
-            console.print(f"[red]Cannot connect to relay at {relay_url}[/red]")
+            _ui.error_with_retry("Cannot connect to relay", relay_url={relay_url})
         finally:
             await client.aclose()
 
@@ -2605,7 +2609,7 @@ def _cmd_join(args):
         console.print(f"  Relay: {relay_url}")
         console.print(f"  Room: {room}")
         console.print("")
-        console.print("[yellow]Restart Claude Code to pick up the MCP server.[/yellow]")
+        _ui.info("Restart Claude Code to pick up the MCP server")
     else:
         console.print(f"[bold]Joined room: {room}[/bold]")
     console.print("")
@@ -2660,12 +2664,12 @@ def _cmd_share(args):
     ttl_days = getattr(args, "ttl", 7)
 
     if not RELAY_URL:
-        console.print("[red]Relay URL not configured.[/red]")
+        _ui.error("Relay URL not configured", hint="run: quorus init <name> --secret <s>")
         console.print("[dim]Run: quorus init <name> --secret <secret>[/dim]")
         return
 
     if not RELAY_SECRET and not API_KEY:
-        console.print("[red]No auth configured.[/red]")
+        _ui.error("No auth configured", hint="run: quorus init")
         console.print("[dim]Run: quorus init <name> --secret <secret>[/dim]")
         return
 
@@ -2680,13 +2684,13 @@ def _cmd_share(args):
         rooms = resp.json()
         target = next((r for r in rooms if r["name"] == room), None)
         if not target:
-            console.print(f"[red]Room '{room}' not found.[/red]")
+            _ui.error(f"Room \'{room}\' not found", hint="list rooms: quorus rooms")
             return
     except httpx.ConnectError:
         _relay_unreachable()
         return
     except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error: {e.response.status_code}[/red]")
+        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
         return
 
     # Generate token
@@ -2705,9 +2709,10 @@ def _cmd_share(args):
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
     token = f"quorus://{encoded}"
 
-    from quorus_cli import ui
     from rich.columns import Columns
     from rich.panel import Panel
+
+    from quorus_cli import ui
 
     ui.heading(f"Invite to #{room}")
     ui.token_box(token, label="Share token", expires_in=f"{ttl_days} days")
@@ -2765,7 +2770,7 @@ def _cmd_quickjoin(args):
     # Decode token
     payload = _decode_join_token(token)
     if not payload:
-        console.print("[red]Invalid or expired token.[/red]")
+        _ui.error("Invalid or expired token")
         return
 
     relay_url = payload.get("r", "")
@@ -2774,7 +2779,7 @@ def _cmd_quickjoin(args):
     api_key = payload.get("k", "")
 
     if not relay_url or not room:
-        console.print("[red]Token missing required fields.[/red]")
+        _ui.error("Token missing required fields")
         return
 
     console.print(f"[bold]Joining room: {room}[/bold]")
@@ -2840,7 +2845,7 @@ def _cmd_quickjoin(args):
                 rooms_list = rooms_resp.json()
                 target = next((r for r in rooms_list if r["name"] == room), None)
                 if not target:
-                    console.print(f"[red]Room '{room}' not found.[/red]")
+                    _ui.error(f"Room \'{room}\' not found", hint="list rooms: quorus rooms")
                     return
                 resp = await client.post(
                     f"{relay_url}/rooms/{target['id']}/join",
@@ -2850,13 +2855,14 @@ def _cmd_quickjoin(args):
                 resp.raise_for_status()
                 console.print(f"[green]Joined '{room}' as '{name}'[/green]")
             except httpx.ConnectError:
-                console.print(f"[red]Cannot connect to {relay_url}[/red]")
+                _ui.error_with_retry("Cannot connect to relay", relay_url={relay_url})
 
     asyncio.run(_do_join())
 
-    from quorus_cli import ui
     from rich.panel import Panel
     from rich.text import Text
+
+    from quorus_cli import ui
 
     ui.console.print()
     welcome = Text()
@@ -2868,10 +2874,13 @@ def _cmd_quickjoin(args):
         Panel(welcome, border_style="primary", padding=(0, 1))
     )
     ui.hint_next_steps([
-        f"Open the hub:           [accent]quorus[/]",
+        "Open the hub:           [accent]quorus[/]",
         f"Send a message:         [accent]quorus say {room} 'hello'[/]",
-        f"See who's here:         [accent]quorus ps[/]",
-        f"Wire in an AI agent:    [accent]quorus connect <platform> --room {room} --name <agent>[/]",
+        "See who's here:         [accent]quorus ps[/]",
+        (
+            "Wire in an AI agent:    [accent]quorus connect <platform>"
+            f" --room {room} --name <agent>[/]"
+        ),
     ])
 
 
@@ -2900,7 +2909,7 @@ def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
     quorus_dir = Path(__file__).resolve().parent
 
     if workspace.exists():
-        console.print(f"[yellow]Workspace {workspace} already exists[/yellow]")
+        _ui.warn(f"Workspace {workspace} already exists")
     else:
         workspace.mkdir(parents=True)
 
@@ -3001,7 +3010,7 @@ You communicate ONLY through the room — never reply in terminal.
         subprocess.run(["osascript", "-e", applescript])
         console.print(f"[green]Launched {name} in new Terminal tab[/green]")
     else:
-        console.print(f"[yellow]Run manually: cd {workspace} && claude[/yellow]")
+        _ui.info(f"Run manually: cd {workspace} && claude")
 
 
 def _cmd_add_agent(args):
@@ -3200,7 +3209,7 @@ You are {name} in the {room} group chat. ALL communication goes through the room
         subprocess.run(["osascript", "-e", applescript])
         console.print(f"[bold green]{name} launched in new Terminal tab![/bold green]")
     else:
-        console.print(f"[yellow]Run manually: {claude_cmd}[/yellow]")
+        _ui.info(f"Run manually: {claude_cmd}")
 
     console.print("[dim]Agent will auto-connect to the room on startup.[/dim]")
 
@@ -3262,7 +3271,7 @@ def _cmd_quickstart(args):
             pass
         time.sleep(0.25)
     else:
-        console.print("[red]Relay failed to start.[/red]")
+        _ui.error("Relay failed to start")
         relay_proc.terminate()
         sys.exit(1)
 
@@ -3689,7 +3698,7 @@ def _cmd_relay(args):
     if not secret:
         secret = os.environ.get("RELAY_SECRET", "")
     if not secret:
-        console.print("[red]Error: No relay_secret configured.[/red]")
+        _ui.error("No relay_secret configured", hint="run: quorus init")
         console.print("Run: quorus init <name> --secret <your-secret>")
         sys.exit(1)
 
@@ -3766,7 +3775,7 @@ def _cmd_logs(args):
     except httpx_mod.ConnectError:
         _relay_unreachable()
     except httpx_mod.HTTPStatusError as e:
-        console.print(f"[red]Error: {e.response.status_code}[/red]")
+        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
 
 
 def _cmd_brief(args):
@@ -3777,7 +3786,7 @@ def _cmd_brief(args):
     task = " ".join(args.task) if isinstance(args.task, list) else args.task
 
     if not task or not task.strip():
-        console.print("[red]Error: task text cannot be empty[/red]")
+        _ui.error("Task text cannot be empty")
         sys.exit(1)
 
     _MAX_BRIEF_LEN = 4000
@@ -3809,9 +3818,15 @@ def _cmd_brief(args):
         sys.exit(1)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            console.print(f"[red]Room '{room}' not found[/red]")
+            _ui.error(f"Room \'{room}\' not found", hint="list rooms: quorus rooms")
         else:
-            console.print(f"[red]Error: {e.response.status_code} {e.response.text}[/red]")
+            _ui.error_with_retry(
+
+                f"HTTP {e.response.status_code}: {e.response.text}",
+
+                relay_url=RELAY_URL,
+
+            )
         sys.exit(1)
 
     console.print(f"[bold green]Brief posted to '{room}'[/bold green]")
@@ -3893,7 +3908,7 @@ def _decompose_brief(task: str, brief_id: str) -> list[str]:
                 subtasks.append(cleaned)
         return subtasks
     except Exception as exc:
-        console.print(f"[yellow]Subtask decomposition failed: {exc}[/yellow]")
+        _ui.warn(f"Subtask decomposition failed: {exc}")
         return []
 
 
@@ -3912,14 +3927,17 @@ async def _show_board(room_filter: str | None = None) -> None:
         await client.aclose()
         return
     except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error listing rooms: {e.response.status_code}[/red]")
+        _ui.error_with_retry(
+            f"Error listing rooms: HTTP {e.response.status_code}",
+            relay_url=RELAY_URL,
+        )
         await client.aclose()
         return
 
     if room_filter:
         rooms = [r for r in rooms if r["name"] == room_filter]
         if not rooms:
-            console.print(f"[red]Room '{room_filter}' not found[/red]")
+            _ui.error(f"Room \'{room_filter}\' not found", hint="list rooms: quorus rooms")
             await client.aclose()
             return
 
@@ -4019,7 +4037,7 @@ def _cmd_setup_swarm(args):
             rooms_config.append({"name": pair, "purpose": "Build and ship."})
 
     if not rooms_config:
-        console.print("[red]No rooms specified. Use --rooms 'name:purpose,...'[/red]")
+        _ui.error("No rooms specified", hint="use --rooms \'name:purpose,...\'")
         sys.exit(1)
 
     console.print("[bold green]Quorus Swarm Setup[/bold green]\n")
@@ -4034,12 +4052,18 @@ def _cmd_setup_swarm(args):
             json={"name": room_name, "created_by": INSTANCE_NAME},
             headers=headers,
         )
-        if r.status_code == 200:
-            console.print(f"  [green]Room '{room_name}' created[/green]")
+        if r.status_code in (200, 201):
+            _ui.success(f"Created [room]#{room_name}[/]")
         elif r.status_code == 409:
-            console.print(f"  [yellow]Room '{room_name}' already exists[/yellow]")
+            _ui.warn(
+                f"Room '{room_name}' already exists",
+                hint="continuing with existing room",
+            )
         else:
-            console.print(f"  [red]Failed to create room '{room_name}': {r.text}[/red]")
+            _ui.error(
+                f"Failed to create room '{room_name}'",
+                hint=r.text[:120] if r.text else None,
+            )
             continue
 
         # Join the human to this room
@@ -4096,13 +4120,13 @@ def _cmd_resolve(args):
     try:
         import anthropic
     except ImportError:
-        console.print("[red]anthropic package not installed.[/red]")
+        _ui.error("anthropic package not installed", hint="pip install anthropic")
         console.print("[dim]Run: pip install anthropic[/dim]")
         sys.exit(1)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        console.print("[red]ANTHROPIC_API_KEY not set.[/red]")
+        _ui.error("ANTHROPIC_API_KEY not set")
         console.print("[dim]Export ANTHROPIC_API_KEY=<your-key> and retry.[/dim]")
         sys.exit(1)
 
@@ -4112,7 +4136,7 @@ def _cmd_resolve(args):
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        console.print("[red]git diff failed — are you in a git repo?[/red]")
+        _ui.error("git diff failed", hint="are you in a git repo?")
         console.print(f"[dim]{result.stderr.strip()}[/dim]")
         sys.exit(1)
 
@@ -4163,7 +4187,7 @@ def _cmd_resolve(args):
         try:
             file_content = Path(filepath).read_text(encoding="utf-8", errors="replace")
         except FileNotFoundError:
-            console.print(f"[red]File not found: {filepath}[/red]")
+            _ui.error(f"File not found: {filepath}")
             continue
 
         # Extract conflict blocks
@@ -4203,7 +4227,7 @@ def _cmd_resolve(args):
                 messages=[{"role": "user", "content": prompt}],
             )
         except Exception as e:
-            console.print(f"[red]Claude API error: {e}[/red]")
+            _ui.error(f"Claude API error: {e}")
             continue
 
         reply = response.content[0].text
@@ -4213,7 +4237,7 @@ def _cmd_resolve(args):
         # Extract resolved file from fenced code block
         code_match = re.search(r"```(?:\w+)?\n([\s\S]+?)```", reply)
         if not code_match:
-            console.print("[yellow]Could not extract resolved file from response.[/yellow]")
+            _ui.warn("Could not extract resolved file from response")
             continue
 
         resolved = code_match.group(1)
@@ -4288,7 +4312,7 @@ async def _context(
                 target_room = all_rooms[0]["name"]
             if not target_room:
                 if not quiet:
-                    console.print("[red]No rooms found.[/red]")
+                    _ui.error("No rooms found")
                 return
 
         # Fetch state and history in parallel
@@ -4441,13 +4465,13 @@ async def _context(
             try:
                 import anthropic
             except ImportError:
-                console.print("[red]anthropic package not installed.[/red]")
+                _ui.error("anthropic package not installed", hint="pip install anthropic")
                 console.print("[dim]Run: pip install anthropic[/dim]")
                 return
 
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
             if not api_key:
-                console.print("[red]ANTHROPIC_API_KEY not set.[/red]")
+                _ui.error("ANTHROPIC_API_KEY not set")
                 console.print("[dim]Export ANTHROPIC_API_KEY=<your-key> and retry.[/dim]")
                 return
 
@@ -4483,7 +4507,7 @@ Be direct and actionable. No pleasantries. This will be injected into the agent'
                     console.print(f"\n[bold cyan]=== Summary: {target_room} ===[/bold cyan]\n")
                 print(summary)
             except Exception as e:
-                console.print(f"[red]LLM error: {e}[/red]")
+                _ui.error(f"LLM error: {e}")
                 console.print("[dim]Falling back to raw context:[/dim]")
                 print(block)
             return
@@ -4497,9 +4521,9 @@ Be direct and actionable. No pleasantries. This will be injected into the agent'
     except httpx.HTTPStatusError as e:
         if not quiet:
             if e.response.status_code == 404:
-                console.print(f"[red]Room '{target_room}' not found[/red]")
+                _ui.error(f"Room \'{target_room}\' not found", hint="list rooms: quorus rooms")
             else:
-                console.print(f"[red]Error: {e.response.status_code}[/red]")
+                _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -4529,7 +4553,7 @@ def _cmd_decision(args):
     decision_text = " ".join(args.decision) if isinstance(args.decision, list) else args.decision
 
     if not decision_text.strip():
-        console.print("[red]Decision text cannot be empty.[/red]")
+        _ui.error("Decision text cannot be empty")
         return
 
     headers = _auth_headers()
@@ -4547,9 +4571,15 @@ def _cmd_decision(args):
         return
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            console.print(f"[red]Room '{room}' not found[/red]")
+            _ui.error(f"Room \'{room}\' not found", hint="list rooms: quorus rooms")
         else:
-            console.print(f"[red]Error: {e.response.status_code} {e.response.text}[/red]")
+            _ui.error_with_retry(
+
+                f"HTTP {e.response.status_code}: {e.response.text}",
+
+                relay_url=RELAY_URL,
+
+            )
         return
 
     did = result.get("id", "")
@@ -4646,7 +4676,7 @@ def _print_grouped_help():
             ui.console.print(f"  [accent]{cmd:<22}[/] [muted]{desc}[/]")
 
     ui.console.print()
-    ui.console.print(f"[dim]Docs      [/][primary]https://quorus.dev[/]")
+    ui.console.print("[dim]Docs      [/][primary]https://quorus.dev[/]")
     ui.console.print(
         "[dim]Issues    [/][primary]https://github.com/Quorus-dev/Quorus/issues[/]"
     )

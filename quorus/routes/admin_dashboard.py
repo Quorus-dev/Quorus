@@ -1,3 +1,6 @@
+# ruff: noqa: E501
+# Long lines come from embedded HTML/Tailwind strings where breaking a class
+# list mid-attribute hurts readability more than the line-length rule helps.
 """Admin dashboard — server-rendered HTML view of /admin/metrics.
 
 Browser-friendly auth via a signed cookie (bearer headers don't survive

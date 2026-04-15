@@ -38,6 +38,12 @@ except ImportError:
     print("rich not installed — pip install rich")
     sys.exit(1)
 
+# Use the shared theme-aware console so `[primary]`, `[agent]`, etc. resolve
+# consistently with every ui.py-rendered command. Avoid constructing a raw
+# `Console()` elsewhere in this module — hardcoded hex drifts from the theme
+# as soon as ui.py palette changes.
+from quorus_cli import ui as _ui  # noqa: E402
+
 from quorus.config import ConfigManager, resolve_config_dir
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -145,11 +151,11 @@ def _first_launch_setup(console: Console) -> dict:
         console.print()
         console.print(Panel(
             Text.from_markup(
-                "  [bold #14b8a6]quorus[/bold #14b8a6]"
+                "  [bold primary]quorus[/]"
                 "  [dim]·[/dim]"
                 "  [dim]coordination for agent swarms[/dim]  "
             ),
-            border_style="#14b8a6",
+            border_style="primary",
             padding=(0, 1),
         ))
         console.print()
@@ -364,7 +370,7 @@ def _first_launch_setup(console: Console) -> dict:
             "  [dim]No relay running yet. Start one in another terminal:[/dim]\n"
         )
         console.print(
-            "    [bold #14b8a6]quorus relay[/bold #14b8a6]\n"
+            "    [bold primary]quorus relay[/]\n"
         )
         console.print(
             "  [dim]Then run [bold]quorus begin[/bold] again. Config saved.[/dim]"
@@ -579,6 +585,10 @@ class HubState:
         self.connected: bool = False
         self.status_bar_msg: str = ""
         self.help_visible: bool = False
+        # True once a separator rule has been drawn above an inline SSE
+        # message in the current typing session. Reset when the main loop
+        # returns from input() so the next typing session starts fresh.
+        self._inline_rule_drawn: bool = False
 
     def toggle_help(self) -> None:
         with self._lock:
@@ -587,6 +597,22 @@ class HubState:
     def is_help_visible(self) -> bool:
         with self._lock:
             return self.help_visible
+
+    def mark_inline_rule_if_fresh(self) -> bool:
+        """Claim the 'first inline message' slot. Returns True iff this call
+        flipped the flag from False → True (so the caller should draw the
+        rule exactly once per typing session)."""
+        with self._lock:
+            if self._inline_rule_drawn:
+                return False
+            self._inline_rule_drawn = True
+            return True
+
+    def reset_inline_rule(self) -> None:
+        """Call after input() returns so the next incoming SSE message
+        will get a fresh separator rule."""
+        with self._lock:
+            self._inline_rule_drawn = False
 
     # Rooms
     def set_rooms(self, rooms: list[dict]) -> None:
@@ -735,14 +761,22 @@ def _mint_sse_token(relay: str, secret: str, recipient: str) -> Optional[str]:
     return None
 
 
-def _print_inline_message(console: Console, msg: dict, my_name: str) -> None:
+def _print_inline_message(
+    console: Console, msg: dict, my_name: str, state: "HubState"
+) -> None:
     """Print one chat line directly to stdout.
 
     The main render loop is blocked on input() — so panel redraws only
     happen after Enter. To make incoming messages feel instant, the SSE
     thread prints them here as they arrive. The next full redraw still
     shows them in the chat pane too (dedup prevents doubles).
+
+    The first inline message in a typing session is preceded by a subtle
+    dotted rule so the user sees "messages below this line arrived while
+    you were typing". Rule is reset on Enter (cleared via mark_render).
     """
+    from rich.rule import Rule
+
     sender = msg.get("from_name", "?")
     content = msg.get("content", "")
     ts_raw = msg.get("timestamp", "")
@@ -754,13 +788,19 @@ def _print_inline_message(console: Console, msg: dict, my_name: str) -> None:
     if sender == my_name:
         return
     sender_style = _sender_color(sender)
+
+    # Draw the separator rule once per "typing session" so multiple incoming
+    # messages don't get multiple rules stacked on top of each other.
+    if state.mark_inline_rule_if_fresh():
+        console.print(Rule(style="dim", characters="·"))
+
     line = Text()
     if hhmm:
-        line.append(f"  [{hhmm}] ", style="#64748b")
+        line.append(f"  [{hhmm}] ", style="muted")
     else:
-        line.append("  ", style="#64748b")
+        line.append("  ", style="muted")
     line.append(f"@{sender}", style=f"bold {sender_style}")
-    line.append(": ", style="#475569")
+    line.append(": ", style="dim")
     line.append(content, style="white")
     console.print(line)
 
@@ -819,7 +859,9 @@ def _sse_loop(
                                     is_new = not key or key not in state._seen_set
                                     state.append_message(msg)
                                     if is_new:
-                                        _print_inline_message(console, msg, recipient)
+                                        _print_inline_message(
+                                            console, msg, recipient, state,
+                                        )
                         event_name = ""
                         data_buf = []
                         continue
@@ -839,21 +881,21 @@ def _sse_loop(
 # ── Renderers ─────────────────────────────────────────────────────────────────
 
 def _render_header(relay_url: str, agent_name: str, connected: bool, status: str) -> Panel:
-    dot_style = "bold #10b981" if connected else "bold #ef4444"
+    dot_style = "bold success" if connected else "bold error"
     # Strip protocol for display brevity
     display_relay = relay_url.replace("http://", "").replace("https://", "")
     header_text = Text()
-    header_text.append("  quorus", style="bold #14b8a6")
-    header_text.append("  ·  ", style="#475569")
+    header_text.append("  quorus", style="bold primary")
+    header_text.append("  ·  ", style="dim")
     # Agent name always in purple (#a78bfa) with @ prefix — matches ui.fmt_agent()
-    header_text.append(f"@{agent_name}", style="bold #a78bfa")
-    header_text.append("  ·  ", style="#475569")
-    header_text.append(display_relay, style="#64748b")
-    header_text.append("   ", style="#64748b")
+    header_text.append(f"@{agent_name}", style="bold agent")
+    header_text.append("  ·  ", style="dim")
+    header_text.append(display_relay, style="muted")
+    header_text.append("   ", style="muted")
     # Always ⏵ — color conveys state (green when connected, red when offline)
     header_text.append("⏵", style=dot_style)
-    header_text.append(f" {status}" if status else "", style="#64748b")
-    return Panel(header_text, border_style="#14b8a6", padding=(0, 1))
+    header_text.append(f" {status}" if status else "", style="muted")
+    return Panel(header_text, border_style="primary", padding=(0, 1))
 
 
 def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
@@ -874,21 +916,21 @@ def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
 
         is_selected = i == selected_idx
         if is_selected:
-            t.append(" ❯ ", style="bold #14b8a6")
-            t.append(f"#{name}", style="bold #fbbf24")
-            t.append(f"  {member_count} agents", style="#64748b")
+            t.append(" ❯ ", style="bold primary")
+            t.append(f"#{name}", style="bold room")
+            t.append(f"  {member_count} agents", style="muted")
         else:
             t.append("   ", style="")
-            t.append(f"#{name}", style="#fbbf24")  # dim amber, always
-            t.append(f"  {member_count} agents", style="#475569")
+            t.append(f"#{name}", style="room")  # dim amber, always
+            t.append(f"  {member_count} agents", style="dim")
         t.append("\n")
 
     return Panel(
         t,
-        title="[bold #14b8a6]Rooms[/]",
-        border_style="#1e293b",
+        title="[bold primary]Rooms[/]",
+        border_style="dim",
         padding=(0, 1),
-        subtitle="[#475569]↑↓ switch · n new[/]",
+        subtitle="[dim]↑↓ switch · n new[/]",
     )
 
 
@@ -900,7 +942,7 @@ def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
         return Panel(
             no_msg,
             title=f"[bold]#{room_name}[/bold]",
-            border_style="#14b8a6",
+            border_style="primary",
             padding=(0, 1),
         )
 
@@ -916,24 +958,24 @@ def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
         except Exception:
             ts = "??:??"
 
-        lines.append(f"[{ts}] ", style="#475569")
+        lines.append(f"[{ts}] ", style="dim")
 
         is_me = sender == my_name
         # @sender in purple for you, sender's accent for others — always @-prefixed
-        sender_color = "#a78bfa" if is_me else _sender_color(sender)
+        sender_color = "agent" if is_me else _sender_color(sender)
         lines.append(f"@{sender}", style=f"bold {sender_color}")
 
         if mtype not in ("chat", ""):
-            lines.append(f" [{mtype}]", style="#64748b italic")
+            lines.append(f" [{mtype}]", style="muted italic")
 
-        lines.append(": ", style="#64748b")
+        lines.append(": ", style="muted")
         # Message body: bright for you, regular for others — no bright_white/grey15
         lines.append(content + "\n", style="#f0ede8" if is_me else "#cbd5e1")
 
     return Panel(
         lines,
         title=f"[bold]#{room_name}[/bold]",
-        border_style="#14b8a6",
+        border_style="primary",
         padding=(0, 1),
         subtitle="[dim]Enter send  Ctrl+C quit[/dim]",
     )
@@ -941,29 +983,29 @@ def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
 
 def _render_input_bar(agent_name: str, status_msg: str) -> Panel:
     content = Text()
-    content.append("❯ ", style="bold #14b8a6")
+    content.append("❯ ", style="bold primary")
     if status_msg:
         # Color by message type: errors red, success green, else amber (info)
         lower = status_msg.lower()
         if any(w in lower for w in ("error", "failed", "couldn't", "can't")):
-            style = "#ef4444"
+            style = "error"
         elif any(w in lower for w in ("joined", "created", "sent", "ok")):
-            style = "#10b981"
+            style = "success"
         else:
-            style = "#f59e0b italic"
+            style = "warning italic"
         content.append(status_msg, style=style)
     else:
         content.append(
             "type a message · /help for commands · ctrl+c to quit",
-            style="#475569",
+            style="dim",
         )
-    return Panel(content, border_style="#14b8a6", padding=(0, 1))
+    return Panel(content, border_style="primary", padding=(0, 1))
 
 
 def _print_help(console: Console) -> None:
     """Print the help overlay — keybinds, slash commands, plain-English forms."""
     console.print()
-    console.print("  [bold #14b8a6]Keybinds[/]")
+    console.print("  [bold primary]Keybinds[/]")
     kb_rows = [
         ("↑ / ↓", "switch between rooms"),
         ("Enter", "send the typed message"),
@@ -972,18 +1014,18 @@ def _print_help(console: Console) -> None:
     ]
     for kb, desc in kb_rows:
         console.print(
-            f"  [bold #a78bfa]{kb:<14}[/]  [dim]{desc}[/]"
+            f"  [bold agent]{kb:<14}[/]  [dim]{desc}[/]"
         )
 
     console.print()
-    console.print("  [bold #14b8a6]Slash commands[/]")
+    console.print("  [bold primary]Slash commands[/]")
     for verb, meta in SLASH_COMMANDS.items():
         console.print(
-            f"  [bold #14b8a6]{verb:<14}[/]  [dim]{meta[0]}[/]"
+            f"  [bold primary]{verb:<14}[/]  [dim]{meta[0]}[/]"
         )
 
     console.print()
-    console.print("  [bold #14b8a6]Plain English[/]  [dim](aliases for slash commands)[/]")
+    console.print("  [bold primary]Plain English[/]  [dim](aliases for slash commands)[/]")
     rows = [
         ("create <name>",            "create a new room"),
         ("join <room>",              "switch to that room"),
@@ -993,7 +1035,7 @@ def _print_help(console: Console) -> None:
     ]
     for cmd, desc in rows:
         console.print(
-            f"  [bold #14b8a6]{cmd:<30}[/]  [dim]{desc}[/]"
+            f"  [bold primary]{cmd:<30}[/]  [dim]{desc}[/]"
         )
     console.print()
 
@@ -1127,7 +1169,9 @@ def _dispatch_slash(
 # ── Main hub loop ─────────────────────────────────────────────────────────────
 
 def run_hub() -> None:
-    console = Console()
+    # Shared theme-aware console (primary/agent/room/muted/dim/success/warning/
+    # error/accent all resolve via ui.THEME).
+    console = _ui.console
 
     # 1. Load or create config
     cfg = ConfigManager(CONFIG_FILE).load() or None
@@ -1265,6 +1309,11 @@ def run_hub() -> None:
                 line = input("❯ ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
+
+            # User hit Enter — close out the current typing session so the
+            # next incoming SSE message draws a fresh separator rule above
+            # it (instead of silently stacking).
+            state.reset_inline_rule()
 
             if not line:
                 continue
@@ -1417,7 +1466,7 @@ def run_hub() -> None:
                     console.print()
                     console.print(f"  [bold]Invite '{invitee}' to #{rname}[/bold]")
                     console.print("  [dim]Share this token:[/dim]")
-                    console.print(f"  [#14b8a6]{token}[/#14b8a6]")
+                    console.print(f"  [primary]{token}[/]")
                     console.print(f"  [dim]They run: quorus join {token} --name {invitee}[/dim]")
                     console.print()
                     try:
