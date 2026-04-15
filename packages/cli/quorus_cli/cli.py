@@ -2858,16 +2858,28 @@ def _cmd_doctor(args):
 
     checks_passed = 0
     checks_total = 0
+    optional_passed = 0
+    optional_total = 0
     verbose = args.verbose
 
-    def check(name: str, ok: bool, detail: str = "", fix: str = ""):
-        nonlocal checks_passed, checks_total
-        checks_total += 1
+    def check(name: str, ok: bool, detail: str = "", fix: str = "", optional: bool = False):
+        nonlocal checks_passed, checks_total, optional_passed, optional_total
+        if optional:
+            optional_total += 1
+            if ok:
+                optional_passed += 1
+        else:
+            checks_total += 1
+            if ok:
+                checks_passed += 1
         if ok:
-            checks_passed += 1
             ui.console.print(f"  [success]{ui.ICON_OK}[/]  {name}")
         else:
-            ui.console.print(f"  [error]{ui.ICON_FAIL}[/]  [error]{name}[/]")
+            icon_style = "warning" if optional else "error"
+            icon = ui.ICON_WARN if optional else ui.ICON_FAIL
+            suffix = " [dim](optional)[/]" if optional else ""
+            name_style = "warning" if optional else "error"
+            ui.console.print(f"  [{icon_style}]{icon}[/]  [{name_style}]{name}[/]{suffix}")
             if detail:
                 ui.console.print(f"       [muted]{detail}[/]")
             if fix:
@@ -3043,8 +3055,9 @@ def _cmd_doctor(args):
     check(
         "Hook auto-inject",
         hook_enabled,
-        detail="quorus inbox + context injected on every prompt" if hook_enabled else "",
+        detail="quorus inbox + context injected on every prompt" if hook_enabled else "opt-in feature",
         fix="Run: quorus hook enable",
+        optional=True,
     )
 
     # 12. Pending messages
@@ -3069,14 +3082,18 @@ def _cmd_doctor(args):
     ui.console.print()
     pct = int(checks_passed * 100 / checks_total) if checks_total else 0
     color = "success" if pct == 100 else ("warning" if pct >= 70 else "error")
+    optional_line = (
+        f" [dim]· {optional_passed}/{optional_total} optional[/]"
+        if optional_total else ""
+    )
     ui.console.print(
-        f"  [{color}]{checks_passed}/{checks_total} checks passed[/] "
-        f"[muted]({pct}%)[/]"
+        f"  [{color}]{checks_passed}/{checks_total} required checks passed[/] "
+        f"[muted]({pct}%)[/]{optional_line}"
     )
     if checks_passed == checks_total:
         ui.success("You're all set — try: quorus begin")
     else:
-        ui.warn("Fix the issues above to get started")
+        ui.warn("Fix the required issues above to get started")
 
     # Show web console link
     ui.console.print(

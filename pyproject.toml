@@ -49,6 +49,7 @@ Issues = "https://github.com/Aarya2004/quorus/issues"
 [project.scripts]
 quorus = "quorus_cli.cli:main"
 quorus-relay = "quorus.relay:main"
+quorus-mcp = "quorus_mcp.server:main_cli"
 quorus-analytics = "quorus.analytics:main"
 
 [tool.ruff]

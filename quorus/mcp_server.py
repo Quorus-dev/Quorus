@@ -18,7 +18,7 @@ from quorus_mcp import server as _server
 # direct script (``python quorus/mcp_server.py``). The check must happen
 # BEFORE we alias this module, otherwise ``__name__`` may be lost.
 if __name__ == "__main__":
-    _server.mcp.run(transport="stdio")
+    _server.main_cli()
 else:
     # Make ``quorus.mcp_server`` and ``quorus_mcp.server`` the same module
     # object so attribute mutations (e.g. monkeypatching module-level

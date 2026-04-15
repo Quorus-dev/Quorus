@@ -47,10 +47,16 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
 PUBLIC_RELAY = "https://quorus.dev"  # Fallback public relay
 
-# Accent palette for senders
+# Accent palette for senders — teal/amber/purple only, matches ui.py spec
 _ACCENT_COLORS = [
-    "#14b8a6", "bright_magenta", "bright_yellow", "bright_green",
-    "bright_blue", "bright_red", "orange3", "medium_purple1",
+    "#14b8a6",  # teal (primary)
+    "#a78bfa",  # purple (agent)
+    "#fbbf24",  # amber (room)
+    "#2dd4bf",  # teal-light
+    "#5eead4",  # mint
+    "#f59e0b",  # warning amber
+    "#10b981",  # success
+    "#0d9488",  # teal-deep
 ]
 _sender_color_cache: dict[str, str] = {}
 _color_index = 0
@@ -566,18 +572,19 @@ def _poll_loop(relay: str, secret: str, state: HubState, stop_event: threading.E
 # ── Renderers ─────────────────────────────────────────────────────────────────
 
 def _render_header(relay_url: str, agent_name: str, connected: bool, status: str) -> Panel:
-    dot_icon = "⏵" if connected else "◌"
     dot_style = "bold #10b981" if connected else "bold #ef4444"
     # Strip protocol for display brevity
     display_relay = relay_url.replace("http://", "").replace("https://", "")
     header_text = Text()
     header_text.append("  quorus", style="bold #14b8a6")
     header_text.append("  ·  ", style="#475569")
-    header_text.append(f"@{agent_name}", style=f"bold {_sender_color(agent_name)}")
+    # Agent name always in purple (#a78bfa) with @ prefix — matches ui.fmt_agent()
+    header_text.append(f"@{agent_name}", style="bold #a78bfa")
     header_text.append("  ·  ", style="#475569")
     header_text.append(display_relay, style="#64748b")
     header_text.append("   ", style="#64748b")
-    header_text.append(dot_icon, style=dot_style)
+    # Always ⏵ — color conveys state (green when connected, red when offline)
+    header_text.append("⏵", style=dot_style)
     header_text.append(f" {status}" if status else "", style="#64748b")
     return Panel(header_text, border_style="#14b8a6", padding=(0, 1))
 
@@ -603,7 +610,7 @@ def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
             t.append(f"  {member_count} agents", style="#64748b")
         else:
             t.append("   ", style="")
-            t.append(f"#{name}", style="#94a3b8")
+            t.append(f"#{name}", style="#fbbf24")  # dim amber, always
             t.append(f"  {member_count} agents", style="#475569")
         t.append("\n")
 
@@ -638,18 +645,19 @@ def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
         except Exception:
             ts = "??:??"
 
-        lines.append(f"[{ts}] ", style="dim")
+        lines.append(f"[{ts}] ", style="#475569")
 
-        color = _sender_color(sender)
         is_me = sender == my_name
-        sender_style = f"bold {color}" + (" on grey15" if is_me else "")
-        lines.append(sender, style=sender_style)
+        # @sender in purple for you, sender's accent for others — always @-prefixed
+        sender_color = "#a78bfa" if is_me else _sender_color(sender)
+        lines.append(f"@{sender}", style=f"bold {sender_color}")
 
         if mtype not in ("chat", ""):
-            lines.append(f" [{mtype}]", style="dim italic")
+            lines.append(f" [{mtype}]", style="#64748b italic")
 
-        lines.append(": ")
-        lines.append(content + "\n", style="bright_white" if is_me else "white")
+        lines.append(": ", style="#64748b")
+        # Message body: bright for you, regular for others — no bright_white/grey15
+        lines.append(content + "\n", style="#f0ede8" if is_me else "#cbd5e1")
 
     return Panel(
         lines,
@@ -664,7 +672,15 @@ def _render_input_bar(agent_name: str, status_msg: str) -> Panel:
     content = Text()
     content.append("❯ ", style="bold #14b8a6")
     if status_msg:
-        content.append(status_msg, style="#f59e0b italic")
+        # Color by message type: errors red, success green, else amber (info)
+        lower = status_msg.lower()
+        if any(w in lower for w in ("error", "failed", "couldn't", "can't")):
+            style = "#ef4444"
+        elif any(w in lower for w in ("joined", "created", "sent", "ok")):
+            style = "#10b981"
+        else:
+            style = "#f59e0b italic"
+        content.append(status_msg, style=style)
     else:
         content.append(
             "type a message · /help for commands · ctrl+c to quit",
@@ -803,7 +819,7 @@ def run_hub() -> None:
 
             # Prompt for input
             try:
-                line = input(f"[{agent_name}]> ").strip()
+                line = input("❯ ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
 

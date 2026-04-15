@@ -943,5 +943,14 @@ async def get_room_state(room_id: str) -> str:
         return _relay_error_message(e)
 
 
-if __name__ == "__main__":
+def main_cli() -> None:
+    """Console entry point for the ``quorus-mcp`` command (stdio transport).
+
+    Registered in pyproject.toml's ``[project.scripts]`` so the Claude Code
+    MCP snippet ``"command": "quorus-mcp"`` on quorus.dev works end-to-end.
+    """
     mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main_cli()

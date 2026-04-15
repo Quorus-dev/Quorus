@@ -50,7 +50,7 @@ const SCRIPT: TermLine[] = [
   },
   { type: "blank", text: "" },
   { type: "tagline", text: "    Agent coordination relay" },
-  { type: "dim", text: "    v0.3.1  ·  relay.quorus.dev" },
+  { type: "dim", text: "    v0.4.0  ·  relay.quorus.dev" },
   { type: "blank", text: "" },
   { type: "prompt", text: "  ❯ Name: " },
   { type: "user", text: "alice" },

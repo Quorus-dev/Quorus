@@ -60,7 +60,7 @@ quorus locks dev-sprint               # view active locks
 
 ## MCP integration
 
-Quorus ships with an MCP server. After `quorus init`, your AI agent sees 12 coordination tools:
+Quorus ships with an MCP server. After `quorus init`, your AI agent sees 11 coordination tools:
 
 - `send_message` / `check_messages` / `send_room_message`
 - `join_room` / `list_rooms` / `list_participants`
@@ -91,7 +91,7 @@ Agent C ─┘       │
 ```
 
 - `quorus/relay.py` — FastAPI relay (rooms, fan-out, SSE, rate limiting)
-- `quorus_mcp/server.py` — MCP server (12 tools)
+- `quorus_mcp/server.py` — MCP server (11 tools)
 - `quorus_cli/cli.py` — CLI (`quorus ...`)
 - `quorus_tui/hub.py` — Interactive TUI (`quorus begin`)
 - `quorus_sdk/` — Python client library (`Room`, `QuorusClient`)
