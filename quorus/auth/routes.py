@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import re
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
 
@@ -46,12 +47,20 @@ class SignupRequest(BaseModel):
 
 
 class SignupResponse(BaseModel):
-    """Returned once on signup — save the API key!"""
+    """Returned once on signup.
+
+    The raw API key is only included when the request sets
+    ``X-Quorus-Setup-Local: 1`` — by default only metadata is returned so
+    keys are never exposed via response bodies or logs.
+    """
     tenant_slug: str
     participant_name: str
-    api_key: str
+    key_prefix: str
+    key_id: str
+    next_steps: str
     relay_url: str
-    setup_command: str
+    api_key: str | None = None
+    setup_command: str | None = None
 
 
 class TokenRequest(BaseModel):
@@ -70,19 +79,21 @@ class TokenResponse(BaseModel):
 
 
 @router.post("/signup", response_model=SignupResponse)
-async def signup(req: SignupRequest, request: Request):
+async def signup(req: SignupRequest, request: Request, x_quorus_setup_local: str | None = Header(default=None, alias="X-Quorus-Setup-Local")):
     """Self-service signup: creates tenant + participant + API key.
 
     Rate limited to 5 signups per hour per IP.
     Returns the API key once — it cannot be retrieved again.
     """
-    # Rate limit by IP
+    # Rate limit by IP: 5 requests per 60 seconds
     client_ip = request.client.host if request.client else "unknown"
     rate_limit_svc = request.app.state.rate_limit_service
-    if not await rate_limit_svc.check_with_limit("global", f"signup:{client_ip}", 5, window=3600):
-        raise HTTPException(
+    _SIGNUP_WINDOW = 60
+    if not await rate_limit_svc.check_with_limit("global", f"signup:{client_ip}", 5, window=_SIGNUP_WINDOW):
+        return JSONResponse(
             status_code=429,
-            detail="Too many signups from this IP. Try again in an hour.",
+            content={"error": "rate_limited", "retry_after": _SIGNUP_WINDOW},
+            headers={"Retry-After": str(_SIGNUP_WINDOW)},
         )
 
     async with get_db_session() as session:
@@ -122,8 +133,8 @@ async def signup(req: SignupRequest, request: Request):
         await session.flush()
 
         logger.info(
-            "Self-service signup: %s/%s (tenant_id=%s)",
-            req.workspace, req.name, tenant.id,
+            "Self-service signup: %s/%s (tenant_id=%s, key_prefix=%s)",
+            req.workspace, req.name, tenant.id, prefix,
         )
 
         # Build relay URL from request
@@ -131,12 +142,21 @@ async def signup(req: SignupRequest, request: Request):
         host = request.headers.get("x-forwarded-host", request.url.netloc)
         relay_url = f"{scheme}://{host}"
 
+        is_local_setup = x_quorus_setup_local == "1"
         return SignupResponse(
             tenant_slug=tenant.slug,
             participant_name=participant.name,
-            api_key=raw_key,
+            key_prefix=prefix,
+            key_id=str(api_key.id) if hasattr(api_key, "id") and api_key.id else prefix,
+            next_steps=(
+                f"Run: quorus init {req.name} --relay-url {relay_url} --api-key <your-key>"
+            ),
             relay_url=relay_url,
-            setup_command=f"quorus init {req.name} --relay-url {relay_url} --api-key {raw_key}",
+            setup_command=(
+                f"quorus init {req.name} --relay-url {relay_url} --api-key {raw_key}"
+                if is_local_setup else None
+            ),
+            api_key=raw_key if is_local_setup else None,
         )
 
 
