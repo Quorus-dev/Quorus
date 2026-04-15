@@ -811,7 +811,9 @@ def _render_header(relay_url: str, agent_name: str, connected: bool, status: str
 def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
     if not rooms:
         return Panel(
-            Text("  [dim]No rooms yet. Press [bold]n[/bold] to create one.[/dim]"),
+            Text.from_markup(
+                "  [dim]No rooms yet. Press [bold]n[/bold] to create one.[/dim]"
+            ),
             title="[bold]Rooms[/bold]",
             border_style="dim",
         )
@@ -844,7 +846,9 @@ def _render_room_list(rooms: list[dict], selected_idx: int) -> Panel:
 
 def _render_chat(messages: list[dict], room_name: str, my_name: str) -> Panel:
     if not messages:
-        no_msg = Text(f"\n  [dim]No messages in #{room_name} yet. Say something![/dim]")
+        no_msg = Text.from_markup(
+            f"\n  [dim]No messages in #{room_name} yet. Say something![/dim]"
+        )
         return Panel(
             no_msg,
             title=f"[bold]#{room_name}[/bold]",
