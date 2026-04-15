@@ -1113,6 +1113,11 @@ def _cmd_connect(args):
         "claude": _connect_claude,
         "gemini": _connect_gemini,
         "windsurf": _connect_windsurf,
+        "opencode": _connect_opencode,
+        "cline": _connect_cline,
+        "continue": _connect_continue,
+        "antigravity": _connect_antigravity,
+        "aider": _connect_aider,
         "http": _connect_http,
     }
 
@@ -1385,6 +1390,213 @@ def _connect_windsurf(
     ui.console.print(rules, highlight=False, markup=False)
     ui.console.print(
         f"\n[success]{name} joined room '{room}'. Reload Windsurf to "
+        "activate MCP.[/success]"
+    )
+
+
+def _connect_cline(
+    room: str, name: str, relay_url: str, secret: str, quorus_dir: str,
+) -> None:
+    """Cline (VS Code extension) — uses standard mcpServers schema.
+
+    Cline's config lives inside VS Code's per-extension globalStorage, which
+    varies by OS and VS Code install. We print the snippet and the two
+    common paths for the user to paste into.
+    """
+    from quorus_cli import ui
+
+    ui.heading("Cline (VS Code) Setup")
+    ui.console.print(f"  Agent:  [agent]@{name}[/]")
+    ui.console.print(f"  Room:   [room]#{room}[/]\n")
+
+    cfg = json.dumps(
+        {
+            "mcpServers": {
+                "quorus": {
+                    "command": "quorus-mcp",
+                    "env": {
+                        "INSTANCE_NAME": name,
+                        "RELAY_URL": relay_url,
+                        "RELAY_SECRET": secret,
+                    },
+                }
+            }
+        },
+        indent=2,
+    )
+    ui.console.print(
+        "[bold]1. In Cline: click the MCP Servers icon → Edit Settings → "
+        "paste:[/]\n"
+    )
+    ui.console.print(cfg, highlight=False, markup=False)
+    ui.console.print(
+        "\n  [muted]Cline stores this at "
+        "~/Library/Application Support/Code/User/globalStorage/"
+        "saoudrizwan.claude-dev/settings/cline_mcp_settings.json[/]\n"
+        "  [muted](Linux: ~/.config/Code/User/globalStorage/…)[/]"
+    )
+    ui.console.print(
+        f"\n[success]{name} joined room '{room}'. Reload VS Code to activate "
+        "MCP.[/success]"
+    )
+
+
+def _connect_continue(
+    room: str, name: str, relay_url: str, secret: str, quorus_dir: str,
+) -> None:
+    """Continue (VS Code / JetBrains extension) — standard mcpServers."""
+    from quorus_cli import ui
+
+    ui.heading("Continue Setup")
+    ui.console.print(f"  Agent:  [agent]@{name}[/]")
+    ui.console.print(f"  Room:   [room]#{room}[/]\n")
+    cfg = json.dumps(
+        {
+            "experimental": {
+                "modelContextProtocolServers": [
+                    {
+                        "transport": {
+                            "type": "stdio",
+                            "command": "quorus-mcp",
+                            "env": {
+                                "INSTANCE_NAME": name,
+                                "RELAY_URL": relay_url,
+                                "RELAY_SECRET": secret,
+                            },
+                        }
+                    }
+                ]
+            }
+        },
+        indent=2,
+    )
+    ui.console.print("[bold]Merge into ~/.continue/config.json:[/]\n")
+    ui.console.print(cfg, highlight=False, markup=False)
+    ui.console.print(
+        f"\n[success]{name} joined room '{room}'. Reload Continue.[/success]"
+    )
+
+
+def _connect_antigravity(
+    room: str, name: str, relay_url: str, secret: str, quorus_dir: str,
+) -> None:
+    """Google Antigravity — MCP-compatible agent IDE."""
+    from quorus_cli import ui
+
+    ui.heading("Antigravity Setup")
+    ui.console.print(f"  Agent:  [agent]@{name}[/]")
+    ui.console.print(f"  Room:   [room]#{room}[/]\n")
+    cfg = json.dumps(
+        {
+            "mcpServers": {
+                "quorus": {
+                    "command": "quorus-mcp",
+                    "env": {
+                        "INSTANCE_NAME": name,
+                        "RELAY_URL": relay_url,
+                        "RELAY_SECRET": secret,
+                    },
+                }
+            }
+        },
+        indent=2,
+    )
+    ui.console.print(
+        "[bold]In Antigravity: Settings → MCP Servers → paste:[/]\n"
+    )
+    ui.console.print(cfg, highlight=False, markup=False)
+    ui.console.print(
+        f"\n[success]{name} joined room '{room}'. Reload Antigravity to "
+        "activate MCP.[/success]"
+    )
+
+
+def _connect_aider(
+    room: str, name: str, relay_url: str, secret: str, quorus_dir: str,
+) -> None:
+    """Aider — doesn't speak MCP, so we wire via the HTTP SDK."""
+    from quorus_cli import ui
+
+    ui.heading("Aider Setup")
+    ui.console.print(f"  Agent:  [agent]@{name}[/]")
+    ui.console.print(f"  Room:   [room]#{room}[/]\n")
+    ui.console.print(
+        "Aider doesn't use MCP. Use the Quorus HTTP SDK from a sidecar "
+        "script that aider calls out to, or have aider read/write via "
+        "`quorus say` / `quorus inbox` in its shell output.\n"
+    )
+    snippet = f"""\
+# In aider, run this in the shell to post a status update:
+#   /run quorus say {room} "finished the auth refactor"
+#
+# Or, from a Python helper:
+from quorus_sdk.http_agent import QuorusClient
+
+client = QuorusClient(
+    "{relay_url}",
+    "{secret}",
+    "{name}",
+)
+client.join("{room}")
+client.send("{room}", "aider checkpoint — tests passing")"""
+    ui.console.print(snippet, highlight=False, markup=False)
+    ui.console.print(
+        f"\n[success]{name} joined room '{room}'. "
+        "Point aider's shell at `quorus say/inbox` or the SDK.[/success]"
+    )
+
+
+def _connect_opencode(
+    room: str, name: str, relay_url: str, secret: str, quorus_dir: str,
+) -> None:
+    """Generate Opencode MCP config (sst/opencode, opencode.ai).
+
+    Opencode's MCP schema differs from the common ``mcpServers`` shape —
+    it uses ``mcp.<name> = {type, command[], enabled}``.
+    """
+    from quorus_cli import ui
+
+    ui.heading("Opencode Agent Setup")
+    ui.console.print(f"  Agent:  [agent]@{name}[/]")
+    ui.console.print(f"  Room:   [room]#{room}[/]")
+    ui.console.print()
+
+    oc_cfg = json.dumps(
+        {
+            "$schema": "https://opencode.ai/config.json",
+            "mcp": {
+                "quorus": {
+                    "type": "local",
+                    "command": ["quorus-mcp"],
+                    "enabled": True,
+                    "environment": {
+                        "INSTANCE_NAME": name,
+                        "RELAY_URL": relay_url,
+                        "RELAY_SECRET": secret,
+                    },
+                }
+            },
+        },
+        indent=2,
+    )
+
+    ui.console.print(
+        "[bold]1. Merge into [primary]~/.config/opencode/opencode.json[/]:[/]\n"
+    )
+    ui.console.print(oc_cfg, highlight=False, markup=False)
+
+    ui.console.print("\n[bold]2. Add to your AGENTS.md:[/bold]\n")
+    rules = (
+        f"You are {name} in Quorus room #{room}. Use MCP tools:\n"
+        "- check_messages() — read new messages from other agents and humans\n"
+        f'- send_room_message(room_id="{room}", content="...", '
+        'message_type="chat")\n'
+        "- list_rooms() / list_participants() — discover who's in the room\n"
+        "- claim_task(...) / release_task(...) — coordinate file ownership"
+    )
+    ui.console.print(rules, highlight=False, markup=False)
+    ui.console.print(
+        f"\n[success]{name} joined room '{room}'. Reload Opencode to "
         "activate MCP.[/success]"
     )
 
@@ -1859,7 +2071,10 @@ def _cmd_usage(args):
 
 
 def _cmd_init(args):
-    """One-command setup: write config, register MCP server with Claude Code."""
+    """One-command setup: write config, auto-register MCP with every installed
+    MCP-compatible client (Claude Code, Claude Desktop, Cursor, Windsurf,
+    Gemini CLI). Falls back to a project-level .mcp.json when no client is
+    detected. For OpenAI Codex or other HTTP agents use `quorus connect`."""
     from quorus_cli import ui
 
     ui.banner()
@@ -1941,36 +2156,73 @@ def _cmd_init(args):
             "Install uv for faster startup: https://docs.astral.sh/uv/[/yellow]"
         )
 
-    # 3. Register MCP server with Claude Code
-    # Claude Code CLI → ~/.claude/settings.json
-    # Claude Desktop  → ~/.claude.json
-    # Project-level fallback → .mcp.json in cwd
+    # 3. Register MCP server with every detected MCP-compatible client.
+    # Most agents use the same JSON `mcpServers` shape. Opencode uses a
+    # different schema (`mcp.<name> = {type, command[], enabled}`), so we
+    # wire it with a separate code path.
     mcp_entry = {
         "type": "stdio",
         "command": mcp_command,
         "args": mcp_args,
         "env": {},
     }
-    candidates = [
-        Path.home() / ".claude" / "settings.json",
-        Path.home() / ".claude.json",
-    ]
-    registered_path = None
-    for cfg_path in candidates:
-        if cfg_path.exists():
-            try:
-                claude_config = json.loads(cfg_path.read_text())
-            except (json.JSONDecodeError, ValueError):
-                claude_config = {}
-            claude_config.setdefault("mcpServers", {})["quorus"] = mcp_entry
-            cfg_path.write_text(json.dumps(claude_config, indent=2))
-            registered_path = cfg_path
-            break
+    # Opencode's schema variant
+    opencode_entry = {
+        "type": "local",
+        "command": [mcp_command, *mcp_args],
+        "enabled": True,
+    }
 
-    if registered_path:
-        console.print(f"[green]MCP server registered in {registered_path}[/green]")
+    # (label, config_path) pairs for agents using the standard mcpServers shape
+    mcp_targets = [
+        ("Claude Code", Path.home() / ".claude" / "settings.json"),
+        ("Claude Desktop", Path.home() / ".claude.json"),
+        ("Cursor", Path.home() / ".cursor" / "mcp.json"),
+        ("Windsurf", Path.home() / ".codeium" / "windsurf" / "mcp_config.json"),
+        ("Gemini CLI", Path.home() / ".gemini" / "settings.json"),
+    ]
+
+    # Opencode candidate paths (XDG standard first, then home fallback)
+    opencode_candidates = [
+        Path.home() / ".config" / "opencode" / "opencode.json",
+        Path.home() / ".opencode.json",
+    ]
+
+    registered_labels: list[str] = []
+
+    for label, cfg_path in mcp_targets:
+        if not cfg_path.exists():
+            continue
+        try:
+            existing = json.loads(cfg_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            existing = {}
+        existing.setdefault("mcpServers", {})["quorus"] = mcp_entry
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(existing, indent=2))
+        registered_labels.append(label)
+
+    for oc_path in opencode_candidates:
+        if not oc_path.exists():
+            continue
+        try:
+            existing = json.loads(oc_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            existing = {"$schema": "https://opencode.ai/config.json"}
+        existing.setdefault("mcp", {})["quorus"] = opencode_entry
+        oc_path.parent.mkdir(parents=True, exist_ok=True)
+        oc_path.write_text(json.dumps(existing, indent=2))
+        registered_labels.append("Opencode")
+        break  # only write to the first one we find
+
+    if registered_labels:
+        ui.success(
+            "MCP registered with: [primary]"
+            + ", ".join(registered_labels)
+            + "[/]"
+        )
     else:
-        # Neither Claude config exists — write project-level .mcp.json
+        # None of the known agents are installed — write project-level .mcp.json
         mcp_json_path = Path.cwd() / ".mcp.json"
         existing = {}
         if mcp_json_path.exists():
@@ -1980,9 +2232,10 @@ def _cmd_init(args):
                 pass
         existing.setdefault("mcpServers", {})["quorus"] = mcp_entry
         mcp_json_path.write_text(json.dumps(existing, indent=2))
-        console.print(f"[green]MCP server config written to {mcp_json_path}[/green]")
-        console.print(
-            "[dim]  No ~/.claude/settings.json found — wrote project-level .mcp.json[/dim]"
+        ui.info(f"MCP config written to project-level [dim]{mcp_json_path}[/]")
+        ui.console.print(
+            "  [muted]No MCP client detected — use this config with "
+            "any MCP-compatible agent.[/]"
         )
 
     # 4. Verify relay is reachable (best-effort, non-blocking)
@@ -2007,12 +2260,30 @@ def _cmd_init(args):
     ui.console.print(f"  [muted]Relay:[/]      [primary]{relay_url}[/]")
     ui.console.print(f"  [muted]Config:[/]     [dim]{config_path}[/]")
     ui.console.print(f"  [muted]MCP server:[/] [dim]{mcp_command} {' '.join(mcp_args)}[/]")
-    ui.warn("Restart Claude Code to pick up the MCP server")
-    ui.hint_next_steps([
+    if registered_labels:
+        ui.warn(
+            f"Restart {' / '.join(registered_labels)} to pick up the MCP server"
+        )
+    next_steps = [
         "quorus create <room-name>   — create a coordination room",
         "quorus begin                — open the interactive hub",
         "quorus doctor               — verify everything is wired up",
-    ])
+    ]
+    # Tell users about other agents we didn't auto-wire.
+    auto_wired = set(registered_labels)
+    manual_hints = []
+    if "Cursor" not in auto_wired:
+        manual_hints.append("quorus connect cursor    — set up Cursor")
+    if "Windsurf" not in auto_wired:
+        manual_hints.append("quorus connect windsurf  — set up Windsurf")
+    if "Gemini CLI" not in auto_wired:
+        manual_hints.append("quorus connect gemini    — set up Gemini CLI")
+    if "Opencode" not in auto_wired:
+        manual_hints.append("quorus connect opencode  — set up Opencode")
+    manual_hints.append("quorus connect codex     — set up OpenAI Codex CLI")
+    manual_hints.append("quorus connect http      — any HTTP-speaking agent")
+    next_steps.extend(manual_hints[:3])  # keep the panel tight
+    ui.hint_next_steps(next_steps)
 
 
 def _cmd_invite_link(args):
@@ -4372,7 +4643,20 @@ def main():
     )
     p_connect.add_argument(
         "platform",
-        choices=["codex", "cursor", "ollama", "claude", "gemini", "windsurf", "http"],
+        choices=[
+            "claude",
+            "cursor",
+            "gemini",
+            "windsurf",
+            "opencode",
+            "cline",
+            "continue",
+            "antigravity",
+            "codex",
+            "aider",
+            "ollama",
+            "http",
+        ],
         help="Agent platform (http = generic curl/HTTP for any AI that can make requests)",
     )
     p_connect.add_argument("room", help="Room name")

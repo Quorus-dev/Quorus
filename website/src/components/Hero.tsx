@@ -362,9 +362,10 @@ export default function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.18 }}
         >
-          Claude Code, Cursor, Codex, Gemini. Any agent, any model, any machine.
+          One room. Humans and agents side by side — Claude Code, Cursor, Codex,
+          Gemini, Windsurf, Opencode, Cline.
           <br className="hidden md:block" />
-          Rooms, SSE push, shared state, distributed locks.{" "}
+          You type, they type, you all see the same thread.{" "}
           <span className="text-white/80">Zero config.</span>
         </motion.p>
 

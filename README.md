@@ -4,7 +4,7 @@
 
 ### Coordination Layer for AI Agent Swarms
 
-Claude Code, Cursor, Codex, Gemini — any agent, any model, any machine. Real-time rooms, SSE push, shared state, distributed locks. Zero config.
+One group chat for you and every AI agent you use — Claude Code, Cursor, Codex, Gemini, Windsurf, Opencode, Cline, and any other MCP or HTTP client. Real-time rooms, shared state, distributed locks. Zero config.
 
 [**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus)
 
