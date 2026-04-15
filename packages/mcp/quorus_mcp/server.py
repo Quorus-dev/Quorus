@@ -1,5 +1,4 @@
 import asyncio
-import json as json_module
 import logging
 import os
 from contextlib import asynccontextmanager, suppress
@@ -13,14 +12,11 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.message import SessionMessage
 
 from quorus.config import load_config
+from quorus_mcp.sse import SSEListener, process_sse_event_data
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("mcp_tunnel.mcp")
-
 
 _config = load_config()
 CONFIG_FILE = Path(_config["config_file"])
@@ -28,54 +24,12 @@ RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
 API_KEY = _config["api_key"]
 INSTANCE_NAME = _config["instance_name"]
-POLL_MODE = _config["poll_mode"]
+SSE_ENABLED = os.environ.get("SSE_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
 PUSH_NOTIFICATION_METHOD = _config["push_notification_method"]
 PUSH_NOTIFICATION_CHANNEL = _config["push_notification_channel"]
 
-# JWT cache for API key auth
 _cached_jwt: str | None = None
 _jwt_lock = asyncio.Lock()
-
-
-def _validate_relay_url(value: str) -> str:
-    """Validate relay_url eagerly so bad config fails at startup."""
-    parsed = urlparse(value)
-    if (
-        not value
-        or parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
-        or parsed.username
-        or parsed.password
-    ):
-        raise SystemExit(
-            f"Invalid relay_url: {value!r}. Must be an http(s) URL with a hostname."
-        )
-    return value
-
-
-_validate_relay_url(RELAY_URL)
-if not RELAY_SECRET and not API_KEY:
-    raise SystemExit(
-        "Neither relay_secret nor api_key is set. "
-        "Set RELAY_SECRET or API_KEY env var or config file value."
-    )
-
-_auth_mode = "api_key" if API_KEY else "legacy"
-masked_secret = RELAY_SECRET[:4] + "***" if len(RELAY_SECRET) > 4 else "***"
-masked_api_key = API_KEY[:8] + "***" if len(API_KEY) > 8 else "***"
-logger.info(
-    (
-        "Config loaded: path=%s relay_url=%s instance=%s "
-        "poll_mode=%s push_method=%s auth_mode=%s"
-    ),
-    CONFIG_FILE,
-    RELAY_URL,
-    INSTANCE_NAME,
-    POLL_MODE,
-    PUSH_NOTIFICATION_METHOD or "disabled",
-    _auth_mode,
-)
-
 _http_client: httpx.AsyncClient | None = None
 _pending_messages: list[dict[str, Any]] = []
 _pending_lock = asyncio.Lock()
@@ -84,8 +38,23 @@ _active_session_lock = asyncio.Lock()
 _heartbeat_task: asyncio.Task | None = None
 
 
+def _validate_relay_url(value: str) -> str:
+    parsed = urlparse(value)
+    if not value or parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise SystemExit(f"Invalid relay_url: {value!r}. Must be an http(s) URL with a hostname.")
+    return value
+
+
+_validate_relay_url(RELAY_URL)
+if not RELAY_SECRET and not API_KEY:
+    raise SystemExit("Neither relay_secret nor api_key is set. Set RELAY_SECRET or API_KEY env var or config file value.")
+
+_auth_mode = "api_key" if API_KEY else "legacy"
+logger.info("Config loaded: path=%s relay_url=%s instance=%s sse_enabled=%s push_method=%s auth_mode=%s",
+            CONFIG_FILE, RELAY_URL, INSTANCE_NAME, SSE_ENABLED, PUSH_NOTIFICATION_METHOD or "disabled", _auth_mode)
+
+
 def _get_http_client() -> httpx.AsyncClient:
-    """Return the shared HTTP client, creating one if needed (e.g. in tests)."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient()
@@ -93,7 +62,6 @@ def _get_http_client() -> httpx.AsyncClient:
 
 
 def _reset_runtime_state():
-    """Reset in-memory MCP runtime state between tests."""
     global _active_session, _http_client, _heartbeat_task
     _pending_messages.clear()
     _active_session = None
@@ -101,24 +69,27 @@ def _reset_runtime_state():
     _heartbeat_task = None
 
 
+async def _get_active_session():
+    async with _active_session_lock:
+        return _active_session
+
+
+async def _set_active_session(session) -> None:
+    global _active_session
+    async with _active_session_lock:
+        _active_session = session
+
+
 async def _exchange_api_key_for_jwt() -> str:
-    """Exchange the API key for a JWT via the relay's /v1/auth/token endpoint."""
     global _cached_jwt
-    client = _get_http_client()
-    resp = await client.post(
-        f"{RELAY_URL}/v1/auth/token",
-        json={"api_key": API_KEY},
-        timeout=10,
-    )
+    resp = await _get_http_client().post(f"{RELAY_URL}/v1/auth/token", json={"api_key": API_KEY}, timeout=10)
     resp.raise_for_status()
-    data = resp.json()
-    _cached_jwt = data["token"]
+    _cached_jwt = resp.json()["token"]
     logger.info("JWT obtained via API key exchange")
     return _cached_jwt
 
 
 async def _get_bearer_token() -> str:
-    """Get the Bearer token — cached JWT if using API key auth, else relay secret."""
     global _cached_jwt
     if not API_KEY:
         return RELAY_SECRET
@@ -129,7 +100,6 @@ async def _get_bearer_token() -> str:
 
 
 async def _refresh_jwt_on_401() -> str | None:
-    """Re-exchange API key for a new JWT after a 401. Returns new token or None."""
     global _cached_jwt
     if not API_KEY:
         return None
@@ -143,14 +113,12 @@ async def _refresh_jwt_on_401() -> str | None:
 
 
 def _auth_headers() -> dict[str, str]:
-    """Sync auth headers — uses cached JWT or relay secret."""
     if _cached_jwt:
         return {"Authorization": f"Bearer {_cached_jwt}"}
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
 
 
 def _relay_error_message(exc: Exception) -> str:
-    """Convert a relay communication error to a user-facing string."""
     if isinstance(exc, httpx.ConnectError):
         logger.warning("Cannot reach relay at %s", RELAY_URL)
         return f"Error: Cannot reach relay server at {RELAY_URL}"
@@ -161,27 +129,19 @@ def _relay_error_message(exc: Exception) -> str:
 
 
 def _format_message(msg: dict) -> str:
-    ts = msg.get("timestamp", "")
-    sender = msg.get("from_name", "unknown")
-    content = msg.get("content", "")
-    return f"[{ts}] {sender}: {content}"
+    return f"[{msg.get('timestamp', '')}] {msg.get('from_name', 'unknown')}: {msg.get('content', '')}"
 
 
 async def _remember_session(context: Context | None) -> None:
-    """Track the current client session so background notifications can use it."""
     if context is None:
         return
-
     try:
         session = context.session
     except ValueError:
         return
-
-    global _active_session
-    async with _active_session_lock:
-        if _active_session is not session:
-            logger.info("Updated active MCP session")
-        _active_session = session
+    if await _get_active_session() is not session:
+        logger.info("Updated active MCP session")
+    await _set_active_session(session)
 
 
 async def _append_pending_messages(messages: list[dict]) -> None:
@@ -193,83 +153,57 @@ async def _append_pending_messages(messages: list[dict]) -> None:
 
 async def _drain_pending_messages() -> list[dict]:
     async with _pending_lock:
-        messages = list(_pending_messages)
+        msgs = list(_pending_messages)
         _pending_messages.clear()
-        return messages
+        return msgs
 
 
 async def _send_push_notification(session, msg: dict) -> None:
     if not PUSH_NOTIFICATION_METHOD:
         return
-
-    params = {"message": _format_message(msg)}
+    params: dict[str, str] = {"message": _format_message(msg)}
     if PUSH_NOTIFICATION_CHANNEL:
         params["channel"] = PUSH_NOTIFICATION_CHANNEL
-
-    notification = types.JSONRPCNotification(
-        jsonrpc="2.0",
-        method=PUSH_NOTIFICATION_METHOD,
-        params=params,
-    )
-    await session.send_message(
-        SessionMessage(message=types.JSONRPCMessage(notification)),
-    )
+    await session.send_message(SessionMessage(message=types.JSONRPCMessage(
+        types.JSONRPCNotification(jsonrpc="2.0", method=PUSH_NOTIFICATION_METHOD, params=params)
+    )))
 
 
 async def _notify_active_session(messages: list[dict]) -> None:
-    global _active_session
-
     if not PUSH_NOTIFICATION_METHOD or not messages:
         return
-
-    async with _active_session_lock:
-        session = _active_session
-
+    session = await _get_active_session()
     if session is None:
         return
-
     try:
         for msg in messages:
             await _send_push_notification(session, msg)
         logger.info("Sent %d push notification(s)", len(messages))
     except Exception:
         logger.warning("Failed to deliver push notification(s)", exc_info=True)
-        async with _active_session_lock:
-            if _active_session is session:
-                _active_session = None
+        if await _get_active_session() is session:
+            await _set_active_session(None)
 
 
 async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None, str | None]:
-    """Fetch messages from the relay with manual ACK.
-
-    Returns:
-        (messages, ack_token, error) - messages list, token for ACK, error string
-    """
-    timeout = max(wait + 5, 10)
     try:
-        client = _get_http_client()
-        resp = await client.get(
+        resp = await _get_http_client().get(
             f"{RELAY_URL}/messages/{INSTANCE_NAME}",
             params={"wait": wait, "ack": "manual"},
             headers=_auth_headers(),
-            timeout=timeout,
+            timeout=max(wait + 5, 10),
         )
         resp.raise_for_status()
         data = resp.json()
-        # ack=manual returns {"messages": [...], "ack_token": ...}
-        messages = data.get("messages", [])
-        ack_token = data.get("ack_token")
-        logger.info("Received %d messages from relay", len(messages))
-        return messages, ack_token, None
+        logger.info("Received %d messages from relay", len(data.get("messages", [])))
+        return data.get("messages", []), data.get("ack_token"), None
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
         return [], None, _relay_error_message(e)
 
 
 async def _ack_messages(ack_token: str) -> None:
-    """Acknowledge messages using the token from a manual ACK fetch."""
     try:
-        client = _get_http_client()
-        resp = await client.post(
+        resp = await _get_http_client().post(
             f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
             json={"ack_token": ack_token},
             headers=_auth_headers(),
@@ -281,24 +215,19 @@ async def _ack_messages(ack_token: str) -> None:
         logger.warning("Failed to ACK messages (token: %s)", ack_token[:16], exc_info=True)
 
 
-
 async def _heartbeat_loop(stop_event: asyncio.Event, interval: int = 30) -> None:
-    """Send periodic heartbeats to the relay to report this agent is alive."""
     logger.info("Heartbeat loop started (interval=%ds)", interval)
     while not stop_event.is_set():
         try:
-            client = _get_http_client()
-            resp = await client.post(
+            resp = await _get_http_client().post(
                 f"{RELAY_URL}/heartbeat",
                 json={"instance_name": INSTANCE_NAME, "status": "active"},
-                headers=_auth_headers(),
-                timeout=10,
+                headers=_auth_headers(), timeout=10,
             )
             resp.raise_for_status()
             logger.debug("Heartbeat sent")
         except Exception:
             logger.warning("Heartbeat failed", exc_info=True)
-
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval)
             break
@@ -310,20 +239,16 @@ async def _heartbeat_loop(stop_event: asyncio.Event, interval: int = 30) -> None
 async def _process_sse_event(event_type: str, data: str) -> None:
     if event_type != "message":
         return
-    try:
-        msg = json_module.loads(data)
+    msg = process_sse_event_data(data)
+    if msg is not None:
         await _append_pending_messages([msg])
         await _notify_active_session([msg])
-    except (json_module.JSONDecodeError, KeyError):
-        logger.warning("Failed to parse SSE event data: %s", data[:200])
 
 
 async def _get_sse_token() -> str:
-    """Get a short-lived SSE stream token, falling back to RELAY_SECRET."""
     try:
         bearer = await _get_bearer_token()
-        client = _get_http_client()
-        resp = await client.post(
+        resp = await _get_http_client().post(
             f"{RELAY_URL}/stream/token",
             json={"recipient": INSTANCE_NAME},
             headers={"Authorization": f"Bearer {bearer}"},
@@ -337,87 +262,45 @@ async def _get_sse_token() -> str:
 
 
 async def _sse_listener(stop_event: asyncio.Event) -> None:
-    backoff = 2
-    max_backoff = 30
-    while not stop_event.is_set():
-        try:
-            client = _get_http_client()
-            url = f"{RELAY_URL}/stream/{INSTANCE_NAME}"
-            token = await _get_sse_token()
-            params = {"token": token}
-            async with client.stream("GET", url, params=params, timeout=None) as resp:
-                if resp.status_code != 200:
-                    logger.warning("SSE stream returned %d, retrying", resp.status_code)
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2, max_backoff)
-                    continue
-
-                logger.info("SSE stream connected for %s", INSTANCE_NAME)
-                backoff = 2  # reset on successful connect
-                event_type = ""
-                event_data = ""
-
-                async for line in resp.aiter_lines():
-                    if stop_event.is_set():
-                        break
-                    line = line.strip()
-                    if line.startswith("event:"):
-                        event_type = line[6:].strip()
-                    elif line.startswith("data:"):
-                        event_data = line[5:].strip()
-                    elif line == "" and event_type:
-                        await _process_sse_event(event_type, event_data)
-                        event_type = ""
-                        event_data = ""
-
-        except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError):
-            logger.warning("SSE connection lost, retrying in %ds", backoff)
-        except Exception:
-            logger.warning("SSE listener error, retrying in %ds", backoff, exc_info=True)
-
-        if not stop_event.is_set():
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=backoff)
-            except asyncio.TimeoutError:
-                pass
-            backoff = min(backoff * 2, max_backoff)
+    """Backward-compat wrapper around SSEListener.run()."""
+    listener = SSEListener(
+        relay_url=RELAY_URL, instance_name=INSTANCE_NAME,
+        get_http_client=_get_http_client, get_sse_token=_get_sse_token,
+        on_event=_process_sse_event,
+    )
+    await listener.run(stop_event)
 
 
 @asynccontextmanager
 async def _mcp_lifespan(server: FastMCP):
     global _http_client, _heartbeat_task
     _http_client = httpx.AsyncClient()
-
-    # If using API key auth, exchange for JWT on startup
     if API_KEY:
         try:
             await _exchange_api_key_for_jwt()
         except Exception:
-            logger.warning(
-                "Initial JWT exchange failed — will retry on first request",
-                exc_info=True,
-            )
-
+            logger.warning("Initial JWT exchange failed — will retry on first request", exc_info=True)
     stop_event = asyncio.Event()
-
-    # SSE is the only delivery mode. Always open a persistent push connection.
-    sse_task = asyncio.create_task(_sse_listener(stop_event))
-    if POLL_MODE == "lazy":
-        # Lazy mode: SSE still runs (for push delivery) but we skip channel cap.
-        logger.info("Lazy poll mode — SSE running, channel notifications disabled")
-    else:
+    sse_task: asyncio.Task | None = None
+    if SSE_ENABLED:
+        listener = SSEListener(
+            relay_url=RELAY_URL, instance_name=INSTANCE_NAME,
+            get_http_client=_get_http_client, get_sse_token=_get_sse_token,
+            on_event=_process_sse_event,
+        )
+        sse_task = asyncio.create_task(listener.run(stop_event))
         logger.info("SSE push listener started")
-
-    # Always start heartbeat so the relay knows this agent is alive
+    else:
+        logger.info("SSE disabled — polling fallback only")
     _heartbeat_task = asyncio.create_task(_heartbeat_loop(stop_event))
-
     try:
         yield {"stop_event": stop_event}
     finally:
         stop_event.set()
-        sse_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await sse_task
+        if sse_task is not None:
+            sse_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sse_task
         if _heartbeat_task is not None:
             _heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -455,17 +338,12 @@ mcp = FastMCP("quorus", instructions=QUORUS_INSTRUCTIONS, lifespan=_mcp_lifespan
 
 
 def _install_session_capture() -> None:
-    """Capture the active session as soon as the client enumerates tools.
-
-    This intentionally wraps FastMCP internals because the current SDK does not
-    expose a public session-connected hook for stdio servers. Re-check this on
-    SDK upgrades and replace it with an official hook when one exists.
-    """
-    original_handler = mcp._mcp_server.request_handlers[types.ListToolsRequest]
+    """Capture active session on tool list (no public SDK hook exists for stdio)."""
+    original = mcp._mcp_server.request_handlers[types.ListToolsRequest]
 
     async def wrapped(req: types.ListToolsRequest):
         await _remember_session(mcp.get_context())
-        return await original_handler(req)
+        return await original(req)
 
     mcp._mcp_server.request_handlers[types.ListToolsRequest] = wrapped
 
@@ -474,37 +352,30 @@ _install_session_capture()
 
 
 def _declare_channel_capability() -> None:
-    """Declare the experimental claude/channel capability.
+    orig = mcp._mcp_server.create_initialization_options
 
-    This tells Claude Code that our server can push notifications via
-    the `notifications/claude/channel` method, enabling instant message
-    delivery without polling when launched with --channels.
-    """
-    original_create = mcp._mcp_server.create_initialization_options
-
-    def patched_create(**kwargs):
-        opts = original_create(**kwargs)
+    def patched(**kwargs):
+        opts = orig(**kwargs)
         if opts.capabilities.experimental is None:
             opts.capabilities.experimental = {}
-        opts.capabilities.experimental["claude/channel"] = {
-            "channel": PUSH_NOTIFICATION_CHANNEL,
-        }
+        opts.capabilities.experimental["claude/channel"] = {"channel": PUSH_NOTIFICATION_CHANNEL}
         return opts
 
-    mcp._mcp_server.create_initialization_options = patched_create
+    mcp._mcp_server.create_initialization_options = patched
 
 
-# Always declare channel capability — SSE push is always active.
-if POLL_MODE != "lazy":
+if SSE_ENABLED:
     _declare_channel_capability()
 
 
+# ---------------------------------------------------------------------------
+# Internal tool helpers
+# ---------------------------------------------------------------------------
+
 async def _send_message(to: str, content: str, context: Context | None = None) -> str:
-    """Internal: send a message via the relay."""
     await _remember_session(context)
     try:
-        client = _get_http_client()
-        resp = await client.post(
+        resp = await _get_http_client().post(
             f"{RELAY_URL}/messages",
             json={"from_name": INSTANCE_NAME, "to": to, "content": content},
             headers=_auth_headers(),
@@ -518,73 +389,38 @@ async def _send_message(to: str, content: str, context: Context | None = None) -
 
 
 async def _check_messages(context: Context | None = None) -> str:
-    """Internal: fetch unread messages from the durable queue with proper ACK.
-
-    SSE is notification-only — we always fetch from the durable queue to ensure
-    messages are properly acknowledged. This prevents duplicates between SSE
-    buffer and HTTP fetch paths.
-    """
     await _remember_session(context)
-
-    # Clear SSE buffer (notification-only, not authoritative)
-    # SSE tells us messages are available; durable queue is source of truth
     await _drain_pending_messages()
-
-    # Always fetch from durable queue with manual ACK
     messages, ack_token, error = await _fetch_relay_messages(wait=0)
     if error:
         return error
-
     if not messages:
         return "No new messages."
-
-    # Filter out empty/invalid messages (missing required fields)
-    valid_messages = []
-    for msg in messages:
-        if msg.get("from_name") or msg.get("content") or msg.get("timestamp"):
-            valid_messages.append(msg)
-        else:
-            logger.warning("Filtered invalid message: %r", msg)
-
-    if not valid_messages:
+    valid = [m for m in messages if m.get("from_name") or m.get("content") or m.get("timestamp")]
+    if not valid:
         return "No new messages."
-
-    # Format messages first, then ACK after successful formatting
-    result = "\n".join(_format_message(msg) for msg in valid_messages)
-
-    # ACK fetched messages after successfully processing them
+    result = "\n".join(_format_message(m) for m in valid)
     if ack_token:
         await _ack_messages(ack_token)
-
     return result
 
 
 async def _list_participants(context: Context | None = None) -> str:
-    """Internal: list all known participants."""
     await _remember_session(context)
     try:
-        client = _get_http_client()
-        resp = await client.get(
-            f"{RELAY_URL}/participants",
-            headers=_auth_headers(),
-        )
+        resp = await _get_http_client().get(f"{RELAY_URL}/participants", headers=_auth_headers())
         resp.raise_for_status()
-        participants = resp.json()
-        logger.info("Listed %d participants", len(participants))
-        if not participants:
-            return "No participants yet."
-        return "Participants: " + ", ".join(participants)
+        ps = resp.json()
+        logger.info("Listed %d participants", len(ps))
+        return "No participants yet." if not ps else "Participants: " + ", ".join(ps)
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
         return _relay_error_message(e)
 
 
-async def _send_room_message(
-    room_id: str, content: str, message_type: str = "chat", context: Context | None = None
-) -> str:
+async def _send_room_message(room_id: str, content: str, message_type: str = "chat", context: Context | None = None) -> str:
     await _remember_session(context)
     try:
-        client = _get_http_client()
-        resp = await client.post(
+        resp = await _get_http_client().post(
             f"{RELAY_URL}/rooms/{room_id}/messages",
             json={"from_name": INSTANCE_NAME, "content": content, "message_type": message_type},
             headers=_auth_headers(),
@@ -600,8 +436,7 @@ async def _send_room_message(
 async def _join_room(room_id: str, context: Context | None = None) -> str:
     await _remember_session(context)
     try:
-        client = _get_http_client()
-        resp = await client.post(
+        resp = await _get_http_client().post(
             f"{RELAY_URL}/rooms/{room_id}/join",
             json={"participant": INSTANCE_NAME},
             headers=_auth_headers(),
@@ -616,21 +451,23 @@ async def _join_room(room_id: str, context: Context | None = None) -> str:
 async def _list_rooms(context: Context | None = None) -> str:
     await _remember_session(context)
     try:
-        client = _get_http_client()
-        resp = await client.get(f"{RELAY_URL}/rooms", headers=_auth_headers())
+        resp = await _get_http_client().get(f"{RELAY_URL}/rooms", headers=_auth_headers())
         resp.raise_for_status()
         rooms_list = resp.json()
         logger.info("Listed %d rooms", len(rooms_list))
         if not rooms_list:
             return "No rooms yet."
-        lines = []
-        for r in rooms_list:
-            members = ", ".join(r["members"])
-            lines.append(f"  {r['name']} (id: {r['id']}) — members: {members}")
-        return "Rooms:\n" + "\n".join(lines)
+        return "Rooms:\n" + "\n".join(
+            f"  {r['name']} (id: {r['id']}) — members: {', '.join(r['members'])}"
+            for r in rooms_list
+        )
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
         return _relay_error_message(e)
 
+
+# ---------------------------------------------------------------------------
+# MCP tool registrations
+# ---------------------------------------------------------------------------
 
 @mcp.tool()
 async def send_message(to: str, content: str, context: Context) -> str:
@@ -656,9 +493,7 @@ async def list_participants(context: Context) -> str:
 
 
 @mcp.tool()
-async def send_room_message(
-    room_id: str, content: str, message_type: str = "chat", context: Context = None
-) -> str:
+async def send_room_message(room_id: str, content: str, message_type: str = "chat", context: Context = None) -> str:
     """Send a message to a room. All room members will receive it.
 
     Args:
@@ -686,13 +521,7 @@ async def list_rooms(context: Context = None) -> str:
 
 
 @mcp.tool()
-async def search_room(
-    room_id: str,
-    q: str = "",
-    sender: str = "",
-    message_type: str = "",
-    limit: int = 50,
-) -> str:
+async def search_room(room_id: str, q: str = "", sender: str = "", message_type: str = "", limit: int = 50) -> str:
     """Search room history by keyword, sender, or message type.
 
     Args:
@@ -709,12 +538,8 @@ async def search_room(
         params["sender"] = sender
     if message_type:
         params["message_type"] = message_type
-    client = _get_http_client()
-    resp = await client.get(
-        f"{RELAY_URL}/rooms/{room_id}/search",
-        params=params,
-        headers=_auth_headers(),
-        timeout=10,
+    resp = await _get_http_client().get(
+        f"{RELAY_URL}/rooms/{room_id}/search", params=params, headers=_auth_headers(), timeout=10
     )
     resp.raise_for_status()
     results = resp.json()
@@ -723,11 +548,9 @@ async def search_room(
     lines = []
     for msg in results:
         ts = msg.get("timestamp", "")[:19]
-        name = msg.get("from_name", "?")
         mtype = msg.get("message_type", "chat")
-        content = msg.get("content", "")
         tag = f" [{mtype}]" if mtype != "chat" else ""
-        lines.append(f"[{ts}] {name}{tag}: {content}")
+        lines.append(f"[{ts}] {msg.get('from_name', '?')}{tag}: {msg.get('content', '')}")
     return "\n".join(lines)
 
 
@@ -738,26 +561,16 @@ async def room_metrics(room_id: str) -> str:
     Args:
         room_id: The room name or ID
     """
-    client = _get_http_client()
-    resp = await client.get(
-        f"{RELAY_URL}/rooms/{room_id}/history",
-        # Relay caps history at 200 (room_msg_svc); sending a smaller limit
-        # avoids silently undercounting for busy rooms + saves bytes.
-        params={"limit": 200},
-        headers=_auth_headers(),
-        timeout=10,
+    resp = await _get_http_client().get(
+        f"{RELAY_URL}/rooms/{room_id}/history", params={"limit": 200}, headers=_auth_headers(), timeout=10
     )
     resp.raise_for_status()
     messages = resp.json()
-
     if not messages:
         return f"No messages in {room_id}."
-
     agent_counts: dict[str, int] = {}
     type_counts: dict[str, int] = {}
-    claims = 0
-    completions = 0
-
+    claims = completions = 0
     for msg in messages:
         sender = msg.get("from_name", "?")
         mtype = msg.get("message_type", "chat")
@@ -767,29 +580,17 @@ async def room_metrics(room_id: str) -> str:
             claims += 1
         elif mtype == "status" and "complete" in msg.get("content", "").lower():
             completions += 1
-
-    lines = [f"Metrics for {room_id} ({len(messages)} messages):", ""]
-    lines.append("Agents:")
-    for name, count in sorted(agent_counts.items(), key=lambda x: x[1], reverse=True):
-        lines.append(f"  {name}: {count}")
-    lines.append("")
-    lines.append("Message types:")
-    for mtype, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
-        lines.append(f"  {mtype}: {count}")
+    lines = [f"Metrics for {room_id} ({len(messages)} messages):", "", "Agents:"]
+    lines += [f"  {n}: {c}" for n, c in sorted(agent_counts.items(), key=lambda x: x[1], reverse=True)]
+    lines += ["", "Message types:"]
+    lines += [f"  {t}: {c}" for t, c in sorted(type_counts.items(), key=lambda x: x[1], reverse=True)]
     if claims > 0:
-        rate = min(completions / claims * 100, 100)
-        lines.append(f"\nTask completion: {completions}/{claims} ({rate:.0f}%)")
-
+        lines.append(f"\nTask completion: {completions}/{claims} ({min(completions/claims*100,100):.0f}%)")
     return "\n".join(lines)
 
 
 @mcp.tool()
-async def claim_task(
-    room_id: str,
-    file_path: str,
-    description: str = "",
-    ttl_seconds: int = 300,
-) -> str:
+async def claim_task(room_id: str, file_path: str, description: str = "", ttl_seconds: int = 300) -> str:
     """Acquire an optimistic lock on a file path in a room (Primitive B).
 
     Returns granted (with lock_token) or locked (with held_by) status.
@@ -803,52 +604,21 @@ async def claim_task(
     """
     try:
         client = _get_http_client()
-        resp = await client.post(
-            f"{RELAY_URL}/rooms/{room_id}/lock",
-            json={
-                "file_path": file_path,
-                "claimed_by": INSTANCE_NAME,
-                "description": description,
-                "ttl_seconds": ttl_seconds,
-            },
-            headers=_auth_headers(),
-            timeout=10,
-        )
-        if resp.status_code == 401:
-            new_token = await _refresh_jwt_on_401()
-            if new_token:
-                resp = await client.post(
-                    f"{RELAY_URL}/rooms/{room_id}/lock",
-                    json={
-                        "file_path": file_path,
-                        "claimed_by": INSTANCE_NAME,
-                        "description": description,
-                        "ttl_seconds": ttl_seconds,
-                    },
-                    headers=_auth_headers(),
-                    timeout=10,
-                )
+        payload = {"file_path": file_path, "claimed_by": INSTANCE_NAME, "description": description, "ttl_seconds": ttl_seconds}
+        resp = await client.post(f"{RELAY_URL}/rooms/{room_id}/lock", json=payload, headers=_auth_headers(), timeout=10)
+        if resp.status_code == 401 and await _refresh_jwt_on_401():
+            resp = await client.post(f"{RELAY_URL}/rooms/{room_id}/lock", json=payload, headers=_auth_headers(), timeout=10)
         resp.raise_for_status()
         data = resp.json()
         if data.get("locked"):
-            return (
-                f"LOCKED: {file_path} is held by {data['held_by']}, "
-                f"expires {data['expires_at']}"
-            )
-        return (
-            f"GRANTED: lock_token={data['lock_token']} "
-            f"expires={data['expires_at']}"
-        )
+            return f"LOCKED: {file_path} is held by {data['held_by']}, expires {data['expires_at']}"
+        return f"GRANTED: lock_token={data['lock_token']} expires={data['expires_at']}"
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
         return _relay_error_message(e)
 
 
 @mcp.tool()
-async def release_task(
-    room_id: str,
-    file_path: str,
-    lock_token: str,
-) -> str:
+async def release_task(room_id: str, file_path: str, lock_token: str) -> str:
     """Release a previously acquired file lock (Primitive B).
 
     Validates lock_token ownership. SSE-broadcasts LOCK_RELEASED on success.
@@ -861,23 +631,10 @@ async def release_task(
     try:
         client = _get_http_client()
         url = f"{RELAY_URL}/rooms/{room_id}/lock/{file_path}"
-        resp = await client.request(
-            "DELETE",
-            url,
-            json={"lock_token": lock_token},
-            headers=_auth_headers(),
-            timeout=10,
-        )
-        if resp.status_code == 401:
-            new_token = await _refresh_jwt_on_401()
-            if new_token:
-                resp = await client.request(
-                    "DELETE",
-                    url,
-                    json={"lock_token": lock_token},
-                    headers=_auth_headers(),
-                    timeout=10,
-                )
+        payload = {"lock_token": lock_token}
+        resp = await client.request("DELETE", url, json=payload, headers=_auth_headers(), timeout=10)
+        if resp.status_code == 401 and await _refresh_jwt_on_401():
+            resp = await client.request("DELETE", url, json=payload, headers=_auth_headers(), timeout=10)
         resp.raise_for_status()
         return f"RELEASED: {file_path}"
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
@@ -896,61 +653,37 @@ async def get_room_state(room_id: str) -> str:
     """
     try:
         client = _get_http_client()
-        resp = await client.get(
-            f"{RELAY_URL}/rooms/{room_id}/state",
-            headers=_auth_headers(),
-            timeout=10,
-        )
-        if resp.status_code == 401:
-            new_token = await _refresh_jwt_on_401()
-            if new_token:
-                resp = await client.get(
-                    f"{RELAY_URL}/rooms/{room_id}/state",
-                    headers=_auth_headers(),
-                    timeout=10,
-                )
+        resp = await client.get(f"{RELAY_URL}/rooms/{room_id}/state", headers=_auth_headers(), timeout=10)
+        if resp.status_code == 401 and await _refresh_jwt_on_401():
+            resp = await client.get(f"{RELAY_URL}/rooms/{room_id}/state", headers=_auth_headers(), timeout=10)
         resp.raise_for_status()
         data = resp.json()
         lines = [
             f"Room: {room_id} (snapshot: {data.get('snapshot_at', '')[:19]})",
             f"Schema: {data.get('schema_version', '?')}",
             f"Goal: {data.get('active_goal') or '(none)'}",
-            f"Active agents ({len(data.get('active_agents', []))}): "
-            + ", ".join(data.get("active_agents", [])),
-            f"Messages: {data.get('message_count', 0)} | "
-            f"Last activity: {(data.get('last_activity') or '')[:19]}",
+            f"Active agents ({len(data.get('active_agents', []))}): " + ", ".join(data.get("active_agents", [])),
+            f"Messages: {data.get('message_count', 0)} | Last activity: {(data.get('last_activity') or '')[:19]}",
         ]
-        tasks = data.get("claimed_tasks", [])
-        if tasks:
-            lines.append(f"\nClaimed tasks ({len(tasks)}):")
-            for t in tasks:
-                lines.append(
-                    f"  [{t['claimed_by']}] {t['file_path']} "
-                    f"(expires {t.get('expires_at', '')[:19]})"
-                )
-        locks = data.get("locked_files", {})
-        if locks:
-            lines.append(f"\nLocked files ({len(locks)}):")
-            for fp, lock in locks.items():
-                lines.append(f"  {fp} → held by {lock['held_by']}")
-        decisions = data.get("resolved_decisions", [])
-        if decisions:
-            lines.append(f"\nDecisions ({len(decisions)}):")
-            for d in decisions[-5:]:
-                lines.append(
-                    f"  [{d.get('decided_by', '?')}] {d['decision']}"
-                )
+        if data.get("claimed_tasks"):
+            lines.append(f"\nClaimed tasks ({len(data['claimed_tasks'])}):")
+            for t in data["claimed_tasks"]:
+                lines.append(f"  [{t['claimed_by']}] {t['file_path']} (expires {t.get('expires_at', '')[:19]})")
+        if data.get("locked_files"):
+            lines.append(f"\nLocked files ({len(data['locked_files'])}):")
+            for fp, lock in data["locked_files"].items():
+                lines.append(f"  {fp} \u2192 held by {lock['held_by']}")
+        if data.get("resolved_decisions"):
+            lines.append(f"\nDecisions ({len(data['resolved_decisions'])}):")
+            for d in data["resolved_decisions"][-5:]:
+                lines.append(f"  [{d.get('decided_by', '?')}] {d['decision']}")
         return "\n".join(lines)
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
         return _relay_error_message(e)
 
 
 def main_cli() -> None:
-    """Console entry point for the ``quorus-mcp`` command (stdio transport).
-
-    Registered in pyproject.toml's ``[project.scripts]`` so the Claude Code
-    MCP snippet ``"command": "quorus-mcp"`` on quorus.dev works end-to-end.
-    """
+    """Console entry point for the ``quorus-mcp`` command (stdio transport)."""
     mcp.run(transport="stdio")
 
 

@@ -15,7 +15,6 @@ def configure_mcp():
         patch.object(mcp_server, "RELAY_URL", "http://relay:8080"),
         patch.object(mcp_server, "RELAY_SECRET", "secret"),
         patch.object(mcp_server, "INSTANCE_NAME", "alice"),
-        patch.object(mcp_server, "POLL_MODE", "lazy"),
         patch.object(mcp_server, "PUSH_NOTIFICATION_METHOD", None),
         patch.object(mcp_server, "PUSH_NOTIFICATION_CHANNEL", "mcp-tunnel"),
     ]
