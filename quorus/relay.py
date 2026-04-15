@@ -574,6 +574,10 @@ async def _record_not_found_memory(ip: str) -> bool:
     return False
 
 
+# Paths exempt from 404 rate limiting (infrastructure endpoints)
+_NOT_FOUND_EXEMPT_PATHS = frozenset({"/health", "/metrics", "/health/detailed"})
+
+
 class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
     """Block clients that repeatedly hit non-existent resources (404 spam).
 
@@ -584,6 +588,10 @@ class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         from starlette.responses import JSONResponse
 
+        # Exempt infrastructure paths from 404 rate limiting
+        if request.url.path in _NOT_FOUND_EXEMPT_PATHS:
+            return await call_next(request)
+
         client_ip = _get_client_ip(request)
 
         # Try Redis-backed rate limiter if available
@@ -591,11 +599,11 @@ class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
         use_redis = rate_limit_svc is not None and REDIS_URL
 
         if use_redis:
-            # Use RateLimitService: returns False when limit is exceeded
-            allowed = await rate_limit_svc.check_with_limit(
+            # Check if already blocked (read-only, does not increment)
+            blocked = await rate_limit_svc.is_rate_limited(
                 "global", f"404:{client_ip}", NOT_FOUND_LIMIT, window=NOT_FOUND_WINDOW
             )
-            if not allowed:
+            if blocked:
                 logger.warning(
                     "Blocking IP for repeated 404s (Redis)",
                     ip=client_ip,
@@ -625,9 +633,14 @@ class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        # Track 404s (in-memory mode only; Redis mode tracks via check_with_limit above)
-        if response.status_code == 404 and not use_redis:
-            await _record_not_found_memory(client_ip)
+        # Only record 404s (not other status codes)
+        if response.status_code == 404:
+            if use_redis:
+                await rate_limit_svc.record(
+                    "global", f"404:{client_ip}", window=NOT_FOUND_WINDOW
+                )
+            else:
+                await _record_not_found_memory(client_ip)
 
         return response
 
