@@ -1,7 +1,7 @@
 [project]
-name = "murmur-mcp"
-version = "0.3.0"
-description = "Murmur MCP server — exposes inter-agent messaging tools to MCP-compatible clients like Claude Code"
+name = "quorus-mcp"
+version = "0.4.0"
+description = "Quorus MCP server — exposes inter-agent coordination tools to MCP-compatible clients like Claude Code"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
@@ -9,7 +9,7 @@ authors = [
     {name = "Aarya"},
 ]
 readme = "README.md"
-keywords = ["ai", "agents", "communication", "mcp", "multi-agent", "relay", "chat"]
+keywords = ["ai", "agents", "coordination", "mcp", "multi-agent", "swarm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -28,12 +28,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Aarya2004/murmur"
-Repository = "https://github.com/Aarya2004/murmur"
-Issues = "https://github.com/Aarya2004/murmur/issues"
+Homepage = "https://quorus.dev"
+Repository = "https://github.com/Aarya2004/quorus"
+Issues = "https://github.com/Aarya2004/quorus/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["murmur_mcp"]
+packages = ["quorus_mcp"]
 
 [build-system]
 requires = ["hatchling"]

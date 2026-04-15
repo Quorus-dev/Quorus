@@ -1,13 +1,13 @@
-"""Tests for murmur/sdk.py — high-level Room SDK."""
+"""Tests for quorus/sdk.py — high-level Room SDK."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from murmur.integrations.http_agent import AckError, MurmurClient, ReceiveResult
-from murmur.relay import _reset_state, app
-from murmur.sdk import Room
+from quorus.integrations.http_agent import AckError, QuorusClient, ReceiveResult
+from quorus.relay import _reset_state, app
+from quorus.sdk import Room
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +47,7 @@ async def setup_room(client, auth_headers):
 class TestRoomInit:
     def test_room_has_room_attr(self):
         """Room should expose room name."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = {}
             mock_resp.raise_for_status = MagicMock()
@@ -81,7 +81,7 @@ class TestRoomSendReceive:
     @pytest.mark.asyncio
     async def test_send_message(self, client, auth_headers, setup_room):
         """Room.send should post a message to the room."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = {
                 "id": "123",
@@ -107,7 +107,7 @@ class TestRoomSendReceive:
     @pytest.mark.asyncio
     async def test_send_with_type(self, client, auth_headers, setup_room):
         """Room.send should pass message_type."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = {"id": "456"}
             mock_resp.raise_for_status = MagicMock()
@@ -128,7 +128,7 @@ class TestRoomSendReceive:
     @pytest.mark.asyncio
     async def test_receive_messages(self):
         """Room.receive should return ReceiveResult with messages."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = [
                 {"content": "msg1", "from_name": "a"},
@@ -149,11 +149,11 @@ class TestRoomSendReceive:
             assert result.messages[0]["content"] == "msg1"
 
 
-class TestMurmurClientRetry:
-    """Tests for MurmurClient._request retry logic."""
+class TestQuorusClientRetry:
+    """Tests for QuorusClient._request retry logic."""
 
-    def _make_client(self, retries: int = 3) -> MurmurClient:
-        return MurmurClient("http://t", secret="s", name="a", retries=retries)
+    def _make_client(self, retries: int = 3) -> QuorusClient:
+        return QuorusClient("http://t", secret="s", name="a", retries=retries)
 
     def test_retries_on_connect_error_then_succeeds(self):
         """_request should retry ConnectError and return on eventual success."""
@@ -162,8 +162,8 @@ class TestMurmurClientRetry:
         ok_resp = MagicMock()
         ok_resp.raise_for_status = MagicMock()
 
-        with patch("murmur.integrations.http_agent.httpx.request") as mock_req, \
-             patch("murmur.integrations.http_agent.time.sleep"):
+        with patch("quorus.integrations.http_agent.httpx.request") as mock_req, \
+             patch("quorus.integrations.http_agent.time.sleep"):
             mock_req.side_effect = [
                 _httpx.ConnectError("refused"),
                 _httpx.ConnectError("refused"),
@@ -179,8 +179,8 @@ class TestMurmurClientRetry:
         import httpx as _httpx
         client = self._make_client(retries=2)
 
-        with patch("murmur.integrations.http_agent.httpx.request") as mock_req, \
-             patch("murmur.integrations.http_agent.time.sleep"):
+        with patch("quorus.integrations.http_agent.httpx.request") as mock_req, \
+             patch("quorus.integrations.http_agent.time.sleep"):
             mock_req.side_effect = _httpx.ConnectError("refused")
             with pytest.raises(_httpx.ConnectError):
                 client._request("GET", "http://t/foo")
@@ -197,7 +197,7 @@ class TestMurmurClientRetry:
             "404", request=MagicMock(), response=MagicMock()
         )
 
-        with patch("murmur.integrations.http_agent.httpx.request", return_value=err_resp):
+        with patch("quorus.integrations.http_agent.httpx.request", return_value=err_resp):
             with pytest.raises(_httpx.HTTPStatusError):
                 client._request("GET", "http://t/foo")
 
@@ -211,8 +211,8 @@ class TestMurmurClientRetry:
         ok_resp = MagicMock()
         ok_resp.raise_for_status = MagicMock()
 
-        with patch("murmur.integrations.http_agent.httpx.request") as mock_req, \
-             patch("murmur.integrations.http_agent.time.sleep"):
+        with patch("quorus.integrations.http_agent.httpx.request") as mock_req, \
+             patch("quorus.integrations.http_agent.time.sleep"):
             mock_req.side_effect = [_httpx.ReadTimeout("timed out"), ok_resp]
             result = client._request("GET", "http://t/foo")
 
@@ -221,9 +221,9 @@ class TestMurmurClientRetry:
 
 
 class TestReceiveResult:
-    def _make_client(self) -> MurmurClient:
-        with patch("murmur.integrations.http_agent.httpx.post"):
-            return MurmurClient("http://t", secret="s", name="a")
+    def _make_client(self) -> QuorusClient:
+        with patch("quorus.integrations.http_agent.httpx.post"):
+            return QuorusClient("http://t", secret="s", name="a")
 
     def test_ack_posts_to_relay(self):
         """ReceiveResult.ack() should POST ack_token to the relay."""
@@ -295,7 +295,7 @@ class TestReceiveResult:
 class TestRoomConvenience:
     def test_claim(self):
         """Room.claim should send a CLAIM message."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = {"id": "c1"}
             mock_resp.raise_for_status = MagicMock()
@@ -313,7 +313,7 @@ class TestRoomConvenience:
 
     def test_status(self):
         """Room.status should send a STATUS message."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = {"id": "s1"}
             mock_resp.raise_for_status = MagicMock()
@@ -331,7 +331,7 @@ class TestRoomConvenience:
 
     def test_alert(self):
         """Room.alert should send an ALERT message."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = {"id": "a1"}
             mock_resp.raise_for_status = MagicMock()
@@ -349,7 +349,7 @@ class TestRoomConvenience:
 
     def test_history(self):
         """Room.history should fetch room history."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = [{"content": "old"}]
             mock_resp.raise_for_status = MagicMock()
@@ -366,7 +366,7 @@ class TestRoomConvenience:
 
     def test_members(self):
         """Room.members should return member list."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = [
                 {"name": "test", "members": ["a", "b"]},
@@ -384,7 +384,7 @@ class TestRoomConvenience:
 
     def test_peek(self):
         """Room.peek should return pending count."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = {"count": 5}
             mock_resp.raise_for_status = MagicMock()
@@ -400,7 +400,7 @@ class TestRoomConvenience:
 class TestRoomContextManager:
     def test_sync_context_manager(self):
         """Room should work as sync context manager."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             mock_resp = MagicMock()
             mock_resp.json.return_value = {}
             mock_resp.raise_for_status = MagicMock()
@@ -416,7 +416,7 @@ class TestRoomContextManager:
 class TestRoomLock:
     def test_lock_granted(self):
         """lock() should return {locked: False, lock_token, expires_at} when available."""
-        with patch("murmur.sdk.httpx.post") as mock_post:
+        with patch("quorus.sdk.httpx.post") as mock_post:
             granted_resp = MagicMock()
             granted_resp.status_code = 200
             granted_resp.json.return_value = {
@@ -435,7 +435,7 @@ class TestRoomLock:
 
     def test_lock_taken(self):
         """lock() should return {locked: True, held_by, expires_at} when taken."""
-        with patch("murmur.sdk.httpx.post") as mock_post:
+        with patch("quorus.sdk.httpx.post") as mock_post:
             taken_resp = MagicMock()
             taken_resp.status_code = 200
             taken_resp.json.return_value = {
@@ -454,7 +454,7 @@ class TestRoomLock:
 
     def test_lock_refreshes_jwt_on_401(self):
         """lock() should refresh JWT and retry on 401."""
-        with patch("murmur.sdk.httpx.post") as mock_post:
+        with patch("quorus.sdk.httpx.post") as mock_post:
             unauth_resp = MagicMock()
             unauth_resp.status_code = 401
 
@@ -469,7 +469,7 @@ class TestRoomLock:
             exchange_resp.raise_for_status = MagicMock()
             exchange_resp.json.return_value = {"token": "jwt-tok"}
 
-            # Order: Room._exchange_jwt, MurmurClient._exchange_jwt, lock attempt (401),
+            # Order: Room._exchange_jwt, QuorusClient._exchange_jwt, lock attempt (401),
             # lock 401-branch _exchange_jwt, lock retry (ok)
             mock_post.side_effect = [
                 exchange_resp, exchange_resp, unauth_resp, exchange_resp, ok_resp,
@@ -482,7 +482,7 @@ class TestRoomLock:
 
     def test_unlock_success(self):
         """unlock() should return released dict."""
-        with patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.request") as mock_req:
             ok_resp = MagicMock()
             ok_resp.status_code = 200
             ok_resp.json.return_value = {"released": True, "file_path": "src/auth.py"}
@@ -497,12 +497,12 @@ class TestRoomLock:
 
     def test_unlock_refreshes_jwt_on_401(self):
         """unlock() should refresh JWT and retry on 401."""
-        with patch("murmur.sdk.httpx.post") as mock_post, \
-             patch("murmur.sdk.httpx.request") as mock_req:
+        with patch("quorus.sdk.httpx.post") as mock_post, \
+             patch("quorus.sdk.httpx.request") as mock_req:
             exchange_resp = MagicMock()
             exchange_resp.raise_for_status = MagicMock()
             exchange_resp.json.return_value = {"token": "jwt-tok"}
-            # Room._exchange_jwt + MurmurClient._exchange_jwt on init,
+            # Room._exchange_jwt + QuorusClient._exchange_jwt on init,
             # then one more on 401-retry in unlock()
             mock_post.side_effect = [exchange_resp, exchange_resp, exchange_resp]
 
@@ -523,7 +523,7 @@ class TestRoomLock:
 
     def test_state_returns_dict(self):
         """state() should return the room's state matrix."""
-        with patch("murmur.sdk.httpx.get") as mock_get:
+        with patch("quorus.sdk.httpx.get") as mock_get:
             ok_resp = MagicMock()
             ok_resp.status_code = 200
             ok_resp.json.return_value = {
@@ -546,12 +546,12 @@ class TestRoomLock:
 
     def test_state_refreshes_jwt_on_401(self):
         """state() should refresh JWT and retry on 401."""
-        with patch("murmur.sdk.httpx.post") as mock_post, \
-             patch("murmur.sdk.httpx.get") as mock_get:
+        with patch("quorus.sdk.httpx.post") as mock_post, \
+             patch("quorus.sdk.httpx.get") as mock_get:
             exchange_resp = MagicMock()
             exchange_resp.raise_for_status = MagicMock()
             exchange_resp.json.return_value = {"token": "jwt-tok"}
-            # Room._exchange_jwt + MurmurClient._exchange_jwt on init,
+            # Room._exchange_jwt + QuorusClient._exchange_jwt on init,
             # then one more on 401-retry in state()
             mock_post.side_effect = [exchange_resp, exchange_resp, exchange_resp]
 
@@ -589,7 +589,7 @@ class TestRoomAsync:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+        with apatch("quorus.sdk.httpx.AsyncClient", return_value=mock_client):
             room = Room("test-room", relay="http://t", secret="s", name="a")
             result = await room.asend("hello async", type="chat")
 
@@ -613,7 +613,7 @@ class TestRoomAsync:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+        with apatch("quorus.sdk.httpx.AsyncClient", return_value=mock_client):
             room = Room("test-room", relay="http://t", secret="s", name="a")
             await room.asend("follow-up", reply_to="msg-id-99")
 
@@ -638,7 +638,7 @@ class TestRoomAsync:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+        with apatch("quorus.sdk.httpx.AsyncClient", return_value=mock_client):
             room = Room("test-room", relay="http://t", secret="s", name="a")
             result = await room.areceive(wait=5)
 
@@ -660,7 +660,7 @@ class TestRoomAsync:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+        with apatch("quorus.sdk.httpx.AsyncClient", return_value=mock_client):
             room = Room("test-room", relay="http://t", secret="s", name="a")
             result = await room.areceive()
 
@@ -678,7 +678,7 @@ class TestRoomAsync:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.post = AsyncMock()
 
-        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+        with apatch("quorus.sdk.httpx.AsyncClient", return_value=mock_client):
             room = Room("test-room", relay="http://t", secret="s", name="a")
             await room.a_ack("tok-ack-123")
 
@@ -697,7 +697,7 @@ class TestRoomAsync:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.post = AsyncMock()
 
-        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client):
+        with apatch("quorus.sdk.httpx.AsyncClient", return_value=mock_client):
             room = Room("test-room", relay="http://t", secret="s", name="a")
             await room.a_ack("")
 
@@ -735,7 +735,7 @@ class TestRoomAsync:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.stream = MagicMock(return_value=mock_resp)
 
-        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client), \
+        with apatch("quorus.sdk.httpx.AsyncClient", return_value=mock_client), \
              apatch.object(Room, "_get_sse_token", return_value="sse-tok"):
             room = Room("test-room", relay="http://t", secret="s", name="a")
             messages = []
@@ -775,7 +775,7 @@ class TestRoomAsync:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.stream = MagicMock(return_value=mock_resp)
 
-        with apatch("murmur.sdk.httpx.AsyncClient", return_value=mock_client), \
+        with apatch("quorus.sdk.httpx.AsyncClient", return_value=mock_client), \
              apatch.object(Room, "_get_sse_token", return_value="sse-tok"):
             room = Room("test-room", relay="http://t", secret="s", name="a")
             messages = [msg async for msg in room.astream()]

@@ -1,4 +1,4 @@
-"""Security hardening tests for the Murmur relay.
+"""Security hardening tests for the Quorus relay.
 
 Tests every endpoint with:
 - Missing / wrong / malformed auth
@@ -20,7 +20,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from murmur.relay import (
+from quorus.relay import (
     _reset_state,
     app,
 )

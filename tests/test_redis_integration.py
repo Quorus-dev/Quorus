@@ -16,7 +16,7 @@ import json
 import pytest
 from redis.asyncio import Redis
 
-from murmur.backends.redis_backends import (
+from quorus.backends.redis_backends import (
     RedisIdempotencyBackend,
     RedisMessageBackend,
     RedisRoomStateBackend,

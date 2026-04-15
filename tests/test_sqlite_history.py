@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from murmur.backends.sqlite_history import SQLiteRoomHistoryBackend
+from quorus.backends.sqlite_history import SQLiteRoomHistoryBackend
 
 
 @pytest.fixture

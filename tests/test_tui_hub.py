@@ -1,10 +1,10 @@
-"""Tests for murmur/tui_hub.py — HubState, config helpers, API helpers."""
+"""Tests for quorus/tui_hub.py — HubState, config helpers, API helpers."""
 
 import json
 import threading
 
-from murmur import tui_hub
-from murmur.tui_hub import (
+from quorus import tui_hub
+from quorus.tui_hub import (
     HubState,
     _auth_headers,
     _load_config,

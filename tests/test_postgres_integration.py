@@ -76,19 +76,19 @@ def migrated_db(database_url):
     # Set DATABASE_URL for the migration
     os.environ["DATABASE_URL"] = database_url
 
-    # Find alembic.ini relative to the murmur package
-    import murmur
+    # Find alembic.ini relative to the quorus package
+    import quorus
 
-    murmur_dir = os.path.dirname(murmur.__file__)
-    alembic_ini = os.path.join(murmur_dir, "..", "alembic.ini")
+    quorus_dir = os.path.dirname(quorus.__file__)
+    alembic_ini = os.path.join(quorus_dir, "..", "alembic.ini")
 
     if not os.path.exists(alembic_ini):
         pytest.skip(f"alembic.ini not found at {alembic_ini}")
 
     alembic_cfg = Config(alembic_ini)
-    # Override script location to be relative to murmur package
+    # Override script location to be relative to quorus package
     alembic_cfg.set_main_option(
-        "script_location", os.path.join(murmur_dir, "migrations")
+        "script_location", os.path.join(quorus_dir, "migrations")
     )
 
     # Run migrations
@@ -104,8 +104,8 @@ async def history_backend(migrated_db):
     """Create a PostgresRoomHistoryBackend connected to the test DB."""
     import os
 
-    from murmur.backends.postgres_history import PostgresRoomHistoryBackend
-    from murmur.storage.postgres import close_engine, init_engine
+    from quorus.backends.postgres_history import PostgresRoomHistoryBackend
+    from quorus.storage.postgres import close_engine, init_engine
 
     os.environ["DATABASE_URL"] = migrated_db
     await init_engine(migrated_db)
@@ -119,7 +119,7 @@ async def tenant_id(history_backend):
     """Generate a unique tenant ID and insert it into tenants for FK compliance."""
     from sqlalchemy import text
 
-    from murmur.storage.postgres import get_db_session
+    from quorus.storage.postgres import get_db_session
 
     tid = f"test-tenant-{uuid.uuid4().hex[:8]}"
     async with get_db_session() as session:

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-import murmur.mcp_server as mcp_server
+import quorus.mcp_server as mcp_server
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +49,7 @@ async def test_send_message_calls_relay():
         "post", {"id": "test-id", "timestamp": "2026-04-05T00:00:00Z"}
     )
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._send_message("bob", "hello")
 
         mock_client.post.assert_called_once_with(
@@ -76,7 +76,7 @@ async def test_check_messages_calls_relay():
     # Also mock the ACK POST call
     mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
         mock_client.get.assert_called_once_with(
@@ -95,7 +95,7 @@ async def test_check_messages_always_uses_nonblocking_fetch():
     # Empty messages response (no ACK needed when no messages)
     mock_client = _make_mock_client("get", {"messages": [], "ack_token": None})
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
     mock_client.get.assert_called_once_with(
@@ -111,7 +111,7 @@ async def test_list_participants_calls_relay():
     """list_participants should GET /participants from relay."""
     mock_client = _make_mock_client("get", ["alice", "bob"])
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._list_participants()
 
         mock_client.get.assert_called_once_with(
@@ -128,7 +128,7 @@ async def test_send_message_relay_unreachable():
     mock_client.is_closed = False
     mock_client.post.side_effect = httpx.ConnectError("Connection refused")
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._send_message("bob", "hello")
         assert "error" in result.lower() or "cannot" in result.lower()
 
@@ -161,7 +161,7 @@ async def test_check_messages_always_fetches_from_durable_queue():
     mock_ack_response = MagicMock(status_code=200, raise_for_status=MagicMock())
     mock_client.post = AsyncMock(return_value=mock_ack_response)
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._check_messages()
 
     # HTTP get should be called (always fetch from durable queue)
@@ -227,7 +227,7 @@ async def test_send_room_message_posts_to_relay():
     mock_client = _make_mock_client(
         "post", {"id": "msg-1", "timestamp": "2026-04-11T00:00:00Z"}
     )
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._send_room_message("room-123", "hello room")
     assert "msg-1" in result
     mock_client.post.assert_called_once()
@@ -238,7 +238,7 @@ async def test_send_room_message_posts_to_relay():
 
 async def test_join_room_posts_to_relay():
     mock_client = _make_mock_client("post", {"status": "joined"})
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._join_room("room-123")
     assert "joined" in result.lower()
 
@@ -253,7 +253,7 @@ async def test_list_rooms_gets_from_relay():
         }
     ]
     mock_client = _make_mock_client("get", mock_rooms)
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server._list_rooms()
     assert "yc-hack" in result
 
@@ -291,7 +291,7 @@ async def test_auto_poll_delivers_messages():
     ]
     # Manual ACK response format
     mock_client2 = _make_mock_client("get", {"messages": msgs, "ack_token": "tok123"})
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client2):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client2):
         fetched, ack_token, err = await mcp_server._fetch_relay_messages(wait=0)
     assert len(fetched) == 1
     assert ack_token == "tok123"
@@ -347,7 +347,7 @@ async def test_sse_listener_parses_and_buffers():
     mock_client.is_closed = False
     mock_client.stream = fake_stream
 
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         stop = asyncio.Event()
         task = asyncio.create_task(mcp_server._sse_listener(stop))
 
@@ -408,7 +408,7 @@ async def test_sse_listener_reconnects_on_error():
     mock_client.stream = failing_then_ok_stream
 
     with patch(
-        "murmur.mcp_server._get_http_client", return_value=mock_client
+        "quorus.mcp_server._get_http_client", return_value=mock_client
     ):
         stop = asyncio.Event()
         task = asyncio.create_task(mcp_server._sse_listener(stop))
@@ -446,7 +446,7 @@ async def test_search_room_by_keyword():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("murmur.mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("quorus.mcp_server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp_server.search_room("dev", q="hello")
 
     assert "alice" in result
@@ -464,7 +464,7 @@ async def test_search_room_no_results():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("murmur.mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("quorus.mcp_server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp_server.search_room("dev", q="nonexistent")
 
     assert "No matching" in result
@@ -486,7 +486,7 @@ async def test_room_metrics_returns_stats():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("murmur.mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("quorus.mcp_server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp_server.room_metrics("dev")
 
     assert "3 messages" in result
@@ -506,7 +506,7 @@ async def test_room_metrics_empty():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("murmur.mcp_server.httpx.AsyncClient", return_value=mock_client):
+    with patch("quorus.mcp_server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp_server.room_metrics("empty")
 
     assert "No messages" in result
@@ -524,7 +524,7 @@ async def test_claim_task_granted():
         "lock_token": "tok-abc",
         "expires_at": "2026-04-12T23:00:00Z",
     })
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server.claim_task("dev", "src/auth.py")
     assert "GRANTED" in result
     assert "tok-abc" in result
@@ -537,7 +537,7 @@ async def test_claim_task_already_locked():
         "held_by": "agent-1",
         "expires_at": "2026-04-12T23:00:00Z",
     })
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server.claim_task("dev", "src/auth.py")
     assert "LOCKED" in result
     assert "agent-1" in result
@@ -548,7 +548,7 @@ async def test_claim_task_relay_error():
     mock_client = AsyncMock()
     mock_client.is_closed = False
     mock_client.post = AsyncMock(side_effect=httpx.ConnectError("down"))
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server.claim_task("dev", "src/auth.py")
     assert "error" in result.lower() or "cannot" in result.lower()
 
@@ -556,7 +556,7 @@ async def test_claim_task_relay_error():
 async def test_release_task_success():
     """release_task returns RELEASED message on success."""
     mock_client = _make_mock_client("request", {"released": True, "file_path": "src/auth.py"})
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server.release_task("dev", "src/auth.py", "tok-abc")
     assert "RELEASED" in result
     assert "src/auth.py" in result
@@ -567,7 +567,7 @@ async def test_release_task_relay_error():
     mock_client = AsyncMock()
     mock_client.is_closed = False
     mock_client.request = AsyncMock(side_effect=httpx.ConnectError("down"))
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server.release_task("dev", "src/auth.py", "tok-abc")
     assert "error" in result.lower() or "cannot" in result.lower()
 
@@ -594,7 +594,7 @@ async def test_get_room_state_formats_output():
         },
         "resolved_decisions": [],
     })
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server.get_room_state("dev")
     assert "Ship Primitive B" in result
     assert "agent-1" in result
@@ -607,6 +607,6 @@ async def test_get_room_state_relay_error():
     mock_client = AsyncMock()
     mock_client.is_closed = False
     mock_client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
-    with patch("murmur.mcp_server._get_http_client", return_value=mock_client):
+    with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server.get_room_state("dev")
     assert "error" in result.lower() or "cannot" in result.lower()

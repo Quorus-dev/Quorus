@@ -14,11 +14,11 @@ def _close_coro(coro):
 
 @pytest.fixture(autouse=True)
 def configure_cli(monkeypatch):
-    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://test-relay:8080")
-    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "test-secret")
-    monkeypatch.setattr("murmur.cli.API_KEY", "")
-    monkeypatch.setattr("murmur.cli._cached_jwt", None)
-    monkeypatch.setattr("murmur.cli.INSTANCE_NAME", "test-user")
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://test-relay:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "test-secret")
+    monkeypatch.setattr("quorus.cli.API_KEY", "")
+    monkeypatch.setattr("quorus.cli._cached_jwt", None)
+    monkeypatch.setattr("quorus.cli.INSTANCE_NAME", "test-user")
 
 
 def _mock_response(status_code, json_data):
@@ -40,7 +40,7 @@ def _mock_client(status_code, json_data):
 
 
 async def test_cli_list_rooms():
-    from murmur.cli import _list_rooms
+    from quorus.cli import _list_rooms
 
     mock_rooms = [
         {
@@ -50,14 +50,14 @@ async def test_cli_list_rooms():
             "created_at": "2026-04-11T00:00:00Z",
         }
     ]
-    with patch("murmur.cli._get_client", return_value=_mock_client(200, mock_rooms)):
+    with patch("quorus.cli._get_client", return_value=_mock_client(200, mock_rooms)):
         result = await _list_rooms()
     assert len(result) == 1
     assert result[0]["name"] == "yc-hack"
 
 
 async def test_cli_create_room():
-    from murmur.cli import _create_room
+    from quorus.cli import _create_room
 
     mock_data = {
         "id": "r1",
@@ -65,13 +65,13 @@ async def test_cli_create_room():
         "members": ["test-user"],
         "created_at": "2026-04-11T00:00:00Z",
     }
-    with patch("murmur.cli._get_client", return_value=_mock_client(200, mock_data)):
+    with patch("quorus.cli._get_client", return_value=_mock_client(200, mock_data)):
         result = await _create_room("new-room")
     assert result["name"] == "new-room"
 
 
 async def test_cli_say():
-    from murmur.cli import _say
+    from quorus.cli import _say
 
     rooms_data = [{"id": "r1", "name": "yc-hack", "members": ["test-user"]}]
     msg_data = {"id": "m1", "timestamp": "2026-04-11T00:00:00Z"}
@@ -84,31 +84,31 @@ async def test_cli_say():
     client.post = AsyncMock(return_value=mock_resp_msg)
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         result = await _say("yc-hack", "hello team")
     assert result["id"] == "m1"
 
 
 async def test_cli_dm():
-    from murmur.cli import _dm
+    from quorus.cli import _dm
 
     mock_data = {"id": "m1", "timestamp": "2026-04-11T00:00:00Z"}
-    with patch("murmur.cli._get_client", return_value=_mock_client(200, mock_data)):
+    with patch("quorus.cli._get_client", return_value=_mock_client(200, mock_data)):
         result = await _dm("bob", "private message")
     assert result["id"] == "m1"
 
 
 def test_cli_version(capsys):
-    from murmur.cli import _cmd_version
+    from quorus.cli import _cmd_version
 
     _cmd_version(MagicMock())
     captured = capsys.readouterr()
-    assert "murmur-ai" in captured.out
+    assert "quorus-ai" in captured.out
     assert "0.3.0" in captured.out
 
 
 def test_cli_logs(capsys):
-    from murmur.cli import _cmd_logs
+    from quorus.cli import _cmd_logs
 
     mock_stats = {
         "total_messages_sent": 100,
@@ -137,18 +137,18 @@ def test_cli_logs(capsys):
 def test_cli_logs_relay_down(capsys):
     import httpx
 
-    from murmur.cli import _cmd_logs
+    from quorus.cli import _cmd_logs
 
     with patch("httpx.get", side_effect=httpx.ConnectError("refused")):
         _cmd_logs(MagicMock())
 
     captured = capsys.readouterr()
     assert "Cannot connect" in captured.out
-    assert "murmur relay" in captured.out
+    assert "quorus relay" in captured.out
 
 
 def test_cli_doctor_all_pass(capsys):
-    from murmur.cli import _cmd_doctor
+    from quorus.cli import _cmd_doctor
 
     mock_health = MagicMock()
     mock_health.status_code = 200
@@ -166,9 +166,9 @@ def test_cli_doctor_all_pass(capsys):
     args.verbose = False
 
     with patch("httpx.get", side_effect=mock_get), \
-         patch("murmur.cli.INSTANCE_NAME", "my-agent"), \
-         patch("murmur.cli.RELAY_SECRET", "secret"), \
-         patch("murmur.config.resolve_config_file") as mock_resolve:
+         patch("quorus.cli.INSTANCE_NAME", "my-agent"), \
+         patch("quorus.cli.RELAY_SECRET", "secret"), \
+         patch("quorus.config.resolve_config_file") as mock_resolve:
         mock_path = MagicMock()
         mock_path.exists.return_value = True
         mock_resolve.return_value = mock_path
@@ -179,16 +179,16 @@ def test_cli_doctor_all_pass(capsys):
 
 
 def test_cli_doctor_mcp_registration_detected(capsys, tmp_path):
-    """Doctor detects murmur MCP server registration."""
-    from murmur.cli import _cmd_doctor
+    """Doctor detects quorus MCP server registration."""
+    from quorus.cli import _cmd_doctor
 
-    # Create a mock .claude.json with murmur server
+    # Create a mock .claude.json with quorus server
     claude_json = tmp_path / ".claude.json"
     claude_json.write_text(json.dumps({
         "mcpServers": {
-            "murmur": {
+            "quorus": {
                 "command": "uv",
-                "args": ["run", "python", "murmur/mcp_server.py"]
+                "args": ["run", "python", "quorus/mcp_server.py"]
             }
         }
     }))
@@ -216,11 +216,11 @@ def test_cli_doctor_mcp_registration_detected(capsys, tmp_path):
     args.verbose = False
 
     with patch("httpx.get", side_effect=mock_get), \
-         patch("murmur.cli.INSTANCE_NAME", "my-agent"), \
-         patch("murmur.cli.RELAY_SECRET", "secret"), \
-         patch("murmur.cli.Path.home", return_value=tmp_path), \
-         patch("murmur.cli.Path.cwd", return_value=tmp_path), \
-         patch("murmur.config.resolve_config_file") as mock_resolve:
+         patch("quorus.cli.INSTANCE_NAME", "my-agent"), \
+         patch("quorus.cli.RELAY_SECRET", "secret"), \
+         patch("quorus.cli.Path.home", return_value=tmp_path), \
+         patch("quorus.cli.Path.cwd", return_value=tmp_path), \
+         patch("quorus.config.resolve_config_file") as mock_resolve:
         mock_path = MagicMock()
         mock_path.exists.return_value = True
         mock_resolve.return_value = mock_path
@@ -228,14 +228,14 @@ def test_cli_doctor_mcp_registration_detected(capsys, tmp_path):
 
     captured = capsys.readouterr()
     assert "MCP server registered" in captured.out
-    assert "OK" in captured.out  # Check passes when murmur is registered
+    assert "OK" in captured.out  # Check passes when quorus is registered
 
 
 def test_cli_doctor_mcp_registration_not_found(capsys, tmp_path):
-    """Doctor detects missing murmur MCP server registration."""
-    from murmur.cli import _cmd_doctor
+    """Doctor detects missing quorus MCP server registration."""
+    from quorus.cli import _cmd_doctor
 
-    # Create a .claude.json without murmur server
+    # Create a .claude.json without quorus server
     claude_json = tmp_path / ".claude.json"
     claude_json.write_text(json.dumps({
         "mcpServers": {
@@ -262,11 +262,11 @@ def test_cli_doctor_mcp_registration_not_found(capsys, tmp_path):
     args.verbose = False
 
     with patch("httpx.get", side_effect=mock_get), \
-         patch("murmur.cli.INSTANCE_NAME", "my-agent"), \
-         patch("murmur.cli.RELAY_SECRET", "secret"), \
-         patch("murmur.cli.Path.home", return_value=tmp_path), \
-         patch("murmur.cli.Path.cwd", return_value=tmp_path), \
-         patch("murmur.config.resolve_config_file") as mock_resolve:
+         patch("quorus.cli.INSTANCE_NAME", "my-agent"), \
+         patch("quorus.cli.RELAY_SECRET", "secret"), \
+         patch("quorus.cli.Path.home", return_value=tmp_path), \
+         patch("quorus.cli.Path.cwd", return_value=tmp_path), \
+         patch("quorus.config.resolve_config_file") as mock_resolve:
         mock_path = MagicMock()
         mock_path.exists.return_value = True
         mock_resolve.return_value = mock_path
@@ -300,10 +300,10 @@ _SAMPLE_MSGS = [
 
 
 async def test_export_json_stdout(capsys):
-    from murmur.cli import _export
+    from quorus.cli import _export
 
     client = _mock_client(200, _SAMPLE_MSGS)
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _export("dev", fmt="json")
 
     captured = capsys.readouterr()
@@ -314,10 +314,10 @@ async def test_export_json_stdout(capsys):
 
 
 async def test_export_md_stdout(capsys):
-    from murmur.cli import _export
+    from quorus.cli import _export
 
     client = _mock_client(200, _SAMPLE_MSGS)
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _export("dev", fmt="md")
 
     captured = capsys.readouterr()
@@ -327,11 +327,11 @@ async def test_export_md_stdout(capsys):
 
 
 async def test_export_json_to_file(tmp_path):
-    from murmur.cli import _export
+    from quorus.cli import _export
 
     out_file = str(tmp_path / "export.json")
     client = _mock_client(200, _SAMPLE_MSGS)
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _export("dev", fmt="json", output=out_file)
 
     import json
@@ -340,11 +340,11 @@ async def test_export_json_to_file(tmp_path):
 
 
 async def test_export_md_to_file(tmp_path):
-    from murmur.cli import _export
+    from quorus.cli import _export
 
     out_file = str(tmp_path / "export.md")
     client = _mock_client(200, _SAMPLE_MSGS)
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _export("dev", fmt="md", output=out_file)
 
     content = (tmp_path / "export.md").read_text()
@@ -353,10 +353,10 @@ async def test_export_md_to_file(tmp_path):
 
 
 async def test_export_empty_room(capsys):
-    from murmur.cli import _export
+    from quorus.cli import _export
 
     client = _mock_client(200, [])
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _export("empty-room", fmt="json")
 
     captured = capsys.readouterr()
@@ -366,7 +366,7 @@ async def test_export_empty_room(capsys):
 async def test_export_room_not_found(capsys):
     import httpx
 
-    from murmur.cli import _export
+    from quorus.cli import _export
 
     resp = MagicMock()
     resp.status_code = 404
@@ -376,7 +376,7 @@ async def test_export_room_not_found(capsys):
     client = AsyncMock()
     client.get = AsyncMock(return_value=resp)
     client.aclose = AsyncMock()
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _export("ghost-room", fmt="json")
 
     captured = capsys.readouterr()
@@ -384,10 +384,10 @@ async def test_export_room_not_found(capsys):
 
 
 async def test_export_unknown_format(capsys):
-    from murmur.cli import _export
+    from quorus.cli import _export
 
     client = _mock_client(200, _SAMPLE_MSGS)
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _export("dev", fmt="csv")
 
     captured = capsys.readouterr()
@@ -397,13 +397,13 @@ async def test_export_unknown_format(capsys):
 # ── add-agent wizard tests ──────────────────────────────────────────────
 
 def test_add_agent_creates_workspace(tmp_path, monkeypatch):
-    from murmur.cli import _cmd_add_agent
+    from quorus.cli import _cmd_add_agent
 
-    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://test:8080")
-    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "test-secret")
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://test:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "test-secret")
 
     # Redirect workspace to tmp_path
-    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
 
     # Mock rich prompts to provide answers
     call_count = {"n": 0}
@@ -430,14 +430,14 @@ def test_add_agent_creates_workspace(tmp_path, monkeypatch):
             coro.close()
         return next(return_values)
 
-    with patch("murmur.cli.Prompt.ask", side_effect=mock_ask), \
-         patch("murmur.cli.Confirm.ask", side_effect=mock_confirm), \
-         patch("murmur.cli.asyncio.run", side_effect=_close_coro_with_return), \
-         patch("murmur.cli.subprocess.run"), \
-         patch("murmur.cli.sys.platform", "darwin"):
+    with patch("quorus.cli.Prompt.ask", side_effect=mock_ask), \
+         patch("quorus.cli.Confirm.ask", side_effect=mock_confirm), \
+         patch("quorus.cli.asyncio.run", side_effect=_close_coro_with_return), \
+         patch("quorus.cli.subprocess.run"), \
+         patch("quorus.cli.sys.platform", "darwin"):
         _cmd_add_agent(MagicMock())
 
-    workspace = tmp_path / "murmur-agents" / "test-bot"
+    workspace = tmp_path / "quorus-agents" / "test-bot"
     assert workspace.exists()
     assert (workspace / ".mcp.json").exists()
     assert (workspace / "CLAUDE.md").exists()
@@ -449,13 +449,13 @@ def test_add_agent_creates_workspace(tmp_path, monkeypatch):
     assert "dev" in claude_md
 
     mcp = json.loads((workspace / ".mcp.json").read_text())
-    assert mcp["mcpServers"]["murmur"]["env"]["INSTANCE_NAME"] == "test-bot"
+    assert mcp["mcpServers"]["quorus"]["env"]["INSTANCE_NAME"] == "test-bot"
 
 
 # ── connect command tests ────────────────────────────────────────────────
 
 def test_connect_codex(capsys):
-    from murmur.cli import _cmd_connect
+    from quorus.cli import _cmd_connect
 
     args = MagicMock()
     args.platform = "codex"
@@ -463,8 +463,8 @@ def test_connect_codex(capsys):
     args.name = "codex-bot"
 
     client = _mock_client(200, {})
-    with patch("murmur.cli._get_client", return_value=client), \
-         patch("murmur.cli.asyncio.run", side_effect=_close_coro):
+    with patch("quorus.cli._get_client", return_value=client), \
+         patch("quorus.cli.asyncio.run", side_effect=_close_coro):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
@@ -474,7 +474,7 @@ def test_connect_codex(capsys):
 
 
 def test_connect_cursor(capsys):
-    from murmur.cli import _cmd_connect
+    from quorus.cli import _cmd_connect
 
     args = MagicMock()
     args.platform = "cursor"
@@ -482,8 +482,8 @@ def test_connect_cursor(capsys):
     args.name = "cursor-bot"
 
     client = _mock_client(200, {})
-    with patch("murmur.cli._get_client", return_value=client), \
-         patch("murmur.cli.asyncio.run", side_effect=_close_coro):
+    with patch("quorus.cli._get_client", return_value=client), \
+         patch("quorus.cli.asyncio.run", side_effect=_close_coro):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
@@ -493,7 +493,7 @@ def test_connect_cursor(capsys):
 
 
 def test_connect_ollama(capsys):
-    from murmur.cli import _cmd_connect
+    from quorus.cli import _cmd_connect
 
     args = MagicMock()
     args.platform = "ollama"
@@ -501,8 +501,8 @@ def test_connect_ollama(capsys):
     args.name = "llama-bot"
 
     client = _mock_client(200, {})
-    with patch("murmur.cli._get_client", return_value=client), \
-         patch("murmur.cli.asyncio.run", side_effect=_close_coro):
+    with patch("quorus.cli._get_client", return_value=client), \
+         patch("quorus.cli.asyncio.run", side_effect=_close_coro):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
@@ -512,7 +512,7 @@ def test_connect_ollama(capsys):
 
 
 def test_connect_claude(capsys):
-    from murmur.cli import _cmd_connect
+    from quorus.cli import _cmd_connect
 
     args = MagicMock()
     args.platform = "claude"
@@ -520,23 +520,23 @@ def test_connect_claude(capsys):
     args.name = "claude-bot"
 
     client = _mock_client(200, {})
-    with patch("murmur.cli._get_client", return_value=client), \
-         patch("murmur.cli.asyncio.run", side_effect=_close_coro):
+    with patch("quorus.cli._get_client", return_value=client), \
+         patch("quorus.cli.asyncio.run", side_effect=_close_coro):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
     assert "Claude Code Agent Setup" in captured.out
-    assert "murmur add-agent" in captured.out
+    assert "quorus add-agent" in captured.out
 
 
 # ── search command tests ─────────────────────────────────────────────────
 
 async def test_search_by_keyword(capsys):
-    from murmur.cli import _search
+    from quorus.cli import _search
 
     results = [_SAMPLE_MSGS[0]]  # only "hello world"
     client = _mock_client(200, results)
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _search("dev", query="hello")
 
     captured = capsys.readouterr()
@@ -545,11 +545,11 @@ async def test_search_by_keyword(capsys):
 
 
 async def test_search_by_sender(capsys):
-    from murmur.cli import _search
+    from quorus.cli import _search
 
     results = [_SAMPLE_MSGS[1]]  # only bob
     client = _mock_client(200, results)
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _search("dev", sender="bob")
 
     captured = capsys.readouterr()
@@ -557,11 +557,11 @@ async def test_search_by_sender(capsys):
 
 
 async def test_search_by_message_type(capsys):
-    from murmur.cli import _search
+    from quorus.cli import _search
 
     results = [_SAMPLE_MSGS[1]]  # claim type
     client = _mock_client(200, results)
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _search("dev", message_type="claim")
 
     captured = capsys.readouterr()
@@ -569,10 +569,10 @@ async def test_search_by_message_type(capsys):
 
 
 async def test_search_no_results(capsys):
-    from murmur.cli import _search
+    from quorus.cli import _search
 
     client = _mock_client(200, [])
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _search("dev", query="nonexistent")
 
     captured = capsys.readouterr()
@@ -582,7 +582,7 @@ async def test_search_no_results(capsys):
 async def test_search_room_not_found(capsys):
     import httpx
 
-    from murmur.cli import _search
+    from quorus.cli import _search
 
     resp = MagicMock()
     resp.status_code = 404
@@ -592,7 +592,7 @@ async def test_search_room_not_found(capsys):
     client = AsyncMock()
     client.get = AsyncMock(return_value=resp)
     client.aclose = AsyncMock()
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _search("ghost", query="test")
 
     captured = capsys.readouterr()
@@ -631,7 +631,7 @@ _ANALYTICS_DATA = {
 
 
 async def test_metrics_shows_agent_activity(capsys):
-    from murmur.cli import _metrics
+    from quorus.cli import _metrics
 
     hist_resp = MagicMock()
     hist_resp.status_code = 200
@@ -647,7 +647,7 @@ async def test_metrics_shows_agent_activity(capsys):
     client.get = AsyncMock(side_effect=[hist_resp, analytics_resp])
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _metrics("dev")
 
     captured = capsys.readouterr()
@@ -660,7 +660,7 @@ async def test_metrics_shows_agent_activity(capsys):
 
 
 async def test_metrics_empty_room(capsys):
-    from murmur.cli import _metrics
+    from quorus.cli import _metrics
 
     hist_resp = MagicMock()
     hist_resp.status_code = 200
@@ -671,7 +671,7 @@ async def test_metrics_empty_room(capsys):
     client.get = AsyncMock(return_value=hist_resp)
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _metrics("empty")
 
     captured = capsys.readouterr()
@@ -681,7 +681,7 @@ async def test_metrics_empty_room(capsys):
 async def test_metrics_room_not_found(capsys):
     import httpx
 
-    from murmur.cli import _metrics
+    from quorus.cli import _metrics
 
     resp = MagicMock()
     resp.status_code = 404
@@ -692,7 +692,7 @@ async def test_metrics_room_not_found(capsys):
     client.get = AsyncMock(return_value=resp)
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _metrics("ghost")
 
     captured = capsys.readouterr()
@@ -700,7 +700,7 @@ async def test_metrics_room_not_found(capsys):
 
 
 def test_connect_unknown_platform(capsys):
-    from murmur.cli import _cmd_connect
+    from quorus.cli import _cmd_connect
 
     args = MagicMock()
     args.platform = "gpt"
@@ -714,10 +714,10 @@ def test_connect_unknown_platform(capsys):
 
 
 def test_add_agent_cancelled(monkeypatch, capsys):
-    from murmur.cli import _cmd_add_agent
+    from quorus.cli import _cmd_add_agent
 
-    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://test:8080")
-    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "test-secret")
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://test:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "test-secret")
 
     answers = ["cancel-bot", "dev", "sonnet", "high"]
     call_count = {"n": 0}
@@ -741,9 +741,9 @@ def test_add_agent_cancelled(monkeypatch, capsys):
             coro.close()
         return []
 
-    with patch("murmur.cli.Prompt.ask", side_effect=mock_ask), \
-         patch("murmur.cli.Confirm.ask", side_effect=mock_confirm), \
-         patch("murmur.cli.asyncio.run", side_effect=_close_coro_return_empty):
+    with patch("quorus.cli.Prompt.ask", side_effect=mock_ask), \
+         patch("quorus.cli.Confirm.ask", side_effect=mock_confirm), \
+         patch("quorus.cli.asyncio.run", side_effect=_close_coro_return_empty):
         _cmd_add_agent(MagicMock())
 
     captured = capsys.readouterr()
@@ -759,13 +759,13 @@ _SAMPLE_STATE = {
     "active_goal": "Build distributed mutex locking layer",
     "claimed_tasks": [],
     "locked_files": {
-        "murmur/relay.py": {
+        "quorus/relay.py": {
             "held_by": "arav-agent-1",
             "claimed_by": "arav-agent-1",
             "expires_at": "2026-04-11T10:05:00Z",
             "lock_token": "abc12345-token",
         },
-        "murmur/mcp.py": {
+        "quorus/mcp.py": {
             "held_by": "arav-agent-2",
             "claimed_by": "arav-agent-2",
             "expires_at": "2026-04-11T10:02:00Z",
@@ -780,29 +780,29 @@ _SAMPLE_STATE = {
 
 
 async def test_cmd_room_state_shows_goal(capsys):
-    from murmur.cli import _room_state
+    from quorus.cli import _room_state
 
     client = _mock_client(200, _SAMPLE_STATE)
-    with patch("murmur.cli._get_client", return_value=client):
-        await _room_state("murmur-dev")
+    with patch("quorus.cli._get_client", return_value=client):
+        await _room_state("quorus-dev")
 
     captured = capsys.readouterr()
     assert "Build distributed mutex locking layer" in captured.out
     assert "arav-agent-1" in captured.out
     assert "3 online" in captured.out
-    assert "murmur/relay.py" in captured.out
+    assert "quorus/relay.py" in captured.out
     assert "47" in captured.out
 
 
 async def test_cmd_room_state_no_goal(capsys):
-    from murmur.cli import _room_state
+    from quorus.cli import _room_state
 
     state = dict(_SAMPLE_STATE)
     state["active_goal"] = None
     state["locked_files"] = {}
     client = _mock_client(200, state)
-    with patch("murmur.cli._get_client", return_value=client):
-        await _room_state("murmur-dev")
+    with patch("quorus.cli._get_client", return_value=client):
+        await _room_state("quorus-dev")
 
     captured = capsys.readouterr()
     assert "No active goal" in captured.out
@@ -812,7 +812,7 @@ async def test_cmd_room_state_no_goal(capsys):
 async def test_cmd_room_state_not_found(capsys):
     import httpx
 
-    from murmur.cli import _room_state
+    from quorus.cli import _room_state
 
     resp = MagicMock()
     resp.status_code = 404
@@ -822,7 +822,7 @@ async def test_cmd_room_state_not_found(capsys):
     client = AsyncMock()
     client.get = AsyncMock(return_value=resp)
     client.aclose = AsyncMock()
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _room_state("ghost-room")
 
     captured = capsys.readouterr()
@@ -833,26 +833,26 @@ async def test_cmd_room_state_not_found(capsys):
 
 
 async def test_cmd_room_locks_shows_table(capsys):
-    from murmur.cli import _room_locks
+    from quorus.cli import _room_locks
 
     client = _mock_client(200, _SAMPLE_STATE)
-    with patch("murmur.cli._get_client", return_value=client):
-        await _room_locks("murmur-dev")
+    with patch("quorus.cli._get_client", return_value=client):
+        await _room_locks("quorus-dev")
 
     captured = capsys.readouterr()
-    assert "murmur/relay.py" in captured.out
+    assert "quorus/relay.py" in captured.out
     assert "arav-agent-1" in captured.out
     assert "abc12345" in captured.out
 
 
 async def test_cmd_room_locks_empty(capsys):
-    from murmur.cli import _room_locks
+    from quorus.cli import _room_locks
 
     state = dict(_SAMPLE_STATE)
     state["locked_files"] = {}
     client = _mock_client(200, state)
-    with patch("murmur.cli._get_client", return_value=client):
-        await _room_locks("murmur-dev")
+    with patch("quorus.cli._get_client", return_value=client):
+        await _room_locks("quorus-dev")
 
     captured = capsys.readouterr()
     assert "No active locks" in captured.out
@@ -874,8 +874,8 @@ _ANALYTICS_USAGE = {
 }
 
 _ROOMS_LIST = [
-    {"id": "r1", "name": "murmur-dev", "members": ["arav", "arav-agent-1"]},
-    {"id": "r2", "name": "murmur-prod", "members": ["arav-agent-2"]},
+    {"id": "r1", "name": "quorus-dev", "members": ["arav", "arav-agent-1"]},
+    {"id": "r2", "name": "quorus-prod", "members": ["arav-agent-2"]},
     {"id": "r3", "name": "staging", "members": []},
 ]
 
@@ -887,7 +887,7 @@ _PRESENCE_LIST = [
 
 
 async def test_cmd_usage_shows_stats(capsys):
-    from murmur.cli import _usage
+    from quorus.cli import _usage
 
     analytics_resp = _mock_response(200, _ANALYTICS_USAGE)
     analytics_resp.is_success = True
@@ -900,7 +900,7 @@ async def test_cmd_usage_shows_stats(capsys):
     client.get = AsyncMock(side_effect=[analytics_resp, rooms_resp, presence_resp])
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _usage()
 
     captured = capsys.readouterr()
@@ -912,13 +912,13 @@ async def test_cmd_usage_shows_stats(capsys):
 async def test_cmd_usage_relay_down(capsys):
     import httpx
 
-    from murmur.cli import _usage
+    from quorus.cli import _usage
 
     client = AsyncMock()
     client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _usage()
 
     captured = capsys.readouterr()
@@ -934,7 +934,7 @@ def test_cmd_inbox_no_messages(capsys):
     """When no messages, inbox should exit silently."""
     import httpx as httpx_mod
 
-    from murmur.cli import _cmd_inbox
+    from quorus.cli import _cmd_inbox
 
     peek_resp = MagicMock()
     peek_resp.status_code = 200
@@ -955,7 +955,7 @@ def test_cmd_inbox_with_messages(capsys):
     """When messages exist, inbox should print them."""
     import httpx as httpx_mod
 
-    from murmur.cli import _cmd_inbox
+    from quorus.cli import _cmd_inbox
 
     peek_resp = MagicMock()
     peek_resp.status_code = 200
@@ -980,7 +980,7 @@ def test_cmd_inbox_with_messages(capsys):
         _cmd_inbox(args)
 
     captured = capsys.readouterr()
-    assert "[murmur]" in captured.out
+    assert "[quorus]" in captured.out
     assert "2 new messages" in captured.out
     assert "alice" in captured.out
     assert "bob" in captured.out
@@ -990,7 +990,7 @@ def test_cmd_inbox_json_output(capsys):
     """--json flag should output raw JSON."""
     import httpx as httpx_mod
 
-    from murmur.cli import _cmd_inbox
+    from quorus.cli import _cmd_inbox
 
     peek_resp = MagicMock()
     peek_resp.status_code = 200
@@ -1019,7 +1019,7 @@ def test_cmd_inbox_relay_unreachable(capsys):
     """Should exit silently when relay is unreachable."""
     import httpx as httpx_mod
 
-    from murmur.cli import _cmd_inbox
+    from quorus.cli import _cmd_inbox
 
     with patch.object(httpx_mod, "get", side_effect=httpx_mod.ConnectError("refused")):
         args = MagicMock()
@@ -1033,10 +1033,10 @@ def test_cmd_inbox_relay_unreachable(capsys):
 
 def test_cmd_hook_status_not_configured(capsys, tmp_path):
     """Hook status should show not configured when no hook exists."""
-    from murmur.cli import _cmd_hook
+    from quorus.cli import _cmd_hook
 
     settings_path = tmp_path / ".claude" / "settings.json"
-    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+    with patch("quorus.cli.CLAUDE_SETTINGS_PATH", settings_path):
         args = MagicMock()
         args.action = "status"
         _cmd_hook(args)
@@ -1049,10 +1049,10 @@ def test_cmd_hook_enable_creates_hook(capsys, tmp_path):
     """Hook enable should create the settings file with hook config."""
     import json
 
-    from murmur.cli import _cmd_hook
+    from quorus.cli import _cmd_hook
 
     settings_path = tmp_path / ".claude" / "settings.json"
-    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+    with patch("quorus.cli.CLAUDE_SETTINGS_PATH", settings_path):
         args = MagicMock()
         args.action = "enable"
         _cmd_hook(args)
@@ -1065,14 +1065,14 @@ def test_cmd_hook_enable_creates_hook(capsys, tmp_path):
     settings = json.loads(settings_path.read_text())
     assert "UserPromptSubmit" in settings["hooks"]
     hooks = settings["hooks"]["UserPromptSubmit"]
-    assert any("murmur inbox" in str(h) for h in hooks)
+    assert any("quorus inbox" in str(h) for h in hooks)
 
 
 def test_cmd_hook_enable_already_enabled(capsys, tmp_path):
     """Hook enable when already enabled should show warning."""
     import json
 
-    from murmur.cli import MURMUR_HOOK_CONFIG, _cmd_hook
+    from quorus.cli import MURMUR_HOOK_CONFIG, _cmd_hook
 
     settings_path = tmp_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True)
@@ -1080,7 +1080,7 @@ def test_cmd_hook_enable_already_enabled(capsys, tmp_path):
         "hooks": {"UserPromptSubmit": [MURMUR_HOOK_CONFIG]}
     }))
 
-    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+    with patch("quorus.cli.CLAUDE_SETTINGS_PATH", settings_path):
         args = MagicMock()
         args.action = "enable"
         _cmd_hook(args)
@@ -1090,10 +1090,10 @@ def test_cmd_hook_enable_already_enabled(capsys, tmp_path):
 
 
 def test_cmd_hook_disable_removes_hook(capsys, tmp_path):
-    """Hook disable should remove the murmur hook from settings."""
+    """Hook disable should remove the quorus hook from settings."""
     import json
 
-    from murmur.cli import MURMUR_HOOK_CONFIG, _cmd_hook
+    from quorus.cli import MURMUR_HOOK_CONFIG, _cmd_hook
 
     settings_path = tmp_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True)
@@ -1101,7 +1101,7 @@ def test_cmd_hook_disable_removes_hook(capsys, tmp_path):
         "hooks": {"UserPromptSubmit": [MURMUR_HOOK_CONFIG]}
     }))
 
-    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+    with patch("quorus.cli.CLAUDE_SETTINGS_PATH", settings_path):
         args = MagicMock()
         args.action = "disable"
         _cmd_hook(args)
@@ -1112,14 +1112,14 @@ def test_cmd_hook_disable_removes_hook(capsys, tmp_path):
     # Verify hook was removed
     settings = json.loads(settings_path.read_text())
     hooks = settings["hooks"]["UserPromptSubmit"]
-    assert not any("murmur inbox" in str(h) for h in hooks)
+    assert not any("quorus inbox" in str(h) for h in hooks)
 
 
 def test_cmd_hook_status_when_enabled(capsys, tmp_path):
     """Hook status should show enabled when hook exists."""
     import json
 
-    from murmur.cli import MURMUR_HOOK_CONFIG, _cmd_hook
+    from quorus.cli import MURMUR_HOOK_CONFIG, _cmd_hook
 
     settings_path = tmp_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True)
@@ -1127,7 +1127,7 @@ def test_cmd_hook_status_when_enabled(capsys, tmp_path):
         "hooks": {"UserPromptSubmit": [MURMUR_HOOK_CONFIG]}
     }))
 
-    with patch("murmur.cli.CLAUDE_SETTINGS_PATH", settings_path):
+    with patch("quorus.cli.CLAUDE_SETTINGS_PATH", settings_path):
         args = MagicMock()
         args.action = "status"
         _cmd_hook(args)
@@ -1227,9 +1227,9 @@ def _mock_context_client():
 
 
 async def test_context_shows_active_goal(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev")
 
     captured = capsys.readouterr()
@@ -1238,9 +1238,9 @@ async def test_context_shows_active_goal(capsys):
 
 
 async def test_context_shows_header_without_quiet(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev", quiet=False)
 
     captured = capsys.readouterr()
@@ -1248,9 +1248,9 @@ async def test_context_shows_header_without_quiet(capsys):
 
 
 async def test_context_quiet_suppresses_header(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev", quiet=True)
 
     captured = capsys.readouterr()
@@ -1260,9 +1260,9 @@ async def test_context_quiet_suppresses_header(capsys):
 
 
 async def test_context_shows_claimed_tasks(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev")
 
     captured = capsys.readouterr()
@@ -1271,9 +1271,9 @@ async def test_context_shows_claimed_tasks(capsys):
 
 
 async def test_context_shows_locked_files(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev")
 
     captured = capsys.readouterr()
@@ -1281,9 +1281,9 @@ async def test_context_shows_locked_files(capsys):
 
 
 async def test_context_shows_decisions(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev")
 
     captured = capsys.readouterr()
@@ -1291,9 +1291,9 @@ async def test_context_shows_decisions(capsys):
 
 
 async def test_context_shows_status_updates(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev")
 
     captured = capsys.readouterr()
@@ -1301,9 +1301,9 @@ async def test_context_shows_status_updates(capsys):
 
 
 async def test_context_filters_chat_messages(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev")
 
     captured = capsys.readouterr()
@@ -1314,9 +1314,9 @@ async def test_context_filters_chat_messages(capsys):
 async def test_context_json_output(capsys):
     import json as _json
 
-    from murmur.cli import _context
+    from quorus.cli import _context
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev", json_output=True)
 
     captured = capsys.readouterr()
@@ -1328,7 +1328,7 @@ async def test_context_json_output(capsys):
 
 
 async def test_context_deduplicates_messages(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
     # Two identical status messages — should appear only once
     duplicate_history = [
@@ -1360,7 +1360,7 @@ async def test_context_deduplicates_messages(capsys):
     client.get = AsyncMock(side_effect=[state_resp, hist_resp])
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _context("dev")
 
     captured = capsys.readouterr()
@@ -1371,13 +1371,13 @@ async def test_context_deduplicates_messages(capsys):
 async def test_context_relay_unreachable(capsys):
     import httpx
 
-    from murmur.cli import _context
+    from quorus.cli import _context
 
     client = AsyncMock()
     client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _context("dev")
 
     captured = capsys.readouterr()
@@ -1387,13 +1387,13 @@ async def test_context_relay_unreachable(capsys):
 async def test_context_quiet_suppresses_relay_error(capsys):
     import httpx
 
-    from murmur.cli import _context
+    from quorus.cli import _context
 
     client = AsyncMock()
     client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _context("dev", quiet=True)
 
     captured = capsys.readouterr()
@@ -1403,7 +1403,7 @@ async def test_context_quiet_suppresses_relay_error(capsys):
 async def test_context_room_not_found(capsys):
     import httpx
 
-    from murmur.cli import _context
+    from quorus.cli import _context
 
     resp = MagicMock()
     resp.status_code = 404
@@ -1414,7 +1414,7 @@ async def test_context_room_not_found(capsys):
     client.get = AsyncMock(return_value=resp)
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _context("ghost-room")
 
     captured = capsys.readouterr()
@@ -1422,7 +1422,7 @@ async def test_context_room_not_found(capsys):
 
 
 async def test_context_auto_detects_room(capsys):
-    from murmur.cli import _context
+    from quorus.cli import _context
 
     rooms_resp = MagicMock()
     rooms_resp.status_code = 200
@@ -1446,7 +1446,7 @@ async def test_context_auto_detects_room(capsys):
     client.get = AsyncMock(side_effect=[rooms_resp, state_resp, hist_resp])
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _context(room_name=None)
 
     captured = capsys.readouterr()
@@ -1455,11 +1455,11 @@ async def test_context_auto_detects_room(capsys):
 
 async def test_context_summarize_requires_api_key(capsys, monkeypatch):
     """context --summarize should fail gracefully without ANTHROPIC_API_KEY."""
-    from murmur.cli import _context
+    from quorus.cli import _context
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-    with patch("murmur.cli._get_client", return_value=_mock_context_client()):
+    with patch("quorus.cli._get_client", return_value=_mock_context_client()):
         await _context("dev", summarize=True)
 
     captured = capsys.readouterr()
@@ -1468,7 +1468,7 @@ async def test_context_summarize_requires_api_key(capsys, monkeypatch):
 
 async def test_context_summarize_calls_llm(capsys, monkeypatch):
     """context --summarize should call Claude and print the summary."""
-    from murmur.cli import _context
+    from quorus.cli import _context
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
@@ -1484,7 +1484,7 @@ async def test_context_summarize_calls_llm(capsys, monkeypatch):
     # Ensure aclose is an AsyncMock
     http_client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=http_client):
+    with patch("quorus.cli._get_client", return_value=http_client):
         # Patch anthropic at the import point in the function
         with patch.dict("sys.modules", {"anthropic": MagicMock(
             Anthropic=MagicMock(return_value=mock_anthropic_client)
@@ -1499,7 +1499,7 @@ async def test_context_summarize_calls_llm(capsys, monkeypatch):
 
 
 def test_decision_posts_and_prints_confirmation(capsys):
-    from murmur.cli import _cmd_decision
+    from quorus.cli import _cmd_decision
 
     result = {
         "id": "dec-uuid-1234",
@@ -1526,7 +1526,7 @@ def test_decision_posts_and_prints_confirmation(capsys):
 
 
 def test_decision_shows_id_prefix(capsys):
-    from murmur.cli import _cmd_decision
+    from quorus.cli import _cmd_decision
 
     result = {
         "id": "abcdef12-rest-of-uuid",
@@ -1552,7 +1552,7 @@ def test_decision_shows_id_prefix(capsys):
 
 
 def test_decision_empty_text_rejected(capsys):
-    from murmur.cli import _cmd_decision
+    from quorus.cli import _cmd_decision
 
     args = MagicMock()
     args.room = "dev"
@@ -1567,7 +1567,7 @@ def test_decision_empty_text_rejected(capsys):
 def test_decision_relay_unreachable(capsys):
     import httpx
 
-    from murmur.cli import _cmd_decision
+    from quorus.cli import _cmd_decision
 
     args = MagicMock()
     args.room = "dev"
@@ -1583,7 +1583,7 @@ def test_decision_relay_unreachable(capsys):
 def test_decision_room_not_found(capsys):
     import httpx
 
-    from murmur.cli import _cmd_decision
+    from quorus.cli import _cmd_decision
 
     resp = MagicMock()
     resp.status_code = 404
@@ -1608,11 +1608,11 @@ def test_decision_room_not_found(capsys):
 
 def test_hook_command_includes_both_inbox_and_context():
     """Enabled hook should run both inbox and context for auto-injection."""
-    from murmur.cli import MURMUR_HOOK_CONFIG
+    from quorus.cli import MURMUR_HOOK_CONFIG
 
     all_commands = " ".join(h["command"] for h in MURMUR_HOOK_CONFIG["hooks"])
-    assert "murmur inbox" in all_commands
-    assert "murmur context" in all_commands
+    assert "quorus inbox" in all_commands
+    assert "quorus context" in all_commands
     assert "--quiet" in all_commands
 
 
@@ -1676,7 +1676,7 @@ def test_resolve_no_conflicts_clean_exit(capsys, monkeypatch, tmp_path):
     import subprocess
     from unittest.mock import MagicMock
 
-    from murmur.cli import _cmd_resolve
+    from quorus.cli import _cmd_resolve
 
     # Mock git to return no conflicted files
     mock_result = MagicMock()
@@ -1740,7 +1740,7 @@ def test_resolve_no_api_key_error(capsys, monkeypatch):
     import subprocess
     from unittest.mock import MagicMock
 
-    from murmur.cli import _cmd_resolve
+    from quorus.cli import _cmd_resolve
 
     # Mock git to return conflicted files
     mock_result = MagicMock()
@@ -1772,7 +1772,7 @@ def test_resolve_git_command_failure(capsys, monkeypatch):
     import subprocess
     from unittest.mock import MagicMock
 
-    from murmur.cli import _cmd_resolve
+    from quorus.cli import _cmd_resolve
 
     # Mock git to fail
     mock_result = MagicMock()
@@ -1817,15 +1817,15 @@ def _make_init_args(
 
 def test_cmd_init_happy_path(tmp_path, monkeypatch):
     """Init writes config, registers MCP into ~/.claude.json, and prints a success summary."""
-    from murmur.cli import _cmd_init
+    from quorus.cli import _cmd_init
 
-    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
     # uv available
-    monkeypatch.setattr("murmur.cli.shutil.which", lambda _: "/usr/bin/uv")
+    monkeypatch.setattr("quorus.cli.shutil.which", lambda _: "/usr/bin/uv")
     # relay reachable
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    monkeypatch.setattr("murmur.cli.httpx.get", lambda *a, **kw: mock_resp)
+    monkeypatch.setattr("quorus.cli.httpx.get", lambda *a, **kw: mock_resp)
 
     # Pre-create ~/.claude.json so the registration lands there
     claude_json = tmp_path / ".claude.json"
@@ -1843,23 +1843,23 @@ def test_cmd_init_happy_path(tmp_path, monkeypatch):
     assert "api_key" not in cfg
 
     claude_cfg = json.loads(claude_json.read_text())
-    mcp = claude_cfg["mcpServers"]["murmur"]
+    mcp = claude_cfg["mcpServers"]["quorus"]
     assert mcp["command"] == "uv"
     assert "-m" in mcp["args"]
-    assert "murmur.mcp_server" in mcp["args"]
+    assert "quorus.mcp_server" in mcp["args"]
 
 
 def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, capsys):
     """When uv is not on PATH, the MCP server is registered via sys.executable."""
     import sys
 
-    from murmur.cli import _cmd_init
+    from quorus.cli import _cmd_init
 
-    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
-    monkeypatch.setattr("murmur.cli.shutil.which", lambda _: None)
+    monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("quorus.cli.shutil.which", lambda _: None)
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    monkeypatch.setattr("murmur.cli.httpx.get", lambda *a, **kw: mock_resp)
+    monkeypatch.setattr("quorus.cli.httpx.get", lambda *a, **kw: mock_resp)
 
     # Pre-create ~/.claude.json so the registration lands there
     claude_json = tmp_path / ".claude.json"
@@ -1868,9 +1868,9 @@ def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, ca
     _cmd_init(_make_init_args())
 
     claude_cfg = json.loads(claude_json.read_text())
-    mcp = claude_cfg["mcpServers"]["murmur"]
+    mcp = claude_cfg["mcpServers"]["quorus"]
     assert mcp["command"] == sys.executable
-    assert mcp["args"] == ["-m", "murmur.mcp_server"]
+    assert mcp["args"] == ["-m", "quorus.mcp_server"]
 
     captured = capsys.readouterr()
     assert "uv" in captured.out  # prints the fallback notice
@@ -1878,7 +1878,7 @@ def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, ca
 
 def test_cmd_init_rejects_invalid_url(monkeypatch):
     """Init exits with code 1 when relay URL is not http/https."""
-    from murmur.cli import _cmd_init
+    from quorus.cli import _cmd_init
 
     with pytest.raises(SystemExit) as exc_info:
         _cmd_init(_make_init_args(relay_url="ftp://not-valid"))
@@ -1887,7 +1887,7 @@ def test_cmd_init_rejects_invalid_url(monkeypatch):
 
 def test_cmd_init_rejects_empty_name(monkeypatch):
     """Init exits with code 1 when name is empty or whitespace."""
-    from murmur.cli import _cmd_init
+    from quorus.cli import _cmd_init
 
     with pytest.raises(SystemExit) as exc_info:
         _cmd_init(_make_init_args(name="   "))
@@ -1896,12 +1896,12 @@ def test_cmd_init_rejects_empty_name(monkeypatch):
 
 def test_cmd_init_warns_on_relay_unreachable(tmp_path, monkeypatch, capsys):
     """Init prints a warning (not an error) when the relay cannot be reached."""
-    from murmur.cli import _cmd_init
+    from quorus.cli import _cmd_init
 
-    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
-    monkeypatch.setattr("murmur.cli.shutil.which", lambda _: "/usr/bin/uv")
+    monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("quorus.cli.shutil.which", lambda _: "/usr/bin/uv")
     monkeypatch.setattr(
-        "murmur.cli.httpx.get", lambda *a, **kw: (_ for _ in ()).throw(Exception("timeout"))
+        "quorus.cli.httpx.get", lambda *a, **kw: (_ for _ in ()).throw(Exception("timeout"))
     )
 
     _cmd_init(_make_init_args())  # must not raise
@@ -1914,13 +1914,13 @@ def test_cmd_init_warns_on_relay_unreachable(tmp_path, monkeypatch, capsys):
 
 def test_cmd_init_warns_on_existing_config(tmp_path, monkeypatch, capsys):
     """Init prints a warning when an existing config would be overwritten."""
-    from murmur.cli import _cmd_init
+    from quorus.cli import _cmd_init
 
-    monkeypatch.setattr("murmur.cli.Path.home", lambda: tmp_path)
-    monkeypatch.setattr("murmur.cli.shutil.which", lambda _: "/usr/bin/uv")
+    monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("quorus.cli.shutil.which", lambda _: "/usr/bin/uv")
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    monkeypatch.setattr("murmur.cli.httpx.get", lambda *a, **kw: mock_resp)
+    monkeypatch.setattr("quorus.cli.httpx.get", lambda *a, **kw: mock_resp)
 
     # Create existing config
     config_dir = tmp_path / "mcp-tunnel"
@@ -1938,7 +1938,7 @@ def test_cmd_init_warns_on_existing_config(tmp_path, monkeypatch, capsys):
 
 def test_encode_join_token_with_secret():
     """Token encodes relay URL, room, expiry, and secret."""
-    from murmur.cli import _decode_join_token, _encode_join_token
+    from quorus.cli import _decode_join_token, _encode_join_token
 
     token = _encode_join_token(
         relay_url="https://relay.example.com",
@@ -1946,7 +1946,7 @@ def test_encode_join_token_with_secret():
         secret="my-secret",
     )
 
-    assert token.startswith("murmur://")
+    assert token.startswith("quorus://")
     payload = _decode_join_token(token)
     assert payload is not None
     assert payload["r"] == "https://relay.example.com"
@@ -1957,7 +1957,7 @@ def test_encode_join_token_with_secret():
 
 def test_encode_join_token_with_api_key():
     """Token uses api_key field when provided."""
-    from murmur.cli import _decode_join_token, _encode_join_token
+    from quorus.cli import _decode_join_token, _encode_join_token
 
     token = _encode_join_token(
         relay_url="https://relay.example.com",
@@ -1972,8 +1972,8 @@ def test_encode_join_token_with_api_key():
 
 
 def test_decode_join_token_invalid_prefix():
-    """Tokens without murmur:// prefix are rejected."""
-    from murmur.cli import _decode_join_token
+    """Tokens without quorus:// prefix are rejected."""
+    from quorus.cli import _decode_join_token
 
     result = _decode_join_token("https://not-a-token")
     assert result is None
@@ -1985,7 +1985,7 @@ def test_decode_join_token_expired(monkeypatch):
     import json
     import time
 
-    from murmur.cli import _decode_join_token
+    from quorus.cli import _decode_join_token
 
     # Create token that expired 1 hour ago
     payload = {
@@ -1995,7 +1995,7 @@ def test_decode_join_token_expired(monkeypatch):
         "e": int(time.time()) - 3600,
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    token = f"murmur://{encoded}"
+    token = f"quorus://{encoded}"
 
     result = _decode_join_token(token)
     assert result is None
@@ -2003,17 +2003,17 @@ def test_decode_join_token_expired(monkeypatch):
 
 def test_decode_join_token_malformed():
     """Malformed base64 or JSON is rejected."""
-    from murmur.cli import _decode_join_token
+    from quorus.cli import _decode_join_token
 
-    result = _decode_join_token("murmur://not-valid-base64!!!")
+    result = _decode_join_token("quorus://not-valid-base64!!!")
     assert result is None
 
 
 def test_cmd_share_no_relay_configured(capsys, monkeypatch):
     """Share fails gracefully when no relay URL configured."""
-    from murmur.cli import _cmd_share
+    from quorus.cli import _cmd_share
 
-    monkeypatch.setattr("murmur.cli.RELAY_URL", "")
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "")
 
     args = MagicMock()
     args.room = "test-room"
@@ -2027,11 +2027,11 @@ def test_cmd_share_no_relay_configured(capsys, monkeypatch):
 
 def test_cmd_share_no_auth_configured(capsys, monkeypatch):
     """Share fails gracefully when no auth configured."""
-    from murmur.cli import _cmd_share
+    from quorus.cli import _cmd_share
 
-    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://localhost:8080")
-    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "")
-    monkeypatch.setattr("murmur.cli.API_KEY", "")
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://localhost:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "")
+    monkeypatch.setattr("quorus.cli.API_KEY", "")
 
     args = MagicMock()
     args.room = "test-room"
@@ -2045,7 +2045,7 @@ def test_cmd_share_no_auth_configured(capsys, monkeypatch):
 
 def test_cmd_quickjoin_invalid_token(capsys):
     """Quickjoin rejects invalid tokens."""
-    from murmur.cli import _cmd_quickjoin
+    from quorus.cli import _cmd_quickjoin
 
     args = MagicMock()
     args.token = "not-a-valid-token"
@@ -2063,7 +2063,7 @@ def test_cmd_quickjoin_missing_fields(capsys):
     import json
     import time
 
-    from murmur.cli import _cmd_quickjoin
+    from quorus.cli import _cmd_quickjoin
 
     # Token without room field
     payload = {
@@ -2073,7 +2073,7 @@ def test_cmd_quickjoin_missing_fields(capsys):
         # missing "n" (room)
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    token = f"murmur://{encoded}"
+    token = f"quorus://{encoded}"
 
     args = MagicMock()
     args.token = token
@@ -2086,13 +2086,13 @@ def test_cmd_quickjoin_missing_fields(capsys):
 
 
 # ---------------------------------------------------------------------------
-# Regression tests for murmur join config corruption bug
+# Regression tests for quorus join config corruption bug
 # ---------------------------------------------------------------------------
 
 
 def test_cmd_join_preserves_config_when_no_flags(tmp_path, monkeypatch, capsys):
     """Join without flags should use existing config, not corrupt it."""
-    from murmur.cli import _cmd_join
+    from quorus.cli import _cmd_join
 
     # Set up existing config
     config_dir = tmp_path / "mcp-tunnel"
@@ -2107,14 +2107,14 @@ def test_cmd_join_preserves_config_when_no_flags(tmp_path, monkeypatch, capsys):
     config_path.write_text(json.dumps(original_config))
 
     # Monkeypatch to use tmp config
-    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://existing-relay:8080")
-    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "existing-secret")
-    monkeypatch.setattr("murmur.cli.API_KEY", "")
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://existing-relay:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "existing-secret")
+    monkeypatch.setattr("quorus.cli.API_KEY", "")
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
 
     # Mock the HTTP client
     mock_client = _mock_client(200, [{"id": "r1", "name": "dev-room"}])
-    monkeypatch.setattr("murmur.cli._get_client", lambda: mock_client)
+    monkeypatch.setattr("quorus.cli._get_client", lambda: mock_client)
 
     args = MagicMock()
     args.name = "test-agent"
@@ -2134,10 +2134,10 @@ def test_cmd_join_preserves_config_when_no_flags(tmp_path, monkeypatch, capsys):
 
 def test_cmd_join_requires_room(capsys, monkeypatch):
     """Join without room flag should show error, not crash."""
-    from murmur.cli import _cmd_join
+    from quorus.cli import _cmd_join
 
-    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://existing-relay:8080")
-    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "existing-secret")
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://existing-relay:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "existing-secret")
 
     args = MagicMock()
     args.name = "test-agent"
@@ -2155,7 +2155,7 @@ def test_cmd_join_requires_room(capsys, monkeypatch):
 
 def test_cmd_join_with_explicit_flags_rewrites_config(tmp_path, monkeypatch, capsys):
     """Join with explicit --relay flag should rewrite config."""
-    from murmur.cli import _cmd_join
+    from quorus.cli import _cmd_join
 
     # Set up existing config
     config_dir = tmp_path / "mcp-tunnel"
@@ -2168,14 +2168,14 @@ def test_cmd_join_with_explicit_flags_rewrites_config(tmp_path, monkeypatch, cap
     }
     config_path.write_text(json.dumps(original_config))
 
-    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://old-relay:8080")
-    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "old-secret")
-    monkeypatch.setattr("murmur.cli.API_KEY", "")
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://old-relay:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "old-secret")
+    monkeypatch.setattr("quorus.cli.API_KEY", "")
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
 
     # Mock the HTTP client
     mock_client = _mock_client(200, [{"id": "r1", "name": "dev-room"}])
-    monkeypatch.setattr("murmur.cli._get_client", lambda: mock_client)
+    monkeypatch.setattr("quorus.cli._get_client", lambda: mock_client)
 
     args = MagicMock()
     args.name = "new-agent"

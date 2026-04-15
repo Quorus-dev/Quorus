@@ -1,4 +1,4 @@
-"""Tests for murmur brief, setup-swarm, board, and resolve CLI commands."""
+"""Tests for quorus brief, setup-swarm, board, and resolve CLI commands."""
 import argparse
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,11 +10,11 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def configure_cli(monkeypatch):
-    monkeypatch.setattr("murmur.cli.RELAY_URL", "http://test-relay:8080")
-    monkeypatch.setattr("murmur.cli.RELAY_SECRET", "test-secret")
-    monkeypatch.setattr("murmur.cli.API_KEY", "")
-    monkeypatch.setattr("murmur.cli._cached_jwt", None)
-    monkeypatch.setattr("murmur.cli.INSTANCE_NAME", "test-user")
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://test-relay:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "test-secret")
+    monkeypatch.setattr("quorus.cli.API_KEY", "")
+    monkeypatch.setattr("quorus.cli._cached_jwt", None)
+    monkeypatch.setattr("quorus.cli.INSTANCE_NAME", "test-user")
 
 
 def _mock_response(status_code, json_data=None, text=""):
@@ -53,11 +53,11 @@ def _args(**kwargs):
 
 
 # ---------------------------------------------------------------------------
-# murmur brief
+# quorus brief
 # ---------------------------------------------------------------------------
 
 def test_brief_posts_message_to_room(monkeypatch, capsys):
-    from murmur.cli import _cmd_brief
+    from quorus.cli import _cmd_brief
 
     post_calls = []
 
@@ -79,7 +79,7 @@ def test_brief_posts_message_to_room(monkeypatch, capsys):
 
 
 def test_brief_skips_decomposition_without_api_key(monkeypatch, capsys):
-    from murmur.cli import _cmd_brief
+    from quorus.cli import _cmd_brief
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
@@ -101,7 +101,7 @@ def test_brief_skips_decomposition_without_api_key(monkeypatch, capsys):
 
 
 def test_brief_posts_subtasks_when_api_key_set(monkeypatch, capsys):
-    from murmur.cli import _cmd_brief
+    from quorus.cli import _cmd_brief
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
@@ -142,11 +142,11 @@ def test_brief_posts_subtasks_when_api_key_set(monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------------------
-# murmur setup-swarm
+# quorus setup-swarm
 # ---------------------------------------------------------------------------
 
 def test_setup_swarm_creates_rooms_and_spawns_agents(monkeypatch, capsys):
-    from murmur.cli import _cmd_setup_swarm
+    from quorus.cli import _cmd_setup_swarm
 
     post_calls = []
 
@@ -160,7 +160,7 @@ def test_setup_swarm_creates_rooms_and_spawns_agents(monkeypatch, capsys):
         spawn_calls.append((room, name))
 
     with patch("httpx.post", side_effect=mock_post), \
-         patch("murmur.cli._spawn_agent", side_effect=mock_spawn):
+         patch("quorus.cli._spawn_agent", side_effect=mock_spawn):
         _cmd_setup_swarm(_args(
             rooms="backend:Build APIs,frontend:Build UI",
             agents=2,
@@ -185,7 +185,7 @@ def test_setup_swarm_skips_existing_room(monkeypatch, capsys):
     """A 409 response prints 'already exists' and still spawns agents.
     Only error responses (non-200, non-409) skip agent spawning via `continue`.
     """
-    from murmur.cli import _cmd_setup_swarm
+    from quorus.cli import _cmd_setup_swarm
 
     def mock_post(url, json=None, headers=None):
         if url.endswith("/rooms") and json and json.get("name") == "failroom":
@@ -200,7 +200,7 @@ def test_setup_swarm_skips_existing_room(monkeypatch, capsys):
         spawn_calls.append((room, name))
 
     with patch("httpx.post", side_effect=mock_post), \
-         patch("murmur.cli._spawn_agent", side_effect=mock_spawn):
+         patch("quorus.cli._spawn_agent", side_effect=mock_spawn):
         _cmd_setup_swarm(_args(
             rooms="existing:Old room,failroom:Error room,newroom:New room",
             agents=1,
@@ -219,11 +219,11 @@ def test_setup_swarm_skips_existing_room(monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------------------
-# murmur board
+# quorus board
 # ---------------------------------------------------------------------------
 
 async def test_board_renders_table(monkeypatch, capsys):
-    from murmur.cli import _show_board
+    from quorus.cli import _show_board
 
     rooms = [
         {"id": "r1", "name": "backend", "members": ["alice", "bob"]},
@@ -245,7 +245,7 @@ async def test_board_renders_table(monkeypatch, capsys):
     client.get = AsyncMock(side_effect=get_side_effect)
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _show_board()
 
     captured = capsys.readouterr()
@@ -254,7 +254,7 @@ async def test_board_renders_table(monkeypatch, capsys):
 
 
 async def test_board_room_filter(monkeypatch, capsys):
-    from murmur.cli import _show_board
+    from quorus.cli import _show_board
 
     rooms = [
         {"id": "r1", "name": "backend", "members": ["alice"]},
@@ -274,7 +274,7 @@ async def test_board_room_filter(monkeypatch, capsys):
     client.get = AsyncMock(side_effect=get_side_effect)
     client.aclose = AsyncMock()
 
-    with patch("murmur.cli._get_client", return_value=client):
+    with patch("quorus.cli._get_client", return_value=client):
         await _show_board(room_filter="backend")
 
     # State only fetched for the filtered room
@@ -289,11 +289,11 @@ async def test_board_room_filter(monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------------------
-# murmur resolve
+# quorus resolve
 # ---------------------------------------------------------------------------
 
 def test_resolve_exits_cleanly_when_no_conflicts(monkeypatch, capsys):
-    from murmur.cli import _cmd_resolve
+    from quorus.cli import _cmd_resolve
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
@@ -312,7 +312,7 @@ def test_resolve_exits_cleanly_when_no_conflicts(monkeypatch, capsys):
 
 
 def test_resolve_skips_gracefully_without_api_key(monkeypatch, capsys):
-    from murmur.cli import _cmd_resolve
+    from quorus.cli import _cmd_resolve
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
@@ -327,7 +327,7 @@ def test_resolve_skips_gracefully_without_api_key(monkeypatch, capsys):
 
 
 def test_resolve_reads_conflict_and_calls_claude(monkeypatch, tmp_path, capsys):
-    from murmur.cli import _cmd_resolve
+    from quorus.cli import _cmd_resolve
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
@@ -374,7 +374,7 @@ def test_resolve_reads_conflict_and_calls_claude(monkeypatch, tmp_path, capsys):
     # Decline to apply the resolution (Confirm.ask → False)
     with patch.dict("sys.modules", {"anthropic": mock_anthropic_module}), \
          patch("subprocess.run", return_value=git_result), \
-         patch("murmur.cli.Confirm.ask", return_value=False):
+         patch("quorus.cli.Confirm.ask", return_value=False):
         _cmd_resolve(_args(room=None, model="claude-sonnet-4-6"))
 
     # Claude was called with the conflict content in the prompt

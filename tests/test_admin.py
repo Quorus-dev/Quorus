@@ -7,8 +7,8 @@ directly, plus test the route handlers via ASGI client when possible.
 
 import pytest
 
-from murmur.admin.models import ApiKey, Participant, Tenant
-from murmur.auth.tokens import create_jwt, generate_api_key, verify_api_key
+from quorus.admin.models import ApiKey, Participant, Tenant
+from quorus.auth.tokens import create_jwt, generate_api_key, verify_api_key
 
 # ---------------------------------------------------------------------------
 # Model unit tests (no database needed)
@@ -69,14 +69,14 @@ class TestApiKeyModel:
 
 class TestAdminValidation:
     def test_valid_slug(self):
-        from murmur.admin.routes import _validate_slug
+        from quorus.admin.routes import _validate_slug
 
         assert _validate_slug("acme") == "acme"
         assert _validate_slug("my-org") == "my-org"
         assert _validate_slug("org_123") == "org_123"
 
     def test_invalid_slug(self):
-        from murmur.admin.routes import _validate_slug
+        from quorus.admin.routes import _validate_slug
 
         with pytest.raises(ValueError):
             _validate_slug("")  # Empty
@@ -88,13 +88,13 @@ class TestAdminValidation:
             _validate_slug("-starts-with-dash")
 
     def test_valid_name(self):
-        from murmur.admin.routes import _validate_name
+        from quorus.admin.routes import _validate_name
 
         assert _validate_name("agent-1") == "agent-1"
         assert _validate_name("Agent_2") == "Agent_2"
 
     def test_invalid_name(self):
-        from murmur.admin.routes import _validate_name
+        from quorus.admin.routes import _validate_name
 
         with pytest.raises(ValueError):
             _validate_name("")
@@ -118,7 +118,7 @@ class TestAuthFixtures:
             tenant_slug="acme",
             role="admin",
         )
-        from murmur.auth.tokens import decode_jwt
+        from quorus.auth.tokens import decode_jwt
 
         claims = decode_jwt(token)
         assert claims["sub"] == "admin-agent"
@@ -133,7 +133,7 @@ class TestAuthFixtures:
             tenant_slug="acme",
             role="user",
         )
-        from murmur.auth.tokens import decode_jwt
+        from quorus.auth.tokens import decode_jwt
 
         claims = decode_jwt(token)
         assert claims["sub"] == "worker-1"

@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from murmur.relay import _load_from_file, _reset_state, _save_to_file, app
+from quorus.relay import _load_from_file, _reset_state, _save_to_file, app
 
 
 def _fake_getaddrinfo_public(host, port, family=0, type_=0, proto=0, flags=0):
@@ -193,7 +193,7 @@ async def test_recipient_quota_rejects_when_full(client: AsyncClient, auth_heade
     from unittest.mock import patch
 
     # Patch MAX_RECIPIENT_DEPTH to a small value for testing
-    with patch("murmur.services.message_svc.MAX_RECIPIENT_DEPTH", 2):
+    with patch("quorus.services.message_svc.MAX_RECIPIENT_DEPTH", 2):
         # Send 2 messages (at limit)
         await client.post(
             "/messages",
@@ -221,7 +221,7 @@ async def test_file_persistence_save_and_load(
 ):
     filepath = str(tmp_path / "messages.json")
 
-    with patch("murmur.relay.MESSAGES_FILE", filepath):
+    with patch("quorus.relay.MESSAGES_FILE", filepath):
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "persist me"},
@@ -243,7 +243,7 @@ async def test_delivered_messages_do_not_reappear_after_reload(
 ):
     filepath = str(tmp_path / "messages.json")
 
-    with patch("murmur.relay.MESSAGES_FILE", filepath):
+    with patch("quorus.relay.MESSAGES_FILE", filepath):
         await client.post(
             "/messages",
             json={"from_name": "alice", "to": "bob", "content": "deliver once"},
@@ -352,7 +352,7 @@ async def test_chunked_message_too_large_for_storage_cap_returns_413(
     """Reject chunked messages that cannot fit within the configured global cap."""
     with (
         patch.object(app.state.message_service, "_max_message_size", 4),
-        patch("murmur.services.message_svc.MAX_MESSAGES", 2),
+        patch("quorus.services.message_svc.MAX_MESSAGES", 2),
     ):
         resp = await client.post(
             "/messages",
@@ -633,7 +633,7 @@ async def test_delete_nonexistent_webhook(client: AsyncClient, auth_headers: dic
 
 def test_main_runs_uvicorn(monkeypatch):
     """CLI entrypoint should invoke uvicorn with the configured port."""
-    from murmur.relay import main
+    from quorus.relay import main
 
     calls = []
 
@@ -1011,7 +1011,7 @@ async def test_room_persistence_save_and_load(
     client: AsyncClient, auth_headers: dict, tmp_path
 ):
     filepath = str(tmp_path / "messages.json")
-    with patch("murmur.relay.MESSAGES_FILE", filepath):
+    with patch("quorus.relay.MESSAGES_FILE", filepath):
         await client.post(
             "/rooms",
             json={"name": "test-room", "created_by": "alice"},
@@ -1219,7 +1219,7 @@ async def test_room_history_requires_auth(client: AsyncClient):
 async def test_room_history_persists(client: AsyncClient, auth_headers: dict, tmp_path):
     """Room history should survive save/load cycle."""
     filepath = str(tmp_path / "messages.json")
-    with patch("murmur.relay.MESSAGES_FILE", filepath):
+    with patch("quorus.relay.MESSAGES_FILE", filepath):
         create_resp = await client.post(
             "/rooms", json={"name": "save-room", "created_by": "alice"},
             headers=auth_headers,
@@ -1574,7 +1574,7 @@ async def test_invite_page_requires_auth(client: AsyncClient, auth_headers):
 
 async def test_invite_join_with_scoped_token(client: AsyncClient, auth_headers):
     """Invite join endpoint should accept valid JWT tokens without relay auth."""
-    from murmur.relay import app
+    from quorus.relay import app
 
     invite_svc = app.state.invite_service
 
@@ -1597,7 +1597,7 @@ async def test_invite_join_with_scoped_token(client: AsyncClient, auth_headers):
 
 async def test_invite_join_rejects_wrong_room_token(client: AsyncClient, auth_headers):
     """Invite token for room A should not work for room B (different room_id in JWT)."""
-    from murmur.relay import app
+    from quorus.relay import app
 
     invite_svc = app.state.invite_service
 
@@ -1629,7 +1629,7 @@ async def test_invite_join_rejects_wrong_room_token(client: AsyncClient, auth_he
 
 async def test_invite_join_rejects_expired_token(client: AsyncClient, auth_headers):
     """Expired JWT invite tokens should be rejected."""
-    from murmur.relay import app
+    from quorus.relay import app
 
     invite_svc = app.state.invite_service
 
@@ -1724,7 +1724,7 @@ async def test_persistence_survives_restart(
 ):
     """Rooms and history survive save/load (simulated restart)."""
     filepath = str(tmp_path / "messages.json")
-    with patch("murmur.relay.MESSAGES_FILE", filepath):
+    with patch("quorus.relay.MESSAGES_FILE", filepath):
         # Create room and send message
         await client.post(
             "/rooms", json={"name": "persist-room", "created_by": "alice"},
@@ -1764,7 +1764,7 @@ async def test_dashboard_returns_html(client: AsyncClient):
     """GET / should return the web dashboard without auth."""
     resp = await client.get("/")
     assert resp.status_code == 200
-    assert "murmur" in resp.text.lower()
+    assert "quorus" in resp.text.lower()
     assert "text/html" in resp.headers.get("content-type", "")
 
 
@@ -2395,7 +2395,7 @@ async def test_claim_task_shows_taken(client: AsyncClient, auth_headers: dict):
 async def test_claim_task_appears_in_state(client: AsyncClient, auth_headers: dict):
     """Claimed task appears in GET /rooms/{id}/state locked_files."""
     room_id = await _setup_lock_room(client, auth_headers, "lock-state-room")
-    path = "murmur/relay.py"
+    path = "quorus/relay.py"
 
     resp = await client.post(
         f"/rooms/{room_id}/lock",
@@ -2654,7 +2654,7 @@ async def test_add_room_decision(client: AsyncClient, auth_headers: dict):
 
 async def test_404_rate_limit_blocks_after_threshold(client: AsyncClient, auth_headers):
     """Repeated 404s from same client should trigger rate limiting."""
-    from murmur import relay
+    from quorus import relay
 
     # Reset state
     relay._not_found_counts.clear()
@@ -2688,7 +2688,7 @@ async def test_404_rate_limit_blocks_after_threshold(client: AsyncClient, auth_h
 
 async def test_404_rate_limit_allows_normal_requests(client: AsyncClient, auth_headers):
     """Normal 404s under threshold should not be blocked."""
-    from murmur import relay
+    from quorus import relay
 
     # Reset state
     relay._not_found_counts.clear()
@@ -2749,7 +2749,7 @@ async def test_claim_task_accepts_nested_path(client: AsyncClient, auth_headers:
     room_id = await _setup_lock_room(client, auth_headers, "lock-nested-room")
     resp = await client.post(
         f"/rooms/{room_id}/lock",
-        json={"file_path": "src/murmur/routes/room_state.py", "claimed_by": "alice"},
+        json={"file_path": "src/quorus/routes/room_state.py", "claimed_by": "alice"},
         headers=auth_headers,
     )
     assert resp.status_code == 200
@@ -2952,7 +2952,7 @@ async def test_rate_limit_dm_send(client: AsyncClient, auth_headers):
 @pytest.mark.anyio
 async def test_dm_content_too_large_returns_413(client: AsyncClient, auth_headers):
     """POST /messages returns 413 when content exceeds MAX_MESSAGE_SIZE bytes."""
-    import murmur.routes.messages as dm_routes
+    import quorus.routes.messages as dm_routes
 
     original = dm_routes._MAX_DM_SIZE
     try:

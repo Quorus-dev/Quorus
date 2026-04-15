@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprehensive E2E test for Murmur relay.
+"""Comprehensive E2E test for Quorus relay.
 
 Starts the relay server, creates a room, joins 3 agents, sends messages
 with mixed types, and verifies fan-out, SSE delivery, and docker build.
@@ -353,12 +353,12 @@ def test_docker_build() -> None:
 
 async def run_tests() -> None:
     """Run all E2E tests against a live relay."""
-    print("\n=== Murmur E2E Test Suite ===\n")
+    print("\n=== Quorus E2E Test Suite ===\n")
 
     # Start relay server
     _log("Starting relay server on port 18080...")
     relay_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "murmur.relay:app",
+        [sys.executable, "-m", "uvicorn", "quorus.relay:app",
          "--host", "127.0.0.1", "--port", "18080"],
         env={
             **__import__("os").environ,

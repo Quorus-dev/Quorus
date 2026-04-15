@@ -9,7 +9,7 @@ import asyncio
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from murmur.relay import _reset_state, app
+from quorus.relay import _reset_state, app
 
 HEADERS = {"Authorization": "Bearer test-secret"}
 
@@ -410,12 +410,12 @@ class TestRoomStateMembership:
 
     @pytest.fixture
     def alice_jwt(self):
-        from murmur.auth.tokens import create_jwt
+        from quorus.auth.tokens import create_jwt
         return create_jwt(sub="alice", tenant_id="t-1", tenant_slug="acme", role="user")
 
     @pytest.fixture
     def bob_jwt(self):
-        from murmur.auth.tokens import create_jwt
+        from quorus.auth.tokens import create_jwt
         return create_jwt(sub="bob", tenant_id="t-1", tenant_slug="acme", role="user")
 
     @pytest.fixture

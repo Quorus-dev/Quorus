@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from murmur.relay import _reset_state, app
+from quorus.relay import _reset_state, app
 
 HEADERS = {"Authorization": "Bearer test-secret"}
 
@@ -288,7 +288,7 @@ async def test_room_usage_resolves_by_name(client: AsyncClient):
 
 async def test_usage_router_is_importable():
     """The usage router module is importable and has the expected routes."""
-    from murmur.routes.usage import router
+    from quorus.routes.usage import router
 
     paths = [r.path for r in router.routes]  # type: ignore[attr-defined]
     assert "/v1/usage" in paths, f"Expected /v1/usage in router paths, got: {paths}"

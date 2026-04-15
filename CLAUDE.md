@@ -1,4 +1,4 @@
-# CLAUDE.md — Murmur
+# CLAUDE.md — Quorus
 
 ## Shared Context Protocol
 
@@ -16,7 +16,7 @@
 
 ## Project
 
-Murmur (mcp-tunnel) — relay-based inter-agent communication for distributed Claude Code instances.
+Quorus — coordination layer for AI agent swarms. Real-time rooms, messaging, distributed locks.
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich
 
@@ -29,13 +29,13 @@ Murmur (mcp-tunnel) — relay-based inter-agent communication for distributed Cl
 ## Architecture
 
 ```
-Claude Code A -> MCP Server (stdio) -> HTTP -> [Relay Server (FastAPI)] -> HTTP -> MCP Server (stdio) -> Claude Code B
+Claude Code A -> MCP Server (stdio) -> HTTP -> [Quorus Relay (FastAPI)] -> HTTP -> MCP Server (stdio) -> Claude Code B
 ```
 
-- `relay_server.py` — Central relay (FastAPI). Per-recipient queues, persistence, chunking, analytics.
-- `mcp_server.py` — Local MCP server. Tools: send_message, check_messages, list_participants.
-- `tunnel_config.py` — Config loading. Priority: env vars > ~/mcp-tunnel/config.json > legacy fallback.
-- `analytics.py` — CLI dashboard for relay stats.
+- `quorus/relay.py` — Central relay (FastAPI). Rooms, SSE fan-out, persistence, rate limiting.
+- `quorus_mcp/server.py` — MCP server. 12 tools for coordination.
+- `quorus/config.py` — Config loading. Priority: env vars > ~/.quorus/config.json > legacy fallback.
+- `quorus_cli/cli.py` — CLI commands. `quorus` opens TUI by default.
 
 ---
 

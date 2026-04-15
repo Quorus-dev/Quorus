@@ -6,9 +6,9 @@ Uses the existing relay ASGI client with JWT fixtures.
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from murmur.auth.tokens import create_jwt
-from murmur.relay import app
-from murmur.relay_routes import reset_state
+from quorus.auth.tokens import create_jwt
+from quorus.relay import app
+from quorus.relay_routes import reset_state
 
 
 @pytest.fixture(autouse=True)

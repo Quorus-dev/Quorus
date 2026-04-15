@@ -1,7 +1,7 @@
 [project]
-name = "murmur-sdk"
-version = "0.3.0"
-description = "Murmur SDK — lightweight client for the Murmur relay (rooms, messaging, coordination)"
+name = "quorus-sdk"
+version = "0.4.0"
+description = "Quorus SDK — lightweight client for the Quorus relay (rooms, messaging, coordination)"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
@@ -9,7 +9,7 @@ authors = [
     {name = "Aarya"},
 ]
 readme = "README.md"
-keywords = ["ai", "agents", "communication", "multi-agent", "relay", "chat", "sdk"]
+keywords = ["ai", "agents", "coordination", "multi-agent", "swarm", "sdk"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -27,12 +27,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Aarya2004/murmur"
-Repository = "https://github.com/Aarya2004/murmur"
-Issues = "https://github.com/Aarya2004/murmur/issues"
+Homepage = "https://quorus.dev"
+Repository = "https://github.com/Aarya2004/quorus"
+Issues = "https://github.com/Aarya2004/quorus/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["murmur_sdk"]
+packages = ["quorus_sdk"]
 
 [build-system]
 requires = ["hatchling"]

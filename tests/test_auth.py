@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from murmur.auth.tokens import (
+from quorus.auth.tokens import (
     create_jwt,
     decode_jwt,
     extract_key_prefix,
@@ -23,7 +23,7 @@ class TestJWT:
     def _pin_jwt_secret(self, monkeypatch):
         """Ensure JWT_SECRET is deterministic regardless of test ordering."""
         monkeypatch.setattr(
-            "murmur.auth.tokens.JWT_SECRET",
+            "quorus.auth.tokens.JWT_SECRET",
             "test-jwt-secret-that-is-at-least-32-bytes-long",
         )
 
@@ -103,8 +103,8 @@ class TestJWT:
             tenant_slug="acme",
         )
         claims = decode_jwt(token)
-        assert claims["iss"] == "murmur"
-        assert claims["aud"] == "murmur-relay"
+        assert claims["iss"] == "quorus"
+        assert claims["aud"] == "quorus-relay"
         assert "jti" in claims
         assert len(claims["jti"]) == 32  # hex(16 bytes)
 
@@ -112,11 +112,11 @@ class TestJWT:
         import jwt as pyjwt
 
         # Craft a token with wrong issuer
-        from murmur.auth.tokens import JWT_AUDIENCE, _get_jwt_secret
+        from quorus.auth.tokens import JWT_AUDIENCE, _get_jwt_secret
 
         payload = {
             "sub": "agent-1",
-            "iss": "not-murmur",
+            "iss": "not-quorus",
             "aud": JWT_AUDIENCE,
         }
         token = pyjwt.encode(payload, _get_jwt_secret(), algorithm="HS256")
@@ -126,7 +126,7 @@ class TestJWT:
     def test_wrong_audience_rejected(self):
         import jwt as pyjwt
 
-        from murmur.auth.tokens import JWT_ISSUER, _get_jwt_secret
+        from quorus.auth.tokens import JWT_ISSUER, _get_jwt_secret
 
         payload = {
             "sub": "agent-1",
@@ -225,7 +225,7 @@ class TestAuthMiddleware:
 
     @pytest.mark.asyncio
     async def test_jwt_auth(self, jwt_token):
-        from murmur.auth.middleware import verify_auth
+        from quorus.auth.middleware import verify_auth
 
         request = self._make_request(f"Bearer {jwt_token}")
         ctx = await verify_auth(request)
@@ -236,7 +236,7 @@ class TestAuthMiddleware:
 
     @pytest.mark.asyncio
     async def test_legacy_auth(self):
-        from murmur.auth.middleware import verify_auth
+        from quorus.auth.middleware import verify_auth
 
         request = self._make_request("Bearer test-secret")
         ctx = await verify_auth(request)
@@ -248,7 +248,7 @@ class TestAuthMiddleware:
     async def test_no_auth_fails(self):
         from fastapi import HTTPException
 
-        from murmur.auth.middleware import verify_auth
+        from quorus.auth.middleware import verify_auth
 
         request = self._make_request("")
         with pytest.raises(HTTPException) as exc_info:
@@ -259,7 +259,7 @@ class TestAuthMiddleware:
     async def test_invalid_token_fails(self):
         from fastapi import HTTPException
 
-        from murmur.auth.middleware import verify_auth
+        from quorus.auth.middleware import verify_auth
 
         request = self._make_request("Bearer invalid-token")
         with pytest.raises(HTTPException) as exc_info:
@@ -269,7 +269,7 @@ class TestAuthMiddleware:
 
 class TestIdentityEnforcement:
     def test_require_identity_matches(self):
-        from murmur.auth.middleware import AuthContext, require_identity
+        from quorus.auth.middleware import AuthContext, require_identity
 
         ctx = AuthContext(sub="agent-1", role="user")
         require_identity(ctx, "agent-1")  # Should not raise
@@ -277,7 +277,7 @@ class TestIdentityEnforcement:
     def test_require_identity_mismatch(self):
         from fastapi import HTTPException
 
-        from murmur.auth.middleware import AuthContext, require_identity
+        from quorus.auth.middleware import AuthContext, require_identity
 
         ctx = AuthContext(sub="agent-1", role="user")
         with pytest.raises(HTTPException) as exc_info:
@@ -285,13 +285,13 @@ class TestIdentityEnforcement:
         assert exc_info.value.status_code == 403
 
     def test_require_identity_legacy_skips(self):
-        from murmur.auth.middleware import AuthContext, require_identity
+        from quorus.auth.middleware import AuthContext, require_identity
 
         ctx = AuthContext(sub=None, is_legacy=True, role="admin")
         require_identity(ctx, "any-name")  # Should not raise
 
     def test_require_role_admin(self):
-        from murmur.auth.middleware import AuthContext, require_role
+        from quorus.auth.middleware import AuthContext, require_role
 
         ctx = AuthContext(sub="admin", role="admin")
         require_role(ctx, "admin")  # Should not raise
@@ -299,7 +299,7 @@ class TestIdentityEnforcement:
     def test_require_role_mismatch(self):
         from fastapi import HTTPException
 
-        from murmur.auth.middleware import AuthContext, require_role
+        from quorus.auth.middleware import AuthContext, require_role
 
         ctx = AuthContext(sub="user", role="user")
         with pytest.raises(HTTPException) as exc_info:
@@ -307,7 +307,7 @@ class TestIdentityEnforcement:
         assert exc_info.value.status_code == 403
 
     def test_require_role_legacy_skips(self):
-        from murmur.auth.middleware import AuthContext, require_role
+        from quorus.auth.middleware import AuthContext, require_role
 
         ctx = AuthContext(sub=None, is_legacy=True, role="admin")
         require_role(ctx, "admin")  # Should not raise

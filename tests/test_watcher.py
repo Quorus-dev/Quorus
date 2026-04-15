@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from murmur.watcher import Watcher
+from quorus.watcher import Watcher
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ async def temp_context_dir():
 
 async def test_watcher_init(temp_context_dir: Path):
   """Watcher can be initialized with parameters."""
-  context_path = temp_context_dir / ".murmur" / "context.md"
+  context_path = temp_context_dir / ".quorus" / "context.md"
   watcher = Watcher(
       relay_url="http://localhost:8080",
       auth_headers={"Authorization": "Bearer test"},
@@ -100,7 +100,7 @@ async def test_watcher_format_context_md():
 
 async def test_watcher_write_context(temp_context_dir: Path):
   """Watcher writes context.md atomically."""
-  context_path = temp_context_dir / ".murmur" / "context.md"
+  context_path = temp_context_dir / ".quorus" / "context.md"
   watcher = Watcher(
       relay_url="http://localhost:8080",
       auth_headers={},
@@ -130,9 +130,9 @@ async def test_watcher_write_context(temp_context_dir: Path):
   assert "**Agent**: test-agent" in content
 
 
-async def test_watcher_creates_murmur_dir(temp_context_dir: Path):
-  """Watcher creates .murmur directory if it doesn't exist."""
-  context_path = temp_context_dir / ".murmur" / "subdir" / "context.md"
+async def test_watcher_creates_quorus_dir(temp_context_dir: Path):
+  """Watcher creates .quorus directory if it doesn't exist."""
+  context_path = temp_context_dir / ".quorus" / "subdir" / "context.md"
   assert not context_path.parent.exists()
 
   watcher = Watcher(

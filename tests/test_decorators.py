@@ -1,4 +1,4 @@
-"""Tests for murmur.decorators — decorator-based agent API."""
+"""Tests for quorus.decorators — decorator-based agent API."""
 
 import threading
 import time
@@ -6,13 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from murmur.decorators import Agent
+from quorus.decorators import Agent
 
 
 @pytest.fixture
 def agent():
     """Create an Agent with mocked HTTP client."""
-    with patch("murmur.decorators.MurmurClient") as MockClient:
+    with patch("quorus.decorators.QuorusClient") as MockClient:
         mock_client = MagicMock()
         mock_client.receive.return_value = []
         mock_client.send.return_value = {"id": "m1"}

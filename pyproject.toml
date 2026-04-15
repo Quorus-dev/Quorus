@@ -1,7 +1,7 @@
 [project]
-name = "murmur-ai"
-version = "0.3.0"
-description = "Real-time inter-agent communication for AI agents — rooms, messaging, and coordination"
+name = "quorus"
+version = "0.4.0"
+description = "Real-time coordination layer for AI agent swarms — rooms, messaging, distributed locks"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
@@ -9,7 +9,7 @@ authors = [
     {name = "Aarya"},
 ]
 readme = "README.md"
-keywords = ["ai", "agents", "communication", "mcp", "multi-agent", "relay", "chat"]
+keywords = ["ai", "agents", "coordination", "mcp", "multi-agent", "swarm", "relay"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -42,14 +42,14 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Aarya2004/murmur"
-Repository = "https://github.com/Aarya2004/murmur"
-Issues = "https://github.com/Aarya2004/murmur/issues"
+Homepage = "https://quorus.dev"
+Repository = "https://github.com/Aarya2004/quorus"
+Issues = "https://github.com/Aarya2004/quorus/issues"
 
 [project.scripts]
-murmur = "murmur_cli.cli:main"
-murmur-relay = "murmur.relay:main"
-murmur-analytics = "murmur.analytics:main"
+quorus = "quorus_cli.cli:main"
+quorus-relay = "quorus.relay:main"
+quorus-analytics = "quorus.analytics:main"
 
 [tool.ruff]
 target-version = "py310"
@@ -57,7 +57,7 @@ line-length = 100
 
 [tool.ruff.lint]
 # Dashboard contains inline HTML/CSS/JS in Python strings
-per-file-ignores = {"murmur/dashboard.py" = ["E501"]}
+per-file-ignores = {"quorus/dashboard.py" = ["E501"]}
 select = ["E", "F", "I", "W"]
 
 [project.optional-dependencies]
@@ -80,11 +80,11 @@ markers = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["murmur", "packages/sdk/murmur_sdk", "packages/tui/murmur_tui", "packages/mcp/murmur_mcp", "packages/cli/murmur_cli"]
+packages = ["quorus", "packages/sdk/quorus_sdk", "packages/tui/quorus_tui", "packages/mcp/quorus_mcp", "packages/cli/quorus_cli"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
-    "/.murmur",
+    "/.quorus",
     "*.db",
     "*.db-shm",
     "*.db-wal",

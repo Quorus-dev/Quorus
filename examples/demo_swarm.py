@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Murmur Swarm Demo — shows full "brief to done" workflow.
+"""Quorus Swarm Demo — shows full "brief to done" workflow.
 
 This demo shows:
 1. Setup: create 2 rooms (backend, frontend) with 3 agents
@@ -17,7 +17,7 @@ Visit http://localhost:8080 to see the swarm in action.
 
 import asyncio
 
-from murmur.sdk import Room
+from quorus.sdk import Room
 
 
 async def main():

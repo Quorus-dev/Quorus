@@ -1,7 +1,7 @@
 [project]
-name = "murmur-tui"
-version = "0.3.0"
-description = "Murmur TUI — full-screen terminal hub for managing rooms, agents, and live chat"
+name = "quorus-tui"
+version = "0.4.0"
+description = "Quorus TUI — full-screen terminal hub for managing rooms, agents, and live chat"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
@@ -9,7 +9,7 @@ authors = [
     {name = "Aarya"},
 ]
 readme = "README.md"
-keywords = ["ai", "agents", "communication", "multi-agent", "relay", "chat", "tui", "terminal"]
+keywords = ["ai", "agents", "coordination", "multi-agent", "swarm", "tui", "terminal"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -28,12 +28,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Aarya2004/murmur"
-Repository = "https://github.com/Aarya2004/murmur"
-Issues = "https://github.com/Aarya2004/murmur/issues"
+Homepage = "https://quorus.dev"
+Repository = "https://github.com/Aarya2004/quorus"
+Issues = "https://github.com/Aarya2004/quorus/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["murmur_tui"]
+packages = ["quorus_tui"]
 
 [build-system]
 requires = ["hatchling"]
