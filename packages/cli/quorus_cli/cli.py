@@ -40,6 +40,22 @@ def _relay_unreachable(url: str = "") -> None:
     )
 
 
+def _config_dir() -> Path:
+    """Return the config dir, honoring QUORUS_CONFIG_DIR / MCP_TUNNEL_CONFIG_DIR.
+
+    Falls back to ``~/.quorus``. Used by commands that WRITE config (init,
+    connect, join, add-agent) so they stay in sync with ``resolve_config_file``
+    which is used to READ config.
+    """
+    override = (
+        os.environ.get("QUORUS_CONFIG_DIR")
+        or os.environ.get("MCP_TUNNEL_CONFIG_DIR")
+    )
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".quorus"
+
+
 def _write_sensitive_json(path: Path, data: dict) -> None:
     """Write JSON config atomically with 0600 perms (no TOCTOU window).
 
@@ -1827,7 +1843,7 @@ def _cmd_init(args):
         sys.exit(1)
 
     # 1. Write config (warn if overwriting)
-    config_dir = Path.home() / ".quorus"
+    config_dir = _config_dir()
     config_dir.mkdir(exist_ok=True)
     config_path = config_dir / "config.json"
     if config_path.exists():
@@ -2045,7 +2061,7 @@ def _cmd_join(args):
     name = args.name
     repo_dir = Path(__file__).resolve().parent.parent
     quorus_dir = Path(__file__).resolve().parent
-    config_dir = Path.home() / ".quorus"
+    config_dir = _config_dir()
     config_path = config_dir / "config.json"
 
     # 1. Write config only if needed (token join, explicit flags, or no config exists)
@@ -2267,7 +2283,7 @@ def _cmd_quickjoin(args):
     quorus_dir = Path(__file__).resolve().parent
 
     # 1. Write config
-    config_dir = Path.home() / ".quorus"
+    config_dir = _config_dir()
     config_dir.mkdir(exist_ok=True)
     config = {
         "relay_url": relay_url,
@@ -2717,7 +2733,7 @@ def _cmd_quickstart(args):
         sys.exit(1)
 
     # 2. Write config for the human user
-    config_dir = Path.home() / ".quorus"
+    config_dir = _config_dir()
     config_dir.mkdir(exist_ok=True)
     config = {
         "relay_url": relay_url,
