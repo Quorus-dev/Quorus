@@ -741,20 +741,34 @@ class RedisPresenceBackend:
 
     async def list_all(self, tenant_id: str, timeout_seconds: int) -> list[dict]:
         # Return ALL entries; caller uses timeout_seconds to classify online/offline
-        names = await _with_timeout(self._r.zrange(self._index_key(tenant_id), 0, -1))
+        # Use ZRANGE with scores to get names + timestamps in one call
+        names_with_scores = await _with_timeout(
+            self._r.zrange(self._index_key(tenant_id), 0, -1, withscores=True)
+        )
+        if not names_with_scores:
+            return []
+
         cutoff = (
             datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
         ).timestamp()
+
+        # Build score lookup and pipeline all HGETALL commands
+        scores: dict[str, float] = {}
+        names: list[str] = []
+        for name, score in names_with_scores:
+            names.append(name)
+            scores[name] = score
+
+        # Pipeline all HGETALL commands in one round trip
+        async with self._r.pipeline(transaction=False) as pipe:
+            for name in names:
+                pipe.hgetall(self._entry_key(tenant_id, name))
+            all_data = await _with_timeout(pipe.execute())
+
         results: list[dict] = []
-        for name in names:
-            data = await _with_timeout(self._r.hgetall(self._entry_key(tenant_id, name)))
+        for name, data in zip(names, all_data):
             if data:
-                # Mark online/offline based on score
-                score = await _with_timeout(self._r.zscore(self._index_key(tenant_id), name))
-                if score is not None and score >= cutoff:
-                    data["_online"] = True
-                else:
-                    data["_online"] = False
+                data["_online"] = scores.get(name, 0) >= cutoff
                 results.append(data)
         return results
 
