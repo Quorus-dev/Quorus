@@ -79,7 +79,13 @@ class TokenResponse(BaseModel):
 
 
 @router.post("/signup", response_model=SignupResponse)
-async def signup(req: SignupRequest, request: Request, x_quorus_setup_local: str | None = Header(default=None, alias="X-Quorus-Setup-Local")):
+async def signup(
+    req: SignupRequest,
+    request: Request,
+    x_quorus_setup_local: str | None = Header(
+        default=None, alias="X-Quorus-Setup-Local",
+    ),
+):
     """Self-service signup: creates tenant + participant + API key.
 
     Rate limited to 5 signups per hour per IP.
@@ -89,7 +95,10 @@ async def signup(req: SignupRequest, request: Request, x_quorus_setup_local: str
     client_ip = request.client.host if request.client else "unknown"
     rate_limit_svc = request.app.state.rate_limit_service
     _SIGNUP_WINDOW = 60
-    if not await rate_limit_svc.check_with_limit("global", f"signup:{client_ip}", 5, window=_SIGNUP_WINDOW):
+    allowed = await rate_limit_svc.check_with_limit(
+        "global", f"signup:{client_ip}", 5, window=_SIGNUP_WINDOW,
+    )
+    if not allowed:
         return JSONResponse(
             status_code=429,
             content={"error": "rate_limited", "retry_after": _SIGNUP_WINDOW},

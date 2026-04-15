@@ -518,7 +518,8 @@ class RedisRoomBackend:
         meta = await _with_timeout(self._r.hgetall(self._meta_key(tenant_id, room_id)))
         if not meta:
             return None
-        meta["members"] = await _with_timeout(self._r.hgetall(self._members_key(tenant_id, room_id)))
+        members_key = self._members_key(tenant_id, room_id)
+        meta["members"] = await _with_timeout(self._r.hgetall(members_key))
         return meta
 
     async def get_by_name(self, tenant_id: str, name: str) -> tuple[str, dict] | None:
@@ -557,11 +558,12 @@ class RedisRoomBackend:
             return
         new_name = updates.get("name")
         if new_name is not None:
+            name_idx = self._name_index_key(tenant_id)
             old_name = await _with_timeout(self._r.hget(meta_key, "name"))
             if old_name and old_name != new_name:
-                await _with_timeout(self._r.hdel(self._name_index_key(tenant_id), old_name))
+                await _with_timeout(self._r.hdel(name_idx, old_name))
             if new_name:
-                await _with_timeout(self._r.hset(self._name_index_key(tenant_id), new_name, room_id))
+                await _with_timeout(self._r.hset(name_idx, new_name, room_id))
         fields = {k: v for k, v in updates.items() if k != "members"}
         if fields:
             await _with_timeout(self._r.hset(meta_key, mapping=fields))
