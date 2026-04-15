@@ -2577,14 +2577,33 @@ def _cmd_share(args):
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
     token = f"quorus://{encoded}"
 
-    console.print(f"[bold green]Join token for '{room}'[/bold green]")
-    console.print("")
-    console.print(f"[cyan]{token}[/cyan]")
-    console.print("")
-    console.print(f"[dim]Expires in {ttl_days} days. Share with agents to join.[/dim]")
-    console.print("")
-    console.print("Recipient runs:")
-    console.print(f"  [bold]quorus quickjoin {token[:50]}...[/bold]")
+    from quorus_cli import ui
+
+    ui.heading(f"Invite to #{room}")
+    ui.console.print(
+        f"  [muted]Expires in {ttl_days} days. Share with teammates + agents.[/]\n"
+    )
+    ui.console.print("  [bold]Token:[/]")
+    ui.console.print(f"  [accent]{token}[/]\n")
+    ui.console.print(
+        "  [heading]Your teammate (human) pastes this after installing Quorus:[/]\n"
+    )
+    ui.console.print(f"  [primary]quorus quickjoin {token} --name <their-name>[/]\n")
+    ui.console.print("  [heading]Or, inside the Quorus TUI:[/]\n")
+    ui.console.print(
+        "  [primary]quorus[/] → first-run wizard → [bold]1[/] Paste an invite token\n"
+    )
+    ui.console.print(
+        "  [heading]To add their AI agent (Claude Code, Cursor, Gemini, etc.) "
+        "to the same room:[/]\n"
+    )
+    ui.console.print(
+        f"  [primary]quorus connect <platform> --room {room} --name <agent-name>[/]\n"
+    )
+    ui.console.print(
+        "  [muted]Platforms: claude · cursor · gemini · windsurf · opencode · "
+        "cline · continue · antigravity · codex · aider · ollama · http[/]"
+    )
 
 
 def _cmd_quickjoin(args):
@@ -2684,11 +2703,17 @@ def _cmd_quickjoin(args):
 
     asyncio.run(_do_join())
 
-    console.print("")
-    console.print("[yellow]Restart Claude Code to pick up MCP server.[/yellow]")
-    console.print("")
-    console.print("Start chatting:")
-    console.print(f"  quorus chat {room}")
+    from quorus_cli import ui
+
+    ui.console.print()
+    ui.success(f"Joined [room]#{room}[/] as [agent]@{name}[/]")
+    ui.hint_next_steps([
+        f"quorus                     — open the TUI and start chatting in #{room}",
+        f"quorus chat {room}           — quick-chat mode (CLI only)",
+        f"quorus connect <platform> --room {room} --name <agent-name>",
+        "    ↑ wires your AI agent (Claude Code, Cursor, Gemini, etc.) "
+        "into the same room",
+    ])
 
 
 def _spawn_agent(room: str, name: str, relay_url: str, secret: str):

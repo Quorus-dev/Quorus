@@ -194,20 +194,74 @@ def _first_launch_setup(console: Console) -> dict:
         console.print(" [dim]no local relay.[/dim]")
         console.print()
 
-        # Offer options: local, custom, or signup
+        # Offer options: paste invite token (most common for teammates),
+        # local relay (solo), bring-your-own URL+secret, or sign up.
         console.print("  [dim]How would you like to connect?[/dim]\n")
-        console.print("    [bold]1[/bold] Start a local relay (quorus relay)")
-        console.print("    [bold]2[/bold] Connect to a relay (I have a URL + secret/API key)")
-        console.print("    [bold]3[/bold] Sign up for a new account on a hosted relay")
+        console.print(
+            "    [bold]1[/bold] Paste an invite token "
+            "(someone shared a [cyan]quorus://[/cyan] link with me)"
+        )
+        console.print("    [bold]2[/bold] Start a local relay (solo / testing)")
+        console.print("    [bold]3[/bold] Connect to a relay (I have a URL + secret/API key)")
+        console.print("    [bold]4[/bold] Sign up for a new account on a hosted relay")
         console.print()
 
         choice = Prompt.ask(
             "  Which one?",
-            choices=["1", "2", "3"],
+            choices=["1", "2", "3", "4"],
             default="1",
         )
 
-        if choice == "2":
+        if choice == "1":
+            # Paste invite token — most common teammate onboarding flow.
+            import base64 as _b64
+            import json as _json
+
+            token = Prompt.ask(
+                "  Paste the [cyan]quorus://[/cyan] invite token"
+            ).strip()
+            # Accept bare token, quorus://... form, and legacy murm_join_
+            raw = token
+            decoded: dict = {}
+            try:
+                if raw.startswith("quorus://"):
+                    raw = raw[len("quorus://"):]
+                    decoded = _json.loads(_b64.urlsafe_b64decode(raw.encode()).decode())
+                    relay_url = decoded.get("r", "").rstrip("/")
+                    secret = decoded.get("s", "")
+                    api_key = decoded.get("k", "")
+                    joined_room = decoded.get("n", "")
+                elif raw.startswith("quorus_join_") or raw.startswith("murm_join_"):
+                    prefix = "quorus_join_" if raw.startswith("quorus_join_") else "murm_join_"
+                    payload = _json.loads(
+                        _b64.urlsafe_b64decode(raw[len(prefix):].encode()).decode()
+                    )
+                    relay_url = payload.get("relay_url", "").rstrip("/")
+                    secret = payload.get("secret", "")
+                    joined_room = payload.get("room", "")
+                else:
+                    console.print("  [yellow]Token format not recognized — "
+                                  "falling back to manual URL entry.[/yellow]")
+                    decoded = {}
+            except Exception as exc:
+                console.print(f"  [yellow]Couldn't decode token: {exc}[/yellow]")
+                decoded = {}
+
+            if decoded and relay_url:
+                console.print(f"\n  Connecting to {relay_url}...", end="")
+                if _try_connect(relay_url):
+                    console.print(" [bold green]✓[/bold green]")
+                    relay_ok = True
+                    if joined_room:
+                        console.print(
+                            f"  [dim]Token grants access to "
+                            f"[cyan]#{joined_room}[/cyan]. "
+                            "You'll be auto-joined on first message.[/dim]"
+                        )
+                else:
+                    console.print(" [yellow]not reachable[/yellow]")
+
+        elif choice == "3":
             # Connect with existing credentials
             relay_url = Prompt.ask(
                 "  Relay URL"
@@ -232,7 +286,7 @@ def _first_launch_setup(console: Console) -> dict:
             else:
                 console.print(" [yellow]not reachable[/yellow]")
 
-        elif choice == "3":
+        elif choice == "4":
             # Self-service signup
             relay_url = Prompt.ask(
                 "  Relay URL",
