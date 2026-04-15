@@ -7,6 +7,7 @@ All keys are tenant-scoped with the prefix ``t:{tenant_id}:``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -24,6 +25,30 @@ MESSAGE_TTL = int(os.environ.get("MESSAGE_TTL_SECONDS", "86400"))
 VISIBILITY_TIMEOUT = int(os.environ.get("VISIBILITY_TIMEOUT_SECONDS", "60"))
 SSE_TOKEN_TTL = int(os.environ.get("SSE_TOKEN_TTL", "300"))
 HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))
+
+# ---------------------------------------------------------------------------
+# Redis operation timeout
+# ---------------------------------------------------------------------------
+
+REDIS_OP_TIMEOUT_SECONDS = float(os.getenv("QUORUS_REDIS_OP_TIMEOUT", "10"))
+
+
+class BackendError(Exception):
+    """Base class for backend errors."""
+
+
+class RedisOperationTimeout(BackendError):
+    """Raised when a Redis operation exceeds REDIS_OP_TIMEOUT_SECONDS."""
+
+
+async def _with_timeout(coro):
+    """Wrap *coro* with REDIS_OP_TIMEOUT_SECONDS; raise RedisOperationTimeout on timeout."""
+    try:
+        return await asyncio.wait_for(coro, timeout=REDIS_OP_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        raise RedisOperationTimeout(
+            f"Redis operation timed out after {REDIS_OP_TIMEOUT_SECONDS}s"
+        )
 
 # Lua script for atomic sliding-window rate limiting
 _RATE_LIMIT_LUA = """
@@ -186,7 +211,7 @@ class RedisMessageBackend:
         # No MAXLEN trim — acked entries are deleted via XDEL in ack().
         # Stream growth is bounded by delivery rate, not blind trimming
         # that could drop unacked pending entries.
-        await self._r.xadd(key, {"data": json.dumps(message)})
+        await _with_timeout(self._r.xadd(key, {"data": json.dumps(message)}))
 
     async def enqueue_batch(
         self, tenant_id: str, to_name: str, messages: list[dict]
@@ -198,7 +223,7 @@ class RedisMessageBackend:
         async with self._r.pipeline(transaction=False) as pipe:
             for m in messages:
                 pipe.xadd(key, {"data": json.dumps(m)})
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
 
     async def enqueue_fanout(
         self, tenant_id: str, messages_by_recipient: dict[str, dict],
@@ -228,13 +253,13 @@ class RedisMessageBackend:
         if maxlen:
             # Use Lua script for atomic quota-check + enqueue (no message loss)
             messages = [json.dumps(messages_by_recipient[r]) for r in recipients]
-            result = await self._r.eval(
+            result = await _with_timeout(self._r.eval(
                 _QUOTA_ENQUEUE_LUA,
                 len(keys),
                 *keys,
                 maxlen,
                 *messages,
-            )
+            ))
             rejected_indices = json.loads(result)
             return {recipients[i] for i in rejected_indices}
         else:
@@ -243,16 +268,16 @@ class RedisMessageBackend:
                 for recipient, message in messages_by_recipient.items():
                     key = self._key(tenant_id, recipient)
                     pipe.xadd(key, {"data": json.dumps(message)})
-                await pipe.execute()
+                await _with_timeout(pipe.execute())
             return set()
 
     async def dequeue_all(self, tenant_id: str, to_name: str) -> list[dict]:
         """Read and acknowledge all messages (destructive read)."""
         key = self._key(tenant_id, to_name)
         await self._ensure_group(key)
-        entries = await self._r.xreadgroup(
+        entries = await _with_timeout(self._r.xreadgroup(
             _CONSUMER_GROUP, _CONSUMER_NAME, {key: ">"}, count=10000
-        )
+        ))
         if not entries:
             return []
         messages = []
@@ -278,10 +303,10 @@ class RedisMessageBackend:
         # 1. Reclaim stale pending messages (unacked past visibility timeout)
         visibility_ms = VISIBILITY_TIMEOUT * 1000
         try:
-            claimed = await self._r.xautoclaim(
+            claimed = await _with_timeout(self._r.xautoclaim(
                 key, _CONSUMER_GROUP, _CONSUMER_NAME,
                 min_idle_time=visibility_ms, start_id="0-0", count=1000
-            )
+            ))
             # xautoclaim returns (next_start_id, claimed_entries, deleted_ids)
             if claimed and len(claimed) >= 2:
                 for entry_id, fields in claimed[1]:
@@ -296,9 +321,9 @@ class RedisMessageBackend:
             )
 
         # 2. Read new messages
-        entries = await self._r.xreadgroup(
+        entries = await _with_timeout(self._r.xreadgroup(
             _CONSUMER_GROUP, _CONSUMER_NAME, {key: ">"}, count=10000
-        )
+        ))
         if entries:
             for stream_key, stream_entries in entries:
                 for entry_id, fields in stream_entries:
@@ -325,9 +350,9 @@ class RedisMessageBackend:
         except (json.JSONDecodeError, TypeError):
             return
         if ids:
-            await self._r.xack(key, _CONSUMER_GROUP, *ids)
+            await _with_timeout(self._r.xack(key, _CONSUMER_GROUP, *ids))
             # Trim acked entries from the stream
-            await self._r.xdel(key, *ids)
+            await _with_timeout(self._r.xdel(key, *ids))
 
     async def ack_ids(
         self, tenant_id: str, to_name: str, message_ids: list[str]
@@ -335,9 +360,9 @@ class RedisMessageBackend:
         if not message_ids:
             return 0
         key = self._key(tenant_id, to_name)
-        acked = await self._r.xack(key, _CONSUMER_GROUP, *message_ids)
+        acked = await _with_timeout(self._r.xack(key, _CONSUMER_GROUP, *message_ids))
         if message_ids:
-            await self._r.xdel(key, *message_ids)
+            await _with_timeout(self._r.xdel(key, *message_ids))
         return acked
 
     async def requeue(
@@ -354,30 +379,30 @@ class RedisMessageBackend:
         args: list[str] = [_CONSUMER_GROUP, str(len(old_ids))]
         args.extend(old_ids)
         args.extend(json.dumps(m) for m in messages)
-        await self._r.eval(_REQUEUE_LUA, 1, key, *args)
+        await _with_timeout(self._r.eval(_REQUEUE_LUA, 1, key, *args))
 
     async def pending_count(
         self, tenant_id: str, to_name: str
     ) -> int:
         key = self._key(tenant_id, to_name)
         try:
-            info = await self._r.xpending(key, _CONSUMER_GROUP)
+            info = await _with_timeout(self._r.xpending(key, _CONSUMER_GROUP))
             return info["pending"] if info else 0
         except ResponseError:
             return 0  # No consumer group yet
 
     async def peek(self, tenant_id: str, to_name: str) -> int:
-        return await self._r.xlen(self._key(tenant_id, to_name))
+        return await _with_timeout(self._r.xlen(self._key(tenant_id, to_name)))
 
     async def count_all(self, tenant_id: str) -> int:
         """Count total messages across all recipient streams for a tenant."""
         cursor, total = "0", 0
         while True:
-            cursor, keys = await self._r.scan(
+            cursor, keys = await _with_timeout(self._r.scan(
                 cursor=cursor, match=f"t:{tenant_id}:dm:*", count=100
-            )
+            ))
             for key in keys:
-                total += await self._r.xlen(key)
+                total += await _with_timeout(self._r.xlen(key))
             if cursor == 0 or cursor == "0":
                 break
         return total
@@ -386,18 +411,18 @@ class RedisMessageBackend:
         """Count total messages globally across all streams."""
         cursor, total = "0", 0
         while True:
-            cursor, keys = await self._r.scan(
+            cursor, keys = await _with_timeout(self._r.scan(
                 cursor=cursor, match="t:*:dm:*", count=100
-            )
+            ))
             for key in keys:
-                total += await self._r.xlen(key)
+                total += await _with_timeout(self._r.xlen(key))
             if cursor == 0 or cursor == "0":
                 break
         return total
 
     async def recipient_depth(self, tenant_id: str, to_name: str) -> int:
         """Return total stream length for a recipient."""
-        return await self._r.xlen(self._key(tenant_id, to_name))
+        return await _with_timeout(self._r.xlen(self._key(tenant_id, to_name)))
 
 
 # -- Rooms ------------------------------------------------------------------
@@ -438,7 +463,7 @@ class RedisRoomBackend:
             if name:
                 pipe.hset(self._name_index_key(tenant_id), name, room_id)
             pipe.sadd(self._room_index_key(tenant_id), room_id)
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
 
     async def create_if_name_available(
         self, tenant_id: str, room_id: str, room_data: dict
@@ -452,7 +477,7 @@ class RedisRoomBackend:
         meta_args: list[str] = []
         for k, v in meta.items():
             meta_args.extend([k, str(v)])
-        result = await self._r.eval(
+        result = await _with_timeout(self._r.eval(
             _ROOM_CREATE_LUA,
             4,
             self._name_index_key(tenant_id),
@@ -462,23 +487,23 @@ class RedisRoomBackend:
             name,
             room_id,
             *meta_args,
-        )
+        ))
         if result == 0:
             return False
         # Add members separately (pipeline is fine, already created atomically)
         members = room_data.get("members", {})
         if members:
-            await self._r.hset(
+            await _with_timeout(self._r.hset(
                 self._members_key(tenant_id, room_id), mapping=members
-            )
+            ))
         return True
 
     async def rename_if_available(
         self, tenant_id: str, room_id: str, new_name: str
     ) -> bool:
         meta_key = self._meta_key(tenant_id, room_id)
-        old_name = await self._r.hget(meta_key, "name") or ""
-        result = await self._r.eval(
+        old_name = await _with_timeout(self._r.hget(meta_key, "name")) or ""
+        result = await _with_timeout(self._r.eval(
             _ROOM_RENAME_LUA,
             2,
             self._name_index_key(tenant_id),
@@ -486,25 +511,25 @@ class RedisRoomBackend:
             old_name,
             new_name,
             room_id,
-        )
+        ))
         return result == 1
 
     async def get(self, tenant_id: str, room_id: str) -> dict | None:
-        meta = await self._r.hgetall(self._meta_key(tenant_id, room_id))
+        meta = await _with_timeout(self._r.hgetall(self._meta_key(tenant_id, room_id)))
         if not meta:
             return None
-        meta["members"] = await self._r.hgetall(self._members_key(tenant_id, room_id))
+        meta["members"] = await _with_timeout(self._r.hgetall(self._members_key(tenant_id, room_id)))
         return meta
 
     async def get_by_name(self, tenant_id: str, name: str) -> tuple[str, dict] | None:
-        room_id = await self._r.hget(self._name_index_key(tenant_id), name)
+        room_id = await _with_timeout(self._r.hget(self._name_index_key(tenant_id), name))
         if room_id is None:
             return None
         data = await self.get(tenant_id, room_id)
         return (room_id, data) if data is not None else None
 
     async def list_all(self, tenant_id: str) -> list[tuple[str, dict]]:
-        room_ids = await self._r.smembers(self._room_index_key(tenant_id))
+        room_ids = await _with_timeout(self._r.smembers(self._room_index_key(tenant_id)))
         results: list[tuple[str, dict]] = []
         for rid in room_ids:
             data = await self.get(tenant_id, rid)
@@ -516,9 +541,9 @@ class RedisRoomBackend:
         self, tenant_id: str, member_name: str
     ) -> list[tuple[str, dict]]:
         """Return rooms where member_name is a member via reverse index."""
-        room_ids = await self._r.smembers(
+        room_ids = await _with_timeout(self._r.smembers(
             self._member_rooms_key(tenant_id, member_name)
-        )
+        ))
         results: list[tuple[str, dict]] = []
         for rid in room_ids:
             data = await self.get(tenant_id, rid)
@@ -528,25 +553,25 @@ class RedisRoomBackend:
 
     async def update(self, tenant_id: str, room_id: str, updates: dict) -> None:
         meta_key = self._meta_key(tenant_id, room_id)
-        if not await self._r.exists(meta_key):
+        if not await _with_timeout(self._r.exists(meta_key)):
             return
         new_name = updates.get("name")
         if new_name is not None:
-            old_name = await self._r.hget(meta_key, "name")
+            old_name = await _with_timeout(self._r.hget(meta_key, "name"))
             if old_name and old_name != new_name:
-                await self._r.hdel(self._name_index_key(tenant_id), old_name)
+                await _with_timeout(self._r.hdel(self._name_index_key(tenant_id), old_name))
             if new_name:
-                await self._r.hset(self._name_index_key(tenant_id), new_name, room_id)
+                await _with_timeout(self._r.hset(self._name_index_key(tenant_id), new_name, room_id))
         fields = {k: v for k, v in updates.items() if k != "members"}
         if fields:
-            await self._r.hset(meta_key, mapping=fields)
+            await _with_timeout(self._r.hset(meta_key, mapping=fields))
 
     async def delete(self, tenant_id: str, room_id: str) -> None:
         meta_key = self._meta_key(tenant_id, room_id)
         members_key = self._members_key(tenant_id, room_id)
-        name = await self._r.hget(meta_key, "name")
+        name = await _with_timeout(self._r.hget(meta_key, "name"))
         # Get all members to clean up reverse index
-        members = await self._r.hkeys(members_key)
+        members = await _with_timeout(self._r.hkeys(members_key))
         async with self._r.pipeline(transaction=True) as pipe:
             pipe.delete(meta_key)
             pipe.delete(members_key)
@@ -556,22 +581,22 @@ class RedisRoomBackend:
             # Clean up reverse index for all members
             for member_name in members:
                 pipe.srem(self._member_rooms_key(tenant_id, member_name), room_id)
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
 
     async def add_member(
         self, tenant_id: str, room_id: str, name: str, role: str
     ) -> None:
-        if not await self._r.exists(self._meta_key(tenant_id, room_id)):
+        if not await _with_timeout(self._r.exists(self._meta_key(tenant_id, room_id))):
             return
         async with self._r.pipeline(transaction=True) as pipe:
             pipe.hset(self._members_key(tenant_id, room_id), name, role)
             pipe.sadd(self._member_rooms_key(tenant_id, name), room_id)
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
 
     async def add_member_if_capacity(
         self, tenant_id: str, room_id: str, name: str, role: str, max_members: int
     ) -> bool:
-        result = await self._r.eval(
+        result = await _with_timeout(self._r.eval(
             _ROOM_ADD_MEMBER_LUA,
             2,
             self._members_key(tenant_id, room_id),
@@ -580,33 +605,33 @@ class RedisRoomBackend:
             role,
             str(max_members),
             room_id,
-        )
+        ))
         return result == 1
 
     async def remove_member(self, tenant_id: str, room_id: str, name: str) -> None:
-        if not await self._r.exists(self._meta_key(tenant_id, room_id)):
+        if not await _with_timeout(self._r.exists(self._meta_key(tenant_id, room_id))):
             return
         async with self._r.pipeline(transaction=True) as pipe:
             pipe.hdel(self._members_key(tenant_id, room_id), name)
             pipe.srem(self._member_rooms_key(tenant_id, name), room_id)
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
 
     async def get_members(self, tenant_id: str, room_id: str) -> dict[str, str]:
-        return await self._r.hgetall(self._members_key(tenant_id, room_id))
+        return await _with_timeout(self._r.hgetall(self._members_key(tenant_id, room_id)))
 
     async def count(self, tenant_id: str) -> int:
         """Count rooms in a tenant."""
-        return await self._r.scard(self._room_index_key(tenant_id))
+        return await _with_timeout(self._r.scard(self._room_index_key(tenant_id)))
 
     async def count_global(self) -> int:
         """Count all rooms across all tenants."""
         cursor, total = "0", 0
         while True:
-            cursor, keys = await self._r.scan(
+            cursor, keys = await _with_timeout(self._r.scan(
                 cursor=cursor, match="t:*:room:_index", count=100
-            )
+            ))
             for key in keys:
-                total += await self._r.scard(key)
+                total += await _with_timeout(self._r.scard(key))
             if cursor == 0 or cursor == "0":
                 break
         return total
@@ -629,17 +654,17 @@ class RedisRoomHistoryBackend:
         async with self._r.pipeline(transaction=True) as pipe:
             pipe.rpush(key, json.dumps(message))
             pipe.ltrim(key, -self._max, -1)
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
 
     async def get_recent(self, tenant_id: str, room_id: str, limit: int) -> list[dict]:
-        raw = await self._r.lrange(self._key(tenant_id, room_id), -limit, -1)
+        raw = await _with_timeout(self._r.lrange(self._key(tenant_id, room_id), -limit, -1))
         return [json.loads(m) for m in raw]
 
     async def search(
         self, tenant_id: str, room_id: str,
         q: str = "", sender: str = "", message_type: str = "", limit: int = 50,
     ) -> list[dict]:
-        raw = await self._r.lrange(self._key(tenant_id, room_id), 0, -1)
+        raw = await _with_timeout(self._r.lrange(self._key(tenant_id, room_id), 0, -1))
         results: list[dict] = []
         q_lower = q.lower()
         for item in reversed(raw):
@@ -658,7 +683,7 @@ class RedisRoomHistoryBackend:
 
     async def delete(self, tenant_id: str, room_id: str) -> None:
         """Delete history for a room."""
-        await self._r.delete(self._key(tenant_id, room_id))
+        await _with_timeout(self._r.delete(self._key(tenant_id, room_id)))
 
     async def rename_room_in_history(
         self, tenant_id: str, room_id: str, new_name: str
@@ -677,7 +702,7 @@ class RedisRoomHistoryBackend:
             pipe.delete(key)
             if updated:
                 pipe.rpush(key, *updated)
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
 
 
 # -- Presence / heartbeat --------------------------------------------------
@@ -698,7 +723,7 @@ class RedisPresenceBackend:
         now = datetime.now(timezone.utc)
         now_iso, now_ts = now.isoformat(), now.timestamp()
         entry_key = self._entry_key(tenant_id, name)
-        existing_start = await self._r.hget(entry_key, "uptime_start")
+        existing_start = await _with_timeout(self._r.hget(entry_key, "uptime_start"))
         entry = {
             "name": name, "status": status, "room": room,
             "last_heartbeat": now_iso,
@@ -709,21 +734,21 @@ class RedisPresenceBackend:
             pipe.hset(entry_key, mapping=entry)
             # No EXPIRE — sorted set tracks online/offline via score
             pipe.zadd(self._index_key(tenant_id), {name: now_ts})
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
         return entry
 
     async def list_all(self, tenant_id: str, timeout_seconds: int) -> list[dict]:
         # Return ALL entries; caller uses timeout_seconds to classify online/offline
-        names = await self._r.zrange(self._index_key(tenant_id), 0, -1)
+        names = await _with_timeout(self._r.zrange(self._index_key(tenant_id), 0, -1))
         cutoff = (
             datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
         ).timestamp()
         results: list[dict] = []
         for name in names:
-            data = await self._r.hgetall(self._entry_key(tenant_id, name))
+            data = await _with_timeout(self._r.hgetall(self._entry_key(tenant_id, name)))
             if data:
                 # Mark online/offline based on score
-                score = await self._r.zscore(self._index_key(tenant_id), name)
+                score = await _with_timeout(self._r.zscore(self._index_key(tenant_id), name))
                 if score is not None and score >= cutoff:
                     data["_online"] = True
                 else:
@@ -747,10 +772,10 @@ class RedisRateLimitBackend:
     async def check_and_increment(
         self, tenant_id: str, sender: str, window: int, max_count: int
     ) -> bool:
-        result = await self._script(
+        result = await _with_timeout(self._script(
             keys=[self._key(tenant_id, sender)],
             args=[time.time(), window, max_count],
-        )
+        ))
         return bool(result)
 
 
@@ -768,11 +793,11 @@ class RedisSSETokenBackend:
     async def create_token(self, tenant_id: str, recipient: str, ttl: int) -> str:
         token = uuid.uuid4().hex
         payload = json.dumps({"recipient": recipient, "tenant_id": tenant_id})
-        await self._r.set(self._key(token), payload, ex=ttl)
+        await _with_timeout(self._r.set(self._key(token), payload, ex=ttl))
         return token
 
     async def verify_token(self, token: str, recipient: str) -> tuple[bool, str]:
-        raw = await self._r.getdel(self._key(token))
+        raw = await _with_timeout(self._r.getdel(self._key(token)))
         if raw is None:
             return False, ""
         data = json.loads(raw)
@@ -803,10 +828,10 @@ class RedisWebhookBackend:
         secret: str = "",
     ) -> None:
         data = json.dumps({"url": callback_url, "secret": secret})
-        await self._r.set(self._dm_key(tenant_id, instance_name), data)
+        await _with_timeout(self._r.set(self._dm_key(tenant_id, instance_name), data))
 
     async def get_dm(self, tenant_id: str, instance_name: str) -> dict | None:
-        raw = await self._r.get(self._dm_key(tenant_id, instance_name))
+        raw = await _with_timeout(self._r.get(self._dm_key(tenant_id, instance_name)))
         if not raw:
             return None
         # Handle legacy format (plain URL string)
@@ -816,7 +841,7 @@ class RedisWebhookBackend:
             return {"url": raw, "secret": ""}
 
     async def delete_dm(self, tenant_id: str, instance_name: str) -> None:
-        await self._r.delete(self._dm_key(tenant_id, instance_name))
+        await _with_timeout(self._r.delete(self._dm_key(tenant_id, instance_name)))
 
     async def register_room(
         self,
@@ -827,7 +852,7 @@ class RedisWebhookBackend:
         secret: str = "",
     ) -> None:
         key = self._room_key(tenant_id, room_id)
-        raw_hooks = await self._r.lrange(key, 0, -1)
+        raw_hooks = await _with_timeout(self._r.lrange(key, 0, -1))
         new_entry = json.dumps({
             "url": callback_url,
             "registered_by": registered_by,
@@ -836,24 +861,24 @@ class RedisWebhookBackend:
         for raw in raw_hooks:
             hook = json.loads(raw)
             if hook["url"] == callback_url:
-                await self._r.lrem(key, 1, raw)
-                await self._r.rpush(key, new_entry)
+                await _with_timeout(self._r.lrem(key, 1, raw))
+                await _with_timeout(self._r.rpush(key, new_entry))
                 return
-        await self._r.rpush(key, new_entry)
+        await _with_timeout(self._r.rpush(key, new_entry))
 
     async def list_room(self, tenant_id: str, room_id: str) -> list[dict]:
-        raw = await self._r.lrange(self._room_key(tenant_id, room_id), 0, -1)
+        raw = await _with_timeout(self._r.lrange(self._room_key(tenant_id, room_id), 0, -1))
         return [json.loads(h) for h in raw]
 
     async def delete_room(
         self, tenant_id: str, room_id: str, callback_url: str
     ) -> bool:
         key = self._room_key(tenant_id, room_id)
-        raw_hooks = await self._r.lrange(key, 0, -1)
+        raw_hooks = await _with_timeout(self._r.lrange(key, 0, -1))
         removed = False
         for raw in raw_hooks:
             if json.loads(raw)["url"] == callback_url:
-                await self._r.lrem(key, 1, raw)
+                await _with_timeout(self._r.lrem(key, 1, raw))
                 removed = True
         return removed
 
@@ -884,20 +909,20 @@ class RedisAnalyticsBackend:
             pipe.incr(self._sent_key(tenant_id))
             pipe.hincrby(self._agent_key(tenant_id), f"send:{sender}", 1)
             pipe.zincrby(self._hourly_key(tenant_id), 1, hour)
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
 
     async def track_delivery(self, tenant_id: str, recipient: str, count: int) -> None:
         async with self._r.pipeline(transaction=False) as pipe:
             pipe.incrby(self._delivered_key(tenant_id), count)
             pipe.hincrby(self._agent_key(tenant_id), f"recv:{recipient}", count)
-            await pipe.execute()
+            await _with_timeout(pipe.execute())
 
     async def get_stats(self, tenant_id: str) -> dict:
         async with self._r.pipeline(transaction=False) as pipe:
             pipe.get(self._sent_key(tenant_id))
             pipe.get(self._delivered_key(tenant_id))
             pipe.hgetall(self._agent_key(tenant_id))
-            results = await pipe.execute()
+            results = await _with_timeout(pipe.execute())
         total_sent = int(results[0] or 0)
         total_delivered = int(results[1] or 0)
         per_sender: dict[str, int] = {}
@@ -928,20 +953,20 @@ class RedisParticipantBackend:
 
     async def add(self, tenant_id: str, *names: str) -> None:
         if names:
-            await self._r.sadd(self._key(tenant_id), *names)
+            await _with_timeout(self._r.sadd(self._key(tenant_id), *names))
 
     async def list_all(self, tenant_id: str) -> list[str]:
-        members = await self._r.smembers(self._key(tenant_id))
+        members = await _with_timeout(self._r.smembers(self._key(tenant_id)))
         return sorted(members)
 
     async def count_global(self) -> int:
         cursor, total = "0", 0
         while True:
-            cursor, keys = await self._r.scan(
+            cursor, keys = await _with_timeout(self._r.scan(
                 cursor=cursor, match="t:*:participants", count=100
-            )
+            ))
             for key in keys:
-                total += await self._r.scard(key)
+                total += await _with_timeout(self._r.scard(key))
             if cursor == 0 or cursor == "0":
                 break
         return total
@@ -971,7 +996,7 @@ class RedisIdempotencyBackend:
         return f"t:{tid}:idempotency:{key}"
 
     async def get(self, tenant_id: str, key: str) -> dict | None:
-        cached = await self._r.get(self._key(tenant_id, key))
+        cached = await _with_timeout(self._r.get(self._key(tenant_id, key)))
         if cached:
             data = json.loads(cached)
             # Don't return pending markers as cached results
@@ -1009,14 +1034,14 @@ class RedisIdempotencyBackend:
         })
 
         # Try to set the key only if it doesn't exist
-        reserved = await self._r.set(redis_key, pending_value, ex=ttl, nx=True)
+        reserved = await _with_timeout(self._r.set(redis_key, pending_value, ex=ttl, nx=True))
 
         if reserved:
             # We got the lock, caller should process the request
             return None
 
         # Key already exists — check status and body fingerprint
-        cached = await self._r.get(redis_key)
+        cached = await _with_timeout(self._r.get(redis_key))
         if cached:
             data = json.loads(cached)
 
@@ -1050,10 +1075,10 @@ class RedisIdempotencyBackend:
             "_body_fp": body_fingerprint,
             "_result": result,
         })
-        await self._r.set(self._key(tenant_id, key), value, ex=ttl)
+        await _with_timeout(self._r.set(self._key(tenant_id, key), value, ex=ttl))
 
     async def delete(self, tenant_id: str, key: str) -> None:
-        await self._r.delete(self._key(tenant_id, key))
+        await _with_timeout(self._r.delete(self._key(tenant_id, key)))
 
 
 # -- Webhook delivery queue -------------------------------------------------
@@ -1152,7 +1177,7 @@ class RedisWebhookQueueBackend:
     async def enqueue(self, job: dict) -> str:
         """Add a webhook job to the queue. Returns job ID."""
         await self._ensure_group()
-        job_id = await self._r.xadd(_WEBHOOK_QUEUE_KEY, {"data": json.dumps(job)})
+        job_id = await _with_timeout(self._r.xadd(_WEBHOOK_QUEUE_KEY, {"data": json.dumps(job)}))
         return job_id
 
     async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
@@ -1166,10 +1191,10 @@ class RedisWebhookQueueBackend:
         # 1. Reclaim stale pending jobs (visibility timeout expired)
         visibility_ms = _WEBHOOK_VISIBILITY_TIMEOUT * 1000
         try:
-            claimed = await self._r.xautoclaim(
+            claimed = await _with_timeout(self._r.xautoclaim(
                 _WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, _WEBHOOK_CONSUMER,
                 min_idle_time=visibility_ms, start_id="0-0", count=count
-            )
+            ))
             if claimed and len(claimed) >= 2:
                 for entry_id, fields in claimed[1]:
                     job = json.loads(fields["data"])
@@ -1180,10 +1205,10 @@ class RedisWebhookQueueBackend:
         # 2. Read new jobs
         remaining = count - len(jobs)
         if remaining > 0:
-            entries = await self._r.xreadgroup(
+            entries = await _with_timeout(self._r.xreadgroup(
                 _WEBHOOK_CG, _WEBHOOK_CONSUMER,
                 {_WEBHOOK_QUEUE_KEY: ">"}, count=remaining
-            )
+            ))
             if entries:
                 for _stream_key, stream_entries in entries:
                     for entry_id, fields in stream_entries:
@@ -1194,8 +1219,8 @@ class RedisWebhookQueueBackend:
 
     async def ack(self, job_id: str) -> None:
         """Acknowledge successful delivery, removing the job."""
-        await self._r.xack(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, job_id)
-        await self._r.xdel(_WEBHOOK_QUEUE_KEY, job_id)
+        await _with_timeout(self._r.xack(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, job_id))
+        await _with_timeout(self._r.xdel(_WEBHOOK_QUEUE_KEY, job_id))
 
     async def nack(
         self, job_id: str, error: str, max_retries: int
@@ -1211,7 +1236,7 @@ class RedisWebhookQueueBackend:
         crash window where a job could be lost.
         """
         # Fetch the job data first (read doesn't need to be atomic)
-        entries = await self._r.xrange(_WEBHOOK_QUEUE_KEY, job_id, job_id)
+        entries = await _with_timeout(self._r.xrange(_WEBHOOK_QUEUE_KEY, job_id, job_id))
         if not entries:
             return False
 
@@ -1224,7 +1249,7 @@ class RedisWebhookQueueBackend:
         retry_at = time.time() + delay_seconds
 
         # Atomic NACK via Lua script
-        result = await self._r.eval(
+        result = await _with_timeout(self._r.eval(
             _WEBHOOK_NACK_LUA,
             3,  # number of keys
             _WEBHOOK_QUEUE_KEY,
@@ -1237,7 +1262,7 @@ class RedisWebhookQueueBackend:
             str(job["attempt"]),
             str(_DLQ_MAX_SIZE),
             str(retry_at),
-        )
+        ))
         return result == 1
 
     async def promote_delayed(self, max_promote: int = 100) -> int:
@@ -1247,36 +1272,36 @@ class RedisWebhookQueueBackend:
         Returns the number of jobs promoted.
         """
         now = time.time()
-        result = await self._r.eval(
+        result = await _with_timeout(self._r.eval(
             _WEBHOOK_PROMOTE_LUA,
             2,  # number of keys
             _WEBHOOK_DELAY_KEY,
             _WEBHOOK_QUEUE_KEY,
             str(now),
             str(max_promote),
-        )
+        ))
         return int(result) if result else 0
 
     async def get_dlq(self, limit: int = 50) -> list[dict]:
         """Return recent dead letter queue entries."""
-        raw = await self._r.lrange(_WEBHOOK_DLQ_KEY, 0, limit - 1)
+        raw = await _with_timeout(self._r.lrange(_WEBHOOK_DLQ_KEY, 0, limit - 1))
         return [json.loads(j) for j in raw]
 
     async def get_stats(self) -> dict:
         """Return queue statistics."""
         try:
-            queue_len = await self._r.xlen(_WEBHOOK_QUEUE_KEY)
+            queue_len = await _with_timeout(self._r.xlen(_WEBHOOK_QUEUE_KEY))
         except ResponseError:
             queue_len = 0
 
         try:
-            pending_info = await self._r.xpending(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG)
+            pending_info = await _with_timeout(self._r.xpending(_WEBHOOK_QUEUE_KEY, _WEBHOOK_CG))
             pending = pending_info["pending"] if pending_info else 0
         except ResponseError:
             pending = 0
 
-        delayed = await self._r.zcard(_WEBHOOK_DELAY_KEY)
-        dlq_size = await self._r.llen(_WEBHOOK_DLQ_KEY)
+        delayed = await _with_timeout(self._r.zcard(_WEBHOOK_DELAY_KEY))
+        dlq_size = await _with_timeout(self._r.llen(_WEBHOOK_DLQ_KEY))
 
         return {
             "queue_length": queue_len,
@@ -1468,7 +1493,7 @@ class RedisRoomStateBackend:
         pipe.lrange(tasks_key, 0, -1)
         pipe.hgetall(locks_key)
         pipe.lrange(decisions_key, 0, -1)
-        goal, tasks_raw, locks_raw, decisions_raw = await pipe.execute()
+        goal, tasks_raw, locks_raw, decisions_raw = await _with_timeout(pipe.execute())
 
         claimed_tasks = [json.loads(t) for t in tasks_raw] if tasks_raw else []
         locked_files = {
@@ -1491,9 +1516,9 @@ class RedisRoomStateBackend:
         """Set (or clear) the active goal for a room."""
         key = self._key(tenant_id, room_id, "goal")
         if goal is None:
-            await self._r.delete(key)
+            await _with_timeout(self._r.delete(key))
         else:
-            await self._r.set(key, goal)
+            await _with_timeout(self._r.set(key, goal))
 
     async def add_claimed_task(
         self, tenant_id: str, room_id: str, task: dict
@@ -1515,7 +1540,7 @@ class RedisRoomStateBackend:
             }
             pipe.hset(locks_key, fp, json.dumps(lock_data))
 
-        await pipe.execute()
+        await _with_timeout(pipe.execute())
 
     async def remove_claimed_task(
         self, tenant_id: str, room_id: str, task_id: str
@@ -1525,7 +1550,7 @@ class RedisRoomStateBackend:
         locks_key = self._key(tenant_id, room_id, "locks")
 
         # Get all tasks, filter out the one to remove, write back
-        tasks_raw = await self._r.lrange(tasks_key, 0, -1)
+        tasks_raw = await _with_timeout(self._r.lrange(tasks_key, 0, -1))
         if not tasks_raw:
             return
 
@@ -1544,21 +1569,21 @@ class RedisRoomStateBackend:
             pipe.rpush(tasks_key, *new_tasks)
         if removed_fp:
             pipe.hdel(locks_key, removed_fp)
-        await pipe.execute()
+        await _with_timeout(pipe.execute())
 
     async def set_lock(
         self, tenant_id: str, room_id: str, file_path: str, lock_data: dict
     ) -> None:
         """Directly set a lock entry."""
         key = self._key(tenant_id, room_id, "locks")
-        await self._r.hset(key, file_path, json.dumps(lock_data))
+        await _with_timeout(self._r.hset(key, file_path, json.dumps(lock_data)))
 
     async def release_lock(
         self, tenant_id: str, room_id: str, file_path: str
     ) -> None:
         """Remove a file lock entry."""
         key = self._key(tenant_id, room_id, "locks")
-        await self._r.hdel(key, file_path)
+        await _with_timeout(self._r.hdel(key, file_path))
 
     async def try_acquire_lock(
         self, tenant_id: str, room_id: str, file_path: str,
@@ -1577,10 +1602,10 @@ class RedisRoomStateBackend:
         tasks_key = self._key(tenant_id, room_id, "tasks")
 
         script = await self._get_acquire_script()
-        result = await script(
+        result = await _with_timeout(script(
             keys=[locks_key, tasks_key],
             args=[file_path, json.dumps(lock_data), json.dumps(task_data)],
-        )
+        ))
 
         acquired = result[0] == 1
         if acquired:
@@ -1606,10 +1631,10 @@ class RedisRoomStateBackend:
         tasks_key = self._key(tenant_id, room_id, "tasks")
 
         script = await self._get_release_script()
-        result = await script(
+        result = await _with_timeout(script(
             keys=[locks_key, tasks_key],
             args=[file_path, lock_token],
-        )
+        ))
 
         status_code = result[0]
         if status_code == 0:
@@ -1625,7 +1650,7 @@ class RedisRoomStateBackend:
     ) -> None:
         """Append a resolved decision to the room's decision log."""
         key = self._key(tenant_id, room_id, "decisions")
-        await self._r.rpush(key, json.dumps(decision))
+        await _with_timeout(self._r.rpush(key, json.dumps(decision)))
 
     async def expire_tasks(
         self, tenant_id: str, room_id: str
@@ -1642,10 +1667,10 @@ class RedisRoomStateBackend:
         script = await self._get_expire_script()
         now_ts = int(time.time())
 
-        result = await script(
+        result = await _with_timeout(script(
             keys=[tasks_key, locks_key],
             args=[now_ts],
-        )
+        ))
 
         # Result is JSON array of expired task IDs
         if result:
