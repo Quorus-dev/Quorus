@@ -1,15 +1,15 @@
 {
   "mcpServers": {
-    "murmur": {
+    "quorus": {
       "type": "stdio",
       "command": "uv",
       "args": [
         "run",
         "--directory",
-        "/Users/aravkekane/Desktop/Murmur",
+        "/Users/aravkekane/Desktop/Quorus",
         "python",
         "-m",
-        "murmur.mcp_server"
+        "quorus.mcp_server"
       ],
       "env": {
         "INSTANCE_NAME": "arav-agent-2",
