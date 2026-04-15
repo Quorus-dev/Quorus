@@ -147,275 +147,225 @@ def _try_connect(url: str, timeout: float = 3) -> bool:
         return False
 
 
-def _first_launch_setup(console: Console) -> dict:
-    """Interactive first-launch wizard. Returns config dict."""
-    try:
-        from quorus_cli import ui as _ui
-        _ui.banner()
-        _ui.info("Let's get you connected to a swarm. This takes ~30 seconds.")
-        console.print()
-    except Exception:
-        # Fallback if ui module unavailable
-        console.print()
-        console.print(Panel(
-            Text.from_markup(
-                "  [bold primary]quorus[/]"
-                "  [dim]·[/dim]"
-                "  [dim]coordination for agent swarms[/dim]  "
-            ),
-            border_style="primary",
-            padding=(0, 1),
-        ))
-        console.print()
-        console.print("  Welcome! Let's get you coordinating with other agents.\n")
-
-    # Name — conversational, plain English
-    console.print("  [dim]First, pick a name that others will see in rooms.[/dim]\n")
+def _prompt_name(console: Console) -> str:
+    """Collect a valid participant name. One prompt, tight validation."""
+    console.print("  [dim]Pick a name that others will see in rooms.[/]\n")
     while True:
-        name = Prompt.ask("  What should we call you?").strip()
+        name = Prompt.ask("  Your name").strip()
         if not name:
-            console.print("  [dim]Name can't be empty — try again.[/dim]")
+            console.print("  [dim]Empty — try again.[/]")
             continue
         if len(name) > 64:
-            console.print("  [dim]Keep it under 64 characters.[/dim]")
+            console.print("  [dim]Keep it under 64 characters.[/]")
             continue
         if not re.match(r"^[A-Za-z0-9_\-]+$", name):
             console.print(
-                "  [dim]Use letters, numbers, hyphens, or underscores — no spaces.[/dim]"
+                "  [dim]Letters, numbers, hyphens, underscores only — no spaces.[/]"
             )
             continue
-        break
+        return name
 
-    console.print(f"\n  [green]Nice to meet you, {name}![/green]\n")
 
-    # Auto-detect relay — try local first, then offer options
-    console.print("  [dim]Looking for a relay...[/dim]", end="")
+def _decode_invite_token(token: str) -> dict | None:
+    """Decode a pasted `quorus://` or `quorus_join_` invite token.
+
+    Returns {relay_url, secret, api_key, room} on success, None if the
+    format isn't recognized. Accepts both modern URI form and legacy
+    `quorus_join_` / `murm_join_` base64 payloads.
+    """
+    import base64 as _b64
+    import json as _json
+
+    raw = token.strip()
+    try:
+        if raw.startswith("quorus://"):
+            payload = _json.loads(
+                _b64.urlsafe_b64decode(raw[len("quorus://"):].encode()).decode()
+            )
+            return {
+                "relay_url": (payload.get("r", "") or "").rstrip("/"),
+                "secret": payload.get("s", "") or "",
+                "api_key": payload.get("k", "") or "",
+                "room": payload.get("n", "") or "",
+            }
+        if raw.startswith("quorus_join_") or raw.startswith("murm_join_"):
+            prefix = (
+                "quorus_join_" if raw.startswith("quorus_join_") else "murm_join_"
+            )
+            payload = _json.loads(
+                _b64.urlsafe_b64decode(raw[len(prefix):].encode()).decode()
+            )
+            return {
+                "relay_url": (payload.get("relay_url", "") or "").rstrip("/"),
+                "secret": payload.get("secret", "") or "",
+                "api_key": "",
+                "room": payload.get("room", "") or "",
+            }
+    except Exception:
+        return None
+    return None
+
+
+def _run_signup(
+    console: Console, relay_url: str, name: str, workspace: str,
+) -> tuple[str, str]:
+    """Run the signup flow on `relay_url`. Returns (api_key, workspace) on
+    success, ("", "") on failure. Handles rate-limit / workspace-taken /
+    missing-key cases inline with user-friendly messages."""
+    console.print("  [dim]Creating your account...[/] ", end="")
+    result = _signup(relay_url, name, workspace)
+
+    if result is None:
+        console.print("[red]failed[/]")
+        console.print("  [dim]Signup endpoint unreachable.[/]")
+        return "", ""
+    if "error" in result:
+        console.print("[red]failed[/]")
+        err = result["error"]
+        if err == "workspace_taken":
+            console.print(
+                f"  [dim]Workspace '[bold]{workspace}[/]' already taken.[/]"
+            )
+            # Retry with a random-ish suffix, user can rename later.
+            import secrets as _s
+            alt = f"{workspace}-{_s.token_hex(2)}"
+            console.print(f"  [dim]Retrying with [bold]{alt}[/]...[/] ", end="")
+            result = _signup(relay_url, name, alt)
+            if result and "error" not in result and result.get("api_key"):
+                console.print("[bold green]✓[/]")
+                return result["api_key"], alt
+            console.print("[red]still failed[/]")
+            return "", ""
+        if err == "rate_limited":
+            console.print("  [dim]Rate limited — try again in an hour.[/]")
+        else:
+            console.print(f"  [dim]{err}[/]")
+        return "", ""
+
+    api_key = result.get("api_key") or ""
+    if not api_key:
+        console.print("[red]no key returned[/]")
+        console.print(
+            "  [dim]Server accepted signup but didn't return a key. "
+            "Run [bold]quorus doctor[/] to diagnose.[/]"
+        )
+        return "", ""
+
+    console.print("[bold green]✓[/]")
+    return api_key, workspace
+
+
+def _first_launch_setup(console: Console) -> dict:
+    """Interactive first-launch wizard. Returns config dict.
+
+    Flow, in order of prompts the user sees:
+
+    1. Name (always).
+    2. If a local relay is reachable, we're done — no more prompts.
+    3. Otherwise: ONE prompt — "Paste an invite token, or press Enter
+       to sign up." Token → decode and connect. Empty → signup against
+       the public relay with workspace defaulted to the user's name.
+
+    Everything else (manual URL + secret, auth-type menu, workspace
+    name prompts) is gone. Power users pass those via `quorus init`
+    CLI flags.
+    """
+    try:
+        from quorus_cli import ui as _ui
+        _ui.banner()
+        _ui.info("Setting up Quorus — just a name and you're in.")
+        console.print()
+    except Exception:
+        console.print()
+        console.print("  [bold primary]quorus[/]  [dim]coordination for agent swarms[/]\n")
+
+    name = _prompt_name(console)
+    console.print(f"\n  [dim]Welcome, [agent]@{name}[/].[/]\n")
+
     relay_url = DEFAULT_RELAY
     secret = ""
     api_key = ""
     relay_ok = False
 
-    # Try local relay first
+    # Happy path: auto-detect local relay.
     if _try_connect(DEFAULT_RELAY):
-        console.print(f" [green]found local relay at {DEFAULT_RELAY}[/green]")
-        relay_url = DEFAULT_RELAY
+        console.print(f"  [dim]Connected to local relay at {DEFAULT_RELAY}.[/]")
         relay_ok = True
     else:
-        console.print(" [dim]no local relay.[/dim]")
-        console.print()
-
-        # Offer options: paste invite token (most common for teammates),
-        # local relay (solo), bring-your-own URL+secret, or sign up.
-        console.print("  [dim]How would you like to connect?[/dim]\n")
+        # No local relay — one prompt for everything else.
         console.print(
-            "    [bold]1[/bold] Paste an invite token "
-            "(someone shared a [cyan]quorus://[/cyan] link with me)"
+            "  [dim]No local relay found. "
+            "Paste an invite token, or press Enter to sign up on "
+            f"[primary]{PUBLIC_RELAY}[/][dim].[/]\n"
         )
-        console.print("    [bold]2[/bold] Start a local relay (solo / testing)")
-        console.print("    [bold]3[/bold] Connect to a relay (I have a URL + secret/API key)")
-        console.print("    [bold]4[/bold] Sign up for a new account on a hosted relay")
-        console.print()
+        token = Prompt.ask("  Token or Enter", default="").strip()
 
-        choice = Prompt.ask(
-            "  Which one?",
-            choices=["1", "2", "3", "4"],
-            default="1",
-        )
-
-        if choice == "1":
-            # Paste invite token — most common teammate onboarding flow.
-            import base64 as _b64
-            import json as _json
-
-            token = Prompt.ask(
-                "  Paste the [cyan]quorus://[/cyan] invite token"
-            ).strip()
-            # Accept bare token, quorus://... form, and legacy murm_join_
-            raw = token
-            decoded: dict = {}
-            try:
-                if raw.startswith("quorus://"):
-                    raw = raw[len("quorus://"):]
-                    decoded = _json.loads(_b64.urlsafe_b64decode(raw.encode()).decode())
-                    relay_url = decoded.get("r", "").rstrip("/")
-                    secret = decoded.get("s", "")
-                    api_key = decoded.get("k", "")
-                    joined_room = decoded.get("n", "")
-                elif raw.startswith("quorus_join_") or raw.startswith("murm_join_"):
-                    prefix = "quorus_join_" if raw.startswith("quorus_join_") else "murm_join_"
-                    payload = _json.loads(
-                        _b64.urlsafe_b64decode(raw[len(prefix):].encode()).decode()
-                    )
-                    relay_url = payload.get("relay_url", "").rstrip("/")
-                    secret = payload.get("secret", "")
-                    joined_room = payload.get("room", "")
-                else:
-                    console.print("  [yellow]Token format not recognized — "
-                                  "falling back to manual URL entry.[/yellow]")
-                    decoded = {}
-            except Exception as exc:
-                console.print(f"  [yellow]Couldn't decode token: {exc}[/yellow]")
-                decoded = {}
-
-            if decoded and relay_url:
-                console.print(f"\n  Connecting to {relay_url}...", end="")
-                if _try_connect(relay_url):
-                    console.print(" [bold green]✓[/bold green]")
-                    relay_ok = True
-                    if joined_room:
-                        console.print(
-                            f"  [dim]Token grants access to "
-                            f"[cyan]#{joined_room}[/cyan]. "
-                            "You'll be auto-joined on first message.[/dim]"
-                        )
-                else:
-                    console.print(" [yellow]not reachable[/yellow]")
-
-        elif choice == "3":
-            # Connect with existing credentials
-            relay_url = Prompt.ask(
-                "  Relay URL"
-            ).strip().rstrip("/")
-
-            auth_type = Prompt.ask(
-                "  Auth type",
-                choices=["secret", "api-key", "none"],
-                default="secret",
-            )
-
-            if auth_type == "secret":
-                secret = Prompt.ask("  Secret").strip()
-            elif auth_type == "api-key":
-                api_key = Prompt.ask("  API key (mct_...)").strip()
-
-            console.print()
-            console.print(f"  Connecting to {relay_url}...", end="")
-            if _try_connect(relay_url):
-                console.print(" [bold green]✓[/bold green]")
-                relay_ok = True
-            else:
-                console.print(" [yellow]not reachable[/yellow]")
-
-        elif choice == "4":
-            # Self-service signup
-            relay_url = Prompt.ask(
-                "  Relay URL",
-                default=PUBLIC_RELAY,
-            ).strip().rstrip("/")
-
-            console.print()
-            console.print(f"  Connecting to {relay_url}...", end="")
-            if not _try_connect(relay_url):
-                console.print(" [yellow]not reachable[/yellow]")
+        if token:
+            decoded = _decode_invite_token(token)
+            if decoded is None:
                 console.print(
-                    f"\n  [dim]Couldn't reach {relay_url}. Check the URL and try again.[/dim]"
+                    "  [red]Token not recognized.[/] "
+                    "[dim]Expected a quorus:// or quorus_join_ token.[/]"
                 )
             else:
-                console.print(" [bold green]✓[/bold green]")
-                console.print()
-
-                # Get workspace name
-                console.print("  [dim]Pick a workspace name (like a team or project name).[/dim]\n")
-                while True:
-                    workspace = Prompt.ask("  Workspace").strip().lower()
-                    if not workspace:
-                        console.print("  [dim]Workspace can't be empty.[/dim]")
-                        continue
-                    if len(workspace) < 2 or len(workspace) > 64:
-                        console.print("  [dim]Keep it between 2-64 characters.[/dim]")
-                        continue
-                    ws_re = r"^[a-z0-9][a-z0-9_\-]*[a-z0-9]$"
-                    if not re.match(ws_re, workspace) and len(workspace) > 1:
+                relay_url = decoded["relay_url"]
+                secret = decoded["secret"]
+                api_key = decoded["api_key"]
+                console.print(f"  [dim]Connecting to {relay_url}...[/] ", end="")
+                if _try_connect(relay_url):
+                    console.print("[bold green]✓[/]")
+                    relay_ok = True
+                    if decoded.get("room"):
                         console.print(
-                            "  [dim]Use lowercase letters, numbers, hyphens. "
-                            "Start/end with letter or number.[/dim]"
+                            f"  [dim]Token unlocks [room]#{decoded['room']}[/] — "
+                            "you'll land there automatically.[/]"
                         )
-                        continue
-                    break
-
-                console.print()
-                console.print("  Creating account...", end="")
-
-                result = _signup(relay_url, name, workspace)
-
-                if result is None:
-                    console.print(" [red]failed[/red]")
-                    console.print(
-                        "\n  [dim]Could not reach signup endpoint. "
-                        "Is this a production relay?[/dim]"
-                    )
-                elif "error" in result:
-                    console.print(" [red]failed[/red]")
-                    if result["error"] == "workspace_taken":
-                        console.print(
-                            f"\n  [yellow]Workspace '{workspace}' is already taken. "
-                            "Try another name.[/yellow]"
-                        )
-                    elif result["error"] == "rate_limited":
-                        console.print(
-                            "\n  [yellow]Too many signups. Try again in an hour.[/yellow]"
-                        )
-                    else:
-                        console.print(f"\n  [dim]Error: {result['error']}[/dim]")
                 else:
-                    console.print(" [bold green]✓[/bold green]")
-                    api_key = result.get("api_key") or ""
-                    if not api_key:
-                        # Server returned a 200 but no key. Shouldn't happen
-                        # now that `_signup` sends X-Quorus-Setup-Local=1, but
-                        # guard in case a proxy strips it or the server
-                        # changes contract. Fail loud rather than write a
-                        # useless config silently.
-                        console.print()
-                        console.print(
-                            "  [red]Signup succeeded but the server returned no API key.[/]"
-                        )
-                        console.print(
-                            "  [dim]Run [bold]quorus doctor[/] to diagnose, or retry.[/]"
-                        )
-                    else:
-                        relay_ok = True
-                        console.print()
-                        console.print(
-                            f"  [green]Account created.[/] Workspace: "
-                            f"[bold]{workspace}[/]"
-                        )
-                        console.print(
-                            "  [dim]Config + key saved to ~/.quorus/config.json[/]"
-                        )
-                        console.print()
+                    console.print("[yellow]not reachable[/]")
+        else:
+            # Empty input → signup against the public relay. Workspace
+            # defaults to the user's name (lowercased, safe-charset).
+            relay_url = PUBLIC_RELAY
+            console.print(f"  [dim]Connecting to {relay_url}...[/] ", end="")
+            if not _try_connect(relay_url):
+                console.print("[yellow]not reachable[/]")
+                console.print(
+                    f"  [dim]Couldn't reach {relay_url}. "
+                    "Check your internet, then rerun `quorus`.[/]"
+                )
+            else:
+                console.print("[bold green]✓[/]")
+                console.print()
+                default_workspace = re.sub(r"[^a-z0-9\-]", "-", name.lower())[:32]
+                if not default_workspace or default_workspace[0] == "-":
+                    default_workspace = f"ws-{default_workspace}".strip("-")
+                api_key, workspace = _run_signup(
+                    console, relay_url, name, default_workspace,
+                )
+                if api_key:
+                    relay_ok = True
+                    console.print(
+                        f"  [dim]Account ready — workspace [bold]{workspace}[/], "
+                        "config saved to ~/.quorus/config.json.[/]"
+                    )
 
-    # If still not connected and chose local, guide them
+    # If still not connected, guide without pretending we succeeded.
     if not relay_ok and relay_url == DEFAULT_RELAY:
         console.print()
         console.print(
-            "  [dim]No relay running yet. Start one in another terminal:[/dim]\n"
+            "  [dim]Start a local relay in another terminal:[/] "
+            "[accent]quorus relay[/]"
         )
         console.print(
-            "    [bold primary]quorus relay[/]\n"
-        )
-        console.print(
-            "  [dim]Then run [bold]quorus begin[/bold] again. Config saved.[/dim]"
-        )
-    elif not relay_ok and choice != "3":
-        console.print()
-        console.print(
-            f"  [dim]Couldn't reach {relay_url}.[/dim]\n"
-            "  [dim]Config saved — run [bold]quorus begin[/bold] when the relay is up.[/dim]"
+            "  [dim]Then rerun [bold]quorus[/] — config already saved.[/]"
         )
 
-    # Save config
+    # Save config — even partial configs so the next run starts warm.
     _save_instance_config(name, relay_url, secret=secret, api_key=api_key)
 
     if relay_ok:
-        console.print()
-        console.print(
-            f"  [green]You're in![/green] Connected as [bold]{name}[/bold].\n"
-        )
-        console.print(
-            "  [dim]Type a message to chat, or [bold]help[/bold] for commands.[/dim]\n"
-        )
-        time.sleep(0.3)
+        console.print(f"\n  [success]✓[/] You're in as [agent]@{name}[/].")
+        time.sleep(0.2)
 
     return {
         "relay_url": relay_url,
