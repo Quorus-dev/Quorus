@@ -2002,8 +2002,9 @@ def _cmd_invite_token(args):
 def _cmd_join(args):
     """One-liner to join a room: writes config, registers MCP, joins the room.
 
-    Accepts either explicit flags (--relay, --secret, --room) OR a murm_join_
-    token as the first positional argument for instant, zero-config onboarding.
+    Accepts either explicit flags (--relay, --secret, --room) OR a
+    quorus_join_ (or legacy murm_join_) token as the first positional argument
+    for instant, zero-config onboarding.
 
     If no flags are provided and config already exists, just joins the room
     without rewriting config or re-registering MCP.
@@ -2012,7 +2013,10 @@ def _cmd_join(args):
     token = getattr(args, "token", None)
     rewrite_config = False
 
-    if token and token.startswith("murm_join_"):
+    if token and (
+        token.startswith(_JOIN_TOKEN_PREFIX)
+        or token.startswith(_LEGACY_JOIN_PREFIX)
+    ):
         try:
             decoded = _parse_join_token(token)
         except ValueError as exc:
@@ -4219,14 +4223,14 @@ def main():
 
     p_join = sub.add_parser(
         "join",
-        help="Join a room — pass a murm_join_ token or explicit flags",
+        help="Join a room — pass a quorus_join_ (or legacy murm_join_) token or explicit flags",
     )
     p_join.add_argument("--name", required=True, help="Your participant name")
     p_join.add_argument(
         "token",
         nargs="?",
         default=None,
-        help="Join token (murm_join_…). When provided, --relay/--secret/--room are not needed.",
+        help="Join token (quorus_join_…). When provided, --relay/--secret/--room are not needed.",
     )
     p_join.add_argument("--relay", dest="relay_url", default=None, help="Relay URL")
     p_join_auth = p_join.add_mutually_exclusive_group(required=False)

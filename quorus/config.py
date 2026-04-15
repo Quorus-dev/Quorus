@@ -3,9 +3,14 @@ import os
 from pathlib import Path
 from typing import Any
 
+CONFIG_FILENAME = "config.json"
+
+# These module-level paths are kept for backward compatibility with tests that
+# `monkeypatch.setattr("quorus.config.DEFAULT_CONFIG_DIR", ...)`. The active
+# resolution happens in `resolve_config_file()` below, which re-evaluates
+# `Path.home()` at call time so it follows any runtime HOME changes.
 DEFAULT_CONFIG_DIR = Path.home() / ".quorus"
 LEGACY_CONFIG_DIR = Path.home() / "mcp-tunnel"  # Previous default
-CONFIG_FILENAME = "config.json"
 
 
 def as_bool(value: Any, default: bool = False) -> bool:
@@ -25,8 +30,13 @@ def resolve_config_file() -> Path:
     if config_dir_override:
         return Path(config_dir_override).expanduser() / CONFIG_FILENAME
 
-    default_file = DEFAULT_CONFIG_DIR / CONFIG_FILENAME
-    legacy_file = LEGACY_CONFIG_DIR / CONFIG_FILENAME
+    # Prefer module-level constants when they've been monkeypatched in tests;
+    # fall back to `Path.home()` at call time otherwise so this works under
+    # runtime HOME changes (e.g., `sudo -E`).
+    default_dir = DEFAULT_CONFIG_DIR if "DEFAULT_CONFIG_DIR" in globals() else (Path.home() / ".quorus")
+    legacy_dir = LEGACY_CONFIG_DIR if "LEGACY_CONFIG_DIR" in globals() else (Path.home() / "mcp-tunnel")
+    default_file = default_dir / CONFIG_FILENAME
+    legacy_file = legacy_dir / CONFIG_FILENAME
     legacy_murmur_file = Path.home() / ".murmur" / CONFIG_FILENAME
     if default_file.exists():
         return default_file
