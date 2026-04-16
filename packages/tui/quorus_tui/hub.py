@@ -163,8 +163,11 @@ def _try_connect(url: str, timeout: float = 10) -> bool:
 
 
 def _prompt_name(console: Console) -> str:
-    """Collect a valid participant name. One prompt, tight validation."""
-    console.print("  [dim]Pick a name that others will see in rooms.[/]\n")
+    """Collect a valid participant name. One prompt, tight validation.
+
+    Intentionally terse — no preamble line, no flourish. The wizard
+    above already framed the question.
+    """
     while True:
         name = Prompt.ask("  Your name").strip()
         if not name:
@@ -175,7 +178,7 @@ def _prompt_name(console: Console) -> str:
             continue
         if not re.match(r"^[A-Za-z0-9_\-]+$", name):
             console.print(
-                "  [dim]Letters, numbers, hyphens, underscores only — no spaces.[/]"
+                "  [dim]Letters, numbers, hyphens, underscores only.[/]"
             )
             continue
         return name
@@ -273,29 +276,35 @@ def _run_signup(
 def _first_launch_setup(console: Console) -> dict:
     """Interactive first-launch wizard. Returns config dict.
 
-    Flow, in order of prompts the user sees:
+    Single-screen onboarding. Cadence:
 
-    1. Name (always).
-    2. If a local relay is reachable, we're done — no more prompts.
-    3. Otherwise: ONE prompt — "Paste an invite token, or press Enter
-       to sign up." Token → decode and connect. Empty → signup against
-       the public relay with workspace defaulted to the user's name.
+        (banner)
+        Welcome to Quorus. One group chat for you and every agent.
 
-    Everything else (manual URL + secret, auth-type menu, workspace
-    name prompts) is gone. Power users pass those via `quorus init`
-    CLI flags.
+        Your name > arav
+
+        Looking for a relay... ✓ local relay at localhost:8080
+        You're in as @arav.
+
+    Fast-path requires exactly one prompt. No-local-relay path adds one
+    more ("Token or Enter to sign up"). No other prompts, ever.
     """
+    from quorus_cli import ui as _ui
+
     try:
-        from quorus_cli import ui as _ui
         _ui.banner()
-        _ui.info("Setting up Quorus — just a name and you're in.")
-        console.print()
     except Exception:
-        console.print()
-        console.print("  [bold primary]quorus[/]  [dim]coordination for agent swarms[/]\n")
+        console.print(
+            "\n  [bold primary]quorus[/]  "
+            "[dim]coordination for agent swarms[/]\n"
+        )
+
+    console.print(
+        "  [muted]Welcome to Quorus. "
+        "One group chat for you and every agent.[/]\n"
+    )
 
     name = _prompt_name(console)
-    console.print(f"\n  [dim]Welcome, [agent]@{name}[/].[/]\n")
 
     relay_url = DEFAULT_RELAY
     secret = ""
@@ -303,54 +312,87 @@ def _first_launch_setup(console: Console) -> dict:
     relay_ok = False
 
     # Happy path: auto-detect local relay.
+    console.print()
+    console.print("  [dim]Looking for a relay...[/] ", end="")
     if _try_connect(DEFAULT_RELAY):
-        console.print(f"  [dim]Connected to local relay at {DEFAULT_RELAY}.[/]")
+        console.print(f"[success]✓[/] [muted]local relay at {DEFAULT_RELAY}[/]")
         relay_ok = True
     else:
-        # No local relay — one prompt for everything else.
+        console.print("[muted]no local relay found[/]")
+        console.print()
         console.print(
-            "  [dim]No local relay found. "
-            "Paste an invite token, or press Enter to sign up on "
-            f"[primary]{PUBLIC_RELAY}[/][dim].[/]\n"
+            "  [muted]Paste a[/] [accent]quorus://[/] [muted]or[/] "
+            "[accent]ABCD-EFGH[/] [muted]invite code, or press Enter to "
+            "sign up on[/] [primary]quorus-relay.fly.dev[/][muted].[/]"
         )
-        token = Prompt.ask("  Token or Enter", default="").strip()
+        raw = Prompt.ask("\n  Invite or Enter", default="").strip()
 
-        if token:
-            decoded = _decode_invite_token(token)
-            if decoded is None:
+        decoded = _decode_invite_token(raw) if raw else None
+        if raw and decoded:
+            relay_url = decoded["relay_url"]
+            secret = decoded["secret"]
+            api_key = decoded["api_key"]
+            console.print(f"\n  [dim]Connecting to {relay_url}...[/] ", end="")
+            if _try_connect(relay_url):
+                console.print("[success]✓[/]")
+                relay_ok = True
+                if decoded.get("room"):
+                    console.print(
+                        f"  [muted]You'll land in [room]#{decoded['room']}[/] "
+                        "automatically.[/]"
+                    )
+            else:
+                console.print("[warning]not reachable[/]")
+        elif raw:
+            # Try short code — server-side resolve covers the cases where
+            # the input isn't a quorus:// URI. This closes the loop for
+            # teammates whose share output gave them a code.
+            from quorus.services.join_code_svc import normalize_code
+
+            canonical = normalize_code(raw)
+            if canonical is None:
                 console.print(
-                    "  [red]Token not recognized.[/] "
-                    "[dim]Expected a quorus:// or quorus_join_ token.[/]"
+                    "\n  [error]Couldn't recognize that input.[/] "
+                    "[dim]Expected a quorus:// token or a code like "
+                    "ABCD-EFGH.[/]"
                 )
             else:
-                relay_url = decoded["relay_url"]
-                secret = decoded["secret"]
-                api_key = decoded["api_key"]
-                console.print(f"  [dim]Connecting to {relay_url}...[/] ", end="")
-                if _try_connect(relay_url):
-                    console.print("[bold green]✓[/]")
-                    relay_ok = True
-                    if decoded.get("room"):
+                console.print(
+                    f"\n  [dim]Resolving [accent]{raw}[/] against "
+                    f"[primary]{PUBLIC_RELAY}[/]...[/] ", end="",
+                )
+                try:
+                    resp = httpx.get(
+                        f"{PUBLIC_RELAY}/v1/join/resolve/{canonical}",
+                        timeout=10,
+                        follow_redirects=True,
+                    )
+                except Exception:
+                    resp = None
+                if resp is not None and resp.status_code == 200:
+                    payload = (resp.json() or {}).get("payload") or {}
+                    relay_url = (payload.get("r") or "").rstrip("/")
+                    secret = payload.get("s", "") or ""
+                    api_key = payload.get("k", "") or ""
+                    console.print("[success]✓[/]")
+                    relay_ok = bool(relay_url)
+                    if payload.get("n"):
                         console.print(
-                            f"  [dim]Token unlocks [room]#{decoded['room']}[/] — "
-                            "you'll land there automatically.[/]"
+                            f"  [muted]You'll land in [room]#{payload['n']}[/] "
+                            "automatically.[/]"
                         )
                 else:
-                    console.print("[yellow]not reachable[/]")
+                    console.print("[error]code not found or expired[/]")
         else:
-            # Empty input → signup against the public relay. Workspace
-            # defaults to the user's name (lowercased, safe-charset).
+            # Empty input → signup against the public relay.
             relay_url = PUBLIC_RELAY
-            console.print(f"  [dim]Connecting to {relay_url}...[/] ", end="")
+            console.print(f"\n  [dim]Signing you up on {relay_url}...[/]")
             if not _try_connect(relay_url):
-                console.print("[yellow]not reachable[/]")
                 console.print(
-                    f"  [dim]Couldn't reach {relay_url}. "
-                    "Check your internet, then rerun `quorus`.[/]"
+                    "  [error]Couldn't reach the relay.[/] "
+                    "[dim]Check your internet and rerun `quorus`.[/]"
                 )
             else:
-                console.print("[bold green]✓[/]")
-                console.print()
                 default_workspace = re.sub(r"[^a-z0-9\-]", "-", name.lower())[:32]
                 if not default_workspace or default_workspace[0] == "-":
                     default_workspace = f"ws-{default_workspace}".strip("-")
@@ -360,8 +402,8 @@ def _first_launch_setup(console: Console) -> dict:
                 if api_key:
                     relay_ok = True
                     console.print(
-                        f"  [dim]Account ready — workspace [bold]{workspace}[/], "
-                        "config saved to ~/.quorus/config.json.[/]"
+                        f"  [muted]Workspace [bold]{workspace}[/] — "
+                        "config saved to ~/.quorus/config.json[/]"
                     )
 
     # If still not connected, guide without pretending we succeeded.
@@ -379,8 +421,8 @@ def _first_launch_setup(console: Console) -> dict:
     _save_instance_config(name, relay_url, secret=secret, api_key=api_key)
 
     if relay_ok:
-        console.print(f"\n  [success]✓[/] You're in as [agent]@{name}[/].")
-        time.sleep(0.2)
+        console.print(f"\n  [success]✓[/] [muted]You're in as[/] [agent]@{name}[/].")
+        time.sleep(0.15)
 
     return {
         "relay_url": relay_url,

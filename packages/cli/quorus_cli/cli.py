@@ -446,29 +446,51 @@ def _cmd_rooms(args):
         sys.exit(1)
 
     if not rooms:
-        ui.info("No rooms yet")
-        ui.console.print("  [muted]Create one: [accent]quorus create <name>[/][/]")
+        ui.console.print()
+        ui.console.print("  [muted]— no rooms yet —[/]")
+        ui.console.print(
+            "  [dim]create one with[/] [accent]quorus create <name>[/]"
+        )
         return
 
-    table = Table(
-        title="[heading]Rooms[/]",
-        border_style=ui.PRIMARY,
-        header_style=f"bold {ui.PRIMARY}",
-        title_justify="left",
-        show_edge=True,
+    # Summary line — borderless, scannable, gh/stripe-style.
+    total_members = sum(len(r.get("members", [])) for r in rooms)
+    ui.console.print()
+    ui.console.print(
+        f"  [muted]— {len(rooms)} room{'s' if len(rooms) != 1 else ''} · "
+        f"{total_members} member{'s' if total_members != 1 else ''} —[/]"
     )
-    table.add_column("Room", style=f"bold {ui.ROOM}")
-    table.add_column("Members", style=ui.MUTED)
-    table.add_column("ID", style="dim")
+    ui.console.print()
+
+    # Borderless table: no edges, no separator lines.
+    from rich import box as _box
+
+    table = Table(
+        box=_box.SIMPLE_HEAD,
+        show_edge=False,
+        show_lines=False,
+        pad_edge=False,
+        header_style="muted",
+        border_style="dim",
+    )
+    table.add_column("ROOM", style=f"bold {ui.ROOM}", no_wrap=True)
+    table.add_column("MEMBERS", style="muted")
+    table.add_column("ID", style="dim", no_wrap=True)
     for r in rooms:
         members_list = r.get("members", [])
-        member_str = ", ".join(f"@{m}" for m in members_list) if members_list else "—"
+        member_str = (
+            ", ".join(f"@{m}" for m in members_list) if members_list else "—"
+        )
         table.add_row(
             f"#{r['name']}",
             member_str,
             r["id"][:8],
         )
     ui.console.print(table)
+    ui.console.print(
+        "\n  [dim]next:[/] [accent]quorus share <room>[/] "
+        "[dim]— invite humans + agents[/]"
+    )
 
 
 def _cmd_create(args):
@@ -792,15 +814,36 @@ async def _ps() -> None:
         agents = resp.json()
 
         if not agents:
-            console.print("[dim]No agents reporting presence yet.[/dim]")
+            console.print()
+            console.print("  [muted]— no agents reporting presence yet —[/]")
+            console.print(
+                "  [dim]spawn one with[/] [accent]quorus spawn <room> <name>[/]"
+            )
             return
 
-        table = Table(title="Agent Presence")
-        table.add_column("Name", style="bold")
-        table.add_column("Status")
-        table.add_column("Room", style="dim")
-        table.add_column("Last Heartbeat", style="dim")
-        table.add_column("Uptime", justify="right")
+        # Summary line + borderless table.
+        online_n = sum(1 for a in agents if a.get("online"))
+        console.print()
+        console.print(
+            f"  [muted]— {len(agents)} agent{'s' if len(agents) != 1 else ''} · "
+            f"{online_n} online —[/]"
+        )
+        console.print()
+
+        from rich import box as _box
+
+        table = Table(
+            box=_box.SIMPLE_HEAD,
+            show_edge=False,
+            show_lines=False,
+            pad_edge=False,
+            header_style="muted",
+        )
+        table.add_column("AGENT", style="bold agent", no_wrap=True)
+        table.add_column("STATUS", no_wrap=True)
+        table.add_column("ROOM", style="dim")
+        table.add_column("LAST SEEN", style="dim", no_wrap=True)
+        table.add_column("UPTIME", justify="right", style="dim", no_wrap=True)
 
         from datetime import datetime, timezone
 
@@ -840,15 +883,22 @@ async def _ps() -> None:
             except (ValueError, KeyError, TypeError):
                 hb_str = "—"
 
+            room_label = a.get("room", "")
+            if room_label:
+                room_label = f"#{room_label}"
             table.add_row(
-                a["name"],
+                f"@{a['name']}",
                 status_display,
-                a.get("room", ""),
+                room_label or "—",
                 hb_str,
                 uptime,
             )
 
         console.print(table)
+        console.print(
+            "\n  [dim]next:[/] [accent]quorus say <room> 'hi'[/]"
+            " [dim]— send a test message[/]"
+        )
     except httpx.ConnectError:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
