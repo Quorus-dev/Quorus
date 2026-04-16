@@ -41,13 +41,20 @@ class RedisOperationTimeout(BackendError):
     """Raised when a Redis operation exceeds REDIS_OP_TIMEOUT_SECONDS."""
 
 
-async def _with_timeout(coro):
-    """Wrap *coro* with REDIS_OP_TIMEOUT_SECONDS; raise RedisOperationTimeout on timeout."""
+async def _with_timeout(coro, *, timeout_override: float | None = None):
+    """Wrap *coro* with REDIS_OP_TIMEOUT_SECONDS; raise RedisOperationTimeout on timeout.
+
+    Pass ``timeout_override`` for long-blocking commands (e.g. XREADGROUP
+    ... BLOCK) whose expected wait legitimately exceeds the default cap.
+    """
+    timeout = (
+        timeout_override if timeout_override is not None else REDIS_OP_TIMEOUT_SECONDS
+    )
     try:
-        return await asyncio.wait_for(coro, timeout=REDIS_OP_TIMEOUT_SECONDS)
+        return await asyncio.wait_for(coro, timeout=timeout)
     except asyncio.TimeoutError:
         raise RedisOperationTimeout(
-            f"Redis operation timed out after {REDIS_OP_TIMEOUT_SECONDS}s"
+            f"Redis operation timed out after {timeout}s"
         )
 
 # Lua script for atomic sliding-window rate limiting
@@ -1219,6 +1226,19 @@ class RedisWebhookQueueBackend:
     def __init__(self, r: Redis) -> None:
         self._r = r
         self._group_created = False
+        # Throttle for housekeeping (xautoclaim + promote_delayed). Without
+        # this, every fetch issues 2-3 extra commands. Read once at construct
+        # time; tests that need different values construct fresh backends.
+        self._reclaim_interval_s = float(
+            os.getenv("QUORUS_WEBHOOK_RECLAIM_INTERVAL", "30")
+        )
+        self._last_reclaim_at: float = 0.0
+        # ZCARD cache on the delay set — lets us skip EVAL promote_delayed
+        # when nothing is queued for retry.
+        self._delay_card_cache: tuple[float, int] = (0.0, 0)
+        self._delay_card_ttl_s = float(
+            os.getenv("QUORUS_WEBHOOK_DELAY_CARD_TTL", "10")
+        )
 
     async def _ensure_group(self) -> None:
         """Create consumer group if it doesn't exist."""
@@ -1239,29 +1259,52 @@ class RedisWebhookQueueBackend:
         job_id = await _with_timeout(self._r.xadd(_WEBHOOK_QUEUE_KEY, {"data": json.dumps(job)}))
         return job_id
 
+    async def _delay_set_has_work(self) -> bool:
+        """Cached ZCARD on the delay set — avoid EVAL when there's nothing to promote."""
+        now = time.time()
+        cached_at, cached_count = self._delay_card_cache
+        if now - cached_at < self._delay_card_ttl_s:
+            return cached_count > 0
+        try:
+            count = await _with_timeout(self._r.zcard(_WEBHOOK_DELAY_KEY))
+        except Exception:
+            # On failure, assume there IS work — don't drop retries silently.
+            return True
+        self._delay_card_cache = (now, int(count or 0))
+        return self._delay_card_cache[1] > 0
+
     async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
-        """Fetch pending jobs for delivery."""
+        """Fetch pending jobs for delivery.
+
+        Housekeeping (XAUTOCLAIM, promote_delayed) runs at most once per
+        ``self._reclaim_interval_s`` seconds to keep idle Redis cost near
+        zero. The cheap XREADGROUP read runs every call.
+        """
         await self._ensure_group()
         jobs: list[tuple[str, dict]] = []
 
-        # 0. Promote any due delayed jobs back to the main queue
-        await self.promote_delayed()
+        now = time.time()
+        do_housekeeping = (now - self._last_reclaim_at) >= self._reclaim_interval_s
+        if do_housekeeping:
+            self._last_reclaim_at = now
+            # 0. Promote due delayed jobs — only if the delay set has work.
+            if await self._delay_set_has_work():
+                await self.promote_delayed()
+            # 1. Reclaim stale pending jobs (visibility timeout expired).
+            visibility_ms = _WEBHOOK_VISIBILITY_TIMEOUT * 1000
+            try:
+                claimed = await _with_timeout(self._r.xautoclaim(
+                    _WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, _WEBHOOK_CONSUMER,
+                    min_idle_time=visibility_ms, start_id="0-0", count=count
+                ))
+                if claimed and len(claimed) >= 2:
+                    for entry_id, fields in claimed[1]:
+                        job = json.loads(fields["data"])
+                        jobs.append((entry_id, job))
+            except ResponseError as e:
+                _redis_logger.warning("XAUTOCLAIM failed: %s", e)
 
-        # 1. Reclaim stale pending jobs (visibility timeout expired)
-        visibility_ms = _WEBHOOK_VISIBILITY_TIMEOUT * 1000
-        try:
-            claimed = await _with_timeout(self._r.xautoclaim(
-                _WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, _WEBHOOK_CONSUMER,
-                min_idle_time=visibility_ms, start_id="0-0", count=count
-            ))
-            if claimed and len(claimed) >= 2:
-                for entry_id, fields in claimed[1]:
-                    job = json.loads(fields["data"])
-                    jobs.append((entry_id, job))
-        except ResponseError as e:
-            _redis_logger.warning("XAUTOCLAIM failed: %s", e)
-
-        # 2. Read new jobs
+        # 2. Read new jobs (cheap, always runs).
         remaining = count - len(jobs)
         if remaining > 0:
             entries = await _with_timeout(self._r.xreadgroup(
@@ -1275,6 +1318,44 @@ class RedisWebhookQueueBackend:
                         jobs.append((entry_id, job))
 
         return jobs
+
+    async def fetch_blocking(
+        self, count: int = 10, block_ms: int = 30000
+    ) -> list[tuple[str, dict]]:
+        """Block on XREADGROUP up to ``block_ms`` ms.
+
+        Fast path: runs the throttled fetch first so cached pending or
+        reclaimed entries are delivered without waiting. Slow path: a
+        single ``XREADGROUP ... BLOCK block_ms`` issued to Redis — wakes
+        the instant XADD posts a new job.
+
+        Housekeeping (reclaim, promote_delayed) remains throttled by the
+        timer in ``fetch``.
+        """
+        jobs = await self.fetch(count=count)
+        if jobs:
+            return jobs
+        await self._ensure_group()
+        try:
+            entries = await _with_timeout(
+                self._r.xreadgroup(
+                    _WEBHOOK_CG, _WEBHOOK_CONSUMER,
+                    {_WEBHOOK_QUEUE_KEY: ">"}, count=count, block=block_ms,
+                ),
+                # Give the asyncio timeout enough headroom so the Redis-side
+                # BLOCK can elapse before we raise a timeout.
+                timeout_override=(block_ms / 1000) + 5.0,
+            )
+        except RedisOperationTimeout:
+            return []
+        if not entries:
+            return []
+        out: list[tuple[str, dict]] = []
+        for _stream_key, stream_entries in entries:
+            for entry_id, fields in stream_entries:
+                job = json.loads(fields["data"])
+                out.append((entry_id, job))
+        return out
 
     async def ack(self, job_id: str) -> None:
         """Acknowledge successful delivery, removing the job."""
