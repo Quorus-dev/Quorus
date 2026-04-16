@@ -586,6 +586,35 @@ class HubState:
         # message in the current typing session. Reset when the main loop
         # returns from input() so the next typing session starts fresh.
         self._inline_rule_drawn: bool = False
+        # Per-room unread count. Incremented when an SSE message lands
+        # for a non-selected room; zeroed when the user selects it.
+        self.unread: dict[str, int] = {}
+        # Last observed relay round-trip in milliseconds. None = unknown.
+        self.latency_ms: int | None = None
+
+    def increment_unread(self, room_name: str) -> None:
+        with self._lock:
+            self.unread[room_name] = self.unread.get(room_name, 0) + 1
+
+    def clear_unread(self, room_name: str) -> None:
+        with self._lock:
+            self.unread.pop(room_name, None)
+
+    def get_unread(self, room_name: str) -> int:
+        with self._lock:
+            return self.unread.get(room_name, 0)
+
+    def total_unread(self) -> int:
+        with self._lock:
+            return sum(self.unread.values())
+
+    def set_latency_ms(self, ms: int | None) -> None:
+        with self._lock:
+            self.latency_ms = ms
+
+    def get_latency_ms(self) -> int | None:
+        with self._lock:
+            return self.latency_ms
 
     def toggle_help(self) -> None:
         with self._lock:
@@ -627,21 +656,33 @@ class HubState:
             idx = max(0, min(self.selected_room_idx, len(self.rooms) - 1))
             return self.rooms[idx]
 
+    def _selected_name_locked(self) -> str:
+        """Current room's name. Must be called inside the lock."""
+        if not self.rooms:
+            return ""
+        idx = max(0, min(self.selected_room_idx, len(self.rooms) - 1))
+        r = self.rooms[idx]
+        return r.get("name") or r.get("id") or ""
+
     def select_next(self) -> None:
         with self._lock:
             if self.rooms:
                 self.selected_room_idx = (self.selected_room_idx + 1) % len(self.rooms)
+                # Entering a room counts as reading it.
+                self.unread.pop(self._selected_name_locked(), None)
 
     def select_prev(self) -> None:
         with self._lock:
             if self.rooms:
                 self.selected_room_idx = (self.selected_room_idx - 1) % len(self.rooms)
+                self.unread.pop(self._selected_name_locked(), None)
 
     def select_by_name(self, name: str) -> None:
         with self._lock:
             for i, r in enumerate(self.rooms):
                 if r.get("name") == name:
                     self.selected_room_idx = i
+                    self.unread.pop(name, None)
                     return
 
     # Messages
@@ -717,9 +758,34 @@ class HubState:
 
 def _poll_loop(relay: str, secret: str, state: HubState, stop_event: threading.Event) -> None:
     """Slow reconciliation poll — SSE push handles real-time delivery. This
-    exists only to recover from dropped streams and reconcile missed messages."""
+    exists only to recover from dropped streams and reconcile missed messages.
+
+    Opportunistically measures the /health round-trip each cycle so the
+    header can show a live latency number.
+    """
+    import time as _time
+
     while not stop_event.is_set():
         try:
+            # Measure latency in a lightweight /health probe that runs
+            # regardless of whether rooms succeed — keeps the number
+            # flowing even when the tenant has no rooms yet.
+            t0 = _time.perf_counter()
+            try:
+                hr = httpx.get(
+                    f"{relay.rstrip('/')}/health",
+                    timeout=5,
+                    follow_redirects=True,
+                )
+                if hr.status_code == 200:
+                    state.set_latency_ms(
+                        int((_time.perf_counter() - t0) * 1000)
+                    )
+                else:
+                    state.set_latency_ms(None)
+            except Exception:
+                state.set_latency_ms(None)
+
             rooms = _fetch_rooms(relay, secret)
             if rooms:
                 state.set_rooms(rooms)
@@ -850,9 +916,7 @@ def _sse_loop(
                             if isinstance(msg, dict):
                                 msg_room = msg.get("room", "")
                                 if msg_room and msg_room == state.selected_room_name():
-                                    # Only print if we haven't seen this id —
-                                    # avoids double-print when the inline echo
-                                    # is already on screen.
+                                    # Active room — append + inline print.
                                     key = HubState._dedup_key(msg)
                                     is_new = not key or key not in state._seen_set
                                     state.append_message(msg)
@@ -860,6 +924,11 @@ def _sse_loop(
                                         _print_inline_message(
                                             console, msg, recipient, state,
                                         )
+                                elif msg_room and msg.get("from_name") != recipient:
+                                    # Background room — bump the unread
+                                    # badge so the header + room strip
+                                    # reflect the activity next redraw.
+                                    state.increment_unread(msg_room)
                         event_name = ""
                         data_buf = []
                         continue
@@ -882,13 +951,36 @@ def _sse_loop(
 # loop prints directly.
 
 
-def _render_header(
-    relay_url: str, agent_name: str, connected: bool, status: str,
-) -> Text:
-    """One-line header: `quorus · @name · host · ⏵ status`.
+# ── Message-type glyphs ───────────────────────────────────────────────────────
+# One-char prefix that replaces the old `[message_type]` bracket tag.
+# Reserved glyphs are chosen to be visually distinct at small sizes.
+_MSG_TYPE_GLYPH = {
+    "chat": "",
+    "system": "·",
+    "brief": "›",
+    "decision": "◆",
+    "task": "›",
+    "note": "·",
+}
 
-    No panel, no border — a `Rule(style="dim")` is printed beneath it
-    by the main loop for the only piece of structure this view needs.
+
+def _render_header(
+    relay_url: str,
+    agent_name: str,
+    connected: bool,
+    status: str,
+    *,
+    room_count: int = 0,
+    unread_total: int = 0,
+    latency_ms: int | None = None,
+) -> Text:
+    """Premium one-line header.
+
+    Format: `  @arav · 3 rooms · 12 unread     host  ⏵ 42ms`
+
+    The literal "quorus" word is dropped — the brand lives in the
+    banner + first-run wizard. Header space now carries live signal:
+    identity, room count, unread badge, host, connection + latency.
     """
     from rich.text import Text as _Text
 
@@ -896,61 +988,84 @@ def _render_header(
         relay_url.replace("http://", "").replace("https://", "")
     )
     dot_style = "bold success" if connected else "bold error"
+
     header = _Text()
-    header.append("  quorus", style="bold primary")
-    header.append("  ·  ", style="dim")
+    header.append("  ")
     header.append(f"@{agent_name}", style="bold agent")
-    header.append("  ·  ", style="dim")
+
+    if room_count:
+        header.append("  ·  ", style="dim")
+        header.append(
+            f"{room_count} {'room' if room_count == 1 else 'rooms'}",
+            style="muted",
+        )
+    if unread_total:
+        header.append("  ·  ", style="dim")
+        header.append(
+            f"{unread_total} unread", style="bold room",
+        )
+
+    # Right side: host + connection pulse + latency (when known).
+    header.append("     ", style="muted")
     header.append(display_relay, style="muted")
     header.append("  ", style="muted")
     header.append("⏵", style=dot_style)
-    if status:
+    if latency_ms is not None:
+        header.append(f" {latency_ms}ms", style="muted")
+    elif status:
         header.append(f" {status}", style="muted")
     return header
 
 
-def _render_room_strip(rooms: list[dict], selected_idx: int) -> Text:
-    """Inline horizontal room strip: `  #dev · #design · #ops`.
+def _render_room_strip(
+    rooms: list[dict],
+    selected_idx: int,
+    *,
+    unread_by_room: dict[str, int] | None = None,
+) -> Text:
+    """Inline room strip with unread dots.
 
-    Active room in bold amber, others in dim. Middle-dot divider.
-    Empty state lives on its own line so the layout never collapses
-    vertically below this anchor.
+    `#dev•3   #design   #ops•1` — active room bold amber, others dim,
+    unread count rendered inline as `•N` without a border.
     """
-    strip = Text()
+    unread_by_room = unread_by_room or {}
+
     if not rooms:
-        strip.append(
-            "  · no rooms yet · press [bold]n[/] to create one ·",
-        )
         return Text.from_markup(
-            "  [dim]· no rooms yet · press [bold]n[/] to create one ·[/]"
+            "  [dim]· no rooms yet · press[/] [bold]n[/] "
+            "[dim]to create one ·[/]"
         )
 
-    strip.append("  ", style="")
+    strip = Text("  ")
     for i, room in enumerate(rooms):
         name = room.get("name") or room.get("id", "?")
         is_selected = i == selected_idx
+        unread = unread_by_room.get(name, 0)
         if is_selected:
             strip.append(f"#{name}", style="bold room")
         else:
             strip.append(f"#{name}", style="dim")
+        if unread and not is_selected:
+            strip.append(f"•{unread}", style="bold room")
         if i < len(rooms) - 1:
-            strip.append("  ·  ", style="dim")
+            strip.append("   ·   ", style="dim")
     return strip
 
 
-def _format_message_line(msg: dict, my_name: str) -> Text:
-    """Render one chat line as bare indented text.
+def _format_header_line(
+    msg: dict, my_name: str, *, glyph: str = "",
+) -> Text:
+    """Group-leader line: `  · [HH:MM]  @sender  body`.
 
-    Format: `  [HH:MM]  @sender  content`. Own messages use the agent
-    (purple) color for the name; others hash into 3 theme colors.
+    Used for the first message in a sender-group (and any message
+    after a >120s gap). Continuation messages skip the leader and
+    just indent.
     """
     sender = msg.get("from_name") or msg.get("sender", "?")
     content = msg.get("content", "")
     ts_raw = msg.get("timestamp", "")
-    mtype = msg.get("message_type", "chat")
 
     try:
-        # Expect ISO 8601; take HH:MM directly.
         hhmm = ts_raw[11:16] if len(ts_raw) >= 16 else ts_raw[:5]
     except Exception:
         hhmm = "??:??"
@@ -959,45 +1074,136 @@ def _format_message_line(msg: dict, my_name: str) -> Text:
     sender_color = "agent" if is_me else _sender_color(sender)
 
     line = Text()
-    line.append("  ", style="")
+    line.append("  ")
+    # Glyph column (1 char) for message-type differentiation.
+    if glyph:
+        line.append(glyph, style="muted")
+        line.append(" ")
+    else:
+        line.append("  ", style="")
     line.append(f"[{hhmm}]", style="dim")
-    line.append("  ", style="")
+    line.append("  ")
     line.append(f"@{sender}", style=f"bold {sender_color}")
-    if mtype not in ("chat", ""):
-        line.append(f" [{mtype}]", style="muted italic")
-    line.append("  ", style="")
-    line.append(content, style="white" if is_me else "muted")
+    line.append("  ")
+    line.append(content, style="bright_white" if is_me else "muted")
     return line
 
 
-def _render_chat_feed(
-    messages: list[dict], room_name: str, my_name: str,
-) -> list[Text]:
-    """Flat message feed — returns a list of lines for the main loop to
-    print in order. No Panel, no border.
+def _format_continuation_line(msg: dict, my_name: str) -> Text:
+    """Continuation line — same sender, within 120s of the previous.
 
-    Empty states (no room / no messages in room) return 1-3 muted hint
-    lines centered in the feed column.
+    Indented to align under the previous message's body so the eye
+    reads each sender-group as a block (iMessage rhythm).
+    """
+    sender = msg.get("from_name") or msg.get("sender", "?")
+    content = msg.get("content", "")
+    is_me = sender == my_name
+    # Indent matches the `  · [HH:MM]  @sender  ` column — roughly
+    # 2 + 2 + 7 + 2 + len(@sender) + 2, but we fix at 20 so names of
+    # varying length all align cleanly.
+    indent = " " * 20
+    line = Text(indent)
+    line.append(content, style="bright_white" if is_me else "muted")
+    return line
+
+
+def _ts_epoch(msg: dict) -> float:
+    """Parse a message's ISO timestamp to epoch seconds. 0 on failure."""
+    from datetime import datetime
+
+    ts_raw = msg.get("timestamp", "")
+    if not ts_raw:
+        return 0.0
+    try:
+        # Handle trailing Z and explicit offset.
+        normalized = ts_raw.replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _empty_card(
+    console_width: int,
+    *,
+    glyph: str,
+    title: str,
+    cta: str,
+) -> list[Text]:
+    """A vertically-centered 5-line empty state.
+
+    No borders, no panel — just centered Text lines. Used when there
+    are no rooms OR no messages in the selected room.
+    """
+
+    def _center(s: str, style: str) -> Text:
+        pad = max(0, (console_width - len(s)) // 2)
+        return Text(" " * pad + s, style=style)
+
+    return [
+        Text(""),
+        _center(glyph, "bold primary"),
+        Text(""),
+        _center(title, "muted"),
+        Text(""),
+        _center(cta, "dim"),
+    ]
+
+
+def _render_chat_feed(
+    messages: list[dict],
+    room_name: str,
+    my_name: str,
+    *,
+    console_width: int = 80,
+) -> list[Text]:
+    """Flat message feed with sender-grouping + empty cards.
+
+    - Sender-group: consecutive messages from the same sender within
+      120s collapse. Only the first shows `[HH:MM] @sender`; later
+      lines are indented to the body column.
+    - Empty states get a centered 5-line card.
     """
     if not room_name:
-        return [
-            Text.from_markup(
-                "  [dim]·[/]  [dim]no room yet[/]  [dim]·[/]"
-            ),
-            Text.from_markup(
-                "  [dim]press[/] [bold]n[/] [dim]or type[/] "
-                "[accent]/create <name>[/]"
-            ),
-        ]
+        return _empty_card(
+            console_width,
+            glyph="⌘",
+            title="no room yet",
+            cta="press  n  or type  /create <name>",
+        )
     if not messages:
-        return [
-            Text.from_markup(
-                f"  [dim]·[/]  [dim]no messages in[/] [bold room]#{room_name}[/] "
-                "[dim]yet[/]  [dim]·[/]"
-            ),
-            Text.from_markup("  [dim]say something to get the room started.[/]"),
-        ]
-    return [_format_message_line(m, my_name) for m in messages]
+        return _empty_card(
+            console_width,
+            glyph="◌",
+            title=f"#{room_name} is quiet",
+            cta="type a message to get started",
+        )
+
+    lines: list[Text] = []
+    prev_sender: str | None = None
+    prev_ts: float = 0.0
+    for msg in messages:
+        sender = msg.get("from_name") or msg.get("sender", "?")
+        mtype = msg.get("message_type", "chat")
+        ts = _ts_epoch(msg)
+        same_group = (
+            sender == prev_sender
+            and prev_ts
+            and (ts - prev_ts) < 120
+            and mtype == "chat"
+        )
+
+        if same_group:
+            lines.append(_format_continuation_line(msg, my_name))
+        else:
+            # Blank line between groups for breathing room.
+            if prev_sender is not None:
+                lines.append(Text(""))
+            glyph = _MSG_TYPE_GLYPH.get(mtype, "")
+            lines.append(_format_header_line(msg, my_name, glyph=glyph))
+
+        prev_sender = sender
+        prev_ts = ts
+    return lines
 
 
 def _render_status_line(status_msg: str) -> Text | None:
@@ -1292,21 +1498,54 @@ def run_hub() -> None:
                 with state._lock:
                     selected_idx = state.selected_room_idx
 
+                # Snapshot live-signal fields for the header.
+                unread_total = state.total_unread()
+                unread_by_room = {
+                    (r.get("name") or r.get("id", "")): state.get_unread(
+                        r.get("name") or r.get("id", "")
+                    )
+                    for r in rooms_snap
+                }
+                latency_ms = state.get_latency_ms()
+                console_width = max(40, console.size.width)
+
                 console.clear()
                 # Header row + single hairline rule. No border box.
                 console.print(
-                    _render_header(relay_url, agent_name, connected, conn_status)
+                    _render_header(
+                        relay_url,
+                        agent_name,
+                        connected,
+                        conn_status,
+                        room_count=len(rooms_snap),
+                        unread_total=unread_total,
+                        latency_ms=latency_ms,
+                    )
                 )
                 console.print(_Rule(style="dim"))
                 # Inline room strip (horizontal, not a sidebar).
-                console.print(_render_room_strip(rooms_snap, selected_idx))
+                console.print(
+                    _render_room_strip(
+                        rooms_snap, selected_idx,
+                        unread_by_room=unread_by_room,
+                    )
+                )
                 console.print()
-                # Flat chat feed — one line per message, no panel.
+                # Flat chat feed — grouped, centered empty states.
                 for feed_line in _render_chat_feed(
                     msgs_snap, room_name, agent_name,
+                    console_width=console_width,
                 ):
                     console.print(feed_line)
                 console.print()
+                # First-send hint: only when room is selected and empty.
+                if room_name and not msgs_snap and not status_bar:
+                    console.print(
+                        Text.from_markup(
+                            "  [dim]type a message · [/][accent]/help[/] "
+                            "[dim]for commands[/]"
+                        )
+                    )
                 # Transient status line (if any) above the bare prompt.
                 status_line = _render_status_line(status_bar)
                 if status_line is not None:
