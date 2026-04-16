@@ -739,16 +739,34 @@ class RedisRoomHistoryBackend:
 # -- Presence / heartbeat --------------------------------------------------
 
 class RedisPresenceBackend:
-    """Agent heartbeat tracking with Redis Hashes and a Sorted Set index."""
+    """Agent heartbeat tracking with Redis Hashes and a Sorted Set index.
+
+    ``list_all`` is cached per ``(tenant_id, timeout_seconds)`` for
+    ``QUORUS_PRESENCE_CACHE_TTL`` seconds (default 5). TUI and dashboard
+    polling hit this method often; the cache eliminates repeated
+    ZRANGE + per-agent HGETALL fan-out in the steady state. Writes
+    (heartbeat) invalidate the tenant's entries so the agent's own
+    update is visible on the next read.
+    """
 
     def __init__(self, r: Redis) -> None:
         self._r = r
+        # Key: (tenant_id, timeout_seconds). Value: (cache_payload, fetched_at).
+        # cache_payload items carry "_score" so the _online flag can be
+        # recomputed for the caller's current clock without re-fetching.
+        self._list_all_cache: dict[
+            tuple[str, int], tuple[list[dict], float]
+        ] = {}
 
     def _entry_key(self, tid: str, name: str) -> str:
         return f"t:{tid}:presence:{name}"
 
     def _index_key(self, tid: str) -> str:
         return f"t:{tid}:presence:_idx"
+
+    def _invalidate_tenant(self, tenant_id: str) -> None:
+        for key in [k for k in self._list_all_cache if k[0] == tenant_id]:
+            self._list_all_cache.pop(key, None)
 
     async def heartbeat(self, tenant_id: str, name: str, status: str, room: str) -> dict:
         now = datetime.now(timezone.utc)
@@ -766,39 +784,69 @@ class RedisPresenceBackend:
             # No EXPIRE — sorted set tracks online/offline via score
             pipe.zadd(self._index_key(tenant_id), {name: now_ts})
             await _with_timeout(pipe.execute())
+        # The caller just wrote — drop any cached list_all so its own
+        # heartbeat is visible on the next read.
+        self._invalidate_tenant(tenant_id)
         return entry
 
     async def list_all(self, tenant_id: str, timeout_seconds: int) -> list[dict]:
-        # Return ALL entries; caller uses timeout_seconds to classify online/offline
-        # Use ZRANGE with scores to get names + timestamps in one call
+        # Return ALL entries; caller uses timeout_seconds to classify online/offline.
+        ttl = float(os.getenv("QUORUS_PRESENCE_CACHE_TTL", "5"))
+        cache_key = (tenant_id, int(timeout_seconds))
+        now = time.time()
+
+        if ttl > 0:
+            cached = self._list_all_cache.get(cache_key)
+            if cached is not None and (now - cached[1]) < ttl:
+                cutoff = (
+                    datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+                ).timestamp()
+                refreshed: list[dict] = []
+                for entry in cached[0]:
+                    score = entry.get("_score", 0.0)
+                    item = {k: v for k, v in entry.items() if k != "_score"}
+                    item["_online"] = score >= cutoff
+                    refreshed.append(item)
+                return refreshed
+
+        # Cache miss: fetch from Redis in two round-trips (ZRANGE, then
+        # pipelined HGETALL per agent).
         names_with_scores = await _with_timeout(
             self._r.zrange(self._index_key(tenant_id), 0, -1, withscores=True)
         )
         if not names_with_scores:
+            if ttl > 0:
+                self._list_all_cache[cache_key] = ([], now)
             return []
 
         cutoff = (
             datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
         ).timestamp()
 
-        # Build score lookup and pipeline all HGETALL commands
         scores: dict[str, float] = {}
         names: list[str] = []
         for name, score in names_with_scores:
             names.append(name)
             scores[name] = score
 
-        # Pipeline all HGETALL commands in one round trip
         async with self._r.pipeline(transaction=False) as pipe:
             for name in names:
                 pipe.hgetall(self._entry_key(tenant_id, name))
             all_data = await _with_timeout(pipe.execute())
 
         results: list[dict] = []
+        cache_payload: list[dict] = []
         for name, data in zip(names, all_data):
             if data:
-                data["_online"] = scores.get(name, 0) >= cutoff
+                score = scores.get(name, 0.0)
+                data["_online"] = score >= cutoff
                 results.append(data)
+                # Cache copy keeps the score so a later cached read can
+                # recompute _online with the current cutoff.
+                cache_payload.append({**data, "_score": score})
+
+        if ttl > 0:
+            self._list_all_cache[cache_key] = (cache_payload, now)
         return results
 
 
