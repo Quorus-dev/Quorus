@@ -57,7 +57,7 @@ def _write_sensitive_json(path: Path, data: dict) -> None:
 
 
 def _get_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient()
+    return httpx.AsyncClient(follow_redirects=True)
 
 
 def _auth_headers() -> dict[str, str]:
@@ -69,6 +69,7 @@ def _auth_headers() -> dict[str, str]:
                 f"{RELAY_URL}/v1/auth/token",
                 json={"api_key": API_KEY},
                 timeout=10,
+                follow_redirects=True,
             )
             resp.raise_for_status()
             _cached_jwt = resp.json()["token"]
@@ -85,6 +86,7 @@ def _get_sse_token(recipient: str) -> str:
             json={"recipient": recipient},
             headers=headers,
             timeout=10,
+            follow_redirects=True,
         )
         if resp.status_code == 200:
             return resp.json()["token"]
@@ -200,7 +202,7 @@ async def _watch(room_name: str) -> None:
     console.print(f"[dim]Members: {', '.join(room['members'])}[/dim]")
     console.print("─" * 60)
 
-    client = httpx.AsyncClient()
+    client = httpx.AsyncClient(follow_redirects=True)
     try:
         url = f"{RELAY_URL}/stream/{INSTANCE_NAME}"
         sse_token = _get_sse_token(INSTANCE_NAME)
@@ -352,7 +354,7 @@ async def _chat(room_name: str) -> None:
 
     async def _stream_messages():
         """Background task: stream SSE messages and print them."""
-        client = httpx.AsyncClient()
+        client = httpx.AsyncClient(follow_redirects=True)
         try:
             url = f"{RELAY_URL}/stream/{INSTANCE_NAME}"
             sse_token = _get_sse_token(INSTANCE_NAME)
@@ -555,6 +557,7 @@ def _cmd_inbox(args):
             f"{RELAY_URL}/messages/{INSTANCE_NAME}/peek",
             headers=_auth_headers(),
             timeout=5,
+            follow_redirects=True,
         )
         resp.raise_for_status()
     except httpx.ConnectError:
@@ -575,6 +578,7 @@ def _cmd_inbox(args):
             params={"ack": "manual"},
             headers=_auth_headers(),
             timeout=5,
+            follow_redirects=True,
         )
         resp.raise_for_status()
         result = resp.json()
@@ -611,6 +615,7 @@ def _cmd_inbox(args):
                 json={"ack_token": ack_token},
                 headers=_auth_headers(),
                 timeout=5,
+                follow_redirects=True,
             )
         except (httpx.ConnectError, httpx.HTTPStatusError):
             pass  # Best effort — messages may redeliver but output succeeded
@@ -692,7 +697,7 @@ def _cmd_hook(args):
 
 async def _history(room_name: str, limit: int = 50):
     """Fetch and display room message history."""
-    client = httpx.AsyncClient()
+    client = httpx.AsyncClient(follow_redirects=True)
     try:
         resp = await client.get(
             f"{RELAY_URL}/rooms/{room_name}/history",
@@ -1725,7 +1730,7 @@ async def _watch_daemon(name: str) -> None:
     console.print(f"  Inbox: {inbox_path}")
     console.print("  Ctrl+C to stop\n")
 
-    client = httpx.AsyncClient()
+    client = httpx.AsyncClient(follow_redirects=True)
     try:
         url = f"{RELAY_URL}/stream/{name}"
         sse_token = _get_sse_token(name)
@@ -2369,7 +2374,7 @@ def _cmd_init(args):
 
     # 4. Verify relay is reachable (best-effort, non-blocking)
     try:
-        resp = httpx.get(f"{relay_url}/health", timeout=3.0)
+        resp = httpx.get(f"{relay_url}/health", timeout=3.0, follow_redirects=True)
         if resp.status_code == 200:
             console.print(f"[green]Relay reachable at {relay_url}[/green]")
         else:
@@ -2679,6 +2684,7 @@ def _cmd_share(args):
             f"{RELAY_URL}/rooms",
             headers=_auth_headers(),
             timeout=10,
+            follow_redirects=True,
         )
         resp.raise_for_status()
         rooms = resp.json()
@@ -2838,7 +2844,7 @@ def _cmd_quickjoin(args):
     # 3. Join the room
     async def _do_join():
         headers = {"Authorization": f"Bearer {api_key or secret}"}
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             try:
                 rooms_resp = await client.get(f"{relay_url}/rooms", headers=headers)
                 rooms_resp.raise_for_status()
@@ -3264,7 +3270,7 @@ def _cmd_quickstart(args):
     import httpx as httpx_mod
     for _ in range(20):
         try:
-            r = httpx_mod.get(f"{relay_url}/health", timeout=1)
+            r = httpx_mod.get(f"{relay_url}/health", timeout=1, follow_redirects=True)
             if r.status_code == 200:
                 break
         except Exception:
@@ -3294,6 +3300,7 @@ def _cmd_quickstart(args):
         f"{relay_url}/rooms",
         json={"name": room_name, "created_by": "human"},
         headers=headers,
+        follow_redirects=True,
     )
     if r.status_code in (200, 201):
         r.json()  # validate response
@@ -3327,6 +3334,7 @@ def _cmd_quickstart(args):
             f"{relay_url}/rooms/{room_name}/join",
             json={"participant": name},
             headers=headers,
+            follow_redirects=True,
         )
         _spawn_agent(room_name, name, relay_url, secret)
 
@@ -3371,6 +3379,7 @@ def _cmd_hackathon(args):
             f"{RELAY_URL}/rooms",
             json={"name": room_name, "created_by": INSTANCE_NAME},
             headers=headers,
+            follow_redirects=True,
         )
         if r.status_code in (200, 201):
             from quorus_cli import ui as _ui
@@ -3394,6 +3403,7 @@ def _cmd_hackathon(args):
             f"{RELAY_URL}/rooms/{room_name}/join",
             json={"participant": INSTANCE_NAME},
             headers=headers,
+            follow_redirects=True,
         )
 
         # Spawn agents with mission-specific CLAUDE.md
@@ -3413,6 +3423,7 @@ def _cmd_hackathon(args):
                 "message_type": "alert",
             },
             headers=headers,
+            follow_redirects=True,
         )
 
     console.print("\n[bold green]Hackathon ready![/bold green]")
@@ -3497,7 +3508,7 @@ def _cmd_doctor(args):
     # 5. Relay reachable
     relay_ok = False
     try:
-        r = httpx.get(f"{RELAY_URL}/health", timeout=5)
+        r = httpx.get(f"{RELAY_URL}/health", timeout=5, follow_redirects=True)
         relay_ok = r.status_code == 200
     except Exception:
         pass
@@ -3516,6 +3527,7 @@ def _cmd_doctor(args):
                 f"{RELAY_URL}/rooms",
                 headers=_auth_headers(),
                 timeout=5,
+                follow_redirects=True,
             )
             auth_ok = r.status_code == 200
         except Exception:
@@ -3574,6 +3586,7 @@ def _cmd_doctor(args):
                 f"{RELAY_URL}/rooms",
                 headers=_auth_headers(),
                 timeout=5,
+                follow_redirects=True,
             )
             room_list = r.json()
             check(
@@ -3600,7 +3613,7 @@ def _cmd_doctor(args):
     # 10. Relay version
     if relay_ok:
         try:
-            r = httpx.get(f"{RELAY_URL}/health", timeout=5)
+            r = httpx.get(f"{RELAY_URL}/health", timeout=5, follow_redirects=True)
             health = r.json()
             version = health.get("version", "unknown")
             uptime = health.get("uptime_seconds", 0)
@@ -3646,6 +3659,7 @@ def _cmd_doctor(args):
                 f"{RELAY_URL}/messages",
                 headers=_auth_headers(),
                 timeout=5,
+                follow_redirects=True,
             )
             if r.status_code == 200:
                 msgs = r.json()
@@ -3742,6 +3756,7 @@ def _cmd_logs(args):
             f"{RELAY_URL}/analytics",
             headers=_auth_headers(),
             timeout=5,
+            follow_redirects=True,
         )
         r.raise_for_status()
         stats = r.json()
@@ -3811,6 +3826,7 @@ def _cmd_brief(args):
             },
             headers=headers,
             timeout=10,
+            follow_redirects=True,
         )
         resp.raise_for_status()
     except httpx.ConnectError:
@@ -3849,6 +3865,7 @@ def _cmd_brief(args):
                     },
                     headers=headers,
                     timeout=10,
+                    follow_redirects=True,
                 ).raise_for_status()
             except (httpx.ConnectError, httpx.HTTPStatusError):
                 console.print(f"[yellow]Warning: failed to post subtask: {subtask}[/yellow]")
@@ -4051,6 +4068,7 @@ def _cmd_setup_swarm(args):
             f"{RELAY_URL}/rooms",
             json={"name": room_name, "created_by": INSTANCE_NAME},
             headers=headers,
+            follow_redirects=True,
         )
         if r.status_code in (200, 201):
             _ui.success(f"Created [room]#{room_name}[/]")
@@ -4071,6 +4089,7 @@ def _cmd_setup_swarm(args):
             f"{RELAY_URL}/rooms/{room_name}/join",
             json={"participant": INSTANCE_NAME},
             headers=headers,
+            follow_redirects=True,
         )
 
         # Spawn agents
@@ -4090,6 +4109,7 @@ def _cmd_setup_swarm(args):
                 "message_type": "alert",
             },
             headers=headers,
+            follow_redirects=True,
         )
 
         created_rooms.append(room_name)
@@ -4159,6 +4179,7 @@ def _cmd_resolve(args):
                 params={"limit": 100},
                 headers=_auth_headers(),
                 timeout=10,
+                follow_redirects=True,
             )
             if resp.status_code == 200:
                 history = resp.json()
@@ -4563,6 +4584,7 @@ def _cmd_decision(args):
             json={"decision": decision_text},
             headers=headers,
             timeout=10,
+            follow_redirects=True,
         )
         resp.raise_for_status()
         result = resp.json()

@@ -60,7 +60,11 @@ SSE_RECONNECT_S = 2  # backoff between dropped-stream reconnects
 CONFIG_DIR = resolve_config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
-PUBLIC_RELAY = "https://quorus.dev"  # Fallback public relay
+# Fallback public relay for fresh-user signup. `quorus.dev` is the
+# marketing site (Vercel) — the actual relay is hosted on Fly at
+# `quorus-relay.fly.dev`. Update this if/when the relay gets its own
+# subdomain (e.g. `api.quorus.dev`).
+PUBLIC_RELAY = "https://quorus-relay.fly.dev"
 
 # Sender palette — the 3 semantic colors from ui.py, nothing else.
 # Names hash deterministically so the same sender is always the same
@@ -118,6 +122,7 @@ def _signup(relay_url: str, name: str, workspace: str) -> dict | None:
             json={"name": name, "workspace": workspace},
             headers={"X-Quorus-Setup-Local": "1"},
             timeout=10,
+            follow_redirects=True,
         )
         if r.status_code == 200:
             return r.json()
@@ -131,13 +136,30 @@ def _signup(relay_url: str, name: str, workspace: str) -> dict | None:
         return None
 
 
-def _try_connect(url: str, timeout: float = 3) -> bool:
-    """Test if a relay is reachable."""
-    try:
-        r = httpx.get(f"{url.rstrip('/')}/health", timeout=timeout)
-        return r.status_code == 200
-    except Exception:
-        return False
+def _try_connect(url: str, timeout: float = 10) -> bool:
+    """Test if a relay is reachable.
+
+    Follows redirects (Fly.io forces http→https; subdomains proxy).
+    Timeout is generous (10s) and we do one silent retry — Fly machines
+    scale-to-zero, so a cold boot can take a few seconds to respond
+    even though the relay is fine. A 3s timeout here caused the TUI
+    to falsely report "not reachable" during onboarding.
+    """
+    def _probe() -> bool:
+        try:
+            r = httpx.get(
+                f"{url.rstrip('/')}/health",
+                timeout=timeout,
+                follow_redirects=True,
+            )
+            return r.status_code == 200
+        except Exception:
+            return False
+
+    if _probe():
+        return True
+    # Retry once — covers cold-start wake-ups on Fly + brief blips.
+    return _probe()
 
 
 def _prompt_name(console: Console) -> str:
@@ -384,6 +406,7 @@ def _exchange_api_key_for_jwt(relay: str, api_key: str) -> str | None:
             f"{relay.rstrip('/')}/v1/auth/token",
             json={"api_key": api_key},
             timeout=10,
+            follow_redirects=True,
         )
         if r.status_code == 200:
             jwt = r.json().get("token")
@@ -418,7 +441,12 @@ def _auth_headers(secret: str) -> dict:
 
 def _fetch_rooms(relay: str, secret: str) -> list[dict]:
     try:
-        r = httpx.get(f"{relay}/rooms", headers=_auth_headers(secret), timeout=5)
+        r = httpx.get(
+            f"{relay}/rooms",
+            headers=_auth_headers(secret),
+            timeout=5,
+            follow_redirects=True,
+        )
         if r.status_code == 200:
             data = r.json()
             return data if isinstance(data, list) else data.get("rooms", [])
@@ -440,6 +468,7 @@ def _fetch_history(relay: str, secret: str, room: str) -> list[dict] | None:
             headers=_auth_headers(secret),
             params={"limit": MAX_MSG},
             timeout=5,
+            follow_redirects=True,
         )
         if r.status_code == 200:
             data = r.json()
@@ -468,6 +497,7 @@ def _send_message(
             headers=_auth_headers(secret),
             json={"from_name": sender, "content": content, "message_type": "chat"},
             timeout=5,
+            follow_redirects=True,
         )
         if r.status_code in (200, 201):
             try:
@@ -488,6 +518,7 @@ def _join_room(relay: str, secret: str, room: str, participant: str) -> None:
             headers=_auth_headers(secret),
             json={"participant": participant},
             timeout=5,
+            follow_redirects=True,
         )
     except Exception:
         pass
@@ -509,6 +540,7 @@ def _create_room(
             headers=_auth_headers(secret),
             json={"name": name, "created_by": creator},
             timeout=5,
+            follow_redirects=True,
         )
         if r.status_code in (200, 201):
             return ("ok", r.json())
@@ -718,6 +750,7 @@ def _mint_sse_token(relay: str, secret: str, recipient: str) -> Optional[str]:
             headers=_auth_headers(secret),
             json={"recipient": recipient},
             timeout=5,
+            follow_redirects=True,
         )
         if r.status_code == 200:
             return r.json().get("token")

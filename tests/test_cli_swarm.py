@@ -61,7 +61,7 @@ def test_brief_posts_message_to_room(monkeypatch, capsys):
 
     post_calls = []
 
-    def mock_post(url, json=None, headers=None, timeout=None):
+    def mock_post(url, json=None, headers=None, timeout=None, **_kwargs):
         post_calls.append((url, json))
         return _mock_response(200, {"id": "m1"})
 
@@ -85,7 +85,7 @@ def test_brief_skips_decomposition_without_api_key(monkeypatch, capsys):
 
     post_calls = []
 
-    def mock_post(url, json=None, headers=None, timeout=None):
+    def mock_post(url, json=None, headers=None, timeout=None, **_kwargs):
         post_calls.append((url, json))
         return _mock_response(200, {"id": "m1"})
 
@@ -117,7 +117,7 @@ def test_brief_posts_subtasks_when_api_key_set(monkeypatch, capsys):
 
     post_calls = []
 
-    def mock_post(url, json=None, headers=None, timeout=None):
+    def mock_post(url, json=None, headers=None, timeout=None, **_kwargs):
         resp = _mock_response(200, {"id": "m1"})
         resp.raise_for_status = MagicMock()
         post_calls.append((url, json))
@@ -150,7 +150,7 @@ def test_setup_swarm_creates_rooms_and_spawns_agents(monkeypatch, capsys):
 
     post_calls = []
 
-    def mock_post(url, json=None, headers=None):
+    def mock_post(url, json=None, headers=None, **_kwargs):
         post_calls.append(url)
         return _mock_response(200, {"id": "r1"})
 
@@ -187,7 +187,7 @@ def test_setup_swarm_skips_existing_room(monkeypatch, capsys):
     """
     from quorus.cli import _cmd_setup_swarm
 
-    def mock_post(url, json=None, headers=None):
+    def mock_post(url, json=None, headers=None, **_kwargs):
         if url.endswith("/rooms") and json and json.get("name") == "failroom":
             return _mock_response(500, {}, "Internal Server Error")
         if url.endswith("/rooms") and json and json.get("name") == "existing":
