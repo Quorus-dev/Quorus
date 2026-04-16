@@ -403,17 +403,26 @@ class WebhookService:
             await self._process_job(job)
 
     async def _worker_loop_durable(self) -> None:
-        """Worker loop for durable Redis Streams queue."""
+        """Worker loop for durable Redis Streams queue.
+
+        Uses native blocking XREADGROUP (on Redis) or asyncio.Event (on
+        the in-memory backend) so we wake on enqueue rather than polling
+        on a 1s timer. Idle cost: ~1 Redis command per WEBHOOK_BLOCK_MS
+        ms instead of 3-4 per second.
+        """
+        block_ms = int(os.environ.get("WEBHOOK_BLOCK_MS", "30000"))
         while not self._stop_event.is_set():
             try:
-                jobs = await self._queue_backend.fetch(count=10)
+                jobs = await self._queue_backend.fetch_blocking(
+                    count=10, block_ms=block_ms
+                )
             except Exception as e:
                 logger.warning("Failed to fetch webhook jobs: %s", e)
                 await asyncio.sleep(1.0)
                 continue
 
             if not jobs:
-                await asyncio.sleep(1.0)
+                # Block timeout elapsed with no work — loop back and block again.
                 continue
 
             for job_id, job_data in jobs:
