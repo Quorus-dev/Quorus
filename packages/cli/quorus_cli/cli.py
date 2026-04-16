@@ -2476,17 +2476,76 @@ def _cmd_invite_token(args):
 
 
 def _cmd_join(args):
-    """One-liner to join a room: writes config, registers MCP, joins the room.
+    """One-liner to join a room.
 
-    Accepts either explicit flags (--relay, --secret, --room) OR a
-    quorus_join_ (or legacy murm_join_) token as the first positional argument
-    for instant, zero-config onboarding.
+    Accepts any of these forms as the positional argument:
 
-    If no flags are provided and config already exists, just joins the room
-    without rewriting config or re-registering MCP.
+    1. A short 8-char invite code (``ABCD-EFGH``) — resolved against
+       the public Fly relay or ``--relay``. Tolerates paste artifacts.
+    2. A ``quorus://`` portable token (the current share format).
+    3. A legacy ``quorus_join_`` / ``murm_join_`` token.
+
+    Falls back to explicit flags (``--relay``, ``--secret``, ``--room``)
+    for the power-user / CI path.
     """
-    # --- Token-based join path (always rewrites config) ---
-    token = getattr(args, "token", None)
+    # --- Short-code path: resolve via the relay and delegate ---
+    token_raw = getattr(args, "token", None) or ""
+    if token_raw:
+        from quorus.services.join_code_svc import normalize_code
+
+        canonical = normalize_code(token_raw)
+        if canonical is not None:
+            relay_for_lookup = (
+                getattr(args, "relay_url", None)
+                or os.environ.get("QUORUS_PUBLIC_RELAY")
+                or "https://quorus-relay.fly.dev"
+            ).rstrip("/")
+            try:
+                resp = httpx.get(
+                    f"{relay_for_lookup}/v1/join/resolve/{canonical}",
+                    timeout=10,
+                    follow_redirects=True,
+                )
+            except httpx.ConnectError:
+                _ui.error_with_retry(
+                    "Can't reach relay", relay_url=relay_for_lookup,
+                )
+                sys.exit(2)
+            if resp.status_code == 404:
+                _ui.error(
+                    "Code not found or expired",
+                    hint="ask your teammate for a fresh one: quorus share <room>",
+                )
+                sys.exit(4)
+            if resp.status_code == 429:
+                _ui.error("Too many join attempts — try again in a minute")
+                sys.exit(1)
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError:
+                _ui.error_with_retry(
+                    f"Resolve failed (HTTP {resp.status_code})",
+                    relay_url=relay_for_lookup,
+                )
+                sys.exit(1)
+            payload = (resp.json() or {}).get("payload") or {}
+            if not payload:
+                _ui.error("Server returned an empty payload — ask for a fresh code")
+                sys.exit(1)
+            _apply_join_payload(payload, args.name)
+            return
+
+    # --- Portable quorus:// token (self-decoding) ---
+    if token_raw.startswith("quorus://"):
+        payload = _decode_join_token(token_raw)
+        if not payload:
+            _ui.error("Invalid or expired token")
+            sys.exit(4)
+        _apply_join_payload(payload, args.name)
+        return
+
+    # --- quorus_join_ / murm_join_ legacy path ---
+    token = token_raw
     rewrite_config = False
 
     if token and (
@@ -2663,129 +2722,159 @@ def _decode_join_token(token: str) -> dict | None:
         return None
 
 
+def _copy_to_clipboard(text: str) -> bool:
+    """Push `text` to the OS clipboard. Returns True on success, False
+    silently if no supported tool is available.
+
+    Tries `pbcopy` (macOS), `xclip -selection clipboard` / `xsel -ib`
+    (Linux), `clip.exe` (WSL/Windows). Stdin is passed via a subprocess
+    pipe so the command line stays short and no temp file is involved.
+    """
+    candidates: list[list[str]] = [
+        ["pbcopy"],
+        ["xclip", "-selection", "clipboard"],
+        ["xsel", "--clipboard", "--input"],
+        ["clip.exe"],
+    ]
+    for cmd in candidates:
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+        try:
+            proc.communicate(input=text.encode("utf-8"), timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            continue
+        if proc.returncode == 0:
+            return True
+    return False
+
+
 def _cmd_share(args):
-    """Generate a portable join token for a room."""
+    """Generate a short invite code for a room by calling the relay.
+
+    The relay mints a code, stores the payload, and returns the display
+    form (`ABCD-EFGH`). We print two pasteable commands — one for
+    teammates who already have Quorus, one for fresh installs — and
+    auto-copy the `quorus join CODE --name ` prefix to the clipboard
+    when stdout is a TTY.
+    """
     room = args.room
-    ttl_days = getattr(args, "ttl", 7)
+    ttl_days = getattr(args, "ttl", 1)
+    want_copy = getattr(args, "copy", None)
+    # Default `--copy` behavior: on when stdout is a TTY, off otherwise.
+    if want_copy is None:
+        want_copy = sys.stdout.isatty()
 
     if not RELAY_URL:
-        _ui.error("Relay URL not configured", hint="run: quorus init <name> --secret <s>")
-        console.print("[dim]Run: quorus init <name> --secret <secret>[/dim]")
+        _ui.error(
+            "Relay URL not configured",
+            hint="run: quorus init <name> --secret <s>",
+        )
         return
 
     if not RELAY_SECRET and not API_KEY:
         _ui.error("No auth configured", hint="run: quorus init")
-        console.print("[dim]Run: quorus init <name> --secret <secret>[/dim]")
         return
 
-    # Verify room exists
+    # Call the mint endpoint — admin-only, auth via our configured
+    # relay secret or API key. The relay checks the room exists and
+    # returns 404 if not, so we don't need a pre-flight /rooms call.
     try:
-        resp = httpx.get(
-            f"{RELAY_URL}/rooms",
+        resp = httpx.post(
+            f"{RELAY_URL}/v1/join/mint",
             headers=_auth_headers(),
-            timeout=10,
+            json={"room": room, "ttl_days": ttl_days},
+            timeout=15,
             follow_redirects=True,
         )
-        resp.raise_for_status()
-        rooms = resp.json()
-        target = next((r for r in rooms if r["name"] == room), None)
-        if not target:
-            _ui.error(f"Room \'{room}\' not found", hint="list rooms: quorus rooms")
-            return
     except httpx.ConnectError:
         _relay_unreachable()
         return
-    except httpx.HTTPStatusError as e:
-        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+    if resp.status_code == 404:
+        _ui.error(
+            f"Room '{room}' not found",
+            hint="list rooms: quorus rooms",
+        )
+        return
+    if resp.status_code in (401, 403):
+        _ui.error(
+            "Not authorized to mint invite codes",
+            hint="admin-only — check RELAY_SECRET or API key role",
+        )
+        return
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError:
+        _ui.error_with_retry(
+            f"Mint failed (HTTP {resp.status_code})",
+            relay_url=RELAY_URL,
+        )
         return
 
-    # Generate token
-    import base64
-    import time
+    body = resp.json()
+    code = body["code"]
+    install_url = body["install_url"]
 
-    payload = {
-        "r": RELAY_URL,
-        "n": room,
-        "e": int(time.time()) + 86400 * ttl_days,
-    }
-    if API_KEY:
-        payload["k"] = API_KEY
+    # Humanize TTL for the footer.
+    if ttl_days == 1:
+        ttl_label = "24h"
     else:
-        payload["s"] = RELAY_SECRET
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    token = f"quorus://{encoded}"
-
-    from rich.columns import Columns
-    from rich.panel import Panel
+        ttl_label = f"{ttl_days} days"
 
     from quorus_cli import ui
 
+    ui.console.print()
     ui.heading(f"Invite to #{room}")
-    ui.token_box(token, label="Share token", expires_in=f"{ttl_days} days")
+
+    # Big code — the star of the show.
+    from rich.align import Align
+    from rich.text import Text
+
+    big = Text()
+    big.append("      ")
+    big.append(code, style=f"bold {ui.ROOM}")
+    big.append(f"      expires in {ttl_label}", style="muted")
+    ui.console.print(big)
     ui.console.print()
 
-    # Short token preview for readable panel copy
-    tok_preview = token if len(token) <= 24 else token[:20] + "…"
+    ui.console.print("  [muted]Share one of these with your teammate:[/]")
+    ui.console.print()
+    join_cmd = f"quorus join {code} --name <their-name>"
+    install_cmd = f"curl -sSL {install_url} | sh"
+    ui.console.print(f"    [accent]{join_cmd}[/]")
+    ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
+    ui.console.print(f"    [accent]{install_cmd}[/]")
+    ui.console.print()
 
-    human = Panel(
-        (
-            "[muted]They install Quorus, then run:[/]\n\n"
-            f"[accent]quorus quickjoin {tok_preview}[/]\n"
-            "[accent]  --name <their-name>[/]"
-        ),
-        title="[heading]Human[/]",
-        border_style="primary",
-        title_align="left",
-        padding=(1, 2),
-    )
-    tui_panel = Panel(
-        (
-            "[muted]Inside the Quorus TUI:[/]\n\n"
-            "[accent]quorus[/]\n"
-            "[muted]then choose[/] [primary]1. Paste invite token[/]"
-        ),
-        title="[heading]TUI[/]",
-        border_style="primary",
-        title_align="left",
-        padding=(1, 2),
-    )
-    agent = Panel(
-        (
-            "[muted]Wire any AI agent in:[/]\n\n"
-            "[accent]quorus connect claude[/]\n"
-            f"[accent]  --room {room}[/]\n"
-            "[accent]  --name <agent>[/]"
-        ),
-        title="[heading]Agent[/]",
-        border_style="agent",
-        title_align="left",
-        padding=(1, 2),
-    )
-    ui.console.print(Columns([human, tui_panel, agent], equal=True, expand=True))
-    ui.footer(
-        "Agents: claude · cursor · gemini · windsurf · opencode · "
-        "cline · continue · antigravity · codex · aider · ollama"
-    )
+    if want_copy:
+        # Copy the join command minus the literal <their-name> placeholder
+        # so when the teammate pastes it, they can just type their name.
+        prefix = f"quorus join {code} --name "
+        if _copy_to_clipboard(prefix):
+            ui.console.print(
+                f"  [success]✓[/] [muted]copied `{prefix}` to clipboard.[/]"
+            )
+        # Silent if no clipboard tool found — not worth a warning.
+
+    _ = Align  # lint: imported for future centering use
 
 
-def _cmd_quickjoin(args):
-    """Join a room using a portable token (zero config)."""
-    token = args.token
-    name = args.name
+def _apply_join_payload(payload: dict, name: str) -> None:
+    """Write config, register MCP, join room, print the welcome.
 
-    # Decode token
-    payload = _decode_join_token(token)
-    if not payload:
-        _ui.error("Invalid or expired token")
-        return
-
+    Shared between `quorus quickjoin <token>` and `quorus join <code>`.
+    ``payload`` matches the shape `_encode_join_token` produces:
+    ``{"r": relay_url, "n": room, "s"?: secret, "k"?: api_key}``.
+    """
     relay_url = payload.get("r", "")
     room = payload.get("n", "")
     secret = payload.get("s", "")
     api_key = payload.get("k", "")
 
     if not relay_url or not room:
-        _ui.error("Token missing required fields")
+        _ui.error("Join payload missing required fields")
         return
 
     console.print(f"[bold]Joining room: {room}[/bold]")
@@ -2888,6 +2977,15 @@ def _cmd_quickjoin(args):
             f" --room {room} --name <agent>[/]"
         ),
     ])
+
+
+def _cmd_quickjoin(args):
+    """Join a room using a portable `quorus://` token (zero config)."""
+    payload = _decode_join_token(args.token)
+    if not payload:
+        _ui.error("Invalid or expired token")
+        return
+    _apply_join_payload(payload, args.name)
 
 
 def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
@@ -4709,7 +4807,71 @@ def _print_grouped_help():
     )
 
 
+def _normalize_argv_for_autocorrect(argv: list[str]) -> tuple[list[str], bool]:
+    """Fix autocorrect + paste artifacts before argparse sees sys.argv.
+
+    Real input we've hit in the wild:
+      - iMessage turns `--name` into `—name` (U+2014 em-dash).
+      - Smart quotes wrap paste content (`"quorus://..."`).
+      - "Quorus" / "Quorum" capitalization on the subcommand.
+
+    Returns ``(fixed_argv, changed)`` so the caller can print a muted
+    "note: fixed autocorrected input" hint exactly once, so the user
+    knows why the command worked and can disable autocorrect going
+    forward. Only touches argv[1:] — argv[0] is the program name.
+    """
+    changed = False
+    out = [argv[0]] if argv else []
+
+    for i, tok in enumerate(argv[1:], start=1):
+        original = tok
+        # Replace em-dash / en-dash at the start with `--`/`-` equivalents.
+        # We ONLY do this when it's the first char, so content like
+        # "long—dash—words" inside a message body is preserved.
+        if tok.startswith("\u2014"):  # em-dash
+            tok = "--" + tok[1:]
+        elif tok.startswith("\u2013"):  # en-dash
+            tok = "--" + tok[1:]
+        # Strip paired smart+straight quotes from both ends of a single
+        # paste-as-arg. Skip if they aren't a matched pair so we don't
+        # nuke intentional quote characters inside content.
+        _quote_pairs = {
+            ("\u201c", "\u201d"),  # "double"
+            ("\u2018", "\u2019"),  # 'single'
+            ("\"", "\""),
+            ("'", "'"),
+        }
+        if len(tok) >= 2:
+            for opener, closer in _quote_pairs:
+                if tok.startswith(opener) and tok.endswith(closer):
+                    tok = tok[len(opener):-len(closer) or None]
+                    break
+        # Subcommand name: lowercase if it's clearly meant to be one of
+        # ours and the user TitleCased it.
+        if i == 1 and tok and tok != tok.lower():
+            tok = tok.lower()
+        if tok != original:
+            changed = True
+        out.append(tok)
+    return out, changed
+
+
 def main():
+    # Fix common paste / autocorrect mangles in argv before argparse
+    # sees them. Smart quotes around tokens, em-dash instead of `--`,
+    # etc. — all of which appeared while real users were trying to
+    # join a room via iMessage-pasted commands.
+    sys.argv, _fixed = _normalize_argv_for_autocorrect(sys.argv)
+    if _fixed:
+        # Print BEFORE banner / help so the reason surfaces reliably.
+        try:
+            _ui.console.print(
+                "[dim]note: cleaned autocorrected smart-quotes / em-dashes "
+                "from your command line.[/]"
+            )
+        except Exception:
+            pass
+
     # Intercept top-level --help / -h for custom grouped output
     if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help", "help"):
         _print_grouped_help()
@@ -5000,16 +5162,28 @@ def main():
         help="Emit raw JSON instead of rendered output",
     )
 
-    p_join = sub.add_parser(
-        "join",
-        help="Join a room — pass a quorus_join_ (or legacy murm_join_) token or explicit flags",
-    )
+    p_join = sub.add_parser("join", **_help_block(
+        synopsis="Join a room — short code, portable token, or explicit flags.",
+        description=(
+            "Accepts any of:\n"
+            "  • A short 8-char invite code (e.g. ABCD-EFGH) — the\n"
+            "    recommended share format.\n"
+            "  • A `quorus://…` portable token.\n"
+            "  • A legacy `quorus_join_` / `murm_join_` token.\n"
+            "  • Explicit --relay / --secret / --room flags for CI or\n"
+            "    agent-managed setups.\n"
+            "Paste artifacts (hyphens, smart quotes, whitespace, case)\n"
+            "are normalized away before anything touches the relay."
+        ),
+        example="quorus join HX4K-M7ZP --name bob",
+        help_text="Join a room — short code, token, or explicit flags",
+    ))
     p_join.add_argument("--name", required=True, help="Your participant name")
     p_join.add_argument(
         "token",
         nargs="?",
         default=None,
-        help="Join token (quorus_join_…). When provided, --relay/--secret/--room are not needed.",
+        help="Short code (ABCD-EFGH), quorus:// token, or legacy token",
     )
     p_join.add_argument("--relay", dest="relay_url", default=None, help="Relay URL")
     p_join_auth = p_join.add_mutually_exclusive_group(required=False)
@@ -5024,17 +5198,31 @@ def main():
     p_invite_token.add_argument("room", help="Room name")
 
     p_share = sub.add_parser("share", **_help_block(
-        synopsis="Generate a portable invite token for a room.",
+        synopsis="Generate a short invite code for a room.",
         description=(
-            "Produces a `quorus://…` token that encodes the relay URL, "
-            "room name, and credentials. Share the token; teammates run "
-            "`quorus quickjoin` and agents run `quorus connect`."
+            "Mints an 8-char code (e.g. ABCD-EFGH) and prints two ways "
+            "to use it — `quorus join` for teammates who already have "
+            "Quorus, and a `curl | sh` one-liner for fresh installs. "
+            "Auto-copies the join command to clipboard when stdout is "
+            "a TTY (override with --copy / --no-copy)."
         ),
-        example="quorus share design-review --ttl 7",
-        help_text="Generate a portable join token for a room",
+        example="quorus share design",
+        help_text="Generate a short invite code for a room",
     ))
     p_share.add_argument("room", help="Room name")
-    p_share.add_argument("--ttl", type=int, default=7, help="Token expiry in days (default: 7)")
+    p_share.add_argument(
+        "--ttl", type=int, default=1,
+        help="Code expiry in days (default: 1, max 7)",
+    )
+    _copy_group = p_share.add_mutually_exclusive_group()
+    _copy_group.add_argument(
+        "--copy", dest="copy", action="store_const", const=True,
+        help="Copy the join command to the clipboard (default on TTY)",
+    )
+    _copy_group.add_argument(
+        "--no-copy", dest="copy", action="store_const", const=False,
+        help="Don't touch the clipboard",
+    )
 
     p_quickjoin = sub.add_parser("quickjoin", **_help_block(
         synopsis="Join a room from a portable `quorus://` token.",
@@ -5048,6 +5236,7 @@ def main():
     ))
     p_quickjoin.add_argument("token", help="Join token (quorus://...)")
     p_quickjoin.add_argument("--name", required=True, help="Your participant name")
+
 
     p_kick = sub.add_parser("kick", help="Kick a participant from a room (admin)")
     p_kick.add_argument("room", help="Room name")

@@ -358,6 +358,10 @@ def _init_services(app_instance, redis_conn=None):
         default_ttl=invite_ttl,
     )
 
+    from quorus.services.join_code_svc import JoinCodeService
+
+    join_code = JoinCodeService()
+
     app_instance.state.notification_service = notification
     app_instance.state.message_service = message
     app_instance.state.room_service = room
@@ -369,6 +373,7 @@ def _init_services(app_instance, redis_conn=None):
     app_instance.state.rate_limit_service = rate_limit
     app_instance.state.invite_service = invite
     app_instance.state.audit_service = audit
+    app_instance.state.join_code_service = join_code
     app_instance.state.backends = backends
 
     # Create outbox worker if enabled (requires Postgres)
@@ -687,6 +692,7 @@ from quorus.dashboard import router as dashboard_router  # noqa: E402
 from quorus.routes import router as relay_router  # noqa: E402
 from quorus.routes.admin_dashboard import router as admin_dashboard_router  # noqa: E402
 from quorus.routes.admin_metrics import router as admin_metrics_router  # noqa: E402
+from quorus.routes.join_codes import router as join_codes_router  # noqa: E402
 
 app.include_router(relay_router)
 app.include_router(auth_router)
@@ -694,6 +700,7 @@ app.include_router(admin_router)
 app.include_router(dashboard_router)
 app.include_router(admin_metrics_router)
 app.include_router(admin_dashboard_router)
+app.include_router(join_codes_router)
 
 
 # ---------------------------------------------------------------------------

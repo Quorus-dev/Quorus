@@ -2087,7 +2087,9 @@ def test_cmd_quickjoin_missing_fields(capsys):
     _cmd_quickjoin(args)
 
     captured = capsys.readouterr()
-    assert "Token missing required fields" in captured.out
+    # Message text was tightened when the payload path was factored
+    # out so it's shared with `quorus join` too.
+    assert "missing required fields" in captured.out
 
 
 # ---------------------------------------------------------------------------
