@@ -444,6 +444,18 @@ class WebhookQueueBackend(Protocol):
         """
         ...
 
+    async def fetch_blocking(
+        self, count: int = 10, block_ms: int = 30000
+    ) -> list[tuple[str, dict]]:
+        """Fetch jobs, blocking up to ``block_ms`` ms when none are pending.
+
+        Backends should return as soon as at least one job is available.
+        Returns an empty list when the block timeout expires with no work.
+        Reclaim of stale claims and promotion of delayed jobs MAY happen
+        less frequently than every call (implementation-specific throttle).
+        """
+        ...
+
     async def ack(self, job_id: str) -> None:
         """Acknowledge successful delivery, removing the job."""
         ...
