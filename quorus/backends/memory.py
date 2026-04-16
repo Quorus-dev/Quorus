@@ -898,6 +898,9 @@ class InMemoryWebhookQueueBackend:
         self._dlq_max_size = dlq_max_size
         self._counter = 0
         self._lock = asyncio.Lock()
+        # Set whenever there is work in _queue; used by fetch_blocking to
+        # wake on enqueue without polling.
+        self._has_work = asyncio.Event()
 
     async def enqueue(self, job: dict) -> str:
         """Add a webhook job to the queue. Returns job ID."""
@@ -905,6 +908,7 @@ class InMemoryWebhookQueueBackend:
             self._counter += 1
             job_id = f"job-{self._counter}"
             self._queue.append((job_id, job))
+            self._has_work.set()
             return job_id
 
     async def fetch(self, count: int = 10) -> list[tuple[str, dict]]:
@@ -916,7 +920,26 @@ class InMemoryWebhookQueueBackend:
             self._queue = self._queue[count:]
             for job_id, job in fetched:
                 self._pending[job_id] = job
+            if not self._queue:
+                self._has_work.clear()
             return fetched
+
+    async def fetch_blocking(
+        self, count: int = 10, block_ms: int = 30000
+    ) -> list[tuple[str, dict]]:
+        """Block up to ``block_ms`` ms waiting for at least one job.
+
+        Fast path: if work is already queued, return immediately. Slow
+        path: wait on ``_has_work`` or the timeout, then fetch.
+        """
+        jobs = await self.fetch(count=count)
+        if jobs:
+            return jobs
+        try:
+            await asyncio.wait_for(self._has_work.wait(), timeout=block_ms / 1000)
+        except asyncio.TimeoutError:
+            return []
+        return await self.fetch(count=count)
 
     def _promote_delayed_locked(self) -> int:
         """Move due delayed jobs to main queue (call under lock)."""
