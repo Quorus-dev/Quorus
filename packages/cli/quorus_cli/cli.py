@@ -5147,6 +5147,144 @@ def _normalize_argv_for_autocorrect(argv: list[str]) -> tuple[list[str], bool]:
     return out, changed
 
 
+def _cmd_workspaces(args) -> None:
+    """Dispatch `quorus workspaces [list|use|add|rm]`."""
+    from quorus.profiles import ProfileManager
+    pm = ProfileManager()
+    action = getattr(args, "ws_action", None) or "list"
+
+    if action == "list":
+        _workspaces_list(pm)
+        return
+    if action == "use":
+        _workspaces_use(pm, args.slug)
+        return
+    if action == "add":
+        _workspaces_add(pm, getattr(args, "name", None))
+        return
+    if action == "rm":
+        _workspaces_rm(pm, args.slug, yes=bool(getattr(args, "yes", False)))
+        return
+    raise SystemExit(f"Unknown workspaces action: {action}")
+
+
+def _workspaces_list(pm) -> None:
+    slugs = pm.list()
+    if not slugs:
+        _ui.console.print(
+            "  [dim]no workspaces yet — run [bold]quorus login[/] to add one[/]"
+        )
+        return
+    current = pm.current()
+    _ui.console.print("  [bold]Workspaces[/]")
+    for slug in slugs:
+        data = pm.get(slug) or {}
+        label = data.get("workspace_label") or data.get("instance_name") or slug
+        relay = data.get("relay_url", "")
+        marker = "*" if slug == current else " "
+        _ui.console.print(
+            f"  {marker} [bold]{slug:<16}[/]  [dim]{label}  ·  {relay}[/]"
+        )
+    _ui.console.print("")
+    _ui.console.print("  [dim]switch: quorus workspaces use <slug>[/]")
+
+
+def _workspaces_use(pm, slug: str) -> None:
+    try:
+        pm.set_current(slug)
+    except FileNotFoundError:
+        _ui.console.print(f"  [red]No such workspace: {slug}[/]")
+        raise SystemExit(4)
+    except ValueError as e:
+        _ui.console.print(f"  [red]{e}[/]")
+        raise SystemExit(5)
+    _ui.console.print(f"  [green]✓[/] now using workspace [bold]{slug}[/]")
+
+
+def _workspaces_add(pm, desired_name: str | None) -> None:
+    """Run the first-launch wizard and save as a new profile.
+
+    Reuses the TUI's _first_launch_setup flow so all three paths
+    (local autodetect / invite / signup) are available.
+    """
+    # Lazy import — hub.py pulls in heavy TUI deps.
+    from quorus_tui.hub import _first_launch_setup
+    cfg = _first_launch_setup(_ui.console)
+    if not cfg:
+        _ui.console.print("  [red]signup cancelled[/]")
+        raise SystemExit(1)
+
+    # Pick a slug: user-supplied, or derive from instance_name, then dedupe.
+    base = (desired_name or cfg.get("instance_name") or "default").lower()
+    # Sanitise to match ProfileManager's slug regex.
+    import re
+    base = re.sub(r"[^a-z0-9_-]+", "-", base).strip("-") or "default"
+    slug = base
+    existing = set(pm.list())
+    i = 2
+    while slug in existing:
+        slug = f"{base}-{i}"
+        i += 1
+
+    pm.save(slug, cfg)
+    pm.set_current(slug)
+    _ui.console.print(
+        f"  [green]✓[/] workspace [bold]{slug}[/] created and active"
+    )
+
+
+def _workspaces_rm(pm, slug: str, *, yes: bool) -> None:
+    existing = pm.list()
+    if slug not in existing:
+        _ui.console.print(f"  [red]No such workspace: {slug}[/]")
+        raise SystemExit(4)
+    if len(existing) == 1:
+        _ui.console.print(
+            f"  [red]Refusing to delete last workspace ({slug}).[/] "
+            "Add another first: quorus login"
+        )
+        raise SystemExit(5)
+    if not yes:
+        _ui.console.print(
+            f"  Delete workspace [bold]{slug}[/]? Pass --yes to confirm."
+        )
+        raise SystemExit(5)
+    was_current = (pm.current() == slug)
+    pm.delete(slug)
+    msg = f"  [green]✓[/] deleted workspace [bold]{slug}[/]"
+    if was_current:
+        msg += "  [dim](no current workspace — pick one with `quorus workspaces use`)[/]"
+    _ui.console.print(msg)
+
+
+def _cmd_login(args) -> None:
+    """Alias: quorus login == quorus workspaces add."""
+    from quorus.profiles import ProfileManager
+    _workspaces_add(ProfileManager(), getattr(args, "name", None))
+
+
+def _cmd_whoami(args) -> None:
+    from quorus.profiles import ProfileManager
+    pm = ProfileManager()
+    # Honor --workspace / QUORUS_PROFILE override.
+    override = getattr(args, "workspace", None) or os.environ.get("QUORUS_PROFILE")
+    slug = override or pm.current()
+    if slug is None:
+        _ui.console.print(
+            "  [dim]no current workspace — run "
+            "[bold]quorus workspaces use <slug>[/][/]"
+        )
+        return
+    data = pm.get(slug) or {}
+    if not data:
+        _ui.console.print(f"  [red]profile {slug!r} missing or corrupt[/]")
+        raise SystemExit(1)
+    label = data.get("workspace_label") or slug
+    _ui.console.print(f"  [bold]@{data.get('instance_name', '?')}[/]")
+    _ui.console.print(f"  [dim]workspace:[/] {label}  [dim]({slug})[/]")
+    _ui.console.print(f"  [dim]relay:[/]     {data.get('relay_url', '?')}")
+
+
 def main():
     # Fix common paste / autocorrect mangles in argv before argparse
     # sees them. Smart quotes around tokens, em-dash instead of `--`,
@@ -5174,6 +5312,22 @@ def main():
         add_help=True,
     )
     sub = parser.add_subparsers(dest="command")
+
+    parser.add_argument(
+        "-w", "--workspace",
+        dest="workspace",
+        default=None,
+        help=(
+            "Select a specific workspace profile for this command. "
+            "Priority: flag > QUORUS_PROFILE env > current pointer."
+        ),
+    )
+
+    def _resolve_active_profile(args) -> str | None:
+        """Return the profile slug to use for this command, or None for current."""
+        if getattr(args, "workspace", None):
+            return args.workspace
+        return os.environ.get("QUORUS_PROFILE")
 
     # ── Help block template — used on the high-traffic commands so each one's
     # `--help` shows a synopsis, a description, an example, and the exit
@@ -5642,6 +5796,49 @@ def main():
         help_text="Open the Quorus hub (interactive TUI)",
     ))
 
+    p_workspaces = sub.add_parser("workspaces", **_help_block(
+        synopsis="Manage Quorus workspace profiles.",
+        description=(
+            "List, switch, add, or remove workspace profiles. Each profile "
+            "is a separate identity (relay URL + API key + instance name). "
+            "Profiles are stored under ~/.quorus/profiles/<slug>.json."
+        ),
+        example="quorus workspaces use personal",
+        help_text="Manage workspace profiles",
+    ))
+    ws_sub = p_workspaces.add_subparsers(dest="ws_action")
+    ws_sub.add_parser("list", help="List all workspace profiles (default)")
+    p_ws_use = ws_sub.add_parser("use", help="Switch to a workspace")
+    p_ws_use.add_argument("slug", help="Profile slug to make current")
+    p_ws_add = ws_sub.add_parser("add", help="Create a new workspace profile")
+    p_ws_add.add_argument("name", nargs="?", default=None,
+                          help="Optional slug for the new profile")
+    p_ws_rm = ws_sub.add_parser("rm", help="Delete a workspace profile")
+    p_ws_rm.add_argument("slug", help="Profile slug to delete")
+    p_ws_rm.add_argument("--yes", action="store_true",
+                         help="Skip confirmation")
+
+    sub.add_parser("login", **_help_block(
+        synopsis="Add a new workspace profile (alias for `workspaces add`).",
+        description=(
+            "Runs the first-launch wizard — sign up on the public relay, "
+            "paste an invite token, or auto-detect a local relay — and "
+            "saves the result as a new workspace profile."
+        ),
+        example="quorus login",
+        help_text="Add a new workspace profile",
+    ))
+
+    sub.add_parser("whoami", **_help_block(
+        synopsis="Show the current workspace profile's identity.",
+        description=(
+            "Prints the active profile's instance_name, workspace label, "
+            "and relay URL."
+        ),
+        example="quorus whoami",
+        help_text="Show active workspace identity",
+    ))
+
     args = parser.parse_args()
     if not args.command:
         # Launch TUI by default (like `claude` or `gemini`)
@@ -5697,6 +5894,9 @@ def main():
         "context": _cmd_context,
         "decision": _cmd_decision,
         "begin": _cmd_begin,
+        "workspaces": _cmd_workspaces,
+        "login": _cmd_login,
+        "whoami": _cmd_whoami,
     }
     commands[args.command](args)
 

@@ -11,7 +11,7 @@ from mcp import types
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.message import SessionMessage
 
-from quorus.config import load_config
+from quorus.config import ConfigManager, load_config
 from quorus_mcp.sse import SSEListener, process_sse_event_data
 
 logging.basicConfig(
@@ -20,7 +20,55 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp_tunnel.mcp")
 
-_config = load_config()
+# Honor QUORUS_PROFILE env var: pick a specific profile without touching
+# "current". Falls back to the current-profile pointer / legacy migration
+# path inside load_config().
+_profile_slug = os.environ.get("QUORUS_PROFILE")
+if _profile_slug:
+    # Load just the named profile's data, then let load_config() apply
+    # env-var overrides on top (env still beats profile for direct
+    # overrides like QUORUS_RELAY_URL).
+    _profile_data = ConfigManager(profile=_profile_slug).load()
+    # load_config() reads from resolve_config_file() — temporarily point
+    # it at the profile file by setting QUORUS_CONFIG_DIR is too invasive,
+    # so instead we build the config dict by hand using the same priority
+    # rules load_config() uses (env > file > default).
+    _config = {
+        "config_file": str(ConfigManager(profile=_profile_slug).path),
+        "relay_url": (
+            os.environ.get("RELAY_URL")
+            or _profile_data.get("relay_url", "http://localhost:8080")
+        ),
+        "relay_secret": (
+            os.environ.get("RELAY_SECRET")
+            or _profile_data.get("relay_secret", "")
+        ),
+        "api_key": (
+            os.environ.get("API_KEY") or _profile_data.get("api_key", "")
+        ),
+        "instance_name": (
+            os.environ.get("INSTANCE_NAME")
+            or _profile_data.get("instance_name", "default")
+        ),
+        "enable_background_polling": True,
+        "poll_mode": (
+            (os.environ.get("POLL_MODE") or _profile_data.get("poll_mode") or "sse")
+            .strip().lower()
+        ),
+        "push_notification_method": (
+            os.environ.get("PUSH_NOTIFICATION_METHOD")
+            or _profile_data.get("push_notification_method")
+            or "notifications/claude/channel"
+        ),
+        "push_notification_channel": (
+            os.environ.get("PUSH_NOTIFICATION_CHANNEL")
+            or _profile_data.get("push_notification_channel", "quorus")
+        ),
+    }
+    if _config["poll_mode"] not in {"lazy", "sse"}:
+        _config["poll_mode"] = "sse"
+else:
+    _config = load_config()
 CONFIG_FILE = Path(_config["config_file"])
 # Per-agent identity + connection overrides. Each client the CLI wires
 # (Claude Code, Codex, Cursor, …) gets its own QUORUS_INSTANCE_NAME via
