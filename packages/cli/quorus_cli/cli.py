@@ -3572,6 +3572,151 @@ You communicate ONLY through the room — never reply in terminal.
         _ui.info(f"Run manually: cd {workspace} && claude")
 
 
+def _cmd_register_agents(args):
+    """Register all detected MCP clients as agents and join them to a room.
+
+    Detects installed clients, creates agent identities with separate API keys,
+    writes MCP configs, and joins all agents to the specified room.
+    """
+    room = args.room
+    instance = args.instance or ""
+
+    # Load config to get API key and relay URL
+    config = load_config()
+    relay_url = config.get("relay_url", "")
+    api_key = config.get("api_key", "")
+    human_name = config.get("instance_name", "")
+
+    if not relay_url or not api_key:
+        _ui.error(
+            "Not configured",
+            hint="Run 'quorus join <code>' first to set up your account",
+        )
+        return
+
+    if not human_name or human_name == "default":
+        _ui.error(
+            "No identity configured",
+            hint="Run 'quorus join <code> --name <your-name>' first",
+        )
+        return
+
+    console.print(f"\n[bold]Registering agents for @{human_name}[/bold]")
+    if instance:
+        console.print(f"[dim]Instance suffix: -{instance}[/dim]")
+    console.print()
+
+    # Step 1: Detect installed platforms
+    from quorus_cli.mcp_writers import ALL_WRITERS
+
+    installed_platforms = []
+    for platform_key, _writer in ALL_WRITERS:
+        if _is_platform_installed(platform_key):
+            installed_platforms.append(platform_key)
+
+    if not installed_platforms:
+        _ui.warn("No MCP clients detected", hint="Install Claude Code, Codex, Cursor, etc.")
+        return
+
+    console.print(f"[dim]Detected: {', '.join(installed_platforms)}[/dim]\n")
+
+    # Step 2: Register agent identities and get API keys
+    agent_keys: dict[str, str] = {}
+    for platform_key in installed_platforms:
+        suffix = f"{platform_key}-{instance}" if instance else platform_key
+        try:
+            agent_key = _register_agent_identity(
+                relay_url=relay_url,
+                parent_api_key=api_key,
+                suffix=suffix,
+            )
+            if agent_key:
+                agent_keys[platform_key] = agent_key
+                agent_name = f"{human_name}-{suffix}"
+                console.print(f"  [green]✓[/green] @{agent_name}")
+            else:
+                console.print(f"  [yellow]—[/yellow] {platform_key}: registration failed")
+        except Exception as exc:
+            console.print(f"  [red]✗[/red] {platform_key}: {exc}")
+
+    if not agent_keys:
+        _ui.error("No agents registered")
+        return
+
+    # Step 3: Write MCP configs with per-agent keys
+    mcp_command, mcp_args = _mcp_server_command()
+    from quorus_cli.mcp_writers import McpEnv, register_all
+
+    env = McpEnv(
+        command=mcp_command,
+        args=list(mcp_args),
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret="",
+        instance_name_base=human_name + (f"-{instance}" if instance else ""),
+        per_platform_keys=agent_keys,
+    )
+    results = register_all(env)
+
+    wrote = [r for r in results if r.ok]
+    if wrote:
+        console.print(f"\n[dim]Wrote {len(wrote)} MCP config(s)[/dim]")
+
+    # Step 4: Join agents to the room (if specified)
+    if room:
+        console.print(f"\n[dim]Joining agents to #{room}...[/dim]")
+
+        async def _do_join_agents():
+            joined = 0
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                for platform_key, agent_api_key in agent_keys.items():
+                    suffix = f"{platform_key}-{instance}" if instance else platform_key
+                    agent_name = f"{human_name}-{suffix}"
+                    try:
+                        # Get JWT
+                        token_resp = await client.post(
+                            f"{relay_url}/v1/auth/token",
+                            json={"api_key": agent_api_key},
+                            timeout=10,
+                        )
+                        if token_resp.status_code != 200:
+                            continue
+                        jwt = token_resp.json().get("token", "")
+
+                        # Get room ID
+                        headers = {"Authorization": f"Bearer {jwt}"}
+                        rooms_resp = await client.get(f"{relay_url}/rooms", headers=headers)
+                        if rooms_resp.status_code != 200:
+                            continue
+                        rooms_list = rooms_resp.json()
+                        target = next((r for r in rooms_list if r["name"] == room), None)
+                        if not target:
+                            continue
+
+                        # Join
+                        resp = await client.post(
+                            f"{relay_url}/rooms/{target['id']}/join",
+                            json={"participant": agent_name},
+                            headers=headers,
+                        )
+                        if resp.status_code == 200:
+                            joined += 1
+                            console.print(f"  [green]✓[/green] @{agent_name} joined #{room}")
+                    except Exception:
+                        pass
+            return joined
+
+        joined = asyncio.run(_do_join_agents())
+        if joined > 0:
+            _ui.success(f"{joined} agent(s) joined #{room}")
+
+    console.print()
+    _ui.hint_next_steps([
+        "Restart your MCP clients to pick up the new configs",
+        f"Check room members: [accent]quorus members {room or '<room>'}[/]",
+    ])
+
+
 def _cmd_add_agent(args):
     """Interactive wizard to create and launch an agent."""
     console.print("\n[bold green]Quorus Add Agent Wizard[/bold green]\n")
@@ -5714,6 +5859,18 @@ def main():
         "--prefix", default="agent", help="Name prefix (default: agent)"
     )
 
+    p_register_agents = sub.add_parser(
+        "register-agents",
+        help="Register all detected MCP clients as agents",
+    )
+    p_register_agents.add_argument(
+        "--room", help="Room to join agents to (optional)"
+    )
+    p_register_agents.add_argument(
+        "--instance",
+        help="Instance suffix for multiple copies (e.g., '2' creates name-claude-2)",
+    )
+
     p_quickstart = sub.add_parser(
         "quickstart", help="One-command demo: relay + room + agents"
     )
@@ -6043,6 +6200,7 @@ def main():
         "invite-token": _cmd_invite_token,
         "spawn": _cmd_spawn,
         "spawn-multiple": _cmd_spawn_multiple,
+        "register-agents": _cmd_register_agents,
         "quickstart": _cmd_quickstart,
         "hackathon": _cmd_hackathon,
         "watch-daemon": _cmd_watch_daemon,
