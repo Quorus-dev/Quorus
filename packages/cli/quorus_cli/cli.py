@@ -60,6 +60,23 @@ def _get_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(follow_redirects=True)
 
 
+def _mcp_server_command() -> tuple[str, list[str]]:
+    """Return the best (command, args) for launching the Quorus MCP server.
+
+    Prefers the installed `quorus-mcp` entry point (instant startup) over
+    `uv run` (which recreates a venv) over plain `python -m` (slower deps).
+    """
+    # 1. Prefer installed entry point — instant startup, no venv overhead
+    quorus_mcp = shutil.which("quorus-mcp")
+    if quorus_mcp:
+        return quorus_mcp, []
+    # 2. Fall back to uv if available
+    if shutil.which("uv"):
+        return "uv", ["run", "python", "-m", "quorus.mcp_server"]
+    # 3. Last resort: direct python
+    return sys.executable, ["-m", "quorus.mcp_server"]
+
+
 def _auth_headers() -> dict[str, str]:
     """Get auth headers — JWT from API key, or legacy secret for local dev."""
     global _cached_jwt
@@ -1201,13 +1218,7 @@ def _cmd_connect(args):
     if platform in auto_write_platforms:
         from quorus_cli.mcp_writers import McpEnv, register_one
 
-        if shutil.which("uv"):
-            mcp_command = "uv"
-            mcp_args = ["run", "python", "-m", "quorus.mcp_server"]
-        else:
-            mcp_command = sys.executable
-            mcp_args = ["-m", "quorus.mcp_server"]
-
+        mcp_command, mcp_args = _mcp_server_command()
         env = McpEnv(
             command=mcp_command,
             args=mcp_args,
@@ -2529,17 +2540,8 @@ def _cmd_init(args):
     # (atomic 0600 write via _write_sensitive_json)
     console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
-    # 2. Build MCP server command — prefer `uv run`, fall back to `python -m`
-    if shutil.which("uv"):
-        mcp_command = "uv"
-        mcp_args = ["run", "python", "-m", "quorus.mcp_server"]
-    else:
-        mcp_command = sys.executable
-        mcp_args = ["-m", "quorus.mcp_server"]
-        console.print(
-            "[yellow]Note: 'uv' not found on PATH — using Python interpreter directly. "
-            "Install uv for faster startup: https://docs.astral.sh/uv/[/yellow]"
-        )
+    # 2. Build MCP server command — prefer entry point, then uv, then python
+    mcp_command, mcp_args = _mcp_server_command()
 
     # 3. Register MCP server with every detected MCP-compatible client
     # via the shared multi-platform helper.
@@ -3152,12 +3154,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     # Continue). Shared logic with `quorus init` — every joiner gets
     # the same full auto-register treatment, not just Claude Code.
     del repo_dir, quorus_dir  # unused here; kept above for compat with old edits
-    if shutil.which("uv"):
-        mcp_command = "uv"
-        mcp_args = ["run", "python", "-m", "quorus.mcp_server"]
-    else:
-        mcp_command = sys.executable
-        mcp_args = ["-m", "quorus.mcp_server"]
+    mcp_command, mcp_args = _mcp_server_command()
     from quorus_cli import ui as _reg_ui
 
     _register_mcp_everywhere(
