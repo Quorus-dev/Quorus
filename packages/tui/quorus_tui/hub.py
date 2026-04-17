@@ -1496,21 +1496,39 @@ _KEY_TAB   = "__TAB__"
 _KEY_QUIT  = "__QUIT_KEY__"
 
 
-def _read_input(prompt: str = "❯ ") -> str:
+def _read_input(
+    prompt: str = "❯ ",
+    history: list[str] | None = None,
+) -> str:
     """Read one line of input, handling special keys properly.
 
-    With readchar: intercepts arrow keys and Tab before they reach the
-    terminal so they don't print escape sequences. Returns sentinel
-    strings for Up/Down/Tab so the caller can act without parsing escapes.
+    With readchar: intercepts arrow keys and Tab. Up/Down walk the
+    submitted-input history in-place (readline-style) — the current line
+    is replaced with a previous entry, and the user can edit or submit.
+    Tab is returned as a sentinel so the caller can cycle rooms.
 
     Without readchar (fallback): behaves like plain input(). Arrow keys
-    will still show ^[[A in this path, but at least Tab works via readline.
+    will still show ^[[A in this path.
     """
     if not _READCHAR_AVAILABLE:
         try:
             return input(prompt)
         except (EOFError, KeyboardInterrupt):
             return _KEY_QUIT
+
+    hist = history or []
+    # hist_idx == len(hist) means "not browsing history — editing a
+    # fresh line". Walking UP decrements; DOWN increments back to the end.
+    hist_idx = len(hist)
+    draft = ""  # the in-progress line the user was typing before UP
+
+    def _redraw_line(buf_list: list[str]) -> None:
+        # Clear the current input line and redraw prompt + buffer.
+        # \r returns to column 0, \x1b[K erases to end of line.
+        sys.stdout.write("\r\x1b[K")
+        sys.stdout.write(prompt)
+        sys.stdout.write("".join(buf_list))
+        sys.stdout.flush()
 
     sys.stdout.write(prompt)
     sys.stdout.flush()
@@ -1522,14 +1540,29 @@ def _read_input(prompt: str = "❯ ") -> str:
                 sys.stdout.write("\n")
                 sys.stdout.flush()
                 return "".join(buf).strip()
-            if key in (readchar.key.UP,):
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                return _KEY_UP
-            if key in (readchar.key.DOWN,):
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                return _KEY_DOWN
+            if key == readchar.key.UP:
+                if not hist:
+                    continue
+                if hist_idx == len(hist):
+                    # Stash the in-progress draft so DOWN can restore it.
+                    draft = "".join(buf)
+                if hist_idx > 0:
+                    hist_idx -= 1
+                    buf = list(hist[hist_idx])
+                    _redraw_line(buf)
+                continue
+            if key == readchar.key.DOWN:
+                if not hist:
+                    continue
+                if hist_idx < len(hist) - 1:
+                    hist_idx += 1
+                    buf = list(hist[hist_idx])
+                    _redraw_line(buf)
+                elif hist_idx == len(hist) - 1:
+                    hist_idx = len(hist)
+                    buf = list(draft)
+                    _redraw_line(buf)
+                continue
             if key == readchar.key.TAB:
                 sys.stdout.write("\n")
                 sys.stdout.flush()
@@ -1541,7 +1574,6 @@ def _read_input(prompt: str = "❯ ") -> str:
             if key in (readchar.key.BACKSPACE, "\x7f"):
                 if buf:
                     buf.pop()
-                    # Erase the last character on screen.
                     sys.stdout.write("\b \b")
                     sys.stdout.flush()
                 continue
@@ -1640,13 +1672,21 @@ def run_hub() -> None:
     # (same approach as quorus_tui.py, which proven to work)
     console.clear()
     last_render = 0.0
+    # Hold auto-redraw until the user submits next input. Used after we
+    # print transient output (help, slash hint, room menu) so the 2s
+    # redraw tick doesn't clear it out from under them.
+    hold_render = False
+    # Readline-style input history: last N lines the user submitted.
+    # Arrow Up/Down walk this in _read_input().
+    input_history: list[str] = []
+    HISTORY_MAX = 100
 
     try:
         while True:
             now = time.monotonic()
 
             # Redraw if poll interval passed or first render
-            if now - last_render >= POLL_S:
+            if not hold_render and now - last_render >= POLL_S:
                 connected, conn_status = state.get_connection()
                 rooms_snap = state.get_rooms()
                 selected = state.get_selected_room()
@@ -1718,7 +1758,11 @@ def run_hub() -> None:
                 last_render = now
 
             # Bare prompt — no panel, no border.
-            line = _read_input("❯ ")
+            line = _read_input("❯ ", history=input_history)
+
+            # Once the user submits anything, clear the render hold so the
+            # UI catches up on the next tick.
+            hold_render = False
 
             # User hit Enter — close out the current typing session so the
             # next incoming SSE message draws a fresh separator rule above
@@ -1728,30 +1772,8 @@ def run_hub() -> None:
             if line == _KEY_QUIT:
                 break
 
-            # Arrow Up / Down → switch rooms.
-            if line == _KEY_UP:
-                state.select_prev()
-                selected = state.get_selected_room()
-                if selected:
-                    rname = selected.get("name") or selected.get("id", "")
-                    if rname:
-                        _join_room(relay_url, secret, rname, agent_name)
-                        _load_history_into(state, relay_url, secret, rname)
-                last_render = 0
-                continue
-
-            if line == _KEY_DOWN:
-                state.select_next()
-                selected = state.get_selected_room()
-                if selected:
-                    rname = selected.get("name") or selected.get("id", "")
-                    if rname:
-                        _join_room(relay_url, secret, rname, agent_name)
-                        _load_history_into(state, relay_url, secret, rname)
-                last_render = 0
-                continue
-
-            # Tab → cycle to next room.
+            # Tab → cycle to next room. (Arrow Up/Down now walk input
+            # history inside _read_input — they never reach here.)
             if line == _KEY_TAB:
                 state.select_next()
                 selected = state.get_selected_room()
@@ -1766,6 +1788,12 @@ def run_hub() -> None:
             if not line:
                 continue
 
+            # Record in history (dedup consecutive, cap length).
+            if not input_history or input_history[-1] != line:
+                input_history.append(line)
+                if len(input_history) > HISTORY_MAX:
+                    del input_history[: len(input_history) - HISTORY_MAX]
+
             # ── Plain-English command parsing ──────────────────────────────────
             cmd = line.strip()
             cmd_lower = cmd.lower()
@@ -1778,7 +1806,7 @@ def run_hub() -> None:
             if cmd_lower in ("help", "?"):
                 _print_help(console)
                 _print_room_menu(state, console)
-                last_render = 0
+                hold_render = True
                 continue
 
             # Number → jump to room by index from the /rooms menu.
@@ -1802,7 +1830,7 @@ def run_hub() -> None:
             # Bare "/" → show slash-command hint inline, don't send as message.
             if cmd == "/":
                 _print_slash_hint(console)
-                last_render = 0
+                hold_render = True
                 continue
 
             # Slash-command dispatcher (Discord / Slack style). Runs BEFORE the
@@ -1811,13 +1839,19 @@ def run_hub() -> None:
                 parts = cmd.split(None, 1)
                 verb = parts[0].lower()
                 arg = parts[1] if len(parts) > 1 else ""
+                # Commands that print transient output should hold the
+                # redraw so the output isn't wiped on the next tick.
+                printing_verbs = {"/help", "/rooms", "/status", "/invite"}
                 handled = _dispatch_slash(
                     verb, arg, state, relay_url, secret, agent_name, console,
                 )
                 if handled == "__QUIT__":
                     break
                 if handled:
-                    last_render = 0
+                    if verb in printing_verbs:
+                        hold_render = True
+                    else:
+                        last_render = 0
                     continue
                 state.set_status_bar(
                     f"unknown command: {verb} — try /help"
