@@ -31,7 +31,19 @@ async def init_redis(url: str | None = None) -> Redis:
     if _redis is not None:
         return _redis
     resolved_url = url or os.environ.get("REDIS_URL", _DEFAULT_URL)
-    _redis = Redis.from_url(resolved_url, decode_responses=True)
+    # socket_keepalive + health_check_interval keep the pooled connection
+    # alive across idle periods so Upstash's TLS idle-timeout doesn't force
+    # reconnects — each reconnect used to cost a PING on checkout.
+    # health_check_interval is a redis-py *client-side* timer that only fires
+    # PING when a connection has been idle that long AND is being checked
+    # out, so its per-minute cost is bounded by actual request volume, not
+    # by wall clock.
+    _redis = Redis.from_url(
+        resolved_url,
+        decode_responses=True,
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
     # Verify connectivity
     await _redis.ping()
     return _redis
