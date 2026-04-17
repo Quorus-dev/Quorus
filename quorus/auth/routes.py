@@ -140,19 +140,34 @@ async def signup(
             if not tenant:
                 raise HTTPException(status_code=404, detail="Tenant not found")
 
-            # Create participant as member (not admin) in existing tenant
-            participant = Participant(
-                tenant_id=tenant.id,
-                name=req.name,
-                role="member",
+            # Check if participant with this name already exists in tenant
+            existing_participant = await session.execute(
+                select(Participant).where(
+                    Participant.tenant_id == tenant.id,
+                    Participant.name == req.name,
+                )
             )
-            session.add(participant)
-            await session.flush()
+            participant = existing_participant.scalar_one_or_none()
 
-            logger.info(
-                "Join-tenant signup: %s joined %s (tenant_id=%s)",
-                req.name, tenant.slug, tenant.id,
-            )
+            if participant:
+                logger.info(
+                    "Rejoin-tenant: %s rejoined %s (tenant_id=%s)",
+                    req.name, tenant.slug, tenant.id,
+                )
+            else:
+                # Create participant as member (not admin) in existing tenant
+                participant = Participant(
+                    tenant_id=tenant.id,
+                    name=req.name,
+                    role="member",
+                )
+                session.add(participant)
+                await session.flush()
+
+                logger.info(
+                    "Join-tenant signup: %s joined %s (tenant_id=%s)",
+                    req.name, tenant.slug, tenant.id,
+                )
         else:
             # Check workspace uniqueness
             existing = await session.execute(
