@@ -37,17 +37,17 @@ async def get_presence(
     auth: AuthContext = Depends(verify_auth),
 ):
     svc = request.app.state.presence_service
+    # Single list_all call — the backend already returns every entry with
+    # an ``_online`` flag classified against HEARTBEAT_TIMEOUT. The prior
+    # two-call pattern (once for online, once with a 100-year timeout for
+    # all entries) created a second cache bucket that never hit, defeating
+    # the 5s presence cache for every dashboard refresh.
     entries = await svc.list_all(_tid(auth), HEARTBEAT_TIMEOUT)
-    # The backend returns entries within timeout (online).
-    # We also want offline ones, so we get all with a very large timeout.
-    all_entries = await svc.list_all(_tid(auth), timeout=86400 * 365 * 100)
-    online_names = {e["name"] for e in entries}
     result = []
-    for e in all_entries:
-        name = e.get("name", "")
-        online = name in online_names
+    for e in entries:
+        online = bool(e.get("_online"))
         result.append({
-            "name": name,
+            "name": e.get("name", ""),
             "online": online,
             "status": e.get("status", "active") if online else "offline",
             "room": e.get("room", ""),

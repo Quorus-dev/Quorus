@@ -26,17 +26,18 @@ async def get_agent_profile(
   """Get public profile for an agent (rooms, last seen, message count)."""
   tid = _tid(auth)
 
-  # Get agent presence info (last seen, online status)
+  # Get agent presence info (last seen, online status). Single list_all
+  # call — the backend tags each entry with ``_online`` against the
+  # supplied timeout. The previous two-call pattern created a second
+  # cache bucket that defeated the presence cache.
   presence_svc = request.app.state.presence_service
-  online_entries = await presence_svc.list_all(tid, HEARTBEAT_TIMEOUT)
-  all_entries = await presence_svc.list_all(tid, timeout=86400 * 365 * 100)
-  agent_entry = next((e for e in all_entries if e.get("name") == name), None)
+  entries = await presence_svc.list_all(tid, HEARTBEAT_TIMEOUT)
+  agent_entry = next((e for e in entries if e.get("name") == name), None)
 
   if not agent_entry:
     raise HTTPException(status_code=404, detail="Agent not found")
 
-  online_names = {e.get("name", "") for e in online_entries}
-  is_online = name in online_names
+  is_online = bool(agent_entry.get("_online"))
 
   # Get rooms for this agent
   room_svc = request.app.state.room_service
