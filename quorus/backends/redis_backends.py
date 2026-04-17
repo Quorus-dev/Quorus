@@ -558,14 +558,35 @@ class RedisRoomBackend:
         data = await self.get(tenant_id, room_id)
         return (room_id, data) if data is not None else None
 
+    async def _fetch_rooms_pipelined(
+        self, tenant_id: str, room_ids: list[str]
+    ) -> list[tuple[str, dict]]:
+        """Fetch meta + members for each room_id in a single pipelined round-trip.
+
+        Reduces fan-out from 2N sequential commands to one pipeline of 2N
+        commands — same Redis command budget, but a single RTT and a single
+        await instead of N. The N+1-looking pattern was the sequential
+        awaits, not the command count.
+        """
+        if not room_ids:
+            return []
+        async with self._r.pipeline(transaction=False) as pipe:
+            for rid in room_ids:
+                pipe.hgetall(self._meta_key(tenant_id, rid))
+                pipe.hgetall(self._members_key(tenant_id, rid))
+            raw = await _with_timeout(pipe.execute())
+        results: list[tuple[str, dict]] = []
+        for i, rid in enumerate(room_ids):
+            meta = raw[2 * i]
+            members = raw[2 * i + 1]
+            if meta:
+                meta["members"] = members or {}
+                results.append((rid, meta))
+        return results
+
     async def list_all(self, tenant_id: str) -> list[tuple[str, dict]]:
         room_ids = await _with_timeout(self._r.smembers(self._room_index_key(tenant_id)))
-        results: list[tuple[str, dict]] = []
-        for rid in room_ids:
-            data = await self.get(tenant_id, rid)
-            if data is not None:
-                results.append((rid, data))
-        return results
+        return await self._fetch_rooms_pipelined(tenant_id, list(room_ids))
 
     async def list_by_member(
         self, tenant_id: str, member_name: str
@@ -574,12 +595,7 @@ class RedisRoomBackend:
         room_ids = await _with_timeout(self._r.smembers(
             self._member_rooms_key(tenant_id, member_name)
         ))
-        results: list[tuple[str, dict]] = []
-        for rid in room_ids:
-            data = await self.get(tenant_id, rid)
-            if data is not None:
-                results.append((rid, data))
-        return results
+        return await self._fetch_rooms_pipelined(tenant_id, list(room_ids))
 
     async def update(self, tenant_id: str, room_id: str, updates: dict) -> None:
         meta_key = self._meta_key(tenant_id, room_id)
@@ -764,9 +780,24 @@ class RedisPresenceBackend:
     def _index_key(self, tid: str) -> str:
         return f"t:{tid}:presence:_idx"
 
-    def _invalidate_tenant(self, tenant_id: str) -> None:
-        for key in [k for k in self._list_all_cache if k[0] == tenant_id]:
-            self._list_all_cache.pop(key, None)
+    def _patch_tenant_cache(self, tenant_id: str, entry: dict, score: float) -> None:
+        """Apply a heartbeat update to every cached list_all bucket for this tenant.
+
+        Before, heartbeats invalidated the cache wholesale — which meant any
+        tenant with an active agent never saw a cache hit, because the agent's
+        own 10s heartbeat blew away the 5s TTL. Patching in place keeps the
+        cache warm across heartbeats and preserves the fix's original intent:
+        the writer's own update is visible to its next read.
+        """
+        name = entry.get("name")
+        if not name:
+            return
+        for key, (payload, fetched_at) in list(self._list_all_cache.items()):
+            if key[0] != tenant_id:
+                continue
+            new_payload = [e for e in payload if e.get("name") != name]
+            new_payload.append({**entry, "_score": score})
+            self._list_all_cache[key] = (new_payload, fetched_at)
 
     async def heartbeat(self, tenant_id: str, name: str, status: str, room: str) -> dict:
         now = datetime.now(timezone.utc)
@@ -784,9 +815,9 @@ class RedisPresenceBackend:
             # No EXPIRE — sorted set tracks online/offline via score
             pipe.zadd(self._index_key(tenant_id), {name: now_ts})
             await _with_timeout(pipe.execute())
-        # The caller just wrote — drop any cached list_all so its own
-        # heartbeat is visible on the next read.
-        self._invalidate_tenant(tenant_id)
+        # Patch cached buckets in place so this writer's update is visible
+        # without nuking the cache for every other reader in the tenant.
+        self._patch_tenant_cache(tenant_id, entry, now_ts)
         return entry
 
     async def list_all(self, tenant_id: str, timeout_seconds: int) -> list[dict]:

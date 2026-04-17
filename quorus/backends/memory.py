@@ -502,14 +502,21 @@ class InMemoryPresenceBackend:
     async def list_all(
         self, tenant_id: str, timeout_seconds: int
     ) -> list[dict]:
+        # Return every entry for the tenant, tagged with ``_online`` based
+        # on the timeout. Mirrors RedisPresenceBackend.list_all so callers
+        # (/presence, dashboard) don't need a second call to retrieve
+        # offline agents.
         now = time.time()
         cutoff = now - timeout_seconds
         async with self._lock:
-            return [
-                dict(e)
-                for (tid, _), e in self._entries.items()
-                if tid == tenant_id and e["last_heartbeat"] >= cutoff
-            ]
+            out: list[dict] = []
+            for (tid, _), e in self._entries.items():
+                if tid != tenant_id:
+                    continue
+                item = dict(e)
+                item["_online"] = e["last_heartbeat"] >= cutoff
+                out.append(item)
+            return out
 
     def clear(self) -> None:
         self._entries.clear()
