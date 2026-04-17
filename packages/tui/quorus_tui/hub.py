@@ -1278,9 +1278,9 @@ def _print_help(console: Console) -> None:
     console.print()
     console.print(Text.from_markup("  [bold primary]Navigation[/]"))
     nav_rows = [
-        ("Tab",          "cycle to next room"),
-        ("↑ / ↓",        "switch rooms (type 'up' or 'down')"),
-        ("1, 2, 3 …",    "jump to room by number  (see /rooms)"),
+        ("Tab",          "cycle to the next room"),
+        ("↑ / ↓",        "walk through your input history"),
+        ("1, 2, 3 …",    "jump to a room by number (see /rooms)"),
         ("?  or  /help", "show this screen"),
         ("Ctrl+C",        "quit"),
     ]
@@ -1356,14 +1356,31 @@ def _print_room_menu(state: "HubState", console: "Console") -> None:
 
 
 def _print_slash_hint(console: "Console") -> None:
-    """One-liner autocomplete hint shown when user submits a bare '/'."""
-    verbs = "  ".join(SLASH_COMMANDS.keys())
-    console.print(Text.from_markup(f"  [dim]{verbs}[/]"))
+    """Autocomplete hint shown when user submits a bare '/'.
+
+    Lists each slash command with its one-line description so it's
+    actually discoverable (instead of just a jumble of verbs).
+    """
+    console.print()
+    console.print(Text.from_markup(
+        "  [bold primary]Slash commands[/]  [dim]· type the verb, then Enter[/]"
+    ))
+    for verb, (desc, _handler) in SLASH_COMMANDS.items():
+        console.print(
+            Text.from_markup(f"  [bold primary]{verb:<12}[/]  [dim]{desc}[/]")
+        )
+    console.print()
+    console.print(Text.from_markup(
+        "  [dim]Press Enter on an empty prompt to return to chat.[/]"
+    ))
+    console.print()
 
 
 def _slash_help(arg, state, relay_url, secret, agent_name, console):
     del arg, relay_url, secret, agent_name
+    console.clear()
     _print_help(console)
+    _print_room_menu(state, console)
     return True
 
 
@@ -1375,6 +1392,7 @@ def _slash_rooms(arg, state, relay_url, secret, agent_name, console):
         state.set_status_bar(f"{len(rooms)} room(s) loaded")
     else:
         state.set_status_bar("no rooms (or relay unreachable)")
+    console.clear()
     _print_room_menu(state, console)
     return True
 
@@ -1804,6 +1822,7 @@ def run_hub() -> None:
 
             # help — plain word or "?" shortcut
             if cmd_lower in ("help", "?"):
+                console.clear()
                 _print_help(console)
                 _print_room_menu(state, console)
                 hold_render = True
@@ -1829,6 +1848,7 @@ def run_hub() -> None:
 
             # Bare "/" → show slash-command hint inline, don't send as message.
             if cmd == "/":
+                console.clear()
                 _print_slash_hint(console)
                 hold_render = True
                 continue
@@ -1841,7 +1861,9 @@ def run_hub() -> None:
                 arg = parts[1] if len(parts) > 1 else ""
                 # Commands that print transient output should hold the
                 # redraw so the output isn't wiped on the next tick.
-                printing_verbs = {"/help", "/rooms", "/status", "/invite"}
+                # /status and /invite only set the status bar — they
+                # NEED a redraw for the bar to appear.
+                printing_verbs = {"/help", "/rooms"}
                 handled = _dispatch_slash(
                     verb, arg, state, relay_url, secret, agent_name, console,
                 )
