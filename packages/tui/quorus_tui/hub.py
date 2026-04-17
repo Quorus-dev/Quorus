@@ -1074,8 +1074,8 @@ def _render_room_strip(
 
     if not rooms:
         return Text.from_markup(
-            "  [dim]· no rooms yet · press[/] [bold]n[/] "
-            "[dim]to create one ·[/]"
+            "  [dim]· no rooms yet · type[/] [bold]/create <name>[/] "
+            "[dim]to make one ·[/]"
         )
 
     strip = Text("  ")
@@ -1210,7 +1210,7 @@ def _render_chat_feed(
             console_width,
             glyph="⌘",
             title="no room yet",
-            cta="press  n  or type  /create <name>",
+            cta="/create <name>  to make one  ·  Tab to cycle",
         )
     if not messages:
         return _empty_card(
@@ -1268,40 +1268,50 @@ def _render_status_line(status_msg: str) -> Text | None:
 
 
 def _print_help(console: Console) -> None:
-    """Print the help overlay — keybinds, slash commands, plain-English forms."""
+    """Print the help overlay — keybinds, slash commands, room navigation."""
     console.print()
-    console.print("  [bold primary]Keybinds[/]")
-    kb_rows = [
-        ("↑ / ↓", "switch between rooms"),
-        ("Enter", "send the typed message"),
-        ("?", "show/hide this help"),
-        ("Ctrl+C", "quit the hub"),
+    console.print(Text.from_markup("  [bold primary]Navigation[/]"))
+    nav_rows = [
+        ("Tab",          "cycle to next room"),
+        ("↑ / ↓",        "switch rooms (type 'up' or 'down')"),
+        ("1, 2, 3 …",    "jump to room by number  (see /rooms)"),
+        ("?  or  /help", "show this screen"),
+        ("Ctrl+C",        "quit"),
     ]
-    for kb, desc in kb_rows:
+    for kb, desc in nav_rows:
         console.print(
-            f"  [bold agent]{kb:<14}[/]  [dim]{desc}[/]"
+            Text.from_markup(f"  [bold agent]{kb:<22}[/]  [dim]{desc}[/]")
         )
 
     console.print()
-    console.print("  [bold primary]Slash commands[/]")
-    for verb, meta in SLASH_COMMANDS.items():
+    console.print(Text.from_markup(
+        "  [bold primary]Slash commands[/]  [dim]· type / to see options[/]"
+    ))
+    slash_rows = [
+        ("/create <name>",   "create a new room and switch to it"),
+        ("/join <room>",     "switch to a room by name"),
+        ("/switch <room>",   "alias for /join"),
+        ("/rooms",           "list all rooms with a numbered menu"),
+        ("/invite",          "show how to share the current room"),
+        ("/status",          "connection and relay info"),
+        ("/clear",           "clear the chat pane"),
+        ("/quit",            "close the hub"),
+    ]
+    for cmd, desc in slash_rows:
         console.print(
-            f"  [bold primary]{verb:<14}[/]  [dim]{meta[0]}[/]"
+            Text.from_markup(f"  [bold primary]{cmd:<22}[/]  [dim]{desc}[/]")
         )
 
     console.print()
-    console.print("  [bold primary]Plain English[/]  [dim](aliases for slash commands)[/]")
-    rows = [
-        ("create <name>",            "create a new room"),
-        ("join <room>",              "switch to that room"),
-        ("invite <name>",            "show join token for current room"),
-        ("quit / exit",              "close the hub"),
-        ("<anything else>",          "sent as a chat message to the active room"),
-    ]
-    for cmd, desc in rows:
-        console.print(
-            f"  [bold primary]{cmd:<30}[/]  [dim]{desc}[/]"
-        )
+    console.print(Text.from_markup("  [bold primary]Sending messages[/]"))
+    console.print(Text.from_markup(
+        "  [dim]Anything that isn't a command is sent as a chat message "
+        "to the active room.[/]"
+    ))
+    console.print(Text.from_markup(
+        "  [dim]Plain-English shortcuts also work:[/] "
+        "[muted]create dev  ·  join general  ·  quit[/]"
+    ))
     console.print()
 
 
@@ -1310,6 +1320,40 @@ def _print_help(console: Console) -> None:
 #   "/verb": (one-line description, handler)
 # Handler signature:
 #   handler(arg, state, relay_url, secret, agent_name, console) -> True | "__QUIT__"
+
+
+def _print_room_menu(state: "HubState", console: "Console") -> None:
+    """Print a numbered room list. User can type the number to switch."""
+    rooms = state.get_rooms()
+    if not rooms:
+        console.print(Text.from_markup("  [dim]no rooms yet · /create <name>[/]"))
+        return
+    console.print()
+    console.print(Text.from_markup("  [bold primary]Rooms[/]  [dim]· type a number to switch[/]"))
+    selected_name = state.selected_room_name()
+    with state._lock:
+        unread = dict(state.unread)
+    for i, room in enumerate(rooms, 1):
+        name = room.get("name") or room.get("id", "?")
+        is_selected = name == selected_name
+        badge = unread.get(name, 0)
+        line = Text(f"  {i}  ")
+        if is_selected:
+            line.append(f"#{name}", style="bold room")
+            line.append("  active", style="dim success")
+        else:
+            line.append(f"#{name}", style="dim")
+        if badge and not is_selected:
+            line.append(f"  •{badge} unread", style="bold room")
+        console.print(line)
+    console.print()
+
+
+def _print_slash_hint(console: "Console") -> None:
+    """One-liner autocomplete hint shown when user submits a bare '/'."""
+    verbs = "  ".join(SLASH_COMMANDS.keys())
+    console.print(Text.from_markup(f"  [dim]{verbs}[/]"))
+
 
 def _slash_help(arg, state, relay_url, secret, agent_name, console):
     del arg, relay_url, secret, agent_name
@@ -1325,6 +1369,7 @@ def _slash_rooms(arg, state, relay_url, secret, agent_name, console):
         state.set_status_bar(f"{len(rooms)} room(s) loaded")
     else:
         state.set_status_bar("no rooms (or relay unreachable)")
+    _print_room_menu(state, console)
     return True
 
 
@@ -1403,15 +1448,20 @@ def _slash_quit(arg, state, relay_url, secret, agent_name, console):
     return "__QUIT__"
 
 
+def _slash_switch(arg, state, relay_url, secret, agent_name, console):
+    return _slash_join(arg, state, relay_url, secret, agent_name, console)
+
+
 SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
-    "/help":   ("show keybinds + all commands",        _slash_help),
-    "/rooms":  ("refresh the room list",               _slash_rooms),
-    "/join":   ("/join <room> — switch rooms",         _slash_join),
-    "/create": ("/create <name> — make a new room",    _slash_create),
-    "/invite": ("show how to share the current room",  _slash_invite),
-    "/status": ("connection + relay info",             _slash_status),
-    "/clear":  ("clear the chat pane",                 _slash_clear),
-    "/quit":   ("close the hub",                       _slash_quit),
+    "/help":    ("show keybinds + all commands",        _slash_help),
+    "/rooms":   ("list rooms with numbered menu",        _slash_rooms),
+    "/join":    ("/join <room> — switch to a room",      _slash_join),
+    "/switch":  ("/switch <room> — alias for /join",     _slash_switch),
+    "/create":  ("/create <name> — make a new room",     _slash_create),
+    "/invite":  ("show how to share the current room",   _slash_invite),
+    "/status":  ("connection + relay info",              _slash_status),
+    "/clear":   ("clear the chat pane",                  _slash_clear),
+    "/quit":    ("close the hub",                        _slash_quit),
 }
 
 
@@ -1572,6 +1622,11 @@ def run_hub() -> None:
                         unread_by_room=unread_by_room,
                     )
                 )
+                # Persistent nav hint — always visible so users know how
+                # to switch rooms without having to discover /help first.
+                console.print(Text.from_markup(
+                    "  [dim]Tab next room · /rooms for menu · /help for all commands[/]"
+                ))
                 console.print()
                 # Flat chat feed — grouped, centered empty states.
                 for feed_line in _render_chat_feed(
@@ -1580,14 +1635,6 @@ def run_hub() -> None:
                 ):
                     console.print(feed_line)
                 console.print()
-                # First-send hint: only when room is selected and empty.
-                if room_name and not msgs_snap and not status_bar:
-                    console.print(
-                        Text.from_markup(
-                            "  [dim]type a message · [/][accent]/help[/] "
-                            "[dim]for commands[/]"
-                        )
-                    )
                 # Transient status line (if any) above the bare prompt.
                 status_line = _render_status_line(status_bar)
                 if status_line is not None:
@@ -1606,6 +1653,18 @@ def run_hub() -> None:
             # it (instead of silently stacking).
             state.reset_inline_rule()
 
+            # Tab → cycle to next room (works inside plain input()).
+            if line == "\t":
+                state.select_next()
+                selected = state.get_selected_room()
+                if selected:
+                    rname = selected.get("name") or selected.get("id", "")
+                    if rname:
+                        _join_room(relay_url, secret, rname, agent_name)
+                        _load_history_into(state, relay_url, secret, rname)
+                last_render = 0
+                continue
+
             if not line:
                 continue
 
@@ -1620,6 +1679,31 @@ def run_hub() -> None:
             # help — plain word or "?" shortcut
             if cmd_lower in ("help", "?"):
                 _print_help(console)
+                _print_room_menu(state, console)
+                last_render = 0
+                continue
+
+            # Number → jump to room by index from the /rooms menu.
+            if cmd.isdigit():
+                idx = int(cmd) - 1
+                rooms_snap = state.get_rooms()
+                if 0 <= idx < len(rooms_snap):
+                    target = rooms_snap[idx]
+                    rname = target.get("name") or target.get("id", "")
+                    state.select_by_name(rname)
+                    _join_room(relay_url, secret, rname, agent_name)
+                    _load_history_into(state, relay_url, secret, rname)
+                    state.set_status_bar(f"switched to #{rname}")
+                else:
+                    state.set_status_bar(
+                        f"no room #{cmd} — type /rooms to see the list"
+                    )
+                last_render = 0
+                continue
+
+            # Bare "/" → show slash-command hint inline, don't send as message.
+            if cmd == "/":
+                _print_slash_hint(console)
                 last_render = 0
                 continue
 
