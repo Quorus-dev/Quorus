@@ -161,3 +161,27 @@ def test_mcp_server_honors_quorus_profile(
     assert server_mod.RELAY_URL == "https://right.test"
     assert server_mod.API_KEY == "sk_y"
     assert server_mod.INSTANCE_NAME == "targetbot"
+
+
+def test_codex_agent_command_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
+    from quorus_cli import cli as cli_mod
+
+    called = {}
+
+    def fake_cmd(args) -> None:
+        called["room"] = args.room
+        called["suffix"] = args.suffix
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli_mod, "_cmd_codex_agent", fake_cmd)
+
+    with patch.object(
+        cli_mod.sys,
+        "argv",
+        ["quorus", "codex-agent", "medbuddy-sprint", "--suffix", "reviewer"],
+    ):
+        with pytest.raises(SystemExit) as exc:
+            cli_mod.main()
+
+    assert exc.value.code == 0
+    assert called == {"room": "medbuddy-sprint", "suffix": "reviewer"}

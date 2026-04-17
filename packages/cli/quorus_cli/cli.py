@@ -1290,7 +1290,14 @@ def _connect_codex(
     console.print(f"  Room:   [cyan]{room}[/cyan]")
     console.print(f"  Relay:  [cyan]{relay_url}[/cyan]\n")
 
-    console.print("[bold]1. Add to your Codex system prompt:[/bold]\n")
+    console.print("[bold]1. Fast path: run the supervised Codex runner:[/bold]\n")
+    console.print(
+        f"quorus codex-agent {room} --name {name} --announce",
+        highlight=False,
+        markup=False,
+    )
+
+    console.print("\n[bold]2. Or add to your Codex system prompt:[/bold]\n")
 
     system_prompt = f"""You are {name} in a Quorus dev room. Use curl to communicate:
 
@@ -1311,7 +1318,7 @@ Check messages after every task. Claim work with CLAIM:. Post STATUS: when done.
 
     console.print(system_prompt, highlight=False, markup=False)
 
-    console.print("\n[bold]2. Or use the Python client:[/bold]\n")
+    console.print("\n[bold]3. Or use the Python client:[/bold]\n")
     python_snippet = f"""\
 from quorus_sdk.http_agent import QuorusClient
 
@@ -1965,6 +1972,35 @@ def _cmd_watch_context(args):
         asyncio.run(_watch_context(args.room, context_path))
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped.[/dim]")
+
+
+def _cmd_codex_agent(args):
+    from quorus_cli.codex_agent import CodexAgentError, run_codex_agent
+
+    try:
+        rc = run_codex_agent(
+            room=args.room,
+            relay_url=RELAY_URL,
+            parent_name=INSTANCE_NAME,
+            parent_api_key=API_KEY,
+            relay_secret=RELAY_SECRET,
+            requested_name=args.name,
+            suffix=args.suffix,
+            cwd=Path(args.cwd).resolve(),
+            wait_seconds=args.wait,
+            announce=args.announce,
+            no_launch=args.no_launch,
+            verbose=args.verbose,
+            sandbox=args.sandbox,
+            approval=args.approval,
+        )
+    except CodexAgentError as exc:
+        _ui.error(str(exc))
+        sys.exit(1)
+    except httpx.HTTPError as exc:
+        _ui.error(f"Codex runner failed: {exc}")
+        sys.exit(1)
+    raise SystemExit(rc)
 
 
 def _cmd_status(args):
@@ -3570,6 +3606,44 @@ You communicate ONLY through the room — never reply in terminal.
         console.print(f"[green]Launched {name} in new Terminal tab[/green]")
     else:
         _ui.info(f"Run manually: cd {workspace} && claude")
+
+
+def _spawn_codex_agent(room: str, name: str, workspace: Path | None = None):
+    """Launch a Codex agent runner in a new terminal tab."""
+    import re as _re
+
+    if not _re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
+        _ui.error(
+            f"Invalid agent name '{name}'",
+            hint="use only letters, digits, hyphen, underscore (1-64 chars)",
+        )
+        sys.exit(1)
+    if not _re.fullmatch(r"[A-Za-z0-9_-]{1,64}", room):
+        _ui.error(
+            f"Invalid room name '{room}'",
+            hint="use only letters, digits, hyphen, underscore (1-64 chars)",
+        )
+        sys.exit(1)
+
+    agents_dir = Path.home() / "quorus-agents"
+    workspace = workspace or (agents_dir / name)
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"[green]Workspace created: {workspace}[/green]")
+
+    if sys.platform == "darwin":
+        cmd = (
+            f"cd {workspace} && quorus codex-agent {room} "
+            f"--name {name} --announce --cwd {workspace}"
+        )
+        applescript = f'tell application "Terminal" to do script "{cmd}"'
+        subprocess.run(["osascript", "-e", applescript])
+        console.print(f"[green]Launched Codex agent {name} in new Terminal tab[/green]")
+    else:
+        _ui.info(
+            "Run manually: "
+            f"cd {workspace} && quorus codex-agent {room} --name {name} --announce --cwd {workspace}"
+        )
 
 
 def _cmd_register_agents(args):
@@ -5891,6 +5965,60 @@ def main():
         "--output", "-o", default=None, help="Context file path (default: .quorus/context.md)"
     )
 
+    p_codex_agent = sub.add_parser(
+        "codex-agent",
+        help="Launch Codex with a Quorus-bound identity and inbox loop",
+    )
+    p_codex_agent.add_argument("room", help="Room name")
+    p_codex_agent.add_argument(
+        "--name",
+        default=None,
+        help="Exact Codex participant name (current identity or a child name)",
+    )
+    p_codex_agent.add_argument(
+        "--suffix",
+        default=None,
+        help="Register/use child identity suffix, e.g. reviewer -> name-codex-reviewer",
+    )
+    p_codex_agent.add_argument(
+        "--cwd",
+        default=".",
+        help="Working directory for the Codex session (default: current directory)",
+    )
+    p_codex_agent.add_argument(
+        "--wait",
+        type=int,
+        default=90,
+        help="Inbox long-poll wait in seconds (default: 90)",
+    )
+    p_codex_agent.add_argument(
+        "--announce",
+        action="store_true",
+        help="Post an online status message before launching Codex",
+    )
+    p_codex_agent.add_argument(
+        "--no-launch",
+        action="store_true",
+        help="Run only the inbox loop without launching Codex",
+    )
+    p_codex_agent.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print mirrored inbox lines and loop errors to stderr",
+    )
+    p_codex_agent.add_argument(
+        "--sandbox",
+        default="workspace-write",
+        choices=["read-only", "workspace-write", "danger-full-access"],
+        help="Codex sandbox mode (default: workspace-write)",
+    )
+    p_codex_agent.add_argument(
+        "--approval",
+        default="on-request",
+        choices=["untrusted", "on-request", "never"],
+        help="Codex approval mode (default: on-request)",
+    )
+
     p_hack = sub.add_parser(
         "hackathon", help="Set up hackathon: 2 rooms + agents with missions"
     )
@@ -6205,6 +6333,7 @@ def main():
         "hackathon": _cmd_hackathon,
         "watch-daemon": _cmd_watch_daemon,
         "watch-context": _cmd_watch_context,
+        "codex-agent": _cmd_codex_agent,
         "state": _cmd_room_state,
         "locks": _cmd_room_locks,
         "usage": _cmd_usage,
