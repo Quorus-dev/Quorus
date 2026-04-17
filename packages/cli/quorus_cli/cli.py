@@ -3063,6 +3063,46 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     console.print(f"  Name: {name}")
     console.print("")
 
+    # Auto-signup if no credentials provided in the join code.
+    # JWT-admin minted codes don't embed credentials for security reasons,
+    # so we sign up the joiner to get them their own API key.
+    if not api_key and not secret:
+        console.print("[dim]No credentials in invite — signing you up...[/dim]")
+        import re as _re
+        import secrets as _secrets
+        workspace = _re.sub(r"[^a-z0-9\-]", "-", name.lower())[:32]
+        if not workspace or workspace[0] == "-":
+            workspace = f"ws-{workspace}".strip("-")
+        try:
+            signup_resp = httpx.post(
+                f"{relay_url}/v1/auth/signup",
+                json={"name": name, "workspace": workspace},
+                headers={"X-Quorus-Setup-Local": "1"},
+                timeout=15,
+                follow_redirects=True,
+            )
+            if signup_resp.status_code == 409:
+                # Workspace taken — retry with random suffix
+                workspace = f"{workspace}-{_secrets.token_hex(2)}"
+                signup_resp = httpx.post(
+                    f"{relay_url}/v1/auth/signup",
+                    json={"name": name, "workspace": workspace},
+                    headers={"X-Quorus-Setup-Local": "1"},
+                    timeout=15,
+                    follow_redirects=True,
+                )
+            if signup_resp.status_code == 200:
+                signup_data = signup_resp.json()
+                api_key = signup_data.get("api_key", "")
+                if api_key:
+                    console.print(f"[green]✓[/green] [dim]Account created (workspace: {workspace})[/dim]")
+                else:
+                    console.print("[yellow]Warning: signup succeeded but no API key returned[/yellow]")
+            else:
+                console.print(f"[yellow]Warning: signup failed (HTTP {signup_resp.status_code})[/yellow]")
+        except Exception as exc:
+            console.print(f"[yellow]Warning: signup failed: {exc}[/yellow]")
+
     # Reuse join logic
     repo_dir = Path(__file__).resolve().parent.parent
     quorus_dir = Path(__file__).resolve().parent
