@@ -54,6 +54,11 @@ class McpEnv:
     writer derives its own agent identity by suffixing the platform
     key (``arav-claude``, ``arav-codex``) so the relay sees each
     client as a separate participant.
+
+    If ``per_platform_keys`` is provided, each platform gets its own
+    API key (fetched from ``/v1/auth/register-agent``). Otherwise
+    all platforms share the same key (legacy behavior, causes identity
+    mismatch errors on the relay).
     """
 
     command: str
@@ -62,6 +67,7 @@ class McpEnv:
     api_key: str = ""
     relay_secret: str = ""
     instance_name_base: str = ""
+    per_platform_keys: dict[str, str] | None = None  # platform_key -> api_key
 
     def agent_identity(self, platform_key: str) -> str:
         base = self.instance_name_base.strip()
@@ -74,7 +80,15 @@ class McpEnv:
             "QUORUS_RELAY_URL": self.relay_url,
             "QUORUS_INSTANCE_NAME": self.agent_identity(platform_key),
         }
-        if self.api_key:
+        # Use per-platform key if available, else fall back to shared key
+        platform_api_key = (
+            self.per_platform_keys.get(platform_key)
+            if self.per_platform_keys
+            else None
+        )
+        if platform_api_key:
+            env["QUORUS_API_KEY"] = platform_api_key
+        elif self.api_key:
             env["QUORUS_API_KEY"] = self.api_key
         elif self.relay_secret:
             env["QUORUS_RELAY_SECRET"] = self.relay_secret

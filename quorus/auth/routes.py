@@ -74,6 +74,26 @@ class TokenResponse(BaseModel):
     expires_in: int
 
 
+class RegisterAgentRequest(BaseModel):
+    """Register an agent identity under an existing account."""
+    suffix: str  # e.g. "claude", "codex", "cursor"
+
+    @field_validator("suffix")
+    @classmethod
+    def check_suffix(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not v or len(v) > 32 or not _NAME_RE.match(v):
+            raise ValueError("Suffix must be 1-32 alphanumeric chars, hyphens, or underscores")
+        return v
+
+
+class RegisterAgentResponse(BaseModel):
+    """Returns the new agent identity's API key."""
+    agent_name: str
+    api_key: str
+    tenant_slug: str
+
+
 # ---------------------------------------------------------------------------
 # Self-service signup
 # ---------------------------------------------------------------------------
@@ -259,4 +279,126 @@ async def exchange_api_key(req: TokenRequest):
         return TokenResponse(
             token=token,
             expires_in=JWT_TTL_SECONDS,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Register agent identity
+# ---------------------------------------------------------------------------
+
+
+@router.post("/register-agent", response_model=RegisterAgentResponse)
+async def register_agent(
+    req: RegisterAgentRequest,
+    request: Request,
+    authorization: str = Header(...),
+):
+    """Create a new agent identity under an existing account.
+
+    Requires the parent account's API key in the Authorization header.
+    Creates a new participant named `{parent_name}-{suffix}` with its own API key.
+    """
+    # Extract API key from Bearer header
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    parent_key = authorization[7:].strip()
+
+    try:
+        prefix = extract_key_prefix(parent_key)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid API key format")
+
+    async with get_db_session() as session:
+        # Look up parent key
+        result = await session.execute(
+            select(ApiKey).where(
+                ApiKey.key_prefix == prefix,
+                ApiKey.revoked_at.is_(None),
+            )
+        )
+        parent_key_row = result.scalar_one_or_none()
+        if not parent_key_row or not verify_api_key(parent_key, parent_key_row.key_hash):
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+        # Get parent participant and tenant
+        parent_participant = await session.get(Participant, parent_key_row.participant_id)
+        if not parent_participant:
+            raise HTTPException(status_code=401, detail="Parent participant not found")
+
+        tenant = await session.get(Tenant, parent_participant.tenant_id)
+        if not tenant:
+            raise HTTPException(status_code=401, detail="Tenant not found")
+
+        # Build agent name: {parent_name}-{suffix}
+        agent_name = f"{parent_participant.name}-{req.suffix}"
+
+        # Check if agent already exists — return existing key if so
+        existing_result = await session.execute(
+            select(Participant).where(
+                Participant.tenant_id == tenant.id,
+                Participant.name == agent_name,
+            )
+        )
+        existing_agent = existing_result.scalar_one_or_none()
+
+        if existing_agent:
+            # Agent exists — find its active API key
+            key_result = await session.execute(
+                select(ApiKey).where(
+                    ApiKey.participant_id == existing_agent.id,
+                    ApiKey.revoked_at.is_(None),
+                )
+            )
+            existing_key = key_result.scalar_one_or_none()
+            if existing_key:
+                # Can't return the raw key (it's hashed), so create a new one
+                raw_key, new_prefix, key_hash = generate_api_key()
+                new_api_key = ApiKey(
+                    participant_id=existing_agent.id,
+                    label=f"agent-{req.suffix}",
+                    key_prefix=new_prefix,
+                    key_hash=key_hash,
+                )
+                session.add(new_api_key)
+                await session.flush()
+
+                logger.info(
+                    "Agent key regenerated: %s (tenant=%s, suffix=%s)",
+                    agent_name, tenant.slug, req.suffix,
+                )
+                return RegisterAgentResponse(
+                    agent_name=agent_name,
+                    api_key=raw_key,
+                    tenant_slug=tenant.slug,
+                )
+
+        # Create new agent participant
+        agent_participant = Participant(
+            tenant_id=tenant.id,
+            name=agent_name,
+            role="agent",  # Agents get a distinct role
+        )
+        session.add(agent_participant)
+        await session.flush()
+
+        # Generate API key for the agent
+        raw_key, new_prefix, key_hash = generate_api_key()
+        agent_api_key = ApiKey(
+            participant_id=agent_participant.id,
+            label=f"agent-{req.suffix}",
+            key_prefix=new_prefix,
+            key_hash=key_hash,
+        )
+        session.add(agent_api_key)
+        await session.flush()
+
+        logger.info(
+            "Agent registered: %s (tenant=%s, suffix=%s, parent=%s)",
+            agent_name, tenant.slug, req.suffix, parent_participant.name,
+        )
+
+        return RegisterAgentResponse(
+            agent_name=agent_name,
+            api_key=raw_key,
+            tenant_slug=tenant.slug,
         )

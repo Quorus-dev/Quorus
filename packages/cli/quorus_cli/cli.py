@@ -2354,6 +2354,54 @@ def _cmd_stats(args):
     asyncio.run(_stats(days=args.days, emit_json=args.json))
 
 
+def _is_platform_installed(platform_key: str) -> bool:
+    """Quick check if a platform's config file exists (signals installation)."""
+    from pathlib import Path
+    paths = {
+        "claude": Path.home() / ".claude" / "settings.json",
+        "claude-desktop": Path.home() / ".claude.json",
+        "cursor": Path.home() / ".cursor" / "mcp.json",
+        "codex": Path.home() / ".codex" / "config.toml",
+        "gemini": Path.home() / ".gemini" / "settings.json",
+        "windsurf": Path.home() / ".codeium" / "windsurf" / "mcp_config.json",
+        "opencode": Path.home() / ".config" / "opencode" / "opencode.json",
+        "continue": Path.home() / ".continue" / "config.json",
+        "cline": Path.home() / ".cline" / "mcp.json",
+    }
+    path = paths.get(platform_key)
+    if path and path.exists():
+        return True
+    # Codex special case: check if binary is installed
+    if platform_key == "codex" and shutil.which("codex"):
+        return True
+    return False
+
+
+def _register_agent_identity(
+    relay_url: str,
+    parent_api_key: str,
+    suffix: str,
+) -> str | None:
+    """Call /v1/auth/register-agent to create an agent identity.
+
+    Returns the agent's API key, or None on failure.
+    """
+    try:
+        resp = httpx.post(
+            f"{relay_url}/v1/auth/register-agent",
+            json={"suffix": suffix},
+            headers={"Authorization": f"Bearer {parent_api_key}"},
+            timeout=10,
+            follow_redirects=True,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("api_key")
+        return None
+    except Exception:
+        return None
+
+
 def _register_mcp_everywhere(
     *,
     name: str,
@@ -2371,13 +2419,45 @@ def _register_mcp_everywhere(
     ``mcpServers`` JSON, Codex's TOML, Opencode's nested shape, etc.).
     Every write is idempotent + atomic + preserves existing entries.
 
+    For each installed platform, registers a separate agent identity
+    (e.g. ``arav-claude``, ``arav-codex``) with its own API key, so
+    each agent appears as a distinct participant in the room.
+
     Returns the list of display labels that were successfully wired,
     so the caller can print a ``Restart X to pick up the MCP server``
     hint and decide whether to fall back to a project-level
     ``.mcp.json``.
     """
-    from quorus_cli.mcp_writers import McpEnv, register_all
+    from quorus_cli.mcp_writers import McpEnv, register_all, ALL_WRITERS
 
+    # Step 1: Detect which platforms are installed by checking paths
+    # (We need to know this BEFORE writing so we can fetch per-platform keys)
+    installed_platforms: list[str] = []
+    for platform_key, writer_fn in ALL_WRITERS:
+        # Quick detect — each writer knows its config path; we peek at
+        # typical paths without actually running the writer.
+        if _is_platform_installed(platform_key):
+            installed_platforms.append(platform_key)
+
+    # Step 2: For each installed platform, register agent identity + get API key
+    per_platform_keys: dict[str, str] = {}
+    if api_key and installed_platforms:
+        ui.console.print("[dim]Registering agent identities...[/dim]")
+        for platform_key in installed_platforms:
+            try:
+                agent_key = _register_agent_identity(
+                    relay_url=relay_url,
+                    parent_api_key=api_key,
+                    suffix=platform_key,
+                )
+                if agent_key:
+                    per_platform_keys[platform_key] = agent_key
+            except Exception as exc:
+                ui.console.print(
+                    f"  [dim]— {platform_key}: couldn't register agent ({exc})[/dim]"
+                )
+
+    # Step 3: Build env and run all writers
     env = McpEnv(
         command=mcp_command,
         args=list(mcp_args),
@@ -2385,6 +2465,7 @@ def _register_mcp_everywhere(
         api_key=api_key,
         relay_secret=relay_secret,
         instance_name_base=name,
+        per_platform_keys=per_platform_keys if per_platform_keys else None,
     )
     results = register_all(env)
 
