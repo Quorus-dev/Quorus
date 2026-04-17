@@ -1334,7 +1334,7 @@ def _print_room_menu(state: "HubState", console: "Console") -> None:
         console.print(Text.from_markup("  [dim]no rooms yet · /create <name>[/]"))
         return
     console.print()
-    console.print(Text.from_markup("  [bold primary]Rooms[/]  [dim]· type a number to switch[/]"))
+    console.print(Text.from_markup("  [bold primary]Rooms[/]"))
     selected_name = state.selected_room_name()
     with state._lock:
         unread = dict(state.unread)
@@ -1377,7 +1377,6 @@ def _print_slash_hint(console: "Console") -> None:
 
 def _slash_help(arg, state, relay_url, secret, agent_name, console):
     del arg, relay_url, secret, agent_name
-    console.clear()
     _print_help(console)
     _print_room_menu(state, console)
     return True
@@ -1391,7 +1390,6 @@ def _slash_rooms(arg, state, relay_url, secret, agent_name, console):
         state.set_status_bar(f"{len(rooms)} room(s) loaded")
     else:
         state.set_status_bar("no rooms (or relay unreachable)")
-    console.clear()
     _print_room_menu(state, console)
     return True
 
@@ -1821,7 +1819,6 @@ def run_hub() -> None:
 
             # help — plain word or "?" shortcut
             if cmd_lower in ("help", "?"):
-                console.clear()
                 _print_help(console)
                 _print_room_menu(state, console)
                 hold_render = True
@@ -1847,7 +1844,6 @@ def run_hub() -> None:
 
             # Bare "/" → show slash-command hint inline, don't send as message.
             if cmd == "/":
-                console.clear()
                 _print_slash_hint(console)
                 hold_render = True
                 continue
