@@ -37,6 +37,12 @@ except ImportError:
     print("rich not installed — pip install rich")
     sys.exit(1)
 
+try:
+    import readchar
+    _READCHAR_AVAILABLE = True
+except ImportError:
+    _READCHAR_AVAILABLE = False
+
 # Use the shared theme-aware console so `[primary]`, `[agent]`, etc. resolve
 # consistently with every ui.py-rendered command. Avoid constructing a raw
 # `Console()` elsewhere in this module — hardcoded hex drifts from the theme
@@ -1481,6 +1487,76 @@ def _dispatch_slash(
     return handler(arg, state, relay_url, secret, agent_name, console)
 
 
+# ── Input reader ──────────────────────────────────────────────────────────────
+
+# Special sentinel strings returned by _read_input() for non-text keys.
+_KEY_UP    = "__UP__"
+_KEY_DOWN  = "__DOWN__"
+_KEY_TAB   = "__TAB__"
+_KEY_QUIT  = "__QUIT_KEY__"
+
+
+def _read_input(prompt: str = "❯ ") -> str:
+    """Read one line of input, handling special keys properly.
+
+    With readchar: intercepts arrow keys and Tab before they reach the
+    terminal so they don't print escape sequences. Returns sentinel
+    strings for Up/Down/Tab so the caller can act without parsing escapes.
+
+    Without readchar (fallback): behaves like plain input(). Arrow keys
+    will still show ^[[A in this path, but at least Tab works via readline.
+    """
+    if not _READCHAR_AVAILABLE:
+        try:
+            return input(prompt)
+        except (EOFError, KeyboardInterrupt):
+            return _KEY_QUIT
+
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    buf: list[str] = []
+    try:
+        while True:
+            key = readchar.readkey()
+            if key in (readchar.key.ENTER, "\r", "\n"):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return "".join(buf).strip()
+            if key in (readchar.key.UP,):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return _KEY_UP
+            if key in (readchar.key.DOWN,):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return _KEY_DOWN
+            if key == readchar.key.TAB:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return _KEY_TAB
+            if key in (readchar.key.CTRL_C, readchar.key.CTRL_D):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return _KEY_QUIT
+            if key in (readchar.key.BACKSPACE, "\x7f"):
+                if buf:
+                    buf.pop()
+                    # Erase the last character on screen.
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+            # Ignore other control/escape sequences (F-keys, Home, End…).
+            if key.startswith("\x1b") or ord(key[0]) < 32:
+                continue
+            buf.append(key)
+            sys.stdout.write(key)
+            sys.stdout.flush()
+    except (EOFError, KeyboardInterrupt):
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        return _KEY_QUIT
+
+
 # ── Main hub loop ─────────────────────────────────────────────────────────────
 
 def run_hub() -> None:
@@ -1641,20 +1717,42 @@ def run_hub() -> None:
                     console.print(status_line)
                 last_render = now
 
-            # Bare prompt — no panel, no border. Color from the primary
-            # theme token so it matches the rest of the TUI.
-            try:
-                line = input("❯ ").strip()
-            except (EOFError, KeyboardInterrupt):
-                break
+            # Bare prompt — no panel, no border.
+            line = _read_input("❯ ")
 
             # User hit Enter — close out the current typing session so the
             # next incoming SSE message draws a fresh separator rule above
             # it (instead of silently stacking).
             state.reset_inline_rule()
 
-            # Tab → cycle to next room (works inside plain input()).
-            if line == "\t":
+            if line == _KEY_QUIT:
+                break
+
+            # Arrow Up / Down → switch rooms.
+            if line == _KEY_UP:
+                state.select_prev()
+                selected = state.get_selected_room()
+                if selected:
+                    rname = selected.get("name") or selected.get("id", "")
+                    if rname:
+                        _join_room(relay_url, secret, rname, agent_name)
+                        _load_history_into(state, relay_url, secret, rname)
+                last_render = 0
+                continue
+
+            if line == _KEY_DOWN:
+                state.select_next()
+                selected = state.get_selected_room()
+                if selected:
+                    rname = selected.get("name") or selected.get("id", "")
+                    if rname:
+                        _join_room(relay_url, secret, rname, agent_name)
+                        _load_history_into(state, relay_url, secret, rname)
+                last_render = 0
+                continue
+
+            # Tab → cycle to next room.
+            if line == _KEY_TAB:
                 state.select_next()
                 selected = state.get_selected_room()
                 if selected:
@@ -1724,29 +1822,6 @@ def run_hub() -> None:
                 state.set_status_bar(
                     f"unknown command: {verb} — try /help"
                 )
-                last_render = 0
-                continue
-
-            # Arrow key passthrough (terminal sends escape sequences)
-            if cmd == "\x1b[A" or cmd_lower == "up":
-                state.select_prev()
-                selected = state.get_selected_room()
-                if selected:
-                    rname = selected.get("name") or selected.get("id", "")
-                    if rname:
-                        _join_room(relay_url, secret, rname, agent_name)
-                        _load_history_into(state, relay_url, secret, rname)
-                last_render = 0
-                continue
-
-            if cmd == "\x1b[B" or cmd_lower == "down":
-                state.select_next()
-                selected = state.get_selected_room()
-                if selected:
-                    rname = selected.get("name") or selected.get("id", "")
-                    if rname:
-                        _join_room(relay_url, secret, rname, agent_name)
-                        _load_history_into(state, relay_url, secret, rname)
                 last_render = 0
                 continue
 
