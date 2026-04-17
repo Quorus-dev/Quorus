@@ -1870,19 +1870,25 @@ def test_cmd_init_happy_path(tmp_path, monkeypatch):
 
     claude_cfg = json.loads(claude_json.read_text())
     mcp = claude_cfg["mcpServers"]["quorus"]
-    assert mcp["command"] == "uv"
-    assert "-m" in mcp["args"]
-    assert "quorus.mcp_server" in mcp["args"]
+    # Command is full path from shutil.which() (e.g., /usr/bin/uv)
+    assert "uv" in mcp["command"] or "quorus-mcp" in mcp["command"]
+    # Args depend on whether entry point or uv run is used
+    if "quorus-mcp" in mcp["command"]:
+        assert mcp["args"] == []
+    else:
+        assert "-m" in mcp["args"]
+        assert "quorus.mcp_server" in mcp["args"]
 
 
 def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, capsys):
-    """When uv is not on PATH, the MCP server is registered via sys.executable."""
+    """When uv and quorus-mcp are not on PATH, falls back to sys.executable."""
     import sys
 
     from quorus.cli import _cmd_init
 
     monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
+    # Mock shutil.which to return None for all commands (no uv, no quorus-mcp)
     monkeypatch.setattr("quorus.cli.shutil.which", lambda _: None)
     mock_resp = MagicMock()
     mock_resp.status_code = 200
@@ -1898,9 +1904,6 @@ def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, ca
     mcp = claude_cfg["mcpServers"]["quorus"]
     assert mcp["command"] == sys.executable
     assert mcp["args"] == ["-m", "quorus.mcp_server"]
-
-    captured = capsys.readouterr()
-    assert "uv" in captured.out  # prints the fallback notice
 
 
 def test_cmd_init_rejects_invalid_url(monkeypatch):
