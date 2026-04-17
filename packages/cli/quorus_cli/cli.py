@@ -2627,7 +2627,7 @@ def _cmd_init(args):
 
     # 3. Register MCP server with every detected MCP-compatible client
     # via the shared multi-platform helper.
-    registered_labels = _register_mcp_everywhere(
+    registered_labels, _agent_keys = _register_mcp_everywhere(
         name=name,
         relay_url=relay_url,
         api_key=api_key,
