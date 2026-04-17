@@ -3228,9 +3228,9 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         console.print("[dim]No credentials in invite — signing you up...[/dim]")
         import re as _re
         import secrets as _secrets
-        workspace = _re.sub(r"[^a-z0-9\-]", "-", name.lower())[:32]
-        if not workspace or workspace[0] == "-":
-            workspace = f"ws-{workspace}".strip("-")
+        workspace = _re.sub(r"[^a-z0-9\-]", "-", name.lower()).strip("-")[:32]
+        if not workspace:
+            workspace = f"ws-{_secrets.token_hex(2)}"
         try:
             # Build signup payload — include tenant_id if joining existing workspace
             signup_payload = {"name": name, "workspace": workspace}
