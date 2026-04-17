@@ -206,8 +206,8 @@ def load_config() -> dict[str, Any]:
     Preserved for back-compat with existing callers. New code should use
     ``ConfigManager`` directly for simple load/save.
     """
+    file_config: dict[str, Any] = ConfigManager().load()
     config_file = resolve_config_file()
-    file_config: dict[str, Any] = ConfigManager(config_file).load()
 
     def get(env_key: str, file_key: str, default: str) -> str:
         return os.environ.get(env_key) or file_config.get(file_key, default)
