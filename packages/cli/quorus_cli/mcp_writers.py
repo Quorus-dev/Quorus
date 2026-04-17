@@ -324,8 +324,11 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return {}
     try:
         import tomllib  # stdlib since 3.11
-    except ModuleNotFoundError:  # pragma: no cover - for <3.11
-        return {}
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib  # fallback for Python < 3.11
+        except ModuleNotFoundError:
+            return {}
     try:
         with path.open("rb") as f:
             return tomllib.load(f)

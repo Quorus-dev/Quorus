@@ -92,10 +92,7 @@ async def mint_code(
 
     tenant_id = auth.tenant_id or "_legacy"
     room_svc = request.app.state.room_service
-    result = await room_svc.get_by_name(tenant_id, req.room)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Room not found")
-    room_id, room_data = result
+    room_id, room_data = await room_svc.get(tenant_id, req.room)
     room_name = room_data.get("name", req.room)
 
     relay_url = _request_relay_url(request).rstrip("/")
