@@ -455,8 +455,11 @@ def test_add_agent_creates_workspace(tmp_path, monkeypatch):
 
 # ── connect command tests ────────────────────────────────────────────────
 
-def test_connect_codex(capsys):
+def test_connect_codex(capsys, tmp_path, monkeypatch):
+    """`connect codex` now auto-writes ~/.codex/config.toml — no prose."""
     from quorus.cli import _cmd_connect
+
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     args = MagicMock()
     args.platform = "codex"
@@ -469,13 +472,22 @@ def test_connect_codex(capsys):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
-    assert "Codex Agent Setup" in captured.out
+    # New contract: one-line success + the config file actually exists
+    # with the quorus entry + the codex-bot identity baked in.
+    assert "Wired Codex CLI" in captured.out
     assert "codex-bot" in captured.out
-    assert "/messages/codex-bot" in captured.out
+    config = tmp_path / ".codex" / "config.toml"
+    assert config.exists(), "codex config should have been written"
+    body = config.read_text()
+    assert "[mcp_servers.quorus]" in body
+    assert 'QUORUS_INSTANCE_NAME = "codex-bot"' in body
 
 
-def test_connect_cursor(capsys):
+def test_connect_cursor(capsys, tmp_path, monkeypatch):
+    """`connect cursor` auto-writes ~/.cursor/mcp.json."""
     from quorus.cli import _cmd_connect
+
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     args = MagicMock()
     args.platform = "cursor"
@@ -488,9 +500,13 @@ def test_connect_cursor(capsys):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
-    assert "Cursor Agent Setup" in captured.out
-    assert "mcpServers" in captured.out
+    assert "Wired Cursor" in captured.out
     assert "cursor-bot" in captured.out
+    import json as _json
+    config = tmp_path / ".cursor" / "mcp.json"
+    assert config.exists()
+    data = _json.loads(config.read_text())
+    assert data["mcpServers"]["quorus"]["env"]["QUORUS_INSTANCE_NAME"] == "cursor-bot"
 
 
 def test_connect_ollama(capsys):
@@ -512,8 +528,11 @@ def test_connect_ollama(capsys):
     assert "ollama_agent.py" in captured.out
 
 
-def test_connect_claude(capsys):
+def test_connect_claude(capsys, tmp_path, monkeypatch):
+    """`connect claude` auto-writes ~/.claude/settings.json."""
     from quorus.cli import _cmd_connect
+
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     args = MagicMock()
     args.platform = "claude"
@@ -526,8 +545,13 @@ def test_connect_claude(capsys):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
-    assert "Claude Code Agent Setup" in captured.out
-    assert "quorus add-agent" in captured.out
+    assert "Wired Claude Code" in captured.out
+    assert "claude-bot" in captured.out
+    import json as _json
+    config = tmp_path / ".claude" / "settings.json"
+    assert config.exists()
+    data = _json.loads(config.read_text())
+    assert data["mcpServers"]["quorus"]["env"]["QUORUS_INSTANCE_NAME"] == "claude-bot"
 
 
 # ── search command tests ─────────────────────────────────────────────────

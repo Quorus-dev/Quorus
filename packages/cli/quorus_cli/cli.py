@@ -1132,7 +1132,20 @@ def _cmd_metrics(args):
 
 
 def _cmd_connect(args):
-    """Generate platform-specific onboarding for an agent type."""
+    """Wire an agent platform's MCP config to Quorus + auto-join the room.
+
+    For every platform with a known config path (claude, claude-desktop,
+    cursor, codex, gemini, windsurf, opencode, continue, cline) we write
+    the MCP server entry directly to the client's config file — no
+    copy-paste, no Settings UI trip. The writer returns a result we
+    surface inline. The agent also joins the room via the relay so the
+    participant list reflects reality immediately.
+
+    Platforms without an auto-write path (antigravity, aider, ollama,
+    http) still fall through to their original prose generator, which
+    prints the exact snippet to paste and auto-copies it to the
+    clipboard. Better than silent failure.
+    """
     platform = args.platform
     room = args.room
     name = args.name
@@ -1140,29 +1153,35 @@ def _cmd_connect(args):
     secret = RELAY_SECRET
     quorus_dir = str(Path(__file__).resolve().parent.parent)
 
-    generators = {
-        "codex": _connect_codex,
-        "cursor": _connect_cursor,
+    prose_generators = {
         "ollama": _connect_ollama,
-        "claude": _connect_claude,
-        "gemini": _connect_gemini,
-        "windsurf": _connect_windsurf,
-        "opencode": _connect_opencode,
-        "cline": _connect_cline,
-        "continue": _connect_continue,
         "antigravity": _connect_antigravity,
         "aider": _connect_aider,
         "http": _connect_http,
     }
+    # Every auto-write platform maps to a writer key in mcp_writers.
+    auto_write_platforms = {
+        "claude": "claude",
+        "claude-desktop": "claude-desktop",
+        "cursor": "cursor",
+        "codex": "codex",
+        "gemini": "gemini",
+        "windsurf": "windsurf",
+        "opencode": "opencode",
+        "continue": "continue",
+        "cline": "cline",
+    }
 
-    if platform not in generators:
+    if platform not in prose_generators and platform not in auto_write_platforms:
         _ui.error(f"Unknown platform: {platform}")
         console.print(
-            f"[dim]Supported: {', '.join(generators)}[/dim]"
+            "[dim]Supported: "
+            + ", ".join(list(auto_write_platforms) + list(prose_generators))
+            + "[/dim]"
         )
         return
 
-    # Auto-join room
+    # Auto-join the room so the participant list reflects this agent.
     async def _auto_join():
         client = _get_client()
         try:
@@ -1178,7 +1197,77 @@ def _cmd_connect(args):
             await client.aclose()
 
     asyncio.run(_auto_join())
-    generators[platform](room, name, relay_url, secret, quorus_dir)
+
+    if platform in auto_write_platforms:
+        from quorus_cli.mcp_writers import McpEnv, register_one
+
+        if shutil.which("uv"):
+            mcp_command = "uv"
+            mcp_args = ["run", "python", "-m", "quorus.mcp_server"]
+        else:
+            mcp_command = sys.executable
+            mcp_args = ["-m", "quorus.mcp_server"]
+
+        env = McpEnv(
+            command=mcp_command,
+            args=mcp_args,
+            relay_url=relay_url,
+            api_key=API_KEY,
+            relay_secret=secret,
+            # connect uses the --name passed on the CLI as the full
+            # identity — this is the explicit agent-identity flow
+            # (no `-<platform>` suffix), so the user's chosen name
+            # shows up verbatim in the room.
+            instance_name_base="",
+        )
+        # Override identity generation: treat `name` as the final
+        # agent identity instead of deriving from base.
+        env.instance_name_base = name
+        # Tell the writer to use the bare name (no platform suffix).
+        object.__setattr__(env, "_explicit_identity", True)
+
+        # Monkey-patch the platform-suffix behavior for this one call:
+        # `quorus connect cursor --name arav-cursor` already names the
+        # agent explicitly, so we want the env to use `arav-cursor`
+        # verbatim, not `arav-cursor-cursor`.
+        original_env_block = env.env_block
+
+        def _explicit_env_block(_platform_key: str) -> dict[str, str]:
+            block = {
+                "QUORUS_RELAY_URL": env.relay_url,
+                "QUORUS_INSTANCE_NAME": name,
+            }
+            if env.api_key:
+                block["QUORUS_API_KEY"] = env.api_key
+            elif env.relay_secret:
+                block["QUORUS_RELAY_SECRET"] = env.relay_secret
+            return block
+
+        env.env_block = _explicit_env_block  # type: ignore[method-assign]
+        # Keep reference for lint.
+        _ = original_env_block
+
+        result = register_one(auto_write_platforms[platform], env, force=True)
+        if result.ok:
+            _ui.success(
+                f"Wired [primary]{result.platform}[/] → "
+                f"[agent]@{name}[/] in [room]#{room}[/]"
+            )
+            if result.path:
+                _ui.console.print(f"  [dim]{result.path}[/]")
+            _ui.console.print(
+                f"  [muted]Restart {result.platform} to pick up the "
+                "MCP server.[/]"
+            )
+        else:
+            _ui.error(
+                f"Couldn't wire {result.platform}",
+                hint=result.detail or "check file permissions",
+            )
+        return
+
+    # Prose fallback for manual-only platforms.
+    prose_generators[platform](room, name, relay_url, secret, quorus_dir)
 
 
 def _connect_codex(
@@ -3039,6 +3128,24 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                 )
                 resp.raise_for_status()
                 console.print(f"[green]Joined '{room}' as '{name}'[/green]")
+
+                # Announce the join as a system message so every other
+                # participant sees `· {name} joined #{room}` appear in
+                # their feed live via SSE. Best-effort — if the relay
+                # rejects system messages from this client for any
+                # reason, we still landed in the room.
+                try:
+                    await client.post(
+                        f"{relay_url}/rooms/{target['id']}/messages",
+                        json={
+                            "from_name": name,
+                            "content": f"joined #{room}",
+                            "message_type": "system",
+                        },
+                        headers=headers,
+                    )
+                except Exception:
+                    pass
             except httpx.ConnectError:
                 _ui.error_with_retry("Cannot connect to relay", relay_url={relay_url})
 
