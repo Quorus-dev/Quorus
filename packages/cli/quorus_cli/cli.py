@@ -3151,7 +3151,23 @@ def _apply_join_payload(payload: dict, name: str) -> None:
 
     # 3. Join the room
     async def _do_join():
-        headers = {"Authorization": f"Bearer {api_key or secret}"}
+        # Exchange API key for JWT if we have one; otherwise use secret directly
+        auth_token = secret
+        if api_key:
+            try:
+                token_resp = httpx.post(
+                    f"{relay_url}/v1/auth/token",
+                    json={"api_key": api_key},
+                    timeout=10,
+                    follow_redirects=True,
+                )
+                if token_resp.status_code == 200:
+                    auth_token = token_resp.json().get("token", api_key)
+                else:
+                    auth_token = api_key  # fallback to raw key
+            except Exception:
+                auth_token = api_key
+        headers = {"Authorization": f"Bearer {auth_token}"}
         async with httpx.AsyncClient(follow_redirects=True) as client:
             try:
                 rooms_resp = await client.get(f"{relay_url}/rooms", headers=headers)
