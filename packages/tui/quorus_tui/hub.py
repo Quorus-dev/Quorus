@@ -639,6 +639,22 @@ class HubState:
         self.unread: dict[str, int] = {}
         # Last observed relay round-trip in milliseconds. None = unknown.
         self.latency_ms: int | None = None
+        # Pending workspace switch requested via /workspace. The main loop
+        # checks this on each tick and tears down cleanly when set.
+        self._pending_switch: str | None = None
+
+    def request_workspace_switch(self, slug: str) -> None:
+        """Signal the main loop to tear down and switch to *slug*."""
+        with self._lock:
+            self._pending_switch = slug
+
+    def pending_workspace_switch(self) -> str | None:
+        with self._lock:
+            return self._pending_switch
+
+    def clear_workspace_switch(self) -> None:
+        with self._lock:
+            self._pending_switch = None
 
     def increment_unread(self, room_name: str) -> None:
         with self._lock:
@@ -1021,6 +1037,7 @@ def _render_header(
     room_count: int = 0,
     unread_total: int = 0,
     latency_ms: int | None = None,
+    workspace_label: str = "",
 ) -> Text:
     """Premium one-line header.
 
@@ -1040,6 +1057,10 @@ def _render_header(
     header = _Text()
     header.append("  ")
     header.append(f"@{agent_name}", style="bold agent")
+
+    if workspace_label:
+        header.append("  ·  ", style="dim")
+        header.append(workspace_label, style="accent")
 
     if room_count:
         header.append("  ·  ", style="dim")
@@ -1298,6 +1319,7 @@ def _print_help(console: Console) -> None:
         ("/switch <room>",   "alias for /join"),
         ("/rooms",           "list all rooms with a numbered menu"),
         ("/invite",          "show how to share the current room"),
+        ("/workspace",       "list or switch workspaces"),
         ("/status",          "connection and relay info"),
         ("/clear",           "clear the chat pane"),
         ("/quit",            "close the hub"),
@@ -1473,16 +1495,78 @@ def _slash_switch(arg, state, relay_url, secret, agent_name, console):
     return _slash_join(arg, state, relay_url, secret, agent_name, console)
 
 
+def _print_workspace_menu(console) -> None:
+    from quorus.profiles import ProfileManager
+    pm = ProfileManager()
+    slugs = pm.list()
+    current = pm.current()
+    console.print()
+    console.print(Text.from_markup("  [bold primary]Workspaces[/]"))
+    if not slugs:
+        console.print(Text.from_markup(
+            "  [dim]no workspaces — run [bold]quorus login[/] to add one[/]"
+        ))
+        console.print()
+        return
+    for slug in slugs:
+        data = pm.get(slug) or {}
+        label = (
+            data.get("workspace_label")
+            or data.get("instance_name")
+            or slug
+        )
+        marker = "●" if slug == current else " "
+        line = Text(f"  {marker}  ")
+        if slug == current:
+            line.append(slug, style="bold room")
+            line.append("  active", style="dim success")
+        else:
+            line.append(slug, style="dim")
+        line.append(f"  {label}", style="dim")
+        console.print(line)
+    console.print()
+    console.print(Text.from_markup(
+        "  [dim]switch: /workspace <slug>  ·  add: /workspace add[/]"
+    ))
+    console.print()
+
+
+def _slash_workspace(arg, state, relay_url, secret, agent_name, console):
+    del relay_url, secret, agent_name
+    from quorus.profiles import ProfileManager
+    target = arg.strip()
+    pm = ProfileManager()
+
+    if not target:
+        _print_workspace_menu(console)
+        return True
+
+    if target == "add":
+        state.set_status_bar(
+            "run `quorus login` in a second terminal to add a workspace"
+        )
+        return True
+
+    if pm.get(target) is None:
+        state.set_status_bar(f"no such workspace: {target} — /workspace to list")
+        return True
+
+    state.request_workspace_switch(target)
+    state.set_status_bar(f"switching to {target}...")
+    return True
+
+
 SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
-    "/help":    ("show keybinds + all commands",        _slash_help),
-    "/rooms":   ("list rooms with numbered menu",        _slash_rooms),
-    "/join":    ("/join <room> — switch to a room",      _slash_join),
-    "/switch":  ("/switch <room> — alias for /join",     _slash_switch),
-    "/create":  ("/create <name> — make a new room",     _slash_create),
-    "/invite":  ("show how to share the current room",   _slash_invite),
-    "/status":  ("connection + relay info",              _slash_status),
-    "/clear":   ("clear the chat pane",                  _slash_clear),
-    "/quit":    ("close the hub",                        _slash_quit),
+    "/help":       ("show keybinds + all commands",        _slash_help),
+    "/rooms":      ("list rooms with numbered menu",        _slash_rooms),
+    "/join":       ("/join <room> — switch to a room",      _slash_join),
+    "/switch":     ("/switch <room> — alias for /join",     _slash_switch),
+    "/create":     ("/create <name> — make a new room",     _slash_create),
+    "/invite":     ("show how to share the current room",   _slash_invite),
+    "/workspace":  ("list / switch workspaces",             _slash_workspace),
+    "/status":     ("connection + relay info",              _slash_status),
+    "/clear":      ("clear the chat pane",                  _slash_clear),
+    "/quit":       ("close the hub",                        _slash_quit),
 }
 
 
@@ -1606,85 +1690,20 @@ def _read_input(
 
 # ── Main hub loop ─────────────────────────────────────────────────────────────
 
-def run_hub() -> None:
-    # Shared theme-aware console (primary/agent/room/muted/dim/success/warning/
-    # error/accent all resolve via ui.THEME).
-    console = _ui.console
+def _main_input_loop(
+    *,
+    console,
+    state: "HubState",
+    relay_url: str,
+    secret: str,
+    agent_name: str,
+    workspace_label: str = "",
+) -> "str | tuple[str, str]":
+    """The render+input loop. Returns 'quit' or ('switch', slug).
 
-    # 1. Load or create config
-    cfg = ConfigManager(CONFIG_FILE).load() or None
-    if cfg is None:
-        cfg = _first_launch_setup(console)
-
-    relay_url: str = cfg.get("relay_url", DEFAULT_RELAY).rstrip("/")
-    agent_name: str = cfg.get("instance_name", "agent")
-    raw_secret: str = cfg.get("relay_secret", "") or cfg.get("api_key", "")
-
-    # Exchange API key for JWT if needed
-    secret = _get_auth_token(relay_url, raw_secret)
-
-    # 2. Initial room load — auto-create a starter room if this is a blank
-    # slate so the user lands in a live chat instead of a dead hub.
-    console.print(f"\n  [dim]Connecting to {relay_url}...[/dim]")
-    rooms = _fetch_rooms(relay_url, secret)
-    if not rooms:
-        starter = "general"
-        status, _ = _create_room(relay_url, secret, starter, agent_name)
-        if status == "ok":
-            console.print(
-                f"  [dim]Created starter room [room]#{starter}[/] — you can add more anytime.[/]"
-            )
-            rooms = _fetch_rooms(relay_url, secret)
-        elif status == "conflict":
-            # Someone else made a room named `general` in the same tenant —
-            # silently refetch rather than surface a confusing "exists" error.
-            rooms = _fetch_rooms(relay_url, secret)
-        elif status == "auth":
-            console.print(
-                "  [red]Not authenticated.[/] "
-                "[dim]Run: quorus doctor[/]"
-            )
-        elif status == "unreachable":
-            console.print(
-                f"  [red]Can't reach relay at {relay_url}.[/] "
-                "[dim]Is it running? Try: quorus relay[/]"
-            )
-        # Any other failure → render the empty-state hint from the panel.
-
-    # 3. Set up shared state
-    state = HubState()
-    state.set_rooms(rooms)
-    if rooms:
-        state.set_connected(True, "Connected")
-        # Auto-join first room
-        first_room = rooms[0].get("name") or rooms[0].get("id", "")
-        if first_room:
-            _join_room(relay_url, secret, first_room, agent_name)
-            msgs = _fetch_history(relay_url, secret, first_room)
-            if msgs is not None:
-                state.set_messages(msgs)
-    else:
-        state.set_connected(False, "No rooms yet")
-
-    # 4. Start SSE push listener (primary) + slow reconciliation poller (fallback).
-    # SSE delivers messages in <100ms; poll is a 10s safety net for dropped streams.
-    stop_event = threading.Event()
-    poller = threading.Thread(
-        target=_poll_loop,
-        args=(relay_url, secret, state, stop_event),
-        daemon=True,
-    )
-    poller.start()
-    sse_listener = threading.Thread(
-        target=_sse_loop,
-        args=(relay_url, secret, agent_name, state, console, stop_event),
-        daemon=True,
-    )
-    sse_listener.start()
-
-    # 5. Main interactive loop
-    # Rich Live doesn't support input() — we use clear+redraw + input() pattern
-    # (same approach as quorus_tui.py, which proven to work)
+    Body of the old run_hub main loop, plus a per-tick check for
+    pending workspace-switch requests set by /workspace.
+    """
     console.clear()
     last_render = 0.0
     # Hold auto-redraw until the user submits next input. Used after we
@@ -1698,6 +1717,13 @@ def run_hub() -> None:
 
     try:
         while True:
+            # Pending workspace switch? Exit the loop so _run_session
+            # can tear down threads and return ("switch", slug).
+            pending = state.pending_workspace_switch()
+            if pending is not None:
+                state.clear_workspace_switch()
+                return ("switch", pending)
+
             now = time.monotonic()
 
             # Redraw if poll interval passed or first render
@@ -1743,6 +1769,7 @@ def run_hub() -> None:
                         room_count=len(rooms_snap),
                         unread_total=unread_total,
                         latency_ms=latency_ms,
+                        workspace_label=workspace_label,
                     )
                 )
                 console.print(_Rule(style="dim"))
@@ -1785,7 +1812,7 @@ def run_hub() -> None:
             state.reset_inline_rule()
 
             if line == _KEY_QUIT:
-                break
+                return "quit"
 
             # Tab → cycle to next room. (Arrow Up/Down now walk input
             # history inside _read_input — they never reach here.)
@@ -1815,7 +1842,7 @@ def run_hub() -> None:
 
             # quit / exit
             if cmd_lower in ("quit", "exit", "q"):
-                break
+                return "quit"
 
             # help — plain word or "?" shortcut
             if cmd_lower in ("help", "?"):
@@ -1858,12 +1885,12 @@ def run_hub() -> None:
                 # redraw so the output isn't wiped on the next tick.
                 # /status and /invite only set the status bar — they
                 # NEED a redraw for the bar to appear.
-                printing_verbs = {"/help", "/rooms"}
+                printing_verbs = {"/help", "/rooms", "/workspace"}
                 handled = _dispatch_slash(
                     verb, arg, state, relay_url, secret, agent_name, console,
                 )
                 if handled == "__QUIT__":
-                    break
+                    return "quit"
                 if handled:
                     if verb in printing_verbs:
                         hold_render = True
@@ -2025,8 +2052,139 @@ def run_hub() -> None:
 
             last_render = 0  # force immediate redraw after send
 
-    except KeyboardInterrupt:
-        pass
+    except (EOFError, KeyboardInterrupt):
+        return "quit"
+
+
+def _run_session(
+    profile: dict,
+    *,
+    state: "HubState | None" = None,
+) -> "str | tuple[str, str]":
+    """Run one workspace session. Returns 'quit' or ('switch', slug).
+
+    The *state* parameter exists so tests can pre-seed a HubState with
+    a pending switch and observe the early-exit path without running
+    the full interactive loop.
+    """
+    console = _ui.console
+
+    relay_url: str = profile.get("relay_url", DEFAULT_RELAY).rstrip("/")
+    agent_name: str = profile.get("instance_name", "agent")
+    raw_secret: str = profile.get("relay_secret", "") or profile.get("api_key", "")
+    workspace_label: str = profile.get("workspace_label") or ""
+
+    # Exchange API key for JWT if needed
+    secret = _get_auth_token(relay_url, raw_secret)
+
+    # Initial room load — auto-create a starter room if this is a blank
+    # slate so the user lands in a live chat instead of a dead hub.
+    console.print(f"\n  [dim]Connecting to {relay_url}...[/dim]")
+    rooms = _fetch_rooms(relay_url, secret)
+    if not rooms:
+        starter = "general"
+        status, _ = _create_room(relay_url, secret, starter, agent_name)
+        if status == "ok":
+            console.print(
+                f"  [dim]Created starter room [room]#{starter}[/] — you can add more anytime.[/]"
+            )
+            rooms = _fetch_rooms(relay_url, secret)
+        elif status == "conflict":
+            # Someone else made a room named `general` in the same tenant —
+            # silently refetch rather than surface a confusing "exists" error.
+            rooms = _fetch_rooms(relay_url, secret)
+        elif status == "auth":
+            console.print(
+                "  [red]Not authenticated.[/] "
+                "[dim]Run: quorus doctor[/]"
+            )
+        elif status == "unreachable":
+            console.print(
+                f"  [red]Can't reach relay at {relay_url}.[/] "
+                "[dim]Is it running? Try: quorus relay[/]"
+            )
+        # Any other failure → render the empty-state hint from the panel.
+
+    if state is None:
+        state = HubState()
+    state.set_rooms(rooms)
+    if rooms:
+        state.set_connected(True, "Connected")
+        # Auto-join first room
+        first_room = rooms[0].get("name") or rooms[0].get("id", "")
+        if first_room:
+            _join_room(relay_url, secret, first_room, agent_name)
+            msgs = _fetch_history(relay_url, secret, first_room)
+            if msgs is not None:
+                state.set_messages(msgs)
+    else:
+        state.set_connected(False, "No rooms yet")
+
+    # Start SSE push listener (primary) + slow reconciliation poller (fallback).
+    stop_event = threading.Event()
+    poller = threading.Thread(
+        target=_poll_loop,
+        args=(relay_url, secret, state, stop_event),
+        daemon=True,
+    )
+    poller.start()
+    sse_listener = threading.Thread(
+        target=_sse_loop,
+        args=(relay_url, secret, agent_name, state, console, stop_event),
+        daemon=True,
+    )
+    sse_listener.start()
+
+    try:
+        return _main_input_loop(
+            console=console,
+            state=state,
+            relay_url=relay_url,
+            secret=secret,
+            agent_name=agent_name,
+            workspace_label=workspace_label,
+        )
     finally:
         stop_event.set()
+        poller.join(timeout=2)
+        sse_listener.join(timeout=2)
+
+
+def run_hub() -> None:
+    """Outer loop: pick a profile, run a session, loop on switch."""
+    console = _ui.console
+
+    from quorus.profiles import ProfileManager
+    pm = ProfileManager()
+    pm.migrate_legacy_if_needed()
+
+    try:
+        while True:
+            profile = pm.current_profile()
+            if profile is None:
+                # Fresh install — fall through to wizard, save as default.
+                profile = _first_launch_setup(console)
+                if not profile:
+                    return
+                pm.save("default", profile)
+                pm.set_current("default")
+
+            result = _run_session(profile)
+            if result == "quit":
+                return
+            if isinstance(result, tuple) and result[0] == "switch":
+                new_slug = result[1]
+                try:
+                    pm.set_current(new_slug)
+                except FileNotFoundError:
+                    console.print(
+                        f"  [red]workspace {new_slug!r} vanished — "
+                        "returning to current[/]"
+                    )
+                    continue
+                # Loop continues — next iteration picks up the new profile.
+                continue
+            # Any other shape — treat as quit.
+            return
+    finally:
         console.print("\n[dim]Quorus Hub closed. Goodbye.[/dim]")
