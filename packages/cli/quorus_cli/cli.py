@@ -3053,6 +3053,8 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     room = payload.get("n", "")
     secret = payload.get("s", "")
     api_key = payload.get("k", "")
+    tenant_id = payload.get("t", "")  # Tenant ID to join
+    invite_token = payload.get("i", "")  # Scoped invite token for joining
 
     if not relay_url or not room:
         _ui.error("Join payload missing required fields")
@@ -3074,15 +3076,21 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         if not workspace or workspace[0] == "-":
             workspace = f"ws-{workspace}".strip("-")
         try:
+            # Build signup payload — include tenant_id if joining existing workspace
+            signup_payload = {"name": name, "workspace": workspace}
+            if tenant_id:
+                signup_payload["join_tenant_id"] = tenant_id
+                console.print(f"[dim]Joining existing workspace...[/dim]")
+
             signup_resp = httpx.post(
                 f"{relay_url}/v1/auth/signup",
-                json={"name": name, "workspace": workspace},
+                json=signup_payload,
                 headers={"X-Quorus-Setup-Local": "1"},
                 timeout=15,
                 follow_redirects=True,
             )
-            if signup_resp.status_code == 409:
-                # Workspace taken — retry with random suffix
+            if signup_resp.status_code == 409 and not tenant_id:
+                # Workspace taken — retry with random suffix (only if creating new)
                 workspace = f"{workspace}-{_secrets.token_hex(2)}"
                 signup_resp = httpx.post(
                     f"{relay_url}/v1/auth/signup",
@@ -3094,12 +3102,19 @@ def _apply_join_payload(payload: dict, name: str) -> None:
             if signup_resp.status_code == 200:
                 signup_data = signup_resp.json()
                 api_key = signup_data.get("api_key", "")
+                joined_workspace = signup_data.get("tenant_slug", workspace)
                 if api_key:
-                    console.print(f"[green]✓[/green] [dim]Account created (workspace: {workspace})[/dim]")
+                    console.print(f"[green]✓[/green] [dim]Account created (workspace: {joined_workspace})[/dim]")
                 else:
                     console.print("[yellow]Warning: signup succeeded but no API key returned[/yellow]")
             else:
                 console.print(f"[yellow]Warning: signup failed (HTTP {signup_resp.status_code})[/yellow]")
+                try:
+                    err_detail = signup_resp.json().get("detail", "")
+                    if err_detail:
+                        console.print(f"[dim]  {err_detail}[/dim]")
+                except Exception:
+                    pass
         except Exception as exc:
             console.print(f"[yellow]Warning: signup failed: {exc}[/yellow]")
 
@@ -3151,25 +3166,44 @@ def _apply_join_payload(payload: dict, name: str) -> None:
 
     # 3. Join the room
     async def _do_join():
-        # Exchange API key for JWT if we have one; otherwise use secret directly
-        auth_token = secret
-        if api_key:
-            try:
-                token_resp = httpx.post(
-                    f"{relay_url}/v1/auth/token",
-                    json={"api_key": api_key},
-                    timeout=10,
-                    follow_redirects=True,
-                )
-                if token_resp.status_code == 200:
-                    auth_token = token_resp.json().get("token", api_key)
-                else:
-                    auth_token = api_key  # fallback to raw key
-            except Exception:
-                auth_token = api_key
-        headers = {"Authorization": f"Bearer {auth_token}"}
         async with httpx.AsyncClient(follow_redirects=True) as client:
             try:
+                # Preferred path: use scoped invite token (no auth required)
+                if invite_token:
+                    resp = await client.post(
+                        f"{relay_url}/invite/{room}/join",
+                        json={"participant": name, "token": invite_token},
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        console.print(f"[green]Joined '{room}' as '{name}'[/green]")
+                        return
+                    else:
+                        # Token might be expired; fall through to auth-based join
+                        console.print(f"[dim]Invite token rejected ({resp.status_code}), trying auth...[/dim]")
+
+                # Fallback: use auth-based join (requires admin or legacy secret)
+                auth_token = secret
+                if api_key:
+                    try:
+                        token_resp = httpx.post(
+                            f"{relay_url}/v1/auth/token",
+                            json={"api_key": api_key},
+                            timeout=10,
+                            follow_redirects=True,
+                        )
+                        if token_resp.status_code == 200:
+                            auth_token = token_resp.json().get("token", api_key)
+                        else:
+                            auth_token = api_key
+                    except Exception:
+                        auth_token = api_key
+
+                if not auth_token:
+                    _ui.error("No credentials available to join room")
+                    return
+
+                headers = {"Authorization": f"Bearer {auth_token}"}
                 rooms_resp = await client.get(f"{relay_url}/rooms", headers=headers)
                 rooms_resp.raise_for_status()
                 rooms_list = rooms_resp.json()
@@ -3185,11 +3219,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                 resp.raise_for_status()
                 console.print(f"[green]Joined '{room}' as '{name}'[/green]")
 
-                # Announce the join as a system message so every other
-                # participant sees `· {name} joined #{room}` appear in
-                # their feed live via SSE. Best-effort — if the relay
-                # rejects system messages from this client for any
-                # reason, we still landed in the room.
+                # Announce the join as a system message
                 try:
                     await client.post(
                         f"{relay_url}/rooms/{target['id']}/messages",

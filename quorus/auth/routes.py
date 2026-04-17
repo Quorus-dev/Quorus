@@ -26,6 +26,7 @@ class SignupRequest(BaseModel):
     name: str
     workspace: str
     email: EmailStr | None = None
+    join_tenant_id: str | None = None  # Join existing tenant instead of creating new
 
     @field_validator("name")
     @classmethod
@@ -106,29 +107,56 @@ async def signup(
         )
 
     async with get_db_session() as session:
-        # Check workspace uniqueness
-        existing = await session.execute(
-            select(Tenant).where(Tenant.slug == req.workspace)
-        )
-        if existing.scalar_one_or_none():
-            raise HTTPException(
-                status_code=409,
-                detail=f"Workspace '{req.workspace}' is already taken",
+        # If joining an existing tenant via invite code
+        if req.join_tenant_id:
+            import uuid
+            try:
+                # Validate format, but keep as string for session.get
+                uuid.UUID(req.join_tenant_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid tenant ID format")
+
+            tenant = await session.get(Tenant, req.join_tenant_id)
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+
+            # Create participant as member (not admin) in existing tenant
+            participant = Participant(
+                tenant_id=tenant.id,
+                name=req.name,
+                role="member",
             )
+            session.add(participant)
+            await session.flush()
 
-        # Create tenant
-        tenant = Tenant(slug=req.workspace, display_name=req.workspace)
-        session.add(tenant)
-        await session.flush()
+            logger.info(
+                "Join-tenant signup: %s joined %s (tenant_id=%s)",
+                req.name, tenant.slug, tenant.id,
+            )
+        else:
+            # Check workspace uniqueness
+            existing = await session.execute(
+                select(Tenant).where(Tenant.slug == req.workspace)
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Workspace '{req.workspace}' is already taken",
+                )
 
-        # Create participant as admin
-        participant = Participant(
-            tenant_id=tenant.id,
-            name=req.name,
-            role="admin",
-        )
-        session.add(participant)
-        await session.flush()
+            # Create tenant
+            tenant = Tenant(slug=req.workspace, display_name=req.workspace)
+            session.add(tenant)
+            await session.flush()
+
+            # Create participant as admin
+            participant = Participant(
+                tenant_id=tenant.id,
+                name=req.name,
+                role="admin",
+            )
+            session.add(participant)
+            await session.flush()
 
         # Issue API key
         raw_key, prefix, key_hash = generate_api_key()

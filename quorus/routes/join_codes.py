@@ -97,23 +97,33 @@ async def mint_code(
 
     relay_url = _request_relay_url(request).rstrip("/")
 
+    # Create a scoped invite token so joiners can call /invite/{room}/join
+    # without needing admin access. The token is embedded in the short code
+    # payload and lets anyone with the code join the room.
+    invite_svc = request.app.state.invite_service
+    invite_token = invite_svc.create_token(
+        tenant_id=tenant_id,
+        room_id=room_id,
+        issuer=auth.sub or "admin",
+        role="member",
+        ttl=req.ttl_days * 86400,
+    )
+
     # Build a payload the CLI already knows how to decode — same shape as
     # `_encode_join_token` so `quickjoin` can accept it without changes.
     payload: dict = {
         "r": relay_url,
         "n": room_name,
+        "t": tenant_id,  # Tenant ID so joiners can join this tenant
+        "i": invite_token,  # Scoped invite token for /invite/{room}/join
     }
     # For legacy (RELAY_SECRET) admins we ship the secret directly so the
     # recipient can auth without a key exchange; for JWT-role-admin we
-    # encode nothing privileged — in that case the join code just directs
-    # the recipient at the room, and they auth with their own tenant key.
+    # include the tenant_id so the CLI can request to join that tenant.
     if auth.is_legacy:
         secret = _legacy_admin_secret()
         if secret:
             payload["s"] = secret
-    # JWT-admin path: no secret is embedded. The recipient must already
-    # have an account in this tenant or use `quorus init` with their own
-    # API key. (We don't give out the admin's JWT, obviously.)
 
     svc = request.app.state.join_code_service
     display_code, expires_at = await svc.mint(
