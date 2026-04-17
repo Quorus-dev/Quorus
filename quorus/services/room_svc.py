@@ -13,6 +13,18 @@ from quorus.backends.protocol import RoomBackend
 logger = structlog.get_logger("quorus.services.room")
 
 
+def _looks_like_uuid(s: str) -> bool:
+    """True if ``s`` has UUID shape (36 chars with hyphens at 8/13/18/23).
+
+    Cheap shape check — avoids the cost of uuid.UUID() parsing on every
+    /rooms/* request. Wrong-guesses are self-correcting: we just fall back
+    to the other lookup path, same as before.
+    """
+    if len(s) != 36:
+        return False
+    return s[8] == "-" and s[13] == "-" and s[18] == "-" and s[23] == "-"
+
+
 class RoomService:
     """Encapsulates room CRUD and membership management."""
 
@@ -66,15 +78,24 @@ class RoomService:
 
         Raises ``HTTPException(404)`` if not found.
         """
-        # Try by ID first
-        data = await self._backend.get(tenant_id, room_id_or_name)
-        if data is not None:
-            return room_id_or_name, data
-
-        # Try by name
-        result = await self._backend.get_by_name(tenant_id, room_id_or_name)
-        if result is not None:
-            return result  # (room_id, data)
+        # Slug-shaped inputs (e.g. "general") hit the name index first.
+        # The previous order always tried get() first, which cost two
+        # wasted HGETALLs on every /rooms/general/* call — one of the
+        # top Redis command sinks in the dashboard.
+        if not _looks_like_uuid(room_id_or_name):
+            result = await self._backend.get_by_name(tenant_id, room_id_or_name)
+            if result is not None:
+                return result
+            data = await self._backend.get(tenant_id, room_id_or_name)
+            if data is not None:
+                return room_id_or_name, data
+        else:
+            data = await self._backend.get(tenant_id, room_id_or_name)
+            if data is not None:
+                return room_id_or_name, data
+            result = await self._backend.get_by_name(tenant_id, room_id_or_name)
+            if result is not None:
+                return result
 
         raise HTTPException(status_code=404, detail="Room not found")
 
@@ -97,9 +118,13 @@ class RoomService:
     async def _format_room_list(
         self, tenant_id: str, pairs: list[tuple[str, dict]]
     ) -> list[dict]:
+        # The backend's list_all/list_by_member already returns members in
+        # ``data["members"]``. Re-fetching via get_members() was a 2×
+        # amplification on every /rooms call — one of the top Redis command
+        # sinks in the usage dashboard.
         results = []
         for room_id, data in pairs:
-            members = await self._backend.get_members(tenant_id, room_id)
+            members = data.get("members") or {}
             results.append(
                 {
                     "id": room_id,
