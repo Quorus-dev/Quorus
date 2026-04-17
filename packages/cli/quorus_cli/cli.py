@@ -2428,7 +2428,7 @@ def _register_mcp_everywhere(
     hint and decide whether to fall back to a project-level
     ``.mcp.json``.
     """
-    from quorus_cli.mcp_writers import McpEnv, register_all, ALL_WRITERS
+    from quorus_cli.mcp_writers import ALL_WRITERS, McpEnv, register_all
 
     # Step 1: Detect which platforms are installed by checking paths
     # (We need to know this BEFORE writing so we can fetch per-platform keys)
