@@ -2528,7 +2528,8 @@ def _register_mcp_everywhere(
             f"  [dim]— not installed: {skipped_labels}[/]"
         )
 
-    return [r.platform for r in installed]
+    # Return both installed platforms and their API keys for room auto-join
+    return [r.platform for r in installed], per_platform_keys
 
 
 def _platform_key_for(label: str) -> str:
@@ -3125,6 +3126,78 @@ def _cmd_share(args):
     _ = Align  # lint: imported for future centering use
 
 
+async def _join_agents_to_room(
+    client: httpx.AsyncClient,
+    relay_url: str,
+    room: str,
+    human_name: str,
+    agent_keys: dict[str, str],
+    invite_token: str | None,
+) -> None:
+    """Join all registered agents to the room after the human joins.
+
+    Each agent uses its own API key to authenticate. Uses invite token
+    if available, otherwise falls back to auth-based join.
+    """
+    if not agent_keys:
+        return
+
+    joined_count = 0
+    for platform_key, agent_api_key in agent_keys.items():
+        agent_name = f"{human_name}-{platform_key}"
+        try:
+            # Try invite token first (works without admin)
+            if invite_token:
+                resp = await client.post(
+                    f"{relay_url}/invite/{room}/join",
+                    json={"participant": agent_name, "token": invite_token},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    joined_count += 1
+                    continue
+
+            # Fallback: get JWT and join via auth
+            token_resp = await client.post(
+                f"{relay_url}/v1/auth/token",
+                json={"api_key": agent_api_key},
+                timeout=10,
+            )
+            if token_resp.status_code != 200:
+                continue
+
+            jwt = token_resp.json().get("token", "")
+            if not jwt:
+                continue
+
+            # Get room ID
+            headers = {"Authorization": f"Bearer {jwt}"}
+            rooms_resp = await client.get(f"{relay_url}/rooms", headers=headers)
+            if rooms_resp.status_code != 200:
+                continue
+
+            rooms_list = rooms_resp.json()
+            target = next((r for r in rooms_list if r["name"] == room), None)
+            if not target:
+                continue
+
+            # Join room
+            resp = await client.post(
+                f"{relay_url}/rooms/{target['id']}/join",
+                json={"participant": agent_name},
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                joined_count += 1
+        except Exception:
+            pass  # Silently continue — agent join is best-effort
+
+    if joined_count > 0:
+        console.print(
+            f"[dim]  + {joined_count} agent(s) auto-joined the room[/dim]"
+        )
+
+
 def _apply_join_payload(payload: dict, name: str) -> None:
     """Write config, register MCP, join room, print the welcome.
 
@@ -3238,7 +3311,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     mcp_command, mcp_args = _mcp_server_command()
     from quorus_cli import ui as _reg_ui
 
-    _register_mcp_everywhere(
+    _installed_platforms, agent_keys = _register_mcp_everywhere(
         name=name,
         relay_url=relay_url,
         api_key=api_key,
@@ -3248,7 +3321,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         ui=_reg_ui,
     )
 
-    # 3. Join the room
+    # 3. Join the room (human + all registered agents)
     async def _do_join():
         async with httpx.AsyncClient(follow_redirects=True) as client:
             try:
@@ -3261,6 +3334,12 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                     )
                     if resp.status_code == 200:
                         console.print(f"[green]Joined '{room}' as '{name}'[/green]")
+                        # Also join all registered agents to the room
+                        if agent_keys:
+                            await _join_agents_to_room(
+                                client, relay_url, room, name,
+                                agent_keys, invite_token,
+                            )
                         return
                     else:
                         # Token might be expired; fall through to auth-based join
@@ -3318,6 +3397,13 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                     )
                 except Exception:
                     pass
+
+                # Also join all registered agents to the room
+                if agent_keys:
+                    await _join_agents_to_room(
+                        client, relay_url, room, name,
+                        agent_keys, invite_token,
+                    )
             except httpx.ConnectError:
                 _ui.error_with_retry("Cannot connect to relay", relay_url={relay_url})
 
