@@ -1280,7 +1280,6 @@ def _print_help(console: Console) -> None:
     nav_rows = [
         ("Tab",          "cycle to the next room"),
         ("↑ / ↓",        "walk through your input history"),
-        ("1, 2, 3 …",    "jump to a room by number (see /rooms)"),
         ("?  or  /help", "show this screen"),
         ("Ctrl+C",        "quit"),
     ]
