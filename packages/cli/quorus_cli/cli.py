@@ -3080,7 +3080,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
             signup_payload = {"name": name, "workspace": workspace}
             if tenant_id:
                 signup_payload["join_tenant_id"] = tenant_id
-                console.print(f"[dim]Joining existing workspace...[/dim]")
+                console.print("[dim]Joining existing workspace...[/dim]")
 
             signup_resp = httpx.post(
                 f"{relay_url}/v1/auth/signup",
@@ -3104,11 +3104,17 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                 api_key = signup_data.get("api_key", "")
                 joined_workspace = signup_data.get("tenant_slug", workspace)
                 if api_key:
-                    console.print(f"[green]✓[/green] [dim]Account created (workspace: {joined_workspace})[/dim]")
+                    console.print(
+                        f"[green]✓[/green] [dim]Account created ({joined_workspace})[/dim]"
+                    )
                 else:
-                    console.print("[yellow]Warning: signup succeeded but no API key returned[/yellow]")
+                    console.print(
+                        "[yellow]Warning: signup succeeded but no API key returned[/yellow]"
+                    )
             else:
-                console.print(f"[yellow]Warning: signup failed (HTTP {signup_resp.status_code})[/yellow]")
+                console.print(
+                    f"[yellow]Warning: signup failed (HTTP {signup_resp.status_code})[/yellow]"
+                )
                 try:
                     err_detail = signup_resp.json().get("detail", "")
                     if err_detail:
@@ -3180,7 +3186,9 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                         return
                     else:
                         # Token might be expired; fall through to auth-based join
-                        console.print(f"[dim]Invite token rejected ({resp.status_code}), trying auth...[/dim]")
+                        console.print(
+                            f"[dim]Invite token rejected ({resp.status_code}), trying auth...[/dim]"
+                        )
 
                 # Fallback: use auth-based join (requires admin or legacy secret)
                 auth_token = secret
