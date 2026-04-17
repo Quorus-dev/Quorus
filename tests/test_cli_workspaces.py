@@ -185,3 +185,93 @@ def test_codex_agent_command_dispatches(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert exc.value.code == 0
     assert called == {"room": "medbuddy-sprint", "suffix": "reviewer"}
+
+
+def test_spawn_codex_dispatches_to_codex_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    from quorus_cli import cli as cli_mod
+
+    called = {}
+
+    def fake_spawn(room: str, name: str) -> None:
+        called["room"] = room
+        called["name"] = name
+
+    monkeypatch.setattr(cli_mod, "_spawn_codex_agent", fake_spawn)
+    monkeypatch.setattr(cli_mod, "_spawn_agent", lambda *args, **kwargs: None)
+
+    with patch.object(
+        cli_mod.sys,
+        "argv",
+        ["quorus", "spawn", "medbuddy-sprint", "reviewer", "--platform", "codex"],
+    ):
+        cli_mod.main()
+
+    assert called == {"room": "medbuddy-sprint", "name": "reviewer"}
+
+
+def test_spawn_defaults_to_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    from quorus_cli import cli as cli_mod
+
+    called = {}
+
+    def fake_spawn(room: str, name: str, relay_url: str, secret: str) -> None:
+        called["room"] = room
+        called["name"] = name
+        called["relay_url"] = relay_url
+        called["secret"] = secret
+
+    monkeypatch.setattr(cli_mod, "_spawn_agent", fake_spawn)
+    monkeypatch.setattr(cli_mod, "_spawn_codex_agent", lambda *args, **kwargs: None)
+
+    with patch.object(cli_mod.sys, "argv", ["quorus", "spawn", "medbuddy-sprint", "builder"]):
+        cli_mod.main()
+
+    assert called["room"] == "medbuddy-sprint"
+    assert called["name"] == "builder"
+
+
+def test_resolve_explicit_agent_auth_registers_child_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from quorus_cli import cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_register_agent_identity", lambda **kwargs: "mct_child")
+    saved = {}
+
+    class FakePm:
+        def current(self):
+            return "default"
+
+        def get(self, slug):
+            assert slug == "default"
+            return {"instance_name": "arav"}
+
+        def save(self, slug, data):
+            saved["slug"] = slug
+            saved["data"] = data
+
+    monkeypatch.setattr(cli_mod, "ProfileManager", lambda: FakePm())
+
+    api_key, relay_secret = cli_mod._resolve_explicit_agent_auth(
+        requested_name="arav-codex-reviewer",
+        current_name="arav",
+        relay_url="https://relay.test",
+        api_key="mct_parent",
+        relay_secret="",
+    )
+
+    assert api_key == "mct_child"
+    assert relay_secret == ""
+    assert saved["slug"] == "default"
+    assert saved["data"]["agent_api_keys"]["arav-codex-reviewer"] == "mct_child"
+
+
+def test_resolve_explicit_agent_auth_rejects_unrelated_name() -> None:
+    from quorus_cli import cli as cli_mod
+
+    with pytest.raises(ValueError):
+        cli_mod._resolve_explicit_agent_auth(
+            requested_name="other-person",
+            current_name="arav",
+            relay_url="https://relay.test",
+            api_key="mct_parent",
+            relay_secret="",
+        )

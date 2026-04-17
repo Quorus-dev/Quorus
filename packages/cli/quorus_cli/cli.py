@@ -17,6 +17,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from quorus.config import load_config
+from quorus.profiles import ProfileManager
 from quorus_cli import ui as _ui
 
 console = Console()
@@ -1219,12 +1220,24 @@ def _cmd_connect(args):
         from quorus_cli.mcp_writers import McpEnv, register_one
 
         mcp_command, mcp_args = _mcp_server_command()
+        try:
+            explicit_api_key, explicit_secret = _resolve_explicit_agent_auth(
+                requested_name=name,
+                current_name=INSTANCE_NAME,
+                relay_url=relay_url,
+                api_key=API_KEY,
+                relay_secret=secret,
+            )
+        except ValueError as exc:
+            _ui.error(str(exc))
+            return
+
         env = McpEnv(
             command=mcp_command,
             args=mcp_args,
             relay_url=relay_url,
-            api_key=API_KEY,
-            relay_secret=secret,
+            api_key=explicit_api_key,
+            relay_secret=explicit_secret,
             # connect uses the --name passed on the CLI as the full
             # identity — this is the explicit agent-identity flow
             # (no `-<platform>` suffix), so the user's chosen name
@@ -1993,6 +2006,10 @@ def _cmd_codex_agent(args):
             verbose=args.verbose,
             sandbox=args.sandbox,
             approval=args.approval,
+            autonomous=args.autonomous,
+            room_poll_seconds=args.room_poll,
+            heartbeat_seconds=args.heartbeat,
+            history_limit=args.history_limit,
         )
     except CodexAgentError as exc:
         _ui.error(str(exc))
@@ -2436,6 +2453,62 @@ def _register_agent_identity(
         return None
     except Exception:
         return None
+
+
+def _resolve_explicit_agent_auth(
+    *,
+    requested_name: str,
+    current_name: str,
+    relay_url: str,
+    api_key: str,
+    relay_secret: str,
+) -> tuple[str, str]:
+    """Resolve the correct auth for an explicit agent identity.
+
+    Returns ``(api_key, relay_secret)`` for the final config payload.
+
+    Under API-key auth, an explicit child identity must either be the
+    current identity itself or a derived child name (`current-suffix`).
+    In the child case we register a dedicated agent key so JWT subject and
+    Quorus participant name stay aligned across machines and CLIs.
+    """
+    if not api_key:
+        return "", relay_secret
+
+    if requested_name == current_name:
+        return api_key, ""
+
+    prefix = f"{current_name}-"
+    if not requested_name.startswith(prefix):
+        raise ValueError(
+            "Explicit agent names must either match your current identity "
+            f"({current_name}) or be a child identity like {prefix}<suffix>."
+        )
+
+    suffix = requested_name[len(prefix):].strip()
+    if not suffix:
+        raise ValueError("Derived child-agent suffix is empty.")
+
+    child_key = _register_agent_identity(
+        relay_url=relay_url,
+        parent_api_key=api_key,
+        suffix=suffix,
+    )
+    if not child_key:
+        raise ValueError(
+            f"Couldn't register child identity '{requested_name}'."
+        )
+    pm = ProfileManager()
+    slug = pm.current()
+    if slug:
+        data = pm.get(slug) or {}
+        keys = data.get("agent_api_keys", {})
+        if not isinstance(keys, dict):
+            keys = {}
+        keys[requested_name] = child_key
+        data["agent_api_keys"] = keys
+        pm.save(slug, data)
+    return child_key, ""
 
 
 def _register_mcp_everywhere(
@@ -3642,7 +3715,8 @@ def _spawn_codex_agent(room: str, name: str, workspace: Path | None = None):
     else:
         _ui.info(
             "Run manually: "
-            f"cd {workspace} && quorus codex-agent {room} --name {name} --announce --cwd {workspace}"
+            f"cd {workspace} && quorus codex-agent {room} "
+            f"--name {name} --announce --cwd {workspace}"
         )
 
 
@@ -3842,26 +3916,37 @@ def _cmd_add_agent(args):
     else:
         room = Prompt.ask("[bold]Room name[/bold]", default="quorus-dev")
 
-    # 3. Model preference
-    model = Prompt.ask(
-        "[bold]Model preference[/bold]",
-        choices=["opus", "sonnet", "haiku"],
-        default="sonnet",
+    platform = Prompt.ask(
+        "[bold]Platform[/bold]",
+        choices=["claude", "codex"],
+        default="claude",
     )
 
-    # 4. Effort level
-    effort = Prompt.ask(
-        "[bold]Effort level[/bold]",
-        choices=["low", "medium", "high"],
-        default="high",
-    )
+    model = effort = None
+    if platform == "claude":
+        # 3. Model preference
+        model = Prompt.ask(
+            "[bold]Model preference[/bold]",
+            choices=["opus", "sonnet", "haiku"],
+            default="sonnet",
+        )
+
+        # 4. Effort level
+        effort = Prompt.ask(
+            "[bold]Effort level[/bold]",
+            choices=["low", "medium", "high"],
+            default="high",
+        )
 
     # Summary and confirm
     console.print("\n[bold]Summary:[/bold]")
     console.print(f"  Name:   [cyan]{name}[/cyan]")
     console.print(f"  Room:   [cyan]{room}[/cyan]")
-    console.print(f"  Model:  [cyan]{model}[/cyan]")
-    console.print(f"  Effort: [cyan]{effort}[/cyan]")
+    console.print(f"  Platform: [cyan]{platform}[/cyan]")
+    if model:
+        console.print(f"  Model:  [cyan]{model}[/cyan]")
+    if effort:
+        console.print(f"  Effort: [cyan]{effort}[/cyan]")
 
     if not Confirm.ask("\n[bold]Launch agent?[/bold]", default=True):
         console.print("[dim]Cancelled.[/dim]")
@@ -3902,27 +3987,28 @@ def _cmd_add_agent(args):
     }
     (workspace / ".mcp.json").write_text(json.dumps(mcp_config, indent=2))
 
-    # .claude/ settings with model preference
-    claude_dir = workspace / ".claude"
-    claude_dir.mkdir(exist_ok=True)
-    settings = {
-        "permissions": {
-            "allow": [
-                "Bash(*)",
-                "Read(*)",
-                "Write(*)",
-                "Edit(*)",
-                "Glob(*)",
-                "Grep(*)",
-                "mcp__quorus__*",
-            ],
-            "deny": [],
+    if platform == "claude":
+        # .claude/ settings with model preference
+        claude_dir = workspace / ".claude"
+        claude_dir.mkdir(exist_ok=True)
+        settings = {
+            "permissions": {
+                "allow": [
+                    "Bash(*)",
+                    "Read(*)",
+                    "Write(*)",
+                    "Edit(*)",
+                    "Glob(*)",
+                    "Grep(*)",
+                    "mcp__quorus__*",
+                ],
+                "deny": [],
+            }
         }
-    }
-    (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
+        (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
 
-    # CLAUDE.md with model/effort hints
-    claude_md = f"""# Quorus Agent
+        # CLAUDE.md with model/effort hints
+        claude_md = f"""# Quorus Agent
 
 You are {name} in the {room} group chat. ALL communication goes through the room.
 
@@ -3949,50 +4035,57 @@ You are {name} in the {room} group chat. ALL communication goes through the room
 - list_rooms() — see rooms
 - All standard Claude Code tools (Read, Write, Edit, Bash, etc.)
 """
-    (workspace / "CLAUDE.md").write_text(claude_md)
+        (workspace / "CLAUDE.md").write_text(claude_md)
 
-    # Symlink to quorus source
-    quorus_link = workspace / "quorus"
-    if not quorus_link.exists():
-        quorus_link.symlink_to(quorus_dir.parent)
+        # Symlink to quorus source
+        quorus_link = workspace / "quorus"
+        if not quorus_link.exists():
+            quorus_link.symlink_to(quorus_dir.parent)
 
-    # Auto-join room
-    async def _auto_join():
-        client = _get_client()
-        try:
-            resp = await client.post(
-                f"{RELAY_URL}/rooms/{room}/join",
-                json={"participant": name},
-                headers=_auth_headers(),
+        # Auto-join room
+        async def _auto_join():
+            client = _get_client()
+            try:
+                resp = await client.post(
+                    f"{RELAY_URL}/rooms/{room}/join",
+                    json={"participant": name},
+                    headers=_auth_headers(),
+                )
+                resp.raise_for_status()
+            except Exception:
+                pass
+            finally:
+                await client.aclose()
+
+        asyncio.run(_auto_join())
+
+        console.print(f"\n[green]Workspace ready: {workspace}[/green]")
+
+        # Build claude launch command with model flag
+        model_flag = f"--model {model}" if model != "sonnet" else ""
+        claude_cmd = f"cd {workspace} && claude {model_flag}".strip()
+
+        # Launch in new terminal tab (macOS)
+        if sys.platform == "darwin":
+            applescript = (
+                f'tell application "Terminal" to do script "{claude_cmd}"'
             )
-            resp.raise_for_status()
-        except Exception:
-            pass
-        finally:
-            await client.aclose()
+            subprocess.run(["osascript", "-e", applescript])
+            console.print(f"[bold green]{name} launched in new Terminal tab![/bold green]")
+        else:
+            _ui.info(f"Run manually: {claude_cmd}")
 
-    asyncio.run(_auto_join())
+        console.print("[dim]Agent will auto-connect to the room on startup.[/dim]")
+        return
 
-    console.print(f"\n[green]Workspace ready: {workspace}[/green]")
-
-    # Build claude launch command with model flag
-    model_flag = f"--model {model}" if model != "sonnet" else ""
-    claude_cmd = f"cd {workspace} && claude {model_flag}".strip()
-
-    # Launch in new terminal tab (macOS)
-    if sys.platform == "darwin":
-        applescript = (
-            f'tell application "Terminal" to do script "{claude_cmd}"'
-        )
-        subprocess.run(["osascript", "-e", applescript])
-        console.print(f"[bold green]{name} launched in new Terminal tab![/bold green]")
-    else:
-        _ui.info(f"Run manually: {claude_cmd}")
-
-    console.print("[dim]Agent will auto-connect to the room on startup.[/dim]")
+    _spawn_codex_agent(room, name, workspace)
+    console.print("[dim]Codex runner will auto-connect to the room on startup.[/dim]")
 
 
 def _cmd_spawn(args):
+    if args.platform == "codex":
+        _spawn_codex_agent(args.room, args.name)
+        return
     _spawn_agent(args.room, args.name, RELAY_URL, RELAY_SECRET)
 
 
@@ -4003,7 +4096,10 @@ def _cmd_spawn_multiple(args):
     for i in range(1, count + 1):
         name = f"{prefix}-{i}"
         console.print(f"\n[bold]Spawning {name}...[/bold]")
-        _spawn_agent(room, name, RELAY_URL, RELAY_SECRET)
+        if args.platform == "codex":
+            _spawn_codex_agent(room, name)
+        else:
+            _spawn_agent(room, name, RELAY_URL, RELAY_SECRET)
     console.print(f"\n[bold green]Spawned {count} agents.[/bold green]")
 
 
@@ -5919,10 +6015,16 @@ def main():
     p_invite_link.add_argument("room", help="Room name")
 
     p_spawn = sub.add_parser(
-        "spawn", help="Create agent workspace and launch Claude Code"
+        "spawn", help="Create agent workspace and launch an agent"
     )
     p_spawn.add_argument("room", help="Room name")
     p_spawn.add_argument("name", help="Agent name")
+    p_spawn.add_argument(
+        "--platform",
+        choices=["claude", "codex"],
+        default="claude",
+        help="Agent platform to launch (default: claude)",
+    )
 
     p_spawn_multi = sub.add_parser(
         "spawn-multiple", help="Spawn N agents at once"
@@ -5931,6 +6033,12 @@ def main():
     p_spawn_multi.add_argument("count", type=int, help="Number of agents")
     p_spawn_multi.add_argument(
         "--prefix", default="agent", help="Name prefix (default: agent)"
+    )
+    p_spawn_multi.add_argument(
+        "--platform",
+        choices=["claude", "codex"],
+        default="claude",
+        help="Agent platform to launch (default: claude)",
     )
 
     p_register_agents = sub.add_parser(
@@ -6005,6 +6113,29 @@ def main():
         "--verbose",
         action="store_true",
         help="Print mirrored inbox lines and loop errors to stderr",
+    )
+    p_codex_agent.add_argument(
+        "--autonomous",
+        action="store_true",
+        help="Run supervised autonomous turns via codex exec when room context changes",
+    )
+    p_codex_agent.add_argument(
+        "--room-poll",
+        type=int,
+        default=15,
+        help="Room state/history refresh interval in seconds (default: 15)",
+    )
+    p_codex_agent.add_argument(
+        "--heartbeat",
+        type=int,
+        default=30,
+        help="Presence heartbeat interval in seconds (default: 30)",
+    )
+    p_codex_agent.add_argument(
+        "--history-limit",
+        type=int,
+        default=25,
+        help="How many recent room messages to mirror into context (default: 25)",
     )
     p_codex_agent.add_argument(
         "--sandbox",

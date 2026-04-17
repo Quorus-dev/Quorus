@@ -408,7 +408,7 @@ def test_add_agent_creates_workspace(tmp_path, monkeypatch):
 
     # Mock rich prompts to provide answers
     call_count = {"n": 0}
-    answers = ["test-bot", "dev", "sonnet", "high"]
+    answers = ["test-bot", "dev", "claude", "sonnet", "high"]
 
     def mock_ask(prompt, **kwargs):
         idx = call_count["n"]
@@ -460,11 +460,46 @@ def test_connect_codex(capsys, tmp_path, monkeypatch):
     from quorus.cli import _cmd_connect
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("quorus.cli.INSTANCE_NAME", "arav")
+    monkeypatch.setattr("quorus.cli.API_KEY", "mct_parent")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "")
 
     args = MagicMock()
     args.platform = "codex"
     args.room = "dev"
-    args.name = "codex-bot"
+    args.name = "arav-codex-bot"
+
+    client = _mock_client(200, {})
+    with patch("quorus.cli._get_client", return_value=client), \
+         patch("quorus.cli.asyncio.run", side_effect=_close_coro), \
+         patch("quorus.cli._register_agent_identity", return_value="mct_child"):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    # New contract: one-line success + the config file actually exists
+    # with the quorus entry + the explicit child identity baked in.
+    assert "Wired Codex CLI" in captured.out
+    assert "arav-codex-bot" in captured.out
+    config = tmp_path / ".codex" / "config.toml"
+    assert config.exists(), "codex config should have been written"
+    body = config.read_text()
+    assert "[mcp_servers.quorus]" in body
+    assert 'QUORUS_INSTANCE_NAME = "arav-codex-bot"' in body
+    assert 'QUORUS_API_KEY = "mct_child"' in body
+
+
+def test_connect_codex_rejects_non_child_name_under_api_key(capsys, tmp_path, monkeypatch):
+    from quorus.cli import _cmd_connect
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("quorus.cli.INSTANCE_NAME", "arav")
+    monkeypatch.setattr("quorus.cli.API_KEY", "mct_parent")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "")
+
+    args = MagicMock()
+    args.platform = "codex"
+    args.room = "dev"
+    args.name = "totally-different-name"
 
     client = _mock_client(200, {})
     with patch("quorus.cli._get_client", return_value=client), \
@@ -472,15 +507,7 @@ def test_connect_codex(capsys, tmp_path, monkeypatch):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
-    # New contract: one-line success + the config file actually exists
-    # with the quorus entry + the codex-bot identity baked in.
-    assert "Wired Codex CLI" in captured.out
-    assert "codex-bot" in captured.out
-    config = tmp_path / ".codex" / "config.toml"
-    assert config.exists(), "codex config should have been written"
-    body = config.read_text()
-    assert "[mcp_servers.quorus]" in body
-    assert 'QUORUS_INSTANCE_NAME = "codex-bot"' in body
+    assert "child identity" in (captured.out + captured.err).lower()
 
 
 def test_connect_cursor(capsys, tmp_path, monkeypatch):

@@ -49,6 +49,9 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect Path.home() to a scratch dir so writers are sandboxed."""
     monkeypatch.setenv("HOME", str(tmp_path))
     # Path.home() reads HOME on macOS+Linux, so setting it is enough.
+    # Also mock shutil.which to prevent detection of system-installed binaries
+    # like `codex` that would bypass the HOME-based detection.
+    monkeypatch.setattr("shutil.which", lambda _: None)
     return tmp_path
 
 

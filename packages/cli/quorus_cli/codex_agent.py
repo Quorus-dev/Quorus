@@ -1,7 +1,13 @@
 """Codex-specific Quorus runner.
 
-This launches Codex with a room-bound Quorus identity and a lightweight
-background inbox loop, without changing existing Claude/Cursor flows.
+This keeps Codex additive to Quorus rather than changing Claude/Gemini paths.
+It supports:
+
+- room-bound Codex identities
+- inbox mirroring for direct messages
+- room state/history context snapshots
+- presence heartbeats so the runner stays visible in room state
+- optional supervised autonomous mode powered by ``codex exec``
 """
 
 from __future__ import annotations
@@ -15,9 +21,42 @@ from pathlib import Path
 
 import httpx
 
+from quorus.profiles import ProfileManager
+
+DEFAULT_HISTORY_LIMIT = 25
+
 
 class CodexAgentError(RuntimeError):
     """Raised for recoverable Codex-agent runner failures."""
+
+
+def _current_profile_manager() -> tuple[ProfileManager, str | None, dict]:
+    pm = ProfileManager()
+    slug = pm.current()
+    data = pm.get(slug) if slug else None
+    return pm, slug, (data or {})
+
+
+def _cached_child_api_key(agent_name: str) -> str:
+    _pm, _slug, data = _current_profile_manager()
+    keys = data.get("agent_api_keys", {})
+    if isinstance(keys, dict):
+        value = keys.get(agent_name, "")
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _save_child_api_key(agent_name: str, api_key: str) -> None:
+    pm, slug, data = _current_profile_manager()
+    if not slug:
+        return
+    keys = data.get("agent_api_keys", {})
+    if not isinstance(keys, dict):
+        keys = {}
+    keys[agent_name] = api_key
+    data["agent_api_keys"] = keys
+    pm.save(slug, data)
 
 
 def _auth_headers(
@@ -42,6 +81,34 @@ def _auth_headers(
         return {"Authorization": f"Bearer {relay_secret}"}
 
     raise CodexAgentError("Codex runner needs an API key or relay secret.")
+
+
+def _request_json(
+    method: str,
+    url: str,
+    *,
+    relay_url: str,
+    api_key: str = "",
+    relay_secret: str = "",
+    params: dict | None = None,
+    json_body: dict | None = None,
+    timeout: int | float = 10,
+) -> object:
+    resp = httpx.request(
+        method,
+        url,
+        params=params,
+        json=json_body,
+        headers=_auth_headers(
+            relay_url=relay_url,
+            api_key=api_key,
+            relay_secret=relay_secret,
+        ),
+        timeout=timeout,
+        follow_redirects=True,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def resolve_identity(
@@ -79,6 +146,11 @@ def resolve_identity(
     if not derived_suffix:
         raise CodexAgentError("Derived Codex agent suffix cannot be empty.")
 
+    agent_name = f"{parent_name}-{derived_suffix}"
+    cached_key = _cached_child_api_key(agent_name)
+    if cached_key:
+        return agent_name, cached_key
+
     resp = httpx.post(
         f"{relay_url}/v1/auth/register-agent",
         json={"suffix": derived_suffix},
@@ -88,7 +160,10 @@ def resolve_identity(
     )
     resp.raise_for_status()
     data = resp.json()
-    return data["agent_name"], data["api_key"]
+    agent_name = data["agent_name"]
+    agent_api_key = data["api_key"]
+    _save_child_api_key(agent_name, agent_api_key)
+    return agent_name, agent_api_key
 
 
 def join_room(
@@ -100,18 +175,31 @@ def join_room(
     relay_secret: str = "",
 ) -> None:
     """Ensure the runner identity is a member of the room."""
-    resp = httpx.post(
+    _request_json(
+        "POST",
         f"{relay_url}/rooms/{room}/join",
-        json={"participant": participant},
-        headers=_auth_headers(
-            relay_url=relay_url,
-            api_key=api_key,
-            relay_secret=relay_secret,
-        ),
-        timeout=10,
-        follow_redirects=True,
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=relay_secret,
+        json_body={"participant": participant},
     )
-    resp.raise_for_status()
+
+
+def parent_join_room(
+    *,
+    relay_url: str,
+    room: str,
+    participant: str,
+    parent_api_key: str,
+) -> None:
+    """Add a child participant to the room using the parent/admin identity."""
+    _request_json(
+        "POST",
+        f"{relay_url}/rooms/{room}/join",
+        relay_url=relay_url,
+        api_key=parent_api_key,
+        json_body={"participant": participant},
+    )
 
 
 def send_announcement(
@@ -124,22 +212,165 @@ def send_announcement(
     relay_secret: str = "",
 ) -> None:
     """Post a status message for the Codex runner."""
-    resp = httpx.post(
+    _request_json(
+        "POST",
         f"{relay_url}/rooms/{room}/messages",
-        json={
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=relay_secret,
+        json_body={
             "from_name": participant,
             "content": content,
             "message_type": "status",
         },
-        headers=_auth_headers(
-            relay_url=relay_url,
-            api_key=api_key,
-            relay_secret=relay_secret,
-        ),
-        timeout=10,
-        follow_redirects=True,
     )
-    resp.raise_for_status()
+
+
+def send_heartbeat(
+    *,
+    relay_url: str,
+    room: str,
+    participant: str,
+    api_key: str = "",
+    relay_secret: str = "",
+) -> None:
+    """Keep the Codex runner visible in room presence."""
+    _request_json(
+        "POST",
+        f"{relay_url}/heartbeat",
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=relay_secret,
+        json_body={"instance_name": participant, "status": "online", "room": room},
+    )
+
+
+def fetch_room_state(
+    *,
+    relay_url: str,
+    room: str,
+    api_key: str = "",
+    relay_secret: str = "",
+) -> dict:
+    data = _request_json(
+        "GET",
+        f"{relay_url}/rooms/{room}/state",
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=relay_secret,
+    )
+    return data if isinstance(data, dict) else {}
+
+
+def fetch_room_history(
+    *,
+    relay_url: str,
+    room: str,
+    limit: int,
+    api_key: str = "",
+    relay_secret: str = "",
+) -> list[dict]:
+    data = _request_json(
+        "GET",
+        f"{relay_url}/rooms/{room}/history",
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=relay_secret,
+        params={"limit": limit},
+    )
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _message_id(message: dict) -> str:
+    value = message.get("message_id") or message.get("id") or message.get("uuid") or ""
+    return str(value)
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _append_lines(path: Path, lines: list[str]) -> None:
+    if not lines:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for line in lines:
+            handle.write(line)
+
+
+def _format_room_context(room: str, participant: str, state: dict, history: list[dict]) -> str:
+    lines = [
+        f"# Quorus Room: {room}",
+        f"Participant: {participant}",
+        f"Snapshot: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())} UTC",
+        "",
+    ]
+
+    active_agents = state.get("active_agents", [])
+    if isinstance(active_agents, list) and active_agents:
+        lines.append("## Active Agents")
+        for agent in active_agents:
+            lines.append(f"- {agent}")
+        lines.append("")
+
+    if history:
+        lines.append("## Recent Room Messages")
+        for message in history[-DEFAULT_HISTORY_LIMIT:]:
+            sender = message.get("from_name", "?")
+            message_type = message.get("message_type", "chat")
+            timestamp = str(message.get("timestamp", ""))[:19]
+            content = str(message.get("content", "")).strip()
+            lines.append(f"- [{timestamp}] {sender} [{message_type}]: {content}")
+        lines.append("")
+
+    locks = state.get("locked_files", {})
+    if isinstance(locks, dict) and locks:
+        lines.append("## Locked Files")
+        for file_path, meta in locks.items():
+            holder = meta.get("held_by", "?") if isinstance(meta, dict) else "?"
+            lines.append(f"- {file_path}: {holder}")
+        lines.append("")
+
+    goal = state.get("active_goal")
+    if goal:
+        lines.append("## Active Goal")
+        lines.append(str(goal))
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def sync_room_context(
+    *,
+    relay_url: str,
+    room: str,
+    participant: str,
+    context_path: Path,
+    history_limit: int,
+    api_key: str = "",
+    relay_secret: str = "",
+) -> list[dict]:
+    state = fetch_room_state(
+        relay_url=relay_url,
+        room=room,
+        api_key=api_key,
+        relay_secret=relay_secret,
+    )
+    history = fetch_room_history(
+        relay_url=relay_url,
+        room=room,
+        limit=history_limit,
+        api_key=api_key,
+        relay_secret=relay_secret,
+    )
+    _write_atomic(context_path, _format_room_context(room, participant, state, history))
+    return history
 
 
 def poll_inbox_loop(
@@ -154,57 +385,161 @@ def poll_inbox_loop(
     verbose: bool = False,
 ) -> None:
     """Mirror the participant inbox into a local file for Codex context."""
-    headers = _auth_headers(
-        relay_url=relay_url,
-        api_key=api_key,
-        relay_secret=relay_secret,
-    )
     inbox_path.parent.mkdir(parents=True, exist_ok=True)
 
     while not stop_event.is_set():
         try:
-            resp = httpx.get(
+            data = _request_json(
+                "GET",
                 f"{relay_url}/messages/{participant}",
+                relay_url=relay_url,
+                api_key=api_key,
+                relay_secret=relay_secret,
                 params={"wait": wait_seconds},
-                headers=headers,
                 timeout=wait_seconds + 10,
-                follow_redirects=True,
             )
-            resp.raise_for_status()
-            messages = resp.json()
-            if not isinstance(messages, list) or not messages:
+            messages = data if isinstance(data, list) else []
+            if not messages:
                 continue
 
-            with inbox_path.open("a", encoding="utf-8") as handle:
-                for msg in messages:
-                    sender = msg.get("from_name", "?")
-                    room = msg.get("room", "dm")
-                    content = msg.get("content", "")
-                    ts = str(msg.get("timestamp", ""))[:19]
-                    line = f"[{ts}] {sender} ({room}): {content}\n"
-                    handle.write(line)
-                    if verbose:
-                        sys.stderr.write(line)
-                        sys.stderr.flush()
+            lines: list[str] = []
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                sender = msg.get("from_name", "?")
+                room = msg.get("room", "dm")
+                content = msg.get("content", "")
+                ts = str(msg.get("timestamp", ""))[:19]
+                lines.append(f"[{ts}] {sender} ({room}): {content}\n")
+            _append_lines(inbox_path, lines)
+
+            if verbose:
+                for line in lines:
+                    sys.stderr.write(line)
+                sys.stderr.flush()
         except Exception as exc:  # noqa: BLE001
             if verbose:
-                sys.stderr.write(f"[quorus codex-agent] {exc}\n")
+                sys.stderr.write(f"[quorus codex-agent inbox] {exc}\n")
                 sys.stderr.flush()
             time.sleep(5)
 
 
-def build_prompt(room: str, participant: str, inbox_path: Path) -> str:
+def room_context_loop(
+    *,
+    relay_url: str,
+    room: str,
+    participant: str,
+    context_path: Path,
+    history_limit: int,
+    stop_event: threading.Event,
+    poll_seconds: int,
+    api_key: str = "",
+    relay_secret: str = "",
+    verbose: bool = False,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            sync_room_context(
+                relay_url=relay_url,
+                room=room,
+                participant=participant,
+                context_path=context_path,
+                history_limit=history_limit,
+                api_key=api_key,
+                relay_secret=relay_secret,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if verbose:
+                sys.stderr.write(f"[quorus codex-agent context] {exc}\n")
+                sys.stderr.flush()
+        stop_event.wait(poll_seconds)
+
+
+def heartbeat_loop(
+    *,
+    relay_url: str,
+    room: str,
+    participant: str,
+    stop_event: threading.Event,
+    heartbeat_seconds: int,
+    api_key: str = "",
+    relay_secret: str = "",
+    verbose: bool = False,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            send_heartbeat(
+                relay_url=relay_url,
+                room=room,
+                participant=participant,
+                api_key=api_key,
+                relay_secret=relay_secret,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if verbose:
+                sys.stderr.write(f"[quorus codex-agent heartbeat] {exc}\n")
+                sys.stderr.flush()
+        stop_event.wait(heartbeat_seconds)
+
+
+def build_prompt(
+    room: str,
+    participant: str,
+    inbox_path: Path,
+    context_path: Path | None = None,
+) -> str:
     """Build the initial Codex room prompt."""
-    return (
-        f"You are `{participant}` in the Quorus room `{room}`.\n\n"
-        "Operating rules:\n"
-        "- Check Quorus messages and room context before acting.\n"
-        "- Use the Quorus MCP tools as the primary read/write path.\n"
-        f"- A local inbox mirror is available at `{inbox_path}` as fallback context.\n"
-        "- If a concrete task is assigned, acknowledge ownership clearly in-room before implementing.\n"
-        "- Post concise status updates after meaningful progress, blockers, or completion.\n"
-        f"- Do not impersonate another participant. Only send as `{participant}`."
+    lines = [
+        f"You are `{participant}` in the Quorus room `{room}`.",
+        "",
+        "Operating rules:",
+        "- Check Quorus messages and room context before acting.",
+        "- Use the Quorus MCP tools as the primary read/write path.",
+        f"- A local inbox mirror is available at `{inbox_path}` as fallback context.",
+    ]
+    if context_path is not None:
+        lines.append(f"- A room context snapshot is available at `{context_path}`.")
+    lines.extend(
+        [
+            "- If a concrete task is assigned, acknowledge ownership "
+            "clearly in-room before implementing.",
+            "- Post concise status updates after meaningful progress, blockers, or completion.",
+            f"- Do not impersonate another participant. Only send as `{participant}`.",
+        ]
     )
+    return "\n".join(lines)
+
+
+def _codex_base_command(
+    *,
+    participant: str,
+    relay_url: str,
+    api_key: str = "",
+    relay_secret: str = "",
+    cwd: Path,
+) -> list[str]:
+    cmd = [
+        "-C",
+        str(cwd),
+        "-c",
+        f"mcp_servers.quorus.env.QUORUS_INSTANCE_NAME={json.dumps(participant)}",
+        "-c",
+        f"mcp_servers.quorus.env.QUORUS_RELAY_URL={json.dumps(relay_url)}",
+    ]
+    if api_key:
+        cmd.extend(
+            ["-c", f"mcp_servers.quorus.env.QUORUS_API_KEY={json.dumps(api_key)}"]
+        )
+    elif relay_secret:
+        cmd.extend(
+            [
+                "-c",
+                f"mcp_servers.quorus.env.QUORUS_RELAY_SECRET={json.dumps(relay_secret)}",
+            ]
+        )
+    else:
+        raise CodexAgentError("Codex launch needs an API key or relay secret.")
+    return cmd
 
 
 def build_codex_command(
@@ -212,30 +547,175 @@ def build_codex_command(
     room: str,
     participant: str,
     relay_url: str,
-    api_key: str,
+    api_key: str = "",
+    relay_secret: str = "",
     cwd: Path,
     sandbox: str,
     approval: str,
     inbox_path: Path,
+    context_path: Path | None = None,
 ) -> list[str]:
-    """Build the Codex command line with per-run Quorus overrides."""
-    prompt = build_prompt(room, participant, inbox_path)
+    """Build the interactive Codex command line with Quorus overrides."""
+    prompt = build_prompt(room, participant, inbox_path, context_path)
     return [
         "codex",
-        "-C",
-        str(cwd),
+        *_codex_base_command(
+            participant=participant,
+            relay_url=relay_url,
+            api_key=api_key,
+            relay_secret=relay_secret,
+            cwd=cwd,
+        ),
         "-s",
         sandbox,
         "-a",
         approval,
-        "-c",
-        f"mcp_servers.quorus.env.QUORUS_INSTANCE_NAME={json.dumps(participant)}",
-        "-c",
-        f"mcp_servers.quorus.env.QUORUS_API_KEY={json.dumps(api_key)}",
-        "-c",
-        f"mcp_servers.quorus.env.QUORUS_RELAY_URL={json.dumps(relay_url)}",
         prompt,
     ]
+
+
+def build_codex_exec_command(
+    *,
+    room: str,
+    participant: str,
+    relay_url: str,
+    api_key: str = "",
+    relay_secret: str = "",
+    cwd: Path,
+    sandbox: str,
+    inbox_path: Path,
+    context_path: Path,
+    prompt: str,
+) -> list[str]:
+    """Build a non-interactive Codex command for supervised autonomous turns."""
+    return [
+        "codex",
+        "exec",
+        *_codex_base_command(
+            participant=participant,
+            relay_url=relay_url,
+            api_key=api_key,
+            relay_secret=relay_secret,
+            cwd=cwd,
+        ),
+        "-s",
+        sandbox,
+        "--skip-git-repo-check",
+        build_prompt(room, participant, inbox_path, context_path) + "\n\n" + prompt,
+    ]
+
+
+def _autonomous_prompt(
+    *,
+    room: str,
+    participant: str,
+    context_path: Path,
+    new_messages: list[dict],
+    initial_scan: bool,
+) -> str:
+    if initial_scan:
+        return (
+            f"Review the current Quorus room `{room}` using the MCP tools first, then "
+            f"use `{context_path}` only as fallback context. If there is a concrete "
+            "task or blocker you should own, acknowledge it in-room and proceed."
+        )
+
+    summary_lines = []
+    for message in new_messages[-5:]:
+        sender = message.get("from_name", "?")
+        content = str(message.get("content", "")).strip()
+        summary_lines.append(f"- {sender}: {content}")
+    summarized = "\n".join(summary_lines) or "- no new message text captured"
+    return (
+        "New Quorus room activity arrived. Read the room with MCP tools, use the "
+        f"snapshot at `{context_path}` only as fallback, then respond or act if needed.\n\n"
+        "Newest messages:\n"
+        f"{summarized}"
+    )
+
+
+def run_autonomous_loop(
+    *,
+    room: str,
+    participant: str,
+    relay_url: str,
+    api_key: str,
+    relay_secret: str,
+    cwd: Path,
+    sandbox: str,
+    inbox_path: Path,
+    context_path: Path,
+    history_limit: int,
+    poll_seconds: int,
+    stop_event: threading.Event,
+    verbose: bool,
+) -> int:
+    """Supervise ``codex exec`` runs when room activity changes."""
+    seen_message_ids: set[str] = set()
+    initial_scan = True
+
+    while not stop_event.is_set():
+        try:
+            history = sync_room_context(
+                relay_url=relay_url,
+                room=room,
+                participant=participant,
+                context_path=context_path,
+                history_limit=history_limit,
+                api_key=api_key,
+                relay_secret=relay_secret,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if verbose:
+                sys.stderr.write(f"[quorus codex-agent auto-sync] {exc}\n")
+                sys.stderr.flush()
+            stop_event.wait(poll_seconds)
+            continue
+
+        new_messages = []
+        current_ids: set[str] = set()
+        for message in history:
+            message_id = _message_id(message)
+            if message_id:
+                current_ids.add(message_id)
+            sender = str(message.get("from_name", ""))
+            if message_id and message_id not in seen_message_ids and sender != participant:
+                new_messages.append(message)
+
+        should_run = initial_scan or bool(new_messages)
+        seen_message_ids.update(current_ids)
+
+        if not should_run:
+            stop_event.wait(poll_seconds)
+            continue
+
+        prompt = _autonomous_prompt(
+            room=room,
+            participant=participant,
+            context_path=context_path,
+            new_messages=new_messages,
+            initial_scan=initial_scan,
+        )
+        initial_scan = False
+        cmd = build_codex_exec_command(
+            room=room,
+            participant=participant,
+            relay_url=relay_url,
+            api_key=api_key,
+            relay_secret=relay_secret,
+            cwd=cwd,
+            sandbox=sandbox,
+            inbox_path=inbox_path,
+            context_path=context_path,
+            prompt=prompt,
+        )
+        rc = subprocess.call(cmd)
+        if rc != 0 and verbose:
+            sys.stderr.write(f"[quorus codex-agent auto-exec] codex exited {rc}\n")
+            sys.stderr.flush()
+        stop_event.wait(max(5, poll_seconds))
+
+    return 0
 
 
 def run_codex_agent(
@@ -254,8 +734,12 @@ def run_codex_agent(
     verbose: bool,
     sandbox: str,
     approval: str,
+    autonomous: bool,
+    room_poll_seconds: int,
+    heartbeat_seconds: int,
+    history_limit: int,
 ) -> int:
-    """Join the room, start inbox mirroring, and optionally launch Codex."""
+    """Join the room, maintain runner state, and launch Codex."""
     participant, agent_api_key = resolve_identity(
         relay_url=relay_url,
         parent_name=parent_name,
@@ -265,13 +749,28 @@ def run_codex_agent(
     )
     effective_secret = relay_secret if not agent_api_key else ""
 
-    join_room(
-        relay_url=relay_url,
-        room=room,
-        participant=participant,
-        api_key=agent_api_key,
-        relay_secret=effective_secret,
-    )
+    try:
+        join_room(
+            relay_url=relay_url,
+            room=room,
+            participant=participant,
+            api_key=agent_api_key,
+            relay_secret=effective_secret,
+        )
+    except httpx.HTTPStatusError as exc:
+        can_parent_add = (
+            exc.response.status_code == 403
+            and parent_api_key
+            and participant != parent_name
+        )
+        if not can_parent_add:
+            raise
+        parent_join_room(
+            relay_url=relay_url,
+            room=room,
+            participant=participant,
+            parent_api_key=parent_api_key,
+        )
 
     if announce:
         send_announcement(
@@ -284,38 +783,87 @@ def run_codex_agent(
         )
 
     inbox_path = Path(f"/tmp/quorus-{participant}-inbox.txt")
+    context_path = Path(f"/tmp/quorus-{participant}-context.md")
     stop_event = threading.Event()
-    watcher = threading.Thread(
-        target=poll_inbox_loop,
-        kwargs={
-            "relay_url": relay_url,
-            "participant": participant,
-            "inbox_path": inbox_path,
-            "stop_event": stop_event,
-            "wait_seconds": wait_seconds,
-            "api_key": agent_api_key,
-            "relay_secret": effective_secret,
-            "verbose": verbose,
-        },
-        daemon=True,
-    )
-    watcher.start()
 
-    print(f"Quorus room:   {room}")
-    print(f"Participant:   {participant}")
-    print(f"Inbox mirror:  {inbox_path}")
-    print(f"Relay:         {relay_url}")
+    threads = [
+        threading.Thread(
+            target=poll_inbox_loop,
+            kwargs={
+                "relay_url": relay_url,
+                "participant": participant,
+                "inbox_path": inbox_path,
+                "stop_event": stop_event,
+                "wait_seconds": wait_seconds,
+                "api_key": agent_api_key,
+                "relay_secret": effective_secret,
+                "verbose": verbose,
+            },
+            daemon=True,
+        ),
+        threading.Thread(
+            target=room_context_loop,
+            kwargs={
+                "relay_url": relay_url,
+                "room": room,
+                "participant": participant,
+                "context_path": context_path,
+                "history_limit": history_limit,
+                "stop_event": stop_event,
+                "poll_seconds": room_poll_seconds,
+                "api_key": agent_api_key,
+                "relay_secret": effective_secret,
+                "verbose": verbose,
+            },
+            daemon=True,
+        ),
+        threading.Thread(
+            target=heartbeat_loop,
+            kwargs={
+                "relay_url": relay_url,
+                "room": room,
+                "participant": participant,
+                "stop_event": stop_event,
+                "heartbeat_seconds": heartbeat_seconds,
+                "api_key": agent_api_key,
+                "relay_secret": effective_secret,
+                "verbose": verbose,
+            },
+            daemon=True,
+        ),
+    ]
+    for thread in threads:
+        thread.start()
+
+    print(f"Quorus room:     {room}")
+    print(f"Participant:     {participant}")
+    print(f"Inbox mirror:    {inbox_path}")
+    print(f"Context mirror:  {context_path}")
+    print(f"Relay:           {relay_url}")
+    print(f"Mode:            {'autonomous' if autonomous else 'interactive'}")
 
     try:
         if no_launch:
-            print("Inbox loop active. Press Ctrl+C to stop.")
+            print("Quorus loops active. Press Ctrl+C to stop.")
             while not stop_event.is_set():
                 time.sleep(1)
             return 0
 
-        if not agent_api_key:
-            raise CodexAgentError(
-                "Launching Codex with Quorus overrides requires API-key auth."
+        if autonomous:
+            return run_autonomous_loop(
+                room=room,
+                participant=participant,
+                relay_url=relay_url,
+                api_key=agent_api_key,
+                relay_secret=effective_secret,
+                cwd=cwd,
+                sandbox=sandbox,
+                inbox_path=inbox_path,
+                context_path=context_path,
+                history_limit=history_limit,
+                poll_seconds=room_poll_seconds,
+                stop_event=stop_event,
+                verbose=verbose,
             )
 
         cmd = build_codex_command(
@@ -323,14 +871,17 @@ def run_codex_agent(
             participant=participant,
             relay_url=relay_url,
             api_key=agent_api_key,
+            relay_secret=effective_secret,
             cwd=cwd,
             sandbox=sandbox,
             approval=approval,
             inbox_path=inbox_path,
+            context_path=context_path,
         )
         return subprocess.call(cmd)
     except KeyboardInterrupt:
         return 130
     finally:
         stop_event.set()
-        watcher.join(timeout=2)
+        for thread in threads:
+            thread.join(timeout=2)

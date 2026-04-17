@@ -4,11 +4,15 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from quorus_cli.codex_agent import (
     CodexAgentError,
+    _cached_child_api_key,
+    _message_id,
+    _save_child_api_key,
     build_codex_command,
+    build_codex_exec_command,
     build_prompt,
+    parent_join_room,
     resolve_identity,
 )
 
@@ -54,6 +58,24 @@ def test_resolve_identity_registers_child_from_suffix(monkeypatch: pytest.Monkey
     assert api_key == "mct_child"
 
 
+def test_resolve_identity_uses_cached_child_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "quorus_cli.codex_agent._cached_child_api_key",
+        lambda agent_name: "mct_cached" if agent_name == "arav-codex-reviewer" else "",
+    )
+
+    name, api_key = resolve_identity(
+        relay_url="https://relay.test",
+        parent_name="arav-codex",
+        parent_api_key="mct_parent",
+        requested_name=None,
+        suffix="reviewer",
+    )
+
+    assert name == "arav-codex-reviewer"
+    assert api_key == "mct_cached"
+
+
 def test_resolve_identity_rejects_non_child_name() -> None:
     with pytest.raises(CodexAgentError):
         resolve_identity(
@@ -77,6 +99,17 @@ def test_build_prompt_mentions_room_and_inbox() -> None:
     assert "/tmp/quorus-arav-codex-reviewer-inbox.txt" in prompt
 
 
+def test_build_prompt_mentions_context_snapshot_when_present() -> None:
+    prompt = build_prompt(
+        "medbuddy-sprint",
+        "arav-codex-reviewer",
+        Path("/tmp/quorus-arav-codex-reviewer-inbox.txt"),
+        Path("/tmp/quorus-arav-codex-reviewer-context.md"),
+    )
+
+    assert "/tmp/quorus-arav-codex-reviewer-context.md" in prompt
+
+
 def test_build_codex_command_includes_quorus_overrides() -> None:
     cmd = build_codex_command(
         room="medbuddy-sprint",
@@ -89,16 +122,121 @@ def test_build_codex_command_includes_quorus_overrides() -> None:
         inbox_path=Path("/tmp/quorus-arav-codex-reviewer-inbox.txt"),
     )
 
-    assert cmd[:7] == [
+    assert cmd[:3] == [
         "codex",
         "-C",
         "/tmp/workspace",
-        "-s",
-        "workspace-write",
-        "-a",
-        "on-request",
     ]
+    assert "-s" in cmd
+    assert "workspace-write" in cmd
+    assert "-a" in cmd
+    assert "on-request" in cmd
     assert 'mcp_servers.quorus.env.QUORUS_INSTANCE_NAME="arav-codex-reviewer"' in cmd
     assert 'mcp_servers.quorus.env.QUORUS_API_KEY="mct_child"' in cmd
     assert 'mcp_servers.quorus.env.QUORUS_RELAY_URL="https://relay.test"' in cmd
     assert "medbuddy-sprint" in cmd[-1]
+
+
+def test_build_codex_exec_command_uses_exec_mode() -> None:
+    cmd = build_codex_exec_command(
+        room="medbuddy-sprint",
+        participant="arav-codex-reviewer",
+        relay_url="https://relay.test",
+        api_key="mct_child",
+        cwd=Path("/tmp/workspace"),
+        sandbox="workspace-write",
+        inbox_path=Path("/tmp/quorus-arav-codex-reviewer-inbox.txt"),
+        context_path=Path("/tmp/quorus-arav-codex-reviewer-context.md"),
+        prompt="Handle the newest room activity.",
+    )
+
+    assert cmd[:4] == ["codex", "exec", "-C", "/tmp/workspace"]
+    assert "--skip-git-repo-check" in cmd
+    assert any("QUORUS_API_KEY" in part for part in cmd)
+    assert "Handle the newest room activity." in cmd[-1]
+
+
+def test_build_codex_command_supports_relay_secret() -> None:
+    cmd = build_codex_command(
+        room="dev-room",
+        participant="local-codex",
+        relay_url="http://localhost:8080",
+        relay_secret="dev-secret",
+        cwd=Path("/tmp/workspace"),
+        sandbox="workspace-write",
+        approval="on-request",
+        inbox_path=Path("/tmp/quorus-local-codex-inbox.txt"),
+    )
+
+    assert 'mcp_servers.quorus.env.QUORUS_RELAY_SECRET="dev-secret"' in cmd
+    assert all("QUORUS_API_KEY" not in part for part in cmd)
+
+
+def test_message_id_prefers_message_id_then_id() -> None:
+    assert _message_id({"message_id": "abc", "id": "fallback"}) == "abc"
+    assert _message_id({"id": "fallback"}) == "fallback"
+    assert _message_id({}) == ""
+
+
+def test_save_and_load_child_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakePm:
+        def __init__(self):
+            self.saved = None
+
+        def current(self):
+            return "default"
+
+        def get(self, slug):
+            assert slug == "default"
+            return {"instance_name": "arav"}
+
+        def save(self, slug, data):
+            self.saved = (slug, data)
+
+    fake_pm = FakePm()
+    monkeypatch.setattr("quorus_cli.codex_agent.ProfileManager", lambda: fake_pm)
+
+    _save_child_api_key("arav-codex-builder", "mct_child")
+
+    assert fake_pm.saved is not None
+    saved_slug, saved_data = fake_pm.saved
+    assert saved_slug == "default"
+    assert saved_data["agent_api_keys"]["arav-codex-builder"] == "mct_child"
+
+
+def test_cached_child_api_key_reads_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakePm:
+        def current(self):
+            return "default"
+
+        def get(self, slug):
+            assert slug == "default"
+            return {"agent_api_keys": {"arav-codex-builder": "mct_child"}}
+
+    monkeypatch.setattr("quorus_cli.codex_agent.ProfileManager", lambda: FakePm())
+
+    assert _cached_child_api_key("arav-codex-builder") == "mct_child"
+
+
+def test_parent_join_room_uses_parent_jwt(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = {}
+
+    def fake_request_json(method: str, url: str, **kwargs):
+        called["method"] = method
+        called["url"] = url
+        called["kwargs"] = kwargs
+        return {"ok": True}
+
+    monkeypatch.setattr("quorus_cli.codex_agent._request_json", fake_request_json)
+
+    parent_join_room(
+        relay_url="https://relay.test",
+        room="medbuddy-sprint",
+        participant="arav-codex-builder",
+        parent_api_key="mct_parent",
+    )
+
+    assert called["method"] == "POST"
+    assert called["url"] == "https://relay.test/rooms/medbuddy-sprint/join"
+    assert called["kwargs"]["json_body"] == {"participant": "arav-codex-builder"}
+    assert called["kwargs"]["api_key"] == "mct_parent"
