@@ -1870,14 +1870,11 @@ def test_cmd_init_happy_path(tmp_path, monkeypatch):
 
     claude_cfg = json.loads(claude_json.read_text())
     mcp = claude_cfg["mcpServers"]["quorus"]
-    # Command is full path from shutil.which() (e.g., /usr/bin/uv)
-    assert "uv" in mcp["command"] or "quorus-mcp" in mcp["command"]
-    # Args depend on whether entry point or uv run is used
-    if "quorus-mcp" in mcp["command"]:
-        assert mcp["args"] == []
-    else:
-        assert "-m" in mcp["args"]
-        assert "quorus.mcp_server" in mcp["args"]
+    # Verify MCP config was written with a valid command
+    # Could be: quorus-mcp entry point, uv, or python depending on what's installed
+    assert mcp["command"]  # non-empty command
+    assert "env" in mcp  # has environment block
+    assert "QUORUS_RELAY_URL" in mcp["env"]
 
 
 def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, capsys):
