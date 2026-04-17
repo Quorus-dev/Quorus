@@ -2254,11 +2254,123 @@ def _cmd_stats(args):
     asyncio.run(_stats(days=args.days, emit_json=args.json))
 
 
+def _register_mcp_everywhere(
+    *,
+    name: str,
+    relay_url: str,
+    api_key: str,
+    relay_secret: str,
+    mcp_command: str,
+    mcp_args: list[str],
+    ui,
+) -> list[str]:
+    """Auto-wire every installed MCP-compatible client in one sweep.
+
+    Delegates to per-platform writers in ``quorus_cli.mcp_writers``
+    which handle each client's config schema (Claude Code's
+    ``mcpServers`` JSON, Codex's TOML, Opencode's nested shape, etc.).
+    Every write is idempotent + atomic + preserves existing entries.
+
+    Returns the list of display labels that were successfully wired,
+    so the caller can print a ``Restart X to pick up the MCP server``
+    hint and decide whether to fall back to a project-level
+    ``.mcp.json``.
+    """
+    from quorus_cli.mcp_writers import McpEnv, register_all
+
+    env = McpEnv(
+        command=mcp_command,
+        args=list(mcp_args),
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=relay_secret,
+        instance_name_base=name,
+    )
+    results = register_all(env)
+
+    installed = [r for r in results if r.ok]
+    skipped = [r for r in results if r.status == "not_installed"]
+    errored = [r for r in results if r.status == "error"]
+
+    if installed:
+        labels = ", ".join(r.platform for r in installed)
+        ui.success(f"MCP registered with: [primary]{labels}[/]")
+        for r in installed:
+            identity = f"{name}-{_platform_key_for(r.platform)}"
+            ui.console.print(
+                f"  [muted]• {r.platform}[/] "
+                f"[dim]→ @{identity}  ({r.path})[/]"
+            )
+
+    if errored:
+        for r in errored:
+            ui.warn(
+                f"Couldn't write {r.platform} config at {r.path}",
+                hint=r.detail or "check file permissions + JSON syntax",
+            )
+
+    if not installed:
+        # No known client installed — fall back to project-level .mcp.json
+        # so a bare directory can still plug into any MCP client that
+        # honors the project file.
+        mcp_json_path = Path.cwd() / ".mcp.json"
+        existing: dict = {}
+        if mcp_json_path.exists():
+            try:
+                existing = json.loads(mcp_json_path.read_text())
+            except (json.JSONDecodeError, ValueError):
+                pass
+        existing.setdefault("mcpServers", {})["quorus"] = {
+            "type": "stdio",
+            "command": mcp_command,
+            "args": list(mcp_args),
+            "env": {
+                "QUORUS_RELAY_URL": relay_url,
+                "QUORUS_INSTANCE_NAME": name,
+                **({"QUORUS_API_KEY": api_key} if api_key else {}),
+                **(
+                    {"QUORUS_RELAY_SECRET": relay_secret}
+                    if (relay_secret and not api_key) else {}
+                ),
+            },
+        }
+        mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n")
+        ui.info(f"MCP config written to project-level [dim]{mcp_json_path}[/]")
+        ui.console.print(
+            "  [muted]No MCP client detected — use this config with "
+            "any MCP-compatible agent.[/]"
+        )
+
+    if skipped:
+        skipped_labels = ", ".join(r.platform for r in skipped)
+        ui.console.print(
+            f"  [dim]— not installed: {skipped_labels}[/]"
+        )
+
+    return [r.platform for r in installed]
+
+
+def _platform_key_for(label: str) -> str:
+    """Map a display label back to the lowercase key used in identities."""
+    m = {
+        "Claude Code": "claude",
+        "Claude Desktop": "claude-desktop",
+        "Cursor": "cursor",
+        "Codex CLI": "codex",
+        "Gemini CLI": "gemini",
+        "Windsurf": "windsurf",
+        "Opencode": "opencode",
+        "Continue": "continue",
+        "Cline": "cline",
+    }
+    return m.get(label, label.lower().replace(" ", "-"))
+
+
 def _cmd_init(args):
     """One-command setup: write config, auto-register MCP with every installed
     MCP-compatible client (Claude Code, Claude Desktop, Cursor, Windsurf,
-    Gemini CLI). Falls back to a project-level .mcp.json when no client is
-    detected. For OpenAI Codex or other HTTP agents use `quorus connect`."""
+    Gemini CLI, Codex). Falls back to a project-level .mcp.json when no client
+    is detected."""
     from quorus_cli import ui
 
     ui.banner()
@@ -2340,87 +2452,17 @@ def _cmd_init(args):
             "Install uv for faster startup: https://docs.astral.sh/uv/[/yellow]"
         )
 
-    # 3. Register MCP server with every detected MCP-compatible client.
-    # Most agents use the same JSON `mcpServers` shape. Opencode uses a
-    # different schema (`mcp.<name> = {type, command[], enabled}`), so we
-    # wire it with a separate code path.
-    mcp_entry = {
-        "type": "stdio",
-        "command": mcp_command,
-        "args": mcp_args,
-        "env": {},
-    }
-    # Opencode's schema variant
-    opencode_entry = {
-        "type": "local",
-        "command": [mcp_command, *mcp_args],
-        "enabled": True,
-    }
-
-    # (label, config_path) pairs for agents using the standard mcpServers shape
-    mcp_targets = [
-        ("Claude Code", Path.home() / ".claude" / "settings.json"),
-        ("Claude Desktop", Path.home() / ".claude.json"),
-        ("Cursor", Path.home() / ".cursor" / "mcp.json"),
-        ("Windsurf", Path.home() / ".codeium" / "windsurf" / "mcp_config.json"),
-        ("Gemini CLI", Path.home() / ".gemini" / "settings.json"),
-    ]
-
-    # Opencode candidate paths (XDG standard first, then home fallback)
-    opencode_candidates = [
-        Path.home() / ".config" / "opencode" / "opencode.json",
-        Path.home() / ".opencode.json",
-    ]
-
-    registered_labels: list[str] = []
-
-    for label, cfg_path in mcp_targets:
-        if not cfg_path.exists():
-            continue
-        try:
-            existing = json.loads(cfg_path.read_text())
-        except (json.JSONDecodeError, ValueError):
-            existing = {}
-        existing.setdefault("mcpServers", {})["quorus"] = mcp_entry
-        cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg_path.write_text(json.dumps(existing, indent=2))
-        registered_labels.append(label)
-
-    for oc_path in opencode_candidates:
-        if not oc_path.exists():
-            continue
-        try:
-            existing = json.loads(oc_path.read_text())
-        except (json.JSONDecodeError, ValueError):
-            existing = {"$schema": "https://opencode.ai/config.json"}
-        existing.setdefault("mcp", {})["quorus"] = opencode_entry
-        oc_path.parent.mkdir(parents=True, exist_ok=True)
-        oc_path.write_text(json.dumps(existing, indent=2))
-        registered_labels.append("Opencode")
-        break  # only write to the first one we find
-
-    if registered_labels:
-        ui.success(
-            "MCP registered with: [primary]"
-            + ", ".join(registered_labels)
-            + "[/]"
-        )
-    else:
-        # None of the known agents are installed — write project-level .mcp.json
-        mcp_json_path = Path.cwd() / ".mcp.json"
-        existing = {}
-        if mcp_json_path.exists():
-            try:
-                existing = json.loads(mcp_json_path.read_text())
-            except (json.JSONDecodeError, ValueError):
-                pass
-        existing.setdefault("mcpServers", {})["quorus"] = mcp_entry
-        mcp_json_path.write_text(json.dumps(existing, indent=2))
-        ui.info(f"MCP config written to project-level [dim]{mcp_json_path}[/]")
-        ui.console.print(
-            "  [muted]No MCP client detected — use this config with "
-            "any MCP-compatible agent.[/]"
-        )
+    # 3. Register MCP server with every detected MCP-compatible client
+    # via the shared multi-platform helper.
+    registered_labels = _register_mcp_everywhere(
+        name=name,
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=secret,
+        mcp_command=mcp_command,
+        mcp_args=mcp_args,
+        ui=ui,
+    )
 
     # 4. Verify relay is reachable (best-effort, non-blocking)
     try:
@@ -2955,30 +2997,28 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     # (atomic 0600 write via _write_sensitive_json)
     console.print(f"[green]Config written to {config_path}[/green]")
 
-    # 2. Register MCP server
-    claude_config_path = Path.home() / ".claude.json"
-    if claude_config_path.exists():
-        try:
-            claude_config = json.loads(claude_config_path.read_text())
-        except (json.JSONDecodeError, ValueError):
-            claude_config = {}
+    # 2. Register MCP server with every installed client (Claude Code,
+    # Claude Desktop, Cursor, Codex, Gemini CLI, Windsurf, Opencode,
+    # Continue). Shared logic with `quorus init` — every joiner gets
+    # the same full auto-register treatment, not just Claude Code.
+    del repo_dir, quorus_dir  # unused here; kept above for compat with old edits
+    if shutil.which("uv"):
+        mcp_command = "uv"
+        mcp_args = ["run", "python", "-m", "quorus.mcp_server"]
     else:
-        claude_config = {}
+        mcp_command = sys.executable
+        mcp_args = ["-m", "quorus.mcp_server"]
+    from quorus_cli import ui as _reg_ui
 
-    if "mcpServers" not in claude_config:
-        claude_config["mcpServers"] = {}
-
-    claude_config["mcpServers"]["quorus"] = {
-        "type": "stdio",
-        "command": "uv",
-        "args": [
-            "run", "--directory", str(repo_dir),
-            "python", str(quorus_dir / "mcp_server.py"),
-        ],
-        "env": {},
-    }
-    claude_config_path.write_text(json.dumps(claude_config, indent=2))
-    console.print("[green]MCP server registered[/green]")
+    _register_mcp_everywhere(
+        name=name,
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=secret,
+        mcp_command=mcp_command,
+        mcp_args=mcp_args,
+        ui=_reg_ui,
+    )
 
     # 3. Join the room
     async def _do_join():

@@ -22,10 +22,14 @@ logger = logging.getLogger("mcp_tunnel.mcp")
 
 _config = load_config()
 CONFIG_FILE = Path(_config["config_file"])
-RELAY_URL = _config["relay_url"]
-RELAY_SECRET = _config["relay_secret"]
-API_KEY = _config["api_key"]
-INSTANCE_NAME = _config["instance_name"]
+# Per-agent identity + connection overrides. Each client the CLI wires
+# (Claude Code, Codex, Cursor, …) gets its own QUORUS_INSTANCE_NAME via
+# env so the relay sees them as distinct participants even though they
+# share `~/.quorus/config.json`. Env beats config for all four fields.
+RELAY_URL = os.environ.get("QUORUS_RELAY_URL") or _config["relay_url"]
+RELAY_SECRET = os.environ.get("QUORUS_RELAY_SECRET") or _config["relay_secret"]
+API_KEY = os.environ.get("QUORUS_API_KEY") or _config["api_key"]
+INSTANCE_NAME = os.environ.get("QUORUS_INSTANCE_NAME") or _config["instance_name"]
 SSE_ENABLED = os.environ.get("SSE_ENABLED", "true").strip().lower() not in {
     "0", "false", "no", "off",
 }
