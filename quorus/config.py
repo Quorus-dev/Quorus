@@ -108,29 +108,67 @@ def resolve_config_file() -> Path:
 class ConfigManager:
     """Load/save config with a single source of truth for the path.
 
-    Call sites should prefer ``ConfigManager`` over reimplementing
-    load/save in each module.
+    Behavior:
+
+    - When ``profile`` is given, ``load()`` returns that profile's data
+      (or ``{}`` if missing/corrupt).
+    - When ``profile`` is ``None`` (default), ``load()`` returns the
+      CURRENT profile's data, falling back to legacy auto-migration on
+      first call, then falling back to direct pointer-file read if no
+      profile layout has been set up yet (returns ``{}`` on fresh installs).
+    - ``save(data)`` writes to ``self.path`` with 0o600 atomic rename.
+      When ``profile`` is set, ``self.path`` resolves to the profile
+      file; otherwise it resolves to the pointer path (backward-compat
+      for callers writing the legacy flat shape — migration picks that
+      up on the next load).
     """
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        profile: str | None = None,
+    ) -> None:
         self._explicit_path = path
+        self._profile = profile
 
     @property
     def path(self) -> Path:
-        return self._explicit_path or resolve_config_file()
+        if self._explicit_path is not None:
+            return self._explicit_path
+        if self._profile is not None:
+            from quorus.profiles import PROFILES_SUBDIR
+            return (
+                resolve_config_dir() / PROFILES_SUBDIR / f"{self._profile}.json"
+            )
+        return resolve_config_file()
 
     def load(self) -> dict[str, Any]:
-        path = self.path
-        if not path.exists():
-            return {}
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, ValueError):
-            return {}
+        # Explicit-path callers (tests, CLI --config pointing at a file)
+        # get raw file contents, no profile resolution.
+        if self._explicit_path is not None:
+            return _read_json_or_empty(self._explicit_path)
+
+        from quorus.profiles import ProfileManager
+
+        pm = ProfileManager()
+
+        # Explicit profile kwarg — read that profile or empty.
+        if self._profile is not None:
+            data = pm.get(self._profile)
+            return data or {}
+
+        # Default behavior: auto-migrate legacy, then return current.
+        pm.migrate_legacy_if_needed()
+        current = pm.current_profile()
+        if current is not None:
+            return current
+        # No profiles and no legacy to migrate → empty.
+        return {}
 
     def save(self, data: dict[str, Any]) -> None:
         path = self.path
-        if _is_legacy_dir(path.parent):
+        if _is_legacy_dir(path.parent) or _is_legacy_dir(path.parent.parent):
             raise ValueError(
                 f"Refusing to write config to legacy path {path}. "
                 "Move your config to ~/.quorus/."
@@ -150,6 +188,16 @@ class ConfigManager:
                 pass
             raise
         os.replace(tmp, path)
+
+
+def _read_json_or_empty(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text())
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
 
 
 def load_config() -> dict[str, Any]:
