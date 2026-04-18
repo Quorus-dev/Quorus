@@ -1,13 +1,15 @@
 """Claude Code-specific Quorus runner.
 
-This keeps Claude Code additive to Quorus rather than changing Codex/Gemini paths.
-It supports:
+Mirrors the hardened Codex runner architecture:
 
-- room-bound Claude Code identities
-- inbox mirroring for direct messages
-- room state/history context snapshots
-- presence heartbeats so the runner stays visible in room state
-- optional supervised autonomous mode powered by ``claude -p``
+- isolated per-agent QUORUS_CONFIG_DIR (never overwrites the human's profile)
+- exact identity resolution (no double-suffix: arav-claude stays arav-claude)
+- parent-assisted join fallback on 403
+- correct /heartbeat endpoint (not /rooms/{room}/heartbeat)
+- proper thread cleanup in finally block
+- saved autonomy defaults persisted to profile
+- MCP-unavailable fallback via quorus CLI shell calls
+- supervised autonomous mode via ``claude -p`` (non-interactive, bounded per turn)
 """
 
 from __future__ import annotations
@@ -26,11 +28,16 @@ import httpx
 from quorus.profiles import ProfileManager
 
 DEFAULT_HISTORY_LIMIT = 25
+_DEFAULTS_KEY = "claude_autonomy"
 
 
 class ClaudeAgentError(RuntimeError):
     """Raised for recoverable Claude-agent runner failures."""
 
+
+# ---------------------------------------------------------------------------
+# Profile helpers
+# ---------------------------------------------------------------------------
 
 def _current_profile_manager() -> tuple[ProfileManager, str | None, dict]:
     pm = ProfileManager()
@@ -60,6 +67,49 @@ def _save_child_api_key(agent_name: str, api_key: str) -> None:
     data["agent_api_keys"] = keys
     pm.save(slug, data)
 
+
+def load_claude_autonomy_defaults() -> dict:
+    """Load saved Claude autonomy defaults from the current profile."""
+    _pm, _slug, data = _current_profile_manager()
+    defaults = data.get(_DEFAULTS_KEY, {})
+    return defaults if isinstance(defaults, dict) else {}
+
+
+def save_claude_autonomy_defaults(
+    *,
+    autonomous: bool | None = None,
+    room_poll_seconds: int | None = None,
+    heartbeat_seconds: int | None = None,
+    history_limit: int | None = None,
+    permission_mode: str | None = None,
+    model: str | None = None,
+) -> None:
+    """Persist Claude autonomy defaults into the current Quorus profile."""
+    pm, slug, data = _current_profile_manager()
+    if not slug:
+        return
+    existing = data.get(_DEFAULTS_KEY, {})
+    if not isinstance(existing, dict):
+        existing = {}
+    if autonomous is not None:
+        existing["autonomous"] = autonomous
+    if room_poll_seconds is not None:
+        existing["room_poll_seconds"] = room_poll_seconds
+    if heartbeat_seconds is not None:
+        existing["heartbeat_seconds"] = heartbeat_seconds
+    if history_limit is not None:
+        existing["history_limit"] = history_limit
+    if permission_mode is not None:
+        existing["permission_mode"] = permission_mode
+    if model is not None:
+        existing["model"] = model
+    data[_DEFAULTS_KEY] = existing
+    pm.save(slug, data)
+
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
 
 def _auth_headers(
     *,
@@ -113,6 +163,163 @@ def _request_json(
     return resp.json()
 
 
+# ---------------------------------------------------------------------------
+# Identity resolution  (mirrors codex_agent.py exactly — no double-suffix)
+# ---------------------------------------------------------------------------
+
+def resolve_identity(
+    *,
+    relay_url: str,
+    parent_name: str,
+    parent_api_key: str,
+    requested_name: str | None,
+    suffix: str | None,
+) -> tuple[str, str]:
+    """Resolve the participant identity and API key for the Claude run.
+
+    Mirrors the Codex runner logic exactly to prevent double-suffix creation:
+    - No --name, no --suffix → return (parent_name, parent_api_key) as-is.
+    - Only one of --name or --suffix may be given.
+    - --name must equal parent_name or start with parent_name + '-'.
+    """
+    if requested_name and suffix:
+        raise ClaudeAgentError("Pass either --name or --suffix, not both.")
+
+    # No override — run as the parent identity directly (prevents arav-claude-claude).
+    if not requested_name and not suffix:
+        return parent_name, parent_api_key
+
+    if not parent_api_key:
+        raise ClaudeAgentError(
+            "Registering child Claude identities requires a Quorus workspace API key."
+        )
+
+    if suffix:
+        derived_suffix = suffix.strip()
+    else:
+        # --name provided: validate it is this user's child, not a random name.
+        if requested_name == parent_name:
+            return parent_name, parent_api_key
+        prefix = f"{parent_name}-"
+        if not requested_name or not requested_name.startswith(prefix):
+            raise ClaudeAgentError(
+                f"--name must equal {parent_name!r} or start with {prefix!r}."
+            )
+        derived_suffix = requested_name[len(prefix):]
+
+    if not derived_suffix:
+        raise ClaudeAgentError("Derived Claude agent suffix cannot be empty.")
+
+    agent_name = f"{parent_name}-{derived_suffix}"
+
+    # Return cached key if already registered.
+    cached_key = _cached_child_api_key(agent_name)
+    if cached_key:
+        return agent_name, cached_key
+
+    # Register a new child identity via the relay.
+    resp = httpx.post(
+        f"{relay_url}/v1/auth/register-agent",
+        json={"suffix": derived_suffix},
+        headers={"Authorization": f"Bearer {parent_api_key}"},
+        timeout=10,
+        follow_redirects=True,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    agent_name = data["agent_name"]
+    agent_api_key = data["api_key"]
+    _save_child_api_key(agent_name, agent_api_key)
+    return agent_name, agent_api_key
+
+
+# ---------------------------------------------------------------------------
+# Room operations
+# ---------------------------------------------------------------------------
+
+def join_room(
+    *,
+    relay_url: str,
+    room: str,
+    participant: str,
+    api_key: str = "",
+    relay_secret: str = "",
+) -> None:
+    """Ensure the runner identity is a member of the room."""
+    _request_json(
+        "POST",
+        f"{relay_url}/rooms/{room}/join",
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=relay_secret,
+        json_body={"participant": participant},
+    )
+
+
+def parent_join_room(
+    *,
+    relay_url: str,
+    room: str,
+    participant: str,
+    parent_api_key: str,
+) -> None:
+    """Add a child participant to the room using the parent/admin identity."""
+    _request_json(
+        "POST",
+        f"{relay_url}/rooms/{room}/join",
+        relay_url=relay_url,
+        api_key=parent_api_key,
+        json_body={"participant": participant},
+    )
+
+
+def send_announcement(
+    *,
+    relay_url: str,
+    room: str,
+    participant: str,
+    content: str,
+    api_key: str = "",
+    relay_secret: str = "",
+) -> None:
+    """Post a status message for the Claude runner."""
+    _request_json(
+        "POST",
+        f"{relay_url}/rooms/{room}/messages",
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=relay_secret,
+        json_body={
+            "from_name": participant,
+            "content": content,
+            "message_type": "status",
+        },
+    )
+
+
+def send_heartbeat(
+    *,
+    relay_url: str,
+    room: str,
+    participant: str,
+    api_key: str = "",
+    relay_secret: str = "",
+) -> None:
+    """Keep the Claude runner visible in room presence.
+
+    Uses the top-level /heartbeat endpoint (mirrors codex_agent.py).
+    The old /rooms/{room}/heartbeat endpoint does not exist on the relay.
+    """
+    _request_json(
+        "POST",
+        f"{relay_url}/heartbeat",
+        relay_url=relay_url,
+        api_key=api_key,
+        relay_secret=relay_secret,
+        json_body={"instance_name": participant, "status": "active", "room": room},
+    )
+
+
 def fetch_room_state(
     *,
     relay_url: str,
@@ -146,126 +353,18 @@ def fetch_room_history(
         relay_secret=relay_secret,
         params={"limit": limit},
     )
-    return data if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
 
 
-def send_heartbeat(
-    *,
-    relay_url: str,
-    room: str,
-    participant: str,
-    api_key: str = "",
-    relay_secret: str = "",
-) -> None:
-    _request_json(
-        "POST",
-        f"{relay_url}/rooms/{room}/heartbeat",
-        relay_url=relay_url,
-        api_key=api_key,
-        relay_secret=relay_secret,
-        json_body={"participant": participant},
-    )
-
-
-def send_room_message(
-    *,
-    relay_url: str,
-    room: str,
-    participant: str,
-    content: str,
-    message_type: str = "chat",
-    api_key: str = "",
-    relay_secret: str = "",
-) -> dict:
-    data = _request_json(
-        "POST",
-        f"{relay_url}/rooms/{room}/messages",
-        relay_url=relay_url,
-        api_key=api_key,
-        relay_secret=relay_secret,
-        json_body={
-            "from_name": participant,
-            "content": content,
-            "message_type": message_type,
-        },
-    )
-    return data if isinstance(data, dict) else {}
-
-
-def join_room(
-    *,
-    relay_url: str,
-    room: str,
-    participant: str,
-    api_key: str = "",
-    relay_secret: str = "",
-) -> dict:
-    data = _request_json(
-        "POST",
-        f"{relay_url}/rooms/{room}/join",
-        relay_url=relay_url,
-        api_key=api_key,
-        relay_secret=relay_secret,
-        json_body={"participant": participant},
-    )
-    return data if isinstance(data, dict) else {}
-
-
-def register_agent_identity(
-    *,
-    relay_url: str,
-    parent_api_key: str,
-    suffix: str,
-) -> tuple[str, str]:
-    """Register a child agent identity under the parent account."""
-    resp = httpx.post(
-        f"{relay_url}/v1/auth/register-agent",
-        headers={"Authorization": f"Bearer {parent_api_key}"},
-        json={"suffix": suffix},
-        timeout=15,
-        follow_redirects=True,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return data["agent_name"], data["api_key"]
-
-
-def resolve_identity(
-    *,
-    relay_url: str,
-    parent_name: str,
-    parent_api_key: str,
-    requested_name: str | None,
-    suffix: str | None,
-) -> tuple[str, str]:
-    """Resolve or register the Claude agent identity."""
-    if requested_name:
-        cached_key = _cached_child_api_key(requested_name)
-        if cached_key:
-            return requested_name, cached_key
-        return requested_name, parent_api_key
-
-    agent_suffix = suffix or "claude"
-    expected_name = f"{parent_name}-{agent_suffix}"
-    cached_key = _cached_child_api_key(expected_name)
-    if cached_key:
-        return expected_name, cached_key
-
-    try:
-        agent_name, agent_key = register_agent_identity(
-            relay_url=relay_url,
-            parent_api_key=parent_api_key,
-            suffix=agent_suffix,
-        )
-        _save_child_api_key(agent_name, agent_key)
-        return agent_name, agent_key
-    except Exception:
-        # Registration endpoint unavailable — operate under parent identity.
-        return expected_name, parent_api_key
-
+# ---------------------------------------------------------------------------
+# Local mirror helpers
+# ---------------------------------------------------------------------------
 
 def _message_id(msg: dict) -> str:
-    return str(msg.get("id", "")) or str(msg.get("timestamp", ""))
+    value = msg.get("message_id") or msg.get("id") or msg.get("uuid") or msg.get("timestamp") or ""
+    return str(value)
 
 
 def _write_atomic(path: Path, content: str) -> None:
@@ -353,6 +452,67 @@ def sync_room_context(
     return history
 
 
+# ---------------------------------------------------------------------------
+# MCP fallback — quorus CLI shell calls
+# ---------------------------------------------------------------------------
+
+def _quorus_cli_path() -> str | None:
+    """Return path to the installed quorus CLI, or None."""
+    return shutil.which("quorus")
+
+
+def _fallback_read_context(context_path: Path) -> str:
+    """Read the local context mirror as fallback when MCP is unavailable."""
+    if context_path.exists():
+        return context_path.read_text(encoding="utf-8")
+    return ""
+
+
+def _fallback_post_message(room: str, content: str, verbose: bool = False) -> bool:
+    """Post a message via quorus CLI when MCP is unavailable."""
+    cli = _quorus_cli_path()
+    if not cli:
+        return False
+    try:
+        result = subprocess.run(
+            [cli, "say", room, content],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if verbose and result.returncode != 0:
+            sys.stderr.write(f"[quorus claude-agent fallback-post] {result.stderr}\n")
+        return result.returncode == 0
+    except Exception as exc:  # noqa: BLE001
+        if verbose:
+            sys.stderr.write(f"[quorus claude-agent fallback-post] {exc}\n")
+        return False
+
+
+def _fallback_read_inbox(verbose: bool = False) -> list[str]:
+    """Read new inbox messages via quorus CLI as fallback."""
+    cli = _quorus_cli_path()
+    if not cli:
+        return []
+    try:
+        result = subprocess.run(
+            [cli, "inbox"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            return [line for line in result.stdout.splitlines() if line.strip()]
+    except Exception as exc:  # noqa: BLE001
+        if verbose:
+            sys.stderr.write(f"[quorus claude-agent fallback-inbox] {exc}\n")
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Background loops
+# ---------------------------------------------------------------------------
+
 def poll_inbox_loop(
     *,
     relay_url: str,
@@ -401,6 +561,10 @@ def poll_inbox_loop(
             if verbose:
                 sys.stderr.write(f"[quorus claude-agent inbox] {exc}\n")
                 sys.stderr.flush()
+            # MCP fallback: try quorus CLI inbox
+            fallback_lines = _fallback_read_inbox(verbose=verbose)
+            if fallback_lines:
+                _append_lines(inbox_path, [line + "\n" for line in fallback_lines])
             time.sleep(5)
 
 
@@ -432,6 +596,7 @@ def room_context_loop(
             if verbose:
                 sys.stderr.write(f"[quorus claude-agent context] {exc}\n")
                 sys.stderr.flush()
+            # Context mirror stays on disk from last successful sync — still usable.
         stop_event.wait(poll_seconds)
 
 
@@ -462,6 +627,10 @@ def heartbeat_loop(
         stop_event.wait(heartbeat_seconds)
 
 
+# ---------------------------------------------------------------------------
+# Claude command builders
+# ---------------------------------------------------------------------------
+
 def build_prompt(
     room: str,
     participant: str,
@@ -475,21 +644,21 @@ def build_prompt(
         "Operating rules:",
         "- Check Quorus messages and room context before acting.",
         "- Use the Quorus MCP tools as the primary read/write path.",
+        "- If Quorus MCP is unavailable, fall back to the local room mirrors and "
+        "the `quorus` CLI via shell for room reads/posts.",
         f"- A local inbox mirror is available at `{inbox_path}` as fallback context.",
     ]
     if context_path is not None:
         lines.append(f"- A room context snapshot is available at `{context_path}`.")
-    lines.extend(
-        [
-            "- If a concrete task is assigned, acknowledge ownership "
-            "clearly in-room before implementing.",
-            "- Post concise status updates after meaningful progress, blockers, or completion.",
-            f"- Do not impersonate another participant. Only send as `{participant}`.",
-            "- Work autonomously on assigned tasks. Build, test, and iterate without waiting.",
-            "- When you complete a task, announce it in-room and look for the next one.",
-            "- If blocked, post the blocker clearly and move to other work if possible.",
-        ]
-    )
+    lines.extend([
+        "- If a concrete task is assigned, acknowledge ownership "
+        "clearly in-room before implementing.",
+        "- Post concise status updates after meaningful progress, blockers, or completion.",
+        f"- Do not impersonate another participant. Only send as `{participant}`.",
+        "- Work autonomously on assigned tasks. Build, test, iterate, and post updates.",
+        "- When you complete a task, announce it in-room and look for the next one.",
+        "- If blocked, post the blocker clearly and move to other work if possible.",
+    ])
     return "\n".join(lines)
 
 
@@ -500,8 +669,8 @@ def _build_mcp_config(
     api_key: str = "",
     relay_secret: str = "",
 ) -> dict:
-    """Build MCP config for Quorus server."""
-    env = {
+    """Build MCP config block for the Quorus server."""
+    env: dict[str, str] = {
         "QUORUS_INSTANCE_NAME": participant,
         "QUORUS_RELAY_URL": relay_url,
     }
@@ -510,10 +679,7 @@ def _build_mcp_config(
     elif relay_secret:
         env["QUORUS_RELAY_SECRET"] = relay_secret
 
-    mcp_command = shutil.which("quorus-mcp")
-    if not mcp_command:
-        mcp_command = "quorus-mcp"
-
+    mcp_command = shutil.which("quorus-mcp") or "quorus-mcp"
     return {
         "mcpServers": {
             "quorus": {
@@ -546,7 +712,6 @@ def build_claude_command(
         api_key=api_key,
         relay_secret=relay_secret,
     )
-
     cmd = [
         "claude",
         "--model", model,
@@ -554,10 +719,8 @@ def build_claude_command(
         "--mcp-config", json.dumps(mcp_config),
         "--append-system-prompt", prompt,
     ]
-
     if cwd:
         cmd.extend(["--add-dir", str(cwd)])
-
     return cmd
 
 
@@ -575,7 +738,10 @@ def build_claude_print_command(
     prompt: str,
     model: str = "sonnet",
 ) -> list[str]:
-    """Build the non-interactive Claude -p command for autonomous mode."""
+    """Build the non-interactive ``claude -p`` command for autonomous turns.
+
+    Equivalent to ``codex exec`` — one bounded turn per room-activity trigger.
+    """
     base_prompt = build_prompt(room, participant, inbox_path, context_path)
     mcp_config = _build_mcp_config(
         participant=participant,
@@ -583,12 +749,10 @@ def build_claude_print_command(
         api_key=api_key,
         relay_secret=relay_secret,
     )
-
-    # Combine system context + task prompt into single prompt argument.
-    # --append-system-prompt and --add-dir both break -p / --print mode.
+    # --append-system-prompt and --add-dir both break -p / --print mode,
+    # so we fold everything into the single prompt argument.
     full_prompt = f"{base_prompt}\n\n{prompt}"
-
-    cmd = [
+    return [
         "claude",
         "-p",
         "--model", model,
@@ -598,8 +762,10 @@ def build_claude_print_command(
         full_prompt,
     ]
 
-    return cmd
 
+# ---------------------------------------------------------------------------
+# Autonomous loop
+# ---------------------------------------------------------------------------
 
 def _autonomous_prompt(
     *,
@@ -649,7 +815,10 @@ def run_autonomous_loop(
     verbose: bool,
     model: str = "sonnet",
 ) -> int:
-    """Supervise ``claude -p`` runs when room activity changes."""
+    """Supervise ``claude -p`` runs when room activity changes.
+
+    One bounded autonomous turn per new-message batch — never one giant free-run.
+    """
     seen_message_ids: set[str] = set()
     initial_scan = True
 
@@ -668,10 +837,15 @@ def run_autonomous_loop(
             if verbose:
                 sys.stderr.write(f"[quorus claude-agent auto-sync] {exc}\n")
                 sys.stderr.flush()
+            # MCP fallback: read from local context mirror
+            context_text = _fallback_read_context(context_path)
+            if context_text and not initial_scan:
+                stop_event.wait(poll_seconds)
+                continue
             stop_event.wait(poll_seconds)
             continue
 
-        new_messages = []
+        new_messages: list[dict] = []
         current_ids: set[str] = set()
         for message in history:
             message_id = _message_id(message)
@@ -696,6 +870,7 @@ def run_autonomous_loop(
             initial_scan=initial_scan,
         )
         initial_scan = False
+
         cmd = build_claude_print_command(
             room=room,
             participant=participant,
@@ -711,17 +886,22 @@ def run_autonomous_loop(
         )
 
         if verbose:
-            sys.stderr.write(f"[quorus claude-agent] Spawning claude -p\n")
+            sys.stderr.write(f"[quorus claude-agent] Spawning claude -p turn\n")
             sys.stderr.flush()
 
         rc = subprocess.call(cmd, cwd=str(cwd) if cwd else None)
         if rc != 0 and verbose:
             sys.stderr.write(f"[quorus claude-agent auto-exec] claude exited {rc}\n")
             sys.stderr.flush()
+
         stop_event.wait(max(5, poll_seconds))
 
     return 0
 
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
 def run_claude_agent(
     *,
@@ -743,15 +923,27 @@ def run_claude_agent(
     heartbeat_seconds: int,
     history_limit: int,
     model: str = "sonnet",
+    save_defaults: bool = False,
 ) -> int:
-    """Join the room, maintain runner state, and launch Claude Code."""
-    # Isolate this agent's Quorus config so it never overwrites the human's
-    # shared ~/.quorus/profiles/default.json.  Each agent gets its own
-    # scratch directory under /tmp; the relay connection details are passed
-    # via environment variables so no file-write is needed.
+    """Join the room, maintain runner state, and launch Claude Code.
+
+    Config isolation: each agent gets its own QUORUS_CONFIG_DIR under /tmp
+    so it never overwrites the human's ~/.quorus/profiles/default.json.
+    """
     import tempfile as _tmp
-    _agent_config_dir = Path(_tmp.mkdtemp(prefix=f"quorus-agent-"))
+    _agent_config_dir = Path(_tmp.mkdtemp(prefix="quorus-agent-"))
     os.environ.setdefault("QUORUS_CONFIG_DIR", str(_agent_config_dir))
+
+    # Optionally persist these settings for future runs.
+    if save_defaults:
+        save_claude_autonomy_defaults(
+            autonomous=autonomous,
+            room_poll_seconds=room_poll_seconds,
+            heartbeat_seconds=heartbeat_seconds,
+            history_limit=history_limit,
+            permission_mode=permission_mode,
+            model=model,
+        )
 
     participant, agent_api_key = resolve_identity(
         relay_url=relay_url,
@@ -760,117 +952,138 @@ def run_claude_agent(
         requested_name=requested_name,
         suffix=suffix,
     )
+    effective_secret = relay_secret if not agent_api_key else ""
 
+    # Join with parent-assisted fallback and 403-already-member tolerance.
     try:
         join_room(
             relay_url=relay_url,
             room=room,
             participant=participant,
             api_key=agent_api_key,
-            relay_secret=relay_secret,
+            relay_secret=effective_secret,
         )
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 403:
-            # Room requires invite token for self-join; agent may already be a
-            # member or can operate via API key — continue rather than abort.
+        can_parent_add = (
+            exc.response.status_code == 403
+            and parent_api_key
+            and participant != parent_name
+        )
+        if can_parent_add:
+            # Child identity — ask the parent account to add it.
+            parent_join_room(
+                relay_url=relay_url,
+                room=room,
+                participant=participant,
+                parent_api_key=parent_api_key,
+            )
+        elif exc.response.status_code == 403:
+            # Some relays reject redundant self-join; if room state is readable
+            # with current auth, treat existing membership as satisfied.
+            fetch_room_state(
+                relay_url=relay_url,
+                room=room,
+                api_key=agent_api_key,
+                relay_secret=effective_secret,
+            )
             if verbose:
                 sys.stderr.write(
-                    f"[quorus claude-agent] join returned 403 (invite-only room); "
-                    "continuing with existing credentials.\n"
+                    f"[quorus claude-agent] join returned 403; room state readable — "
+                    "treating as existing member.\n"
                 )
                 sys.stderr.flush()
         else:
             raise
 
     if announce:
-        send_room_message(
+        send_announcement(
             relay_url=relay_url,
             room=room,
             participant=participant,
-            content=f"`{participant}` joined via Claude Code runner.",
-            message_type="system",
+            content=f"{participant} online. Claude Code runner attached and ready.",
             api_key=agent_api_key,
-            relay_secret=relay_secret,
+            relay_secret=effective_secret,
         )
 
     inbox_path = Path(f"/tmp/quorus-{participant}-inbox.txt")
     context_path = Path(f"/tmp/quorus-{participant}-context.md")
-
     stop_event = threading.Event()
 
-    inbox_thread = threading.Thread(
-        target=poll_inbox_loop,
-        kwargs={
-            "relay_url": relay_url,
-            "participant": participant,
-            "inbox_path": inbox_path,
-            "stop_event": stop_event,
-            "wait_seconds": wait_seconds,
-            "api_key": agent_api_key,
-            "relay_secret": relay_secret,
-            "verbose": verbose,
-        },
-        daemon=True,
-    )
-    inbox_thread.start()
+    threads = [
+        threading.Thread(
+            target=poll_inbox_loop,
+            kwargs={
+                "relay_url": relay_url,
+                "participant": participant,
+                "inbox_path": inbox_path,
+                "stop_event": stop_event,
+                "wait_seconds": wait_seconds,
+                "api_key": agent_api_key,
+                "relay_secret": effective_secret,
+                "verbose": verbose,
+            },
+            daemon=True,
+        ),
+        threading.Thread(
+            target=room_context_loop,
+            kwargs={
+                "relay_url": relay_url,
+                "room": room,
+                "participant": participant,
+                "context_path": context_path,
+                "history_limit": history_limit,
+                "stop_event": stop_event,
+                "poll_seconds": room_poll_seconds,
+                "api_key": agent_api_key,
+                "relay_secret": effective_secret,
+                "verbose": verbose,
+            },
+            daemon=True,
+        ),
+        threading.Thread(
+            target=heartbeat_loop,
+            kwargs={
+                "relay_url": relay_url,
+                "room": room,
+                "participant": participant,
+                "stop_event": stop_event,
+                "heartbeat_seconds": heartbeat_seconds,
+                "api_key": agent_api_key,
+                "relay_secret": effective_secret,
+                "verbose": verbose,
+            },
+            daemon=True,
+        ),
+    ]
+    for thread in threads:
+        thread.start()
 
-    context_thread = threading.Thread(
-        target=room_context_loop,
-        kwargs={
-            "relay_url": relay_url,
-            "room": room,
-            "participant": participant,
-            "context_path": context_path,
-            "history_limit": history_limit,
-            "stop_event": stop_event,
-            "poll_seconds": room_poll_seconds,
-            "api_key": agent_api_key,
-            "relay_secret": relay_secret,
-            "verbose": verbose,
-        },
-        daemon=True,
-    )
-    context_thread.start()
+    print(f"Quorus room:     {room}")
+    print(f"Participant:     {participant}")
+    print(f"Inbox mirror:    {inbox_path}")
+    print(f"Context mirror:  {context_path}")
+    print(f"Relay:           {relay_url}")
+    print(f"Mode:            {'autonomous' if autonomous else 'interactive'}")
+    print(f"Permission mode: {permission_mode}")
 
-    heartbeat_thread = threading.Thread(
-        target=heartbeat_loop,
-        kwargs={
-            "relay_url": relay_url,
-            "room": room,
-            "participant": participant,
-            "stop_event": stop_event,
-            "heartbeat_seconds": heartbeat_seconds,
-            "api_key": agent_api_key,
-            "relay_secret": relay_secret,
-            "verbose": verbose,
-        },
-        daemon=True,
-    )
-    heartbeat_thread.start()
-
-    if no_launch:
-        sys.stderr.write(
-            f"[quorus claude-agent] Runner active for {participant} in {room}. "
-            "Press Ctrl+C to stop.\n"
-        )
-        try:
-            while True:
+    try:
+        if no_launch:
+            print("Quorus loops active. Press Ctrl+C to stop.")
+            while not stop_event.is_set():
                 time.sleep(1)
-        except KeyboardInterrupt:
-            stop_event.set()
-        return 0
+            return 0
 
-    if autonomous:
-        sys.stderr.write(
-            f"[quorus claude-agent] Autonomous mode active for {participant} in {room}.\n"
-        )
-        try:
+        if autonomous:
+            sys.stderr.write(
+                f"[quorus claude-agent] Autonomous mode active for {participant} in {room}.\n"
+            )
+            sys.stderr.flush()
             return run_autonomous_loop(
                 room=room,
                 participant=participant,
                 relay_url=relay_url,
                 api_key=agent_api_key,
-                relay_secret=relay_secret,
+                relay_secret=effective_secret,
                 cwd=cwd,
                 permission_mode=permission_mode,
                 inbox_path=inbox_path,
@@ -881,27 +1094,24 @@ def run_claude_agent(
                 verbose=verbose,
                 model=model,
             )
-        except KeyboardInterrupt:
-            stop_event.set()
-            return 0
 
-    cmd = build_claude_command(
-        room=room,
-        participant=participant,
-        relay_url=relay_url,
-        api_key=agent_api_key,
-        relay_secret=relay_secret,
-        cwd=cwd,
-        permission_mode=permission_mode,
-        inbox_path=inbox_path,
-        context_path=context_path,
-        model=model,
-    )
-
-    try:
+        cmd = build_claude_command(
+            room=room,
+            participant=participant,
+            relay_url=relay_url,
+            api_key=agent_api_key,
+            relay_secret=effective_secret,
+            cwd=cwd,
+            permission_mode=permission_mode,
+            inbox_path=inbox_path,
+            context_path=context_path,
+            model=model,
+        )
         return subprocess.call(cmd, cwd=str(cwd) if cwd else None)
+
     except KeyboardInterrupt:
-        stop_event.set()
-        return 0
+        return 130
     finally:
         stop_event.set()
+        for thread in threads:
+            thread.join(timeout=2)

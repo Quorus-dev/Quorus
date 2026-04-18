@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from quorus_cli.codex_agent import (
     CodexAgentError,
@@ -14,6 +15,7 @@ from quorus_cli.codex_agent import (
     build_prompt,
     parent_join_room,
     resolve_identity,
+    run_codex_agent,
     send_heartbeat,
 )
 
@@ -269,3 +271,61 @@ def test_send_heartbeat_uses_active_status(monkeypatch: pytest.MonkeyPatch) -> N
         "room": "medbuddy-sprint",
     }
     assert called["kwargs"]["relay_secret"] == "dev-secret"
+
+
+def test_run_codex_agent_tolerates_forbidden_self_join_when_room_is_readable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    response = MagicMock()
+    response.status_code = 403
+    request = MagicMock()
+    exc = httpx.HTTPStatusError("forbidden", request=request, response=response)
+
+    called = {"fetch": 0}
+
+    class DummyThread:
+        def __init__(self, target=None, kwargs=None, daemon=None):
+            self.target = target
+            self.kwargs = kwargs or {}
+
+        def start(self):
+            return None
+
+        def join(self, timeout=None):
+            return None
+
+    monkeypatch.setattr(
+        "quorus_cli.codex_agent.join_room",
+        lambda **kwargs: (_ for _ in ()).throw(exc),
+    )
+    monkeypatch.setattr(
+        "quorus_cli.codex_agent.fetch_room_state",
+        lambda **kwargs: called.__setitem__("fetch", called["fetch"] + 1) or {},
+    )
+    monkeypatch.setattr("quorus_cli.codex_agent.threading.Thread", DummyThread)
+    monkeypatch.setattr("quorus_cli.codex_agent.run_autonomous_loop", lambda **kwargs: 0)
+
+    rc = run_codex_agent(
+        room="medbuddy-sprint",
+        relay_url="https://relay.test",
+        parent_name="arav-codex",
+        parent_api_key="mct_parent",
+        relay_secret="",
+        requested_name="arav-codex",
+        suffix=None,
+        cwd=tmp_path,
+        wait_seconds=10,
+        announce=False,
+        no_launch=False,
+        verbose=False,
+        sandbox="workspace-write",
+        approval="on-request",
+        autonomous=True,
+        room_poll_seconds=180,
+        heartbeat_seconds=180,
+        history_limit=25,
+    )
+
+    assert rc == 0
+    assert called["fetch"] == 1

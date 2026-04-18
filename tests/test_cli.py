@@ -633,6 +633,64 @@ def test_connect_claude(capsys, tmp_path, monkeypatch):
     assert data["mcpServers"]["quorus"]["env"]["QUORUS_INSTANCE_NAME"] == "claude-bot"
 
 
+def test_register_mcp_everywhere_reuses_matching_codex_identity(monkeypatch):
+    from quorus_cli import cli as cli_mod
+
+    captured = {}
+
+    class FakeUi:
+        def __init__(self):
+            self.console = MagicMock()
+
+        def success(self, message):
+            captured["success"] = message
+
+        def warn(self, *_args, **_kwargs):
+            pass
+
+    def fake_register_all(env):
+        captured["identity"] = env.agent_identity("codex")
+        captured["env_block"] = env.env_block("codex")
+        return [
+            MagicMock(
+                ok=True,
+                platform="Codex CLI",
+                path="/tmp/config.toml",
+                status="wrote",
+            )
+        ]
+
+    monkeypatch.setattr(
+        cli_mod, "_is_platform_installed", lambda platform: platform == "codex"
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_register_agent_identity",
+        lambda **kwargs: pytest.fail("should not register child"),
+    )
+
+    import quorus_cli.mcp_writers as writers_mod
+
+    monkeypatch.setattr(writers_mod, "ALL_WRITERS", [("codex", object())])
+    monkeypatch.setattr(writers_mod, "register_all", fake_register_all)
+
+    installed, keys = cli_mod._register_mcp_everywhere(
+        name="arav-codex",
+        relay_url="https://relay.test",
+        api_key="mct_parent",
+        relay_secret="",
+        mcp_command="uv",
+        mcp_args=["run"],
+        ui=FakeUi(),
+    )
+
+    assert installed == ["Codex CLI"]
+    assert keys == {"codex": "mct_parent"}
+    assert captured["identity"] == "arav-codex"
+    assert captured["env_block"]["QUORUS_INSTANCE_NAME"] == "arav-codex"
+    assert captured["env_block"]["QUORUS_API_KEY"] == "mct_parent"
+
+
 def test_add_agent_codex_uses_autonomous_choice(tmp_path, monkeypatch):
     from quorus.cli import _cmd_add_agent
 
@@ -2347,3 +2405,83 @@ def test_cmd_join_with_explicit_flags_rewrites_config(tmp_path, monkeypatch, cap
     saved_config = json.loads(config_path.read_text())
     assert saved_config["relay_url"] == "http://new-relay:8080"
     assert saved_config["relay_secret"] == "new-secret"
+
+
+def test_cmd_join_uses_explicit_auth_for_room_lookup_and_join(
+    tmp_path, monkeypatch, capsys,
+):
+    """Join should use the passed relay/auth, not stale global config."""
+    from quorus.cli import _cmd_join
+
+    config_dir = tmp_path / ".quorus"
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://old-relay:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "old-secret")
+    monkeypatch.setattr("quorus.cli.API_KEY", "")
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    calls = {"get": None, "join": None}
+
+    rooms_resp = _mock_response(200, [{"id": "room-123", "name": "dev-room"}])
+    join_resp = _mock_response(200, {"status": "joined"})
+
+    client = AsyncMock()
+
+    async def fake_get(url, **kwargs):
+        calls["get"] = {"url": url, **kwargs}
+        return rooms_resp
+
+    async def fake_post(url, **kwargs):
+        calls["join"] = {"url": url, **kwargs}
+        return join_resp
+
+    client.get = AsyncMock(side_effect=fake_get)
+    client.post = AsyncMock(side_effect=fake_post)
+    client.aclose = AsyncMock()
+    monkeypatch.setattr("quorus.cli._get_client", lambda: client)
+
+    args = MagicMock()
+    args.name = "new-agent"
+    args.token = None
+    args.relay_url = "http://new-relay:8080"
+    args.secret = "new-secret"
+    args.api_key = None
+    args.room = "dev-room"
+
+    _cmd_join(args)
+
+    assert calls["get"]["url"] == "http://new-relay:8080/rooms"
+    assert calls["get"]["headers"] == {"Authorization": "Bearer new-secret"}
+    assert calls["join"]["url"] == "http://new-relay:8080/rooms/room-123/join"
+    assert calls["join"]["headers"] == {"Authorization": "Bearer new-secret"}
+    assert calls["join"]["json"] == {"participant": "new-agent"}
+
+
+def test_cmd_join_registers_mcp_on_first_config_write(tmp_path, monkeypatch, capsys):
+    """Fresh join should write the Claude MCP registration after config creation."""
+    from quorus.cli import _cmd_join
+
+    config_dir = tmp_path / ".quorus"
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://relay:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "secret")
+    monkeypatch.setattr("quorus.cli.API_KEY", "")
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    mock_client = _mock_client(200, [{"id": "r1", "name": "dev-room"}])
+    monkeypatch.setattr("quorus.cli._get_client", lambda: mock_client)
+
+    args = MagicMock()
+    args.name = "fresh-agent"
+    args.token = None
+    args.relay_url = None
+    args.secret = None
+    args.api_key = None
+    args.room = "dev-room"
+
+    _cmd_join(args)
+
+    claude_config = tmp_path / ".claude.json"
+    assert claude_config.exists()
+    data = json.loads(claude_config.read_text())
+    assert "quorus" in data["mcpServers"]

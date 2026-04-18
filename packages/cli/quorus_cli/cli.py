@@ -2171,6 +2171,7 @@ def _cmd_claude_agent(args):
             heartbeat_seconds=args.heartbeat,
             history_limit=args.history_limit,
             model=args.model,
+            save_defaults=args.save_defaults,
         )
     except ClaudeAgentError as exc:
         _ui.error(str(exc))
@@ -3132,8 +3133,10 @@ def _cmd_join(args):
     config_dir = _config_dir()
     config_path = config_dir / "config.json"
 
+    need_fresh_setup = rewrite_config or not config_path.exists()
+
     # 1. Write config only if needed (token join, explicit flags, or no config exists)
-    if rewrite_config or not config_path.exists():
+    if need_fresh_setup:
         config_dir.mkdir(exist_ok=True)
         config = {
             "relay_url": relay_url,
@@ -3151,7 +3154,7 @@ def _cmd_join(args):
         console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
     # 2. Register MCP server with Claude Code (only if setting up fresh)
-    if rewrite_config or not config_path.exists():
+    if need_fresh_setup:
         claude_config_path = Path.home() / ".claude.json"
         if claude_config_path.exists():
             try:
@@ -3180,10 +3183,33 @@ def _cmd_join(args):
     async def _do_join():
         client = _get_client()
         try:
+            headers: dict[str, str] = {}
+            if api_key:
+                token_resp = await client.post(
+                    f"{relay_url}/v1/auth/token",
+                    json={"api_key": api_key},
+                    timeout=10,
+                    follow_redirects=True,
+                )
+                token_resp.raise_for_status()
+                token = token_resp.json().get("token", "")
+                if not token:
+                    _ui.error("Auth token exchange returned no token")
+                    return
+                headers = {"Authorization": f"Bearer {token}"}
+            elif secret:
+                headers = {"Authorization": f"Bearer {secret}"}
+            else:
+                _ui.error(
+                    "No auth configured for this join",
+                    hint="pass --secret, --api-key, or use an invite code",
+                )
+                return
+
             # Resolve room by name
             rooms_resp = await client.get(
                 f"{relay_url}/rooms",
-                headers=_auth_headers(),
+                headers=headers,
             )
             rooms_resp.raise_for_status()
             rooms_list = rooms_resp.json()
@@ -3200,7 +3226,7 @@ def _cmd_join(args):
             resp = await client.post(
                 f"{relay_url}/rooms/{target['id']}/join",
                 json={"participant": name},
-                headers=_auth_headers(),
+                headers=headers,
             )
             if resp.status_code == 403:
                 _ui.error(
@@ -6571,6 +6597,12 @@ def main():
         "--model",
         default="sonnet",
         help="Claude model to use (default: sonnet). Options: opus, sonnet, haiku",
+    )
+    p_claude_agent.add_argument(
+        "--save-defaults",
+        action="store_true",
+        default=False,
+        help="Save current flags as defaults for future claude-agent invocations",
     )
 
     p_hack = sub.add_parser(

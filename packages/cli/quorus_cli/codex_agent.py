@@ -501,6 +501,8 @@ def build_prompt(
         "Operating rules:",
         "- Check Quorus messages and room context before acting.",
         "- Use the Quorus MCP tools as the primary read/write path.",
+        "- If Quorus MCP is unavailable, fall back to the local room mirrors and "
+        "the `quorus` CLI via shell for room reads/posts.",
         f"- A local inbox mirror is available at `{inbox_path}` as fallback context.",
     ]
     if context_path is not None:
@@ -749,7 +751,7 @@ def run_codex_agent(
 ) -> int:
     """Join the room, maintain runner state, and launch Codex."""
     import tempfile as _tmp
-    _agent_config_dir = Path(_tmp.mkdtemp(prefix=f"quorus-agent-"))
+    _agent_config_dir = Path(_tmp.mkdtemp(prefix="quorus-agent-"))
     os.environ.setdefault("QUORUS_CONFIG_DIR", str(_agent_config_dir))
 
     participant, agent_api_key = resolve_identity(
@@ -775,14 +777,25 @@ def run_codex_agent(
             and parent_api_key
             and participant != parent_name
         )
-        if not can_parent_add:
+        if can_parent_add:
+            parent_join_room(
+                relay_url=relay_url,
+                room=room,
+                participant=participant,
+                parent_api_key=parent_api_key,
+            )
+        elif exc.response.status_code == 403:
+            # Some relays reject redundant self-join attempts even when the
+            # participant already has access to the room. If room state is
+            # readable with the current auth, treat membership as satisfied.
+            fetch_room_state(
+                relay_url=relay_url,
+                room=room,
+                api_key=agent_api_key,
+                relay_secret=effective_secret,
+            )
+        else:
             raise
-        parent_join_room(
-            relay_url=relay_url,
-            room=room,
-            participant=participant,
-            parent_api_key=parent_api_key,
-        )
 
     if announce:
         send_announcement(

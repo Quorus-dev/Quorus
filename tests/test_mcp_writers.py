@@ -20,6 +20,7 @@ from quorus_cli.mcp_writers import (
     McpEnv,
     WriteResult,
     _render_codex_toml,
+    _repair_codex_toml,
     register_all,
     register_claude_code,
     register_claude_desktop,
@@ -63,6 +64,15 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 class TestMcpEnv:
     def test_agent_identity_is_name_plus_platform(self, env: McpEnv):
         assert env.agent_identity("claude") == "arav-claude"
+        assert env.agent_identity("codex") == "arav-codex"
+
+    def test_agent_identity_avoids_double_platform_suffix(self):
+        env = McpEnv(
+            command="uv",
+            args=[],
+            relay_url="http://r",
+            instance_name_base="arav-codex",
+        )
         assert env.agent_identity("codex") == "arav-codex"
 
     def test_agent_identity_falls_back_to_platform_when_unnamed(self):
@@ -306,6 +316,51 @@ class TestCodex:
         assert "[mcp_servers.quorus]" in body
         assert "[mcp_servers.quorus.env]" in body
         assert 'args = ["run", "python"]' in body
+
+    def test_render_codex_toml_flattens_model_migration_keys(self):
+        data = {
+            "notice": {
+                "model_migrations": {
+                    "gpt-5": {
+                        "2-codex": "gpt-5.4",
+                    }
+                }
+            }
+        }
+
+        body = _render_codex_toml(data)
+
+        assert "[notice.model_migrations]" in body
+        assert '"gpt-5.2-codex" = "gpt-5.4"' in body
+
+    def test_repair_codex_toml_quotes_project_paths(self):
+        body = (
+            'model = "gpt-5.4"\n\n'
+            "[projects./Users/aravkekane/Desktop]\n"
+            'trust_level = "trusted"\n'
+        )
+
+        repaired = _repair_codex_toml(body)
+
+        assert '[projects."/Users/aravkekane/Desktop"]' in repaired
+
+    def test_register_codex_repairs_invalid_project_headers(
+        self, fake_home: Path, env: McpEnv,
+    ):
+        p = fake_home / ".codex" / "config.toml"
+        p.parent.mkdir(parents=True)
+        p.write_text(
+            'model = "gpt-5.4"\n\n'
+            "[projects./Users/aravkekane/Desktop]\n"
+            'trust_level = "trusted"\n',
+        )
+
+        r = register_codex(env)
+
+        assert r.ok
+        body = p.read_text()
+        assert '[projects."/Users/aravkekane/Desktop"]' in body
+        assert "[mcp_servers.quorus]" in body
 
 
 # ---------------------------------------------------------------------------

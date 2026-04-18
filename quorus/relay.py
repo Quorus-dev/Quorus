@@ -152,20 +152,33 @@ def _snapshot_state() -> dict:
     dm_webhooks = {}
     for (tid, name), url in backends.webhooks._dm_hooks.items():
         dm_webhooks[name] = url
+    # Room state (coordination: goals, locks, tasks, decisions)
+    room_state = {}
+    if hasattr(backends.room_state, "_state"):
+        for (tid, rid), sdata in backends.room_state._state.items():
+            key = f"{tid}:{rid}"
+            room_state[key] = sdata
+    # Participants
+    participants = {}
+    if hasattr(backends.participants, "_participants"):
+        for tid, names in backends.participants._participants.items():
+            participants[tid] = list(names)
+    # Analytics
+    analytics = {}
+    if hasattr(backends.analytics, "_stats"):
+        for tid, stats in backends.analytics._stats.items():
+            analytics[tid] = stats
+
     return {
         "messages": messages,
-        "participants": [],
-        "analytics": {
-            "total_sent": 0,
-            "total_delivered": 0,
-            "per_participant": {},
-            "hourly_volume": {},
-        },
+        "participants": participants,
+        "analytics": analytics,
         "rooms": rooms_data,
         "room_history": history,
         "room_webhooks": room_webhooks,
         "presence": presence_data,
         "webhooks": dm_webhooks,
+        "room_state": room_state,
     }
 
 
@@ -226,6 +239,18 @@ def _apply_loaded_state(data: dict) -> None:
     # DM webhooks
     for name, url in data.get("webhooks", {}).items():
         backends.webhooks._dm_hooks[(_LEGACY_TENANT, name)] = url
+    # Room state
+    for key, sdata in data.get("room_state", {}).items():
+        parts = key.split(":", 1)
+        tid = parts[0] if len(parts) == 2 else _LEGACY_TENANT
+        rid = parts[1] if len(parts) == 2 else parts[0]
+        backends.room_state._state[(tid, rid)] = sdata
+    # Participants
+    for tid, names in data.get("participants", {}).items():
+        backends.participants._participants[tid] = set(names)
+    # Analytics
+    for tid, stats in data.get("analytics", {}).items():
+        backends.analytics._stats[tid] = stats
 
 
 def _save_to_file():
@@ -419,6 +444,22 @@ async def lifespan(app):
     # Create backends and services
     _init_services(app, redis_conn=redis_conn)
 
+    # Load state from file in dev/test mode (no Redis)
+    persist_task = None
+    if not redis_conn:
+        await asyncio.to_thread(_load_from_file)
+
+        async def _periodic_save():
+            while True:
+                await asyncio.sleep(30)  # Save every 30 seconds
+                try:
+                    await _persist_state()
+                except Exception:
+                    logger.exception("Failed to periodically save state")
+
+        persist_task = asyncio.create_task(_periodic_save())
+        logger.info("JSON persistence loop started")
+
     # Start cross-replica notification listener
     if hasattr(app.state, "notification_service"):
         await app.state.notification_service.start()
@@ -434,6 +475,17 @@ async def lifespan(app):
         logger.info("Outbox worker started")
 
     yield
+
+    # Stop JSON persistence loop
+    if persist_task:
+        persist_task.cancel()
+        try:
+            await persist_task
+        except asyncio.CancelledError:
+            pass
+        # Final save on shutdown
+        await _persist_state()
+        logger.info("JSON persistence loop stopped")
 
     # Stop outbox worker
     if hasattr(app.state, "outbox_worker"):

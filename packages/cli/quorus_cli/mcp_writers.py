@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -73,6 +74,8 @@ class McpEnv:
         base = self.instance_name_base.strip()
         if not base:
             return platform_key
+        if base.endswith(f"-{platform_key}"):
+            return base
         return f"{base}-{platform_key}"
 
     def env_block(self, platform_key: str) -> dict[str, str]:
@@ -350,6 +353,44 @@ def _read_toml(path: Path) -> dict[str, Any]:
         raise
 
 
+def _repair_codex_toml(text: str) -> str:
+    """Repair the known invalid path-table form emitted by older Codex configs.
+
+    Example:
+    ``[projects./Users/arav/Desktop]`` -> ``[projects."/Users/arav/Desktop"]``
+    """
+    fixed_lines: list[str] = []
+    changed = False
+    pattern = re.compile(r'^\[projects\.(/.+)\]$')
+    for line in text.splitlines():
+        match = pattern.match(line.strip())
+        if match:
+            path_key = match.group(1).replace("\\", "\\\\").replace('"', '\\"')
+            fixed_lines.append(f'[projects."{path_key}"]')
+            changed = True
+            continue
+        fixed_lines.append(line)
+    if not changed:
+        return text
+    suffix = "\n" if text.endswith("\n") else ""
+    return "\n".join(fixed_lines) + suffix
+
+
+def _read_codex_toml(path: Path) -> dict[str, Any]:
+    """Read Codex TOML with a targeted repair path for older invalid headers."""
+    try:
+        return _read_toml(path)
+    except Exception:
+        if not path.exists():
+            raise
+        raw = path.read_text()
+        repaired = _repair_codex_toml(raw)
+        if repaired == raw:
+            raise
+        path.write_text(repaired)
+        return _read_toml(path)
+
+
 def _toml_escape(s: str) -> str:
     """Minimal TOML-safe string escape: double quotes + backslash."""
     return s.replace("\\", "\\\\").replace("\"", "\\\"")
@@ -387,6 +428,22 @@ def _render_codex_toml(data: dict[str, Any]) -> str:
     Keys containing special characters (e.g. ``/`` in file paths) are
     quoted so the output is valid TOML.
     """
+    notice = data.get("notice")
+    if isinstance(notice, dict):
+        migrations = notice.get("model_migrations")
+        if isinstance(migrations, dict):
+            def _flatten(prefix: str, value: Any, out: dict[str, Any]) -> None:
+                if isinstance(value, dict):
+                    for child_key, child_value in value.items():
+                        next_prefix = f"{prefix}.{child_key}" if prefix else child_key
+                        _flatten(next_prefix, child_value, out)
+                else:
+                    out[prefix] = value
+
+            flattened: dict[str, Any] = {}
+            _flatten("", migrations, flattened)
+            notice["model_migrations"] = flattened
+
     lines: list[str] = []
     top_scalars: dict[str, Any] = {}
     top_tables: dict[str, Any] = {}
@@ -429,7 +486,7 @@ def register_codex(env: McpEnv, *, force: bool = False) -> WriteResult:
     if not codex_installed and not force:
         return WriteResult("Codex CLI", "not_installed", path)
     try:
-        data = _read_toml(path)
+        data = _read_codex_toml(path)
     except Exception as exc:
         return WriteResult("Codex CLI", "error", path, str(exc))
     servers = data.setdefault("mcp_servers", {})
