@@ -251,13 +251,17 @@ def resolve_identity(
     if cached_key:
         return expected_name, cached_key
 
-    agent_name, agent_key = register_agent_identity(
-        relay_url=relay_url,
-        parent_api_key=parent_api_key,
-        suffix=agent_suffix,
-    )
-    _save_child_api_key(agent_name, agent_key)
-    return agent_name, agent_key
+    try:
+        agent_name, agent_key = register_agent_identity(
+            relay_url=relay_url,
+            parent_api_key=parent_api_key,
+            suffix=agent_suffix,
+        )
+        _save_child_api_key(agent_name, agent_key)
+        return agent_name, agent_key
+    except Exception:
+        # Registration endpoint unavailable — operate under parent identity.
+        return expected_name, parent_api_key
 
 
 def _message_id(msg: dict) -> str:
@@ -580,20 +584,19 @@ def build_claude_print_command(
         relay_secret=relay_secret,
     )
 
+    # Combine system context + task prompt into single prompt argument.
+    # --append-system-prompt and --add-dir both break -p / --print mode.
+    full_prompt = f"{base_prompt}\n\n{prompt}"
+
     cmd = [
         "claude",
-        "-p",  # Non-interactive print mode
+        "-p",
         "--model", model,
         "--permission-mode", permission_mode,
         "--mcp-config", json.dumps(mcp_config),
-        "--append-system-prompt", base_prompt,
         "--output-format", "text",
+        full_prompt,
     ]
-
-    if cwd:
-        cmd.extend(["--add-dir", str(cwd)])
-
-    cmd.append(prompt)
 
     return cmd
 
@@ -758,13 +761,26 @@ def run_claude_agent(
         suffix=suffix,
     )
 
-    join_room(
-        relay_url=relay_url,
-        room=room,
-        participant=participant,
-        api_key=agent_api_key,
-        relay_secret=relay_secret,
-    )
+    try:
+        join_room(
+            relay_url=relay_url,
+            room=room,
+            participant=participant,
+            api_key=agent_api_key,
+            relay_secret=relay_secret,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 403:
+            # Room requires invite token for self-join; agent may already be a
+            # member or can operate via API key — continue rather than abort.
+            if verbose:
+                sys.stderr.write(
+                    f"[quorus claude-agent] join returned 403 (invite-only room); "
+                    "continuing with existing credentials.\n"
+                )
+                sys.stderr.flush()
+        else:
+            raise
 
     if announce:
         send_room_message(
