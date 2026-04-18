@@ -1589,10 +1589,11 @@ def _dispatch_slash(
 # ── Input reader ──────────────────────────────────────────────────────────────
 
 # Special sentinel strings returned by _read_input() for non-text keys.
-_KEY_UP    = "__UP__"
-_KEY_DOWN  = "__DOWN__"
-_KEY_TAB   = "__TAB__"
-_KEY_QUIT  = "__QUIT_KEY__"
+_KEY_UP      = "__UP__"
+_KEY_DOWN    = "__DOWN__"
+_KEY_TAB     = "__TAB__"
+_KEY_QUIT    = "__QUIT_KEY__"
+_KEY_TIMEOUT = "__TIMEOUT__"   # no keypress within render tick — re-render
 
 
 def _read_input(
@@ -1634,6 +1635,13 @@ def _read_input(
     buf: list[str] = []
     try:
         while True:
+            import select as _sel
+            ready, _, _ = _sel.select([sys.stdin], [], [], RENDER_TICK_S)
+            if not ready:
+                # No keypress within the render window — signal a redraw.
+                sys.stdout.write("\r\x1b[K")  # clear the input line
+                sys.stdout.flush()
+                return _KEY_TIMEOUT
             key = readchar.readkey()
             if key in (readchar.key.ENTER, "\r", "\n"):
                 sys.stdout.write("\n")
@@ -1810,6 +1818,11 @@ def _main_input_loop(
             # next incoming SSE message draws a fresh separator rule above
             # it (instead of silently stacking).
             state.reset_inline_rule()
+
+            if line == _KEY_TIMEOUT:
+                # Render tick fired while idle — just loop back to redraw.
+                last_render = 0
+                continue
 
             if line == _KEY_QUIT:
                 return "quit"
