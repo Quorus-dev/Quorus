@@ -369,12 +369,23 @@ def _format_toml_value(v: Any) -> str:
     return f"\"{_toml_escape(str(v))}\""
 
 
+def _toml_key(k: str) -> str:
+    """Return a TOML-safe key segment — bare if safe, quoted otherwise."""
+    import re as _re
+    if _re.fullmatch(r"[A-Za-z0-9_-]+", k):
+        return k
+    escaped = k.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def _render_codex_toml(data: dict[str, Any]) -> str:
     """Round-trip what we know about Codex config + our additions to TOML.
 
     Not a general TOML serializer — just enough to emit the shape
     Codex expects: top-level keys + nested ``[section]`` / ``[sub.key]``
     tables. Nested env maps render as ``[mcp_servers.quorus.env]``.
+    Keys containing special characters (e.g. ``/`` in file paths) are
+    quoted so the output is valid TOML.
     """
     lines: list[str] = []
     top_scalars: dict[str, Any] = {}
@@ -385,7 +396,7 @@ def _render_codex_toml(data: dict[str, Any]) -> str:
         else:
             top_scalars[k] = v
     for k, v in top_scalars.items():
-        lines.append(f"{k} = {_format_toml_value(v)}")
+        lines.append(f"{_toml_key(k)} = {_format_toml_value(v)}")
     if top_scalars and top_tables:
         lines.append("")
 
@@ -401,13 +412,13 @@ def _render_codex_toml(data: dict[str, Any]) -> str:
         if scalars or not subs:
             lines.append(header)
             for k, v in scalars.items():
-                lines.append(f"{k} = {_format_toml_value(v)}")
+                lines.append(f"{_toml_key(k)} = {_format_toml_value(v)}")
             lines.append("")
         for k, v in subs.items():
-            _emit_table(f"{prefix}.{k}", v)
+            _emit_table(f"{prefix}.{_toml_key(k)}", v)
 
     for k, v in top_tables.items():
-        _emit_table(k, v)
+        _emit_table(_toml_key(k), v)
     return "\n".join(lines).rstrip() + "\n"
 
 
