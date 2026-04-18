@@ -742,6 +742,14 @@ def run_claude_agent(
     model: str = "sonnet",
 ) -> int:
     """Join the room, maintain runner state, and launch Claude Code."""
+    # Isolate this agent's Quorus config so it never overwrites the human's
+    # shared ~/.quorus/profiles/default.json.  Each agent gets its own
+    # scratch directory under /tmp; the relay connection details are passed
+    # via environment variables so no file-write is needed.
+    import tempfile as _tmp
+    _agent_config_dir = Path(_tmp.mkdtemp(prefix=f"quorus-agent-"))
+    os.environ.setdefault("QUORUS_CONFIG_DIR", str(_agent_config_dir))
+
     participant, agent_api_key = resolve_identity(
         relay_url=relay_url,
         parent_name=parent_name,

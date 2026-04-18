@@ -16,6 +16,7 @@ It supports:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -552,7 +553,7 @@ def build_gemini_command(
     """Build the interactive Gemini command line with Quorus overrides."""
     prompt = build_prompt(room, participant, inbox_path, context_path)
     env = _gemini_base_env(participant, relay_url, api_key, relay_secret)
-    cmd = ["gemini", "--worktree", str(cwd), "--approval-mode", "default", "-i", prompt]
+    cmd = ["gemini", "--approval-mode", "default", "-i", prompt]
     return cmd, env
 
 
@@ -572,7 +573,7 @@ def build_gemini_exec_command(
     """Build a non-interactive Gemini command for supervised autonomous turns."""
     env = _gemini_base_env(participant, relay_url, api_key, relay_secret)
     full_prompt = build_prompt(room, participant, inbox_path, context_path) + "\n\n" + prompt
-    cmd = ["gemini", "--worktree", str(cwd), "--approval-mode", "yolo", "-p", full_prompt]
+    cmd = ["gemini", "--approval-mode", "yolo", "-p", full_prompt]
     return cmd, env
 
 
@@ -680,7 +681,7 @@ def run_autonomous_loop(
             context_path=context_path,
             prompt=prompt,
         )
-        rc = subprocess.call(cmd, env=env)
+        rc = subprocess.call(cmd, env=env, cwd=cwd)
         if rc != 0 and verbose:
             sys.stderr.write(f"[quorus gemini-agent auto-exec] gemini exited {rc}\n")
             sys.stderr.flush()
@@ -711,6 +712,10 @@ def run_gemini_agent(
     history_limit: int,
 ) -> int:
     """Join the room, maintain runner state, and launch Gemini."""
+    import tempfile as _tmp
+    _agent_config_dir = Path(_tmp.mkdtemp(prefix=f"quorus-agent-"))
+    os.environ.setdefault("QUORUS_CONFIG_DIR", str(_agent_config_dir))
+
     participant, agent_api_key = resolve_identity(
         relay_url=relay_url,
         parent_name=parent_name,
@@ -849,7 +854,7 @@ def run_gemini_agent(
             inbox_path=inbox_path,
             context_path=context_path,
         )
-        return subprocess.call(cmd, env=env)
+        return subprocess.call(cmd, env=env, cwd=cwd)
     except KeyboardInterrupt:
         return 130
     finally:

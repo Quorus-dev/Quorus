@@ -16,6 +16,7 @@ It supports:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -747,6 +748,10 @@ def run_codex_agent(
     history_limit: int,
 ) -> int:
     """Join the room, maintain runner state, and launch Codex."""
+    import tempfile as _tmp
+    _agent_config_dir = Path(_tmp.mkdtemp(prefix=f"quorus-agent-"))
+    os.environ.setdefault("QUORUS_CONFIG_DIR", str(_agent_config_dir))
+
     participant, agent_api_key = resolve_identity(
         relay_url=relay_url,
         parent_name=parent_name,

@@ -1783,7 +1783,7 @@ def _main_input_loop(
                 # Persistent nav hint — always visible so users know how
                 # to switch rooms without having to discover /help first.
                 console.print(Text.from_markup(
-                    "  [dim]Tab next room · /rooms for menu · /help for all commands[/]"
+                    "  [dim]Tab — switch room · Enter — open selected room · /rooms — list · /help — all commands[/]"
                 ))
                 console.print()
                 # Flat chat feed — grouped, centered empty states.
@@ -2110,13 +2110,8 @@ def _run_session(
     state.set_rooms(rooms)
     if rooms:
         state.set_connected(True, "Connected")
-        # Auto-join first room
-        first_room = rooms[0].get("name") or rooms[0].get("id", "")
-        if first_room:
-            _join_room(relay_url, secret, first_room, agent_name)
-            msgs = _fetch_history(relay_url, secret, first_room)
-            if msgs is not None:
-                state.set_messages(msgs)
+        # Land on the room list — user navigates with Tab/Up/Down to pick a room.
+        # Do NOT auto-join or pre-load messages; let the user choose intentionally.
     else:
         state.set_connected(False, "No rooms yet")
 
