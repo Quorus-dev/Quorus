@@ -469,10 +469,15 @@ def test_connect_codex(capsys, tmp_path, monkeypatch):
     args.room = "dev"
     args.name = "arav-codex-bot"
 
+    class FakePm:
+        def current(self):
+            return None
+
     client = _mock_client(200, {})
     with patch("quorus.cli._get_client", return_value=client), \
          patch("quorus.cli.asyncio.run", side_effect=_close_coro), \
-         patch("quorus.cli._register_agent_identity", return_value="mct_child"):
+         patch("quorus.cli._register_agent_identity", return_value="mct_child"), \
+         patch("quorus.cli.ProfileManager", return_value=FakePm()):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
@@ -486,6 +491,53 @@ def test_connect_codex(capsys, tmp_path, monkeypatch):
     assert "[mcp_servers.quorus]" in body
     assert 'QUORUS_INSTANCE_NAME = "arav-codex-bot"' in body
     assert 'QUORUS_API_KEY = "mct_child"' in body
+
+
+def test_connect_codex_saves_autonomous_defaults(capsys, tmp_path, monkeypatch):
+    from quorus.cli import _cmd_connect
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("quorus.cli.INSTANCE_NAME", "arav")
+    monkeypatch.setattr("quorus.cli.API_KEY", "mct_parent")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "")
+
+    saved = {}
+
+    class FakePm:
+        def current(self):
+            return "default"
+
+        def get(self, slug):
+            assert slug == "default"
+            return saved.get(slug, {"instance_name": "arav"})
+
+        def save(self, slug, data):
+            saved[slug] = data
+
+    args = MagicMock()
+    args.platform = "codex"
+    args.room = "dev"
+    args.name = "arav-codex-bot"
+
+    client = _mock_client(200, {})
+    with patch("quorus.cli._get_client", return_value=client), \
+         patch("quorus.cli.asyncio.run", side_effect=_close_coro), \
+         patch("quorus.cli._register_agent_identity", return_value="mct_child"), \
+         patch("quorus.cli.ProfileManager", return_value=FakePm()), \
+         patch("quorus.cli.Confirm.ask", return_value=True), \
+         patch("quorus.cli.Prompt.ask", side_effect=["20", "45", "40"]):
+        _cmd_connect(args)
+
+    captured = capsys.readouterr()
+    assert "Future Quorus-managed Codex launches" in captured.out
+    defaults = saved["default"]["codex_runner_defaults"]
+    assert defaults == {
+        "autonomous": True,
+        "room_poll": 20,
+        "heartbeat": 45,
+        "history_limit": 40,
+        "announce": True,
+    }
 
 
 def test_connect_codex_rejects_non_child_name_under_api_key(capsys, tmp_path, monkeypatch):
@@ -579,6 +631,51 @@ def test_connect_claude(capsys, tmp_path, monkeypatch):
     assert config.exists()
     data = _json.loads(config.read_text())
     assert data["mcpServers"]["quorus"]["env"]["QUORUS_INSTANCE_NAME"] == "claude-bot"
+
+
+def test_add_agent_codex_uses_autonomous_choice(tmp_path, monkeypatch):
+    from quorus.cli import _cmd_add_agent
+
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://test:8080")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "test-secret")
+    monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
+    monkeypatch.setattr(
+        "quorus.cli._get_codex_runner_defaults",
+        lambda: {"autonomous": False},
+    )
+
+    prompt_answers = iter(["builder-bot", "dev", "codex"])
+    confirm_answers = iter([True, True])
+    captured = {}
+
+    def fake_prompt(_prompt, **_kwargs):
+        return next(prompt_answers)
+
+    def fake_confirm(_prompt, **_kwargs):
+        return next(confirm_answers)
+
+    def fake_spawn(room, name, workspace, *, autonomous=None, announce=None):
+        captured["room"] = room
+        captured["name"] = name
+        captured["workspace"] = workspace
+        captured["autonomous"] = autonomous
+        captured["announce"] = announce
+
+    def _close_coro_with_return(coro):
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        return [{"name": "dev", "id": "r1", "members": []}]
+
+    with patch("quorus.cli.Prompt.ask", side_effect=fake_prompt), \
+         patch("quorus.cli.Confirm.ask", side_effect=fake_confirm), \
+         patch("quorus.cli.asyncio.run", side_effect=_close_coro_with_return), \
+         patch("quorus.cli._spawn_codex_agent", side_effect=fake_spawn):
+        _cmd_add_agent(MagicMock())
+
+    assert captured["room"] == "dev"
+    assert captured["name"] == "builder-bot"
+    assert captured["workspace"] == tmp_path / "quorus-agents" / "builder-bot"
+    assert captured["autonomous"] is True
 
 
 # ── search command tests ─────────────────────────────────────────────────

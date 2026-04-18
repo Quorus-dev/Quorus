@@ -14,6 +14,7 @@ from quorus_cli.codex_agent import (
     build_prompt,
     parent_join_room,
     resolve_identity,
+    send_heartbeat,
 )
 
 
@@ -240,3 +241,31 @@ def test_parent_join_room_uses_parent_jwt(monkeypatch: pytest.MonkeyPatch) -> No
     assert called["url"] == "https://relay.test/rooms/medbuddy-sprint/join"
     assert called["kwargs"]["json_body"] == {"participant": "arav-codex-builder"}
     assert called["kwargs"]["api_key"] == "mct_parent"
+
+
+def test_send_heartbeat_uses_active_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = {}
+
+    def fake_request_json(method: str, url: str, **kwargs):
+        called["method"] = method
+        called["url"] = url
+        called["kwargs"] = kwargs
+        return {"ok": True}
+
+    monkeypatch.setattr("quorus_cli.codex_agent._request_json", fake_request_json)
+
+    send_heartbeat(
+        relay_url="https://relay.test",
+        room="medbuddy-sprint",
+        participant="arav-codex-builder",
+        relay_secret="dev-secret",
+    )
+
+    assert called["method"] == "POST"
+    assert called["url"] == "https://relay.test/heartbeat"
+    assert called["kwargs"]["json_body"] == {
+        "instance_name": "arav-codex-builder",
+        "status": "active",
+        "room": "medbuddy-sprint",
+    }
+    assert called["kwargs"]["relay_secret"] == "dev-secret"

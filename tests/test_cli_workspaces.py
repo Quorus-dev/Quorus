@@ -209,6 +209,40 @@ def test_spawn_codex_dispatches_to_codex_runner(monkeypatch: pytest.MonkeyPatch)
     assert called == {"room": "medbuddy-sprint", "name": "reviewer"}
 
 
+def test_spawn_codex_agent_uses_saved_autonomous_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from quorus_cli import cli as cli_mod
+
+    messages: list[str] = []
+
+    monkeypatch.setattr(cli_mod.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(cli_mod.sys, "platform", "linux")
+    monkeypatch.setattr(
+        cli_mod,
+        "_get_codex_runner_defaults",
+        lambda: {
+            "autonomous": True,
+            "announce": True,
+            "room_poll": 20,
+            "heartbeat": 45,
+            "history_limit": 40,
+        },
+    )
+    monkeypatch.setattr(cli_mod._ui, "info", lambda message: messages.append(message))
+
+    cli_mod._spawn_codex_agent("medbuddy-sprint", "reviewer")
+
+    assert messages, "expected manual launch instructions"
+    launch = messages[-1]
+    assert "--announce" in launch
+    assert "--autonomous" in launch
+    assert "--room-poll 20" in launch
+    assert "--heartbeat 45" in launch
+    assert "--history-limit 40" in launch
+
+
 def test_spawn_defaults_to_claude(monkeypatch: pytest.MonkeyPatch) -> None:
     from quorus_cli import cli as cli_mod
 

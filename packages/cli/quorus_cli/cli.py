@@ -2115,6 +2115,39 @@ def _cmd_codex_agent(args):
     raise SystemExit(rc)
 
 
+def _cmd_gemini_agent(args):
+    from quorus_cli.gemini_agent import GeminiAgentError, run_gemini_agent
+
+    try:
+        rc = run_gemini_agent(
+            room=args.room,
+            relay_url=RELAY_URL,
+            parent_name=INSTANCE_NAME,
+            parent_api_key=API_KEY,
+            relay_secret=RELAY_SECRET,
+            requested_name=args.name,
+            suffix=args.suffix,
+            cwd=Path(args.cwd).resolve(),
+            wait_seconds=args.wait,
+            announce=args.announce,
+            no_launch=args.no_launch,
+            verbose=args.verbose,
+            sandbox=args.sandbox,
+            approval=args.approval,
+            autonomous=args.autonomous,
+            room_poll_seconds=args.room_poll,
+            heartbeat_seconds=args.heartbeat,
+            history_limit=args.history_limit,
+        )
+    except GeminiAgentError as exc:
+        _ui.error(str(exc))
+        sys.exit(1)
+    except httpx.HTTPError as exc:
+        _ui.error(f"Gemini runner failed: {exc}")
+        sys.exit(1)
+    raise SystemExit(rc)
+
+
 def _cmd_claude_agent(args):
     from quorus_cli.claude_agent import ClaudeAgentError, run_claude_agent
 
@@ -6320,6 +6353,83 @@ def main():
         help="Codex approval mode (default: on-request)",
     )
 
+    p_gemini_agent = sub.add_parser(
+        "gemini-agent",
+        help="Launch Gemini with a Quorus-bound identity and inbox loop",
+    )
+    p_gemini_agent.add_argument("room", help="Room name")
+    p_gemini_agent.add_argument(
+        "--name",
+        default=None,
+        help="Exact Gemini participant name (current identity or a child name)",
+    )
+    p_gemini_agent.add_argument(
+        "--suffix",
+        default=None,
+        help="Register/use child identity suffix, e.g. reviewer -> name-gemini-reviewer",
+    )
+    p_gemini_agent.add_argument(
+        "--cwd",
+        default=".",
+        help="Working directory for the Gemini session (default: current directory)",
+    )
+    p_gemini_agent.add_argument(
+        "--wait",
+        type=int,
+        default=90,
+        help="Inbox long-poll wait in seconds (default: 90)",
+    )
+    p_gemini_agent.add_argument(
+        "--announce",
+        action="store_true",
+        help="Post an online status message before launching Gemini",
+    )
+    p_gemini_agent.add_argument(
+        "--no-launch",
+        action="store_true",
+        help="Run only the inbox loop without launching Gemini",
+    )
+    p_gemini_agent.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print mirrored inbox lines and loop errors to stderr",
+    )
+    p_gemini_agent.add_argument(
+        "--autonomous",
+        action="store_true",
+        help="Run supervised autonomous turns via Gemini exec when room context changes",
+    )
+    p_gemini_agent.add_argument(
+        "--room-poll",
+        type=int,
+        default=15,
+        help="Room state/history refresh interval in seconds (default: 15)",
+    )
+    p_gemini_agent.add_argument(
+        "--heartbeat",
+        type=int,
+        default=30,
+        help="Presence heartbeat interval in seconds (default: 30)",
+    )
+    p_gemini_agent.add_argument(
+        "--history-limit",
+        type=int,
+        default=25,
+        help="How many recent room messages to mirror into context (default: 25)",
+    )
+    p_gemini_agent.add_argument(
+        "--sandbox",
+        default="workspace-write",
+        choices=["read-only", "workspace-write", "danger-full-access"],
+        help="Gemini sandbox mode (default: workspace-write)",
+    )
+    p_gemini_agent.add_argument(
+        "--approval",
+        default="on-request",
+        choices=["untrusted", "on-request", "never"],
+        help="Gemini approval mode (default: on-request)",
+    )
+
     p_claude_agent = sub.add_parser(
         "claude-agent",
         help="Launch Claude Code with a Quorus-bound identity and inbox loop",
@@ -6711,6 +6821,7 @@ def main():
         "watch-daemon": _cmd_watch_daemon,
         "watch-context": _cmd_watch_context,
         "codex-agent": _cmd_codex_agent,
+        "gemini-agent": _cmd_gemini_agent,
         "claude-agent": _cmd_claude_agent,
         "state": _cmd_room_state,
         "locks": _cmd_room_locks,

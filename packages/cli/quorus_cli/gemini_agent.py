@@ -1,16 +1,16 @@
-"""Codex-specific Quorus runner.
+"""Gemini-specific Quorus runner.
 
-This keeps Codex additive to Quorus rather than changing Claude/Gemini paths.
-It launches the user's installed Codex CLI locally and lets Quorus provide
+This keeps Gemini additive to Quorus rather than changing Claude/Gemini paths.
+It launches the user's installed Gemini CLI locally and lets Quorus provide
 room identity, inbox mirroring, and coordination.
 
 It supports:
 
-- room-bound Codex identities
+- room-bound Gemini identities
 - inbox mirroring for direct messages
 - room state/history context snapshots
 - presence heartbeats so the runner stays visible in room state
-- optional supervised autonomous mode powered by ``codex exec``
+- optional supervised autonomous mode powered by ``gemini exec``
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ from quorus.profiles import ProfileManager
 DEFAULT_HISTORY_LIMIT = 25
 
 
-class CodexAgentError(RuntimeError):
-    """Raised for recoverable Codex-agent runner failures."""
+class GeminiAgentError(RuntimeError):
+    """Raised for recoverable Gemini-agent runner failures."""
 
 
 def _current_profile_manager() -> tuple[ProfileManager, str | None, dict]:
@@ -83,8 +83,8 @@ def _auth_headers(
     if relay_secret:
         return {"Authorization": f"Bearer {relay_secret}"}
 
-    raise CodexAgentError(
-        "Codex runner needs Quorus relay auth (workspace API key or relay secret)."
+    raise GeminiAgentError(
+        "Gemini runner needs Quorus relay auth (workspace API key or relay secret)."
     )
 
 
@@ -124,16 +124,16 @@ def resolve_identity(
     requested_name: str | None,
     suffix: str | None,
 ) -> tuple[str, str]:
-    """Resolve the participant identity and API key for the Codex run."""
+    """Resolve the participant identity and API key for the Gemini run."""
     if requested_name and suffix:
-        raise CodexAgentError("Pass either --name or --suffix, not both.")
+        raise GeminiAgentError("Pass either --name or --suffix, not both.")
 
     if not requested_name and not suffix:
         return parent_name, parent_api_key
 
     if not parent_api_key:
-        raise CodexAgentError(
-            "Registering child Codex identities requires Quorus workspace auth."
+        raise GeminiAgentError(
+            "Registering child Gemini identities requires Quorus workspace auth."
         )
 
     if suffix:
@@ -143,13 +143,13 @@ def resolve_identity(
             return parent_name, parent_api_key
         prefix = f"{parent_name}-"
         if not requested_name or not requested_name.startswith(prefix):
-            raise CodexAgentError(
+            raise GeminiAgentError(
                 f"--name must equal {parent_name!r} or start with {prefix!r}."
             )
         derived_suffix = requested_name[len(prefix):]
 
     if not derived_suffix:
-        raise CodexAgentError("Derived Codex agent suffix cannot be empty.")
+        raise GeminiAgentError("Derived Gemini agent suffix cannot be empty.")
 
     agent_name = f"{parent_name}-{derived_suffix}"
     cached_key = _cached_child_api_key(agent_name)
@@ -216,7 +216,7 @@ def send_announcement(
     api_key: str = "",
     relay_secret: str = "",
 ) -> None:
-    """Post a status message for the Codex runner."""
+    """Post a status message for the Gemini runner."""
     _request_json(
         "POST",
         f"{relay_url}/rooms/{room}/messages",
@@ -239,14 +239,14 @@ def send_heartbeat(
     api_key: str = "",
     relay_secret: str = "",
 ) -> None:
-    """Keep the Codex runner visible in room presence."""
+    """Keep the Gemini runner visible in room presence."""
     _request_json(
         "POST",
         f"{relay_url}/heartbeat",
         relay_url=relay_url,
         api_key=api_key,
         relay_secret=relay_secret,
-        json_body={"instance_name": participant, "status": "active", "room": room},
+        json_body={"instance_name": participant, "status": "online", "room": room},
     )
 
 
@@ -389,7 +389,7 @@ def poll_inbox_loop(
     relay_secret: str = "",
     verbose: bool = False,
 ) -> None:
-    """Mirror the participant inbox into a local file for Codex context."""
+    """Mirror the participant inbox into a local file for Gemini context."""
     inbox_path.parent.mkdir(parents=True, exist_ok=True)
 
     while not stop_event.is_set():
@@ -424,7 +424,7 @@ def poll_inbox_loop(
                 sys.stderr.flush()
         except Exception as exc:  # noqa: BLE001
             if verbose:
-                sys.stderr.write(f"[quorus codex-agent inbox] {exc}\n")
+                sys.stderr.write(f"[quorus gemini-agent inbox] {exc}\n")
                 sys.stderr.flush()
             time.sleep(5)
 
@@ -455,7 +455,7 @@ def room_context_loop(
             )
         except Exception as exc:  # noqa: BLE001
             if verbose:
-                sys.stderr.write(f"[quorus codex-agent context] {exc}\n")
+                sys.stderr.write(f"[quorus gemini-agent context] {exc}\n")
                 sys.stderr.flush()
         stop_event.wait(poll_seconds)
 
@@ -482,7 +482,7 @@ def heartbeat_loop(
             )
         except Exception as exc:  # noqa: BLE001
             if verbose:
-                sys.stderr.write(f"[quorus codex-agent heartbeat] {exc}\n")
+                sys.stderr.write(f"[quorus gemini-agent heartbeat] {exc}\n")
                 sys.stderr.flush()
         stop_event.wait(heartbeat_seconds)
 
@@ -493,7 +493,7 @@ def build_prompt(
     inbox_path: Path,
     context_path: Path | None = None,
 ) -> str:
-    """Build the initial Codex room prompt."""
+    """Build the initial Gemini room prompt."""
     lines = [
         f"You are `{participant}` in the Quorus room `{room}`.",
         "",
@@ -515,41 +515,28 @@ def build_prompt(
     return "\n".join(lines)
 
 
-def _codex_base_command(
-    *,
+def _gemini_base_env(
     participant: str,
     relay_url: str,
     api_key: str = "",
     relay_secret: str = "",
-    cwd: Path,
-) -> list[str]:
-    cmd = [
-        "-C",
-        str(cwd),
-        "-c",
-        f"mcp_servers.quorus.env.QUORUS_INSTANCE_NAME={json.dumps(participant)}",
-        "-c",
-        f"mcp_servers.quorus.env.QUORUS_RELAY_URL={json.dumps(relay_url)}",
-    ]
+) -> dict:
+    import os
+    env = os.environ.copy()
+    env["QUORUS_INSTANCE_NAME"] = participant
+    env["QUORUS_RELAY_URL"] = relay_url
     if api_key:
-        cmd.extend(
-            ["-c", f"mcp_servers.quorus.env.QUORUS_API_KEY={json.dumps(api_key)}"]
-        )
+        env["QUORUS_API_KEY"] = api_key
     elif relay_secret:
-        cmd.extend(
-            [
-                "-c",
-                f"mcp_servers.quorus.env.QUORUS_RELAY_SECRET={json.dumps(relay_secret)}",
-            ]
-        )
+        env["QUORUS_RELAY_SECRET"] = relay_secret
     else:
-        raise CodexAgentError(
-            "Codex launch needs Quorus relay auth (workspace API key or relay secret)."
+        raise GeminiAgentError(
+            "Gemini launch needs Quorus relay auth (workspace API key or relay secret)."
         )
-    return cmd
+    return env
 
 
-def build_codex_command(
+def build_gemini_command(
     *,
     room: str,
     participant: str,
@@ -561,27 +548,15 @@ def build_codex_command(
     approval: str,
     inbox_path: Path,
     context_path: Path | None = None,
-) -> list[str]:
-    """Build the interactive Codex command line with Quorus overrides."""
+) -> tuple[list[str], dict]:
+    """Build the interactive Gemini command line with Quorus overrides."""
     prompt = build_prompt(room, participant, inbox_path, context_path)
-    return [
-        "codex",
-        *_codex_base_command(
-            participant=participant,
-            relay_url=relay_url,
-            api_key=api_key,
-            relay_secret=relay_secret,
-            cwd=cwd,
-        ),
-        "-s",
-        sandbox,
-        "-a",
-        approval,
-        prompt,
-    ]
+    env = _gemini_base_env(participant, relay_url, api_key, relay_secret)
+    cmd = ["gemini", "--worktree", str(cwd), "--approval-mode", "default", "-i", prompt]
+    return cmd, env
 
 
-def build_codex_exec_command(
+def build_gemini_exec_command(
     *,
     room: str,
     participant: str,
@@ -593,23 +568,12 @@ def build_codex_exec_command(
     inbox_path: Path,
     context_path: Path,
     prompt: str,
-) -> list[str]:
-    """Build a non-interactive Codex command for supervised autonomous turns."""
-    return [
-        "codex",
-        "exec",
-        *_codex_base_command(
-            participant=participant,
-            relay_url=relay_url,
-            api_key=api_key,
-            relay_secret=relay_secret,
-            cwd=cwd,
-        ),
-        "-s",
-        sandbox,
-        "--skip-git-repo-check",
-        build_prompt(room, participant, inbox_path, context_path) + "\n\n" + prompt,
-    ]
+) -> tuple[list[str], dict]:
+    """Build a non-interactive Gemini command for supervised autonomous turns."""
+    env = _gemini_base_env(participant, relay_url, api_key, relay_secret)
+    full_prompt = build_prompt(room, participant, inbox_path, context_path) + "\n\n" + prompt
+    cmd = ["gemini", "--worktree", str(cwd), "--approval-mode", "yolo", "-p", full_prompt]
+    return cmd, env
 
 
 def _autonomous_prompt(
@@ -657,7 +621,7 @@ def run_autonomous_loop(
     stop_event: threading.Event,
     verbose: bool,
 ) -> int:
-    """Supervise ``codex exec`` runs when room activity changes."""
+    """Supervise ``gemini exec`` runs when room activity changes."""
     seen_message_ids: set[str] = set()
     initial_scan = True
 
@@ -674,7 +638,7 @@ def run_autonomous_loop(
             )
         except Exception as exc:  # noqa: BLE001
             if verbose:
-                sys.stderr.write(f"[quorus codex-agent auto-sync] {exc}\n")
+                sys.stderr.write(f"[quorus gemini-agent auto-sync] {exc}\n")
                 sys.stderr.flush()
             stop_event.wait(poll_seconds)
             continue
@@ -704,7 +668,7 @@ def run_autonomous_loop(
             initial_scan=initial_scan,
         )
         initial_scan = False
-        cmd = build_codex_exec_command(
+        cmd, env = build_gemini_exec_command(
             room=room,
             participant=participant,
             relay_url=relay_url,
@@ -716,16 +680,16 @@ def run_autonomous_loop(
             context_path=context_path,
             prompt=prompt,
         )
-        rc = subprocess.call(cmd)
+        rc = subprocess.call(cmd, env=env)
         if rc != 0 and verbose:
-            sys.stderr.write(f"[quorus codex-agent auto-exec] codex exited {rc}\n")
+            sys.stderr.write(f"[quorus gemini-agent auto-exec] gemini exited {rc}\n")
             sys.stderr.flush()
         stop_event.wait(max(5, poll_seconds))
 
     return 0
 
 
-def run_codex_agent(
+def run_gemini_agent(
     *,
     room: str,
     relay_url: str,
@@ -746,7 +710,7 @@ def run_codex_agent(
     heartbeat_seconds: int,
     history_limit: int,
 ) -> int:
-    """Join the room, maintain runner state, and launch Codex."""
+    """Join the room, maintain runner state, and launch Gemini."""
     participant, agent_api_key = resolve_identity(
         relay_url=relay_url,
         parent_name=parent_name,
@@ -784,7 +748,7 @@ def run_codex_agent(
             relay_url=relay_url,
             room=room,
             participant=participant,
-            content=f"{participant} online. Codex runner attached and ready for room work.",
+            content=f"{participant} online. Gemini runner attached and ready for room work.",
             api_key=agent_api_key,
             relay_secret=effective_secret,
         )
@@ -873,7 +837,7 @@ def run_codex_agent(
                 verbose=verbose,
             )
 
-        cmd = build_codex_command(
+        cmd, env = build_gemini_command(
             room=room,
             participant=participant,
             relay_url=relay_url,
@@ -885,7 +849,7 @@ def run_codex_agent(
             inbox_path=inbox_path,
             context_path=context_path,
         )
-        return subprocess.call(cmd)
+        return subprocess.call(cmd, env=env)
     except KeyboardInterrupt:
         return 130
     finally:
