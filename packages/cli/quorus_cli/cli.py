@@ -2714,14 +2714,20 @@ def _register_mcp_everywhere(
     if api_key and installed_platforms:
         ui.console.print("[dim]Registering agent identities...[/dim]")
         for platform_key in installed_platforms:
+            target_identity = f"{name}-{platform_key}"
+            if name.endswith(f"-{platform_key}"):
+                target_identity = name
             try:
-                agent_key = _register_agent_identity(
-                    relay_url=relay_url,
-                    parent_api_key=api_key,
-                    suffix=platform_key,
-                )
-                if agent_key:
-                    per_platform_keys[platform_key] = agent_key
+                if target_identity == name:
+                    per_platform_keys[platform_key] = api_key
+                else:
+                    agent_key = _register_agent_identity(
+                        relay_url=relay_url,
+                        parent_api_key=api_key,
+                        suffix=platform_key,
+                    )
+                    if agent_key:
+                        per_platform_keys[platform_key] = agent_key
             except Exception as exc:
                 ui.console.print(
                     f"  [dim]— {platform_key}: couldn't register agent ({exc})[/dim]"
@@ -2747,7 +2753,7 @@ def _register_mcp_everywhere(
         labels = ", ".join(r.platform for r in installed)
         ui.success(f"MCP registered with: [primary]{labels}[/]")
         for r in installed:
-            identity = f"{name}-{_platform_key_for(r.platform)}"
+            identity = env.agent_identity(_platform_key_for(r.platform))
             ui.console.print(
                 f"  [muted]• {r.platform}[/] "
                 f"[dim]→ @{identity}  ({r.path})[/]"
@@ -3185,7 +3191,10 @@ def _cmd_join(args):
             if not target:
                 _ui.error(
                     f"Room '{room}' not found on relay",
-                    hint="paste a share token: quorus quickjoin <token>",
+                    hint=(
+                        "Use an invite code instead: "
+                        "quorus join <ABCD-EFGH> --name <name>"
+                    ),
                 )
                 return
             resp = await client.post(
@@ -3193,6 +3202,12 @@ def _cmd_join(args):
                 json={"participant": name},
                 headers=_auth_headers(),
             )
+            if resp.status_code == 403:
+                _ui.error(
+                    "Cannot self-join without an invite token",
+                    hint="ask for an invite code: quorus share <room>",
+                )
+                return
             resp.raise_for_status()
             console.print(f"[green]Joined room '{room}' as '{name}'[/green]")
         except httpx.ConnectError:
@@ -3499,8 +3514,12 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         import re as _re
         import secrets as _secrets
         workspace = _re.sub(r"[^a-z0-9\-]", "-", name.lower()).strip("-")[:32]
+        # Server slug validator requires at least 2 chars (first + last group).
+        # Pad 1-char slugs with a random hex suffix so validation never fails.
         if not workspace:
             workspace = f"ws-{_secrets.token_hex(2)}"
+        elif len(workspace) < 2:
+            workspace = f"{workspace}{_secrets.token_hex(2)}"
         try:
             # Build signup payload — include tenant_id if joining existing workspace
             signup_payload = {"name": name, "workspace": workspace}
@@ -3595,7 +3614,10 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     async def _do_join():
         async with httpx.AsyncClient(follow_redirects=True) as client:
             try:
-                # Preferred path: use scoped invite token (no auth required)
+                # Preferred path: use scoped invite token (no auth required).
+                # This is the ONLY path that works for a brand-new invitee —
+                # the auth-based fallback below requires admin/creator privilege
+                # to add members, which a fresh signup doesn't have.
                 if invite_token:
                     resp = await client.post(
                         f"{relay_url}/invite/{room}/join",
@@ -3611,15 +3633,45 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                                 agent_keys, invite_token,
                             )
                         return
-                    else:
-                        # Token might be expired; fall through to auth-based join
-                        console.print(
-                            f"[dim]Invite token rejected ({resp.status_code}), trying auth...[/dim]"
-                        )
 
-                # Fallback: use auth-based join (requires admin or legacy secret)
+                    # Invite token was rejected. Surface the specific reason so
+                    # the user knows whether to ask for a fresh code or debug.
+                    _invite_detail = ""
+                    try:
+                        _invite_detail = resp.json().get("detail", "")
+                    except Exception:
+                        pass
+                    if resp.status_code == 403:
+                        _reason = _invite_detail or "token expired or invalid"
+                        _ui.error(
+                            f"Invite rejected: {_reason}",
+                            hint="ask your teammate for a fresh code: quorus share <room>",
+                        )
+                    else:
+                        _ui.error(
+                            f"Invite join failed (HTTP {resp.status_code})"
+                            + (f": {_invite_detail}" if _invite_detail else ""),
+                            hint="ask your teammate for a fresh code: quorus share <room>",
+                        )
+                    # If we have no auth fallback credentials, stop here with a
+                    # clear message rather than falling through to a path that will
+                    # always fail for a non-admin member.
+                    if not secret and not api_key:
+                        return
+                    # Fall through to auth-based join only when legacy secret is
+                    # available (legacy admin accounts can add members directly).
+                    if not secret:
+                        return
+                    console.print(
+                        "[dim]Falling back to legacy-secret join...[/dim]"
+                    )
+
+                # Auth-based join: only valid for legacy secret (admin) users.
+                # JWT-auth regular members cannot self-join or list all rooms —
+                # they need an invite token (above). If we reach here without a
+                # secret, bail with a clear error instead of a confusing 403.
                 auth_token = secret
-                if api_key:
+                if not auth_token and api_key:
                     try:
                         token_resp = httpx.post(
                             f"{relay_url}/v1/auth/token",
@@ -3635,7 +3687,10 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                         auth_token = api_key
 
                 if not auth_token:
-                    _ui.error("No credentials available to join room")
+                    _ui.error(
+                        "Cannot join room: no invite token and no credentials",
+                        hint="ask your teammate for a fresh code: quorus share <room>",
+                    )
                     return
 
                 headers = {"Authorization": f"Bearer {auth_token}"}
@@ -3644,13 +3699,25 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                 rooms_list = rooms_resp.json()
                 target = next((r for r in rooms_list if r["name"] == room), None)
                 if not target:
-                    _ui.error(f"Room \'{room}\' not found", hint="list rooms: quorus rooms")
+                    _ui.error(
+                        f"Room '{room}' not found on this relay",
+                        hint=(
+                            "Your account may not have access. "
+                            "Ask for a fresh invite code: quorus share <room>"
+                        ),
+                    )
                     return
                 resp = await client.post(
                     f"{relay_url}/rooms/{target['id']}/join",
                     json={"participant": name},
                     headers=headers,
                 )
+                if resp.status_code == 403:
+                    _ui.error(
+                        "Cannot self-join without an invite token",
+                        hint="ask your teammate for a fresh code: quorus share <room>",
+                    )
+                    return
                 resp.raise_for_status()
                 console.print(f"[green]Joined '{room}' as '{name}'[/green]")
 
