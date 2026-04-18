@@ -57,6 +57,93 @@ def _write_sensitive_json(path: Path, data: dict) -> None:
     ConfigManager(path).save(data)
 
 
+def _get_codex_runner_defaults() -> dict:
+    """Return saved Codex runner defaults from the active workspace profile."""
+    pm = ProfileManager()
+    slug = pm.current()
+    if not slug:
+        return {}
+    data = pm.get(slug) or {}
+    defaults = data.get("codex_runner_defaults", {})
+    return defaults if isinstance(defaults, dict) else {}
+
+
+def _save_codex_runner_defaults(
+    *,
+    autonomous: bool,
+    room_poll: int = 15,
+    heartbeat: int = 30,
+    history_limit: int = 25,
+    announce: bool = True,
+) -> None:
+    """Persist Codex runner defaults for future Quorus-managed launches."""
+    pm = ProfileManager()
+    slug = pm.current()
+    if not slug:
+        return
+    data = pm.get(slug) or {}
+    data["codex_runner_defaults"] = {
+        "autonomous": bool(autonomous),
+        "room_poll": int(room_poll),
+        "heartbeat": int(heartbeat),
+        "history_limit": int(history_limit),
+        "announce": bool(announce),
+    }
+    pm.save(slug, data)
+
+
+def _maybe_configure_codex_autonomy_defaults(*, force_prompt: bool = False) -> None:
+    """Offer a one-time Codex autonomy opt-in and persist the choice."""
+    pm = ProfileManager()
+    slug = pm.current()
+    if not slug:
+        return
+
+    data = pm.get(slug) or {}
+    defaults = data.get("codex_runner_defaults", {})
+    if defaults and not force_prompt:
+        return
+
+    defaults = defaults if isinstance(defaults, dict) else {}
+    current_default = bool(defaults.get("autonomous", False))
+
+    enabled = Confirm.ask(
+        "[bold]Enable supervised autonomous Codex workers by default?[/bold]",
+        default=current_default,
+    )
+    if enabled:
+        room_poll = int(
+            Prompt.ask(
+                "[bold]Room refresh interval (seconds)[/bold]",
+                default=str(defaults.get("room_poll", 15)),
+            )
+        )
+        heartbeat = int(
+            Prompt.ask(
+                "[bold]Presence heartbeat interval (seconds)[/bold]",
+                default=str(defaults.get("heartbeat", 30)),
+            )
+        )
+        history_limit = int(
+            Prompt.ask(
+                "[bold]Room history context size[/bold]",
+                default=str(defaults.get("history_limit", 25)),
+            )
+        )
+    else:
+        room_poll = int(defaults.get("room_poll", 15))
+        heartbeat = int(defaults.get("heartbeat", 30))
+        history_limit = int(defaults.get("history_limit", 25))
+
+    _save_codex_runner_defaults(
+        autonomous=enabled,
+        room_poll=room_poll,
+        heartbeat=heartbeat,
+        history_limit=history_limit,
+        announce=True,
+    )
+
+
 def _get_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(follow_redirects=True)
 
@@ -1283,6 +1370,14 @@ def _cmd_connect(args):
                 f"  [muted]Restart {result.platform} to pick up the "
                 "MCP server.[/]"
             )
+            if platform == "codex":
+                _maybe_configure_codex_autonomy_defaults()
+                defaults = _get_codex_runner_defaults()
+                if defaults.get("autonomous"):
+                    _ui.console.print(
+                        "  [muted]Future Quorus-managed Codex launches will "
+                        "use saved autonomous runner defaults.[/]"
+                    )
         else:
             _ui.error(
                 f"Couldn't wire {result.platform}",
@@ -2016,6 +2111,39 @@ def _cmd_codex_agent(args):
         sys.exit(1)
     except httpx.HTTPError as exc:
         _ui.error(f"Codex runner failed: {exc}")
+        sys.exit(1)
+    raise SystemExit(rc)
+
+
+def _cmd_claude_agent(args):
+    from quorus_cli.claude_agent import ClaudeAgentError, run_claude_agent
+
+    try:
+        rc = run_claude_agent(
+            room=args.room,
+            relay_url=RELAY_URL,
+            parent_name=INSTANCE_NAME,
+            parent_api_key=API_KEY,
+            relay_secret=RELAY_SECRET,
+            requested_name=args.name,
+            suffix=args.suffix,
+            cwd=Path(args.cwd).resolve(),
+            wait_seconds=args.wait,
+            announce=args.announce,
+            no_launch=args.no_launch,
+            verbose=args.verbose,
+            permission_mode=args.permission_mode,
+            autonomous=args.autonomous,
+            room_poll_seconds=args.room_poll,
+            heartbeat_seconds=args.heartbeat,
+            history_limit=args.history_limit,
+            model=args.model,
+        )
+    except ClaudeAgentError as exc:
+        _ui.error(str(exc))
+        sys.exit(1)
+    except httpx.HTTPError as exc:
+        _ui.error(f"Claude runner failed: {exc}")
         sys.exit(1)
     raise SystemExit(rc)
 
@@ -3681,7 +3809,14 @@ You communicate ONLY through the room — never reply in terminal.
         _ui.info(f"Run manually: cd {workspace} && claude")
 
 
-def _spawn_codex_agent(room: str, name: str, workspace: Path | None = None):
+def _spawn_codex_agent(
+    room: str,
+    name: str,
+    workspace: Path | None = None,
+    *,
+    autonomous: bool | None = None,
+    announce: bool | None = None,
+):
     """Launch a Codex agent runner in a new terminal tab."""
     import re as _re
 
@@ -3701,13 +3836,36 @@ def _spawn_codex_agent(room: str, name: str, workspace: Path | None = None):
     agents_dir = Path.home() / "quorus-agents"
     workspace = workspace or (agents_dir / name)
     workspace.mkdir(parents=True, exist_ok=True)
+    defaults = _get_codex_runner_defaults()
+    use_autonomous = bool(defaults.get("autonomous", False)) if autonomous is None else autonomous
+    use_announce = bool(defaults.get("announce", True)) if announce is None else announce
+    room_poll = int(defaults.get("room_poll", 15))
+    heartbeat = int(defaults.get("heartbeat", 30))
+    history_limit = int(defaults.get("history_limit", 25))
+
+    flags = []
+    if use_announce:
+        flags.append("--announce")
+    if use_autonomous:
+        flags.extend(
+            [
+                "--autonomous",
+                "--room-poll",
+                str(room_poll),
+                "--heartbeat",
+                str(heartbeat),
+                "--history-limit",
+                str(history_limit),
+            ]
+        )
+    flag_suffix = f" {' '.join(flags)}" if flags else ""
 
     console.print(f"[green]Workspace created: {workspace}[/green]")
 
     if sys.platform == "darwin":
         cmd = (
             f"cd {workspace} && quorus codex-agent {room} "
-            f"--name {name} --announce --cwd {workspace}"
+            f"--name {name}{flag_suffix} --cwd {workspace}"
         )
         applescript = f'tell application "Terminal" to do script "{cmd}"'
         subprocess.run(["osascript", "-e", applescript])
@@ -3716,7 +3874,7 @@ def _spawn_codex_agent(room: str, name: str, workspace: Path | None = None):
         _ui.info(
             "Run manually: "
             f"cd {workspace} && quorus codex-agent {room} "
-            f"--name {name} --announce --cwd {workspace}"
+            f"--name {name}{flag_suffix} --cwd {workspace}"
         )
 
 
@@ -3923,6 +4081,7 @@ def _cmd_add_agent(args):
     )
 
     model = effort = None
+    codex_autonomous = None
     if platform == "claude":
         # 3. Model preference
         model = Prompt.ask(
@@ -3937,6 +4096,12 @@ def _cmd_add_agent(args):
             choices=["low", "medium", "high"],
             default="high",
         )
+    else:
+        defaults = _get_codex_runner_defaults()
+        codex_autonomous = Confirm.ask(
+            "[bold]Launch Codex in supervised autonomous mode?[/bold]",
+            default=bool(defaults.get("autonomous", False)),
+        )
 
     # Summary and confirm
     console.print("\n[bold]Summary:[/bold]")
@@ -3947,6 +4112,11 @@ def _cmd_add_agent(args):
         console.print(f"  Model:  [cyan]{model}[/cyan]")
     if effort:
         console.print(f"  Effort: [cyan]{effort}[/cyan]")
+    if codex_autonomous is not None:
+        console.print(
+            "  Autonomous: "
+            f"[cyan]{'yes' if codex_autonomous else 'no'}[/cyan]"
+        )
 
     if not Confirm.ask("\n[bold]Launch agent?[/bold]", default=True):
         console.print("[dim]Cancelled.[/dim]")
@@ -4078,7 +4248,7 @@ You are {name} in the {room} group chat. ALL communication goes through the room
         console.print("[dim]Agent will auto-connect to the room on startup.[/dim]")
         return
 
-    _spawn_codex_agent(room, name, workspace)
+    _spawn_codex_agent(room, name, workspace, autonomous=codex_autonomous)
     console.print("[dim]Codex runner will auto-connect to the room on startup.[/dim]")
 
 
@@ -6150,6 +6320,82 @@ def main():
         help="Codex approval mode (default: on-request)",
     )
 
+    p_claude_agent = sub.add_parser(
+        "claude-agent",
+        help="Launch Claude Code with a Quorus-bound identity and inbox loop",
+    )
+    p_claude_agent.add_argument("room", help="Room name")
+    p_claude_agent.add_argument(
+        "--name",
+        default=None,
+        help="Exact Claude participant name (current identity or a child name)",
+    )
+    p_claude_agent.add_argument(
+        "--suffix",
+        default=None,
+        help="Register/use child identity suffix, e.g. reviewer -> name-claude-reviewer",
+    )
+    p_claude_agent.add_argument(
+        "--cwd",
+        default=".",
+        help="Working directory for the Claude session (default: current directory)",
+    )
+    p_claude_agent.add_argument(
+        "--wait",
+        type=int,
+        default=90,
+        help="Inbox long-poll wait in seconds (default: 90)",
+    )
+    p_claude_agent.add_argument(
+        "--announce",
+        action="store_true",
+        help="Post an online status message before launching Claude",
+    )
+    p_claude_agent.add_argument(
+        "--no-launch",
+        action="store_true",
+        help="Run only the inbox loop without launching Claude",
+    )
+    p_claude_agent.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print mirrored inbox lines and loop errors to stderr",
+    )
+    p_claude_agent.add_argument(
+        "--autonomous",
+        action="store_true",
+        help="Run supervised autonomous turns via claude -p when room context changes",
+    )
+    p_claude_agent.add_argument(
+        "--room-poll",
+        type=int,
+        default=15,
+        help="Room state/history refresh interval in seconds (default: 15)",
+    )
+    p_claude_agent.add_argument(
+        "--heartbeat",
+        type=int,
+        default=30,
+        help="Presence heartbeat interval in seconds (default: 30)",
+    )
+    p_claude_agent.add_argument(
+        "--history-limit",
+        type=int,
+        default=25,
+        help="How many recent room messages to mirror into context (default: 25)",
+    )
+    p_claude_agent.add_argument(
+        "--permission-mode",
+        default="auto",
+        choices=["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"],
+        help="Claude permission mode (default: auto)",
+    )
+    p_claude_agent.add_argument(
+        "--model",
+        default="sonnet",
+        help="Claude model to use (default: sonnet). Options: opus, sonnet, haiku",
+    )
+
     p_hack = sub.add_parser(
         "hackathon", help="Set up hackathon: 2 rooms + agents with missions"
     )
@@ -6465,6 +6711,7 @@ def main():
         "watch-daemon": _cmd_watch_daemon,
         "watch-context": _cmd_watch_context,
         "codex-agent": _cmd_codex_agent,
+        "claude-agent": _cmd_claude_agent,
         "state": _cmd_room_state,
         "locks": _cmd_room_locks,
         "usage": _cmd_usage,
