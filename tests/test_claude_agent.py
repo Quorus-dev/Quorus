@@ -1,7 +1,9 @@
 """Unit tests for packages/cli/quorus_cli/claude_agent.py.
 
 Tests the Claude Code autonomous runner infrastructure:
-- Identity resolution and caching
+- Identity resolution (no double-suffix, parent passthrough, prefix validation)
+- Heartbeat endpoint correctness
+- 403 join fallback logic
 - Room context formatting
 - Command building (interactive and print mode)
 - Autonomous prompt generation
@@ -11,7 +13,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch, call
 
+import httpx
 import pytest
 from quorus_cli.claude_agent import (
     ClaudeAgentError,
@@ -21,6 +25,10 @@ from quorus_cli.claude_agent import (
     build_claude_command,
     build_claude_print_command,
     build_prompt,
+    resolve_identity,
+    send_heartbeat,
+    join_room,
+    parent_join_room,
 )
 
 
@@ -142,7 +150,9 @@ class TestBuildClaudePrintCommand:
             context_path=Path("/tmp/context.md"),
             prompt="Execute this task now",
         )
-        assert cmd[-1] == "Execute this task now"
+        # Last arg is the combined system+user prompt; user prompt must be embedded.
+        assert "Execute this task now" in cmd[-1]
+        assert "alice-claude" in cmd[-1]
 
 
 class TestAutonomousPrompt:
@@ -236,3 +246,247 @@ class TestFormatRoomContext:
         )
         assert "## Active Goal" in context
         assert "Build the MVP by EOD" in context
+
+
+# ---------------------------------------------------------------------------
+# resolve_identity — the no-double-suffix invariant
+# ---------------------------------------------------------------------------
+
+class TestResolveIdentity:
+    RELAY = "https://relay.test"
+    PARENT = "arav"
+    PARENT_KEY = "mct_parent_key"
+
+    def test_no_name_no_suffix_returns_parent(self):
+        """Core invariant: no --name + no --suffix → run as parent, no child created."""
+        name, key = resolve_identity(
+            relay_url=self.RELAY,
+            parent_name=self.PARENT,
+            parent_api_key=self.PARENT_KEY,
+            requested_name=None,
+            suffix=None,
+        )
+        assert name == self.PARENT
+        assert key == self.PARENT_KEY
+
+    def test_requested_name_equals_parent_returns_parent(self):
+        """--name arav when parent is arav → run as parent directly."""
+        name, key = resolve_identity(
+            relay_url=self.RELAY,
+            parent_name=self.PARENT,
+            parent_api_key=self.PARENT_KEY,
+            requested_name=self.PARENT,
+            suffix=None,
+        )
+        assert name == self.PARENT
+        assert key == self.PARENT_KEY
+
+    def test_both_name_and_suffix_raises(self):
+        with pytest.raises(ClaudeAgentError, match="either --name or --suffix"):
+            resolve_identity(
+                relay_url=self.RELAY,
+                parent_name=self.PARENT,
+                parent_api_key=self.PARENT_KEY,
+                requested_name="arav-claude",
+                suffix="claude",
+            )
+
+    def test_name_without_parent_prefix_raises(self):
+        """--name aarya-claude when parent is arav → reject (not this user's child)."""
+        with pytest.raises(ClaudeAgentError, match="must equal"):
+            resolve_identity(
+                relay_url=self.RELAY,
+                parent_name=self.PARENT,
+                parent_api_key=self.PARENT_KEY,
+                requested_name="aarya-claude",
+                suffix=None,
+            )
+
+    def test_suffix_registers_child_via_relay(self):
+        """--suffix claude → registers arav-claude child and returns its key."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "agent_name": "arav-claude",
+            "api_key": "mct_child_key",
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("quorus_cli.claude_agent._cached_child_api_key", return_value=""), \
+             patch("quorus_cli.claude_agent._save_child_api_key") as mock_save, \
+             patch("httpx.post", return_value=mock_resp):
+            name, key = resolve_identity(
+                relay_url=self.RELAY,
+                parent_name=self.PARENT,
+                parent_api_key=self.PARENT_KEY,
+                requested_name=None,
+                suffix="claude",
+            )
+
+        assert name == "arav-claude"
+        assert key == "mct_child_key"
+        mock_save.assert_called_once_with("arav-claude", "mct_child_key")
+
+    def test_cached_child_key_skips_registration(self):
+        """Cached child API key → no relay call needed."""
+        with patch("quorus_cli.claude_agent._cached_child_api_key", return_value="mct_cached"), \
+             patch("httpx.post") as mock_post:
+            name, key = resolve_identity(
+                relay_url=self.RELAY,
+                parent_name=self.PARENT,
+                parent_api_key=self.PARENT_KEY,
+                requested_name=None,
+                suffix="claude",
+            )
+
+        assert name == "arav-claude"
+        assert key == "mct_cached"
+        mock_post.assert_not_called()
+
+    def test_name_with_parent_prefix_accepted(self):
+        """--name arav-cursor with parent arav → suffix=cursor, registers child."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "agent_name": "arav-cursor",
+            "api_key": "mct_cursor_key",
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("quorus_cli.claude_agent._cached_child_api_key", return_value=""), \
+             patch("quorus_cli.claude_agent._save_child_api_key"), \
+             patch("httpx.post", return_value=mock_resp):
+            name, key = resolve_identity(
+                relay_url=self.RELAY,
+                parent_name=self.PARENT,
+                parent_api_key=self.PARENT_KEY,
+                requested_name="arav-cursor",
+                suffix=None,
+            )
+
+        assert name == "arav-cursor"
+        assert key == "mct_cursor_key"
+
+
+# ---------------------------------------------------------------------------
+# send_heartbeat — correct endpoint + payload
+# ---------------------------------------------------------------------------
+
+class TestSendHeartbeat:
+    def test_posts_to_top_level_heartbeat_endpoint(self):
+        """Must use /heartbeat, NOT /rooms/{room}/heartbeat (old wrong path)."""
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"ok": True}
+        mock_token_resp = MagicMock()
+        mock_token_resp.raise_for_status = MagicMock()
+        mock_token_resp.json.return_value = {"token": "jwt_tok"}
+
+        captured_url = []
+
+        def fake_request(method, url, **kwargs):
+            captured_url.append(url)
+            return mock_resp
+
+        with patch("httpx.post", return_value=mock_token_resp), \
+             patch("httpx.request", side_effect=fake_request):
+            send_heartbeat(
+                relay_url="https://relay.test",
+                room="medbuddy-sprint",
+                participant="arav-claude",
+                api_key="mct_test",
+            )
+
+        assert any("heartbeat" in u for u in captured_url), f"No heartbeat URL found in {captured_url}"
+        assert not any("/rooms/" in u for u in captured_url), \
+            f"Used wrong room-scoped heartbeat endpoint: {captured_url}"
+
+    def test_heartbeat_payload_includes_required_fields(self):
+        """Payload must include instance_name, status=active, room."""
+        captured_body = {}
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"ok": True}
+        mock_token_resp = MagicMock()
+        mock_token_resp.raise_for_status = MagicMock()
+        mock_token_resp.json.return_value = {"token": "jwt_tok"}
+
+        def fake_request(method, url, json=None, **kwargs):
+            if json:
+                captured_body.update(json)
+            return mock_resp
+
+        with patch("httpx.post", return_value=mock_token_resp), \
+             patch("httpx.request", side_effect=fake_request):
+            send_heartbeat(
+                relay_url="https://relay.test",
+                room="medbuddy-sprint",
+                participant="arav-claude",
+                api_key="mct_test",
+            )
+
+        assert captured_body.get("instance_name") == "arav-claude"
+        assert captured_body.get("status") == "active"
+        assert captured_body.get("room") == "medbuddy-sprint"
+
+
+# ---------------------------------------------------------------------------
+# 403 join fallback — parent-assisted join
+# ---------------------------------------------------------------------------
+
+class TestJoinRoomFallback:
+    def test_join_room_posts_to_correct_url(self):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"ok": True}
+        mock_token_resp = MagicMock()
+        mock_token_resp.raise_for_status = MagicMock()
+        mock_token_resp.json.return_value = {"token": "tok"}
+
+        captured = []
+
+        def fake_request(method, url, **kwargs):
+            captured.append((method, url))
+            return mock_resp
+
+        with patch("httpx.post", return_value=mock_token_resp), \
+             patch("httpx.request", side_effect=fake_request):
+            join_room(
+                relay_url="https://relay.test",
+                room="general",
+                participant="arav-claude",
+                api_key="mct_test",
+            )
+
+        assert any("rooms/general/join" in u for _, u in captured)
+
+    def test_parent_join_room_uses_parent_api_key(self):
+        """parent_join_room must authenticate as parent, not child."""
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"ok": True}
+        mock_token_resp = MagicMock()
+        mock_token_resp.raise_for_status = MagicMock()
+        mock_token_resp.json.return_value = {"token": "parent_tok"}
+
+        captured_auth = []
+
+        def fake_post(url, **kwargs):
+            # Token exchange captures the api_key used
+            body = kwargs.get("json", {})
+            if "api_key" in body:
+                captured_auth.append(body["api_key"])
+            return mock_token_resp
+
+        def fake_request(method, url, **kwargs):
+            return mock_resp
+
+        with patch("httpx.post", side_effect=fake_post), \
+             patch("httpx.request", side_effect=fake_request):
+            parent_join_room(
+                relay_url="https://relay.test",
+                room="general",
+                participant="arav-claude",
+                parent_api_key="mct_parent_key",
+            )
+
+        assert "mct_parent_key" in captured_auth, \
+            "parent_join_room must authenticate with parent API key"
