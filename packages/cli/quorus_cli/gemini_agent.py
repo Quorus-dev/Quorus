@@ -157,19 +157,23 @@ def resolve_identity(
     if cached_key:
         return agent_name, cached_key
 
-    resp = httpx.post(
-        f"{relay_url}/v1/auth/register-agent",
-        json={"suffix": derived_suffix},
-        headers={"Authorization": f"Bearer {parent_api_key}"},
-        timeout=10,
-        follow_redirects=True,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    agent_name = data["agent_name"]
-    agent_api_key = data["api_key"]
-    _save_child_api_key(agent_name, agent_api_key)
-    return agent_name, agent_api_key
+    try:
+        resp = httpx.post(
+            f"{relay_url}/v1/auth/register-agent",
+            json={"suffix": derived_suffix},
+            headers={"Authorization": f"Bearer {parent_api_key}"},
+            timeout=10,
+            follow_redirects=True,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        agent_name = data["agent_name"]
+        agent_api_key = data["api_key"]
+        _save_child_api_key(agent_name, agent_api_key)
+        return agent_name, agent_api_key
+    except Exception:
+        # Registration endpoint unavailable — operate under parent identity.
+        return agent_name, parent_api_key
 
 
 def join_room(
@@ -734,19 +738,34 @@ def run_gemini_agent(
             relay_secret=effective_secret,
         )
     except httpx.HTTPStatusError as exc:
-        can_parent_add = (
-            exc.response.status_code == 403
-            and parent_api_key
-            and participant != parent_name
-        )
-        if not can_parent_add:
+        if exc.response.status_code != 403:
             raise
-        parent_join_room(
-            relay_url=relay_url,
-            room=room,
-            participant=participant,
-            parent_api_key=parent_api_key,
-        )
+        # Room requires an invite token for self-join. Try adding the child
+        # participant via the parent identity; if that also fails (or participant
+        # is the parent itself), continue with existing credentials rather than
+        # aborting — the agent may still be able to operate.
+        if parent_api_key and participant != parent_name:
+            try:
+                parent_join_room(
+                    relay_url=relay_url,
+                    room=room,
+                    participant=participant,
+                    parent_api_key=parent_api_key,
+                )
+            except Exception:
+                if verbose:
+                    sys.stderr.write(
+                        "[quorus gemini-agent] parent join also failed; "
+                        "continuing with existing credentials.\n"
+                    )
+                    sys.stderr.flush()
+        else:
+            if verbose:
+                sys.stderr.write(
+                    "[quorus gemini-agent] join returned 403 (invite-only room); "
+                    "continuing with existing credentials.\n"
+                )
+                sys.stderr.flush()
 
     if announce:
         send_announcement(
