@@ -2105,6 +2105,7 @@ def _cmd_codex_agent(args):
             room_poll_seconds=args.room_poll,
             heartbeat_seconds=args.heartbeat,
             history_limit=args.history_limit,
+            save_defaults=args.save_defaults,
         )
     except CodexAgentError as exc:
         _ui.error(str(exc))
@@ -6444,6 +6445,12 @@ def main():
         default="on-request",
         choices=["untrusted", "on-request", "never"],
         help="Codex approval mode (default: on-request)",
+    )
+    p_codex_agent.add_argument(
+        "--save-defaults",
+        action="store_true",
+        default=False,
+        help="Save current flags as defaults for future codex-agent invocations",
     )
 
     p_gemini_agent = sub.add_parser(

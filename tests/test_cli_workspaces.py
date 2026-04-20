@@ -171,6 +171,7 @@ def test_codex_agent_command_dispatches(monkeypatch: pytest.MonkeyPatch) -> None
     def fake_cmd(args) -> None:
         called["room"] = args.room
         called["suffix"] = args.suffix
+        called["save_defaults"] = args.save_defaults
         raise SystemExit(0)
 
     monkeypatch.setattr(cli_mod, "_cmd_codex_agent", fake_cmd)
@@ -178,13 +179,24 @@ def test_codex_agent_command_dispatches(monkeypatch: pytest.MonkeyPatch) -> None
     with patch.object(
         cli_mod.sys,
         "argv",
-        ["quorus", "codex-agent", "medbuddy-sprint", "--suffix", "reviewer"],
+        [
+            "quorus",
+            "codex-agent",
+            "medbuddy-sprint",
+            "--suffix",
+            "reviewer",
+            "--save-defaults",
+        ],
     ):
         with pytest.raises(SystemExit) as exc:
             cli_mod.main()
 
     assert exc.value.code == 0
-    assert called == {"room": "medbuddy-sprint", "suffix": "reviewer"}
+    assert called == {
+        "room": "medbuddy-sprint",
+        "suffix": "reviewer",
+        "save_defaults": True,
+    }
 
 
 def test_spawn_codex_dispatches_to_codex_runner(monkeypatch: pytest.MonkeyPatch) -> None:

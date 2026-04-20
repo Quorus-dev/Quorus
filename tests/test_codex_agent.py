@@ -16,6 +16,7 @@ from quorus_cli.codex_agent import (
     parent_join_room,
     resolve_identity,
     run_codex_agent,
+    save_codex_runner_defaults,
     send_heartbeat,
 )
 
@@ -221,6 +222,43 @@ def test_cached_child_api_key_reads_profile(monkeypatch: pytest.MonkeyPatch) -> 
     assert _cached_child_api_key("arav-codex-builder") == "mct_child"
 
 
+def test_save_codex_runner_defaults_persists_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saved = {}
+
+    class FakePm:
+        def current(self):
+            return "default"
+
+        def get(self, slug):
+            assert slug == "default"
+            return {"instance_name": "arav-codex"}
+
+        def save(self, slug, data):
+            saved["slug"] = slug
+            saved["data"] = data
+
+    monkeypatch.setattr("quorus_cli.codex_agent.ProfileManager", lambda: FakePm())
+
+    save_codex_runner_defaults(
+        autonomous=True,
+        room_poll_seconds=20,
+        heartbeat_seconds=45,
+        history_limit=40,
+        announce=False,
+    )
+
+    assert saved["slug"] == "default"
+    assert saved["data"]["codex_runner_defaults"] == {
+        "autonomous": True,
+        "room_poll": 20,
+        "heartbeat": 45,
+        "history_limit": 40,
+        "announce": False,
+    }
+
+
 def test_parent_join_room_uses_parent_jwt(monkeypatch: pytest.MonkeyPatch) -> None:
     called = {}
 
@@ -329,3 +367,61 @@ def test_run_codex_agent_tolerates_forbidden_self_join_when_room_is_readable(
 
     assert rc == 0
     assert called["fetch"] == 1
+
+
+def test_run_codex_agent_saves_defaults_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    called = {}
+
+    class DummyThread:
+        def __init__(self, target=None, kwargs=None, daemon=None):
+            self.target = target
+            self.kwargs = kwargs or {}
+
+        def start(self):
+            return None
+
+        def join(self, timeout=None):
+            return None
+
+    monkeypatch.setattr("quorus_cli.codex_agent.join_room", lambda **kwargs: None)
+    monkeypatch.setattr("quorus_cli.codex_agent.send_announcement", lambda **kwargs: None)
+    monkeypatch.setattr("quorus_cli.codex_agent.threading.Thread", DummyThread)
+    monkeypatch.setattr("quorus_cli.codex_agent.run_autonomous_loop", lambda **kwargs: 0)
+    monkeypatch.setattr(
+        "quorus_cli.codex_agent.save_codex_runner_defaults",
+        lambda **kwargs: called.update(kwargs),
+    )
+
+    rc = run_codex_agent(
+        room="medbuddy-sprint",
+        relay_url="https://relay.test",
+        parent_name="arav-codex",
+        parent_api_key="mct_parent",
+        relay_secret="",
+        requested_name="arav-codex",
+        suffix=None,
+        cwd=tmp_path,
+        wait_seconds=10,
+        announce=True,
+        no_launch=False,
+        verbose=False,
+        sandbox="workspace-write",
+        approval="on-request",
+        autonomous=True,
+        room_poll_seconds=20,
+        heartbeat_seconds=45,
+        history_limit=40,
+        save_defaults=True,
+    )
+
+    assert rc == 0
+    assert called == {
+        "autonomous": True,
+        "room_poll_seconds": 20,
+        "heartbeat_seconds": 45,
+        "history_limit": 40,
+        "announce": True,
+    }

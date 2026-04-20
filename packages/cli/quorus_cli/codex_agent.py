@@ -28,6 +28,7 @@ import httpx
 from quorus.profiles import ProfileManager
 
 DEFAULT_HISTORY_LIMIT = 25
+_DEFAULTS_KEY = "codex_runner_defaults"
 
 
 class CodexAgentError(RuntimeError):
@@ -60,6 +61,35 @@ def _save_child_api_key(agent_name: str, api_key: str) -> None:
         keys = {}
     keys[agent_name] = api_key
     data["agent_api_keys"] = keys
+    pm.save(slug, data)
+
+
+def save_codex_runner_defaults(
+    *,
+    autonomous: bool | None = None,
+    room_poll_seconds: int | None = None,
+    heartbeat_seconds: int | None = None,
+    history_limit: int | None = None,
+    announce: bool | None = None,
+) -> None:
+    """Persist Codex runner defaults into the current Quorus profile."""
+    pm, slug, data = _current_profile_manager()
+    if not slug:
+        return
+    existing = data.get(_DEFAULTS_KEY, {})
+    if not isinstance(existing, dict):
+        existing = {}
+    if autonomous is not None:
+        existing["autonomous"] = autonomous
+    if room_poll_seconds is not None:
+        existing["room_poll"] = room_poll_seconds
+    if heartbeat_seconds is not None:
+        existing["heartbeat"] = heartbeat_seconds
+    if history_limit is not None:
+        existing["history_limit"] = history_limit
+    if announce is not None:
+        existing["announce"] = announce
+    data[_DEFAULTS_KEY] = existing
     pm.save(slug, data)
 
 
@@ -748,11 +778,21 @@ def run_codex_agent(
     room_poll_seconds: int,
     heartbeat_seconds: int,
     history_limit: int,
+    save_defaults: bool = False,
 ) -> int:
     """Join the room, maintain runner state, and launch Codex."""
     import tempfile as _tmp
     _agent_config_dir = Path(_tmp.mkdtemp(prefix="quorus-agent-"))
     os.environ.setdefault("QUORUS_CONFIG_DIR", str(_agent_config_dir))
+
+    if save_defaults:
+        save_codex_runner_defaults(
+            autonomous=autonomous,
+            room_poll_seconds=room_poll_seconds,
+            heartbeat_seconds=heartbeat_seconds,
+            history_limit=history_limit,
+            announce=announce,
+        )
 
     participant, agent_api_key = resolve_identity(
         relay_url=relay_url,
