@@ -57,7 +57,8 @@ class TestHubState:
     def test_select_next_noop_on_empty(self):
         s = HubState()
         s.select_next()  # must not raise
-        assert s.selected_room_idx == 0
+        # No rooms → stays in welcome state (-1).
+        assert s.selected_room_idx == -1
 
     def test_get_selected_room_clamps_index(self):
         """Index out of bounds is clamped to last element."""
@@ -140,8 +141,11 @@ class TestHubState:
         s = HubState()
         assert s.selected_room_name() == ""
         s.set_rooms([{"id": "r1", "name": "dev"}, {"id": "r2", "name": "ops"}])
+        # Default is welcome state (no room selected) → empty name.
+        assert s.selected_room_name() == ""
+        s.select_next()  # advances from -1 to 0 (dev)
         assert s.selected_room_name() == "dev"
-        s.select_next()
+        s.select_next()  # advances 0 → 1 (ops)
         assert s.selected_room_name() == "ops"
 
     def test_set_connected(self):

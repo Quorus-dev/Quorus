@@ -625,7 +625,10 @@ class HubState:
         # refetch from double-rendering the same message. Bounded to 2*MAX_MSG.
         self._seen_ids: list[str] = []
         self._seen_set: set[str] = set()
-        self.selected_room_idx: int = 0
+        # -1 means "no room selected" → render a clean welcome view at startup
+        # instead of auto-loading whichever room happens to be index 0. Once the
+        # user presses Tab/arrows or types /join, this advances to a real index.
+        self.selected_room_idx: int = -1
         self.status: str = "Connecting..."
         self.connected: bool = False
         self.status_bar_msg: str = ""
@@ -715,14 +718,14 @@ class HubState:
 
     def get_selected_room(self) -> Optional[dict]:
         with self._lock:
-            if not self.rooms:
+            if not self.rooms or self.selected_room_idx < 0:
                 return None
             idx = max(0, min(self.selected_room_idx, len(self.rooms) - 1))
             return self.rooms[idx]
 
     def _selected_name_locked(self) -> str:
         """Current room's name. Must be called inside the lock."""
-        if not self.rooms:
+        if not self.rooms or self.selected_room_idx < 0:
             return ""
         idx = max(0, min(self.selected_room_idx, len(self.rooms) - 1))
         r = self.rooms[idx]
@@ -731,14 +734,22 @@ class HubState:
     def select_next(self) -> None:
         with self._lock:
             if self.rooms:
-                self.selected_room_idx = (self.selected_room_idx + 1) % len(self.rooms)
+                # Advance from welcome (-1) to first room (0), then wrap normally.
+                if self.selected_room_idx < 0:
+                    self.selected_room_idx = 0
+                else:
+                    self.selected_room_idx = (self.selected_room_idx + 1) % len(self.rooms)
                 # Entering a room counts as reading it.
                 self.unread.pop(self._selected_name_locked(), None)
 
     def select_prev(self) -> None:
         with self._lock:
             if self.rooms:
-                self.selected_room_idx = (self.selected_room_idx - 1) % len(self.rooms)
+                # Going prev from welcome (-1) lands on last room.
+                if self.selected_room_idx < 0:
+                    self.selected_room_idx = len(self.rooms) - 1
+                else:
+                    self.selected_room_idx = (self.selected_room_idx - 1) % len(self.rooms)
                 self.unread.pop(self._selected_name_locked(), None)
 
     def select_by_name(self, name: str) -> None:
@@ -790,9 +801,13 @@ class HubState:
             self._track_id(key)
 
     def selected_room_name(self) -> str:
-        """Return the currently-selected room name, or empty string."""
+        """Return the currently-selected room name, or empty string.
+
+        Returns empty when no rooms exist OR the welcome state is active
+        (selected_room_idx < 0).
+        """
         with self._lock:
-            if not self.rooms:
+            if not self.rooms or self.selected_room_idx < 0:
                 return ""
             idx = max(0, min(self.selected_room_idx, len(self.rooms) - 1))
             r = self.rooms[idx]
