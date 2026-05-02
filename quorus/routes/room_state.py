@@ -156,6 +156,31 @@ async def claim_task(
     if auth.sub and body.claimed_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot claim as another user")
 
+    # Policy gate (SHADOW by default — logs intent, doesn't block).
+    # See quorus/auth/policy.py.
+    from quorus.auth.policy import (
+        Decision as _D,
+        PolicyContext as _PC,
+        evaluate as _eval,
+        load_policy_for_tenant as _load,
+    )
+    _actor_role = "agent" if (auth.sub or "").endswith(
+        ("-claude", "-codex", "-cursor", "-gemini", "-claude-1m")
+    ) else "human"
+    _pol = _eval(_PC(
+        actor=auth.sub or "anonymous",
+        action="lock.acquire",
+        resource=body.file_path,
+        role=_actor_role,
+        tenant_id=_tid(auth),
+    ), _load(_tid(auth)))
+    if _pol.effective_decision == _D.DENY:
+        raise HTTPException(status_code=403, detail=f"policy_denied: {_pol.reason}")
+    if _pol.effective_decision == _D.REQUIRE_HUMAN:
+        raise HTTPException(
+            status_code=403, detail=f"approval_required: {_pol.reason}"
+        )
+
     backends = request.app.state.backends
     tid = _tid(auth)
 
