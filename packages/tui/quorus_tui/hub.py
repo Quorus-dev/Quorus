@@ -72,10 +72,16 @@ def _full_clear(console) -> None:
     Falls back to Rich's clear if stdout isn't a real terminal (e.g. inside
     pytest capture).
     """
-    import sys as _sys
-    if _sys.stdout.isatty():
-        _sys.stdout.write("\x1b[3J\x1b[H\x1b[2J")
-        _sys.stdout.flush()
+    if sys.stdout.isatty():
+        # xterm.js (VS Code) is strict: visible-clear (2J) MUST precede
+        # scrollback-clear (3J) and cursor-home (H) goes last. iTerm2 /
+        # Alacritty / Terminal.app are tolerant; VS Code is not.
+        sys.stdout.write("\x1b[2J\x1b[3J\x1b[H")
+        sys.stdout.flush()
+        try:
+            console.clear()  # reset Rich's styled state too
+        except Exception:
+            pass
     else:
         console.clear()
 
@@ -2109,8 +2115,15 @@ def _main_input_loop(
             state.reset_inline_rule()
 
             if line == _KEY_TIMEOUT:
-                # Render tick fired while idle — just loop back to redraw.
-                last_render = 0
+                # Render tick fired. If the user is mid-typing (we have a
+                # pending input buffer), HOLD the redraw — wiping the screen
+                # erases what they're typing, even though the buffer survives
+                # the round-trip. Letting them finish the line keeps the UX
+                # calm. We still re-loop so the inline status row updates.
+                if _PENDING_INPUT_BUF:
+                    hold_render = True
+                else:
+                    last_render = 0
                 continue
 
             if line == _KEY_QUIT:
