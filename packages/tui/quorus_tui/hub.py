@@ -837,8 +837,29 @@ class HubState:
 
     # Rooms
     def set_rooms(self, rooms: list[dict]) -> None:
+        """Refresh the room list while preserving the user's current selection.
+
+        Without this, a polling-thread refetch that returns rooms in a
+        different order silently shifts `selected_room_idx` to a different
+        room — observed as "the TUI kicked me out of #quorus-may4-sprint
+        into #general." Fix: capture the selected room's NAME before
+        replacing the list, then re-find it in the new list and update
+        the index. -1 (welcome state) is preserved as -1.
+        """
         with self._lock:
+            prev_name = ""
+            if 0 <= self.selected_room_idx < len(self.rooms):
+                r = self.rooms[self.selected_room_idx]
+                prev_name = r.get("name") or r.get("id") or ""
             self.rooms = rooms
+            if prev_name:
+                for i, r in enumerate(rooms):
+                    if (r.get("name") or r.get("id") or "") == prev_name:
+                        self.selected_room_idx = i
+                        return
+                # Selected room vanished from the new list — drop to welcome
+                # rather than silently jumping to a different room.
+                self.selected_room_idx = -1
 
     def get_rooms(self) -> list[dict]:
         with self._lock:
