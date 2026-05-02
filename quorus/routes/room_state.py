@@ -160,8 +160,14 @@ async def claim_task(
     # See quorus/auth/policy.py.
     from quorus.auth.policy import (
         Decision as _D,
+    )
+    from quorus.auth.policy import (
         PolicyContext as _PC,
+    )
+    from quorus.auth.policy import (
         evaluate as _eval,
+    )
+    from quorus.auth.policy import (
         load_policy_for_tenant as _load,
     )
     _actor_role = "agent" if (auth.sub or "").endswith(
