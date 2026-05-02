@@ -839,27 +839,46 @@ class HubState:
     def set_rooms(self, rooms: list[dict]) -> None:
         """Refresh the room list while preserving the user's current selection.
 
-        Without this, a polling-thread refetch that returns rooms in a
-        different order silently shifts `selected_room_idx` to a different
-        room — observed as "the TUI kicked me out of #quorus-may4-sprint
-        into #general." Fix: capture the selected room's NAME before
-        replacing the list, then re-find it in the new list and update
-        the index. -1 (welcome state) is preserved as -1.
+        Why preserving by name matters: the polling thread calls this
+        every few seconds. Without name-tracking, a refetch that returns
+        rooms in a different order silently shifts ``selected_room_idx``
+        to point at a different room.
+
+        Why preserving when the room is MISSING from the new list also
+        matters: the relay's GET /rooms returns ``list_for_member`` for
+        regular auth, which can transiently omit the user's current room
+        when a background agent's membership state is mid-update. We saw
+        this as "TUI keeps switching me in and out of rooms randomly."
+        Fix: when prev_name is missing from the new list, KEEP the old
+        room dict by re-injecting it at the front of the list. The user
+        stays put. Real removals (explicit /destroy or Esc) bypass this
+        path because their handlers set ``selected_room_idx = -1``
+        directly before calling ``set_rooms``.
         """
         with self._lock:
             prev_name = ""
+            prev_room: dict | None = None
             if 0 <= self.selected_room_idx < len(self.rooms):
-                r = self.rooms[self.selected_room_idx]
-                prev_name = r.get("name") or r.get("id") or ""
-            self.rooms = rooms
+                prev_room = self.rooms[self.selected_room_idx]
+                prev_name = prev_room.get("name") or prev_room.get("id") or ""
             if prev_name:
                 for i, r in enumerate(rooms):
                     if (r.get("name") or r.get("id") or "") == prev_name:
+                        self.rooms = rooms
                         self.selected_room_idx = i
                         return
-                # Selected room vanished from the new list — drop to welcome
-                # rather than silently jumping to a different room.
-                self.selected_room_idx = -1
+                # Room is missing from the new list. If welcome is the
+                # active state (no prior selection) we wouldn't be here —
+                # this branch only fires when the user *had* selected a
+                # room and the relay forgot it. Re-inject the stale room
+                # dict so the strip still shows it and the user stays in
+                # the chat. The next poll will most likely return it
+                # again; if not, the user can /destroy or Esc.
+                merged = [prev_room] + list(rooms) if prev_room else list(rooms)
+                self.rooms = merged
+                self.selected_room_idx = 0 if prev_room else -1
+                return
+            self.rooms = rooms
 
     def get_rooms(self) -> list[dict]:
         with self._lock:

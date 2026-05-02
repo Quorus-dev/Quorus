@@ -201,6 +201,55 @@ class TestHubState:
         rooms.append({"id": "X", "name": "intruder"})
         assert len(s.get_rooms()) == 1
 
+    def test_set_rooms_preserves_selection_when_room_transiently_missing(self):
+        """Regression for 'TUI keeps switching me in and out of rooms.'
+
+        The relay's GET /rooms uses ``list_for_member`` for non-admin auth,
+        which can transiently omit the user's current room while a
+        background agent shuffles its membership. If we drop to welcome
+        every time the room flickers out, the user gets bounced
+        between the room view and the home screen on every poll.
+        Fix: re-inject the stale room dict into the new list so the
+        user stays put. The next poll typically returns the real room.
+        """
+        s = HubState()
+        s.set_rooms([
+            {"id": "r1", "name": "general"},
+            {"id": "r2", "name": "may4-sprint"},
+        ])
+        s.select_by_name("may4-sprint")
+        assert s.selected_room_name() == "may4-sprint"
+        # Relay transiently forgets the room (membership-cache race)
+        s.set_rooms([{"id": "r1", "name": "general"}])
+        assert s.selected_room_name() == "may4-sprint"  # still in the room
+        # Next poll returns it — the stale dict is replaced by the real one
+        s.set_rooms([
+            {"id": "r1", "name": "general"},
+            {"id": "r2", "name": "may4-sprint", "members": ["arav"]},
+        ])
+        assert s.selected_room_name() == "may4-sprint"
+        sel = s.get_selected_room()
+        assert sel is not None
+        # Confirm we got the FRESH dict, not the stale one
+        assert sel.get("members") == ["arav"]
+
+    def test_set_rooms_with_empty_list_preserves_selection(self):
+        """A 5xx blip that returns no rooms must NOT kick the user out."""
+        s = HubState()
+        s.set_rooms([{"id": "r1", "name": "dev"}])
+        s.select_by_name("dev")
+        s.set_rooms([])  # transient empty response
+        assert s.selected_room_name() == "dev"
+        # And the room is preserved so the strip can still render it
+        assert any(r.get("name") == "dev" for r in s.get_rooms())
+
+    def test_set_rooms_from_welcome_with_empty_stays_at_welcome(self):
+        """If user was at welcome (-1) and rooms is empty, stay at welcome."""
+        s = HubState()
+        s.set_rooms([])
+        assert s.selected_room_idx == -1
+        assert s.get_rooms() == []
+
     def test_set_connected(self):
         s = HubState()
         s.set_connected(True, "Connected")
