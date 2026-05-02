@@ -1,9 +1,30 @@
-"""Reflexd — Quorus client-side AI-native notification daemon (PR-C1).
+"""Reflexd — Quorus client-side AI-native notification daemon.
 
-Wakes the right agent on @-mention without keeping host harnesses open.
-Subscribes to /stream/{participant}, runs local triage, bids on /v1/bid,
-polls /v1/claim, and on win spawns a headless agent (claude SDK / codex /
-gemini / cursor-agent) which posts the reply through /rooms/{room}/messages.
+Phase 1 (PR-C1, shipped): wakes the right agent on @-mention without
+keeping host harnesses open. Subscribes to ``/stream/{participant}``,
+runs local triage, bids on ``/v1/bid``, polls ``/v1/claim``, and on win
+spawns a headless agent (claude SDK / codex / gemini / cursor-agent)
+which posts the reply through ``/rooms/{room}/messages``.
+
+Phase 2 (this module + :mod:`reflexd_triage`): self-assignment. The
+daemon now also detects *open work* in chat and bids on it without
+being explicitly @-mentioned. Triage produces a ``kind`` of:
+
+  - ``mention``       — literal ``@self_name``                (bid 1.0)
+  - ``role_request``  — ``TODO @<role>: ...`` matching caps   (bid 0.7)
+  - ``open_todo``     — ``@open ...`` with capability overlap (bid 0.5)
+  - ``question``      — ``who can ...?`` / trailing ``?``     (bid 0.3)
+
+Capability sets are derived from the participant-name suffix:
+
+  - ``*-claude*`` → frontend, react, tui, tests, general
+  - ``*-codex*``  → backend, relay, audit, policy, general
+  - ``*-gemini*`` → docs, research, general
+  - ``*-cursor*`` → refactor, general
+
+Bid scoring + capability tables live in :mod:`reflexd_triage` so the
+daemon stays under its 1500-LoC cap. All scoring is local — no relay
+round-trip — so this scales to 4+ agents without bottleneck.
 
 Lane: client-side ONLY. No relay route changes. Run with
 ``python scripts/reflexd.py --help``.
@@ -34,10 +55,35 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+# Phase 2 triage v2 lives in a sibling module so reflexd.py stays under its
+# 1500-LoC cap. We import via a path-aware loader because ``scripts/`` is
+# not a package — same dance the tests use to import reflexd itself.
+import importlib.util as _ilu  # noqa: E402
+
 from quorus.config import ConfigManager  # noqa: E402
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
 from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
 from quorus.runtime.turnguard import is_busy as _tg_is_busy  # noqa: E402
+
+_TRIAGE_PATH = Path(__file__).resolve().parent / "reflexd_triage.py"
+_triage_spec = _ilu.spec_from_file_location("reflexd_triage", _TRIAGE_PATH)
+assert _triage_spec is not None and _triage_spec.loader is not None
+reflexd_triage = _ilu.module_from_spec(_triage_spec)
+sys.modules.setdefault("reflexd_triage", reflexd_triage)
+_triage_spec.loader.exec_module(reflexd_triage)
+
+# Re-export the public surface so callers (and existing tests that import
+# from reflexd directly) can keep using ``reflexd.classify_message`` etc.
+classify_message = reflexd_triage.classify_message
+TriageResult = reflexd_triage.TriageResult
+capabilities_for = reflexd_triage.capabilities_for
+matches_capability = reflexd_triage.matches_capability
+compute_bid_v2 = reflexd_triage.compute_bid_v2
+self_assign_preamble = reflexd_triage.self_assign_preamble
+CAPABILITIES_CLAUDE = reflexd_triage.CAPABILITIES_CLAUDE
+CAPABILITIES_CODEX = reflexd_triage.CAPABILITIES_CODEX
+CAPABILITIES_GEMINI = reflexd_triage.CAPABILITIES_GEMINI
+CAPABILITIES_CURSOR = reflexd_triage.CAPABILITIES_CURSOR
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -69,21 +115,27 @@ def triage_local(
     self_name: str,
     message_type: str = "chat",
 ) -> tuple[str, str]:
-    """Local triage v0: returns ``(action, reason)`` with action in {RESPOND, IGNORE}.
+    """Phase-1-compatible 2-tuple wrapper around :func:`classify_message`.
 
-    IGNORE on self-sent or non-conversational; RESPOND on literal ``@self_name``
-    token or trailing ``?``; otherwise IGNORE.
+    Returns ``(action, reason)``. Existing call sites and tests that
+    unpack two values keep working unchanged. The new ``kind``/``role``/
+    ``description`` fields are reachable via :func:`classify_message`
+    directly — see :mod:`reflexd_triage` for the rubric.
+
+    Reason mapping is preserved so log lines stay grep-stable:
+
+    * ``"literal @mention"`` for mentions (Phase 1 wire format)
+    * ``"question mark"`` for trailing ``?``
+    * other Phase-2 reasons (``"open_todo"``, ``"role_request:<role>"``,
+      ``"who_can_question"``) are surfaced verbatim.
     """
-    if sender and sender == self_name:
-        return "IGNORE", "self message"
-    if message_type not in {"chat", "request", "question"}:
-        return "IGNORE", f"non-conversational type {message_type!r}"
-    text = content or ""
-    if re.search(rf"@{re.escape(self_name)}(?![A-Za-z0-9_-])", text):
-        return "RESPOND", "literal @mention"
-    if text.rstrip().endswith("?"):
-        return "RESPOND", "question mark"
-    return "IGNORE", "no signal"
+    result = classify_message(
+        content=content,
+        sender=sender,
+        self_name=self_name,
+        message_type=message_type,
+    )
+    return result.action, result.reason
 
 
 def compute_bid(*, is_mention: bool, recency_seconds: float) -> float:
@@ -721,8 +773,16 @@ class Reflexd:
     ) -> bool:
         """Process one chat/question/request envelope.
 
+        Phase-2 flow:
+          1. v2 triage → (action, reason, kind, role, description)
+          2. score bid via :func:`compute_bid_v2` against this agent's
+             capability set; bid 0.0 means "not for me, skip"
+          3. submit bid + poll claim
+          4. on win, wake the harness with a context that includes the
+             self-assignment preamble for ``open_todo`` kinds
+
         Returns True iff we POSTed a bid (regardless of claim outcome);
-        False on IGNORE / busy-queued.
+        False on IGNORE / busy-queued / capability-mismatch.
         """
         sender = envelope.get("from_name") or ""
         content = envelope.get("content") or ""
@@ -730,15 +790,16 @@ class Reflexd:
         message_id = envelope.get("id") or ""
         message_type = envelope.get("message_type") or "chat"
 
-        action, reason = triage_local(
+        triage = classify_message(
             content=content, sender=sender,
             self_name=self.config.participant_name, message_type=message_type,
         )
         logger.debug(
-            "triage room=%s sender=%s id=%s preview=%r → %s (%s)",
-            room, sender, message_id, safe_message_preview(content), action, reason,
+            "triage room=%s sender=%s id=%s preview=%r → %s kind=%s reason=%s",
+            room, sender, message_id, safe_message_preview(content),
+            triage.action, triage.kind, triage.reason,
         )
-        if action != "RESPOND":
+        if triage.action != "RESPOND":
             return False
 
         if is_busy(self.config.participant_name, self.config.runtime_dir):
@@ -748,15 +809,32 @@ class Reflexd:
                 self._queue.pop(0)
             return False
 
-        is_mention = reason == "literal @mention"
+        # Capability-aware bid scoring. Score 0.0 ⇒ this agent isn't a fit;
+        # skip the bid POST entirely so we don't poison the auction with
+        # zero-bids that look like real participants.
+        caps = capabilities_for(
+            self.config.participant_name, harness=detect_harness(self.config.participant_name),
+        )
         recency = max(0.0, time.time() - self._last_wake_at) if self._last_wake_at else 0.0
-        bid = compute_bid(is_mention=is_mention, recency_seconds=min(recency, 5.0))
+        bid, bid_reason = compute_bid_v2(
+            kind=triage.kind,
+            role=triage.role,
+            description=triage.description,
+            capabilities=caps,
+            recency_seconds=min(recency, 5.0),
+        )
+        if bid <= 0.0:
+            logger.info(
+                "skipping bid (no capability match) room=%s id=%s kind=%s reason=%s",
+                room, message_id, triage.kind, bid_reason,
+            )
+            return False
 
         try:
             await relay.submit_bid(
                 room_id=room, message_id=message_id,
                 participant=self.config.participant_name,
-                bid=bid, reason=reason,
+                bid=bid, reason=bid_reason,
             )
         except httpx.HTTPError as exc:
             logger.warning("bid POST failed: %s", exc)
@@ -781,22 +859,31 @@ class Reflexd:
             logger.info("lost or no claim room=%s id=%s winner=%s", room, message_id, winner)
             return True
 
-        await self._wake_and_reply(relay, envelope, reason=reason)
+        await self._wake_and_reply(relay, envelope, triage=triage)
         self._last_wake_at = time.time()
         return True
 
     async def _wake_and_reply(
-        self, relay: RelayClient, envelope: dict[str, Any], *, reason: str,
+        self, relay: RelayClient, envelope: dict[str, Any], *,
+        triage: "TriageResult | None" = None, reason: str | None = None,
     ) -> None:
+        """Render the wake context and hand it to the headless harness.
+
+        ``triage`` (Phase 2) carries the full classification so the
+        prompt can include the self-assign preamble for open tasks.
+        ``reason`` (legacy) is still accepted for callers that haven't
+        migrated yet — used only for log lines.
+        """
         room = envelope.get("room") or ""
         if not self.config.spawn_enabled:
             logger.info("spawn disabled (test mode); skipping harness call")
             return
 
         history = await relay.fetch_recent(room=room, limit=HEARTBEAT_HISTORY_LIMIT)
-        prompt = self._build_prompt(envelope, history)
+        prompt = self._build_prompt(envelope, history, triage=triage)
         harness = detect_harness(self.config.participant_name)
-        logger.info("waking harness=%s room=%s reason=%s", harness, room, reason)
+        log_reason = (triage.reason if triage else None) or reason or "?"
+        logger.info("waking harness=%s room=%s reason=%s", harness, room, log_reason)
         try:
             reply = await self.adapter.run(harness, context=prompt)
         except Exception as exc:
@@ -817,8 +904,14 @@ class Reflexd:
 
     def _build_prompt(
         self, envelope: dict[str, Any], history: list[dict[str, Any]],
+        *, triage: "TriageResult | None" = None,
     ) -> str:
-        """Compose: QOD constitution + last N messages + WakeIntent block."""
+        """Compose QOD + history + WakeIntent.
+
+        For ``open_todo`` kinds we *prepend* a self-assignment preamble
+        (QOD rules 1 + 3) so the harness's reply naturally follows the
+        plan/ship convention without needing extra prompting.
+        """
         recent = history[-HEARTBEAT_HISTORY_LIMIT:] if history else []
         lines = [
             f"@{m.get('from_name') or m.get('sender') or '?'}: {m.get('content') or ''}"
@@ -828,12 +921,34 @@ class Reflexd:
         wake_sender = envelope.get("from_name") or "?"
         wake_content = envelope.get("content") or ""
         wake_room = envelope.get("room") or "?"
-        return (
-            f"{render_qod_for_agent_loop()}\n\n"
-            f"# Wake Intent\n"
+
+        # Phase-2: open_todo kinds get a self-assignment preamble that
+        # tells the harness it just *picked up* this work.
+        preamble = ""
+        intent_blurb = (
             f"You are `{self.config.participant_name}`. You were @-mentioned in "
             f"room `{wake_room}` by `{wake_sender}`. Reply concisely (1-3 lines) "
-            f"and do not run any tools that require user approval.\n\n"
+            f"and do not run any tools that require user approval."
+        )
+        if triage is not None and triage.kind == "open_todo":
+            preamble = self_assign_preamble(description=triage.description) + "\n"
+            intent_blurb = (
+                f"You are `{self.config.participant_name}`. You picked up an open "
+                f"task in room `{wake_room}` posted by `{wake_sender}`. Follow the "
+                f"self-assign preamble above and start with a 1-line plan."
+            )
+        elif triage is not None and triage.kind == "role_request":
+            intent_blurb = (
+                f"You are `{self.config.participant_name}`. You picked up a "
+                f"role-tagged task (role={triage.role!r}) in room `{wake_room}` "
+                f"posted by `{wake_sender}`. Reply concisely with a 1-line plan."
+            )
+
+        return (
+            f"{preamble}"
+            f"{render_qod_for_agent_loop()}\n\n"
+            f"# Wake Intent\n"
+            f"{intent_blurb}\n\n"
             f"# Recent room transcript (most recent last)\n{history_block}\n\n"
             f"# Triggering message\n@{wake_sender}: {wake_content}\n"
         )

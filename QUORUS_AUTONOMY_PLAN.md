@@ -86,12 +86,12 @@ Agents read the room, pick up open work without being told. Mechanism:
 - Bandit speaker-selection from PR-R-FUTURE (codex lane)
 - `/v1/work_queue` endpoint maintaining a priority list of unclaimed work
 
-| Task                                                                              | Owner  |
-| --------------------------------------------------------------------------------- | ------ |
-| `/v1/work_queue` endpoint + claim TTL                                             | codex  |
-| `quorus claim <id>` / `quorus release <id>` already exist; wire bandit to suggest | codex  |
-| Reflex extension: bid on `@open` if skill_match > threshold                       | claude |
-| QOD update: rule 7 = "scan work queue at start of every turn, claim if idle"      | claude |
+| Task                                                                              | Owner  | Status                                                          |
+| --------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------- |
+| `/v1/work_queue` endpoint + claim TTL                                             | codex  | TODO                                                            |
+| `quorus claim <id>` / `quorus release <id>` already exist; wire bandit to suggest | codex  | TODO                                                            |
+| Reflex extension: bid on `@open` if skill_match > threshold                       | claude | shipped: triage extension + capabilities + self-assign preamble |
+| QOD update: rule 7 = "scan work queue at start of every turn, claim if idle"      | claude | TODO                                                            |
 
 ### Phase 3: Self-PR & Self-Review
 
