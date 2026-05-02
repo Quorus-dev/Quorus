@@ -763,8 +763,19 @@ QUORUS_HOOK_CONFIG = {
 
 
 def _cmd_hook(args):
-    """Manage Claude Code message hook."""
+    """Manage Claude Code message hook OR run a per-harness hook entrypoint.
+
+    Per-harness modes (cursor-session, cursor-stop, gemini-beforeagent)
+    delegate to `quorus_cli.hooks` and print a JSON object the calling
+    agent's hook contract expects, then exit. They never touch
+    `~/.claude/settings.json`. The original enable/disable/status modes
+    keep their existing behavior unchanged.
+    """
     action = args.action
+
+    if action in {"cursor-session", "cursor-stop", "gemini-beforeagent"}:
+        from quorus_cli import hooks as _hooks
+        return _hooks.dispatch(action)
 
     # Read existing settings
     if CLAUDE_SETTINGS_PATH.exists():
@@ -6224,11 +6235,22 @@ def main():
     p_inbox.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     p_inbox.add_argument("--json", action="store_true", help="JSON output")
 
-    p_hook = sub.add_parser("hook", help="Manage Claude Code message hook")
+    p_hook = sub.add_parser(
+        "hook",
+        help=(
+            "Manage agent message hooks "
+            "(claude/cursor/gemini cross-harness notifications)"
+        ),
+    )
     p_hook.add_argument(
         "action",
-        choices=["enable", "disable", "status"],
-        help="enable/disable/status",
+        choices=[
+            "enable", "disable", "status",
+            # Per-harness invocations — emit JSON for the calling agent's
+            # hook contract. Driven from the agent's own settings/hooks file.
+            "cursor-session", "cursor-stop", "gemini-beforeagent",
+        ],
+        help="enable/disable/status (Claude Code) or per-harness hook entry",
     )
 
     p_watch = sub.add_parser("watch", help="Watch a room live")

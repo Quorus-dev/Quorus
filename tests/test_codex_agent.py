@@ -8,16 +8,19 @@ import pytest
 from quorus_cli.codex_agent import (
     CodexAgentError,
     _cached_child_api_key,
+    _effective_notification_poll_seconds,
     _message_id,
     _save_child_api_key,
     build_codex_command,
     build_codex_exec_command,
     build_prompt,
+    codex_notification_prompt_path,
     parent_join_room,
     resolve_identity,
     run_codex_agent,
     save_codex_runner_defaults,
     send_heartbeat,
+    write_codex_room_notifications,
 )
 
 
@@ -114,6 +117,19 @@ def test_build_prompt_mentions_context_snapshot_when_present() -> None:
     assert "/tmp/quorus-arav-codex-reviewer-context.md" in prompt
 
 
+def test_build_prompt_mentions_codex_notification_prompt_when_present() -> None:
+    prompt = build_prompt(
+        "quorus-may4-sprint",
+        "arav-codex",
+        Path("/tmp/quorus-arav-codex-inbox.txt"),
+        Path("/tmp/quorus-arav-codex-context.md"),
+        Path("/Users/test/.codex/inbox/quorus/arav-codex/next_prompt.md"),
+    )
+
+    assert "Quorus notifications for the next turn" in prompt
+    assert "refreshed within 5 seconds" in prompt
+
+
 def test_build_codex_command_includes_quorus_overrides() -> None:
     cmd = build_codex_command(
         room="medbuddy-sprint",
@@ -151,6 +167,7 @@ def test_build_codex_exec_command_uses_exec_mode() -> None:
         sandbox="workspace-write",
         inbox_path=Path("/tmp/quorus-arav-codex-reviewer-inbox.txt"),
         context_path=Path("/tmp/quorus-arav-codex-reviewer-context.md"),
+        notification_path=Path("/tmp/quorus-arav-codex-reviewer-notify.md"),
         prompt="Handle the newest room activity.",
     )
 
@@ -180,6 +197,47 @@ def test_message_id_prefers_message_id_then_id() -> None:
     assert _message_id({"message_id": "abc", "id": "fallback"}) == "abc"
     assert _message_id({"id": "fallback"}) == "fallback"
     assert _message_id({}) == ""
+
+
+def test_codex_notification_prompt_path_sanitizes_participant(tmp_path: Path) -> None:
+    path = codex_notification_prompt_path(
+        "arav codex/runner",
+        inbox_root=tmp_path,
+    )
+
+    assert path == tmp_path / "arav-codex-runner" / "next_prompt.md"
+
+
+def test_write_codex_room_notifications_writes_prompt_and_jsonl(tmp_path: Path) -> None:
+    prompt_path = write_codex_room_notifications(
+        room="quorus-may4-sprint",
+        participant="arav-codex",
+        inbox_root=tmp_path,
+        messages=[
+            {
+                "id": "msg-1",
+                "timestamp": "2026-05-02T08:00:00Z",
+                "from_name": "arav",
+                "message_type": "chat",
+                "content": "ping",
+            }
+        ],
+    )
+
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    jsonl_text = prompt_path.with_name("notifications.jsonl").read_text(
+        encoding="utf-8",
+    )
+
+    assert "Room: quorus-may4-sprint" in prompt_text
+    assert "arav: ping" in prompt_text
+    assert '"message_id": "msg-1"' in jsonl_text
+
+
+def test_effective_notification_poll_seconds_caps_at_five() -> None:
+    assert _effective_notification_poll_seconds(30) == 5
+    assert _effective_notification_poll_seconds(3) == 3
+    assert _effective_notification_poll_seconds(0) == 1
 
 
 def test_save_and_load_child_key(monkeypatch: pytest.MonkeyPatch) -> None:

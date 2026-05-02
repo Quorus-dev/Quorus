@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -28,6 +29,7 @@ import httpx
 from quorus.profiles import ProfileManager
 
 DEFAULT_HISTORY_LIMIT = 25
+CODEX_NOTIFICATION_POLL_SECONDS = 5
 _DEFAULTS_KEY = "codex_runner_defaults"
 
 
@@ -324,6 +326,110 @@ def _message_id(message: dict) -> str:
     return str(value)
 
 
+def _safe_path_component(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-")
+    return safe or "codex"
+
+
+def _codex_inbox_root() -> Path:
+    codex_home = os.environ.get("CODEX_HOME")
+    root = Path(codex_home) if codex_home else Path.home() / ".codex"
+    return root / "inbox" / "quorus"
+
+
+def codex_notification_prompt_path(
+    participant: str,
+    *,
+    inbox_root: Path | None = None,
+) -> Path:
+    """Path Codex is instructed to read for the next Quorus notification prompt."""
+    root = inbox_root if inbox_root is not None else _codex_inbox_root()
+    return root / _safe_path_component(participant) / "next_prompt.md"
+
+
+def _notification_log_path(prompt_path: Path) -> Path:
+    return prompt_path.with_name("notifications.jsonl")
+
+
+def _format_notification_line(message: dict) -> str:
+    ts = str(message.get("timestamp", ""))[:19]
+    sender = str(message.get("from_name", "?"))
+    message_type = str(message.get("message_type", "chat"))
+    content = str(message.get("content", "")).strip().replace("\n", " ")
+    tag = f" [{message_type}]" if message_type != "chat" else ""
+    return f"- [{ts}] {sender}{tag}: {content}".rstrip()
+
+
+def write_codex_room_notifications(
+    *,
+    room: str,
+    participant: str,
+    messages: list[dict],
+    inbox_root: Path | None = None,
+) -> Path:
+    """Persist unread room messages where Codex can inject them next turn."""
+    prompt_path = codex_notification_prompt_path(participant, inbox_root=inbox_root)
+    if not messages:
+        return prompt_path
+
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path = _notification_log_path(prompt_path)
+    with log_path.open("a", encoding="utf-8") as handle:
+        for message in messages:
+            record = {
+                "room": room,
+                "participant": participant,
+                "message_id": _message_id(message),
+                "timestamp": message.get("timestamp", ""),
+                "from_name": message.get("from_name", ""),
+                "message_type": message.get("message_type", "chat"),
+                "content": message.get("content", ""),
+            }
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+    lines = [
+        f"# Quorus Notifications for {participant}",
+        "",
+        f"Room: {room}",
+        "Instruction: Treat these as newly delivered room messages. "
+        "Read the room with MCP before mutating files.",
+        "",
+        "## Unread Messages",
+    ]
+    lines.extend(_format_notification_line(message) for message in messages[-10:])
+    lines.append("")
+    _write_atomic(prompt_path, "\n".join(lines))
+    return prompt_path
+
+
+def _new_room_messages(
+    history: list[dict],
+    *,
+    participant: str,
+    seen_message_ids: set[str],
+) -> list[dict]:
+    new_messages: list[dict] = []
+    for message in history:
+        message_id = _message_id(message)
+        if not message_id:
+            continue
+        sender = str(message.get("from_name", ""))
+        if message_id not in seen_message_ids and sender != participant:
+            new_messages.append(message)
+    return new_messages
+
+
+def _remember_message_ids(history: list[dict], seen_message_ids: set[str]) -> None:
+    for message in history:
+        message_id = _message_id(message)
+        if message_id:
+            seen_message_ids.add(message_id)
+
+
+def _effective_notification_poll_seconds(room_poll_seconds: int) -> int:
+    return max(1, min(room_poll_seconds, CODEX_NOTIFICATION_POLL_SECONDS))
+
+
 def _write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -473,9 +579,11 @@ def room_context_loop(
     relay_secret: str = "",
     verbose: bool = False,
 ) -> None:
+    seen_message_ids: set[str] = set()
+    primed = False
     while not stop_event.is_set():
         try:
-            sync_room_context(
+            history = sync_room_context(
                 relay_url=relay_url,
                 room=room,
                 participant=participant,
@@ -484,6 +592,19 @@ def room_context_loop(
                 api_key=api_key,
                 relay_secret=relay_secret,
             )
+            if primed:
+                new_messages = _new_room_messages(
+                    history,
+                    participant=participant,
+                    seen_message_ids=seen_message_ids,
+                )
+                write_codex_room_notifications(
+                    room=room,
+                    participant=participant,
+                    messages=new_messages,
+                )
+            _remember_message_ids(history, seen_message_ids)
+            primed = True
         except Exception as exc:  # noqa: BLE001
             if verbose:
                 sys.stderr.write(f"[quorus codex-agent context] {exc}\n")
@@ -523,6 +644,7 @@ def build_prompt(
     participant: str,
     inbox_path: Path,
     context_path: Path | None = None,
+    notification_path: Path | None = None,
 ) -> str:
     """Build the initial Codex room prompt."""
     lines = [
@@ -537,6 +659,14 @@ def build_prompt(
     ]
     if context_path is not None:
         lines.append(f"- A room context snapshot is available at `{context_path}`.")
+    if notification_path is not None:
+        lines.extend(
+            [
+                f"- Quorus notifications for the next turn are written to `{notification_path}`.",
+                "- At the start of each turn, read that notification file if it exists; "
+                "it is refreshed within 5 seconds of new room activity.",
+            ]
+        )
     lines.extend(
         [
             "- If a concrete task is assigned, acknowledge ownership "
@@ -594,9 +724,16 @@ def build_codex_command(
     approval: str,
     inbox_path: Path,
     context_path: Path | None = None,
+    notification_path: Path | None = None,
 ) -> list[str]:
     """Build the interactive Codex command line with Quorus overrides."""
-    prompt = build_prompt(room, participant, inbox_path, context_path)
+    prompt = build_prompt(
+        room,
+        participant,
+        inbox_path,
+        context_path,
+        notification_path,
+    )
     return [
         "codex",
         *_codex_base_command(
@@ -625,6 +762,7 @@ def build_codex_exec_command(
     sandbox: str,
     inbox_path: Path,
     context_path: Path,
+    notification_path: Path,
     prompt: str,
 ) -> list[str]:
     """Build a non-interactive Codex command for supervised autonomous turns."""
@@ -641,7 +779,9 @@ def build_codex_exec_command(
         "-s",
         sandbox,
         "--skip-git-repo-check",
-        build_prompt(room, participant, inbox_path, context_path) + "\n\n" + prompt,
+        build_prompt(room, participant, inbox_path, context_path, notification_path)
+        + "\n\n"
+        + prompt,
     ]
 
 
@@ -650,14 +790,16 @@ def _autonomous_prompt(
     room: str,
     participant: str,
     context_path: Path,
+    notification_path: Path,
     new_messages: list[dict],
     initial_scan: bool,
 ) -> str:
     if initial_scan:
         return (
             f"Review the current Quorus room `{room}` using the MCP tools first, then "
-            f"use `{context_path}` only as fallback context. If there is a concrete "
-            "task or blocker you should own, acknowledge it in-room and proceed."
+            f"use `{context_path}` and `{notification_path}` only as fallback context. "
+            "If there is a concrete task or blocker you should own, acknowledge it "
+            "in-room and proceed."
         )
 
     summary_lines = []
@@ -668,7 +810,8 @@ def _autonomous_prompt(
     summarized = "\n".join(summary_lines) or "- no new message text captured"
     return (
         "New Quorus room activity arrived. Read the room with MCP tools, use the "
-        f"snapshot at `{context_path}` only as fallback, then respond or act if needed.\n\n"
+        f"snapshot at `{context_path}` and notification prompt at "
+        f"`{notification_path}` only as fallback, then respond or act if needed.\n\n"
         "Newest messages:\n"
         f"{summarized}"
     )
@@ -685,6 +828,7 @@ def run_autonomous_loop(
     sandbox: str,
     inbox_path: Path,
     context_path: Path,
+    notification_path: Path,
     history_limit: int,
     poll_seconds: int,
     stop_event: threading.Event,
@@ -722,6 +866,13 @@ def run_autonomous_loop(
             if message_id and message_id not in seen_message_ids and sender != participant:
                 new_messages.append(message)
 
+        if new_messages:
+            write_codex_room_notifications(
+                room=room,
+                participant=participant,
+                messages=new_messages,
+            )
+
         should_run = initial_scan or bool(new_messages)
         seen_message_ids.update(current_ids)
 
@@ -733,6 +884,7 @@ def run_autonomous_loop(
             room=room,
             participant=participant,
             context_path=context_path,
+            notification_path=notification_path,
             new_messages=new_messages,
             initial_scan=initial_scan,
         )
@@ -747,6 +899,7 @@ def run_autonomous_loop(
             sandbox=sandbox,
             inbox_path=inbox_path,
             context_path=context_path,
+            notification_path=notification_path,
             prompt=prompt,
         )
         rc = subprocess.call(cmd)
@@ -849,6 +1002,8 @@ def run_codex_agent(
 
     inbox_path = Path(f"/tmp/quorus-{participant}-inbox.txt")
     context_path = Path(f"/tmp/quorus-{participant}-context.md")
+    notification_path = codex_notification_prompt_path(participant)
+    notification_poll_seconds = _effective_notification_poll_seconds(room_poll_seconds)
     stop_event = threading.Event()
 
     threads = [
@@ -875,7 +1030,7 @@ def run_codex_agent(
                 "context_path": context_path,
                 "history_limit": history_limit,
                 "stop_event": stop_event,
-                "poll_seconds": room_poll_seconds,
+                "poll_seconds": notification_poll_seconds,
                 "api_key": agent_api_key,
                 "relay_secret": effective_secret,
                 "verbose": verbose,
@@ -904,6 +1059,7 @@ def run_codex_agent(
     print(f"Participant:     {participant}")
     print(f"Inbox mirror:    {inbox_path}")
     print(f"Context mirror:  {context_path}")
+    print(f"Notification:    {notification_path}")
     print(f"Relay:           {relay_url}")
     print(f"Mode:            {'autonomous' if autonomous else 'interactive'}")
 
@@ -925,8 +1081,9 @@ def run_codex_agent(
                 sandbox=sandbox,
                 inbox_path=inbox_path,
                 context_path=context_path,
+                notification_path=notification_path,
                 history_limit=history_limit,
-                poll_seconds=room_poll_seconds,
+                poll_seconds=notification_poll_seconds,
                 stop_event=stop_event,
                 verbose=verbose,
             )
@@ -942,6 +1099,7 @@ def run_codex_agent(
             approval=approval,
             inbox_path=inbox_path,
             context_path=context_path,
+            notification_path=notification_path,
         )
         return subprocess.call(cmd)
     except KeyboardInterrupt:
