@@ -1941,6 +1941,60 @@ def _slash_mute(arg, state, relay_url, secret, agent_name, console):
     return _slash.slash_mute(arg, state, relay_url, secret, agent_name, console)
 
 
+def _slash_identity(arg, state, relay_url, secret, agent_name, console):
+    """`/identity human|agent|<name>` — change the from_name for outbound
+    messages. Persists to the active profile so the choice survives
+    restarts. Without args, shows the current identity.
+
+    Useful when a profile is for an agent (instance_name=arav-codex)
+    but the human owner is typing — they don't want to be tagged as
+    their own agent. Auto-default already strips agent suffixes; this
+    is the manual override.
+    """
+    del relay_url, secret  # unused — pure local state
+    target = arg.strip().lower()
+    profile = ConfigManager().load() or {}
+    current_identity = profile.get("chat_identity") or agent_name
+
+    if not target:
+        state.set_status_bar(
+            f"identity: @{current_identity} (profile @{agent_name}). "
+            "Use: /identity human | /identity agent | /identity <name>"
+        )
+        return True
+
+    if target == "human":
+        new_identity = _strip_agent_suffix(agent_name)
+    elif target == "agent":
+        new_identity = agent_name
+    else:
+        # Treat as a literal name. Allow only [A-Za-z0-9_-], non-empty,
+        # ≤64 chars — same shape as agent registration.
+        import re as _re
+        if not _re.match(r"^[A-Za-z0-9_][A-Za-z0-9_\-]{0,63}$", target):
+            state.set_status_bar(
+                f"invalid identity '{target}' — letters/numbers/-_ only, "
+                "must start with a letter/number/_"
+            )
+            return True
+        new_identity = target
+
+    profile["chat_identity"] = new_identity
+    try:
+        ConfigManager().save(profile)
+        state.set_status_bar(
+            f"identity → @{new_identity} (was @{current_identity})"
+        )
+        # NOTE: doesn't update the live agent_name in the running loop —
+        # restart for the change to take effect on outbound messages.
+        console.print(
+            f"  [dim]Restart the TUI to use @{new_identity} for sends[/]"
+        )
+    except Exception as e:  # noqa: BLE001
+        state.set_status_bar(f"could not persist: {e}")
+    return True
+
+
 SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/help":       ("show keybinds + all commands",        _slash_help),
     "/home":       ("return to the welcome view",           _slash_home),
@@ -1956,6 +2010,7 @@ SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/info":       ("members + last-active for this room",  _slash_info),
     "/me":         ("/me <action> — IRC-style action line", _slash_me),
     "/mute":       ("/mute <duration> — silence (preview)", _slash_mute),
+    "/identity":   ("/identity human|agent|<name> — set from_name", _slash_identity),
     "/workspace":  ("list / switch workspaces",             _slash_workspace),
     "/status":     ("connection + relay info",              _slash_status),
     "/clear":      ("clear the chat pane",                  _slash_clear),
@@ -2813,30 +2868,33 @@ def _run_session(
     # Identity disambiguation: when the active profile is for an AGENT
     # (instance_name like "arav-codex" / "arav-claude" / "arav-gemini"),
     # the human owner sitting at the TUI shouldn't be tagged as that
-    # agent in chat. We persist a `chat_identity` field on first use so
-    # the prompt doesn't re-fire each session. Suffix-strip is the
-    # default ("arav-codex" → "arav") with override available.
-    chat_identity: str = profile.get("chat_identity") or agent_name
-    if "chat_identity" not in profile and _name_has_agent_keyword(agent_name):
-        derived = _strip_agent_suffix(agent_name)
-        console.print(
-            f"\n  [dim]Profile instance_name '@{agent_name}' looks like an "
-            "agent identity. Are YOU typing as the human owner, or as the "
-            "agent?[/]"
-        )
-        choice = Prompt.ask(
-            f"  human (post as @{derived}) or agent (post as @{agent_name})",
-            choices=["human", "agent"],
-            default="human",
-        )
-        chat_identity = derived if choice == "human" else agent_name
+    # agent in chat. Auto-default to the suffix-stripped human name
+    # ("arav-codex" → "arav"). Persist on first detection so the
+    # one-time work doesn't re-run every session. The user can flip
+    # back to the agent identity via /identity agent later.
+    #
+    # Why auto and not prompt: Rich's Prompt.ask is fragile inside the
+    # TUI bootstrap (VS Code terminal, Warp, etc. swallow the prompt
+    # silently). Auto-default means the human always types as a human
+    # by default; choosing to post as the agent is the rarer case.
+    chat_identity: str = profile.get("chat_identity") or ""
+    if not chat_identity:
+        if _name_has_agent_keyword(agent_name):
+            chat_identity = _strip_agent_suffix(agent_name)
+            console.print(
+                f"\n  [dim]Identity: posting as [bold success]@{chat_identity}[/]"
+                f" (human). Profile instance is [muted]@{agent_name}[/]"
+                f" (agent). Override with [accent]/identity agent[/].[/]"
+            )
+        else:
+            chat_identity = agent_name
         profile["chat_identity"] = chat_identity
         try:
             ConfigManager().save(profile)
         except Exception as e:  # noqa: BLE001
             console.print(
                 f"  [yellow]Could not persist chat_identity: {e} — "
-                "will re-prompt next session[/]"
+                "will re-detect next session[/]"
             )
 
     # Exchange API key for JWT if needed
