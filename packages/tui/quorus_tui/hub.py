@@ -60,14 +60,17 @@ RENDER_TICK_S = 2
 
 
 def _full_clear(console) -> None:
-    """Clear visible area + scrollback inside the alt-screen.
+    """Clear visible region + scrollback so each redraw replaces the previous.
 
     Rich's `console.clear()` only emits `\\x1b[2J\\x1b[H`, which wipes the
     visible region but leaves the previous frame in scrollback. When the 2s
-    render tick fires, the user sees stacked frames instead of one live one.
-    Adding `\\x1b[3J` (clear scrollback) makes each redraw replace the entire
-    buffer cleanly. Falls back to Rich's clear if the tty isn't a real
-    terminal (e.g. inside pytest capture).
+    render tick fires, the user sees stacked frames stacking up. Adding
+    `\\x1b[3J` (clear scrollback) makes each redraw replace the entire
+    buffer cleanly. We do NOT use alt-screen mode (`\\x1b[?1049h`) because
+    that disables the terminal's native trackpad/mouse scroll.
+
+    Falls back to Rich's clear if stdout isn't a real terminal (e.g. inside
+    pytest capture).
     """
     import sys as _sys
     if _sys.stdout.isatty():
@@ -1902,11 +1905,6 @@ def _main_input_loop(
     Body of the old run_hub main loop, plus a per-tick check for
     pending workspace-switch requests set by /workspace.
     """
-    # Enter alternate-screen mode (\x1b[?1049h) so each redraw fully
-    # replaces the visible area instead of pushing the previous frame
-    # into scrollback. Restored on exit by atexit handler in run_hub().
-    sys.stdout.write("\x1b[?1049h\x1b[H")
-    sys.stdout.flush()
     _full_clear(console)
     last_render = 0.0
     # Hold auto-redraw until the user submits next input. Used after we
@@ -2542,8 +2540,4 @@ def run_hub() -> None:
             # Any other shape — treat as quit.
             return
     finally:
-        # Leave alternate-screen mode so the original terminal scrollback is
-        # restored intact, then print the goodbye on the normal screen.
-        sys.stdout.write("\x1b[?1049l")
-        sys.stdout.flush()
         console.print("\n[dim]Quorus Hub closed. Goodbye.[/dim]")
