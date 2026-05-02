@@ -81,6 +81,33 @@ async def mint_code(
     """Create a short join code for an existing room. Admin-only."""
     require_role(auth, "admin")
 
+    # Policy gate (SHADOW by default). Catches the case where an
+    # agent-class admin token mints invites at scale — policy can flip
+    # this to REQUIRE_HUMAN per tenant. See quorus/auth/policy.py.
+    from quorus.auth.policy import (
+        Decision as _D,
+        PolicyContext as _PC,
+        evaluate as _eval,
+        load_policy_for_tenant as _load,
+    )
+    _actor_role = "agent" if (auth.sub or "").endswith(
+        ("-claude", "-codex", "-cursor", "-gemini", "-claude-1m")
+    ) else "human"
+    _tid_str = auth.tenant_id or "_legacy"
+    _pol = _eval(_PC(
+        actor=auth.sub or "anonymous",
+        action="invite.mint",
+        resource=req.room,
+        role=_actor_role,
+        tenant_id=_tid_str,
+    ), _load(_tid_str))
+    if _pol.effective_decision == _D.DENY:
+        raise HTTPException(status_code=403, detail=f"policy_denied: {_pol.reason}")
+    if _pol.effective_decision == _D.REQUIRE_HUMAN:
+        raise HTTPException(
+            status_code=403, detail=f"approval_required: {_pol.reason}"
+        )
+
     # Rate-limit to stop a leaked admin key from spamming codes.
     client_ip = request.client.host if request.client else "unknown"
     rate_svc = request.app.state.rate_limit_service
