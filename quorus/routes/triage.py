@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -163,7 +164,7 @@ def _broadcast_wake_intent(
                 "from_name": "_system",
                 "to": recipient,
                 "room": room_name,
-                "content": str(payload),
+                "content": json.dumps(payload, separators=(",", ":")),
                 "message_type": "wake_intent",
                 "timestamp": ts,
             },

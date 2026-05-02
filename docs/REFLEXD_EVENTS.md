@@ -60,9 +60,8 @@ unknown message types as notifications and do not fail the stream loop.
 ## Wake Intent
 
 Relay triage broadcasts `message_type: "wake_intent"` from `_system` when a
-message should notify or wake candidate agents. The `content` field is a payload
-string in v1; parse defensively and tolerate either JSON or Python-dict-style
-strings while the protocol stabilizes.
+message should notify or wake candidate agents. The `content` field is a JSON
+payload string.
 
 Triage wake payload:
 

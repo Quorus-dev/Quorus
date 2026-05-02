@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -87,7 +88,10 @@ async def test_triage_mention_targets_named_candidate_and_sse(client: AsyncClien
 
         message = queue.get_nowait()
         assert message["message_type"] == "wake_intent"
-        assert "msg-mention" in message["content"]
+        payload = json.loads(message["content"])
+        assert payload["event"] == "wake_intent"
+        assert payload["message_id"] == "msg-mention"
+        assert payload["candidates"] == ["bob"]
     finally:
         app.state.sse_service.unregister_queue("_legacy", "bob", queue)
 
@@ -165,7 +169,10 @@ async def test_claim_broadcasts_wake_intent_to_bidders(client: AsyncClient):
 
         message = queue.get_nowait()
         assert message["message_type"] == "wake_intent"
-        assert "winner" in message["content"]
+        payload = json.loads(message["content"])
+        assert payload["event"] == "claim"
+        assert payload["winner"] == "carol"
+        assert payload["candidates"] == ["bob", "carol"]
     finally:
         app.state.sse_service.unregister_queue("_legacy", "bob", queue)
 
