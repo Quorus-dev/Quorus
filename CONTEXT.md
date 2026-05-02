@@ -104,8 +104,26 @@ Remaining medium-severity items tracked in code review output.
 
 ## Recent Changes
 
+### Cold-install CI (2026-05-01)
+
+Added `.github/workflows/cold-install.yml` — runs on every PR, every push to
+main, and nightly at 08:00 UTC. Spins up a fresh runner per cell across a
+matrix of `{ubuntu, macos, windows} × {3.10, 3.11, 3.12, 3.13}` (Windows×3.10
+excluded for known mcp/cffi grief), `pipx install`s the PR's checkout with
+the pip wheel cache disabled, then runs `scripts/cold_install_smoke.sh` to
+boot the relay, hit `/health`, run `quorus init`, create a room, send a
+message, and confirm round-trip in <30s. Total budget per cell: 60s smoke,
+8min job. Mirrored locally by `scripts/cold_install_smoke.sh` (POSIX-bash
+3.2 clean) which calls `scripts/cold_install_smoke.py` (the actual driver).
+A pytest skeleton at `tests/test_cold_install.py` runs the smoke against
+`PATH`-installed binaries by default and adds an opt-in Docker variant
+(skipped cleanly when Docker isn't there). This is the gate that locks in
+the April 23 2026 hackathon failure mode where `pytest` was green but
+`pipx install` produced a binary that wouldn't open.
+
 | Date       | What                                                                     |
 | ---------- | ------------------------------------------------------------------------ |
+| 2026-05-01 | feat: cold-install CI — `pipx`-from-checkout smoke + nightly cron        |
 | 2026-04-15 | feat: rebrand Murmur → Quorus (package, CLI, TUI, entry point, configs)  |
 | 2026-04-15 | feat: beautiful CLI — grouped help, teal banner, spinners, styled errors |
 | 2026-04-15 | feat: new ui.py module with Theme, banner, spinner, status helpers       |

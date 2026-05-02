@@ -1,0 +1,166 @@
+# Cold-install regression gate.
+#
+# Why this exists
+# ---------------
+# On 2026-04-23 a YC hackathon demo failed because the published artifact
+# refused to open on a fresh machine. `pytest` was green, but `pipx install`
+# from a clean checkout produced a broken binary. This workflow makes that
+# class of failure impossible to ship: every PR boots a brand-new runner,
+# does a cold `pipx install` (no pip wheel cache, no shared venv state),
+# spawns the relay, and runs an end-to-end round-trip smoke. If the smoke
+# can't complete in 60 seconds, the PR is blocked.
+#
+# Required secrets
+# ----------------
+# None. This workflow runs entirely against a localhost relay with a
+# throwaway shared secret. No external services, no signing keys, no
+# registry credentials. If you ever extend it to publish artifacts, add
+# the relevant secrets here:
+#   - secrets.PYPI_API_TOKEN          (publish)
+#   - secrets.GH_RELEASE_TOKEN        (cut releases)
+#
+# Schedule
+# --------
+# Runs on every PR + nightly at 08:00 UTC so a transient upstream regression
+# (e.g. a new pip resolver bug, a new mcp SDK release) is caught within 24h
+# rather than at the next demo.
+
+name: cold-install
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main]
+  schedule:
+    # 08:00 UTC daily. Quorus has no production cron at this time so the
+    # nightly run never collides with deploys.
+    - cron: "0 8 * * *"
+  workflow_dispatch: {}
+
+# Cancel in-flight runs of this workflow on the same ref. Stale cold-install
+# runs from a force-push waste 4 minutes of matrix time apiece.
+concurrency:
+  group: cold-install-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cold-install:
+    name: cold-install / ${{ matrix.os }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    strategy:
+      # One broken cell shouldn't mask the rest. We want the full matrix
+      # report on every failure so we can tell whether it's a python-version
+      # regression or an OS regression.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Windows + Python 3.10 has historically had install-time grief with
+        # the `mcp` SDK's cffi deps. Exclude until we have a fix; the other
+        # 11 cells provide adequate coverage.
+        exclude:
+          - os: windows-latest
+            python-version: "3.10"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          # CRITICAL: deliberately omitting the `cache:` input. The whole
+          # point of this job is a true cold install — caching pip wheels
+          # would mask wheel-build regressions and registry-resolution flake.
+
+      - name: Disable pip caches (extra paranoia)
+        shell: bash
+        run: |
+          echo "PIP_NO_CACHE_DIR=1" >> "$GITHUB_ENV"
+          echo "PIP_DISABLE_PIP_VERSION_CHECK=1" >> "$GITHUB_ENV"
+          echo "PIPX_DEFAULT_PYTHON=$(which python)" >> "$GITHUB_ENV"
+
+      - name: Install pipx
+        shell: bash
+        run: |
+          python -m pip install --no-cache-dir --quiet pipx
+          python -m pipx ensurepath
+          # Surface pipx bin dir for this job.
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # ----- Cold install from THIS checkout -----
+      # Using "$GITHUB_WORKSPACE" instead of a git+https URL means we test
+      # the PR's source, not whatever happens to be on main. Identical to
+      # what an end user would get if they cloned + pipx-installed.
+      - name: pipx install (cold) from PR checkout — Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          pipx install --force --pip-args="--no-cache-dir" "$GITHUB_WORKSPACE"
+          which quorus
+          which quorus-relay
+          quorus version || quorus --version
+
+      - name: pipx install (cold) from PR checkout — Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pipx install --force --pip-args="--no-cache-dir" "$env:GITHUB_WORKSPACE"
+          Get-Command quorus
+          Get-Command quorus-relay
+          quorus version
+
+      # ----- Smoke -----
+      - name: Cold-install smoke (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 2
+        env:
+          QUORUS_SMOKE_PORT: "18080"
+          QUORUS_SMOKE_TIMEOUT: "60"
+        run: |
+          # Reuse the local repro script — keeps CI and local in lockstep.
+          bash scripts/cold_install_smoke.sh --skip-install
+
+      - name: Cold-install smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 2
+        env:
+          QUORUS_SMOKE_PORT: "18080"
+          QUORUS_SMOKE_TIMEOUT: "60"
+        run: |
+          # On Windows we drive the python smoke directly — the bash wrapper
+          # depends on POSIX tools we don't want to rely on under MINGW.
+          python scripts/cold_install_smoke.py --port 18080 --timeout 60
+
+      - name: Upload relay log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-log-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            /tmp/quorus-smoke-*/relay.log
+            ${{ runner.temp }}/quorus-smoke-*/relay.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  cold-install-summary:
+    name: cold-install summary
+    needs: cold-install
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any matrix cell failed
+        run: |
+          if [ "${{ needs.cold-install.result }}" != "success" ]; then
+            echo "::error::cold-install matrix failed — see individual cells for details"
+            exit 1
+          fi
+          echo "all cold-install matrix cells green"
