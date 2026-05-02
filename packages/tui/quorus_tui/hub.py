@@ -1908,23 +1908,33 @@ def _read_input(
         except Exception:
             pass
 
-    # CRITICAL: put stdin in cbreak (character-at-a-time) mode for the
-    # duration of this call, otherwise the kernel buffers each char until
-    # the user presses Enter — so `select()` never sees them, the 2s tick
-    # fires, the screen wipes, and the user sees "type → appears (terminal
-    # echo) → vanishes (our wipe) → typed nothing reaches our buffer."
-    # readchar.readkey() does its own raw-mode dance internally, but ONLY
-    # after select() returns ready. We need stdin raw BEFORE select() so
-    # bytes arrive char-by-char.
+    # CRITICAL: put stdin in non-canonical, no-echo mode for the duration
+    # of this call. Two separate problems combine if we don't:
+    #   1. Default cooked mode buffers chars until Enter — `select()`
+    #      never sees them, the 2s tick fires, the screen wipes, and the
+    #      user sees "type → appears (terminal echo) → vanishes (our wipe)"
+    #   2. cbreak mode (the obvious fix) leaves ECHO on, so the terminal
+    #      echoes each char AND our `sys.stdout.write(key)` writes it
+    #      again — producing doubled characters on every keystroke.
+    # The fix is the same dance readchar does internally: clear ICANON
+    # (line buffering) AND ECHO (terminal local echo) but KEEP ISIG so
+    # Ctrl+C still raises KeyboardInterrupt.
     import termios
-    import tty
     _stdin_fd = sys.stdin.fileno() if sys.stdin.isatty() else -1
     _saved_termios = None
     if _stdin_fd >= 0:
         try:
             _saved_termios = termios.tcgetattr(_stdin_fd)
-            tty.setcbreak(_stdin_fd)
-        except (termios.error, OSError):
+            new_attrs = list(_saved_termios)
+            # lflag is index 3: clear ICANON + ECHO, keep ISIG.
+            new_attrs[3] = new_attrs[3] & ~(termios.ICANON | termios.ECHO)
+            # cc array (index 6): VMIN=1 (block until 1 char), VTIME=0
+            # so reads block correctly even with select() in front.
+            new_attrs[6] = list(new_attrs[6])
+            new_attrs[6][termios.VMIN] = 1
+            new_attrs[6][termios.VTIME] = 0
+            termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, new_attrs)
+        except (termios.error, OSError, AttributeError):
             _saved_termios = None  # not a real tty (CI / pipe) — fall through
 
     # Restore in-progress buffer from a prior render-tick timeout so the user
