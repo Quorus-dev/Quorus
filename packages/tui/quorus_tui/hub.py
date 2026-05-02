@@ -2198,6 +2198,24 @@ def _read_input(
             else:
                 key = _b
             if key in (readchar.key.ENTER, "\r", "\n"):
+                # Multi-line paste detection: if more bytes are pending in
+                # stdin within 5ms, this \n is part of a paste — append it
+                # to the buffer and keep reading instead of treating it as
+                # a submit. Without this, a paste of N lines becomes N
+                # separate messages (real bug observed: pasting 19-line
+                # text → 19 separate room messages).
+                #
+                # 5ms threshold: human keystrokes are >100ms apart, paste
+                # bytes arrive in microseconds. Safe for both real typists
+                # and bracketed-paste-unaware terminals (iTerm2, VS Code,
+                # macOS Terminal).
+                _ready_more, _, _ = _sel.select([sys.stdin], [], [], 0.005)
+                if _ready_more:
+                    buf.append("\n")
+                    # Don't redraw the single-line composer for multi-line
+                    # input — collect silently. The user will see their
+                    # full message render in the chat after submit.
+                    continue
                 _PENDING_INPUT_BUF.clear()  # commit — the line is submitted
                 sys.stdout.write("\n")
                 sys.stdout.flush()
@@ -2835,9 +2853,12 @@ def _main_input_loop(
                 # Optimistic local echo — render immediately, don't wait for SSE
                 # round-trip. The server-assigned ID pre-arms the dedup set so
                 # when SSE (or the reconciliation poll) redelivers the same
-                # message, it won't render twice.
+                # message, it won't render twice. MUST use chat_identity, not
+                # agent_name, or the user sees their own message tagged with
+                # the agent suffix while the relay (and every other client)
+                # correctly sees it as the human.
                 echo = {
-                    "from_name": agent_name,
+                    "from_name": chat_identity,
                     "content": cmd,
                     "message_type": "chat",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
