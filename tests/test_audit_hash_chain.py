@@ -13,7 +13,7 @@ from quorus.services.audit_svc import AuditService, _entry_hash, _redact
 
 
 def _event(content: str = "hello") -> AuditLedger:
-    return AuditLedger(
+    event = AuditLedger(
         tenant_id="tenant-1",
         message_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
         event_type=AuditEvent.MCP_TOOL_CALLED.value,
@@ -22,6 +22,39 @@ def _event(content: str = "hello") -> AuditLedger:
         details={"content": content},
         created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
     )
+    event.id = uuid.uuid4()
+    return event
+
+
+class _FakeAuditResult:
+    def __init__(self, events: list[AuditLedger]):
+        self.events = events
+
+    def scalars(self):
+        return SimpleNamespace(all=lambda: self.events)
+
+
+class _FakeAuditSession:
+    def __init__(self, events: list[AuditLedger]):
+        self.events = events
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def execute(self, query):
+        return _FakeAuditResult(self.events)
+
+
+def _sealed_events() -> list[AuditLedger]:
+    service = AuditService()
+    first = _event("first")
+    first_hash = service._seal_entry(first, None)
+    second = _event("second")
+    service._seal_entry(second, first_hash)
+    return [first, second]
 
 
 def test_audit_entry_hash_is_deterministic_and_chained() -> None:
@@ -101,3 +134,50 @@ async def test_record_mcp_tool_call_route_uses_auth_identity() -> None:
     assert result["actor"] == "arav-codex"
     assert result["tool_name"] == "claim_task"
     assert result["mutating"] is True
+
+
+@pytest.mark.asyncio
+async def test_verify_chain_accepts_valid_hash_chain(monkeypatch) -> None:
+    events = _sealed_events()
+    monkeypatch.setattr(
+        "quorus.services.audit_svc.get_db_session",
+        lambda: _FakeAuditSession(events),
+    )
+
+    result = await AuditService().verify_chain("tenant-1")
+
+    assert result["verified"] is True
+    assert result["checked_entries"] == 2
+    assert result["last_hash"] == events[-1].entry_hash
+
+
+@pytest.mark.asyncio
+async def test_verify_chain_detects_tampered_entry(monkeypatch) -> None:
+    events = _sealed_events()
+    events[1].details = {"content": "tampered"}
+    monkeypatch.setattr(
+        "quorus.services.audit_svc.get_db_session",
+        lambda: _FakeAuditSession(events),
+    )
+
+    result = await AuditService().verify_chain("tenant-1")
+
+    assert result["verified"] is False
+    assert result["reason"] == "entry_hash mismatch"
+    assert result["entry_id"] == str(events[1].id)
+
+
+@pytest.mark.asyncio
+async def test_verify_chain_detects_broken_prev_hash(monkeypatch) -> None:
+    events = _sealed_events()
+    events[1].prev_hash = "0" * 64
+    monkeypatch.setattr(
+        "quorus.services.audit_svc.get_db_session",
+        lambda: _FakeAuditSession(events),
+    )
+
+    result = await AuditService().verify_chain("tenant-1")
+
+    assert result["verified"] is False
+    assert result["reason"] == "prev_hash mismatch"
+    assert result["entry_id"] == str(events[1].id)
