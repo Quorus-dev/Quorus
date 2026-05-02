@@ -45,18 +45,18 @@ quorus           # opens the hub
 
 **What's built:**
 
-| Module                      | What                                                                                     |
-| --------------------------- | ---------------------------------------------------------------------------------------- |
-| quorus/relay.py             | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin       |
-| quorus_mcp/server.py        | MCP server: 12 tools incl. claim_task, release_task, get_room_state, SSE push, heartbeat |
-| quorus_cli/cli.py           | 30+ CLI commands (quorus ...) — `quorus` with no args opens TUI                          |
-| quorus_cli/ui.py            | Shared theme, banner, spinner, error/success/info primitives                             |
-| quorus_tui/hub.py           | Full-screen TUI hub: rooms panel, agent list, live chat, first-run wizard                |
-| quorus/routes/room_state.py | Primitive A+B: GET state, PATCH goal, POST decisions, POST/DELETE locks (mutex)          |
-| quorus/watcher.py           | Primitive C: SSE-driven daemon, writes .quorus/context.md for IDE indexing               |
-| quorus/dashboard.py         | Web dashboard: live messages + swarm activity panel + usage bar                          |
-| quorus/backends/            | In-memory + Redis + Postgres + SQLite backends (incl. RoomStateBackend)                  |
-| tests/                      | 905 tests passing                                                                        |
+| Module                      | What                                                                                           |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| quorus/relay.py             | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin             |
+| quorus_mcp/server.py        | MCP server: 11 tools incl. claim_task, release_task, get_room_state, send/check, rooms, search |
+| quorus_cli/cli.py           | 30+ CLI commands (quorus ...) — `quorus` with no args opens TUI                                |
+| quorus_cli/ui.py            | Shared theme, banner, spinner, error/success/info primitives                                   |
+| quorus_tui/hub.py           | Full-screen TUI hub: rooms panel, agent list, live chat, first-run wizard                      |
+| quorus/routes/room_state.py | Primitive A+B: GET state, PATCH goal, POST decisions, POST/DELETE locks (mutex)                |
+| quorus/watcher.py           | Primitive C: SSE-driven daemon, writes .quorus/context.md for IDE indexing                     |
+| quorus/dashboard.py         | Web dashboard: live messages + swarm activity panel + usage bar                                |
+| quorus/backends/            | In-memory + Redis + Postgres + SQLite backends (incl. RoomStateBackend)                        |
+| tests/                      | 905 tests passing                                                                              |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -67,7 +67,7 @@ quorus           # opens the hub
 - **Shared state matrix** — goal, locked files, claimed tasks, decisions, active agents
 - **Distributed mutex locking** — claim files with TTL, SSE broadcast LOCK_ACQUIRED/LOCK_RELEASED
 - **Watcher daemon** — writes .quorus/context.md for IDE indexing, event-driven via SSE
-- **MCP tools** (12): send/receive, rooms, locks, state, metrics, search
+- **MCP tools** (11): send/receive, rooms, locks, state, metrics, search
 - **JWT auth + API keys** (`quorus_sk_*` prefix, legacy `murm_sk_*` still accepted)
 - **Portable join tokens** (`quorus_join_*` prefix, legacy `murm_join_*` still accepted)
 - **Rate limiting** on all write + history endpoints
