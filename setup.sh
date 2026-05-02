@@ -83,6 +83,14 @@ if [[ "${1:-}" == "--install" ]]; then
     fi
   fi
 
+  # Patch entry-point scripts to inject sys.path themselves. This is the
+  # belt-and-braces fix that survives Spotlight re-applying UF_HIDDEN to
+  # the .pth file (which it does, repeatedly, on macOS — see
+  # docs/HACKATHON_REGRESSION.md). Idempotent.
+  if [[ -x "${SCRIPT_DIR}/scripts/patch_entry_points.sh" ]]; then
+    bash "${SCRIPT_DIR}/scripts/patch_entry_points.sh" "${SCRIPT_DIR}" || true
+  fi
+
   echo "[setup] Verifying topology"
   "$PY" - <<'EOF'
 import importlib, sys
