@@ -20,7 +20,7 @@ from quorus.config import load_config
 from quorus.profiles import ProfileManager
 from quorus_cli import ui as _ui
 
-console = Console()
+console = _ui.console
 _config = load_config()
 RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
@@ -944,7 +944,7 @@ async def _ps() -> None:
             pad_edge=False,
             header_style="muted",
         )
-        table.add_column("AGENT", style="bold agent", no_wrap=True)
+        table.add_column("AGENT", style=f"bold {_ui.AGENT}", no_wrap=True)
         table.add_column("STATUS", no_wrap=True)
         table.add_column("ROOM", style="dim")
         table.add_column("LAST SEEN", style="dim", no_wrap=True)
