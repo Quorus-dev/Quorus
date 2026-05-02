@@ -60,12 +60,13 @@ def test_cli_argparse_lists_all_six_actions() -> None:
     This fails loud if cli.py drops or renames an action — the kind of
     accidental delete that broke the Gemini surface in the first place.
     """
-    from quorus_cli.cli import main as _main_unused  # noqa: F401 — side-effect import
     # cli.py builds its parser inside main(); we call its registration
     # path indirectly by reading the source. Cheaper than running main()
     # because we don't want network or disk touched.
     import inspect
+
     from quorus_cli import cli as _cli_module
+    from quorus_cli.cli import main as _main_unused  # noqa: F401 — side-effect import
     src = inspect.getsource(_cli_module)
     for choice in (
         '"enable"', '"disable"', '"status"',

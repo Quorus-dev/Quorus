@@ -962,6 +962,29 @@ class HubState:
             r = self.rooms[idx]
             return r.get("name") or r.get("id") or ""
 
+    def snapshot_render_state(
+        self,
+    ) -> tuple[list[dict], int, Optional[dict], str]:
+        """Atomically snapshot (rooms, selected_idx, selected_room, name).
+
+        Why: the render loop used to call get_rooms(), get_selected_room(),
+        and read selected_room_idx in three separate lock acquisitions. The
+        polling thread's set_rooms() can re-order the room list AND update
+        selected_room_idx between those acquisitions, which silently
+        highlighted the wrong room — observed as "the TUI keeps moving me
+        into different rooms randomly." Read everything in one lock so the
+        render is internally consistent.
+        """
+        with self._lock:
+            rooms = list(self.rooms)
+            idx = self.selected_room_idx
+            if not rooms or idx < 0:
+                return rooms, idx, None, ""
+            idx = max(0, min(idx, len(rooms) - 1))
+            r = rooms[idx]
+            name = r.get("name") or r.get("id") or ""
+            return rooms, idx, r, name
+
     # Connection
     def set_connected(self, connected: bool, status: str) -> None:
         with self._lock:
@@ -2159,23 +2182,17 @@ def _main_input_loop(
             # Redraw if poll interval passed or first render
             if not hold_render and now - last_render >= POLL_S:
                 connected, conn_status = state.get_connection()
-                rooms_snap = state.get_rooms()
-                selected = state.get_selected_room()
-                # Empty string signals "no room selected" to the chat
-                # renderer; it uses that to show an honest empty-state
-                # instead of lying with a fake "#general" title.
-                if selected is None:
-                    room_name = ""
-                else:
-                    room_name = selected.get("name") or selected.get("id") or ""
+                # Atomic snapshot: rooms + selected_idx must come from the
+                # same lock acquisition. Otherwise the polling thread can
+                # re-order rooms between get_rooms() and reading the index,
+                # and the render highlights the wrong room.
+                rooms_snap, selected_idx, selected, room_name = (
+                    state.snapshot_render_state()
+                )
                 msgs_snap = state.get_messages()
                 status_bar = state.get_status_bar()
 
                 from rich.rule import Rule as _Rule
-
-                selected_idx: int
-                with state._lock:
-                    selected_idx = state.selected_room_idx
 
                 # Snapshot live-signal fields for the header.
                 unread_total = state.total_unread()

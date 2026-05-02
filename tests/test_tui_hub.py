@@ -153,6 +153,54 @@ class TestHubState:
         s.select_next()  # advances 0 → 1 (ops)
         assert s.selected_room_name() == "ops"
 
+    def test_snapshot_render_state_atomic_after_set_rooms(self):
+        """Regression: render must see (rooms, idx, name) from one snapshot.
+
+        The bug: render loop read get_rooms() and selected_room_idx in two
+        separate lock acquisitions. If the polling thread re-ordered rooms
+        between the reads, the strip highlighted the wrong room and the
+        user appeared to be silently moved into a different room. The fix
+        is HubState.snapshot_render_state() which returns all four pieces
+        under one lock. This test asserts the post-reorder snapshot is
+        internally consistent — idx points at the same name in the rooms
+        list it returned.
+        """
+        s = HubState()
+        s.set_rooms([
+            {"id": "r1", "name": "general"},
+            {"id": "r2", "name": "may4-sprint"},
+            {"id": "r3", "name": "medbuddy"},
+        ])
+        s.select_by_name("may4-sprint")
+        # Polling thread re-orders rooms by recent activity
+        s.set_rooms([
+            {"id": "r2", "name": "may4-sprint"},
+            {"id": "r3", "name": "medbuddy"},
+            {"id": "r1", "name": "general"},
+        ])
+        rooms, idx, sel, name = s.snapshot_render_state()
+        assert name == "may4-sprint"
+        assert sel is not None and sel["name"] == "may4-sprint"
+        assert rooms[idx]["name"] == "may4-sprint"
+
+    def test_snapshot_render_state_welcome_returns_minus_one(self):
+        """No room selected → idx=-1, sel=None, name='', but rooms list intact."""
+        s = HubState()
+        s.set_rooms([{"id": "r1", "name": "dev"}])
+        rooms, idx, sel, name = s.snapshot_render_state()
+        assert idx == -1
+        assert sel is None
+        assert name == ""
+        assert len(rooms) == 1
+
+    def test_snapshot_render_state_rooms_copy_isolated(self):
+        """Mutating the returned rooms list must not corrupt internal state."""
+        s = HubState()
+        s.set_rooms([{"id": "r1", "name": "dev"}])
+        rooms, _, _, _ = s.snapshot_render_state()
+        rooms.append({"id": "X", "name": "intruder"})
+        assert len(s.get_rooms()) == 1
+
     def test_set_connected(self):
         s = HubState()
         s.set_connected(True, "Connected")
