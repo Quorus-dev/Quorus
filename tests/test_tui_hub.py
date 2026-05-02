@@ -1,15 +1,20 @@
 """Tests for quorus/tui_hub.py — HubState, config helpers, API helpers."""
 
+import io
 import json
 import threading
+
+from rich.console import Console
 
 from quorus import tui_hub
 from quorus.tui_hub import (
     HubState,
     _auth_headers,
+    _mint_join_token,
     _save_instance_config,
     _sender_color,
 )
+from quorus_tui import welcome as _welcome
 
 # ---------------------------------------------------------------------------
 # HubState — thread-safe coordination
@@ -260,3 +265,163 @@ def test_sender_color_different_senders():
     colors = [_sender_color(s) for s in senders]
     # At least 2 distinct colors assigned across 8 distinct senders
     assert len(set(colors)) >= 2
+
+
+# ---------------------------------------------------------------------------
+# Welcome / Home view — sort + render
+# ---------------------------------------------------------------------------
+
+
+def _render_welcome_to_string(**kwargs) -> str:
+    """Render the welcome view to a string for assertion-friendly checks."""
+    buf = io.StringIO()
+    console = Console(
+        file=buf, width=100, force_terminal=False, no_color=True,
+        legacy_windows=False,
+    )
+    _welcome.render_welcome(console, **kwargs)
+    return buf.getvalue()
+
+
+class TestSortRoomsByActivity:
+    def test_unread_rooms_come_first(self):
+        rooms = [
+            {"name": "alpha"},
+            {"name": "bravo"},
+            {"name": "charlie"},
+        ]
+        unread = {"bravo": 3}
+        sorted_rooms = _welcome.sort_rooms_by_activity(rooms, unread)
+        assert sorted_rooms[0]["name"] == "bravo"
+
+    def test_higher_unread_count_comes_first(self):
+        rooms = [
+            {"name": "low"},
+            {"name": "high"},
+            {"name": "mid"},
+        ]
+        unread = {"low": 1, "high": 9, "mid": 4}
+        sorted_rooms = _welcome.sort_rooms_by_activity(rooms, unread)
+        names = [r["name"] for r in sorted_rooms]
+        assert names == ["high", "mid", "low"]
+
+    def test_idle_rooms_alphabetical_when_no_created_at(self):
+        rooms = [
+            {"name": "zulu"},
+            {"name": "alpha"},
+            {"name": "mike"},
+        ]
+        sorted_rooms = _welcome.sort_rooms_by_activity(rooms, {})
+        names = [r["name"] for r in sorted_rooms]
+        assert names == ["alpha", "mike", "zulu"]
+
+    def test_unread_lookup_is_case_preserving(self):
+        """Unread keys are stored verbatim — must not be lower-cased."""
+        rooms = [{"name": "DevOps"}, {"name": "general"}]
+        unread = {"DevOps": 2}  # exact case
+        sorted_rooms = _welcome.sort_rooms_by_activity(rooms, unread)
+        assert sorted_rooms[0]["name"] == "DevOps"
+
+
+class TestRenderWelcome:
+    def test_renders_action_menu_keys(self):
+        out = _render_welcome_to_string(
+            rooms=[],
+            unread_by_room={},
+            selected_room_name="",
+            messages=[],
+            agent_name="arav",
+        )
+        # Every action key must be present in the output.
+        for key in ("[n]", "[j]", "[r]", "[s]", "[d]", "[/]", "[?]", "[q]"):
+            assert key in out, f"missing action key {key} in welcome view"
+
+    def test_renders_agent_name(self):
+        out = _render_welcome_to_string(
+            rooms=[], unread_by_room={}, selected_room_name="",
+            messages=[], agent_name="arav",
+        )
+        assert "@arav" in out
+
+    def test_empty_rooms_state_prompts_n(self):
+        out = _render_welcome_to_string(
+            rooms=[], unread_by_room={}, selected_room_name="",
+            messages=[], agent_name="arav",
+        )
+        assert "no rooms yet" in out
+        assert "n" in out  # the [n] action key
+
+    def test_renders_room_with_member_count(self):
+        rooms = [{"name": "general", "members": ["arav", "ada"]}]
+        out = _render_welcome_to_string(
+            rooms=rooms, unread_by_room={}, selected_room_name="",
+            messages=[], agent_name="arav",
+        )
+        assert "#general" in out
+        assert "2 members" in out
+
+    def test_unread_rooms_render_under_new_activity_header(self):
+        rooms = [
+            {"name": "quiet", "members": []},
+            {"name": "noisy", "members": []},
+        ]
+        out = _render_welcome_to_string(
+            rooms=rooms, unread_by_room={"noisy": 4},
+            selected_room_name="", messages=[], agent_name="arav",
+        )
+        assert "new activity" in out
+        assert "unread" in out and "4" in out
+        # Idle bucket rendered separately below.
+        new_idx = out.find("new activity")
+        idle_idx = out.find("idle")
+        assert 0 <= new_idx < idle_idx
+
+    def test_footer_hint_present(self):
+        out = _render_welcome_to_string(
+            rooms=[], unread_by_room={}, selected_room_name="",
+            messages=[], agent_name="arav",
+        )
+        # Key elements of the footer hint — split because Rich may wrap.
+        assert "Tab" in out
+        assert "Esc" in out
+
+
+# ---------------------------------------------------------------------------
+# Hub helpers — invite-token mint + delete RPC
+# ---------------------------------------------------------------------------
+
+
+def test_mint_join_token_is_portable_envelope():
+    token = _mint_join_token("http://relay:8080", "topsecret", "general")
+    assert token.startswith("quorus_join_")
+    # Decodable back to the originating dict.
+    import base64
+    raw = base64.urlsafe_b64decode(token[len("quorus_join_"):]).decode()
+    payload = json.loads(raw)
+    assert payload["relay_url"] == "http://relay:8080"
+    assert payload["secret"] == "topsecret"
+    assert payload["room"] == "general"
+
+
+def test_destroy_room_handles_unreachable_relay():
+    """No relay running on bogus port → returns ('unreachable', detail)."""
+    status, detail = tui_hub._destroy_room(
+        "http://127.0.0.1:1",  # nothing listening
+        "secret", "any-room", "arav",
+    )
+    assert status == "unreachable"
+    assert isinstance(detail, str)
+
+
+# ---------------------------------------------------------------------------
+# Welcome state — selected_room_idx defaults to -1
+# ---------------------------------------------------------------------------
+
+
+def test_default_selected_room_idx_is_welcome_state():
+    """Regression for the 'auto-loads room 0' bug — must default to -1."""
+    s = HubState()
+    assert s.selected_room_idx == -1
+    # And get_selected_room must honor that.
+    s.set_rooms([{"name": "general"}])
+    assert s.get_selected_room() is None

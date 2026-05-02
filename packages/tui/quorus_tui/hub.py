@@ -51,6 +51,8 @@ from quorus_cli import ui as _ui  # noqa: E402
 
 from quorus.config import ConfigManager, resolve_config_dir
 
+from . import welcome as _welcome
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 # Render cadence — how fast the main loop redraws after input/state change.
 # Keep small so the panel view feels live.
@@ -599,6 +601,60 @@ def _create_room(
         return (f"http:{r.status_code}", None)
     except Exception:
         return ("unreachable", None)
+
+
+def _destroy_room(
+    relay: str, secret: str, room: str, requested_by: str,
+) -> tuple[str, str]:
+    """DELETE /rooms/{room}. Returns (status, detail).
+
+    Status: 'ok', 'auth' (401/403), 'missing' (404), 'unreachable',
+    or 'http:<code>'. ``detail`` carries server-side error text when present.
+    """
+    try:
+        r = httpx.request(
+            "DELETE",
+            f"{relay}/rooms/{room}",
+            headers={**_auth_headers(secret), "Content-Type": "application/json"},
+            content=json.dumps({"requested_by": requested_by}),
+            timeout=5,
+            follow_redirects=True,
+        )
+        if r.status_code in (200, 204):
+            return ("ok", "")
+        if r.status_code in (401, 403):
+            return ("auth", _safe_detail(r))
+        if r.status_code == 404:
+            return ("missing", "")
+        return (f"http:{r.status_code}", _safe_detail(r))
+    except Exception as exc:
+        return ("unreachable", str(exc))
+
+
+def _safe_detail(r: "httpx.Response") -> str:
+    """Pull a human-readable error string from a relay response."""
+    try:
+        body = r.json()
+        if isinstance(body, dict):
+            return str(body.get("detail") or body.get("error") or "")
+    except Exception:
+        pass
+    return r.text[:200]
+
+
+def _mint_join_token(relay_url: str, secret: str, room: str) -> str:
+    """Build a portable quorus_join_ token for *room* — local base64 envelope.
+
+    Mirrors the inline token mint used by the existing `invite <name>`
+    flow at the bottom of the input loop. No network call; the token is
+    a self-contained envelope of relay URL + secret + room.
+    """
+    import base64 as _b64
+
+    payload = json.dumps(
+        {"relay_url": relay_url, "secret": secret, "room": room}
+    )
+    return "quorus_join_" + _b64.urlsafe_b64encode(payload.encode()).decode()
 
 
 def _create_error_msg(room: str, status: str, relay: str) -> str:
@@ -1315,6 +1371,7 @@ def _print_help(console: Console) -> None:
     console.print(Text.from_markup("  [bold primary]Navigation[/]"))
     nav_rows = [
         ("Tab",          "cycle to the next room"),
+        ("Esc",          "back to the welcome / home view"),
         ("↑ / ↓",        "walk through your input history"),
         ("?  or  /help", "show this screen"),
         ("Ctrl+C",        "quit"),
@@ -1329,10 +1386,13 @@ def _print_help(console: Console) -> None:
         "  [bold primary]Slash commands[/]  [dim]· type / to see options[/]"
     ))
     slash_rows = [
-        ("/create <name>",   "create a new room and switch to it"),
+        ("/home",            "return to the welcome view"),
+        ("/new <name>",      "create a new room (alias /create)"),
         ("/join <room>",     "switch to a room by name"),
         ("/switch <room>",   "alias for /join"),
         ("/rooms",           "list all rooms with a numbered menu"),
+        ("/share <room>",    "mint a portable invite token"),
+        ("/delete <room>",   "destroy a room (confirmation required)"),
         ("/invite",          "show how to share the current room"),
         ("/workspace",       "list or switch workspaces"),
         ("/status",          "connection and relay info"),
@@ -1485,6 +1545,90 @@ def _slash_invite(arg, state, relay_url, secret, agent_name, console):
     return True
 
 
+def _slash_share(arg, state, relay_url, secret, agent_name, console):
+    """`/share <room>` — mint a portable invite token and print it inline.
+
+    Mirrors the [s] welcome shortcut; here as a slash command so the
+    palette is complete. Argument is the room name (defaults to the
+    currently-selected room).
+    """
+    del agent_name
+    target = (arg.strip() or state.selected_room_name()).lstrip("#")
+    if not target:
+        state.set_status_bar("usage: /share <room>")
+        return True
+    rooms_snap = state.get_rooms()
+    if not any((r.get("name") or "") == target for r in rooms_snap):
+        state.set_status_bar(f"no room '{target}' — try /rooms")
+        return True
+    token = _mint_join_token(relay_url, secret, target)
+    console.print()
+    console.print(f"  [bold]Share #{target}[/bold]")
+    console.print(f"  [primary]{token}[/]")
+    console.print(f"  [dim]They run: quorus join {token}[/dim]")
+    console.print()
+    try:
+        input("  [Press Enter to return to the hub] ")
+    except EOFError:
+        pass
+    state.set_status_bar(f"Token generated for #{target}")
+    return True
+
+
+def _slash_delete(arg, state, relay_url, secret, agent_name, console):
+    """`/delete <room>` — destroy a room. Requires inline confirmation."""
+    target = (arg.strip() or state.selected_room_name()).lstrip("#")
+    if not target:
+        state.set_status_bar("usage: /delete <room>")
+        return True
+    rooms_snap = state.get_rooms()
+    if not any((r.get("name") or "") == target for r in rooms_snap):
+        state.set_status_bar(f"no room '{target}'")
+        return True
+    console.print()
+    confirm = Prompt.ask(f"  Type '{target}' to confirm delete", default="").strip()
+    if confirm != target:
+        state.set_status_bar("Cancelled — confirmation mismatch.")
+        return True
+    status, detail = _destroy_room(relay_url, secret, target, agent_name)
+    if status == "ok":
+        state.set_status_bar(f"Deleted #{target}")
+        with state._lock:
+            state.selected_room_idx = -1
+        state.set_messages([])
+        state.set_rooms(_fetch_rooms(relay_url, secret))
+    elif status == "auth":
+        state.set_status_bar(
+            f"Not authorized to delete #{target}"
+            + (f" — {detail}" if detail else "")
+        )
+    elif status == "missing":
+        state.set_status_bar(f"#{target} no longer exists.")
+    elif status == "unreachable":
+        state.set_status_bar(f"Can't reach relay at {relay_url}.")
+    else:
+        state.set_status_bar(
+            f"Couldn't delete #{target} — {status}"
+            + (f": {detail}" if detail else "")
+        )
+    return True
+
+
+def _slash_new(arg, state, relay_url, secret, agent_name, console):
+    """`/new <name>` — alias for /create, matches the [n] welcome shortcut."""
+    return _slash_create(arg, state, relay_url, secret, agent_name, console)
+
+
+def _slash_home(arg, state, relay_url, secret, agent_name, console):
+    """`/home` — return to the welcome view (same as Esc)."""
+    del arg, relay_url, secret, agent_name, console
+    with state._lock:
+        state.selected_room_idx = -1
+    state.set_messages([])
+    state.set_status_bar("")
+    return True
+
+
 def _slash_status(arg, state, relay_url, secret, agent_name, console):
     del arg, secret, agent_name, console
     connected, label = state.get_connection()
@@ -1573,10 +1717,14 @@ def _slash_workspace(arg, state, relay_url, secret, agent_name, console):
 
 SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/help":       ("show keybinds + all commands",        _slash_help),
+    "/home":       ("return to the welcome view",           _slash_home),
     "/rooms":      ("list rooms with numbered menu",        _slash_rooms),
     "/join":       ("/join <room> — switch to a room",      _slash_join),
     "/switch":     ("/switch <room> — alias for /join",     _slash_switch),
+    "/new":        ("/new <name> — alias for /create",      _slash_new),
     "/create":     ("/create <name> — make a new room",     _slash_create),
+    "/share":      ("/share <room> — mint a join token",    _slash_share),
+    "/delete":     ("/delete <room> — destroy a room",      _slash_delete),
     "/invite":     ("show how to share the current room",   _slash_invite),
     "/workspace":  ("list / switch workspaces",             _slash_workspace),
     "/status":     ("connection + relay info",              _slash_status),
@@ -1607,6 +1755,7 @@ def _dispatch_slash(
 _KEY_UP      = "__UP__"
 _KEY_DOWN    = "__DOWN__"
 _KEY_TAB     = "__TAB__"
+_KEY_ESC     = "__ESC__"       # Esc — return to welcome / home view
 _KEY_QUIT    = "__QUIT_KEY__"
 _KEY_TIMEOUT = "__TIMEOUT__"   # no keypress within render tick — re-render
 
@@ -1689,6 +1838,13 @@ def _read_input(
                 sys.stdout.write("\n")
                 sys.stdout.flush()
                 return _KEY_TAB
+            # Esc on an empty input → "back to welcome / home". If the user
+            # has already typed something we ignore Esc so it doesn't nuke
+            # an in-progress message accidentally.
+            if key == readchar.key.ESC and not buf:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return _KEY_ESC
             if key in (readchar.key.CTRL_C, readchar.key.CTRL_D):
                 sys.stdout.write("\n")
                 sys.stdout.flush()
@@ -1796,27 +1952,44 @@ def _main_input_loop(
                     )
                 )
                 console.print(_Rule(style="dim"))
-                # Inline room strip (horizontal, not a sidebar).
-                console.print(
-                    _render_room_strip(
-                        rooms_snap, selected_idx,
+
+                if selected is None:
+                    # Welcome / Home view — banner, action menu, chats panel.
+                    # Skips the room strip + nav hint + chat feed entirely so
+                    # the welcome surface owns the screen between header and
+                    # prompt. The instant the user picks a room (Tab/Enter/
+                    # /join), the else-branch below takes over.
+                    _welcome.render_welcome(
+                        console,
+                        rooms=rooms_snap,
                         unread_by_room=unread_by_room,
+                        selected_room_name=room_name,
+                        messages=msgs_snap,
+                        agent_name=agent_name,
+                        workspace_label=workspace_label,
                     )
-                )
-                # Persistent nav hint — always visible so users know how
-                # to switch rooms without having to discover /help first.
-                console.print(Text.from_markup(
-                    "  [dim]Tab — switch room · Enter — open selected room"
-                    " · /rooms — list · /help — all commands[/]"
-                ))
-                console.print()
-                # Flat chat feed — grouped, centered empty states.
-                for feed_line in _render_chat_feed(
-                    msgs_snap, room_name, agent_name,
-                    console_width=console_width,
-                ):
-                    console.print(feed_line)
-                console.print()
+                else:
+                    # Inline room strip (horizontal, not a sidebar).
+                    console.print(
+                        _render_room_strip(
+                            rooms_snap, selected_idx,
+                            unread_by_room=unread_by_room,
+                        )
+                    )
+                    # Persistent nav hint — always visible so users know how
+                    # to switch rooms without having to discover /help first.
+                    console.print(Text.from_markup(
+                        "  [dim]Tab — switch room · Enter — open selected room"
+                        " · Esc — back to home · / — slash command[/]"
+                    ))
+                    console.print()
+                    # Flat chat feed — grouped, centered empty states.
+                    for feed_line in _render_chat_feed(
+                        msgs_snap, room_name, agent_name,
+                        console_width=console_width,
+                    ):
+                        console.print(feed_line)
+                    console.print()
                 # Transient status line (if any) above the bare prompt.
                 status_line = _render_status_line(status_bar)
                 if status_line is not None:
@@ -1842,6 +2015,16 @@ def _main_input_loop(
 
             if line == _KEY_QUIT:
                 return "quit"
+
+            # Esc → drop the user back to the welcome / home view. Pure
+            # state mutation — no relay calls, no destructive side-effects.
+            if line == _KEY_ESC:
+                with state._lock:
+                    state.selected_room_idx = -1
+                state.set_messages([])
+                state.set_status_bar("")
+                last_render = 0
+                continue
 
             # Tab → cycle to next room. (Arrow Up/Down now walk input
             # history inside _read_input — they never reach here.)
@@ -1880,6 +2063,130 @@ def _main_input_loop(
                 hold_render = True
                 continue
 
+            # ── Welcome-view single-key shortcuts ──────────────────────────
+            # These mirror the [j] [r] [s] [d] entries in the home action
+            # menu. They prompt inline for any required argument and call
+            # the EXISTING relay endpoints — no new endpoints are created.
+            if cmd_lower == "r":
+                # /rooms — print the numbered room menu inline.
+                _print_room_menu(state, console)
+                hold_render = True
+                continue
+
+            if cmd_lower == "j":
+                # Join by invite — paste a quorus_join_ token.
+                console.print()
+                token = Prompt.ask("  Paste invite token").strip()
+                if not token:
+                    state.set_status_bar("Cancelled — no token entered.")
+                elif not token.startswith("quorus_join_"):
+                    state.set_status_bar(
+                        "Not a join token — expected 'quorus_join_…' prefix."
+                    )
+                else:
+                    state.set_status_bar(
+                        "Token noted — run: quorus join "
+                        + token[:24] + "…  to switch workspaces."
+                    )
+                last_render = 0
+                continue
+
+            if cmd_lower == "s":
+                # Share <room> — mint a portable invite token. Prompts for
+                # the room name so this works from the welcome view (no
+                # selected room) AND from inside an open room.
+                console.print()
+                rooms_snap = state.get_rooms()
+                default_name = state.selected_room_name() or (
+                    rooms_snap[0].get("name") if rooms_snap else ""
+                )
+                target = Prompt.ask(
+                    "  Share which room",
+                    default=default_name or "",
+                ).strip().lstrip("#")
+                if not target:
+                    state.set_status_bar("Cancelled — no room name.")
+                elif not any(
+                    (r.get("name") or "") == target for r in rooms_snap
+                ):
+                    state.set_status_bar(
+                        f"No room '{target}' — press r for the list."
+                    )
+                else:
+                    token = _mint_join_token(relay_url, secret, target)
+                    console.print()
+                    console.print(f"  [bold]Share #{target}[/bold]")
+                    console.print(f"  [primary]{token}[/]")
+                    console.print(
+                        f"  [dim]They run: quorus join {token}[/dim]"
+                    )
+                    console.print()
+                    try:
+                        input("  [Press Enter to return to the hub] ")
+                    except EOFError:
+                        pass
+                    state.set_status_bar(f"Token generated for #{target}")
+                last_render = 0
+                continue
+
+            if cmd_lower == "d":
+                # Delete <room> — destructive, gated by an explicit
+                # confirmation prompt. Uses DELETE /rooms/{id}.
+                console.print()
+                rooms_snap = state.get_rooms()
+                if not rooms_snap:
+                    state.set_status_bar("No rooms to delete.")
+                    last_render = 0
+                    continue
+                target = Prompt.ask(
+                    "  Delete which room",
+                    default=state.selected_room_name() or "",
+                ).strip().lstrip("#")
+                if not target:
+                    state.set_status_bar("Cancelled — no room name.")
+                elif not any(
+                    (r.get("name") or "") == target for r in rooms_snap
+                ):
+                    state.set_status_bar(f"No room '{target}'.")
+                else:
+                    confirm = Prompt.ask(
+                        f"  Type '{target}' to confirm",
+                        default="",
+                    ).strip()
+                    if confirm != target:
+                        state.set_status_bar("Cancelled — confirmation mismatch.")
+                    else:
+                        status, detail = _destroy_room(
+                            relay_url, secret, target, agent_name,
+                        )
+                        if status == "ok":
+                            state.set_status_bar(f"Deleted #{target}")
+                            with state._lock:
+                                state.selected_room_idx = -1
+                            state.set_messages([])
+                            new_rooms = _fetch_rooms(relay_url, secret)
+                            state.set_rooms(new_rooms)
+                        elif status == "auth":
+                            state.set_status_bar(
+                                f"Not authorized to delete #{target}"
+                                + (f" — {detail}" if detail else "")
+                            )
+                        elif status == "missing":
+                            state.set_status_bar(
+                                f"#{target} no longer exists."
+                            )
+                        elif status == "unreachable":
+                            state.set_status_bar(
+                                f"Can't reach relay at {relay_url}."
+                            )
+                        else:
+                            state.set_status_bar(
+                                f"Couldn't delete #{target} — {status}"
+                                + (f": {detail}" if detail else "")
+                            )
+                last_render = 0
+                continue
+
             # Number → jump to room by index from the /rooms menu.
             if cmd.isdigit():
                 idx = int(cmd) - 1
@@ -1914,7 +2221,7 @@ def _main_input_loop(
                 # redraw so the output isn't wiped on the next tick.
                 # /status and /invite only set the status bar — they
                 # NEED a redraw for the bar to appear.
-                printing_verbs = {"/help", "/rooms", "/workspace"}
+                printing_verbs = {"/help", "/rooms", "/workspace", "/share", "/delete"}
                 handled = _dispatch_slash(
                     verb, arg, state, relay_url, secret, agent_name, console,
                 )
