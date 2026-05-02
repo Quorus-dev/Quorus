@@ -17,7 +17,9 @@ import logging
 import logging.handlers
 import os
 import re
+import shutil
 import signal
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -127,6 +129,136 @@ _HARNESS_SUFFIXES = (
     ("-cursor", "cursor"),
 )
 
+# ---------------------------------------------------------------------------
+# Argv-shape pinning — codify the EXACT command shape per harness
+# ---------------------------------------------------------------------------
+# These constants and helpers exist so contract tests can pin the wire-format
+# we send to vendor CLIs. If a vendor renames a flag, ONE of these helpers
+# breaks and the corresponding contract test fails — instead of the daemon
+# silently invoking a non-existent flag at runtime.
+#
+# claude does NOT appear here: the claude_agent_sdk is a Python import, not a
+# subprocess — its "argv" is ``query(prompt=..., options=ClaudeAgentOptions(...))``
+# and is exercised by the dedicated claude contract test below.
+
+CODEX_BIN = "codex"
+GEMINI_BIN = "gemini"
+CURSOR_BIN = "cursor-agent"
+
+
+def build_codex_argv(context: str) -> list[str]:
+    """Pinned argv shape for codex. Contract: ``codex exec --json --prompt <ctx>``."""
+    return [CODEX_BIN, "exec", "--json", "--prompt", context]
+
+
+def build_gemini_argv(context: str) -> list[str]:
+    """Pinned argv shape for gemini. Contract: ``gemini --prompt <ctx>``."""
+    return [GEMINI_BIN, "--prompt", context]
+
+
+def build_cursor_argv(context: str) -> list[str]:
+    """Pinned argv shape for cursor-agent. Contract: ``cursor-agent --headless --prompt <ctx>``."""
+    return [CURSOR_BIN, "--headless", "--prompt", context]
+
+
+# Version-probe argv per binary (NOT prompt-bearing — safe to run on startup).
+_VERSION_PROBE_ARGV: dict[str, list[str]] = {
+    "codex": [CODEX_BIN, "--version"],
+    "gemini": [GEMINI_BIN, "--version"],
+    "cursor": [CURSOR_BIN, "--version"],
+}
+
+# Pinned-known-good version ranges. Entries here say "we have observed this
+# CLI working with these versions". Outside the range we still try, just with
+# a logged WARNING. Keep the format substring-match to avoid SemVer parsing
+# brittleness — vendors emit version strings in different shapes.
+KNOWN_GOOD_VERSIONS: dict[str, tuple[str, ...]] = {
+    "claude": ("0.0.", "0.1.", "0.2.", "0.3.", "0.4.", "1.", "2."),
+    "codex": ("0.", "1.", "2.", "3."),
+    "gemini": ("0.", "1.", "2.", "3."),
+    "cursor": ("0.", "1.", "2.", "3."),
+}
+
+
+def _claude_sdk_version() -> str | None:
+    """Best-effort version pull for the claude_agent_sdk Python module."""
+    try:
+        import claude_agent_sdk  # type: ignore
+
+        ver = getattr(claude_agent_sdk, "__version__", None)
+        if isinstance(ver, str) and ver:
+            return ver
+    except Exception:
+        return None
+    # Fall back to importlib.metadata for installed dist version.
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        return version("claude-agent-sdk")
+    except PackageNotFoundError:
+        return None
+    except Exception:
+        return None
+
+
+def probe_harness_version(harness: str, *, timeout_s: float = 3.0) -> str | None:
+    """Return a version string for ``harness`` or ``None`` if not detected.
+
+    Synchronous on purpose — runs once on daemon startup, not per wake. Uses
+    ``shutil.which`` to short-circuit when the binary is missing so we don't
+    leak a FileNotFoundError into startup logs.
+    """
+    if harness == "claude":
+        return _claude_sdk_version()
+    argv = _VERSION_PROBE_ARGV.get(harness)
+    if not argv:
+        return None
+    if shutil.which(argv[0]) is None:
+        return None
+    try:
+        proc = subprocess.run(  # noqa: S603 — argv is hardcoded above
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    out = (proc.stdout or "").strip() or (proc.stderr or "").strip()
+    # Vendors print multi-line banners; keep the first non-empty line.
+    for line in out.splitlines():
+        line = line.strip()
+        if line:
+            return line[:200]
+    return None
+
+
+def log_adapter_versions(probe: Callable[[str], str | None] | None = None) -> dict[str, str | None]:
+    """Probe each adapter's version on startup and emit a structured log line.
+
+    Returns a ``{harness: version_or_None}`` map for inspection by tests. The
+    daemon logs one INFO line per harness, and a WARNING when the detected
+    version doesn't satisfy any prefix in :data:`KNOWN_GOOD_VERSIONS`.
+    """
+    probe = probe or probe_harness_version
+    versions: dict[str, str | None] = {}
+    for harness in ("claude", "codex", "gemini", "cursor"):
+        ver = probe(harness)
+        versions[harness] = ver
+        if ver is None:
+            logger.info("adapter_version harness=%s version=not-detected", harness)
+            continue
+        good = KNOWN_GOOD_VERSIONS.get(harness, ())
+        is_good = any(ver.startswith(prefix) or prefix in ver for prefix in good) if good else True
+        level = logging.INFO if is_good else logging.WARNING
+        logger.log(
+            level,
+            "adapter_version harness=%s version=%s known_good=%s",
+            harness, ver, "yes" if is_good else "no",
+        )
+    return versions
+
 
 def detect_harness(participant: str) -> str:
     """Route by participant-name suffix. Fallback claude (most common host)."""
@@ -171,8 +303,17 @@ class HeadlessAdapter:
     a best-effort string the daemon then posts to the room.
     """
 
-    def __init__(self, *, timeout_s: int = SUBPROCESS_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_s: int = SUBPROCESS_TIMEOUT_S,
+        dry_run: bool = False,
+    ) -> None:
         self.timeout_s = timeout_s
+        self.dry_run = dry_run
+        # Records the argv (or sdk-call signature) that WOULD have been spawned
+        # in dry-run mode. Kept on the instance for tests + smoke scripts.
+        self.last_dry_run: dict[str, Any] | None = None
 
     @staticmethod
     def _stub_reply(context: str) -> str:
@@ -203,21 +344,56 @@ class HeadlessAdapter:
         # the regular path, only triggered by an explicit env var.
         if os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes"):
             return self._stub_reply(context)
+        if self.dry_run:
+            return self._record_dry_run(harness, context)
         if harness == "claude":
             return await self._run_claude(context)
         if harness == "codex":
             return await self._run_subprocess(
-                ["codex", "exec", "--json", "--prompt", context],
+                build_codex_argv(context),
                 parser=_parse_codex_json,
             )
         if harness == "gemini":
             return await self._run_subprocess(
-                ["gemini", "--prompt", context],
+                build_gemini_argv(context),
                 parser=lambda out: out.strip(),
             )
         if harness == "cursor":
             return await self._run_cursor(context)
         raise ValueError(f"unknown harness {harness!r}")
+
+    def _record_dry_run(self, harness: str, context: str) -> str:
+        """Record what argv WOULD have been called and return a sentinel string.
+
+        This is the lever ``--dry-run`` uses: the full pipeline runs, but the
+        adapter never touches a real binary. Tests and CI smoke can assert on
+        ``adapter.last_dry_run`` to confirm the wire-format we picked.
+        """
+        if harness == "claude":
+            argv: Any = {
+                "kind": "sdk-call",
+                "module": "claude_agent_sdk",
+                "callable": "query",
+                "kwargs": {
+                    "prompt": context,
+                    "options": {"permission_mode": "bypassPermissions", "max_turns": 1},
+                },
+            }
+        elif harness == "codex":
+            argv = build_codex_argv(context)
+        elif harness == "gemini":
+            argv = build_gemini_argv(context)
+        elif harness == "cursor":
+            argv = build_cursor_argv(context)
+        else:
+            raise ValueError(f"unknown harness {harness!r}")
+        self.last_dry_run = {"harness": harness, "argv": argv}
+        logger.info(
+            "dry_run harness=%s argv=%s",
+            harness,
+            argv if isinstance(argv, list) else argv.get("callable", "<sdk-call>"),
+        )
+        return f"[reflexd:dry-run] would invoke {harness} adapter (see last_dry_run)"
 
     async def _run_claude(self, context: str) -> str:
         try:
@@ -251,6 +427,13 @@ class HeadlessAdapter:
         *,
         parser: Callable[[str], str],
     ) -> str:
+        # Pre-flight: if the binary truly isn't on PATH, surface the same
+        # sentinel string regardless of platform. ``shutil.which`` returning
+        # None is a deterministic check; ``FileNotFoundError`` from
+        # ``create_subprocess_exec`` is a backstop for racy installs.
+        if shutil.which(argv[0]) is None:
+            logger.warning("harness binary missing on PATH: %s", argv[0])
+            return f"[reflexd] {argv[0]} not installed on this host"
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -276,19 +459,36 @@ class HeadlessAdapter:
         return parser((stdout or b"").decode("utf-8", errors="replace")) or "[reflexd] (no reply)"
 
     async def _run_cursor(self, context: str) -> str:
-        try:
-            out = await self._run_subprocess(
-                ["cursor-agent", "--headless", "--prompt", context],
-                parser=lambda o: o.strip(),
-            )
-            if not out.startswith("[reflexd] cursor-agent not installed"):
-                return out
-        except Exception as exc:  # pragma: no cover
-            logger.info("cursor-agent failed, falling back to inbox: %s", exc)
-        inbox = Path.home() / ".cursor" / "inbox"
+        # Try the binary first; fall back to the file-inbox protocol if it's
+        # missing. Cursor's stop-hook picks the inbox file up on next session.
+        if shutil.which(CURSOR_BIN) is not None:
+            try:
+                out = await self._run_subprocess(
+                    build_cursor_argv(context),
+                    parser=lambda o: o.strip(),
+                )
+                if not out.startswith("[reflexd] cursor-agent not installed"):
+                    return out
+            except Exception as exc:  # pragma: no cover
+                logger.info("cursor-agent failed, falling back to inbox: %s", exc)
+        return self._write_cursor_inbox(context)
+
+    @staticmethod
+    def _write_cursor_inbox(context: str, *, participant: str | None = None) -> str:
+        """File-inbox fallback: ``~/.cursor/inbox/<participant>/wake_<ts>.md``.
+
+        The cursor stop-hook reads this directory at session start. The
+        participant subdirectory keeps multi-tenant hosts from colliding.
+        """
+        who = participant or os.environ.get("REFLEXD_PARTICIPANT") or "default"
+        # Defensive sanitisation — participant comes from config, but
+        # belt-and-braces against a path-traversal value.
+        who = re.sub(r"[^A-Za-z0-9._-]", "_", who)[:64] or "default"
+        inbox = Path.home() / ".cursor" / "inbox" / who
         inbox.mkdir(parents=True, exist_ok=True)
-        fname = inbox / f"reflexd-{int(time.time() * 1000)}.txt"
+        fname = inbox / f"wake_{int(time.time() * 1000)}.md"
         fname.write_text(context, encoding="utf-8")
+        logger.info("cursor file-inbox wrote %s", fname)
         return f"[reflexd] wrote prompt to {fname}"
 
 
@@ -466,6 +666,7 @@ class ReflexdConfig:
     log_path: Path = field(default_factory=lambda: DEFAULT_LOG_PATH)
     spawn_enabled: bool = True
     legacy_bearer: bool = False
+    dry_run: bool = False
 
     @classmethod
     def from_env(cls) -> "ReflexdConfig":
@@ -755,6 +956,13 @@ def build_argparser() -> argparse.ArgumentParser:
                         help="verbose stderr logging plus ~/.quorus/reflexd.log")
     parser.add_argument("--no-spawn", action="store_true",
                         help="disable harness spawn (claim-only smoke mode)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help=("run the full pipeline but never spawn a real harness; "
+                              "log what argv WOULD have been called"))
+    parser.add_argument("--once", metavar="ROOM",
+                        help=("trigger a synthetic wake_intent on ROOM, run one "
+                              "adapter pass (honoring --dry-run), then exit. "
+                              "Used by scripts/reflexd_smoke.sh in CI."))
     return parser
 
 
@@ -805,20 +1013,21 @@ def cmd_stop() -> int:
 
 
 async def cmd_start(args: argparse.Namespace) -> int:
-    cfg = ReflexdConfig.from_env()
-    if args.participant:
-        cfg.participant_name = args.participant
-    if args.relay_url:
-        cfg.relay_url = args.relay_url.rstrip("/")
-    if args.no_spawn:
-        cfg.spawn_enabled = False
+    cfg = _config_from_args(args)
 
     cfg.runtime_dir.mkdir(parents=True, exist_ok=True)
     configure_logging(cfg.log_path, debug=args.debug)
 
+    # Probe each adapter's version once at startup so support has a paper
+    # trail when a vendor flag changes. Logged to ~/.quorus/reflexd.log.
+    log_adapter_versions()
+
+    if args.once:
+        return await _run_once(cfg, args.once)
+
     pidfile = _pidfile()
     pidfile.write_text(str(os.getpid()), encoding="utf-8")
-    daemon = Reflexd(cfg)
+    daemon = Reflexd(cfg, adapter=HeadlessAdapter(dry_run=cfg.dry_run))
 
     loop = asyncio.get_running_loop()
 
@@ -839,6 +1048,70 @@ async def cmd_start(args: argparse.Namespace) -> int:
             pidfile.unlink()
         except OSError:
             pass
+    return 0
+
+
+def _config_from_args(args: argparse.Namespace) -> ReflexdConfig:
+    """Build a ReflexdConfig honoring CLI overrides.
+
+    Pulled out of ``cmd_start`` so ``--once`` (CI smoke) and ``--dry-run`` can
+    share the same env-merge logic without duplicating the participant/key
+    fail-closed behaviour.
+    """
+    # Dry-run / --once allows zero-secret fixtures so CI can smoke without a
+    # real relay. Inject placeholders ONLY when in those modes.
+    if (getattr(args, "dry_run", False) or getattr(args, "once", None)):
+        os.environ.setdefault("API_KEY", "dryrun-fake-key")
+        os.environ.setdefault("REFLEXD_PARTICIPANT", "reflexd-smoke-claude")
+        os.environ.setdefault("RELAY_URL", "http://127.0.0.1:0")
+    cfg = ReflexdConfig.from_env()
+    if args.participant:
+        cfg.participant_name = args.participant
+    if args.relay_url:
+        cfg.relay_url = args.relay_url.rstrip("/")
+    if args.no_spawn:
+        cfg.spawn_enabled = False
+    if getattr(args, "dry_run", False):
+        cfg.dry_run = True
+    return cfg
+
+
+async def _run_once(cfg: ReflexdConfig, room: str) -> int:
+    """Drive a single synthetic wake_intent through the adapter and exit.
+
+    Used by ``scripts/reflexd_smoke.sh`` so CI can prove the adapter wiring
+    is sound without a real relay or a real harness binary. We bypass the
+    SSE/bid/claim lane intentionally — the contract under test here is
+    "given an envelope, the daemon picks the right harness and we have a
+    record of the argv that would have been spawned".
+    """
+    adapter = HeadlessAdapter(dry_run=True)
+    harness = detect_harness(cfg.participant_name)
+    envelope = {
+        "id": "smoke-msg-1",
+        "from_name": "smoke-driver",
+        "to": cfg.participant_name,
+        "room": room,
+        "content": f"@{cfg.participant_name} smoke: dry-run wake_intent",
+        "message_type": "chat",
+    }
+    daemon = Reflexd(cfg, adapter=adapter)
+    prompt = daemon._build_prompt(envelope, history=[])
+    reply = await adapter.run(harness, context=prompt)
+    record = adapter.last_dry_run or {}
+    print(json.dumps({
+        "ok": True,
+        "harness": harness,
+        "room": room,
+        "participant": cfg.participant_name,
+        "dry_run": True,
+        "argv_recorded": record.get("argv"),
+        "reply_marker": reply,
+    }, default=str))
+    logger.info(
+        "once_done harness=%s room=%s argv_recorded=%s",
+        harness, room, record.get("argv"),
+    )
     return 0
 
 

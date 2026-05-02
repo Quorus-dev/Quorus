@@ -1000,6 +1000,398 @@ def _cmd_turnguard(args):
     raise SystemExit(5)
 
 
+# ---------------------------------------------------------------------------
+# reflexd — start/stop/status/logs wrapper around scripts/reflexd.py
+# ---------------------------------------------------------------------------
+
+_REFLEXD_DEFAULT_LOG = Path.home() / ".quorus" / "reflexd.log"
+_REFLEXD_RUNTIME_DIR = Path.home() / ".quorus" / "runtime"
+
+
+def _resolve_reflexd_participant(explicit: str | None) -> str:
+    """Resolve the participant for ``quorus reflexd`` commands.
+
+    Priority (top wins): explicit ``--participant`` flag → ``$REFLEXD_PARTICIPANT``
+    or ``$QUORUS_PARTICIPANT`` env → active profile's ``instance_name``.
+
+    The participant suffix (``-claude``, ``-codex``, etc.) is preserved because
+    reflexd matches harness type by suffix when spawning a reply.
+    """
+    if explicit:
+        return explicit
+    env_name = os.environ.get("REFLEXD_PARTICIPANT") or os.environ.get(
+        "QUORUS_PARTICIPANT"
+    )
+    if env_name:
+        return env_name
+    try:
+        from quorus.config import ConfigManager as _CM
+        data = _CM().load() or {}
+        name = data.get("instance_name")
+    except Exception:
+        name = None
+    if not name:
+        _ui.error(
+            "reflexd: no participant resolved.",
+            hint=(
+                "Pass [accent]--participant NAME[/] or run "
+                "[accent]quorus init[/] to set instance_name."
+            ),
+        )
+        raise SystemExit(5)
+    return name
+
+
+def _reflexd_pidfile(participant: str) -> Path:
+    """Per-participant pidfile so multiple harnesses can run side-by-side."""
+    safe = "".join(ch for ch in participant if ch.isalnum() or ch in ("-", "_"))
+    if not safe:
+        raise ValueError(f"invalid participant name: {participant!r}")
+    return _REFLEXD_RUNTIME_DIR / f"reflexd.{safe}.pid"
+
+
+def _read_reflexd_pid(participant: str) -> int | None:
+    """Return the PID stored in the per-participant pidfile, or None."""
+    p = _reflexd_pidfile(participant)
+    if not p.exists():
+        return None
+    try:
+        raw = p.read_text(encoding="utf-8").strip()
+        return int(raw) if raw else None
+    except (OSError, ValueError):
+        return None
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Cheap aliveness check via signal 0 — does not actually deliver a signal."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but is owned by someone else — still "alive."
+        return True
+    except OSError:
+        return False
+
+
+def _pid_is_reflexd(pid: int) -> bool:
+    """Best-effort check that ``pid`` is one of our reflexd processes.
+
+    We look at /proc on Linux and ``ps`` on macOS. False positives here are
+    safer than false negatives (we'd refuse to start over a non-reflexd PID),
+    so we accept any process whose command line contains ``reflexd.py``.
+    """
+    if not _pid_is_alive(pid):
+        return False
+    try:
+        # macOS / BSD: ps -p PID -o command=
+        out = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if out.returncode == 0 and "reflexd" in out.stdout:
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # Linux fallback: /proc/<pid>/cmdline
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(
+            "utf-8", errors="replace"
+        )
+        return "reflexd" in cmdline
+    except OSError:
+        return False
+
+
+def _reflexd_script_path() -> Path:
+    """Return absolute path to scripts/reflexd.py inside this checkout."""
+    # cli.py lives at packages/cli/quorus_cli/cli.py; repo root is 4 parents up.
+    here = Path(__file__).resolve()
+    candidate = here.parents[3] / "scripts" / "reflexd.py"
+    if candidate.exists():
+        return candidate
+    # Fallback: scan upward for a 'scripts/reflexd.py' marker.
+    for parent in here.parents:
+        guess = parent / "scripts" / "reflexd.py"
+        if guess.exists():
+            return guess
+    raise FileNotFoundError("reflexd.py not found relative to quorus_cli.cli")
+
+
+def _cmd_reflexd(args):
+    """Dispatcher for ``quorus reflexd start|stop|status|logs``.
+
+    Wraps ``python scripts/reflexd.py`` with per-participant pidfile hygiene
+    so multiple harnesses on the same host can run their own daemons.
+    """
+    action = getattr(args, "reflexd_action", None)
+    if action is None:
+        _ui.error(
+            "reflexd: missing subcommand.",
+            hint=(
+                "usage: [accent]quorus reflexd start|stop|status|logs[/]"
+            ),
+        )
+        raise SystemExit(5)
+
+    if action == "start":
+        return _reflexd_start(args)
+    if action == "stop":
+        return _reflexd_stop(args)
+    if action == "status":
+        return _reflexd_status(args)
+    if action == "logs":
+        return _reflexd_logs(args)
+
+    _ui.error(f"reflexd: unknown action {action!r}")
+    raise SystemExit(5)
+
+
+def _reflexd_start(args) -> None:
+    """Start the daemon. Refuses to start over a live reflexd; clears stale pidfiles."""
+    import time as _time
+
+    participant = _resolve_reflexd_participant(getattr(args, "participant", None))
+    _REFLEXD_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    pidfile = _reflexd_pidfile(participant)
+
+    existing = _read_reflexd_pid(participant)
+    if existing is not None:
+        if _pid_is_reflexd(existing):
+            _ui.error(
+                f"reflexd already running for [primary]{participant}[/] (pid {existing}).",
+                hint=(
+                    "stop it first with "
+                    f"[accent]quorus reflexd stop --participant {participant}[/]"
+                ),
+            )
+            raise SystemExit(5)
+        # Stale pidfile (PID gone or not reflexd) — clear and proceed.
+        try:
+            pidfile.unlink()
+        except OSError:
+            pass
+
+    script = _reflexd_script_path()
+    cmd = [sys.executable, str(script), "start", "--participant", participant]
+    if getattr(args, "debug", False):
+        cmd.append("--debug")
+
+    env = os.environ.copy()
+    env["REFLEXD_PARTICIPANT"] = participant
+    if getattr(args, "stub", False):
+        env["REFLEXD_STUB_REPLY"] = "1"
+
+    log_path = _REFLEXD_DEFAULT_LOG
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    detach = bool(getattr(args, "detach", False))
+    if detach:
+        # Fully detach: own session, redirect stdio to the log, no controlling tty.
+        try:
+            log_fp = open(log_path, "ab", buffering=0)
+        except OSError as exc:
+            _ui.error(f"reflexd: cannot open log {log_path}: {exc}")
+            raise SystemExit(1) from exc
+        try:
+            proc = subprocess.Popen(  # noqa: S603 — args are program-controlled
+                cmd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fp,
+                stderr=log_fp,
+                start_new_session=True,
+                close_fds=True,
+                cwd=str(script.parent.parent),
+            )
+        finally:
+            log_fp.close()
+        # Write our own per-participant pidfile (the daemon writes its own
+        # global one, but we manage lifecycle here).
+        pidfile.write_text(str(proc.pid), encoding="utf-8")
+        try:
+            os.chmod(pidfile, 0o600)
+        except OSError:
+            pass
+        # Brief settle so callers can immediately query status.
+        _time.sleep(0.05)
+        if not _pid_is_alive(proc.pid):
+            try:
+                pidfile.unlink()
+            except OSError:
+                pass
+            _ui.error(
+                "reflexd: daemon exited immediately. Check the log.",
+                hint=f"[accent]quorus reflexd logs --participant {participant}[/]",
+            )
+            raise SystemExit(1)
+        console.print(
+            f"[dim]reflexd:[/] STARTED [primary]{participant}[/] "
+            f"pid=[accent]{proc.pid}[/] log=[dim]{log_path}[/]"
+        )
+        return
+
+    # Foreground: write a pidfile then exec into the script. We use Popen
+    # rather than os.execvpe so the pidfile is cleaned up on Ctrl-C.
+    proc = subprocess.Popen(cmd, env=env, cwd=str(script.parent.parent))  # noqa: S603
+    pidfile.write_text(str(proc.pid), encoding="utf-8")
+    try:
+        os.chmod(pidfile, 0o600)
+    except OSError:
+        pass
+    try:
+        rc = proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        rc = 130
+    finally:
+        try:
+            pidfile.unlink()
+        except OSError:
+            pass
+    raise SystemExit(rc)
+
+
+def _reflexd_stop(args) -> None:
+    """SIGTERM the daemon, escalate to SIGKILL after 10s. No-op when idle."""
+    import signal as _signal
+    import time as _time
+
+    participant = _resolve_reflexd_participant(getattr(args, "participant", None))
+    pidfile = _reflexd_pidfile(participant)
+    pid = _read_reflexd_pid(participant)
+
+    if pid is None or not _pid_is_alive(pid):
+        if pid is not None:
+            # Stale — clean up.
+            try:
+                pidfile.unlink()
+            except OSError:
+                pass
+        console.print(f"[dim]reflexd:[/] not running [muted]({participant})[/]")
+        return
+
+    try:
+        os.kill(pid, _signal.SIGTERM)
+    except OSError as exc:
+        _ui.error(f"reflexd: failed to SIGTERM pid {pid}: {exc}")
+        raise SystemExit(1) from exc
+
+    deadline = _time.monotonic() + 10.0
+    while _time.monotonic() < deadline:
+        if not _pid_is_alive(pid):
+            break
+        _time.sleep(0.1)
+    else:
+        # Escalate.
+        try:
+            os.kill(pid, _signal.SIGKILL)
+        except OSError:
+            pass
+
+    try:
+        pidfile.unlink()
+    except OSError:
+        pass
+    console.print(
+        f"[dim]reflexd:[/] STOPPED [primary]{participant}[/] (pid {pid})"
+    )
+
+
+def _reflexd_status(args) -> None:
+    """Print PID + uptime + last-log-line. Exit 0 if running, 1 if not."""
+    import time as _time
+    from datetime import datetime, timezone
+
+    participant = _resolve_reflexd_participant(getattr(args, "participant", None))
+    pidfile = _reflexd_pidfile(participant)
+    pid = _read_reflexd_pid(participant)
+
+    if pid is None or not _pid_is_alive(pid):
+        if pid is not None:
+            # Stale — clean up.
+            try:
+                pidfile.unlink()
+            except OSError:
+                pass
+        console.print(f"[dim]reflexd:[/] not running [muted]({participant})[/]")
+        raise SystemExit(1)
+
+    # Uptime from pidfile mtime (close enough — we wrote it at spawn time).
+    try:
+        mtime = pidfile.stat().st_mtime
+        uptime = max(0.0, _time.time() - mtime)
+        if uptime < 60:
+            uptime_str = f"{uptime:.0f}s"
+        elif uptime < 3600:
+            uptime_str = f"{uptime / 60:.1f}m"
+        else:
+            uptime_str = f"{uptime / 3600:.1f}h"
+        started = datetime.fromtimestamp(mtime, tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+    except OSError:
+        uptime_str = "?"
+        started = "?"
+
+    last_activity = "?"
+    log_path = _REFLEXD_DEFAULT_LOG
+    if log_path.exists():
+        try:
+            with log_path.open("rb") as fp:
+                fp.seek(0, 2)
+                size = fp.tell()
+                # Read last 4KB; cheaper than a full file scan.
+                fp.seek(max(0, size - 4096))
+                tail = fp.read().decode("utf-8", errors="replace")
+            lines = [ln for ln in tail.splitlines() if ln.strip()]
+            if lines:
+                last_activity = lines[-1][:200]
+        except OSError:
+            pass
+
+    console.print(
+        f"[primary]running[/] [bold]{participant}[/] "
+        f"pid=[accent]{pid}[/] uptime=[dim]{uptime_str}[/] "
+        f"started=[dim]{started}[/]"
+    )
+    console.print(f"  [muted]last:[/] [dim]{last_activity}[/]")
+    raise SystemExit(0)
+
+
+def _reflexd_logs(args) -> None:
+    """Print the last N lines of the daemon log."""
+    tail = max(1, int(getattr(args, "tail", 50) or 50))
+    log_path = _REFLEXD_DEFAULT_LOG
+    if not log_path.exists():
+        console.print(f"[dim]reflexd:[/] no log at {log_path}")
+        raise SystemExit(1)
+    try:
+        with log_path.open("rb") as fp:
+            fp.seek(0, 2)
+            size = fp.tell()
+            # Generous tail — 256 bytes per line × N. Cap at 1MB for safety.
+            window = min(size, max(4096, tail * 256), 1024 * 1024)
+            fp.seek(max(0, size - window))
+            data = fp.read().decode("utf-8", errors="replace")
+    except OSError as exc:
+        _ui.error(f"reflexd: cannot read log: {exc}")
+        raise SystemExit(1) from exc
+    lines = [ln for ln in data.splitlines() if ln]
+    for line in lines[-tail:]:
+        console.print(line, markup=False, highlight=False)
+
+
 def _cmd_hook(args):
     """Manage Claude Code message hook OR run a per-harness hook entrypoint.
 
@@ -3218,6 +3610,12 @@ def _cmd_init(args):
     manual_hints.append("quorus connect http      — any HTTP-speaking agent")
     next_steps.extend(manual_hints[:3])  # keep the panel tight
     ui.hint_next_steps(next_steps)
+    # AI-native notification daemon hint — opt-in per Arav's name-editability
+    # principle. We surface the command but never auto-launch it here.
+    console.print(
+        "[muted]→ to enable AI-native notifications, run:[/] "
+        "[accent]quorus reflexd start --detach[/]"
+    )
 
 
 def _cmd_invite_link(args):
@@ -7172,6 +7570,45 @@ def main():
     p_tg_status.add_argument("--participant", default=None,
                              help="Override resolved participant name")
 
+    # ── reflexd: AI-native notification daemon lifecycle wrapper.
+    p_reflexd = sub.add_parser("reflexd", **_help_block(
+        synopsis="Start/stop/inspect the local Reflex notification daemon.",
+        description=(
+            "Wraps `python scripts/reflexd.py` with per-participant pidfile "
+            "hygiene at ~/.quorus/runtime/reflexd.<participant>.pid. The "
+            "daemon subscribes to the relay for @-mentions and wakes a "
+            "headless agent (claude/codex/gemini/cursor) on win — without "
+            "keeping host harnesses open. One daemon per participant per host."
+        ),
+        example="quorus reflexd start --detach",
+        help_text="Manage the Reflex notification daemon",
+    ))
+    rx_sub = p_reflexd.add_subparsers(dest="reflexd_action")
+    p_rx_start = rx_sub.add_parser("start", help="Start the reflex daemon")
+    p_rx_start.add_argument("--participant", default=None,
+                            help="Override resolved participant name")
+    p_rx_start.add_argument("--detach", action="store_true",
+                            help="Daemonize: redirect stdio to ~/.quorus/reflexd.log")
+    p_rx_start.add_argument("--debug", action="store_true",
+                            help="Verbose logging (passes --debug to scripts/reflexd.py)")
+    p_rx_start.add_argument("--stub", action="store_true",
+                            help="Stub-reply mode: echo triggering messages instead of "
+                                 "spawning a real harness (sets REFLEXD_STUB_REPLY=1)")
+    p_rx_stop = rx_sub.add_parser("stop", help="Stop the reflex daemon (no-op if idle)")
+    p_rx_stop.add_argument("--participant", default=None,
+                           help="Override resolved participant name")
+    p_rx_status = rx_sub.add_parser(
+        "status",
+        help="Print pid/uptime/last-activity. Exit 0 if running, 1 if not.",
+    )
+    p_rx_status.add_argument("--participant", default=None,
+                             help="Override resolved participant name")
+    p_rx_logs = rx_sub.add_parser("logs", help="Print recent daemon log lines")
+    p_rx_logs.add_argument("--participant", default=None,
+                           help="Override resolved participant name")
+    p_rx_logs.add_argument("--tail", type=int, default=50,
+                           help="Number of trailing log lines to print (default 50)")
+
     p_workspaces = sub.add_parser("workspaces", **_help_block(
         synopsis="Manage Quorus workspace profiles.",
         description=(
@@ -7277,6 +7714,7 @@ def main():
         "decision": _cmd_decision,
         "begin": _cmd_begin,
         "turnguard": _cmd_turnguard,
+        "reflexd": _cmd_reflexd,
         "workspaces": _cmd_workspaces,
         "login": _cmd_login,
         "whoami": _cmd_whoami,
