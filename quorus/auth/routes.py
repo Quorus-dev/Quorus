@@ -92,6 +92,7 @@ class RegisterAgentResponse(BaseModel):
     agent_name: str
     api_key: str
     tenant_slug: str
+    next_step: str
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +341,8 @@ async def register_agent(
         if not parent_participant:
             raise HTTPException(status_code=401, detail="Parent participant not found")
 
-        tenant = await session.get(Tenant, parent_participant.tenant_id)
+        parent_tenant_id = parent_participant.tenant_id
+        tenant = await session.get(Tenant, parent_tenant_id)
         if not tenant:
             raise HTTPException(status_code=401, detail="Tenant not found")
 
@@ -385,11 +387,13 @@ async def register_agent(
                     agent_name=agent_name,
                     api_key=raw_key,
                     tenant_slug=tenant.slug,
+                    next_step="Exchange api_key via POST /v1/auth/token before using relay routes.",
                 )
 
-        # Create new agent participant
+        # Create the agent as a peer in the parent's tenant. Do not mint a
+        # child tenant: room visibility and self-join policy are tenant-scoped.
         agent_participant = Participant(
-            tenant_id=tenant.id,
+            tenant_id=parent_tenant_id,
             name=agent_name,
             role="agent",  # Agents get a distinct role
         )
@@ -416,4 +420,5 @@ async def register_agent(
             agent_name=agent_name,
             api_key=raw_key,
             tenant_slug=tenant.slug,
+            next_step="Exchange api_key via POST /v1/auth/token before using relay routes.",
         )

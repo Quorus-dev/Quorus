@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import inspect
 import re
+from types import SimpleNamespace
 
 import pytest
 
+from quorus.admin.models import ApiKey, Participant, Tenant
 from quorus.auth import routes as auth_routes
-from quorus.auth.routes import SignupResponse
+from quorus.auth.routes import RegisterAgentRequest, RegisterAgentResponse, SignupResponse
+from quorus.auth.tokens import generate_api_key
 
 _RAW_KEY_PATTERN = re.compile(r"quorus_sk_[A-Za-z0-9]{10,}")
 
@@ -110,3 +113,90 @@ def test_signup_response_model_optional_fields_default_to_none():
         assert field.default is None, (
             f"{field_name} must default to None, got {field.default!r}"
         )
+
+
+def test_register_agent_response_includes_token_exchange_hint():
+    resp = RegisterAgentResponse(
+        agent_name="arav-codex",
+        api_key="quorus_sk_abcdEFGH1234ijklMNOPqrst",
+        tenant_slug="medbuddy",
+        next_step="Exchange api_key via POST /v1/auth/token before using relay routes.",
+    )
+
+    assert "/v1/auth/token" in resp.next_step
+
+
+@pytest.mark.asyncio
+async def test_register_agent_creates_peer_in_parent_tenant(monkeypatch):
+    parent_raw_key, parent_prefix, parent_key_hash = generate_api_key()
+    parent_tenant = Tenant(id="tenant-parent", slug="medbuddy", display_name="MedBuddy")
+    parent_participant = Participant(
+        id="participant-parent",
+        tenant_id=parent_tenant.id,
+        name="arav-codex",
+        role="admin",
+    )
+    parent_key = ApiKey(
+        id="key-parent",
+        participant_id=parent_participant.id,
+        label="parent",
+        key_prefix=parent_prefix,
+        key_hash=parent_key_hash,
+    )
+    added = []
+
+    class FakeResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class FakeSession:
+        def __init__(self):
+            self.execute_calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query):
+            self.execute_calls += 1
+            if self.execute_calls == 1:
+                return FakeResult(parent_key)
+            return FakeResult(None)
+
+        async def get(self, model, obj_id):
+            if model is Participant and obj_id == parent_participant.id:
+                return parent_participant
+            if model is Tenant and obj_id == parent_tenant.id:
+                return parent_tenant
+            return None
+
+        def add(self, obj):
+            added.append(obj)
+
+        async def flush(self):
+            return None
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(auth_routes, "get_db_session", lambda: fake_session)
+
+    resp = await auth_routes.register_agent(
+        RegisterAgentRequest(suffix="claude-1m"),
+        request=SimpleNamespace(),
+        authorization=f"Bearer {parent_raw_key}",
+    )
+
+    created_participant = next(obj for obj in added if isinstance(obj, Participant))
+    created_key = next(obj for obj in added if isinstance(obj, ApiKey))
+
+    assert created_participant.name == "arav-codex-claude-1m"
+    assert created_participant.tenant_id == parent_tenant.id
+    assert created_participant.role == "agent"
+    assert created_key.participant_id == created_participant.id
+    assert resp.agent_name == "arav-codex-claude-1m"
+    assert resp.tenant_slug == parent_tenant.slug
+    assert "/v1/auth/token" in resp.next_step
