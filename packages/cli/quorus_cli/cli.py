@@ -2858,10 +2858,18 @@ def _cmd_init(args):
     if len(name) > 64:
         ui.error("Name must be 64 characters or fewer")
         sys.exit(1)
-    if not _re.match(r"^[A-Za-z0-9_\-]+$", name):
+    # First char must be alphanumeric/underscore. Accepting leading hyphens
+    # let argparse leakage land "--help" / "-h" in the config as a literal
+    # instance_name, after which a paste of `quorus init --secret --help`
+    # could silently overwrite the user's production profile with a name of
+    # "--help" and a localhost relay.
+    if not _re.match(r"^[A-Za-z0-9_][A-Za-z0-9_\-]*$", name):
         ui.error(
             f"Name '{name}' contains invalid characters",
-            hint="use only letters, numbers, hyphens, and underscores",
+            hint=(
+                "must start with a letter/number/underscore; "
+                "letters, numbers, hyphens, underscores after"
+            ),
         )
         sys.exit(1)
 

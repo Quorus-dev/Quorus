@@ -2103,6 +2103,24 @@ def test_cmd_init_rejects_empty_name(monkeypatch):
     assert exc_info.value.code == 1
 
 
+@pytest.mark.parametrize("bad_name", ["--help", "-h", "-name", "--secret", "-x"])
+def test_cmd_init_rejects_leading_hyphen(monkeypatch, bad_name):
+    """Names starting with '-' must be rejected.
+
+    Regression: a paste of `quorus init --secret --help` (or similar
+    argparse confusion) used to land "--help" in the config as a literal
+    instance_name, which silently overwrote the user's production profile
+    and pointed it at localhost. The validation must reject any name
+    that starts with a hyphen so the error surfaces immediately instead
+    of writing a busted config.
+    """
+    from quorus.cli import _cmd_init
+
+    with pytest.raises(SystemExit) as exc_info:
+        _cmd_init(_make_init_args(name=bad_name))
+    assert exc_info.value.code == 1
+
+
 def test_cmd_init_warns_on_relay_unreachable(tmp_path, monkeypatch, capsys):
     """Init prints a warning (not an error) when the relay cannot be reached."""
     from quorus.cli import _cmd_init
