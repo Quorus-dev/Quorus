@@ -56,19 +56,29 @@ if [[ "${1:-}" == "--install" ]]; then
   # We still install [test] so pytest + asyncio + fakeredis are available.
   "$PIP" install --quiet -e ".[test]"
 
-  # Belt + braces fix for Python 3.14 + uv-style hidden flags.
-  # If anything in the install chain (uv, conda, a sandbox, an HFS attribute
-  # template) marked the freshly-written .pth files as macOS-hidden, strip
-  # the flag so site.py loads them.
+  # Belt + braces fix for Python 3.14 + macOS hidden-flag thrashing.
+  # Three issues collide on Darwin:
+  #   1. `uv venv` (or some container/sandbox templates) sets UF_HIDDEN on
+  #      freshly-written .pth files. Python 3.14's site.py silently skips
+  #      hidden .pth files (CPython gh-117983).
+  #   2. The `com.apple.provenance` xattr (set by macOS on package-manager-
+  #      installed files) causes Spotlight's mdworker to RE-apply UF_HIDDEN
+  #      after we clear it — so a one-shot chflags isn't enough.
+  #   3. Hatchling sometimes writes the .pth file without a trailing newline;
+  #      depending on Python build, the last path line may be skipped.
+  # Fix all three: chflags nohidden + xattr -d com.apple.provenance + ensure
+  # trailing newline. Idempotent and safe to re-run.
   if [[ "$(uname -s)" == "Darwin" ]]; then
     SITE_DIR="$VENV_DIR/lib/python${PY_VERSION}/site-packages"
     if [[ -d "$SITE_DIR" ]]; then
-      # `chflags nohidden` is a no-op when the flag isn't set, so this is safe
-      # to always run. Use shopt-style loop to avoid noisy errors when no
-      # files match.
       shopt -s nullglob 2>/dev/null || true
       for pth in "$SITE_DIR"/_editable_impl_*.pth "$SITE_DIR"/*.pth; do
         chflags nohidden "$pth" 2>/dev/null || true
+        xattr -d com.apple.provenance "$pth" 2>/dev/null || true
+        # Ensure trailing newline so site.py parses the last line.
+        if [[ -s "$pth" ]] && [[ "$(tail -c 1 "$pth" | xxd -p)" != "0a" ]]; then
+          printf '\n' >> "$pth"
+        fi
       done
     fi
   fi
