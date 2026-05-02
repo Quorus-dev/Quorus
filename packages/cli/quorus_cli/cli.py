@@ -677,6 +677,144 @@ def _cmd_dm(args):
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# heartbeat — implements QOD rule #4 (idle-while-working alive signal).
+#
+# Posts "💓 still working on: <last-status>" to the agent's primary room. The
+# primary room is the most recently active room visible to the active profile.
+# Idempotent within a 30-second window so a buggy loop calling heartbeat 3x
+# in a row only emits one message.
+# ---------------------------------------------------------------------------
+
+# Window inside which two heartbeat calls collapse to a single send.
+HEARTBEAT_DEDUPE_WINDOW_SECONDS = 30
+
+
+def _heartbeat_state_path() -> Path:
+    """Where we cache last-heartbeat metadata for de-dupe.
+
+    Lives under the active config dir so it scopes to the workspace profile.
+    """
+    return _config_dir() / "heartbeat_state.json"
+
+
+def _read_heartbeat_state() -> dict:
+    path = _heartbeat_state_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text()) or {}
+    except (json.JSONDecodeError, ValueError, OSError):
+        return {}
+
+
+def _write_heartbeat_state(state: dict) -> None:
+    path = _heartbeat_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, sort_keys=True))
+    except OSError:
+        # Best-effort — heartbeat must never crash the agent loop.
+        pass
+
+
+async def _resolve_primary_room() -> str | None:
+    """Return the most recently active room name for the current identity.
+
+    Strategy: fetch ``/rooms`` (relay returns rooms scoped to the caller's
+    identity), prefer the room whose ``last_message_at`` is newest, else the
+    first room in the list, else None. The relay endpoint returns ``[]`` for
+    callers with no rooms.
+    """
+    rooms = await _list_rooms()
+    if not rooms:
+        return None
+    # Sort by most-recent activity if the relay surfaces it; otherwise fall
+    # back to creation order with the newest first.
+    def _key(r: dict) -> str:
+        return (
+            r.get("last_message_at")
+            or r.get("updated_at")
+            or r.get("created_at")
+            or ""
+        )
+
+    rooms_sorted = sorted(rooms, key=_key, reverse=True)
+    return rooms_sorted[0].get("name")
+
+
+def _cmd_heartbeat(args):
+    """Post a heartbeat to the primary room (QOD rule #4).
+
+    Flags:
+      --status TEXT  Override the heartbeat status text. Defaults to the last
+                     status persisted by an earlier heartbeat call, else
+                     "in progress".
+      --room ROOM    Override room auto-resolution.
+      --force        Bypass the 30-second de-dupe window (testing only).
+    """
+    import time
+
+    from quorus_cli import ui
+
+    state = _read_heartbeat_state()
+    now = time.time()
+    last_ts = float(state.get("last_ts") or 0)
+    last_status = state.get("last_status") or "in progress"
+    explicit_status = getattr(args, "status", None)
+    status_text = explicit_status or last_status
+    force = bool(getattr(args, "force", False))
+
+    # Idempotency: if the last send was inside the dedupe window AND the
+    # status is unchanged, treat this as a no-op success. The whole point of
+    # heartbeat is "I'm alive" — sending three of them in a row is noise.
+    within_window = (now - last_ts) < HEARTBEAT_DEDUPE_WINDOW_SECONDS
+    same_status = status_text == last_status
+    if within_window and same_status and not force:
+        ui.console.print(
+            "[dim]heartbeat suppressed (deduped within "
+            f"{HEARTBEAT_DEDUPE_WINDOW_SECONDS}s)[/dim]"
+        )
+        return
+
+    explicit_room = getattr(args, "room", None)
+    try:
+        room_name = explicit_room or asyncio.run(_resolve_primary_room())
+    except httpx.ConnectError:
+        _relay_unreachable()
+        sys.exit(2)
+    except httpx.HTTPStatusError as exc:
+        ui.error(
+            "Could not resolve primary room",
+            hint=f"HTTP {exc.response.status_code}",
+        )
+        sys.exit(1)
+
+    if not room_name:
+        ui.error(
+            "No active room — heartbeat needs at least one room to post into",
+            hint="join a room first: quorus join <room> or quorus rooms",
+        )
+        sys.exit(4)
+
+    message = f"\U0001f493 still working on: {status_text}"
+    try:
+        asyncio.run(_say(room_name, message))
+    except httpx.HTTPStatusError as exc:
+        ui.error("Heartbeat send failed", hint=f"HTTP {exc.response.status_code}")
+        sys.exit(1)
+    except httpx.ConnectError:
+        _relay_unreachable()
+        sys.exit(2)
+
+    _write_heartbeat_state({
+        "last_ts": now,
+        "last_status": status_text,
+        "last_room": room_name,
+    })
+    ui.success(f"\U0001f493 heartbeat posted to [room]#{room_name}[/]")
+
+
 def _cmd_inbox(args):
     """Check for pending messages (for hooks or manual use)."""
     try:
@@ -6223,14 +6361,15 @@ def main():
     p_members = sub.add_parser("members", help="List room members")
     p_members.add_argument("room", help="Room name")
 
-    p_say = sub.add_parser("say", **_help_block(
+    p_say = sub.add_parser("say", aliases=["s"], **_help_block(
         synopsis="Send a message to a room.",
         description=(
             "The message fans out to every member of the room in real time "
-            "via SSE and is appended to room history."
+            "via SSE and is appended to room history. `quorus s` is the "
+            "two-character alias."
         ),
-        example='quorus say dev "shipping today"',
-        help_text="Send message to a room",
+        example='quorus say dev "shipping today"  # or: quorus s dev "ship"',
+        help_text="Send message to a room (alias: s)",
     ))
     p_say.add_argument("room", help="Room name")
     p_say.add_argument("message", help="Message content")
@@ -6238,6 +6377,33 @@ def main():
     p_dm = sub.add_parser("dm", help="Send direct message")
     p_dm.add_argument("to", help="Recipient name")
     p_dm.add_argument("message", help="Message content")
+
+    p_heartbeat = sub.add_parser("heartbeat", **_help_block(
+        synopsis="Post an alive-signal heartbeat to your primary room.",
+        description=(
+            "Implements QOD rule #4 (idle >5 min while working: post a "
+            "heartbeat). Auto-resolves the primary room from the most "
+            "recently active room visible to the active profile. Idempotent "
+            "within a 30-second window."
+        ),
+        example="quorus heartbeat --status \"refactoring auth\"",
+        help_text="Post a heartbeat to your primary room",
+    ))
+    p_heartbeat.add_argument(
+        "--status",
+        default=None,
+        help="Override the heartbeat status text (default: last cached status)",
+    )
+    p_heartbeat.add_argument(
+        "--room",
+        default=None,
+        help="Override primary-room auto-resolution",
+    )
+    p_heartbeat.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass the 30-second de-dupe window",
+    )
 
     p_inbox = sub.add_parser("inbox", help="Check for pending messages")
     p_inbox.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
@@ -6925,7 +7091,9 @@ def main():
         "invite": _cmd_invite,
         "members": _cmd_members,
         "say": _cmd_say,
+        "s": _cmd_say,
         "dm": _cmd_dm,
+        "heartbeat": _cmd_heartbeat,
         "inbox": _cmd_inbox,
         "hook": _cmd_hook,
         "watch": _cmd_watch,

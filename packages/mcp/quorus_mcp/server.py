@@ -12,6 +12,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.message import SessionMessage
 
 from quorus.config import ConfigManager, load_config
+from quorus.operating_discipline import render_qod_for_mcp
 from quorus_mcp import tools
 from quorus_mcp.sse import SSEListener, process_sse_event_data
 
@@ -367,12 +368,19 @@ async def _mcp_lifespan(server: FastMCP):
             await _http_client.aclose()
         _reset_runtime_state()
 
-QUORUS_INSTRUCTIONS = (
-    "Quorus — inter-agent messaging for distributed Claude Code instances.\n\n"
-    "Tools: send_message, send_room_message, check_messages, list_participants, "
-    "list_rooms, join_room, search_room, room_metrics, claim_task, release_task, get_room_state\n\n"
-    "CLI: quorus inbox | quorus say <room> <msg> | quorus dm <name> <msg>"
+# MCP `instructions` is the cross-harness on-ramp for the Quorus Operating
+# Discipline (QOD). Hosts that surface server instructions to their model
+# (Claude Desktop, Claude Code, Cursor, Gemini CLI, Cline, Continue,
+# Windsurf, Codex via mcp_servers config) pick this up automatically. The
+# canonical QOD lives in ``quorus.operating_discipline`` so the agent-loop
+# sysprompt prepend and the skill module render the exact same six rules.
+_QOD = render_qod_for_mcp()
+_QOD_TAIL = (
+    "Quorus — coordination layer for AI agent swarms.\n\n"
+    "CLI: quorus inbox | quorus say <room> <msg> | quorus dm <name> <msg> | "
+    "quorus heartbeat"
 )
+QUORUS_INSTRUCTIONS = f"{_QOD}\n\n---\n\n{_QOD_TAIL}"
 
 mcp = FastMCP("quorus", instructions=QUORUS_INSTRUCTIONS, lifespan=_mcp_lifespan)
 

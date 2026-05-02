@@ -637,8 +637,20 @@ def build_prompt(
     inbox_path: Path,
     context_path: Path | None = None,
 ) -> str:
-    """Build the initial Claude room prompt."""
+    """Build the initial Claude room prompt.
+
+    The Quorus Operating Discipline (QOD) constitution is prepended verbatim
+    so every Claude agent in every room loads the same six rules. See
+    ``quorus.operating_discipline`` for the canonical text — do not duplicate
+    it here.
+    """
+    from quorus.operating_discipline import render_qod_for_agent_loop
+
     lines = [
+        render_qod_for_agent_loop(),
+        "",
+        "---",
+        "",
         f"You are `{participant}` in the Quorus room `{room}`.",
         "",
         "Operating rules:",

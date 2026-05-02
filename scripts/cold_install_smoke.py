@@ -14,12 +14,23 @@ Designed to be invoked from `scripts/cold_install_smoke.sh` AND from CI.
 No Docker, no Postgres, no Redis — just the relay + httpx + the shipped binaries.
 Exits 1 with "FAIL at step N: <description>" on any failure.
 
+CRITICAL — host-config isolation:
+  The smoke MUST NOT touch the user's real ~/.gemini, ~/.claude, ~/.cursor,
+  ~/.codex, ~/.codeium, ~/.continue, ~/.opencode.json, ~/.cline. The mcp
+  writers in `quorus_cli.mcp_writers` resolve those paths via `Path.home()`,
+  so the smoke overrides ``HOME`` (and ``USERPROFILE`` on Windows) to a
+  scratch dir for every subprocess it spawns. As a defence-in-depth safety
+  net the smoke also snapshots any pre-existing host configs before doing
+  anything, and `atexit`-restores them if a regression somehow re-introduces
+  the bug.
+
 Usage:
     python3 scripts/cold_install_smoke.py [--port 18080] [--timeout 60]
 """
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import shutil
@@ -44,6 +55,26 @@ RELAY_SECRET = "cold-install-smoke-secret"
 PARTICIPANT = "smoke-alice"
 ROOM_NAME = "smoke-room"
 MESSAGE_PAYLOAD = "hello-from-cold-install"
+
+# Every host path the mcp writers reach for via `Path.home() / ...`. If the
+# smoke ever clobbers these, the snapshot/restore safety net below restores
+# them on exit. Keep in sync with `quorus_cli.mcp_writers`.
+HOST_CONFIG_PATHS: tuple[Path, ...] = tuple(
+    Path.home() / rel
+    for rel in (
+        ".claude/settings.json",
+        ".claude.json",
+        ".cursor/mcp.json",
+        ".codeium/windsurf/mcp_config.json",
+        ".gemini/settings.json",
+        ".config/opencode/opencode.json",
+        ".opencode.json",
+        ".continue/config.json",
+        ".cline/mcp.json",
+        ".codex/config.toml",
+    )
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -124,23 +155,90 @@ def _wait_health(port: int, deadline: float, step: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Host-config snapshot / restore — defence in depth.
+#
+# Even with HOME redirected to a scratch dir, a regression in a writer (or a
+# subprocess that resolves $HOME from elsewhere) could clobber the user's
+# real config. So we:
+#   1. snapshot every known host-config path BEFORE the smoke runs,
+#   2. register an atexit handler that restores them if the bytes drift.
+# This is a safety net, not the primary mechanism — fix the writer, not this.
+# ---------------------------------------------------------------------------
+
+def _snapshot_host_configs() -> dict[Path, bytes | None]:
+    """Read every known host config; return path -> original bytes (or None)."""
+    snap: dict[Path, bytes | None] = {}
+    for p in HOST_CONFIG_PATHS:
+        try:
+            snap[p] = p.read_bytes() if p.exists() else None
+        except OSError:
+            snap[p] = None
+    return snap
+
+
+def _restore_host_configs(snap: dict[Path, bytes | None]) -> None:
+    """Restore any host config that drifted from its snapshot."""
+    for p, original in snap.items():
+        try:
+            current = p.read_bytes() if p.exists() else None
+        except OSError:
+            current = None
+        if current == original:
+            continue
+        # Drift detected. Restore (or delete if it didn't exist before).
+        try:
+            if original is None:
+                if p.exists():
+                    p.unlink()
+            else:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(original)
+            sys.stderr.write(
+                f"WARN: cold_install_smoke detected drift at {p} — restored from snapshot.\n"
+            )
+        except OSError as exc:
+            sys.stderr.write(
+                f"WARN: cold_install_smoke could not restore {p}: {exc}\n"
+            )
+
+
+# ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
 
 def run(port: int, timeout: int) -> None:
     overall_start = time.time()
 
+    # Snapshot host configs *before* anything spawns. atexit-restore is the
+    # last line of defence if HOME isolation regresses.
+    snapshot = _snapshot_host_configs()
+    atexit.register(_restore_host_configs, snapshot)
+
     # Step 1: locate binaries
     quorus_bin = _which_or_die("quorus", 1)
     relay_bin = _which_or_die("quorus-relay", 1)
     _ok(1, f"binaries on PATH (quorus={quorus_bin}, quorus-relay={relay_bin})")
 
-    # Step 2: prepare an isolated config dir + workspace
+    # Step 2: prepare an isolated config dir + workspace + fake HOME
     workdir = Path(tempfile.mkdtemp(prefix="quorus-smoke-"))
     config_dir = workdir / "quorus-config"
     config_dir.mkdir(parents=True, exist_ok=True)
+    fake_home = workdir / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
+    # ── HOST ISOLATION ─────────────────────────────────────────────────────
+    # `mcp_writers` resolves every client config via `Path.home()` which
+    # honours $HOME on POSIX and %USERPROFILE% on Windows. Redirecting both
+    # forces every subprocess we spawn to write into the throwaway dir
+    # instead of clobbering the user's real Gemini / Claude / Cursor / Codex
+    # configs.
+    env["HOME"] = str(fake_home)
+    env["USERPROFILE"] = str(fake_home)  # Windows analogue
+    # XDG_CONFIG_HOME defaults to ~/.config which `Path.home()` would now
+    # resolve under fake_home — but be explicit so any tool that reads XDG
+    # directly also gets isolated.
+    env["XDG_CONFIG_HOME"] = str(fake_home / ".config")
     env["QUORUS_CONFIG_DIR"] = str(config_dir)
     env["PORT"] = str(port)
     env["RELAY_SECRET"] = RELAY_SECRET
@@ -151,7 +249,30 @@ def run(port: int, timeout: int) -> None:
     # Required by the relay startup guards in production builds:
     env.setdefault("JWT_SECRET", "cold-smoke-jwt-secret-32-chars-min------")
     env.setdefault("BOOTSTRAP_SECRET", "cold-smoke-bootstrap-32-chars-min------")
-    _ok(2, f"isolated workspace at {workdir}")
+    _ok(2, f"isolated workspace at {workdir} (HOME={fake_home})")
+
+    # Step 2b: prove the isolation actually took. Run a one-shot Python
+    # subprocess with the smoke env and assert Path.home() resolves to the
+    # fake dir. If this fails, the smoke aborts BEFORE spawning the relay,
+    # so a misconfigured env can never reach the writers.
+    probe_code = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "sys.stdout.write(str(Path.home()))\n"
+    )
+    probe = subprocess.run(
+        [sys.executable, "-c", probe_code],
+        env=env,
+        capture_output=True,
+        timeout=10,
+    )
+    resolved_home = probe.stdout.decode(errors="replace").strip()
+    if resolved_home != str(fake_home):
+        _fail(
+            2,
+            f"HOME isolation did not stick: subprocess resolved Path.home()={resolved_home!r} "
+            f"expected {str(fake_home)!r}. Aborting before any writer can clobber real configs.",
+        )
 
     # Step 3: spawn the relay
     relay_log = open(workdir / "relay.log", "wb")

@@ -497,8 +497,19 @@ def build_prompt(
     inbox_path: Path,
     context_path: Path | None = None,
 ) -> str:
-    """Build the initial Gemini room prompt."""
+    """Build the initial Gemini room prompt.
+
+    Prepends the Quorus Operating Discipline (QOD) constitution so every
+    Gemini agent boots with the same six rules as Claude/Codex. Canonical
+    text lives in ``quorus.operating_discipline``.
+    """
+    from quorus.operating_discipline import render_qod_for_agent_loop
+
     lines = [
+        render_qod_for_agent_loop(),
+        "",
+        "---",
+        "",
         f"You are `{participant}` in the Quorus room `{room}`.",
         "",
         "Operating rules:",

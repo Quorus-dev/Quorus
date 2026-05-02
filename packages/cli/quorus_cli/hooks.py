@@ -28,15 +28,66 @@ for the current turn. No tricks needed.
 
 Cursor state file: ~/.quorus/cursors-<agent>.json — last-seen message id
 per (room, agent). Survives across machines if synced.
+
+Diagnostics:
+  Hooks must NEVER block the host harness — relay flakiness should fall
+  through to a no-op return. But silent failure makes regressions invisible
+  (a Codex agent breaks an export and nobody notices for hours). So every
+  ``except`` here records one line to ``~/.quorus/hook-debug.log`` with
+  timestamp + exception type + message. Log is rotated when it exceeds
+  10 MB. Failure to write the log is itself caught — diagnostics never
+  mutate exit codes.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+
+# ── Diagnostics ─────────────────────────────────────────────────────────────
+
+_HOOK_DEBUG_LOG_BYTES = 10 * 1024 * 1024  # 10 MB rotation cap
+
+
+def _hook_debug_log(category: str, exc: BaseException | None, *, extra: str = "") -> None:
+    """Append one structured line to ``~/.quorus/hook-debug.log``.
+
+    Never raises. Rotates the log when it exceeds 10 MB by truncating to the
+    most recent half. Used by every ``except`` branch in this module so we
+    can find out *why* a hook silently no-op'd in production without
+    blocking the host harness.
+    """
+    try:
+        path = Path.home() / ".quorus" / "hook-debug.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Rotate if the log has grown past the cap.
+        try:
+            if path.exists() and path.stat().st_size > _HOOK_DEBUG_LOG_BYTES:
+                # Keep the second half — most recent context survives.
+                data = path.read_bytes()
+                path.write_bytes(data[len(data) // 2:])
+        except OSError:
+            pass  # Rotation is best-effort; never block the host.
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if exc is not None:
+            line = f"{ts} {category} {type(exc).__name__}: {exc}"
+        else:
+            line = f"{ts} {category}"
+        if extra:
+            line = f"{line} {extra}"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        # Diagnostics must never crash the host. Suppress everything.
+        pass
+
+
+# ── Config + cursor helpers ─────────────────────────────────────────────────
 
 
 def _config() -> tuple[str, str, str]:
@@ -63,7 +114,8 @@ def _load_cursors(agent: str) -> dict[str, str]:
         return {}
     try:
         return json.loads(p.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        _hook_debug_log("cursor-load-fail", exc, extra=str(p))
         return {}
 
 
@@ -71,8 +123,9 @@ def _save_cursors(agent: str, cursors: dict[str, str]) -> None:
     p = _cursors_path(agent)
     try:
         p.write_text(json.dumps(cursors, indent=2))
-    except OSError:
-        pass  # Best effort — don't block agent on disk failure
+    except OSError as exc:
+        # Best effort — don't block agent on disk failure
+        _hook_debug_log("cursor-save-fail", exc, extra=str(p))
 
 
 def _fetch_unread(relay: str, secret: str, agent: str) -> list[dict]:
@@ -81,6 +134,11 @@ def _fetch_unread(relay: str, secret: str, agent: str) -> list[dict]:
     Mirrors `_cmd_inbox` in cli.py: peek first to avoid pulling when empty,
     then GET /messages/{agent} with `ack=manual` so the relay doesn't drop
     them off the queue (we want each harness to see them once each).
+
+    All exceptions are caught and logged to ``~/.quorus/hook-debug.log``;
+    the function returns ``[]`` on failure. The host harness must never
+    be blocked by relay flakiness, but the silent-failure mode that hid
+    the cold-install-smoke regression must never recur.
     """
     try:
         peek = httpx.get(
@@ -90,6 +148,11 @@ def _fetch_unread(relay: str, secret: str, agent: str) -> list[dict]:
             follow_redirects=True,
         )
         if peek.status_code != 200:
+            _hook_debug_log(
+                "fetch-peek-non200",
+                None,
+                extra=f"relay={relay} agent={agent} status={peek.status_code}",
+            )
             return []
         if (peek.json() or {}).get("count", 0) == 0:
             return []
@@ -101,10 +164,18 @@ def _fetch_unread(relay: str, secret: str, agent: str) -> list[dict]:
             follow_redirects=True,
         )
         if full.status_code != 200:
+            _hook_debug_log(
+                "fetch-full-non200",
+                None,
+                extra=f"relay={relay} agent={agent} status={full.status_code}",
+            )
             return []
         return (full.json() or {}).get("messages", []) or []
-    except Exception:
-        return []  # Never block the host harness on relay flakiness
+    except Exception as exc:
+        # Never block the host harness on relay flakiness — but log so a
+        # broken relay doesn't go undetected for days.
+        _hook_debug_log("fetch-unread-exc", exc, extra=f"relay={relay} agent={agent}")
+        return []
 
 
 def _format_for_context(messages: list[dict]) -> str:
@@ -152,16 +223,25 @@ def handle_cursor_session() -> int:
     Fires once at composer open / `/clear`. Inject all unread Quorus
     messages so the agent picks up where the team left off.
     """
-    relay, secret, instance = _config()
-    msgs = _fetch_unread(relay, secret, instance)
-    if not msgs:
+    try:
+        relay, secret, instance = _config()
+        msgs = _fetch_unread(relay, secret, instance)
+        if not msgs:
+            print(json.dumps({"additional_context": ""}))
+            return 0
+        cursors = _load_cursors(instance)
+        fresh = _filter_unseen(msgs, cursors)
+        _save_cursors(instance, cursors)
+        print(json.dumps({"additional_context": _format_for_context(fresh)}))
+        return 0
+    except Exception as exc:
+        _hook_debug_log(
+            "cursor-session-exc", exc,
+            extra=traceback.format_exc(limit=2).replace("\n", " | "),
+        )
+        # Cursor expects valid JSON even on failure — emit a safe no-op.
         print(json.dumps({"additional_context": ""}))
         return 0
-    cursors = _load_cursors(instance)
-    fresh = _filter_unseen(msgs, cursors)
-    _save_cursors(instance, cursors)
-    print(json.dumps({"additional_context": _format_for_context(fresh)}))
-    return 0
 
 
 def handle_cursor_stop() -> int:
@@ -171,26 +251,33 @@ def handle_cursor_stop() -> int:
     since session start, push them as a follow-up so they show up as the
     next user message — the only way to push to Cursor mid-session.
     """
-    relay, secret, instance = _config()
-    sentinel = Path.home() / ".quorus" / f"pending-{instance}.flag"
-    has_pending = sentinel.exists()
-    msgs = _fetch_unread(relay, secret, instance) if has_pending else []
-    if not msgs:
-        # Empty stop hook output — Cursor proceeds normally.
-        print(json.dumps({}))
-        return 0
-    cursors = _load_cursors(instance)
-    fresh = _filter_unseen(msgs, cursors)
-    _save_cursors(instance, cursors)
     try:
-        sentinel.unlink()
-    except OSError:
-        pass
-    if not fresh:
+        relay, secret, instance = _config()
+        sentinel = Path.home() / ".quorus" / f"pending-{instance}.flag"
+        has_pending = sentinel.exists()
+        msgs = _fetch_unread(relay, secret, instance) if has_pending else []
+        if not msgs:
+            print(json.dumps({}))
+            return 0
+        cursors = _load_cursors(instance)
+        fresh = _filter_unseen(msgs, cursors)
+        _save_cursors(instance, cursors)
+        try:
+            sentinel.unlink()
+        except OSError as exc:
+            _hook_debug_log("cursor-sentinel-unlink-fail", exc, extra=str(sentinel))
+        if not fresh:
+            print(json.dumps({}))
+            return 0
+        print(json.dumps({"followup_message": _format_for_context(fresh)}))
+        return 0
+    except Exception as exc:
+        _hook_debug_log(
+            "cursor-stop-exc", exc,
+            extra=traceback.format_exc(limit=2).replace("\n", " | "),
+        )
         print(json.dumps({}))
         return 0
-    print(json.dumps({"followup_message": _format_for_context(fresh)}))
-    return 0
 
 
 def handle_gemini_beforeagent() -> int:
@@ -200,21 +287,30 @@ def handle_gemini_beforeagent() -> int:
     additionalContext is appended directly to the user's prompt for the
     current turn. No tricks required.
     """
-    relay, secret, instance = _config()
-    msgs = _fetch_unread(relay, secret, instance)
-    if not msgs:
+    try:
+        relay, secret, instance = _config()
+        msgs = _fetch_unread(relay, secret, instance)
+        if not msgs:
+            print(json.dumps({"hookSpecificOutput": {"additionalContext": ""}}))
+            return 0
+        cursors = _load_cursors(instance)
+        fresh = _filter_unseen(msgs, cursors)
+        _save_cursors(instance, cursors)
+        if not fresh:
+            print(json.dumps({"hookSpecificOutput": {"additionalContext": ""}}))
+            return 0
+        print(json.dumps({
+            "hookSpecificOutput": {"additionalContext": _format_for_context(fresh)}
+        }))
+        return 0
+    except Exception as exc:
+        _hook_debug_log(
+            "gemini-beforeagent-exc", exc,
+            extra=traceback.format_exc(limit=2).replace("\n", " | "),
+        )
+        # Gemini expects valid JSON even on failure — emit a safe no-op.
         print(json.dumps({"hookSpecificOutput": {"additionalContext": ""}}))
         return 0
-    cursors = _load_cursors(instance)
-    fresh = _filter_unseen(msgs, cursors)
-    _save_cursors(instance, cursors)
-    if not fresh:
-        print(json.dumps({"hookSpecificOutput": {"additionalContext": ""}}))
-        return 0
-    print(json.dumps({
-        "hookSpecificOutput": {"additionalContext": _format_for_context(fresh)}
-    }))
-    return 0
 
 
 # Convenience dispatcher used by `_cmd_hook` in cli.py.
