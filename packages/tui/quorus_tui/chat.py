@@ -178,6 +178,21 @@ def _own_bubble(content: str, hhmm: str, console_width: int, *, receipt: str) ->
     return out
 
 
+_AGENT_KEYWORDS = ("codex", "claude", "gemini", "cursor", "bot")
+
+
+def _is_human_sender(name: str) -> bool:
+    """True for senders without an agent-keyword in any dash segment.
+
+    Same heuristic as quorus_tui.hub._name_has_agent_keyword (kept local
+    to avoid an import cycle between the two modules).
+    """
+    if not name or "-" not in name:
+        return True
+    parts = name.lower().split("-")[1:]
+    return not any(kw in p for p in parts for kw in _AGENT_KEYWORDS)
+
+
 def _other_bubble(
     content: str,
     sender: str,
@@ -186,15 +201,21 @@ def _other_bubble(
     *,
     show_header: bool,
 ) -> list[Text]:
-    """Left-aligned other-person bubble with avatar dot + sender header."""
+    """Left-aligned other-person bubble with avatar dot + sender header.
+
+    Humans get a green ● to visually separate them from agents. The
+    sender color (`primary`/`room`/`accent`) still hashes deterministically
+    from the name, but the GLYPH color signals identity-kind.
+    """
     inner = _bubble_width(console_width)
     body = _wrap_lines(content, inner)
     color = _sender_color(sender)
+    glyph_color = "success" if _is_human_sender(sender) else color
     out: list[Text] = []
 
     if show_header:
         head = Text(INDENT)
-        head.append("●", style=color)
+        head.append("●", style=glyph_color)
         head.append("  ")
         head.append(f"@{sender}", style=f"bold {color}")
         out.append(head)

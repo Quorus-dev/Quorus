@@ -51,7 +51,7 @@ Optional — also register the Quorus MCP server so Cursor can SEND messages bac
 
 ## Gemini CLI
 
-Gemini's `BeforeAgent` hook is purpose-built for this — `additionalContext` is appended to the user's prompt for the current turn.
+Gemini's `BeforeAgent` hook is purpose-built for this — `additionalContext` is appended to the user's prompt for the current turn. This is the cleanest integration surface across all harnesses.
 
 **One-time install** — create or merge into `~/.gemini/settings.json`:
 
@@ -68,7 +68,7 @@ Gemini's `BeforeAgent` hook is purpose-built for this — `additionalContext` is
   },
   "mcpServers": {
     "quorus": {
-      "command": "/Users/<you>/Desktop/Quorus/.venv/bin/quorus-mcp",
+      "command": "quorus-mcp",
       "env": {
         "RELAY_URL": "https://quorus-relay.fly.dev",
         "INSTANCE_NAME": "<your-name>-gemini"
@@ -78,7 +78,7 @@ Gemini's `BeforeAgent` hook is purpose-built for this — `additionalContext` is
 }
 ```
 
-Restart Gemini CLI. Every new turn will pick up unread Quorus messages.
+Restart Gemini CLI. Every new turn will pick up unread Quorus messages. The last-seen message state is tracked per-room in `~/.quorus/cursors-gemini.json`.
 
 ## Codex CLI
 

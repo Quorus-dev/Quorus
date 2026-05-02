@@ -122,6 +122,45 @@ def _sender_color(name: str) -> str:
     return _SENDER_COLORS[bucket]
 
 
+# ── Identity disambiguation ───────────────────────────────────────────────
+# Heuristic: a sender is an AGENT if any dash-segment of the name contains a
+# known harness keyword (codex/claude/gemini/cursor/bot). Otherwise human.
+# Keep this list in sync with the suffixes mcp_writers.agent_identity
+# generates. "test"/"pm"/"auto" are NOT agent suffixes — they're labels
+# humans pick for themselves and we treat them as human.
+_AGENT_KEYWORDS = ("codex", "claude", "gemini", "cursor", "bot")
+
+
+def _name_has_agent_keyword(name: str) -> bool:
+    """True iff any dash-segment after the first contains an agent keyword.
+
+    `arav-codex` → True, `arav-claude-1m` → True, `arav-pm` → False,
+    `aarya-test` → False. Plain names without dashes are always human.
+    """
+    if not name or "-" not in name:
+        return False
+    parts = name.lower().split("-")[1:]
+    return any(kw in p for p in parts for kw in _AGENT_KEYWORDS)
+
+
+def _strip_agent_suffix(name: str) -> str:
+    """Return the human prefix of an agent-flavored name.
+
+    Walks forward looking for the first segment containing an agent
+    keyword and strips from that point onwards. This correctly handles
+    versioned/decorated suffixes like `arav-claude-1m` → `arav` and
+    `arav-claude-desktop` → `arav` because the strip happens at the
+    first agent-keyword match, not the last keyword-bearing segment.
+    """
+    if "-" not in name:
+        return name
+    parts = name.split("-")
+    for i, p in enumerate(parts[1:], start=1):
+        if any(kw in p.lower() for kw in _AGENT_KEYWORDS):
+            return "-".join(parts[:i]) or name
+    return name
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 def _save_instance_config(
@@ -2170,12 +2209,20 @@ def _main_input_loop(
     secret: str,
     agent_name: str,
     workspace_label: str = "",
+    chat_identity: str = "",
 ) -> "str | tuple[str, str]":
     """The render+input loop. Returns 'quit' or ('switch', slug).
 
     Body of the old run_hub main loop, plus a per-tick check for
     pending workspace-switch requests set by /workspace.
+
+    `chat_identity` overrides `agent_name` for outbound message
+    `from_name` so the human owner of an agent profile types as
+    themselves (e.g., @arav) instead of their agent (@arav-codex).
+    Falls back to `agent_name` when not provided.
     """
+    if not chat_identity:
+        chat_identity = agent_name
     _full_clear(console)
     last_render = 0.0
     # Hold auto-redraw until the user submits next input. Used after we
@@ -2700,7 +2747,7 @@ def _main_input_loop(
                 last_render = 0
                 continue
 
-            sent_id = _send_message(relay_url, secret, room_name, agent_name, cmd)
+            sent_id = _send_message(relay_url, secret, room_name, chat_identity, cmd)
             if sent_id is not None:
                 state.set_status_bar("")
                 # Optimistic local echo — render immediately, don't wait for SSE
@@ -2750,6 +2797,35 @@ def _run_session(
     agent_name: str = profile.get("instance_name", "agent")
     raw_secret: str = profile.get("relay_secret", "") or profile.get("api_key", "")
     workspace_label: str = profile.get("workspace_label") or ""
+
+    # Identity disambiguation: when the active profile is for an AGENT
+    # (instance_name like "arav-codex" / "arav-claude" / "arav-gemini"),
+    # the human owner sitting at the TUI shouldn't be tagged as that
+    # agent in chat. We persist a `chat_identity` field on first use so
+    # the prompt doesn't re-fire each session. Suffix-strip is the
+    # default ("arav-codex" → "arav") with override available.
+    chat_identity: str = profile.get("chat_identity") or agent_name
+    if "chat_identity" not in profile and _name_has_agent_keyword(agent_name):
+        derived = _strip_agent_suffix(agent_name)
+        console.print(
+            f"\n  [dim]Profile instance_name '@{agent_name}' looks like an "
+            "agent identity. Are YOU typing as the human owner, or as the "
+            "agent?[/]"
+        )
+        choice = Prompt.ask(
+            f"  human (post as @{derived}) or agent (post as @{agent_name})",
+            choices=["human", "agent"],
+            default="human",
+        )
+        chat_identity = derived if choice == "human" else agent_name
+        profile["chat_identity"] = chat_identity
+        try:
+            ConfigManager().save(profile)
+        except Exception as e:  # noqa: BLE001
+            console.print(
+                f"  [yellow]Could not persist chat_identity: {e} — "
+                "will re-prompt next session[/]"
+            )
 
     # Exchange API key for JWT if needed
     secret = _get_auth_token(relay_url, raw_secret)
@@ -2815,6 +2891,7 @@ def _run_session(
             secret=secret,
             agent_name=agent_name,
             workspace_label=workspace_label,
+            chat_identity=chat_identity,
         )
     finally:
         stop_event.set()
