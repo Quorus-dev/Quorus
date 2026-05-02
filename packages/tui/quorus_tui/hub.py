@@ -2795,7 +2795,19 @@ def _run_session(
 
     relay_url: str = profile.get("relay_url", DEFAULT_RELAY).rstrip("/")
     agent_name: str = profile.get("instance_name", "agent")
-    raw_secret: str = profile.get("relay_secret", "") or profile.get("api_key", "")
+    # Auth precedence: prefer api_key over legacy relay_secret. The
+    # opposite order silently breaks the TUI when a profile carries
+    # BOTH (common when a fresh `quorus init --api-key` runs against a
+    # profile that still has an old dev `relay_secret: "quorus-dev"`).
+    # Production relay rejects the legacy secret and the user sees
+    # "No rooms yet" with no error. Production api_keys are prefixed
+    # `mct_` and `_get_auth_token` exchanges them for a JWT.
+    api_key_val = (profile.get("api_key") or "").strip()
+    legacy_secret = (profile.get("relay_secret") or "").strip()
+    if api_key_val.startswith("mct_"):
+        raw_secret: str = api_key_val
+    else:
+        raw_secret = legacy_secret or api_key_val
     workspace_label: str = profile.get("workspace_label") or ""
 
     # Identity disambiguation: when the active profile is for an AGENT
