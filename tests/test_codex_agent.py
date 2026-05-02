@@ -286,7 +286,7 @@ def test_room_context_loop_writes_existing_messages_on_startup(
     )
 
     assert written["room"] == "quorus-may4-sprint"
-    assert [m["id"] for m in written["messages"]] == ["msg-1"]
+    assert [m["id"] for m in written["messages"]] == ["msg-1", "msg-2"]
 
 
 def test_save_and_load_child_key(monkeypatch: pytest.MonkeyPatch) -> None:

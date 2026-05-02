@@ -407,6 +407,7 @@ def _new_room_messages(
     *,
     participant: str,
     seen_message_ids: set[str],
+    include_self: bool = False,
 ) -> list[dict]:
     new_messages: list[dict] = []
     for message in history:
@@ -414,7 +415,7 @@ def _new_room_messages(
         if not message_id:
             continue
         sender = str(message.get("from_name", ""))
-        if message_id not in seen_message_ids and sender != participant:
+        if message_id not in seen_message_ids and (include_self or sender != participant):
             new_messages.append(message)
     return new_messages
 
@@ -595,6 +596,7 @@ def room_context_loop(
                 history,
                 participant=participant,
                 seen_message_ids=seen_message_ids,
+                include_self=True,
             )
             write_codex_room_notifications(
                 room=room,
