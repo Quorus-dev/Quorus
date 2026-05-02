@@ -174,7 +174,35 @@ class HeadlessAdapter:
     def __init__(self, *, timeout_s: int = SUBPROCESS_TIMEOUT_S) -> None:
         self.timeout_s = timeout_s
 
+    @staticmethod
+    def _stub_reply(context: str) -> str:
+        """Demo / smoke stub — no LLM call, no API spend.
+
+        Activated by ``REFLEXD_STUB_REPLY=1``. Echoes the triggering message
+        back so the user can see the full pipeline (SSE → triage → bid →
+        claim → spawn → post) without burning tokens. The marker prefix
+        ``(reflexd-stub)`` makes it obvious in the room that this isn't a
+        real model reply.
+        """
+        # The triggering line is the last "@sender: <body>" block of the
+        # rendered prompt. Pull just the body and trim for readability.
+        body = ""
+        for line in reversed(context.splitlines()):
+            line = line.strip()
+            if line.startswith("@") and ":" in line:
+                body = line.split(":", 1)[1].strip()
+                break
+        if not body:
+            body = "(no message)"
+        if len(body) > 60:
+            body = body[:60] + "…"
+        return f"(reflexd-stub) on it, working on '{body}'"
+
     async def run(self, harness: str, *, context: str) -> str:
+        # Smoke / demo path: avoid spawning any real harness. ~10 LoC, off
+        # the regular path, only triggered by an explicit env var.
+        if os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes"):
+            return self._stub_reply(context)
         if harness == "claude":
             return await self._run_claude(context)
         if harness == "codex":
@@ -275,6 +303,7 @@ class RelayClient:
 
     relay_url: str
     api_key: str
+    legacy_bearer: bool = False  # if True, send api_key directly as Bearer (skip /v1/auth/token)
     _bearer: str | None = None
     _bearer_expires_at: float = 0.0
     _client: httpx.AsyncClient | None = None
@@ -299,6 +328,11 @@ class RelayClient:
 
     async def _headers(self) -> dict[str, str]:
         # Cache JWT for 4 min (relay token lifetime is 5min).
+        # In legacy-bearer mode (e.g. local demo against RELAY_SECRET-only
+        # relay) we skip the /v1/auth/token exchange because that endpoint
+        # requires a Postgres-backed account/key.
+        if self.legacy_bearer:
+            return {"Authorization": f"Bearer {self.api_key}"}
         now = time.time()
         if self._bearer is None or now >= self._bearer_expires_at:
             resp = await self.client.post(
@@ -431,6 +465,7 @@ class ReflexdConfig:
     runtime_dir: Path = field(default_factory=lambda: DEFAULT_RUNTIME_DIR)
     log_path: Path = field(default_factory=lambda: DEFAULT_LOG_PATH)
     spawn_enabled: bool = True
+    legacy_bearer: bool = False
 
     @classmethod
     def from_env(cls) -> "ReflexdConfig":
@@ -443,6 +478,7 @@ class ReflexdConfig:
         participant = (
             os.environ.get("REFLEXD_PARTICIPANT") or data.get("instance_name") or ""
         )
+        legacy_bearer = os.environ.get("REFLEXD_LEGACY_BEARER") in ("1", "true", "yes")
         if not participant:
             raise SystemExit(
                 "reflexd: no participant. Set REFLEXD_PARTICIPANT "
@@ -456,6 +492,7 @@ class ReflexdConfig:
             relay_url=relay_url.rstrip("/"),
             api_key=api_key,
             participant_name=participant,
+            legacy_bearer=legacy_bearer,
         )
 
 
@@ -606,7 +643,9 @@ class Reflexd:
         """Connect, subscribe, and dispatch until ``stop()`` is called."""
         backoff = SSE_RECONNECT_S
         async with RelayClient(
-            relay_url=self.config.relay_url, api_key=self.config.api_key,
+            relay_url=self.config.relay_url,
+            api_key=self.config.api_key,
+            legacy_bearer=self.config.legacy_bearer,
         ) as relay:
             logger.info(
                 "reflexd starting participant=%s relay=%s",

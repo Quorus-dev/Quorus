@@ -1,107 +1,59 @@
 """WhatsApp / iMessage-style chat surface for the Quorus TUI.
 
-Pure-render module. No I/O, no global state, no Rich side-effects beyond
-returning ``Text`` / ``ConsoleRenderable`` instances. The hub composes
-these into the live frame.
+Pure-render orchestrator over visual atoms in :mod:`.chat_widgets`. Returns
+``Text`` / ``ConsoleRenderable`` only — no I/O, no global state. The hub
+composes these into the live frame.
 
-Public surface
---------------
-* :func:`render_app_bar`        — pinned top app-bar for in-room view
-* :func:`render_bubble_feed`    — message bubbles (own / other / system)
-* :func:`render_share_card`     — polished share card returned from `s`
-* :func:`render_mention_popover` — `@…` autocomplete strip above composer
-* :func:`copy_to_clipboard`     — best-effort cross-platform copy
-* :func:`render_composer_hint`  — single dim placeholder under the feed
+Defined here: :func:`render_app_bar`, :func:`render_bubble_feed`,
+:func:`render_composer_hint`. Re-exported from chat_widgets for stable
+imports: ``render_share_card``, ``render_mention_popover``,
+``copy_to_clipboard``, ``last_active_label``.
 
-Conventions
-~~~~~~~~~~~
-* Two-space left margin everywhere (matches ``render.INDENT``).
-* Theme tokens only — never literal hex.
-* No emojis. ASCII-only glyphs everywhere on the visible surface.
-* Continuation grouping window: ``GROUP_GAP_S`` seconds.
+Conventions: two-space left margin (``render.INDENT``); theme tokens only
+(never literal hex); ASCII-only glyphs (no emoji); same-sender messages
+within ``GROUP_GAP_S`` seconds collapse to zero spacing (iMessage rhythm).
 """
 
 from __future__ import annotations
 
-import os
-import platform
-import shutil
-import subprocess
-from datetime import datetime, timezone
-from typing import Iterable
-
 from rich.text import Text
 
+from . import chat_widgets as _w
 from .render import INDENT, two_col
 
-# ── Tunables ─────────────────────────────────────────────────────────────────
+# Pull every widget through a single namespace alias so the import block
+# stays compact. The aliases below give chat.py the same callable surface
+# as before the split — hub.py and slash.py keep importing from chat.
+_p = _w  # type: ignore[assignment]
+SENDER_PALETTE = _p.SENDER_PALETTE
+SHARE_CARD_MIN_W = _p.SHARE_CARD_MIN_W
+TIME_DIVIDER_GAP_S = _p.TIME_DIVIDER_GAP_S
+MAX_FEED_WIDTH_PCT = _p.MAX_FEED_WIDTH_PCT
+bubble_corners = _p.bubble_corners
+bubble_width = _p.bubble_width
+copy_to_clipboard = _p.copy_to_clipboard
+empty_room_card = _p.empty_room_card
+highlight_inline = _p.highlight_inline
+is_human_sender = _p.is_human_sender
+last_active_label = _p.last_active_label
+presence_dot = _p.presence_dot
+reaction_row = _p.reaction_row
+read_receipt_row = _p.read_receipt_row
+receipt_label = _p.receipt_label
+render_mention_popover = _p.render_mention_popover
+render_share_card = _p.render_share_card
+sender_color = _p.sender_color
+time_divider = _p.time_divider
+time_divider_label = _p.time_divider_label
+typing_indicator = _p.typing_indicator
+_hhmm, _ts_epoch, _wrap_lines = _p.hhmm, _p.ts_epoch, _p.wrap_lines
+# Leading-underscore back-compat aliases used by older tests/hub.py.
+_SENDER_PALETTE, _is_human_sender, _sender_color = (
+    SENDER_PALETTE, is_human_sender, sender_color,
+)
 
-GROUP_GAP_S = 120          # within this gap, same-sender msgs collapse
-MAX_FEED_WIDTH_PCT = 0.70  # bubble body wraps at this fraction of the term
-SHARE_CARD_MIN_W = 52      # share card never narrower than this
-
-# System-event message types (centered, italic, dim — like iMessage hints).
+GROUP_GAP_S = 60  # tighter rhythm — iMessage groups within ~1 minute
 _SYSTEM_TYPES = frozenset({"join", "leave", "lock", "decision", "system"})
-
-# Sender palette — mirrors hub._SENDER_COLORS so the avatar dot picks the
-# same color the sender's name renders in. Kept local to avoid an import
-# cycle (chat.py imports nothing from hub.py).
-_SENDER_PALETTE = ("primary", "room", "accent")
-
-
-def _sender_color(name: str) -> str:
-    """Deterministic theme-token color for *name*. Mirrors hub._sender_color."""
-    import hashlib
-
-    digest = hashlib.blake2s(name.encode("utf-8"), digest_size=2).digest()
-    return _SENDER_PALETTE[int.from_bytes(digest, "big") % len(_SENDER_PALETTE)]
-
-
-def _ts_epoch(ts_raw: str) -> float:
-    """ISO-8601 → epoch seconds. 0 on parse failure."""
-    if not ts_raw:
-        return 0.0
-    try:
-        normalized = ts_raw.replace("Z", "+00:00")
-        return datetime.fromisoformat(normalized).timestamp()
-    except (ValueError, TypeError):
-        return 0.0
-
-
-def _hhmm(ts_raw: str) -> str:
-    """Extract HH:MM from an ISO timestamp. Empty on failure."""
-    try:
-        return ts_raw[11:16] if len(ts_raw) >= 16 else ""
-    except Exception:
-        return ""
-
-
-def _wrap_lines(content: str, width: int) -> list[str]:
-    """Word-wrap *content* into lines no wider than *width* cells.
-
-    Preserves user-supplied newlines. ``width`` is clamped to a sane
-    floor so long-token paragraphs never explode. Plain-text only — code
-    fences are detected by the caller and rendered separately.
-    """
-    width = max(20, width)
-    out: list[str] = []
-    for paragraph in content.splitlines() or [""]:
-        if not paragraph:
-            out.append("")
-            continue
-        words = paragraph.split(" ")
-        line = ""
-        for word in words:
-            if not line:
-                line = word
-            elif len(line) + 1 + len(word) <= width:
-                line += " " + word
-            else:
-                out.append(line)
-                line = word
-        if line:
-            out.append(line)
-    return out
 
 
 # ── Top app-bar ──────────────────────────────────────────────────────────────
@@ -113,17 +65,31 @@ def render_app_bar(
     member_count: int,
     last_active: str,
     console_width: int,
+    messages: list[dict] | None = None,
 ) -> Text:
     """Pinned single-row in-room app-bar.
 
     Layout:
-        ``  <-back   #room   · N members · last-active     ⋯ (s)hare (i)nfo (m)embers (l)eave``
-    The ``<-`` arrow is a hint that ``Esc`` returns to welcome.
+        ``  <-back  ●  #room   · N members · last-active     ⋯ (s)hare (i)nfo …``
+
+    The leading ``<-`` arrow hints that ``Esc`` returns to welcome. The
+    ●/○ presence dot uses the same hash as member avatars but flips to
+    bright green when anyone has posted within the last 60s — a quick
+    "active now" signal you can read at a glance.
     """
+    glyph, glyph_style = ("●", "muted")
+    if messages:
+        glyph, glyph_style = presence_dot(messages)
+    # Avatar dot for the room itself uses the room-name's hashed color
+    # — even when the presence ring is dim, the room "identity" reads.
+    room_hue = sender_color(room_name)
+
     left = Text(INDENT)
     left.append("<-", style="dim")
     left.append("  ", style="dim")
-    left.append(f"#{room_name}", style="bold room")
+    left.append(glyph, style=glyph_style)
+    left.append("  ", style="dim")
+    left.append(f"#{room_name}", style=f"bold {room_hue}")
     if member_count:
         left.append("  ·  ", style="dim")
         suffix = "member" if member_count == 1 else "members"
@@ -140,6 +106,8 @@ def render_app_bar(
         right.append(")", style="dim")
         right.append(label, style="muted")
         right.append("  ", style="")
+    # Trailing iMessage-style affordance.
+    right.append("tap (i) for info", style="dim italic")
     return two_col(left, right, total_width=max(40, console_width))
 
 
@@ -147,92 +115,106 @@ def render_app_bar(
 
 
 def _bubble_width(console_width: int) -> int:
-    """Inner text width of a bubble body line."""
-    return max(20, int((console_width - 4) * MAX_FEED_WIDTH_PCT))
+    """Inner text width of a bubble body line. (Back-compat alias.)"""
+    return bubble_width(console_width)
 
 
-def _own_bubble(content: str, hhmm: str, console_width: int, *, receipt: str) -> list[Text]:
+def _own_bubble(
+    content: str,
+    hhmm_str: str,
+    console_width: int,
+    *,
+    receipt: str,  # legacy positional — receipt is now rendered as its own row
+    position: str = "only",
+) -> list[Text]:
     """Right-aligned own-message bubble.
 
-    No sender label (it's you). Subtle accent color for the body, tiny
-    timestamp + delivery receipt at the right edge.
+    The receipt parameter is accepted for back-compat but rendered as a
+    dedicated micro-row by :func:`render_bubble_feed` — never inline. The
+    bubble body itself stays clean: just the message text and a tiny
+    timestamp at the right edge of the final line.
     """
-    inner = _bubble_width(console_width)
+    inner = bubble_width(console_width)
     body = _wrap_lines(content, inner)
     out: list[Text] = []
+    top_glyph, bot_glyph = bubble_corners(position=position, side="right")
+
     for i, line in enumerate(body):
         is_last = i == len(body) - 1
-        # Body: right-aligned within the available width.
-        suffix = (len(hhmm) + len(receipt) + 2) if is_last else 0
-        pad = max(2, console_width - 2 - len(line) - suffix)
+        suffix = (len(hhmm_str) + 2) if is_last and hhmm_str else 0
+        # 2-cell gutter on the right for the rounded-corner glyph.
+        pad = max(2, console_width - 2 - len(line) - suffix - 2)
         row = Text(" " * pad)
-        row.append(line, style="bright")
-        if is_last and (hhmm or receipt):
+        # Body — highlighted inline for @mentions / #rooms.
+        row.append_text(highlight_inline(line, body_style="bright"))
+        if is_last and hhmm_str:
             row.append("  ")
-            if hhmm:
-                row.append(hhmm, style="ts")
-            if receipt:
-                row.append(" ")
-                row.append(receipt, style="success" if receipt.strip() == "✓✓" else "muted")
+            row.append(hhmm_str, style="ts")
+        # Decorative right-edge corner. First line shows top, last shows
+        # bottom; mid-lines show a continuation bar.
+        glyph = top_glyph if i == 0 else (bot_glyph if is_last else "│")
+        row.append("  ")
+        row.append(glyph, style="dim")
         out.append(row)
     return out
-
-
-_AGENT_KEYWORDS = ("codex", "claude", "gemini", "cursor", "bot")
-
-
-def _is_human_sender(name: str) -> bool:
-    """True for senders without an agent-keyword in any dash segment.
-
-    Same heuristic as quorus_tui.hub._name_has_agent_keyword (kept local
-    to avoid an import cycle between the two modules).
-    """
-    if not name or "-" not in name:
-        return True
-    parts = name.lower().split("-")[1:]
-    return not any(kw in p for p in parts for kw in _AGENT_KEYWORDS)
 
 
 def _other_bubble(
     content: str,
     sender: str,
-    hhmm: str,
+    hhmm_str: str,
     console_width: int,
     *,
     show_header: bool,
+    position: str = "only",
 ) -> list[Text]:
     """Left-aligned other-person bubble with avatar dot + sender header.
 
     Humans get a green ● to visually separate them from agents. The
-    sender color (`primary`/`room`/`accent`) still hashes deterministically
-    from the name, but the GLYPH color signals identity-kind.
+    sender color hashes deterministically from the name (6-color palette
+    via :func:`sender_color`). Mentions inside the body are auto-styled.
     """
-    inner = _bubble_width(console_width)
+    inner = bubble_width(console_width)
     body = _wrap_lines(content, inner)
-    color = _sender_color(sender)
-    glyph_color = "success" if _is_human_sender(sender) else color
+    color = sender_color(sender)
+    glyph_color = "success" if is_human_sender(sender) else color
     out: list[Text] = []
+    top_glyph, bot_glyph = bubble_corners(position=position, side="left")
 
     if show_header:
         head = Text(INDENT)
+        head.append(top_glyph, style="dim")
+        head.append("  ")
         head.append("●", style=glyph_color)
         head.append("  ")
         head.append(f"@{sender}", style=f"bold {color}")
         out.append(head)
 
-    # Body lines indent past the avatar so the "block" reads as the sender's.
     body_indent = "    "
     for i, line in enumerate(body):
+        is_first = i == 0
         is_last = i == len(body) - 1
-        row = Text(body_indent)
-        row.append(line, style="bright")
-        if is_last and hhmm:
-            # Right-edge timestamp on the final line of the bubble.
-            used = len(body_indent) + len(line)
-            pad = max(2, console_width - 2 - used - len(hhmm))
+        # Choose left-edge glyph: rounded top on a fresh standalone (no header),
+        # continuation bar otherwise. When show_header is True the corner
+        # already rendered above, so the first body line gets a continuation.
+        if show_header:
+            edge = "│" if not is_last else bot_glyph
+        else:
+            edge = top_glyph if is_first else (bot_glyph if is_last else "│")
+
+        row = Text("  ")
+        row.append(edge, style="dim")
+        row.append(" ")  # one-cell gutter (replaces the body_indent)
+        row.append_text(highlight_inline(line, body_style="bright"))
+        if is_last and hhmm_str:
+            used = 4 + len(line)
+            pad = max(2, console_width - 2 - used - len(hhmm_str))
             row.append(" " * pad)
-            row.append(hhmm, style="ts")
+            row.append(hhmm_str, style="ts")
         out.append(row)
+        # Defensive: keep body_indent referenced for any caller that
+        # patched the internal layout via a monkeypatch.
+        _ = body_indent
     return out
 
 
@@ -258,12 +240,8 @@ def _unread_divider(console_width: int) -> Text:
 
 
 def _code_block(body: str, console_width: int) -> list[Text]:
-    """Render a triple-backtick block with subtle background tint.
-
-    Uses spaces + dim styling rather than Panel so it composes inside
-    the bubble feed without breaking the two-space margin rhythm.
-    """
-    inner = _bubble_width(console_width)
+    """Render a triple-backtick block with subtle background tint."""
+    inner = bubble_width(console_width)
     out: list[Text] = []
     for raw in body.splitlines() or [""]:
         for chunk in [raw[i:i + inner] for i in range(0, max(1, len(raw)), inner)] or [""]:
@@ -292,17 +270,49 @@ def _split_code_fences(content: str) -> list[tuple[str, str]]:
 
 
 def _delivery_receipt(msg: dict) -> str:
-    """One/two-checkmark receipt for own messages.
-
-    * `· ` queued (no id yet)
-    * `✓ ` sent (we have an id)
-    * `✓✓` delivered + read (presence-based; placeholder for future read receipts)
-    """
-    if msg.get("read_by"):  # forward-looking
+    """Legacy single-glyph receipt — kept for tests that still poke it."""
+    if msg.get("read_by"):
         return "✓✓"
     if msg.get("id") or msg.get("message_id"):
         return "✓"
     return "·"
+
+
+def _last_own_index(messages: list[dict], my_name: str) -> int:
+    """Index of the user's most recent own message; ``-1`` if none."""
+    for i in range(len(messages) - 1, -1, -1):
+        if (messages[i].get("from_name") or messages[i].get("sender")) == my_name:
+            return i
+    return -1
+
+
+def _bubble_position(
+    messages: list[dict], idx: int, sender: str, ts: float,
+) -> str:
+    """Decide whether index *idx* is "only" / "first" / "mid" / "last" in its group.
+
+    Used to pick the correct corner glyphs. A "group" is defined identically
+    to :func:`render_bubble_feed`: same sender, < ``GROUP_GAP_S`` seconds.
+    """
+    def _group_with(j: int) -> bool:
+        if not (0 <= j < len(messages)):
+            return False
+        peer = messages[j]
+        peer_sender = peer.get("from_name") or peer.get("sender") or "?"
+        if peer_sender != sender:
+            return False
+        peer_ts = _ts_epoch(peer.get("timestamp", ""))
+        return abs(ts - peer_ts) < GROUP_GAP_S
+
+    has_prev = _group_with(idx - 1)
+    has_next = _group_with(idx + 1)
+    if has_prev and has_next:
+        return "mid"
+    if has_prev:
+        return "last"
+    if has_next:
+        return "first"
+    return "only"
 
 
 def render_bubble_feed(
@@ -312,16 +322,22 @@ def render_bubble_feed(
     *,
     console_width: int = 80,
     first_unread_index: int | None = None,
+    typing: str | None = None,
+    reactions_by_index: dict[int, dict[str, int]] | None = None,
 ) -> list[Text]:
     """Render *messages* as a bubble feed.
 
-    * Group consecutive same-sender messages within ``GROUP_GAP_S``
-      seconds — only the first shows the sender header.
-    * System events (join/leave/lock/decision) render centered + dim.
-    * Own messages right-align with a delivery receipt; other people's
-      left-align with a colored avatar dot.
-    * If *first_unread_index* is provided and points inside *messages*,
-      a centered "new" divider renders just above that index.
+    Polish features layered in:
+
+    * Tighter rhythm — exactly 1 blank line between distinct senders, 0
+      between same-sender messages within :data:`GROUP_GAP_S`.
+    * Time dividers — a centered dim ``— Today, 2:42 PM —`` rule between
+      groups separated by ≥5 minutes.
+    * Inline ``@mention`` / ``#room`` accent highlighting.
+    * Read-receipt row beneath the user's *most recent* own bubble only —
+      older own bubbles drop the receipt to reduce noise.
+    * Reactions — opt-in via *reactions_by_index*; renders tiny pill chips.
+    * Empty-room card — iMessage-y centered illustration.
     """
     if not room_name:
         return _empty_card(
@@ -330,31 +346,28 @@ def render_bubble_feed(
             "Press Tab to cycle, or run /new <name>",
         )
     if not messages:
-        return _empty_card(
-            console_width,
-            f"#{room_name} is quiet",
-            "No messages yet — say hi",
-        )
+        return empty_room_card(room_name, console_width)
 
     out: list[Text] = []
     prev_sender: str | None = None
     prev_ts: float = 0.0
     prev_was_system = False
+    last_own_idx = _last_own_index(messages, my_name)
+    reactions_by_index = reactions_by_index or {}
 
     for i, msg in enumerate(messages):
         if first_unread_index is not None and i == first_unread_index and i > 0:
             out.append(Text(""))
             out.append(_unread_divider(console_width))
             out.append(Text(""))
-            # Force a fresh header on the next bubble.
-            prev_sender = None
+            prev_sender = None  # force a fresh header on the next bubble
 
         sender = msg.get("from_name") or msg.get("sender") or "?"
         content = str(msg.get("content", ""))
         mtype = msg.get("message_type", "chat")
         ts_raw = msg.get("timestamp", "")
         ts = _ts_epoch(ts_raw)
-        hhmm = _hhmm(ts_raw)
+        hhmm_str = _hhmm(ts_raw)
 
         # System event? Centered + dim.
         if mtype in _SYSTEM_TYPES:
@@ -373,16 +386,32 @@ def render_bubble_feed(
             and (ts - prev_ts) < GROUP_GAP_S
         )
 
-        if not same_group and out:
+        # Time-divider — centered between groups separated by ≥5 minutes.
+        # Only renders when crossing the boundary, never at the very start
+        # of the feed (the empty-room card already orients the user).
+        if (
+            prev_ts
+            and (ts - prev_ts) >= TIME_DIVIDER_GAP_S
+            and out
+        ):
+            label = time_divider_label(ts_raw)
+            if label:
+                out.append(Text(""))
+                out.append(time_divider(label, console_width))
+                out.append(Text(""))
+                # The divider replaces the usual "blank line between
+                # senders" — clear same_group so we don't add another.
+                same_group = False
+                prev_sender = None
+        elif not same_group and out:
+            # Tighter rhythm: exactly one blank line between distinct senders.
             out.append(Text(""))
 
-        # Hide HHMM on continuation lines unless we crossed a 5-min boundary,
-        # so the bubble feed doesn't feel like a log file.
-        show_ts = (not same_group) or ((ts - prev_ts) > 300)
-        ts_show = hhmm if show_ts else ""
+        # Hide HHMM on continuation lines unless we crossed a 5-min boundary.
+        show_ts = (not same_group) or ((ts - prev_ts) > TIME_DIVIDER_GAP_S)
+        ts_show = hhmm_str if show_ts else ""
+        position = _bubble_position(messages, i, sender, ts)
 
-        # Code-fence aware rendering — preserve the bubble for text spans
-        # and switch to the code renderer for fenced spans.
         for kind, body in _split_code_fences(content):
             if not body and kind == "text":
                 continue
@@ -390,22 +419,39 @@ def render_bubble_feed(
                 out.extend(_code_block(body, console_width))
                 continue
             if is_me:
-                receipt = _delivery_receipt(msg) if show_ts else ""
-                out.extend(_own_bubble(body, ts_show, console_width, receipt=receipt))
+                out.extend(_own_bubble(
+                    body, ts_show, console_width,
+                    receipt="",  # receipts are now a dedicated row
+                    position=position,
+                ))
             else:
-                out.extend(
-                    _other_bubble(
-                        body,
-                        sender,
-                        ts_show,
-                        console_width,
-                        show_header=not same_group,
-                    )
-                )
+                out.extend(_other_bubble(
+                    body, sender, ts_show, console_width,
+                    show_header=not same_group,
+                    position=position,
+                ))
+
+        # Reactions row — opt-in, dummy data is fine.
+        chips = reactions_by_index.get(i)
+        if chips:
+            row = reaction_row(chips, console_width)
+            if row.cell_len:
+                out.append(row)
+
+        # Read-receipt row — only on the user's MOST RECENT own message.
+        if is_me and i == last_own_idx:
+            label = receipt_label(msg)
+            if label:
+                out.append(read_receipt_row(label, console_width))
 
         prev_sender = sender
         prev_ts = ts
         prev_was_system = False
+
+    # Typing indicator — pure visual, no real backend.
+    if typing:
+        out.append(Text(""))
+        out.append(typing_indicator(typing))
 
     return out
 
@@ -430,8 +476,13 @@ def _empty_card(console_width: int, title: str, cta: str) -> list[Text]:
 # ── Composer hint ────────────────────────────────────────────────────────────
 
 
-def render_composer_hint() -> Text:
-    """Single dim placeholder rendered just above the prompt."""
+def render_composer_hint(typing: str | None = None) -> Text:
+    """Single dim placeholder rendered just above the prompt.
+
+    When *typing* is provided, a typing-indicator line shows *above* the
+    placeholder — the caller passes a renderable group, so we return a
+    :class:`Text` that includes both rows separated by a newline.
+    """
     line = Text(INDENT)
     line.append("│ ", style="primary")
     line.append("Type a message…  ", style="dim")
@@ -439,183 +490,23 @@ def render_composer_hint() -> Text:
     line.append(" mention  ", style="dim")
     line.append("/", style="kbd")
     line.append(" command", style="dim")
-    return line
-
-
-# ── Share card ───────────────────────────────────────────────────────────────
-
-
-def _short_code(code: str) -> str:
-    """Display-friendly short-code.
-
-    Server-issued codes are already short (e.g. ``MJN2-EWVT``). The legacy
-    base64 envelope is long — truncate the middle so it still fits the
-    card. We never modify the actual code returned to the user — only the
-    DISPLAY string. Callers always copy the original.
-    """
-    if len(code) <= 32:
-        return code
-    return code[:14] + "…" + code[-6:]
-
-
-def render_share_card(
-    *,
-    room_name: str,
-    code: str,
-    install_url: str | None = None,
-    console_width: int = 80,
-    ttl_label: str = "7 days",
-) -> list[Text]:
-    """A polished share card for the room. Returns Text lines, no panel."""
-    width = max(SHARE_CARD_MIN_W, min(console_width - 4, 64))
-    title = f" Share #{room_name} "
-    side = max(2, (width - len(title) - 2) // 2)
-    top = Text("  ┌" + "─" * side, style="primary")
-    top.append(title, style="bold primary")
-    top.append("─" * (width - 2 - side - len(title)) + "┐", style="primary")
-
-    def _row(left: str, *, style: str = "bright") -> Text:
-        # Two-space pad inside the bordered card.
-        body = "  " + left
-        pad = max(0, width - 2 - len(body))
-        line = Text("  │", style="primary")
-        line.append(body, style=style)
-        line.append(" " * pad, style="")
-        line.append("│", style="primary")
+    if not typing:
         return line
-
-    def _blank() -> Text:
-        line = Text("  │", style="primary")
-        line.append(" " * (width - 2), style="")
-        line.append("│", style="primary")
-        return line
-
-    bottom = Text("  └" + "─" * (width - 2) + "┘", style="primary")
-
-    lines: list[Text] = [top, _blank()]
-    lines.append(_row(f"Code:   {_short_code(code)}", style="bold accent"))
-    lines.append(_blank())
-    if install_url:
-        lines.append(_row("One-line install:", style="muted"))
-        lines.append(_row(install_url, style="bright"))
-        lines.append(_blank())
-    lines.append(_row(f"Or:  quorus join {_short_code(code)}", style="muted"))
-    lines.append(_blank())
-    lines.append(_row(f"Expires: {ttl_label}  ·  press c to copy, any key to close", style="dim"))
-    lines.append(bottom)
-    return lines
+    # When typing is set, prepend the indicator above the placeholder by
+    # returning a multi-line Text. Rich prints embedded "\n" correctly.
+    indicator = typing_indicator(typing)
+    head = Text()
+    head.append_text(indicator)
+    head.append("\n")
+    head.append_text(line)
+    return head
 
 
-# ── @-mention popover ────────────────────────────────────────────────────────
-
-
-def render_mention_popover(query: str, members: Iterable[str], *, max_rows: int = 5) -> list[Text]:
-    """Up to *max_rows* matching members rendered as a small popover.
-
-    The query matches case-insensitively against member-name prefix first,
-    then falls back to a substring match. Empty list when nothing matches.
-    """
-    q = (query or "").lower().lstrip("@")
-    members = [m for m in members if m]
-    if not members:
-        return []
-
-    prefix = [m for m in members if m.lower().startswith(q)]
-    seen = set(prefix)
-    other = [m for m in members if q in m.lower() and m not in seen]
-    matches = (prefix + other)[:max_rows]
-    if not matches:
-        return []
-
-    rows: list[Text] = []
-    head = Text(INDENT)
-    head.append("@", style="kbd")
-    head.append("  Mention  ", style="dim")
-    head.append("Tab", style="kbd")
-    head.append(" to insert", style="dim")
-    rows.append(head)
-    for name in matches:
-        line = Text("  ")
-        line.append("●", style=_sender_color(name))
-        line.append("  ")
-        line.append(f"@{name}", style=f"bold {_sender_color(name)}")
-        rows.append(line)
-    return rows
-
-
-# ── Clipboard ────────────────────────────────────────────────────────────────
-
-
-def copy_to_clipboard(text: str) -> bool:
-    """Best-effort cross-platform clipboard copy. Returns True on success.
-
-    Prefers native tools (pbcopy/xclip/clip) over Python deps so this stays
-    zero-dependency. Silently fails on headless Linux without xclip — the
-    caller surfaces a "couldn't copy" status instead of crashing.
-    """
-    sys_name = platform.system()
-    try:
-        if sys_name == "Darwin" and shutil.which("pbcopy"):
-            subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True, timeout=2)
-            return True
-        if sys_name == "Linux":
-            for cmd in (["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
-                if shutil.which(cmd[0]):
-                    subprocess.run(cmd, input=text.encode("utf-8"), check=True, timeout=2)
-                    return True
-            # Wayland fallback.
-            if shutil.which("wl-copy"):
-                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=2)
-                return True
-            return False
-        if sys_name == "Windows" and shutil.which("clip"):
-            # `clip` reads from stdin on Windows; encode utf-16-le for safety.
-            subprocess.run(["clip"], input=text.encode("utf-16-le"), check=True, timeout=2)
-            return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-        return False
-    return False
-
-
-# ── Last-active formatter (used by the app-bar) ──────────────────────────────
-
-
-def last_active_label(messages: list[dict], *, now: datetime | None = None) -> str:
-    """Return a short "active 2m ago" / "active just now" label.
-
-    Empty when there are no messages with timestamps.
-    """
-    now = now or datetime.now(timezone.utc)
-    for msg in reversed(messages):
-        ts_raw = msg.get("timestamp", "")
-        if not ts_raw:
-            continue
-        try:
-            normalized = ts_raw.replace("Z", "+00:00")
-            ts = datetime.fromisoformat(normalized)
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-        except (ValueError, TypeError):
-            continue
-        secs = int((now - ts).total_seconds())
-        if secs < 0:
-            return ""
-        if secs < 45:
-            return "active just now"
-        mins = secs // 60
-        if mins < 60:
-            return f"active {mins}m ago"
-        hours = mins // 60
-        if hours < 24:
-            return f"active {hours}h ago"
-        days = hours // 24
-        return f"active {days}d ago"
-    return ""
-
-
-# Re-export so callers can introspect without poking at private helpers.
 __all__ = [
     "GROUP_GAP_S",
+    "MAX_FEED_WIDTH_PCT",
+    "SHARE_CARD_MIN_W",
+    "TIME_DIVIDER_GAP_S",
     "copy_to_clipboard",
     "last_active_label",
     "render_app_bar",
@@ -624,8 +515,3 @@ __all__ = [
     "render_mention_popover",
     "render_share_card",
 ]
-
-
-# Defensive import: ensure os.path is importable in environments where the
-# clipboard probes run before standard subprocess wiring (no-op normally).
-_ = os

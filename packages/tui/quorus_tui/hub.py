@@ -2418,6 +2418,7 @@ def _main_input_loop(
                             member_count=len(members),
                             last_active=last_active,
                             console_width=console_width,
+                            messages=msgs_snap,
                         )
                     )
                     # Inline room strip stays as a one-liner so Tab still

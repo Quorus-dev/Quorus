@@ -33,6 +33,18 @@ ERROR = "#ef4444"
 AGENT = "#818cf8"              # cool indigo — distinct from brand teal
 ROOM = "#fbbf24"               # warm amber — distinct from brand teal
 
+# Sender palette — 6 perceptually-distinct hues used to color member names
+# deterministically. Picked to: (a) all read on dark terminals at a glance,
+# (b) survive common color-blindness filters (no R/G adjacency), (c) avoid
+# the brand teal so chrome and content stay separable. Mirrors the deck
+# avatar palette so a member's color is consistent across surfaces.
+SENDER_TEAL    = "#2dd4bf"     # teal-300 — paired
+SENDER_INDIGO  = "#a5b4fc"     # indigo-300
+SENDER_AMBER   = "#fcd34d"     # amber-300
+SENDER_ROSE    = "#fda4af"     # rose-300
+SENDER_VIOLET  = "#c4b5fd"     # violet-300
+SENDER_CYAN    = "#67e8f9"     # cyan-300
+
 THEME = Theme(
     {
         "primary": PRIMARY,
@@ -54,6 +66,14 @@ THEME = Theme(
         "pill_idle": MUTED,
         "kbd": f"bold {AGENT}",
         "ts": MUTED,
+        # Sender palette tokens — hashed deterministically by chat.py so
+        # the same name always renders in the same color.
+        "sender1": SENDER_TEAL,
+        "sender2": SENDER_INDIGO,
+        "sender3": SENDER_AMBER,
+        "sender4": SENDER_ROSE,
+        "sender5": SENDER_VIOLET,
+        "sender6": SENDER_CYAN,
     }
 )
 
