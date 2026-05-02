@@ -109,3 +109,135 @@ async def test_record_failure_exactly_at_threshold_trips():
 
     await listener._record_failure("final error")
     assert listener._tripped is True
+
+
+# ---------------------------------------------------------------------------
+# Server-level integration: _sse_breaker_state() + polling-fallback gating
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_server_breaker_state_default_when_no_listener():
+    """Without an active listener, _sse_breaker_state returns the cleared shape."""
+    import quorus.mcp_server as mcp_server
+
+    mcp_server._reset_runtime_state()
+    state = mcp_server._sse_breaker_state()
+    assert state == {"tripped": False, "failures": 0, "last_error": None}
+
+
+@pytest.mark.asyncio
+async def test_server_breaker_state_reflects_listener_after_failures():
+    """Once a listener is bound, _sse_breaker_state surfaces its counters."""
+    import quorus.mcp_server as mcp_server
+
+    mcp_server._reset_runtime_state()
+    listener = _make_listener()
+    mcp_server._active_sse_listener = listener
+    try:
+        for i in range(_FAILURE_THRESHOLD):
+            await listener._record_failure(f"err {i}")
+        state = mcp_server._sse_breaker_state()
+        assert state["tripped"] is True
+        assert state["failures"] >= _FAILURE_THRESHOLD
+        assert state["last_error"] is not None
+    finally:
+        mcp_server._active_sse_listener = None
+        mcp_server._reset_runtime_state()
+
+
+@pytest.mark.asyncio
+async def test_server_breaker_state_clears_after_probe_success():
+    """A reset listener clears the breaker view at the server level."""
+    import quorus.mcp_server as mcp_server
+
+    mcp_server._reset_runtime_state()
+    listener = _make_listener()
+    mcp_server._active_sse_listener = listener
+    try:
+        for i in range(_FAILURE_THRESHOLD):
+            await listener._record_failure(f"err {i}")
+        assert mcp_server._sse_breaker_state()["tripped"] is True
+
+        # Simulate a successful probe -> SSEListener.run() does this under
+        # _breaker_lock; mirror that here.
+        async with listener._breaker_lock:
+            listener._tripped = False
+            listener._failures = 0
+            listener._last_error = None
+
+        state = mcp_server._sse_breaker_state()
+        assert state == {"tripped": False, "failures": 0, "last_error": None}
+    finally:
+        mcp_server._active_sse_listener = None
+        mcp_server._reset_runtime_state()
+
+
+@pytest.mark.asyncio
+async def test_polling_fallback_skips_when_breaker_clear():
+    """Fallback must NOT call _fetch_relay_messages while the breaker is clear."""
+    import quorus.mcp_server as mcp_server
+
+    mcp_server._reset_runtime_state()
+    calls: list[int] = []
+
+    async def fake_fetch(wait):
+        calls.append(wait)
+        return ([], None, None)
+
+    stop = asyncio.Event()
+    stop.set()  # exit immediately on the first sleep
+
+    with patch.object(mcp_server, "_fetch_relay_messages", fake_fetch):
+        await mcp_server._polling_fallback(stop)
+
+    assert calls == []
+    mcp_server._reset_runtime_state()
+
+
+@pytest.mark.asyncio
+async def test_polling_fallback_runs_when_breaker_tripped():
+    """When the breaker is tripped, fallback must drain the relay."""
+    import quorus.mcp_server as mcp_server
+
+    mcp_server._reset_runtime_state()
+    listener = _make_listener()
+    for i in range(_FAILURE_THRESHOLD):
+        await listener._record_failure(f"err {i}")
+    mcp_server._active_sse_listener = listener
+    assert mcp_server._sse_breaker_state()["tripped"] is True
+
+    fetched: list[dict] = []
+
+    async def fake_fetch(wait):
+        # Stop after one drain so the test is bounded.
+        stop_event.set()
+        msg = {"id": "m1", "from_name": "x", "content": "y", "timestamp": "t"}
+        return ([msg], "ack-token-1", None)
+
+    acked: list[str] = []
+
+    async def fake_ack(token):
+        acked.append(token)
+
+    appended: list[list[dict]] = []
+
+    async def fake_append(messages):
+        appended.append(list(messages))
+
+    stop_event = asyncio.Event()
+    try:
+        with patch.object(mcp_server, "_fetch_relay_messages", fake_fetch), \
+             patch.object(mcp_server, "_ack_messages", fake_ack), \
+             patch.object(mcp_server, "_append_pending_messages", fake_append), \
+             patch.object(mcp_server, "_notify_active_session",
+                          lambda _msgs: asyncio.sleep(0)):
+            await mcp_server._polling_fallback(stop_event)
+    finally:
+        mcp_server._active_sse_listener = None
+        mcp_server._reset_runtime_state()
+
+    assert appended and appended[0][0]["id"] == "m1"
+    assert acked == ["ack-token-1"]
+    fetched.append({"ok": True})
+    assert fetched

@@ -86,6 +86,9 @@ _pending_lock = asyncio.Lock()
 _active_session = None
 _active_session_lock = asyncio.Lock()
 _heartbeat_task: asyncio.Task | None = None
+# Active SSEListener instance — set during lifespan, used to surface
+# circuit-breaker state for diagnostics and to gate the polling fallback.
+_active_sse_listener: SSEListener | None = None
 
 def _validate_relay_url(value: str) -> str:
     p = urlparse(value)
@@ -111,11 +114,24 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 def _reset_runtime_state() -> None:
-    global _active_session, _http_client, _heartbeat_task
+    global _active_session, _http_client, _heartbeat_task, _active_sse_listener
     _pending_messages.clear()
     _active_session = None
     _http_client = None
     _heartbeat_task = None
+    _active_sse_listener = None
+
+
+def _sse_breaker_state() -> dict[str, Any]:
+    """Return SSE circuit-breaker diagnostics.
+
+    Shape: ``{"tripped": bool, "failures": int, "last_error": str | None}``.
+    Returns the default cleared state when no listener is active (e.g.
+    SSE disabled or before lifespan startup).
+    """
+    if _active_sse_listener is None:
+        return {"tripped": False, "failures": 0, "last_error": None}
+    return _active_sse_listener.breaker_state()
 
 async def _get_active_session():
     async with _active_session_lock:
@@ -268,12 +284,55 @@ async def _get_sse_token() -> str:
     return RELAY_SECRET
 
 async def _sse_listener(stop_event: asyncio.Event) -> None:
-    """Backward-compat wrapper around SSEListener.run()."""
-    await SSEListener(
+    """Run the SSE listener and expose its instance for breaker diagnostics."""
+    global _active_sse_listener
+    listener = SSEListener(
         relay_url=RELAY_URL, instance_name=INSTANCE_NAME,
         get_http_client=_get_http_client, get_sse_token=_get_sse_token,
         on_event=_process_sse_event,
-    ).run(stop_event)
+    )
+    _active_sse_listener = listener
+    try:
+        await listener.run(stop_event)
+    finally:
+        _active_sse_listener = None
+
+
+# Polling fallback: drains the relay's pull endpoint while the circuit
+# breaker is tripped. Sleeps cheaply otherwise. This is automatic; there
+# is no user-facing toggle (the historical poll_mode="lazy" path is gone).
+_FALLBACK_POLL_INTERVAL = 5
+_FALLBACK_POLL_WAIT = 25
+
+
+async def _polling_fallback(stop_event: asyncio.Event) -> None:
+    """Poll the relay for messages while the SSE breaker is tripped."""
+    while not stop_event.is_set():
+        state = _sse_breaker_state()
+        if not state["tripped"]:
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(), timeout=_FALLBACK_POLL_INTERVAL,
+                )
+                return
+            except asyncio.TimeoutError:
+                continue
+        messages, ack_token, error = await _fetch_relay_messages(
+            wait=_FALLBACK_POLL_WAIT,
+        )
+        if error:
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(), timeout=_FALLBACK_POLL_INTERVAL,
+                )
+                return
+            except asyncio.TimeoutError:
+                continue
+        if messages:
+            await _append_pending_messages(messages)
+            await _notify_active_session(messages)
+        if ack_token:
+            await _ack_messages(ack_token)
 
 @asynccontextmanager
 async def _mcp_lifespan(server: FastMCP):
@@ -289,15 +348,17 @@ async def _mcp_lifespan(server: FastMCP):
             )
     stop_event = asyncio.Event()
     sse_task: asyncio.Task | None = None
+    poll_task: asyncio.Task | None = None
     if SSE_ENABLED:
         sse_task = asyncio.create_task(_sse_listener(stop_event))
-        logger.info("SSE push listener started")
+        poll_task = asyncio.create_task(_polling_fallback(stop_event))
+        logger.info("SSE push listener started (polling fallback armed)")
     _heartbeat_task = asyncio.create_task(_heartbeat_loop(stop_event))
     try:
         yield {"stop_event": stop_event}
     finally:
         stop_event.set()
-        for task in filter(None, [sse_task, _heartbeat_task]):
+        for task in filter(None, [sse_task, poll_task, _heartbeat_task]):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
