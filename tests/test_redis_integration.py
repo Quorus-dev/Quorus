@@ -35,6 +35,19 @@ except ImportError:
     RedisContainer = None  # type: ignore[misc,assignment]
 
 
+def _docker_unavailable(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "connection refused",
+            "docker",
+            "permission",
+            "server api version",
+        )
+    )
+
+
 @pytest.fixture(scope="module")
 def redis_container():
     """Start a Redis container for the test module."""
@@ -46,7 +59,7 @@ def redis_container():
     except PermissionError:
         pytest.skip("Docker socket not accessible (permission denied)")
     except Exception as e:
-        if "docker" in str(e).lower() or "permission" in str(e).lower():
+        if _docker_unavailable(e):
             pytest.skip(f"Docker unavailable: {e}")
         raise
 

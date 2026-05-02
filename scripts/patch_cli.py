@@ -1,6 +1,3 @@
-import sys
-from pathlib import Path
-
 path = "/Users/aravkekane/Desktop/Quorus/packages/cli/quorus_cli/cli.py"
 content = open(path).read()
 

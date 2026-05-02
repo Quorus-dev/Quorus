@@ -1,5 +1,3 @@
-import sys
-
 content = open('gemini_agent.py').read()
 
 old_func = """def _gemini_base_command(

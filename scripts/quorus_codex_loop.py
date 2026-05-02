@@ -25,12 +25,12 @@ import tempfile
 import textwrap
 import threading
 import time
-import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
+import tomllib
 
 CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
 
@@ -209,9 +209,12 @@ def build_prompt(room: str, participant: str, inbox_path: Path) -> str:
         Operating rules:
         - At the start of each turn, check Quorus messages and room context before acting.
         - Use the Quorus MCP tools as your primary interface for reading and replying.
-        - A local inbox mirror is being written to `{inbox_path}`. Use it as fallback context if needed.
-        - If someone assigns a concrete task, acknowledge ownership clearly in-room before implementing.
-        - Post concise status updates back to the room after meaningful progress, blockers, or completion.
+        - A local inbox mirror is being written to `{inbox_path}`. Use it as
+          fallback context if needed.
+        - If someone assigns a concrete task, acknowledge ownership clearly
+          in-room before implementing.
+        - Post concise status updates back to the room after meaningful
+          progress, blockers, or completion.
         - Do not impersonate another participant. Only send as `{participant}`.
         """
     ).strip()

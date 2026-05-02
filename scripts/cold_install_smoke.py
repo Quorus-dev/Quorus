@@ -75,7 +75,12 @@ def _which_or_die(binary: str, step: int) -> str:
     return found
 
 
-def _http_get(url: str, *, timeout: float = 5.0, headers: dict | None = None) -> tuple[int, bytes]:
+def _http_get(
+    url: str,
+    *,
+    timeout: float = 5.0,
+    headers: dict | None = None,
+) -> tuple[int, bytes]:
     req = urllib.request.Request(url, headers=headers or {})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -84,7 +89,13 @@ def _http_get(url: str, *, timeout: float = 5.0, headers: dict | None = None) ->
         return e.code, e.read() if hasattr(e, "read") else b""
 
 
-def _http_post(url: str, body: dict, *, timeout: float = 5.0, headers: dict | None = None) -> tuple[int, bytes]:
+def _http_post(
+    url: str,
+    body: dict,
+    *,
+    timeout: float = 5.0,
+    headers: dict | None = None,
+) -> tuple[int, bytes]:
     data = json.dumps(body).encode("utf-8")
     hdrs = {"Content-Type": "application/json"}
     hdrs.update(headers or {})
@@ -256,8 +267,16 @@ def run(port: int, timeout: int) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Quorus cold-install smoke test")
-    p.add_argument("--port", type=int, default=int(os.environ.get("QUORUS_SMOKE_PORT", DEFAULT_PORT)))
-    p.add_argument("--timeout", type=int, default=int(os.environ.get("QUORUS_SMOKE_TIMEOUT", DEFAULT_TIMEOUT)))
+    p.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("QUORUS_SMOKE_PORT", DEFAULT_PORT)),
+    )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=int(os.environ.get("QUORUS_SMOKE_TIMEOUT", DEFAULT_TIMEOUT)),
+    )
     args = p.parse_args()
     run(args.port, args.timeout)
 
