@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -178,3 +180,63 @@ async def test_claim_without_bids_returns_404(client: AsyncClient):
     )
 
     assert resp.status_code == 404
+
+
+async def test_mention_bid_claim_flow_has_one_winner(client: AsyncClient):
+    room_id = await _setup_room(client)
+
+    triage = await client.post(
+        "/v1/triage",
+        json={
+            "room_id": room_id,
+            "message_id": "msg-e2e",
+            "from_name": "alice",
+            "content": "@bob @carol who can handle the deploy?",
+        },
+        headers=HEADERS,
+    )
+    assert triage.status_code == 200
+    assert triage.json()["action"] == "RESPOND"
+    assert triage.json()["candidates"] == ["bob", "carol"]
+
+    bids = await asyncio.gather(
+        client.post(
+            "/v1/bid",
+            json={
+                "room_id": room_id,
+                "message_id": "msg-e2e",
+                "participant": "bob",
+                "bid": 0.7,
+            },
+            headers=HEADERS,
+        ),
+        client.post(
+            "/v1/bid",
+            json={
+                "room_id": room_id,
+                "message_id": "msg-e2e",
+                "participant": "carol",
+                "bid": 0.9,
+            },
+            headers=HEADERS,
+        ),
+    )
+    assert [resp.status_code for resp in bids] == [200, 200]
+
+    claims = await asyncio.gather(
+        client.post(
+            "/v1/claim",
+            json={"room_id": room_id, "message_id": "msg-e2e"},
+            headers=HEADERS,
+        ),
+        client.post(
+            "/v1/claim",
+            json={"room_id": room_id, "message_id": "msg-e2e"},
+            headers=HEADERS,
+        ),
+    )
+
+    assert [resp.status_code for resp in claims] == [200, 200]
+    claim_bodies = [resp.json() for resp in claims]
+    assert {body["winner"] for body in claim_bodies} == {"carol"}
+    assert len({body["claim_token"] for body in claim_bodies}) == 1
