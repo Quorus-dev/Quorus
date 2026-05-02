@@ -1902,11 +1902,18 @@ def _read_input(
             import select as _sel
             ready, _, _ = _sel.select([sys.stdin], [], [], RENDER_TICK_S)
             if not ready:
-                # No keypress within the render window — stash the buffer so
-                # the NEXT call to _read_input restores it after the redraw,
-                # then signal the main loop to redraw.
-                _PENDING_INPUT_BUF[:] = buf
-                sys.stdout.write("\r\x1b[K")  # clear the input line
+                # If the user is actively composing — even one character —
+                # the auto-redraw must NOT fire. Wiping the screen mid-thought
+                # erases what they're typing and produces the "instant erase"
+                # bug reported on 2026-05-02. Just keep waiting for input.
+                # The header / room state will catch up the next time the
+                # user pauses typing or hits Enter.
+                if buf:
+                    continue
+                # Buffer empty → safe to trigger a redraw so live status
+                # (latency, presence, unread badges) refresh while idle.
+                _PENDING_INPUT_BUF.clear()
+                sys.stdout.write("\r\x1b[K")
                 sys.stdout.flush()
                 return _KEY_TIMEOUT
             key = readchar.readkey()
