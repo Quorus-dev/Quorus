@@ -115,6 +115,14 @@ class Watcher:
               if msg.get("room") == self.room_name:
                 context = await self._fetch_context(client)
                 await self._write_context(context)
+                # Drop a sentinel so cross-harness `stop` hooks (Cursor)
+                # know to fetch + emit a followup_message on the next
+                # agent-loop boundary. The hook reads + unlinks the flag.
+                # Skipped for our own messages so the agent doesn't
+                # follow up on its own output.
+                sender = msg.get("from_name") or msg.get("sender") or ""
+                if sender and sender != self.agent_name:
+                  self._drop_sentinel()
             elif event_type in ("lock_acquired", "lock_released"):
               # Primitive B events — update context to show new lock state
               context = await self._fetch_context(client)
@@ -124,6 +132,17 @@ class Watcher:
           finally:
             event_type = ""
             event_data = ""
+
+  def _drop_sentinel(self) -> None:
+    """Touch ~/.quorus/pending-<agent>.flag so cross-harness `stop` hooks
+    (Cursor in particular) detect there's something new to deliver. The
+    hook unlinks the flag after consuming. Best-effort; never raises."""
+    try:
+      flag = Path.home() / ".quorus" / f"pending-{self.agent_name}.flag"
+      flag.parent.mkdir(parents=True, exist_ok=True)
+      flag.touch()
+    except OSError:
+      pass
 
   async def _fetch_context(self, client: httpx.AsyncClient) -> dict:
     """Fetch room state and message history."""
