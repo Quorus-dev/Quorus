@@ -70,7 +70,11 @@ async def test_breaker_clears_on_successful_probe():
 
     listener._attempt_connect = mock_attempt
 
-    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+    # Patch the probe-interval sleep so the test runs instantly without
+    # leaving an un-awaited stop_event.wait() coroutine behind.
+    import quorus_mcp.sse as _sse_mod
+
+    with patch.object(_sse_mod, "_PROBE_INTERVAL", 0):
         await listener.run(stop_event)
 
     assert listener._tripped is False

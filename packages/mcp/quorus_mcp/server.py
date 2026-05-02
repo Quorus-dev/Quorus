@@ -12,6 +12,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.message import SessionMessage
 
 from quorus.config import ConfigManager, load_config
+from quorus_mcp import tools
 from quorus_mcp.sse import SSEListener, process_sse_event_data
 
 logging.basicConfig(
@@ -300,7 +301,7 @@ async def _sse_listener(stop_event: asyncio.Event) -> None:
 
 # Polling fallback: drains the relay's pull endpoint while the circuit
 # breaker is tripped. Sleeps cheaply otherwise. This is automatic; there
-# is no user-facing toggle (the historical poll_mode="lazy" path is gone).
+# is no user-facing toggle (the dead poll-mode path was removed).
 _FALLBACK_POLL_INTERVAL = 5
 _FALLBACK_POLL_WAIT = 25
 
@@ -395,104 +396,34 @@ if SSE_ENABLED:
         return opts
     mcp._mcp_server.create_initialization_options = _patched_init
 
-async def _send_message(to: str, content: str, context: Context | None = None) -> str:
-    await _remember_session(context)
-    try:
-        resp = await _get_http_client().post(
-            f"{RELAY_URL}/messages",
-            json={"from_name": INSTANCE_NAME, "to": to, "content": content},
-            headers=_auth_headers(),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return f"Message sent (id: {data['id']})"
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return _relay_error_message(e)
+# Tool implementations live in ``tools.py`` to keep this module under the
+# 500-line cap. The underscore-prefixed names below are kept as forwarders
+# so existing tests (``mcp_server._send_message`` etc.) keep working.
+_send_message = tools.send_message
+_check_messages = tools.check_messages
+_list_participants = tools.list_participants
+_send_room_message = tools.send_room_message
+_join_room = tools.join_room
+_list_rooms = tools.list_rooms
 
-async def _check_messages(context: Context | None = None) -> str:
-    await _remember_session(context)
-    await _drain_pending_messages()
-    messages, ack_token, error = await _fetch_relay_messages(wait=0)
-    if error:
-        return error
-    valid = [m for m in messages if m.get("from_name") or m.get("content") or m.get("timestamp")]
-    if not valid:
-        return "No new messages."
-    result = "\n".join(_format_message(m) for m in valid)
-    if ack_token:
-        await _ack_messages(ack_token)
-    return result
-
-async def _list_participants(context: Context | None = None) -> str:
-    await _remember_session(context)
-    try:
-        resp = await _get_http_client().get(f"{RELAY_URL}/participants", headers=_auth_headers())
-        resp.raise_for_status()
-        ps = resp.json()
-        return "No participants yet." if not ps else "Participants: " + ", ".join(ps)
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return _relay_error_message(e)
-
-async def _send_room_message(
-    room_id: str,
-    content: str,
-    message_type: str = "chat",
-    context: Context | None = None,
-) -> str:
-    await _remember_session(context)
-    try:
-        resp = await _get_http_client().post(
-            f"{RELAY_URL}/rooms/{room_id}/messages",
-            json={"from_name": INSTANCE_NAME, "content": content, "message_type": message_type},
-            headers=_auth_headers(),
-        )
-        resp.raise_for_status()
-        return f"Room message sent (id: {resp.json()['id']})"
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return _relay_error_message(e)
-
-async def _join_room(room_id: str, context: Context | None = None) -> str:
-    await _remember_session(context)
-    try:
-        resp = await _get_http_client().post(
-            f"{RELAY_URL}/rooms/{room_id}/join",
-            json={"participant": INSTANCE_NAME}, headers=_auth_headers(),
-        )
-        resp.raise_for_status()
-        return f"Joined room {room_id}"
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return _relay_error_message(e)
-
-async def _list_rooms(context: Context | None = None) -> str:
-    await _remember_session(context)
-    try:
-        resp = await _get_http_client().get(f"{RELAY_URL}/rooms", headers=_auth_headers())
-        resp.raise_for_status()
-        rooms_list = resp.json()
-        if not rooms_list:
-            return "No rooms yet."
-        return "Rooms:\n" + "\n".join(
-            f"  {r['name']} (id: {r['id']}) — "
-            f"members: {', '.join(r['members'])}"
-            for r in rooms_list
-        )
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return _relay_error_message(e)
 
 @mcp.tool()
 async def send_message(to: str, content: str, context: Context) -> str:
-    """Send a direct message to another agent. Args: to (recipient name), content."""
-    return await _send_message(to, content, context)
+    """Send a direct message to another agent. Args: to, content."""
+    return await tools.send_message(to, content, context)
+
 
 @mcp.tool()
 async def check_messages(context: Context) -> str:
     """Check for new messages sent to this instance."""
-    return await _check_messages(context)
+    return await tools.check_messages(context)
+
 
 @mcp.tool()
 async def list_participants(context: Context) -> str:
     """List all known participants who have sent messages through the relay."""
-    return await _list_participants(context)
+    return await tools.list_participants(context)
+
 
 @mcp.tool()
 async def send_room_message(
@@ -502,17 +433,20 @@ async def send_room_message(
     context: Context = None,
 ) -> str:
     """Send a message to a room. Types: chat/claim/status/request/alert/sync."""
-    return await _send_room_message(room_id, content, message_type, context)
+    return await tools.send_room_message(room_id, content, message_type, context)
+
 
 @mcp.tool()
 async def join_room(room_id: str, context: Context = None) -> str:
     """Join a room to start receiving its messages."""
-    return await _join_room(room_id, context)
+    return await tools.join_room(room_id, context)
+
 
 @mcp.tool()
 async def list_rooms(context: Context = None) -> str:
     """List all available rooms with their members."""
-    return await _list_rooms(context)
+    return await tools.list_rooms(context)
+
 
 @mcp.tool()
 async def search_room(
@@ -522,66 +456,15 @@ async def search_room(
     message_type: str = "",
     limit: int = 50,
 ) -> str:
-    """Search room history by keyword (q), sender, or message_type. Returns up to limit results."""
-    params: dict[str, str | int] = {"limit": limit}
-    if q:
-        params["q"] = q
-    if sender:
-        params["sender"] = sender
-    if message_type:
-        params["message_type"] = message_type
-    resp = await _get_http_client().get(
-        f"{RELAY_URL}/rooms/{room_id}/search", params=params, headers=_auth_headers(), timeout=10
-    )
-    resp.raise_for_status()
-    results = resp.json()
-    if not results:
-        return "No matching messages."
-    lines = []
-    for msg in results:
-        ts = msg.get("timestamp", "")[:19]
-        mtype = msg.get("message_type", "chat")
-        tag = f" [{mtype}]" if mtype != "chat" else ""
-        lines.append(f"[{ts}] {msg.get('from_name', '?')}{tag}: {msg.get('content', '')}")
-    return "\n".join(lines)
+    """Search room history by keyword (q), sender, or message_type."""
+    return await tools.search_room(room_id, q, sender, message_type, limit)
+
 
 @mcp.tool()
 async def room_metrics(room_id: str) -> str:
-    """Get activity metrics: messages per agent, type breakdown, task completion rate."""
-    resp = await _get_http_client().get(
-        f"{RELAY_URL}/rooms/{room_id}/history",
-        params={"limit": 200}, headers=_auth_headers(), timeout=10,
-    )
-    resp.raise_for_status()
-    messages = resp.json()
-    if not messages:
-        return f"No messages in {room_id}."
-    agent_counts: dict[str, int] = {}
-    type_counts: dict[str, int] = {}
-    claims = completions = 0
-    for msg in messages:
-        sender = msg.get("from_name", "?")
-        mtype = msg.get("message_type", "chat")
-        agent_counts[sender] = agent_counts.get(sender, 0) + 1
-        type_counts[mtype] = type_counts.get(mtype, 0) + 1
-        if mtype == "claim":
-            claims += 1
-        elif mtype == "status" and "complete" in msg.get("content", "").lower():
-            completions += 1
-    lines = [f"Metrics for {room_id} ({len(messages)} messages):", "", "Agents:"]
-    lines += [
-        f"  {n}: {c}"
-        for n, c in sorted(agent_counts.items(), key=lambda x: x[1], reverse=True)
-    ]
-    lines += ["", "Message types:"]
-    lines += [
-        f"  {t}: {c}"
-        for t, c in sorted(type_counts.items(), key=lambda x: x[1], reverse=True)
-    ]
-    if claims > 0:
-        pct = min(completions / claims * 100, 100)
-        lines.append(f"\nTask completion: {completions}/{claims} ({pct:.0f}%)")
-    return "\n".join(lines)
+    """Activity metrics: messages per agent, type breakdown, task completion."""
+    return await tools.room_metrics(room_id)
+
 
 @mcp.tool()
 async def claim_task(
@@ -590,84 +473,21 @@ async def claim_task(
     description: str = "",
     ttl_seconds: int = 300,
 ) -> str:
-    """Acquire an optimistic file lock (Primitive B). Returns GRANTED+token or LOCKED+holder."""
-    try:
-        client = _get_http_client()
-        payload = {
-            "file_path": file_path,
-            "claimed_by": INSTANCE_NAME,
-            "description": description,
-            "ttl_seconds": ttl_seconds,
-        }
-        url = f"{RELAY_URL}/rooms/{room_id}/lock"
-        resp = await client.post(url, json=payload, headers=_auth_headers(), timeout=10)
-        if resp.status_code == 401 and await _refresh_jwt_on_401():
-            resp = await client.post(url, json=payload, headers=_auth_headers(), timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("locked"):
-            return f"LOCKED: {file_path} is held by {data['held_by']}, expires {data['expires_at']}"
-        return f"GRANTED: lock_token={data['lock_token']} expires={data['expires_at']}"
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return _relay_error_message(e)
+    """Acquire an optimistic file lock. Returns GRANTED+token or LOCKED+holder."""
+    return await tools.claim_task(room_id, file_path, description, ttl_seconds)
+
 
 @mcp.tool()
 async def release_task(room_id: str, file_path: str, lock_token: str) -> str:
-    """Release a file lock (Primitive B). Requires the lock_token from claim_task."""
-    try:
-        client = _get_http_client()
-        url = f"{RELAY_URL}/rooms/{room_id}/lock/{file_path}"
-        payload = {"lock_token": lock_token}
-        resp = await client.request(
-            "DELETE", url, json=payload, headers=_auth_headers(), timeout=10,
-        )
-        if resp.status_code == 401 and await _refresh_jwt_on_401():
-            resp = await client.request(
-                "DELETE", url, json=payload, headers=_auth_headers(), timeout=10,
-            )
-        resp.raise_for_status()
-        return f"RELEASED: {file_path}"
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return _relay_error_message(e)
+    """Release a file lock. Requires the lock_token from claim_task."""
+    return await tools.release_task(room_id, file_path, lock_token)
+
 
 @mcp.tool()
 async def get_room_state(room_id: str) -> str:
-    """Get the Shared State Matrix (Primitive A): goal, tasks, locks, decisions, agents."""
-    try:
-        client = _get_http_client()
-        state_url = f"{RELAY_URL}/rooms/{room_id}/state"
-        resp = await client.get(state_url, headers=_auth_headers(), timeout=10)
-        if resp.status_code == 401 and await _refresh_jwt_on_401():
-            resp = await client.get(state_url, headers=_auth_headers(), timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        lines = [
-            f"Room: {room_id} (snapshot: {data.get('snapshot_at', '')[:19]})",
-            f"Schema: {data.get('schema_version', '?')}",
-            f"Goal: {data.get('active_goal') or '(none)'}",
-            f"Active agents ({len(data.get('active_agents', []))}): "
-            + ", ".join(data.get("active_agents", [])),
-            f"Messages: {data.get('message_count', 0)} | "
-            f"Last activity: {(data.get('last_activity') or '')[:19]}",
-        ]
-        if data.get("claimed_tasks"):
-            lines.append(f"\nClaimed tasks ({len(data['claimed_tasks'])}):")
-            for t in data["claimed_tasks"]:
-                lines.append(
-                    f"  [{t['claimed_by']}] {t['file_path']} "
-                    f"(expires {t.get('expires_at', '')[:19]})"
-                )
-        if data.get("locked_files"):
-            lines.append(f"\nLocked files ({len(data['locked_files'])}):")
-            for fp, lock in data["locked_files"].items():
-                lines.append(f"  {fp} \u2192 held by {lock['held_by']}")
-        if data.get("resolved_decisions"):
-            lines.append(f"\nDecisions ({len(data['resolved_decisions'])}):")
-            for d in data["resolved_decisions"][-5:]:
-                lines.append(f"  [{d.get('decided_by', '?')}] {d['decision']}")
-        return "\n".join(lines)
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return _relay_error_message(e)
+    """Get the Shared State Matrix: goal, tasks, locks, decisions, agents."""
+    return await tools.get_room_state(room_id)
+
 
 def main_cli() -> None:
     """Console entry point for the ``quorus-mcp`` command (stdio transport)."""
