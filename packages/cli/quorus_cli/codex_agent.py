@@ -580,7 +580,6 @@ def room_context_loop(
     verbose: bool = False,
 ) -> None:
     seen_message_ids: set[str] = set()
-    primed = False
     while not stop_event.is_set():
         try:
             history = sync_room_context(
@@ -592,19 +591,17 @@ def room_context_loop(
                 api_key=api_key,
                 relay_secret=relay_secret,
             )
-            if primed:
-                new_messages = _new_room_messages(
-                    history,
-                    participant=participant,
-                    seen_message_ids=seen_message_ids,
-                )
-                write_codex_room_notifications(
-                    room=room,
-                    participant=participant,
-                    messages=new_messages,
-                )
+            new_messages = _new_room_messages(
+                history,
+                participant=participant,
+                seen_message_ids=seen_message_ids,
+            )
+            write_codex_room_notifications(
+                room=room,
+                participant=participant,
+                messages=new_messages,
+            )
             _remember_message_ids(history, seen_message_ids)
-            primed = True
         except Exception as exc:  # noqa: BLE001
             if verbose:
                 sys.stderr.write(f"[quorus codex-agent context] {exc}\n")

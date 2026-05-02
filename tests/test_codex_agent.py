@@ -17,6 +17,7 @@ from quorus_cli.codex_agent import (
     codex_notification_prompt_path,
     parent_join_room,
     resolve_identity,
+    room_context_loop,
     run_codex_agent,
     save_codex_runner_defaults,
     send_heartbeat,
@@ -238,6 +239,54 @@ def test_effective_notification_poll_seconds_caps_at_five() -> None:
     assert _effective_notification_poll_seconds(30) == 5
     assert _effective_notification_poll_seconds(3) == 3
     assert _effective_notification_poll_seconds(0) == 1
+
+
+def test_room_context_loop_writes_existing_messages_on_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stop_event = MagicMock()
+    stop_event.is_set.side_effect = [False, True]
+    stop_event.wait.return_value = None
+
+    history = [
+        {
+            "id": "msg-1",
+            "timestamp": "2026-05-02T08:28:25Z",
+            "from_name": "arav",
+            "content": "ACTIVATION TEST",
+        },
+        {
+            "id": "msg-2",
+            "timestamp": "2026-05-02T08:29:12Z",
+            "from_name": "arav-codex",
+            "content": "self message",
+        },
+    ]
+    written = {}
+
+    monkeypatch.setattr(
+        "quorus_cli.codex_agent.sync_room_context",
+        lambda **kwargs: history,
+    )
+    monkeypatch.setattr(
+        "quorus_cli.codex_agent.write_codex_room_notifications",
+        lambda **kwargs: written.update(kwargs) or tmp_path / "next_prompt.md",
+    )
+
+    room_context_loop(
+        relay_url="https://relay.test",
+        room="quorus-may4-sprint",
+        participant="arav-codex",
+        context_path=tmp_path / "context.md",
+        history_limit=25,
+        stop_event=stop_event,
+        poll_seconds=1,
+        api_key="mct_child",
+    )
+
+    assert written["room"] == "quorus-may4-sprint"
+    assert [m["id"] for m in written["messages"]] == ["msg-1"]
 
 
 def test_save_and_load_child_key(monkeypatch: pytest.MonkeyPatch) -> None:
