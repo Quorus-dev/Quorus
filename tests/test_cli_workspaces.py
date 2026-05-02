@@ -148,6 +148,10 @@ def test_mcp_server_honors_quorus_profile(
     pm.set_current("current-one")
 
     monkeypatch.setenv("QUORUS_PROFILE", "target")
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("INSTANCE_NAME", raising=False)
+    monkeypatch.delenv("RELAY_SECRET", raising=False)
+    monkeypatch.delenv("RELAY_URL", raising=False)
     # Required so server-module import doesn't raise on "no auth".
     # (Our profile supplies api_key, so nothing to set here.)
 
