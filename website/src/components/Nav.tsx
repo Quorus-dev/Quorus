@@ -42,11 +42,17 @@ export default function Nav() {
             <button
               key={link.label}
               onClick={() => smoothScroll(link.id)}
-              className="text-xs text-white/50 hover:text-white/90 transition-colors"
+              className="text-xs text-white/50 hover:text-white/90 transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
             >
               {link.label}
             </button>
           ))}
+          <a
+            href="/docs/quickstart"
+            className="text-xs text-white/50 hover:text-white/90 transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
+          >
+            Docs
+          </a>
         </div>
 
         {/* Right actions */}

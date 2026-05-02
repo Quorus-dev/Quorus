@@ -3,49 +3,6 @@ import { useEffect, useRef, useState } from "react";
 
 import CodeBlock from "./CodeBlock";
 
-// ── Typewriter ────────────────────────────────────────────────────────────────
-
-const TYPEWRITER_WORDS = [
-  "AI Swarms",
-  "Agent Teams",
-  "Cursor Agents",
-  "Codex Agents",
-  "Gemini Agents",
-  "Your Swarm",
-];
-
-function TypewriterWord() {
-  const [index, setIndex] = useState(0);
-  const [displayed, setDisplayed] = useState("");
-  const [deleting, setDeleting] = useState(false);
-  const word = TYPEWRITER_WORDS[index];
-
-  useEffect(() => {
-    let t: ReturnType<typeof setTimeout>;
-    if (!deleting && displayed.length < word.length) {
-      t = setTimeout(
-        () => setDisplayed(word.slice(0, displayed.length + 1)),
-        75,
-      );
-    } else if (!deleting && displayed.length === word.length) {
-      t = setTimeout(() => setDeleting(true), 2000);
-    } else if (deleting && displayed.length > 0) {
-      t = setTimeout(() => setDisplayed(displayed.slice(0, -1)), 38);
-    } else {
-      setDeleting(false);
-      setIndex((i) => (i + 1) % TYPEWRITER_WORDS.length);
-    }
-    return () => clearTimeout(t);
-  }, [displayed, deleting, word]);
-
-  return (
-    <span className="gradient-text">
-      {displayed}
-      <span className="cursor-blink text-teal-400/80">|</span>
-    </span>
-  );
-}
-
 // ── Product preview terminal ──────────────────────────────────────────────────
 
 type StepType = "human" | "tool-call" | "tool-result";
@@ -318,26 +275,29 @@ export default function Hero() {
       />
 
       {/* ── Main content ── */}
-      <div className="relative z-10 flex flex-col items-center text-center px-6 w-full max-w-6xl mx-auto pt-48">
+      <div className="relative z-10 flex flex-col items-center text-center px-6 w-full max-w-6xl mx-auto pt-28 md:pt-32">
         {/* Badge */}
         <motion.div
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-teal-500/25 bg-teal-500/[0.08] text-xs text-teal-300 mb-10 backdrop-blur-sm"
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-teal-500/25 bg-teal-500/[0.08] text-xs text-teal-300 mb-6 backdrop-blur-sm"
         >
           <span className="w-1.5 h-1.5 rounded-full bg-teal-400 pulse-dot" />
-          Private beta · Limited spots open now
+          Open beta · v0.4 · MIT
         </motion.div>
 
         {/* ── HEADLINE ── */}
         <motion.h1
-          className="font-bold tracking-[-0.03em] leading-[0.92] mb-8"
-          style={{ fontSize: "clamp(52px, 8.5vw, 108px)" }}
+          className="font-bold tracking-[-0.03em] leading-[0.95] mb-5"
+          style={{ fontSize: "clamp(40px, 6.8vw, 84px)" }}
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.75, delay: 0.08 }}
         >
+          <span className="block text-white/95">
+            Run Claude, Cursor, and Codex
+          </span>
           <span
             className="block"
             style={{
@@ -348,28 +308,26 @@ export default function Hero() {
               backgroundClip: "text",
             }}
           >
-            Quorus
-          </span>
-          <span className="block text-white/95 text-[0.55em]">
-            Coordination Layer for <TypewriterWord />
+            on the same task — without conflicts.
           </span>
         </motion.h1>
 
-        {/* Sub-heading */}
+        {/* Sub-heading: any model, any machine, real-time */}
         <motion.p
-          className="text-lg md:text-xl text-white/60 max-w-2xl mb-10 leading-relaxed"
+          className="text-base md:text-lg text-white/60 max-w-2xl mb-6 leading-relaxed"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.18 }}
         >
-          One room. Humans and agents side by side — Claude Code, Cursor, Codex,
-          Gemini, Windsurf, Opencode, Cline.
-          <br className="hidden md:block" />
-          You type, they type, you all see the same thread.{" "}
-          <span className="text-white/80">Zero config.</span>
+          Quorus is the open-source coordination layer for AI coding agents.{" "}
+          <span className="text-white/80">
+            Any model. Any machine. Real-time coordination.
+          </span>{" "}
+          One room, shared state, distributed locks — so two agents never stomp
+          the same file.
         </motion.p>
 
-        {/* Install command — copyable */}
+        {/* Install command — copyable, above the fold */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -378,39 +336,14 @@ export default function Hero() {
         >
           <CodeBlock command='pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"' />
           <p className="text-center text-[11px] text-white/45 mt-2 font-mono">
-            Then just type <span className="text-teal-400">quorus</span> in your
-            terminal · v0.4.0 beta · MIT
+            Then run <span className="text-teal-300">quorus</span> · v0.4.0 beta
+            · MIT licensed
           </p>
         </motion.div>
 
-        {/* Scroll hint to get-started section */}
-        <motion.a
-          href="#get-started"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.34 }}
-          className="inline-flex items-center gap-1.5 mt-6 text-sm text-white/45 hover:text-teal-300 transition-colors font-mono"
-        >
-          <span>3-step setup</span>
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M19 14l-7 7m0 0l-7-7m7 7V3"
-            />
-          </svg>
-        </motion.a>
-
         {/* Capability pills */}
         <motion.div
-          className="flex flex-wrap items-center justify-center gap-2"
+          className="flex flex-wrap items-center justify-center gap-2 mt-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.7, delay: 0.4 }}
@@ -428,7 +361,7 @@ export default function Hero() {
               initial={{ opacity: 0, scale: 0.88 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.45 + i * 0.05 }}
-              className="px-3 py-1 rounded-full border border-white/[0.08] bg-white/[0.03] text-[11px] text-white/35 hover:border-white/15 hover:text-white/55 transition-all cursor-default"
+              className="px-3 py-1 rounded-full border border-white/[0.08] bg-white/[0.03] text-[11px] text-white/45 hover:border-white/15 hover:text-white/65 transition-all cursor-default"
             >
               {pill}
             </motion.span>

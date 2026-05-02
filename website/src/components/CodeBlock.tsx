@@ -15,13 +15,37 @@ export default function CodeBlock({
   const labelId = useId();
 
   const onCopy = useCallback(() => {
-    navigator.clipboard
-      .writeText(command)
-      .then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      })
-      .catch(() => {});
+    // Modern browsers — Clipboard API. Fallback for non-HTTPS dev envs.
+    const succeed = () => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    };
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.clipboard &&
+      window.isSecureContext
+    ) {
+      navigator.clipboard
+        .writeText(command)
+        .then(succeed)
+        .catch(() => {});
+    } else {
+      // Fallback: hidden textarea
+      const ta = document.createElement("textarea");
+      ta.value = command;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        succeed();
+      } catch {
+        // ignore
+      }
+      document.body.removeChild(ta);
+    }
   }, [command]);
 
   return (
@@ -29,7 +53,7 @@ export default function CodeBlock({
       {label ? (
         <p
           id={labelId}
-          className="text-[11px] font-mono text-white/40 mb-2 tracking-wide uppercase"
+          className="text-[11px] font-mono text-white/50 mb-2 tracking-wide uppercase"
         >
           {label}
         </p>
@@ -41,15 +65,28 @@ export default function CodeBlock({
         <span className="text-teal-400 shrink-0" aria-hidden="true">
           {prompt}
         </span>
-        <code className="text-white/80 whitespace-nowrap">{command}</code>
+        <code className="text-white/85 whitespace-nowrap">{command}</code>
         <button
           type="button"
-          aria-label="Copy command"
+          aria-label={copied ? "Copied to clipboard" : "Copy command"}
           onClick={onCopy}
-          className="ml-auto shrink-0 text-white/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-teal-300 transition-all focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
+          className="ml-auto shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-md text-white/55 hover:text-teal-300 hover:bg-white/[0.05] focus-visible:text-teal-300 focus-visible:bg-white/[0.05] focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 transition-colors"
         >
           {copied ? (
-            <span className="text-teal-300 text-[11px]">Copied ✓</span>
+            <svg
+              className="w-4 h-4 text-teal-300"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
           ) : (
             <svg
               className="w-4 h-4"
@@ -67,6 +104,10 @@ export default function CodeBlock({
             </svg>
           )}
         </button>
+      </div>
+      {/* Polite, screen-reader-only live region for copy confirmation */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {copied ? "Copied to clipboard" : ""}
       </div>
     </div>
   );

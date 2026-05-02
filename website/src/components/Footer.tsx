@@ -11,21 +11,35 @@ export default function Footer() {
         </div>
 
         {/* Links */}
-        <div className="flex items-center gap-6 text-sm text-white/55">
+        <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-white/55">
           <a
-            href="#features"
+            href="/#features"
             className="hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
           >
             Features
           </a>
           <a
-            href="#architecture"
+            href="/#architecture"
             className="hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
           >
             Architecture
           </a>
           <a
-            href="#get-started"
+            href="/docs/quickstart"
+            className="hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
+          >
+            Docs
+          </a>
+          <a
+            href="https://github.com/Quorus-dev/Quorus"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
+          >
+            GitHub
+          </a>
+          <a
+            href="/#get-started"
             className="hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
           >
             Get started

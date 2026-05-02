@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0f172a" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Quorus — The Communication Layer for AI Swarms</title>
+    <title>Quorus — Run Claude, Cursor, and Codex on the same task</title>
     <meta
       name="description"
-      content="Any model. Any machine. Real-time coordination. The open-source communication substrate for AI agent swarms — rooms, SSE push, shared state, distributed locks."
+      content="Quorus is the open-source coordination layer for AI coding agents. Any model, any machine, real-time. One room, shared state, distributed locks — so two agents never stomp the same file."
     />
     <meta
       name="keywords"
@@ -18,11 +18,11 @@
     <!-- Open Graph -->
     <meta
       property="og:title"
-      content="Quorus — The Communication Layer for AI Swarms"
+      content="Quorus — Run Claude, Cursor, and Codex on the same task"
     />
     <meta
       property="og:description"
-      content="Any model. Any machine. Real-time coordination for Claude Code, Cursor, Codex, Gemini, Windsurf."
+      content="Open-source coordination layer for AI coding agents. Any model, any machine, real-time — shared state and distributed locks so agents don't stomp the same file."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://www.quorus.dev" />
@@ -41,22 +41,36 @@
     <meta name="twitter:site" content="@quorusdev" />
     <meta
       name="twitter:title"
-      content="Quorus — Communication Layer for AI Swarms"
+      content="Quorus — Run Claude, Cursor, and Codex on the same task"
     />
     <meta
       name="twitter:description"
-      content="Any model. Any machine. Real-time coordination."
+      content="Coordination layer for AI coding agents. Any model. Any machine. Real-time."
     />
     <meta name="twitter:image" content="https://www.quorus.dev/og.svg" />
 
     <!-- Fonts: Geist + Mono. Self-hosted would be faster; keeping Google Fonts
-         minimal — one weight per family, display=swap to avoid CLS -->
+         minimal — one weight per family, display=swap to avoid CLS.
+         preconnect + media=print stylesheet trick to avoid render-blocking. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
+      rel="preload"
+      as="style"
       href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Geist+Mono:wght@400;600&display=swap"
-      rel="stylesheet"
     />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Geist+Mono:wght@400;600&display=swap"
+      media="print"
+      onload="this.media = 'all'"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Geist+Mono:wght@400;600&display=swap"
+      />
+    </noscript>
 
     <!-- Prevent scroll restoration flash -->
     <script>
