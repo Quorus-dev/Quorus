@@ -900,6 +900,106 @@ QUORUS_HOOK_CONFIG = {
 }
 
 
+def _resolve_turnguard_participant(explicit: str | None) -> str:
+    """Resolve the participant name for ``quorus turnguard``.
+
+    Priority (top wins): explicit ``--participant`` flag → ``$QUORUS_PARTICIPANT``
+    env (set by per-room agent spawns) → active profile's ``instance_name``.
+    """
+    if explicit:
+        return explicit
+    env_name = os.environ.get("QUORUS_PARTICIPANT") or os.environ.get(
+        "REFLEXD_PARTICIPANT"
+    )
+    if env_name:
+        return env_name
+    try:
+        from quorus.config import ConfigManager as _CM
+        data = _CM().load() or {}
+        name = data.get("instance_name")
+    except Exception:
+        name = None
+    if not name:
+        _ui.error(
+            "TurnGuard: no participant resolved.",
+            hint=(
+                "Pass [accent]--participant NAME[/] or run "
+                "[accent]quorus init[/] to set instance_name."
+            ),
+        )
+        raise SystemExit(5)
+    return name
+
+
+def _cmd_turnguard(args):
+    """Mark the current agent busy/idle for the local Reflex daemon.
+
+    Writes ``~/.quorus/runtime/<participant>.busy`` (mode 0600) when the
+    agent starts a tool call and removes it when the tool call ends. The
+    busy file has a TTL (default 5min) so a crashed harness can never
+    permanently lock reflexd out of waking the agent.
+    """
+    from quorus.runtime import turnguard as _tg
+
+    action = getattr(args, "tg_action", None)
+    if action is None:
+        _ui.error(
+            "TurnGuard: missing subcommand.",
+            hint="usage: [accent]quorus turnguard begin|end|status[/]",
+        )
+        raise SystemExit(5)
+
+    participant = _resolve_turnguard_participant(getattr(args, "participant", None))
+
+    if action == "begin":
+        ttl = max(1, int(getattr(args, "ttl", _tg.DEFAULT_TTL_SECONDS)))
+        tool = getattr(args, "tool", None) or ""
+        path = _tg.begin(participant, tool=tool, ttl=ttl)
+        if not getattr(args, "quiet", False):
+            console.print(
+                f"[dim]turnguard:[/] BUSY [primary]{participant}[/] "
+                f"tool=[accent]{tool or '?'}[/] ttl={ttl}s "
+                f"[dim]({path})[/]"
+            )
+        return
+
+    if action == "end":
+        _tg.end(participant)
+        if not getattr(args, "quiet", False):
+            console.print(
+                f"[dim]turnguard:[/] IDLE [primary]{participant}[/]"
+            )
+        return
+
+    if action == "status":
+        busy = _tg.is_busy(participant)
+        path = _tg.busy_path(participant)
+        details = ""
+        if busy and path.exists():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    started = payload.get("started_at") or "?"
+                    expires = payload.get("expires_at") or "?"
+                    tool = payload.get("tool") or "?"
+                    details = (
+                        f" tool=[accent]{tool}[/] started=[dim]{started}[/] "
+                        f"expires=[dim]{expires}[/]"
+                    )
+            except (OSError, json.JSONDecodeError, ValueError):
+                pass
+        if busy:
+            console.print(
+                f"[primary]busy[/] [bold]{participant}[/]" + details
+            )
+            raise SystemExit(0)
+        console.print(f"[dim]idle[/] {participant}")
+        raise SystemExit(1)
+
+    _ui.error(f"TurnGuard: unknown action {action!r}")
+    raise SystemExit(5)
+
+
 def _cmd_hook(args):
     """Manage Claude Code message hook OR run a per-harness hook entrypoint.
 
@@ -7034,6 +7134,44 @@ def main():
         help_text="Open the Quorus hub (interactive TUI)",
     ))
 
+    p_turnguard = sub.add_parser("turnguard", **_help_block(
+        synopsis="Mark the agent busy/idle for the local Reflex daemon.",
+        description=(
+            "Writes ~/.quorus/runtime/<participant>.busy when an agent "
+            "tool call starts and removes it when the tool call ends. "
+            "reflexd checks the same file before waking the agent on an "
+            "@-mention so we never interrupt a Bash / Edit / Read mid-run. "
+            "The busy-file carries a TTL so a crashed harness self-heals."
+        ),
+        example="quorus turnguard begin --tool Bash",
+        help_text="Mark agent busy/idle for reflexd",
+    ))
+    tg_sub = p_turnguard.add_subparsers(dest="tg_action")
+    p_tg_begin = tg_sub.add_parser(
+        "begin", help="Mark agent busy (writes the busy-file, idempotent)"
+    )
+    p_tg_begin.add_argument("--participant", default=None,
+                            help="Override resolved participant name")
+    p_tg_begin.add_argument("--tool", default=None,
+                            help="Tool name (Bash, Edit, ...) — name only, no args")
+    p_tg_begin.add_argument("--ttl", type=int, default=300,
+                            help="Busy-file TTL in seconds (default 300)")
+    p_tg_begin.add_argument("--quiet", action="store_true",
+                            help="Suppress confirmation output")
+    p_tg_end = tg_sub.add_parser(
+        "end", help="Mark agent idle (removes the busy-file, idempotent)"
+    )
+    p_tg_end.add_argument("--participant", default=None,
+                          help="Override resolved participant name")
+    p_tg_end.add_argument("--quiet", action="store_true",
+                          help="Suppress confirmation output")
+    p_tg_status = tg_sub.add_parser(
+        "status",
+        help="Print busy/idle. Exit 0 if busy, 1 if idle.",
+    )
+    p_tg_status.add_argument("--participant", default=None,
+                             help="Override resolved participant name")
+
     p_workspaces = sub.add_parser("workspaces", **_help_block(
         synopsis="Manage Quorus workspace profiles.",
         description=(
@@ -7138,6 +7276,7 @@ def main():
         "context": _cmd_context,
         "decision": _cmd_decision,
         "begin": _cmd_begin,
+        "turnguard": _cmd_turnguard,
         "workspaces": _cmd_workspaces,
         "login": _cmd_login,
         "whoami": _cmd_whoami,

@@ -27,6 +27,7 @@ from pathlib import Path
 import httpx
 
 from quorus.profiles import ProfileManager
+from quorus.runtime import turnguard as _turnguard
 
 DEFAULT_HISTORY_LIMIT = 25
 CODEX_NOTIFICATION_POLL_SECONDS = 5
@@ -912,7 +913,10 @@ def run_autonomous_loop(
             notification_path=notification_path,
             prompt=prompt,
         )
-        rc = subprocess.call(cmd)
+        # TurnGuard: mark busy while the codex subprocess is running so reflexd
+        # doesn't try to wake the agent mid-tool-call.
+        with _turnguard.busy(participant, tool="codex-exec"):
+            rc = subprocess.call(cmd)
         if rc != 0 and verbose:
             sys.stderr.write(f"[quorus codex-agent auto-exec] codex exited {rc}\n")
             sys.stderr.flush()
@@ -1111,7 +1115,9 @@ def run_codex_agent(
             context_path=context_path,
             notification_path=notification_path,
         )
-        return subprocess.call(cmd)
+        # TurnGuard: protect the long-lived interactive Codex session too.
+        with _turnguard.busy(participant, tool="codex"):
+            return subprocess.call(cmd)
     except KeyboardInterrupt:
         return 130
     finally:

@@ -26,6 +26,7 @@ from pathlib import Path
 import httpx
 
 from quorus.profiles import ProfileManager
+from quorus.runtime import turnguard as _turnguard
 
 DEFAULT_HISTORY_LIMIT = 25
 _DEFAULTS_KEY = "claude_autonomy"
@@ -901,7 +902,9 @@ def run_autonomous_loop(
             sys.stderr.write("[quorus claude-agent] Spawning claude -p turn\n")
             sys.stderr.flush()
 
-        rc = subprocess.call(cmd, cwd=str(cwd) if cwd else None)
+        # TurnGuard: protect this -p turn from being interrupted by a wake.
+        with _turnguard.busy(participant, tool="claude-print"):
+            rc = subprocess.call(cmd, cwd=str(cwd) if cwd else None)
         if rc != 0 and verbose:
             sys.stderr.write(f"[quorus claude-agent auto-exec] claude exited {rc}\n")
             sys.stderr.flush()
@@ -1119,7 +1122,10 @@ def run_claude_agent(
             context_path=context_path,
             model=model,
         )
-        return subprocess.call(cmd, cwd=str(cwd) if cwd else None)
+        # TurnGuard: long-lived interactive session — keep the busy-file
+        # alive so reflexd routes wakes through bid/claim, not interrupt.
+        with _turnguard.busy(participant, tool="claude"):
+            return subprocess.call(cmd, cwd=str(cwd) if cwd else None)
 
     except KeyboardInterrupt:
         return 130

@@ -25,6 +25,7 @@ from pathlib import Path
 import httpx
 
 from quorus.profiles import ProfileManager
+from quorus.runtime import turnguard as _turnguard
 
 DEFAULT_HISTORY_LIMIT = 25
 
@@ -695,7 +696,9 @@ def run_autonomous_loop(
             context_path=context_path,
             prompt=prompt,
         )
-        rc = subprocess.call(cmd, env=env, cwd=cwd)
+        # TurnGuard: keep reflexd from waking the agent during this exec turn.
+        with _turnguard.busy(participant, tool="gemini-exec"):
+            rc = subprocess.call(cmd, env=env, cwd=cwd)
         if rc != 0 and verbose:
             sys.stderr.write(f"[quorus gemini-agent auto-exec] gemini exited {rc}\n")
             sys.stderr.flush()
@@ -883,7 +886,9 @@ def run_gemini_agent(
             inbox_path=inbox_path,
             context_path=context_path,
         )
-        return subprocess.call(cmd, env=env, cwd=cwd)
+        # TurnGuard: long-lived interactive Gemini session.
+        with _turnguard.busy(participant, tool="gemini"):
+            return subprocess.call(cmd, env=env, cwd=cwd)
     except KeyboardInterrupt:
         return 130
     finally:

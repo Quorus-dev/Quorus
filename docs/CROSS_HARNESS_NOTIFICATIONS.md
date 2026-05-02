@@ -109,3 +109,150 @@ Within ~5 seconds your agent should mention the message in its next response. If
 - **Cursor `loop_limit: 3`** caps follow-up dispatches to prevent runaway loops if the message itself prompts another tool call.
 - **Codex CLI delivery is in progress** (Codex lane).
 - All hooks fail open: if the relay is unreachable, the agent runs as if no Quorus message exists. Hooks never block your work on relay flakiness.
+
+---
+
+# TurnGuard — don't interrupt an agent mid-tool-call (PR-C2)
+
+`reflexd` (Quorus's client-side wake daemon) refuses to spawn a new agent
+turn while a busy-file exists at `~/.quorus/runtime/<participant>.busy`.
+Each harness writes that file when a tool call starts and removes it when
+the tool call ends. Without this, an @-mention can land mid-`Bash`/`Edit`
+and corrupt the harness's state.
+
+The CLI command — wire any harness to it:
+
+```bash
+quorus turnguard begin --participant arav-claude --tool Bash
+# … run the tool call …
+quorus turnguard end --participant arav-claude
+quorus turnguard status --participant arav-claude   # exit 0 if busy, 1 if idle
+```
+
+`begin` is idempotent (re-running extends the TTL). The default 5-minute
+TTL means a crashed harness self-heals — `reflexd` won't refuse to wake
+the agent forever. Tool field is the **name only** (e.g. `Bash`) — never
+arguments — so PHI/PII never lands on disk.
+
+## Claude Code — TurnGuard wire-up
+
+**Quorus does not auto-mutate `~/.claude/settings.json`.** Add this hooks
+block by hand (or merge into your existing `hooks` map):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "quorus turnguard begin --tool \"$CLAUDE_TOOL_NAME\" --quiet"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "quorus turnguard end --quiet"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+If your `quorus` is in a venv, use the absolute path
+(`/path/to/.venv/bin/quorus`) so the hook works no matter what shell
+PATH Claude Code inherits.
+
+To override the resolved participant name (when running multiple Claude
+identities on one machine), set `QUORUS_PARTICIPANT=alice-claude` in the
+shell that launches `claude` — the helper picks it up.
+
+## Gemini CLI — TurnGuard wire-up
+
+Gemini CLI uses `BeforeTool` / `AfterTool`. Merge into
+`~/.gemini/settings.json`:
+
+```json
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "quorus turnguard begin --tool \"$GEMINI_TOOL_NAME\" --quiet",
+            "name": "quorus-turnguard-begin",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "quorus turnguard end --quiet",
+            "name": "quorus-turnguard-end",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## Codex CLI — automatic, no install needed
+
+Codex doesn't expose a per-tool hook surface, so Quorus's `codex-agent`
+loop wraps each `codex exec` invocation in a `turnguard.busy(...)`
+context manager. Run the agent the normal way:
+
+```bash
+quorus codex-agent --room <room> --autonomous
+```
+
+The busy-file lifecycle is handled in-process; nothing to install.
+Same applies to `quorus claude-agent` and `quorus gemini-agent` — those
+loops are already wired.
+
+## Cursor — manual rule
+
+Cursor doesn't expose a `BeforeToolCall` hook. Add this to your
+`.cursorrules` so the agent itself maintains the busy-file:
+
+```
+Before running any shell or edit tool, run:
+  quorus turnguard begin --tool <tool-name> --quiet
+After every tool call completes, run:
+  quorus turnguard end --quiet
+```
+
+This is best-effort — if Cursor forgets, the 5-minute TTL still bounds
+the worst case (`reflexd` falls back to "no busy file = not busy").
+
+## Verifying TurnGuard
+
+```bash
+quorus turnguard begin --participant arav-claude --tool Bash --ttl 60
+ls ~/.quorus/runtime/arav-claude.busy           # exists, 0600
+quorus turnguard status --participant arav-claude && echo BUSY
+quorus turnguard end --participant arav-claude
+quorus turnguard status --participant arav-claude || echo IDLE
+```
+
+While the busy-file is present, `reflexd` queues incoming @-mentions in
+memory rather than spawning a parallel agent turn. They drain on the
+next wake cycle once you run `turnguard end` (or the TTL expires).

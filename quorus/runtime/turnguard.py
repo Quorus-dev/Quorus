@@ -1,0 +1,197 @@
+"""TurnGuard — busy-file shared between harnesses and reflexd (PR-C2).
+
+When an agent harness is mid-tool-call (Bash, Edit, Read, etc.) it writes
+``~/.quorus/runtime/<participant>.busy``. ``reflexd`` checks the same file
+before waking the agent on an @-mention so we never interrupt a tool call.
+
+The file is JSON ``{"started_at", "tool", "expires_at", "pid"}`` with a TTL
+(default 5min) so a crashed harness can't lock the agent out forever — the
+``is_busy`` reader auto-deletes any stale file past its ``expires_at``.
+
+Single source of truth for the busy-file format. ``scripts/reflexd.py``
+imports ``is_busy`` from here so the reader and writers can never drift.
+"""
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+BUSY_FILE_SUFFIX = ".busy"
+DEFAULT_TTL_SECONDS = 300  # 5 minutes — long enough for slow tool calls.
+_RUNTIME_DIR_NAME = "runtime"
+_QUORUS_DIR_NAME = ".quorus"
+
+
+def runtime_dir() -> Path:
+    """Return ``~/.quorus/runtime/`` (auto-created with 0700 perms).
+
+    PII guard: 0700 keeps tool names & PIDs out of other users' eyes on
+    multi-user hosts. Re-evaluates ``Path.home()`` so test monkeypatches
+    of ``$HOME`` are honoured.
+    """
+    path = Path.home() / _QUORUS_DIR_NAME / _RUNTIME_DIR_NAME
+    path.mkdir(parents=True, exist_ok=True)
+    # mkdir's ``mode`` arg is masked by umask; chmod is the safe fix.
+    try:
+        path.chmod(0o700)
+    except OSError:
+        # Best-effort on filesystems without POSIX perms (e.g. some CI).
+        pass
+    return path
+
+
+def busy_path(participant: str, dir_override: Path | None = None) -> Path:
+    """Return the busy-file path for ``participant`` (no I/O)."""
+    base = dir_override if dir_override is not None else runtime_dir()
+    safe = participant.strip()
+    if not safe:
+        raise ValueError("participant must be non-empty")
+    return base / f"{safe}{BUSY_FILE_SUFFIX}"
+
+
+def _now_ts() -> float:
+    return time.time()
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+def begin(
+    participant: str,
+    *,
+    tool: str | None = None,
+    ttl: int = DEFAULT_TTL_SECONDS,
+    dir_override: Path | None = None,
+) -> Path:
+    """Write the busy-file for ``participant``. Idempotent — extends TTL.
+
+    Body is JSON ``{started_at, tool, expires_at, pid}``. ``tool`` is the
+    NAME only — never arguments — to keep PII out. Returns the file path.
+    """
+    if ttl <= 0:
+        raise ValueError("ttl must be positive")
+    path = busy_path(participant, dir_override=dir_override)
+    now = _now_ts()
+    started_at: str
+    if path.exists():
+        # Re-running begin extends TTL but preserves the original started_at
+        # so callers can see how long the agent has been continuously busy.
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            started_at = existing.get("started_at") or _iso(now)
+        except (OSError, json.JSONDecodeError, ValueError):
+            started_at = _iso(now)
+    else:
+        started_at = _iso(now)
+    payload = {
+        "started_at": started_at,
+        "tool": tool or "",
+        "expires_at": _iso(now + ttl),
+        "pid": os.getpid(),
+    }
+    # 0o600: never readable by other users on the host.
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, sort_keys=True)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def end(participant: str, *, dir_override: Path | None = None) -> None:
+    """Delete the busy-file for ``participant``. No-op if absent."""
+    path = busy_path(participant, dir_override=dir_override)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError:
+        # Permission / filesystem issue — surface, don't swallow silently in
+        # production but don't crash the caller's tool call either.
+        return
+
+
+def is_busy(participant: str, dir_override: Path | None = None) -> bool:
+    """Return True iff a non-expired busy-file exists.
+
+    TTL semantics:
+
+    - File with parseable ``expires_at`` past now → auto-deleted, returns False.
+      (A crashed harness can't permanently block reflexd.)
+    - File with parseable ``expires_at`` in the future → True.
+    - File without parseable JSON / no ``expires_at`` (legacy / raw text) →
+      treated as busy (True). The presence of the file is the signal; we
+      don't second-guess a writer that didn't speak our wire format.
+    - No file → False.
+    """
+    path = busy_path(participant, dir_override=dir_override)
+    if not path.exists():
+        return False
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        # Can't read but it's there — treat as busy (fail safe: don't wake).
+        return True
+    try:
+        data = json.loads(raw) if raw.strip() else {}
+    except (json.JSONDecodeError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        return True
+    expires_iso = data.get("expires_at")
+    if not expires_iso:
+        # JSON but no TTL — accept the file's presence as the signal.
+        return True
+    try:
+        expires_at = datetime.fromisoformat(expires_iso)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return True
+    if expires_at.timestamp() <= _now_ts():
+        end(participant, dir_override=dir_override)
+        return False
+    return True
+
+
+@contextlib.contextmanager
+def busy(
+    participant: str,
+    *,
+    tool: str | None = None,
+    ttl: int = DEFAULT_TTL_SECONDS,
+    dir_override: Path | None = None,
+):
+    """Context manager: ``with busy(p, tool="Bash"): ...``.
+
+    Used by agent-loop harnesses we control (codex/claude/gemini agents)
+    to mark the runtime busy for the duration of a subprocess call.
+    Always clears the busy-file in ``finally``, even on KeyboardInterrupt
+    or subprocess crash, so a tool-call panic doesn't strand the marker.
+    Failures to write the busy-file degrade silently — the agent loop
+    must keep working even if the runtime dir is unwritable.
+    """
+    wrote = False
+    try:
+        try:
+            begin(participant, tool=tool, ttl=ttl, dir_override=dir_override)
+            wrote = True
+        except (OSError, ValueError):
+            wrote = False
+        yield
+    finally:
+        if wrote:
+            try:
+                end(participant, dir_override=dir_override)
+            except Exception:  # pragma: no cover — defensive
+                pass

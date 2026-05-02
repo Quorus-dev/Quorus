@@ -34,6 +34,8 @@ if str(_REPO_ROOT) not in sys.path:
 
 from quorus.config import ConfigManager  # noqa: E402
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
+from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
+from quorus.runtime.turnguard import is_busy as _tg_is_busy  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -89,11 +91,23 @@ def compute_bid(*, is_mention: bool, recency_seconds: float) -> float:
 
 
 def busy_path(participant: str, runtime_dir: Path | None = None) -> Path:
-    return (runtime_dir or DEFAULT_RUNTIME_DIR) / f"{participant}.busy"
+    """Return the busy-file path for ``participant``.
+
+    Delegates to :mod:`quorus.runtime.turnguard` so the file format stays in
+    one place. The optional ``runtime_dir`` arg keeps the legacy positional
+    signature working for in-tree tests that pass a tmp dir directly.
+    """
+    base = runtime_dir or DEFAULT_RUNTIME_DIR
+    return _tg_busy_path(participant, dir_override=base)
 
 
 def is_busy(participant: str, runtime_dir: Path | None = None) -> bool:
-    return busy_path(participant, runtime_dir).exists()
+    """Return True iff TurnGuard says the agent is mid-tool-call.
+
+    Same single-source-of-truth wrapper around the helper as ``busy_path``.
+    """
+    base = runtime_dir or DEFAULT_RUNTIME_DIR
+    return _tg_is_busy(participant, dir_override=base)
 
 
 def safe_message_preview(content: str) -> str:

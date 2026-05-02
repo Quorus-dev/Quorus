@@ -92,9 +92,13 @@ def test_busyfile_skips_wake(tmp_path: Path) -> None:
     runtime = tmp_path / "runtime"
     runtime.mkdir()
     assert reflexd.is_busy(SELF, runtime) is False
-    busy = reflexd.busy_path(SELF, runtime)
-    busy.write_text("pid=123")
+    # Drive setup through the shared TurnGuard helper so reflexd reads what
+    # the harness writers actually produce in production.
+    from quorus.runtime import turnguard as _tg
+    _tg.begin(SELF, tool="Bash", ttl=60, dir_override=runtime)
     assert reflexd.is_busy(SELF, runtime) is True
+    _tg.end(SELF, dir_override=runtime)
+    assert reflexd.is_busy(SELF, runtime) is False
 
 
 def test_bid_calculation_decays_with_recency() -> None:
@@ -430,8 +434,10 @@ def test_busyfile_blocks_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
         spawn_enabled=False,
     )
     cfg.runtime_dir.mkdir()
-    # Drop a busy-file so TurnGuard fires.
-    (cfg.runtime_dir / f"{SELF}.busy").write_text("pid=1")
+    # Drop a busy-file so TurnGuard fires. Use the helper so the e2e test
+    # exercises the same code path the harnesses ship.
+    from quorus.runtime import turnguard as _tg
+    _tg.begin(SELF, tool="Bash", ttl=60, dir_override=cfg.runtime_dir)
 
     daemon = reflexd.Reflexd(cfg)
 
