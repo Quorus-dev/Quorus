@@ -16,18 +16,22 @@ from rich.text import Text
 from rich.theme import Theme
 
 # ── Palette ──────────────────────────────────────────────────────────────────
-# Truecolor hex values — truncated to rich named colors where needed.
-PRIMARY = "#14b8a6"
-PRIMARY_DEEP = "#0d9488"
+# Three-color palette: one brand teal, one warm accent (room highlights),
+# and one cool accent (agent identity). Everything else is neutral.
+# Goal: confident, intentional, never garish. References: Linear, Vercel.
+PRIMARY = "#14b8a6"            # brand teal — primary affordance
+PRIMARY_DEEP = "#0f766e"       # legible on light terminals
 PRIMARY_LIGHT = "#2dd4bf"
-PRIMARY_MINT = "#5eead4"
-MUTED = "#64748b"
-DIM = "#475569"
+PRIMARY_MINT = "#5eead4"       # accent / hover state
+SUBTLE = "#94a3b8"             # bright neutral — body text on dark
+MUTED = "#64748b"              # mid neutral — meta / hints
+DIM = "#334155"                # rule lines, deep separators
+BRIGHT = "#e2e8f0"             # primary surface text (white-ish)
 SUCCESS = "#10b981"
 WARNING = "#f59e0b"
 ERROR = "#ef4444"
-AGENT = "#a78bfa"
-ROOM = "#fbbf24"
+AGENT = "#818cf8"              # cool indigo — distinct from brand teal
+ROOM = "#fbbf24"               # warm amber — distinct from brand teal
 
 THEME = Theme(
     {
@@ -35,6 +39,8 @@ THEME = Theme(
         "accent": PRIMARY_MINT,
         "muted": MUTED,
         "dim": DIM,
+        "subtle": SUBTLE,
+        "bright": BRIGHT,
         "success": SUCCESS,
         "warning": WARNING,
         "error": ERROR,
@@ -42,6 +48,12 @@ THEME = Theme(
         "room": ROOM,
         "prompt": f"bold {PRIMARY}",
         "heading": f"bold {PRIMARY}",
+        # New semantic tokens — used by render helpers to keep call sites
+        # free of literal styles. Alias-only, never override the above.
+        "pill": f"bold {PRIMARY}",
+        "pill_idle": MUTED,
+        "kbd": f"bold {AGENT}",
+        "ts": MUTED,
     }
 )
 
@@ -75,11 +87,19 @@ _BANNER_LINES = [
 
 _TINY_BANNER = "quorus"
 
-_GRADIENT = [PRIMARY_DEEP, PRIMARY, PRIMARY_LIGHT, PRIMARY_MINT]
+# Confident two-stop gradient. The previous 4-color ramp read as
+# "video game"; this reads as "product". Deep teal at the leading
+# edge, brand teal at the trailing edge — no light-mint highlight
+# (it muddied the silhouette on warm-color terminals).
+_GRADIENT = [PRIMARY_DEEP, PRIMARY]
 
 
 def _gradient_text(line: str) -> Text:
-    """Apply horizontal gradient across each non-space char."""
+    """Apply a soft horizontal gradient across each non-space char.
+
+    Two-stop linear interpolation — printable-char index drives the
+    color pick. Spaces never get styled so the silhouette stays sharp.
+    """
     text = Text()
     n = len(_GRADIENT)
     printable_chars = [c for c in line if c != " "]

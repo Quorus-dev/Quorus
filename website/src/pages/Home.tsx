@@ -2,6 +2,7 @@ import Nav from "../components/Nav";
 import Hero from "../components/Hero";
 import StatsBand from "../components/StatsBand";
 import SocialProof from "../components/SocialProof";
+import CrossVendorCompare from "../components/CrossVendorCompare";
 import Features from "../components/Features";
 import AgentShowcase from "../components/AgentShowcase";
 import Integrations from "../components/Integrations";
@@ -28,6 +29,7 @@ export default function Home() {
       <Hero />
       <StatsBand />
       <SocialProof />
+      <CrossVendorCompare />
       <Features />
       <AgentShowcase />
       <Integrations />

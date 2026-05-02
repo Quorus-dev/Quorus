@@ -4,12 +4,15 @@ Rendered ONLY when no room is selected (``HubState.selected_room_idx == -1``).
 The instant the user picks a room (Tab, Enter, /join, number), the chat
 renderer in ``hub.py`` takes over and this module is silent.
 
-Layout (top → bottom):
-  1. Quorus banner (gradient — reused from quorus_cli.ui)
-  2. Action menu — single-key shortcuts wired to existing slash handlers
-  3. Past / current chats panel — sorted by recent activity
-  4. Footer hint — single line
+Layout (top → bottom, one blank line between sections):
 
+  1. Banner — softer two-stop gradient (see ``ui._gradient_text``)
+  2. Identity rule — ``@you  ·  workspace  ·  welcome home``
+  3. Action menu — columned, right-aligned shortcut hints
+  4. Chats — segmented "active" / "idle" lists with relative timestamps
+  5. Footer — single dim line, comma-separated keybinds
+
+Vertical rhythm: exactly ONE blank line between sections, ZERO inside.
 No I/O, no httpx, no threading. Pure Rich rendering against a snapshot
 of HubState — so it is trivially testable and never blocks the loop.
 """
@@ -20,8 +23,15 @@ from typing import Iterable
 
 from quorus_cli.ui import _BANNER_LINES, _gradient_text  # type: ignore[attr-defined]
 from rich.console import Console
-from rich.rule import Rule
 from rich.text import Text
+
+from .render import (
+    INDENT,
+    SEP,
+    relative_time,
+    section_head,
+    two_col,
+)
 
 # Single-key actions surfaced in the welcome view. Order matters — this is
 # the table the user reads top-to-bottom. Each tuple: (key, label, hint).
@@ -31,14 +41,14 @@ _ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("r", "Rooms",            "full numbered list with member counts"),
     ("s", "Share <room>",     "mint an invite token for a room"),
     ("d", "Delete <room>",    "destroy a room (confirmation required)"),
-    ("/", "Slash palette",    "type a / to see every command"),
+    ("/", "Slash palette",    "type / to see every command"),
     ("?", "Help",             "full keybinds + slash commands"),
     ("q", "Quit",             "leave the hub"),
 )
 
+# Footer: dim, comma-separated, single line. Pinned by render order.
 _FOOTER_HINT = (
-    "Tab — switch room  ·  Enter — open  ·  Esc — back to home  "
-    "·  / — slash command"
+    "Tab — switch room, Enter — open, Esc — back home, / — slash command"
 )
 
 
@@ -118,49 +128,61 @@ def render_welcome(
     """
     width = max(40, console.size.width)
 
-    # ── Banner ───────────────────────────────────────────────────────────────
+    # ── 1. Banner ────────────────────────────────────────────────────────────
+    console.print()
     if width >= 60:
-        console.print()
         for line in _BANNER_LINES:
             console.print(_gradient_text(line))
-        console.print()
     else:
-        console.print()
-        console.print(Text("  quorus", style="bold primary"))
-        console.print()
+        console.print(Text(f"{INDENT}quorus", style="bold primary"))
 
-    # Subtle context line: who you are, where you're connected.
-    sub = Text("  ")
+    # Tagline directly under the banner — single line, no decoration.
+    console.print()
+    console.print(Text(
+        f"{INDENT}coordination layer for AI agent swarms",
+        style="muted italic",
+    ))
+
+    # ── 2. Identity rule ─────────────────────────────────────────────────────
+    console.print()
+    sub = Text(INDENT)
     sub.append(f"@{agent_name}", style="bold agent")
     if workspace_label:
-        sub.append("  ·  ", style="dim")
+        sub.append(SEP, style="dim")
         sub.append(workspace_label, style="accent")
-    sub.append("  ·  ", style="dim")
-    sub.append("welcome home", style="muted italic")
+    sub.append(SEP, style="dim")
+    sub.append("welcome home", style="muted")
     console.print(sub)
-    console.print()
 
-    # ── Action menu ──────────────────────────────────────────────────────────
-    console.print(Text.from_markup("  [bold primary]Actions[/]"))
+    # ── 3. Action menu ───────────────────────────────────────────────────────
+    console.print()
+    console.print(section_head("Actions"))
     for key, label, hint in _ACTIONS:
-        line = Text("  ")
-        line.append(f"[{key}]", style="bold accent")
-        line.append("  ")
-        line.append(f"{label:<18}", style="bright_white")
-        line.append(hint, style="dim")
-        console.print(line)
+        # Left half: shortcut + label (constant width so columns align).
+        left = Text(INDENT)
+        left.append(f"[{key}]", style="kbd")
+        left.append("  ")
+        left.append(label, style="bright")
+        # Right half: dim description, right-aligned within the menu band.
+        right = Text(hint, style="muted")
+        # Cap menu band at 80 cols so right-edge doesn't drift off-screen
+        # on ultra-wide terminals (still flush-right inside the band).
+        band = min(width, 78)
+        console.print(two_col(left, right, total_width=band))
+
+    # ── 4. Chats panel ───────────────────────────────────────────────────────
     console.print()
 
-    # ── Past / current chats ─────────────────────────────────────────────────
-    console.print(Rule(style="dim"))
-    console.print()
     if not rooms:
-        console.print(Text.from_markup(
-            "  [bold primary]Your chats[/]  "
-            "[dim]· no rooms yet — press [bold]n[/] to create one[/]"
-        ))
+        # Warm empty state — invitation, not statement of fact.
+        msg = Text(INDENT)
+        msg.append("No rooms yet. ", style="bright")
+        msg.append("Press ", style="muted")
+        msg.append("[n]", style="kbd")
+        msg.append(" to create your first.", style="muted")
+        console.print(msg)
         console.print()
-        console.print(_FOOTER_HINT_LINE())
+        console.print(_footer_hint_line())
         return
 
     sorted_rooms = sort_rooms_by_activity(rooms, unread_by_room)
@@ -169,38 +191,39 @@ def render_welcome(
     idle_rooms  = [r for r in sorted_rooms
                    if unread_by_room.get(_room_key(r), 0) == 0]
 
-    header = Text("  ")
-    header.append("Your chats", style="bold primary")
-    header.append("  ·  ", style="dim")
-    header.append(f"{len(rooms)} total", style="muted")
-    if fresh_rooms:
-        header.append("  ·  ", style="dim")
-        header.append(f"{len(fresh_rooms)} with new activity", style="bold room")
-    console.print(header)
+    # Section head: count + optional unread accent.
+    accent = (
+        f"{len(fresh_rooms)} with new activity"
+        if fresh_rooms else f"{len(rooms)} total"
+    )
+    console.print(section_head("Your chats", accent=accent))
     console.print()
 
     preview_width = max(20, width // 3)
+    band = min(width, 78)
 
     if fresh_rooms:
-        console.print(Text.from_markup("  [dim]── new activity ──[/]"))
         for row in _chat_rows(
             fresh_rooms, unread_by_room,
-            selected_room_name, messages, preview_width,
+            selected_room_name, messages, preview_width, band, fresh=True,
         ):
             console.print(row)
-        console.print()
+        if idle_rooms:
+            console.print()
 
     if idle_rooms:
         if fresh_rooms:
-            console.print(Text.from_markup("  [dim]── idle ──[/]"))
+            # Subtle divider hint between the two buckets.
+            console.print(Text(f"{INDENT}— idle —", style="dim"))
         for row in _chat_rows(
             idle_rooms, unread_by_room,
-            selected_room_name, messages, preview_width,
+            selected_room_name, messages, preview_width, band, fresh=False,
         ):
             console.print(row)
-        console.print()
 
-    console.print(_FOOTER_HINT_LINE())
+    # ── 5. Footer ────────────────────────────────────────────────────────────
+    console.print()
+    console.print(_footer_hint_line())
 
 
 def _room_key(room: dict) -> str:
@@ -219,16 +242,24 @@ def _chat_rows(
     selected_room_name: str,
     messages: list[dict],
     preview_width: int,
+    band_width: int,
+    *,
+    fresh: bool,
 ) -> list[Text]:
-    """Build one Text row per room. Each row:
+    """Build one Text row per room.
 
-      ``  #name  ·  N members  ·  preview…  ·  unread•N``
+    Layout per row (band_width chars wide, two-column composition):
+
+      ``  #name   N members [· preview…]              [unread •N | timestamp]``
+
+    Fresh rooms get a bold left-bar accent on the room name; idle rooms
+    fade to muted. Member counts are always subdued. Timestamps render
+    as ``"2h ago"`` when ``created_at`` is present; otherwise the right
+    column is blank (we never invent signal we don't have).
     """
     rows: list[Text] = []
     for room in rooms:
         name = room.get("name") or room.get("id", "?")
-        # Relay returns either a member list (`members`) or a precomputed count
-        # (`member_count`). Honour whichever is present.
         members = room.get("members") or []
         if isinstance(members, list) and members:
             member_count = len(members)
@@ -238,25 +269,37 @@ def _chat_rows(
         preview = _last_preview_for_room(
             name, selected_room_name, messages, preview_width,
         )
+        rel_ts = relative_time(room.get("created_at", ""))
 
-        line = Text("  ")
-        # Room name in amber, bold if it has unread.
-        line.append(f"#{name}", style="bold room" if unread else "room")
-        line.append("  ·  ", style="dim")
-        line.append(
+        # Left half: room name + member count + (optional) preview.
+        left = Text(INDENT)
+        if fresh:
+            # Fresh rooms get a bold amber name — they should pop.
+            left.append(f"#{name}", style="bold room")
+        else:
+            # Idle rooms fade to subtle so the eye finds the fresh ones.
+            left.append(f"#{name}", style="subtle")
+        left.append("   ")
+        left.append(
             f"{member_count} {'member' if member_count == 1 else 'members'}",
             style="muted",
         )
         if preview:
-            line.append("  ·  ", style="dim")
-            line.append(preview, style="dim")
+            left.append(SEP, style="dim")
+            left.append(preview, style="dim")
+
+        # Right half: unread badge OR timestamp. Never both — unread is
+        # the higher-signal field, so it wins when present.
+        right = Text()
         if unread:
-            line.append("  ·  ", style="dim")
-            line.append(f"unread •{unread}", style="bold room")
-        rows.append(line)
+            right.append(f"unread •{unread}", style="bold room")
+        elif rel_ts:
+            right.append(rel_ts, style="muted")
+
+        rows.append(two_col(left, right, total_width=band_width))
     return rows
 
 
-def _FOOTER_HINT_LINE() -> Text:
-    """Build the welcome footer hint — same on every render."""
-    return Text(f"  {_FOOTER_HINT}", style="dim")
+def _footer_hint_line() -> Text:
+    """Footer hint — dim, single line, comma-separated. Same every render."""
+    return Text(f"{INDENT}{_FOOTER_HINT}", style="dim")

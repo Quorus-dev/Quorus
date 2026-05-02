@@ -48,6 +48,12 @@ export default function Nav() {
             </button>
           ))}
           <a
+            href="/pricing"
+            className="text-xs text-white/50 hover:text-white/90 transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
+          >
+            Pricing
+          </a>
+          <a
             href="/docs/quickstart"
             className="text-xs text-white/50 hover:text-white/90 transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 rounded"
           >

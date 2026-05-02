@@ -20,6 +20,7 @@ logger = logging.getLogger("mcp_tunnel.sse")
 _FAILURE_THRESHOLD = 10
 _PROBE_INTERVAL = 60
 _MAX_BACKOFF = 30
+_BASE_BACKOFF = 2
 
 
 class SSEListener:
@@ -43,6 +44,10 @@ class SSEListener:
         self._tripped = False
         self._last_error: str | None = None
         self._breaker_lock = asyncio.Lock()
+        # Exponential backoff state — survives across `_attempt_connect` calls
+        # so consecutive failures actually back off instead of hammering the
+        # relay every 2s. Reset to _BASE_BACKOFF on any successful connect.
+        self._backoff = _BASE_BACKOFF
 
     def breaker_state(self) -> dict[str, Any]:
         """Return circuit breaker state (non-blocking snapshot)."""
@@ -77,8 +82,14 @@ class SSEListener:
     async def _attempt_connect(
         self, stop_event: asyncio.Event, probe: bool
     ) -> bool:
-        """Try one SSE connection. Return True if a probe connects successfully."""
-        backoff = 2
+        """Try one SSE connection. Return True if a probe connects successfully.
+
+        On any failure, sleeps for `self._backoff` seconds then doubles it
+        (capped at `_MAX_BACKOFF`). On any success, resets to `_BASE_BACKOFF`.
+        Without this, a flapping relay would be hammered every 2s by every
+        connected agent.
+        """
+        backoff = self._backoff
         try:
             client = self._get_http_client()
             url = f"{self._relay_url}/stream/{self._instance_name}"
@@ -95,6 +106,9 @@ class SSEListener:
                 async with self._breaker_lock:
                     self._failures = 0
                     self._last_error = None
+                # Successful connect — reset backoff so a healthy stream
+                # doesn't carry penalty from a prior outage.
+                self._backoff = _BASE_BACKOFF
 
                 logger.info("SSE stream connected for %s", self._instance_name)
 
@@ -129,6 +143,8 @@ class SSEListener:
 
         if not stop_event.is_set():
             await self._sleep_or_stop(stop_event, backoff)
+        # Double for next attempt, capped — survives across calls via self.
+        self._backoff = min(self._backoff * 2, _MAX_BACKOFF)
         return False
 
     async def _record_failure(self, error: str) -> None:

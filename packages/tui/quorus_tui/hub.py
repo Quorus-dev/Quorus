@@ -665,12 +665,55 @@ def _safe_detail(r: "httpx.Response") -> str:
 
 
 def _mint_join_token(relay_url: str, secret: str, room: str) -> str:
-    """Build a portable quorus_join_ token for *room* — local base64 envelope.
+    """Mint a portable join code for *room* via the server-side mint endpoint.
 
-    Mirrors the inline token mint used by the existing `invite <name>`
-    flow at the bottom of the input loop. No network call; the token is
-    a self-contained envelope of relay URL + secret + room.
+    SECURITY: the prior implementation built a local base64 envelope that
+    included the relay secret in plaintext — anyone seeing the resulting
+    `quorus_join_…` token gained admin-equivalent auth on the relay. This
+    is a hard ship-block (security audit Finding 26, CRITICAL).
+
+    The replacement calls `POST /v1/join/mint` so the relay issues a
+    short, single-use code bound to a *scoped invite token* (room-only,
+    time-limited). The relay secret never leaves the caller's machine.
+
+    Falls back to the legacy local envelope ONLY when the server returns
+    404 (very old relay without /v1/join/mint) — and in that fallback
+    the secret is still embedded; we log a warning so operators can
+    upgrade. New deployments must always hit the server path.
     """
+    try:
+        r = httpx.post(
+            f"{relay_url.rstrip('/')}/v1/join/mint",
+            headers=_auth_headers(secret),
+            json={"room": room, "ttl_days": 7},
+            timeout=5,
+            follow_redirects=True,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            code = data.get("code") or data.get("display_code")
+            if code:
+                return code  # short server-issued code, no secret leak
+        if r.status_code == 404:
+            # Server too old to support /v1/join/mint — fall through to
+            # the legacy envelope and warn at the call site via stderr.
+            sys.stderr.write(
+                "[quorus] WARN: relay does not support /v1/join/mint — "
+                "falling back to legacy base64 envelope. Upgrade the "
+                "relay to avoid embedding the relay secret in invites.\n"
+            )
+        else:
+            sys.stderr.write(
+                f"[quorus] WARN: /v1/join/mint returned {r.status_code} — "
+                "falling back to legacy base64 envelope.\n"
+            )
+    except Exception as exc:
+        sys.stderr.write(
+            f"[quorus] WARN: /v1/join/mint failed ({exc!r}) — "
+            "falling back to legacy base64 envelope.\n"
+        )
+
+    # Legacy fallback (kept ONLY for compatibility with very old relays).
     import base64 as _b64
 
     payload = json.dumps(
@@ -1017,12 +1060,14 @@ def _print_inline_message(
 
     line = Text()
     if hhmm:
-        line.append(f"  [{hhmm}] ", style="muted")
+        line.append(f"  [{hhmm}] ", style="ts")
     else:
         line.append("  ", style="muted")
     line.append(f"@{sender}", style=f"bold {sender_style}")
     line.append(": ", style="dim")
-    line.append(content, style="white")
+    # Themed 'bright' instead of literal 'white' — keeps the line
+    # legible on light terminals and matches the rest of the surface.
+    line.append(content, style="bright")
     console.print(line)
 
 
@@ -1131,52 +1176,61 @@ def _render_header(
     unread_total: int = 0,
     latency_ms: int | None = None,
     workspace_label: str = "",
+    console_width: int | None = None,
 ) -> Text:
     """Premium one-line header.
 
-    Format: `  @arav · 3 rooms · 12 unread     host  ⏵ 42ms`
+    Layout — left-aligned identity, right-aligned status:
+
+      ``  @arav · workspace · 3 rooms · 12 unread        relay  ⏵ 42ms``
 
     The literal "quorus" word is dropped — the brand lives in the
-    banner + first-run wizard. Header space now carries live signal:
-    identity, room count, unread badge, host, connection + latency.
+    banner. Header now carries live signal only: identity, room count,
+    unread badge, host, connection pulse, latency. We omit the
+    textual status when latency is known (silence reads cleaner than
+    a stale "Connecting…").
     """
     from rich.text import Text as _Text
+
+    from .render import SEP, two_col
 
     display_relay = (
         relay_url.replace("http://", "").replace("https://", "")
     )
     dot_style = "bold success" if connected else "bold error"
 
-    header = _Text()
-    header.append("  ")
-    header.append(f"@{agent_name}", style="bold agent")
-
+    # Left half — identity + counts.
+    left = _Text("  ")
+    left.append(f"@{agent_name}", style="bold agent")
     if workspace_label:
-        header.append("  ·  ", style="dim")
-        header.append(workspace_label, style="accent")
-
+        left.append(SEP, style="dim")
+        left.append(workspace_label, style="accent")
     if room_count:
-        header.append("  ·  ", style="dim")
-        header.append(
+        left.append(SEP, style="dim")
+        left.append(
             f"{room_count} {'room' if room_count == 1 else 'rooms'}",
             style="muted",
         )
     if unread_total:
-        header.append("  ·  ", style="dim")
-        header.append(
-            f"{unread_total} unread", style="bold room",
-        )
+        left.append(SEP, style="dim")
+        left.append(f"{unread_total} unread", style="bold room")
 
-    # Right side: host + connection pulse + latency (when known).
-    header.append("     ", style="muted")
-    header.append(display_relay, style="muted")
-    header.append("  ", style="muted")
-    header.append("⏵", style=dot_style)
+    # Right half — relay host + connection pulse + latency.
+    right = _Text()
+    if display_relay:
+        right.append(display_relay, style="muted")
+        right.append("  ")
+    right.append("⏵", style=dot_style)
     if latency_ms is not None:
-        header.append(f" {latency_ms}ms", style="muted")
-    elif status:
-        header.append(f" {status}", style="muted")
-    return header
+        right.append(f" {latency_ms}ms", style="muted")
+    elif status and not connected:
+        # Only surface a textual status when something's wrong.
+        right.append(f" {status}", style="muted")
+
+    # Right-align by padding to terminal width. Fall back to a safe
+    # synthetic width when the caller didn't supply one (mostly tests).
+    band = console_width or max(80, left.cell_len + right.cell_len + 4)
+    return two_col(left, right, total_width=band)
 
 
 def _render_room_strip(
@@ -1185,17 +1239,20 @@ def _render_room_strip(
     *,
     unread_by_room: dict[str, int] | None = None,
 ) -> Text:
-    """Inline room strip with unread dots.
+    """Inline room strip with active-pill + unread dots.
 
-    `#dev•3   #design   #ops•1` — active room bold amber, others dim,
-    unread count rendered inline as `•N` without a border.
+    ``  #dev•3   #design   #ops•1`` — the active room is bold amber,
+    idle rooms fade to subtle (still readable, doesn't compete).
+    Unread badge renders inline as ``•N`` so the eye finds new
+    activity without a border or panel.
     """
     unread_by_room = unread_by_room or {}
 
     if not rooms:
+        # Warm empty state — invitation, not statement of fact.
         return Text.from_markup(
-            "  [dim]· no rooms yet · type[/] [bold]/create <name>[/] "
-            "[dim]to make one ·[/]"
+            "  [muted]No rooms yet. Press[/] [kbd][n][/] "
+            "[muted]or run[/] [accent]/new <name>[/][muted].[/]"
         )
 
     strip = Text("  ")
@@ -1204,13 +1261,17 @@ def _render_room_strip(
         is_selected = i == selected_idx
         unread = unread_by_room.get(name, 0)
         if is_selected:
+            # Active room: bold amber — the canonical "you are here" signal.
             strip.append(f"#{name}", style="bold room")
         else:
-            strip.append(f"#{name}", style="dim")
+            # Idle rooms fade to subtle — readable but recessed.
+            strip.append(f"#{name}", style="subtle")
         if unread and not is_selected:
             strip.append(f"•{unread}", style="bold room")
         if i < len(rooms) - 1:
-            strip.append("   ·   ", style="dim")
+            # Tighter spacing than the previous "   ·   " separator —
+            # the centered dot competes visually with room names.
+            strip.append("   ", style="dim")
     return strip
 
 
@@ -1243,11 +1304,13 @@ def _format_header_line(
         line.append(" ")
     else:
         line.append("  ", style="")
-    line.append(f"[{hhmm}]", style="dim")
+    line.append(f"[{hhmm}]", style="ts")
     line.append("  ")
     line.append(f"@{sender}", style=f"bold {sender_color}")
     line.append("  ")
-    line.append(content, style="bright_white" if is_me else "muted")
+    # 'bright' for own messages (eye-anchor), 'subtle' for others — readable
+    # but recessed so the typing column stays the visual focus.
+    line.append(content, style="bright" if is_me else "subtle")
     return line
 
 
@@ -1265,7 +1328,7 @@ def _format_continuation_line(msg: dict, my_name: str) -> Text:
     # varying length all align cleanly.
     indent = " " * 20
     line = Text(indent)
-    line.append(content, style="bright_white" if is_me else "muted")
+    line.append(content, style="bright" if is_me else "subtle")
     return line
 
 
@@ -1328,16 +1391,16 @@ def _render_chat_feed(
     if not room_name:
         return _empty_card(
             console_width,
-            glyph="⌘",
-            title="no room yet",
-            cta="/create <name>  to make one  ·  Tab to cycle",
+            glyph="◌",
+            title="No room selected",
+            cta="Press Tab to cycle, or run  /new <name>",
         )
     if not messages:
         return _empty_card(
             console_width,
             glyph="◌",
             title=f"#{room_name} is quiet",
-            cta="type a message to get started",
+            cta="Say hello to get the conversation started.",
         )
 
     lines: list[Text] = []
@@ -1984,6 +2047,7 @@ def _main_input_loop(
                         unread_total=unread_total,
                         latency_ms=latency_ms,
                         workspace_label=workspace_label,
+                        console_width=console_width,
                     )
                 )
                 console.print(_Rule(style="dim"))
@@ -2012,10 +2076,11 @@ def _main_input_loop(
                         )
                     )
                     # Persistent nav hint — always visible so users know how
-                    # to switch rooms without having to discover /help first.
+                    # to switch rooms without discovering /help. Dim,
+                    # comma-separated, single line: doesn't compete with chat.
                     console.print(Text.from_markup(
-                        "  [dim]Tab — switch room · Enter — open selected room"
-                        " · Esc — back to home · / — slash command[/]"
+                        "  [dim]Tab — switch room, Enter — open, "
+                        "Esc — back home, / — slash command[/]"
                     ))
                     console.print()
                     # Flat chat feed — grouped, centered empty states.
