@@ -51,10 +51,6 @@ if _profile_slug:
             or _profile_data.get("instance_name", "default")
         ),
         "enable_background_polling": True,
-        "poll_mode": (
-            (os.environ.get("POLL_MODE") or _profile_data.get("poll_mode") or "sse")
-            .strip().lower()
-        ),
         "push_notification_method": (
             os.environ.get("PUSH_NOTIFICATION_METHOD")
             or _profile_data.get("push_notification_method")
@@ -65,8 +61,6 @@ if _profile_slug:
             or _profile_data.get("push_notification_channel", "quorus")
         ),
     }
-    if _config["poll_mode"] not in {"lazy", "sse"}:
-        _config["poll_mode"] = "sse"
 else:
     _config = load_config()
 CONFIG_FILE = Path(_config["config_file"])
