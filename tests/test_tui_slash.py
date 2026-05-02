@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import io
 
-from rich.console import Console
-
 from quorus_tui import chat as _chat
 from quorus_tui import slash as _slash
+from rich.console import Console
+
 from quorus.tui_hub import HubState
 
 
@@ -43,7 +43,10 @@ def test_run_share_flow_renders_card_and_returns_dismiss_status(monkeypatch):
 def test_run_share_flow_copy_path(monkeypatch):
     console, _ = _console()
     captured: dict = {}
-    monkeypatch.setattr(_chat, "copy_to_clipboard", lambda t: captured.setdefault("copy", t) or True)
+    monkeypatch.setattr(
+        _chat, "copy_to_clipboard",
+        lambda t: captured.setdefault("copy", t) or True,
+    )
     status = _slash.run_share_flow(
         console=console,
         room_name="dev",

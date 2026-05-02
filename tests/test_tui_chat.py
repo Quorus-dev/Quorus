@@ -5,9 +5,8 @@ from __future__ import annotations
 import io
 from datetime import datetime, timedelta, timezone
 
-from rich.console import Console
-
 from quorus_tui import chat
+from rich.console import Console
 
 
 def _render_to_str(lines, *, width: int = 80) -> str:
