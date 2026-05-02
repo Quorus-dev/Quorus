@@ -1957,7 +1957,40 @@ def _read_input(
                 sys.stdout.flush()
                 _dlog("returning _KEY_TIMEOUT")
                 return _KEY_TIMEOUT
-            key = readchar.readkey()
+            # Read directly from stdin instead of readchar.readkey() — readchar
+            # saves+restores termios on EVERY call, which fights with the
+            # outer raw-mode setup we did once and produces "key lag" where
+            # nothing appears for ~50ms per char. Since stdin is already in
+            # ICANON-off + ECHO-off mode, a single read(1) is correct and
+            # fast. Multi-byte escape sequences (arrows, F-keys) start with
+            # ESC (0x1b); we peek with select(timeout=0.05) to gather the
+            # rest of the sequence without blocking on a lone ESC press.
+            try:
+                _b = sys.stdin.read(1)
+            except (OSError, ValueError):
+                _b = ""
+            if not _b:
+                continue
+            if _b == "\x1b":
+                # Possible escape sequence — peek for trailing bytes.
+                _follow = ""
+                _sel_more, _, _ = _sel.select([sys.stdin], [], [], 0.05)
+                while _sel_more:
+                    _follow += sys.stdin.read(1)
+                    _sel_more, _, _ = _sel.select([sys.stdin], [], [], 0.005)
+                key = "\x1b" + _follow
+            elif _b in ("\x7f", "\x08"):
+                key = readchar.key.BACKSPACE
+            elif _b in ("\r", "\n"):
+                key = readchar.key.ENTER
+            elif _b == "\t":
+                key = readchar.key.TAB
+            elif _b == "\x03":
+                key = readchar.key.CTRL_C
+            elif _b == "\x04":
+                key = readchar.key.CTRL_D
+            else:
+                key = _b
             if key in (readchar.key.ENTER, "\r", "\n"):
                 _PENDING_INPUT_BUF.clear()  # commit — the line is submitted
                 sys.stdout.write("\n")
