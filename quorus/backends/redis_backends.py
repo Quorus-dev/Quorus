@@ -228,7 +228,9 @@ class RedisMessageBackend:
     async def _ensure_group(self, key: str) -> None:
         """Create consumer group if it doesn't exist."""
         try:
-            await self._r.xgroup_create(key, _CONSUMER_GROUP, id="0", mkstream=True)
+            await _with_timeout(
+                self._r.xgroup_create(key, _CONSUMER_GROUP, id="0", mkstream=True)
+            )
         except ResponseError as e:
             if "BUSYGROUP" not in str(e):
                 _redis_logger.error("Unexpected error creating consumer group: %s", e)
@@ -316,8 +318,8 @@ class RedisMessageBackend:
                 ids.append(entry_id)
                 messages.append(json.loads(fields["data"]))
         if ids:
-            await self._r.xack(key, _CONSUMER_GROUP, *ids)
-            await self._r.xdel(key, *ids)
+            await _with_timeout(self._r.xack(key, _CONSUMER_GROUP, *ids))
+            await _with_timeout(self._r.xdel(key, *ids))
         return messages
 
     async def fetch(
@@ -737,7 +739,7 @@ class RedisRoomHistoryBackend:
     ) -> None:
         """Update room name in all history messages."""
         key = self._key(tenant_id, room_id)
-        raw = await self._r.lrange(key, 0, -1)
+        raw = await _with_timeout(self._r.lrange(key, 0, -1))
         if not raw:
             return
         updated = []
@@ -1324,8 +1326,10 @@ class RedisWebhookQueueBackend:
         if self._group_created:
             return
         try:
-            await self._r.xgroup_create(
-                _WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, id="0", mkstream=True
+            await _with_timeout(
+                self._r.xgroup_create(
+                    _WEBHOOK_QUEUE_KEY, _WEBHOOK_CG, id="0", mkstream=True
+                )
             )
         except ResponseError as e:
             if "BUSYGROUP" not in str(e):
