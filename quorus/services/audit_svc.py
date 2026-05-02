@@ -2,17 +2,77 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from quorus.models.audit import AuditEvent, AuditLedger
 from quorus.storage.postgres import get_db_session
 
 logger = structlog.get_logger("quorus.services.audit")
+_REDACTED = "[redacted]"
+_SECRET_KEYS = ("api_key", "auth", "password", "secret", "token")
+
+
+def _utc_iso(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key).lower()
+            if any(secret in key_text for secret in _SECRET_KEYS):
+                redacted[str(key)] = _REDACTED
+            else:
+                redacted[str(key)] = _redact(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    return value
+
+
+def _canonical_entry_payload(entry: AuditLedger, prev_hash: str | None) -> str:
+    payload = {
+        "tenant_id": entry.tenant_id,
+        "message_id": str(entry.message_id),
+        "room_id": entry.room_id,
+        "room_name": entry.room_name,
+        "event_type": entry.event_type,
+        "actor": entry.actor,
+        "target": entry.target,
+        "details": entry.details,
+        "error": entry.error,
+        "created_at": _utc_iso(entry.created_at),
+        "prev_hash": prev_hash,
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _entry_hash(entry: AuditLedger, prev_hash: str | None) -> str:
+    canonical = _canonical_entry_payload(entry, prev_hash)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _receipt_signature(entry_hash: str) -> str | None:
+    secret = os.environ.get("AUDIT_RECEIPT_SECRET") or os.environ.get("RELAY_SECRET")
+    if not secret:
+        return None
+    return hmac.new(
+        secret.encode("utf-8"),
+        entry_hash.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 class AuditService:
@@ -35,6 +95,37 @@ class AuditService:
         events = await audit.get_message_timeline("t-123", message_id)
     """
 
+    async def _lock_tenant_chain(self, session: Any, tenant_id: str) -> None:
+        """Serialize per-tenant chain writes on Postgres when available."""
+        try:
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:tenant_id))"),
+                {"tenant_id": tenant_id},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Audit chain advisory lock unavailable", error=str(exc))
+
+    async def _latest_hash(self, session: Any, tenant_id: str) -> str | None:
+        result = await session.execute(
+            select(AuditLedger.entry_hash)
+            .where(
+                AuditLedger.tenant_id == tenant_id,
+                AuditLedger.entry_hash.isnot(None),
+            )
+            .order_by(AuditLedger.created_at.desc(), AuditLedger.id.desc())
+            .limit(1)
+        )
+        value = result.scalar_one_or_none()
+        return str(value) if value else None
+
+    def _seal_entry(self, event: AuditLedger, prev_hash: str | None) -> str:
+        if event.created_at is None:
+            event.created_at = datetime.now(timezone.utc)
+        event.prev_hash = prev_hash
+        event.entry_hash = _entry_hash(event, prev_hash)
+        event.receipt_signature = _receipt_signature(event.entry_hash)
+        return event.entry_hash
+
     async def record(
         self,
         tenant_id: str,
@@ -47,7 +138,7 @@ class AuditService:
         details: dict[str, Any] | None = None,
         error: str | None = None,
         session: Any | None = None,
-    ) -> None:
+    ) -> AuditLedger:
         """Record an audit event.
 
         Exceptions propagate. Per CLAUDE.md Lessons Learned ("Audit Service
@@ -77,9 +168,13 @@ class AuditService:
 
         if session is not None:
             # Caller owns the transaction — join it.
+            await self._lock_tenant_chain(session, tenant_id)
+            self._seal_entry(event, await self._latest_hash(session, tenant_id))
             session.add(event)
         else:
             async with get_db_session() as new_session:
+                await self._lock_tenant_chain(new_session, tenant_id)
+                self._seal_entry(event, await self._latest_hash(new_session, tenant_id))
                 new_session.add(event)
 
         logger.debug(
@@ -88,6 +183,7 @@ class AuditService:
             event_type=event_type,
             actor=actor,
         )
+        return event
 
     async def record_batch(
         self,
@@ -95,39 +191,73 @@ class AuditService:
         message_id: uuid.UUID,
         events: list[dict],
         session: Any | None = None,
-    ) -> None:
+    ) -> list[AuditLedger]:
         """Record multiple audit events for a message. Exceptions propagate.
 
         ``session`` param: see ``record()`` — same split-brain-prevention
         semantics.
         """
-        def _add(sess: Any) -> None:
+        async def _add(sess: Any) -> list[AuditLedger]:
+            await self._lock_tenant_chain(sess, tenant_id)
+            prev_hash = await self._latest_hash(sess, tenant_id)
+            added: list[AuditLedger] = []
             for event_data in events:
-                sess.add(
-                    AuditLedger(
-                        tenant_id=tenant_id,
-                        message_id=message_id,
-                        event_type=event_data.get("event_type"),
-                        actor=event_data.get("actor"),
-                        target=event_data.get("target"),
-                        room_id=event_data.get("room_id"),
-                        room_name=event_data.get("room_name"),
-                        details=event_data.get("details"),
-                        error=event_data.get("error"),
-                    )
+                event = AuditLedger(
+                    tenant_id=tenant_id,
+                    message_id=message_id,
+                    event_type=event_data.get("event_type"),
+                    actor=event_data.get("actor"),
+                    target=event_data.get("target"),
+                    room_id=event_data.get("room_id"),
+                    room_name=event_data.get("room_name"),
+                    details=event_data.get("details"),
+                    error=event_data.get("error"),
                 )
+                prev_hash = self._seal_entry(event, prev_hash)
+                sess.add(event)
+                added.append(event)
+            return added
 
         if session is not None:
-            _add(session)
+            added_events = await _add(session)
         else:
             async with get_db_session() as new_session:
-                _add(new_session)
+                added_events = await _add(new_session)
 
         logger.debug(
             "Audit events recorded",
             message_id=str(message_id),
             count=len(events),
         )
+        return added_events
+
+    async def record_mcp_tool_call(
+        self,
+        tenant_id: str,
+        actor: str | None,
+        tool_name: str,
+        arguments: dict[str, Any],
+        mutating: bool,
+    ) -> dict:
+        """Record an MCP tool call before the tool performs relay mutation."""
+        event = await self.record(
+            tenant_id=tenant_id,
+            message_id=uuid.uuid4(),
+            event_type=AuditEvent.MCP_TOOL_CALLED,
+            actor=actor,
+            target=tool_name,
+            details={
+                "tool_name": tool_name,
+                "arguments": _redact(arguments),
+                "mutating": mutating,
+            },
+        )
+        return {
+            "id": str(event.id),
+            "entry_hash": event.entry_hash,
+            "prev_hash": event.prev_hash,
+            "receipt_signature": event.receipt_signature,
+        }
 
     async def get_message_timeline(
         self,
@@ -198,6 +328,58 @@ class AuditService:
                 .limit(limit)
             )
             return [e.to_dict() for e in result.scalars().all()]
+
+    async def verify_chain(self, tenant_id: str, limit: int = 10000) -> dict:
+        """Walk the tenant audit hash chain and report the first break."""
+        async with get_db_session() as session:
+            result = await session.execute(
+                select(AuditLedger)
+                .where(AuditLedger.tenant_id == tenant_id)
+                .order_by(AuditLedger.created_at.asc(), AuditLedger.id.asc())
+                .limit(limit)
+            )
+            events = result.scalars().all()
+
+        prev_hash: str | None = None
+        checked = 0
+        legacy_entries = 0
+        for index, event in enumerate(events):
+            if not event.entry_hash:
+                legacy_entries += 1
+                continue
+            checked += 1
+            if event.prev_hash != prev_hash:
+                return {
+                    "verified": False,
+                    "checked_entries": checked,
+                    "legacy_entries": legacy_entries,
+                    "failed_at": index,
+                    "entry_id": str(event.id),
+                    "reason": "prev_hash mismatch",
+                    "expected_prev_hash": prev_hash,
+                    "actual_prev_hash": event.prev_hash,
+                }
+            expected_hash = _entry_hash(event, event.prev_hash)
+            if event.entry_hash != expected_hash:
+                return {
+                    "verified": False,
+                    "checked_entries": checked,
+                    "legacy_entries": legacy_entries,
+                    "failed_at": index,
+                    "entry_id": str(event.id),
+                    "reason": "entry_hash mismatch",
+                    "expected_entry_hash": expected_hash,
+                    "actual_entry_hash": event.entry_hash,
+                }
+            prev_hash = event.entry_hash
+
+        return {
+            "verified": True,
+            "checked_entries": checked,
+            "legacy_entries": legacy_entries,
+            "last_hash": prev_hash,
+            "truncated": len(events) == limit,
+        }
 
 
 async def cleanup_old_events(max_age_days: int = 30) -> int:

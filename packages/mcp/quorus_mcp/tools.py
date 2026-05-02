@@ -25,12 +25,42 @@ def _srv():
     return _server_module
 
 
+async def _audit_tool_call(
+    tool_name: str,
+    arguments: dict,
+    *,
+    mutating: bool,
+    required: bool = False,
+) -> None:
+    """Ask the relay to seal an audit receipt before executing an MCP tool."""
+    s = _srv()
+    client = s._get_http_client()
+    url = f"{s.RELAY_URL}/v1/audit/mcp-tool-call"
+    payload = {
+        "tool_name": tool_name,
+        "arguments": arguments,
+        "mutating": mutating,
+    }
+    resp = await client.post(url, json=payload, headers=s._auth_headers(), timeout=10)
+    if resp.status_code == 401 and await s._refresh_jwt_on_401():
+        resp = await client.post(url, json=payload, headers=s._auth_headers(), timeout=10)
+    if resp.status_code in {404, 501} and not required:
+        return
+    resp.raise_for_status()
+
+
 async def send_message(
     to: str, content: str, context: "Context | None" = None,
 ) -> str:
     s = _srv()
     await s._remember_session(context)
     try:
+        await _audit_tool_call(
+            "send_message",
+            {"to": to, "content": content},
+            mutating=True,
+            required=True,
+        )
         resp = await s._get_http_client().post(
             f"{s.RELAY_URL}/messages",
             json={"from_name": s.INSTANCE_NAME, "to": to, "content": content},
@@ -46,26 +76,31 @@ async def send_message(
 async def check_messages(context: "Context | None" = None) -> str:
     s = _srv()
     await s._remember_session(context)
-    await s._drain_pending_messages()
-    messages, ack_token, error = await s._fetch_relay_messages(wait=0)
-    if error:
-        return error
-    valid = [
-        m for m in messages
-        if m.get("from_name") or m.get("content") or m.get("timestamp")
-    ]
-    if not valid:
-        return "No new messages."
-    result = "\n".join(s._format_message(m) for m in valid)
-    if ack_token:
-        await s._ack_messages(ack_token)
-    return result
+    try:
+        await _audit_tool_call("check_messages", {}, mutating=True, required=True)
+        await s._drain_pending_messages()
+        messages, ack_token, error = await s._fetch_relay_messages(wait=0)
+        if error:
+            return error
+        valid = [
+            m for m in messages
+            if m.get("from_name") or m.get("content") or m.get("timestamp")
+        ]
+        if not valid:
+            return "No new messages."
+        result = "\n".join(s._format_message(m) for m in valid)
+        if ack_token:
+            await s._ack_messages(ack_token)
+        return result
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        return s._relay_error_message(e)
 
 
 async def list_participants(context: "Context | None" = None) -> str:
     s = _srv()
     await s._remember_session(context)
     try:
+        await _audit_tool_call("list_participants", {}, mutating=False)
         resp = await s._get_http_client().get(
             f"{s.RELAY_URL}/participants", headers=s._auth_headers(),
         )
@@ -87,6 +122,16 @@ async def send_room_message(
     s = _srv()
     await s._remember_session(context)
     try:
+        await _audit_tool_call(
+            "send_room_message",
+            {
+                "room_id": room_id,
+                "content": content,
+                "message_type": message_type,
+            },
+            mutating=True,
+            required=True,
+        )
         resp = await s._get_http_client().post(
             f"{s.RELAY_URL}/rooms/{room_id}/messages",
             json={
@@ -106,6 +151,12 @@ async def join_room(room_id: str, context: "Context | None" = None) -> str:
     s = _srv()
     await s._remember_session(context)
     try:
+        await _audit_tool_call(
+            "join_room",
+            {"room_id": room_id},
+            mutating=True,
+            required=True,
+        )
         resp = await s._get_http_client().post(
             f"{s.RELAY_URL}/rooms/{room_id}/join",
             json={"participant": s.INSTANCE_NAME}, headers=s._auth_headers(),
@@ -120,6 +171,7 @@ async def list_rooms(context: "Context | None" = None) -> str:
     s = _srv()
     await s._remember_session(context)
     try:
+        await _audit_tool_call("list_rooms", {}, mutating=False)
         resp = await s._get_http_client().get(
             f"{s.RELAY_URL}/rooms", headers=s._auth_headers(),
         )
@@ -144,6 +196,20 @@ async def search_room(
     limit: int = 50,
 ) -> str:
     s = _srv()
+    try:
+        await _audit_tool_call(
+            "search_room",
+            {
+                "room_id": room_id,
+                "q": q,
+                "sender": sender,
+                "message_type": message_type,
+                "limit": limit,
+            },
+            mutating=False,
+        )
+    except (httpx.ConnectError, httpx.HTTPStatusError):
+        pass
     params: dict[str, str | int] = {"limit": limit}
     if q:
         params["q"] = q
@@ -172,6 +238,14 @@ async def search_room(
 
 async def room_metrics(room_id: str) -> str:
     s = _srv()
+    try:
+        await _audit_tool_call(
+            "room_metrics",
+            {"room_id": room_id},
+            mutating=False,
+        )
+    except (httpx.ConnectError, httpx.HTTPStatusError):
+        pass
     resp = await s._get_http_client().get(
         f"{s.RELAY_URL}/rooms/{room_id}/history",
         params={"limit": 200}, headers=s._auth_headers(), timeout=10,
@@ -223,6 +297,12 @@ async def claim_task(
             "description": description,
             "ttl_seconds": ttl_seconds,
         }
+        await _audit_tool_call(
+            "claim_task",
+            payload,
+            mutating=True,
+            required=True,
+        )
         url = f"{s.RELAY_URL}/rooms/{room_id}/lock"
         resp = await client.post(
             url, json=payload, headers=s._auth_headers(), timeout=10,
@@ -252,6 +332,12 @@ async def release_task(room_id: str, file_path: str, lock_token: str) -> str:
         client = s._get_http_client()
         url = f"{s.RELAY_URL}/rooms/{room_id}/lock/{file_path}"
         payload = {"lock_token": lock_token}
+        await _audit_tool_call(
+            "release_task",
+            {"room_id": room_id, "file_path": file_path},
+            mutating=True,
+            required=True,
+        )
         resp = await client.request(
             "DELETE", url, json=payload, headers=s._auth_headers(), timeout=10,
         )
@@ -269,6 +355,11 @@ async def release_task(room_id: str, file_path: str, lock_token: str) -> str:
 async def get_room_state(room_id: str) -> str:
     s = _srv()
     try:
+        await _audit_tool_call(
+            "get_room_state",
+            {"room_id": room_id},
+            mutating=False,
+        )
         client = s._get_http_client()
         state_url = f"{s.RELAY_URL}/rooms/{room_id}/state"
         resp = await client.get(

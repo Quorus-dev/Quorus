@@ -21,6 +21,7 @@ def configure_mcp():
     # API_KEY added in newer mcp.py — patch only if present
     if hasattr(mcp_server, "API_KEY"):
         patches.append(patch.object(mcp_server, "API_KEY", ""))
+    patches.append(patch("quorus_mcp.tools._audit_tool_call", new_callable=AsyncMock))
     with contextlib.ExitStack() as stack:
         for p in patches:
             stack.enter_context(p)
