@@ -44,6 +44,9 @@ class AuditEvent(str, Enum):
     DM_DELIVERED = "dm_delivered"
     DM_READ = "dm_read"  # ACK'd by recipient
 
+    # MCP tool execution
+    MCP_TOOL_CALLED = "mcp_tool_called"
+
 
 class AuditLedger(Base):
     """Audit ledger entry for message tracing.
@@ -68,6 +71,11 @@ class AuditLedger(Base):
     target: Mapped[str | None] = mapped_column(String(64), nullable=True)
     details: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    receipt_signature: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -88,5 +96,8 @@ class AuditLedger(Base):
             "target": self.target,
             "details": self.details,
             "error": self.error,
+            "prev_hash": self.prev_hash,
+            "entry_hash": self.entry_hash,
+            "receipt_signature": self.receipt_signature,
             "created_at": self.created_at.isoformat(),
         }
