@@ -1773,6 +1773,13 @@ def _dispatch_slash(
 
 # ── Input reader ──────────────────────────────────────────────────────────────
 
+# In-progress input that survives a render-tick timeout. Without this, every
+# 2s redraw wiped the user's half-typed message — the source of "the text
+# keeps getting erased" complaints. _read_input pulls from + writes back to
+# this buffer on every call.
+_PENDING_INPUT_BUF: list[str] = []
+
+
 # Special sentinel strings returned by _read_input() for non-text keys.
 _KEY_UP      = "__UP__"
 _KEY_DOWN    = "__DOWN__"
@@ -1816,20 +1823,26 @@ def _read_input(
         sys.stdout.write("".join(buf_list))
         sys.stdout.flush()
 
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-    buf: list[str] = []
+    # Restore in-progress buffer from a prior render-tick timeout so the user
+    # never loses what they were typing when the 2s redraw fires.
+    buf: list[str] = list(_PENDING_INPUT_BUF)
+    _PENDING_INPUT_BUF.clear()
+    _redraw_line(buf)
     try:
         while True:
             import select as _sel
             ready, _, _ = _sel.select([sys.stdin], [], [], RENDER_TICK_S)
             if not ready:
-                # No keypress within the render window — signal a redraw.
+                # No keypress within the render window — stash the buffer so
+                # the NEXT call to _read_input restores it after the redraw,
+                # then signal the main loop to redraw.
+                _PENDING_INPUT_BUF[:] = buf
                 sys.stdout.write("\r\x1b[K")  # clear the input line
                 sys.stdout.flush()
                 return _KEY_TIMEOUT
             key = readchar.readkey()
             if key in (readchar.key.ENTER, "\r", "\n"):
+                _PENDING_INPUT_BUF.clear()  # commit — the line is submitted
                 sys.stdout.write("\n")
                 sys.stdout.flush()
                 return "".join(buf).strip()
