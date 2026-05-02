@@ -2024,6 +2024,8 @@ SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/me":         ("/me <action> — IRC-style action line", _slash_me),
     "/mute":       ("/mute <duration> — silence (preview)", _slash_mute),
     "/identity":   ("/identity human|agent|<name> — set from_name", _slash_identity),
+    "/rename":     ("/rename <name> — alias for /identity <name>", _slash_identity),
+    "/name":       ("/name <name> — alias for /identity <name>",   _slash_identity),
     "/workspace":  ("list / switch workspaces",             _slash_workspace),
     "/status":     ("connection + relay info",              _slash_status),
     "/clear":      ("clear the chat pane",                  _slash_clear),

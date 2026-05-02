@@ -184,15 +184,21 @@ def slash_me(arg, state, relay_url, secret, agent_name, console):
         return True
 
     # Lazy import to avoid a circular dep with hub.py.
-    from .hub import _send_message  # type: ignore
+    # Use the active chat_identity (human override of agent_name) so /me
+    # actions tag the human user, not their agent. Falls back to agent_name
+    # when chat_identity isn't set (legacy profiles, fresh init).
+    from quorus.config import ConfigManager as _CM
 
-    body = f"* {agent_name} {action}"
-    sent_id = _send_message(relay_url, secret, room_name, agent_name, body)
+    from .hub import _send_message  # type: ignore
+    _profile = _CM().load() or {}
+    sender = _profile.get("chat_identity") or agent_name
+    body = f"* {sender} {action}"
+    sent_id = _send_message(relay_url, secret, room_name, sender, body)
     if sent_id is not None:
         state.set_status_bar("")
         from datetime import datetime, timezone
         echo = {
-            "from_name": agent_name,
+            "from_name": sender,
             "content": body,
             "message_type": "chat",
             "timestamp": datetime.now(timezone.utc).isoformat(),
