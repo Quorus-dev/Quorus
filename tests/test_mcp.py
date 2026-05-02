@@ -1,4 +1,5 @@
 import contextlib
+import importlib
 from contextlib import asynccontextmanager, suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,6 +61,25 @@ async def test_send_message_calls_relay():
         assert "test-id" in result
 
 
+async def test_send_message_audit_timeout_blocks_mutation():
+    """Mutating tools must fail before mutation if required audit times out."""
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.post = AsyncMock()
+
+    with (
+        patch("quorus.mcp_server._get_http_client", return_value=mock_client),
+        patch(
+            "quorus_mcp.tools._audit_tool_call",
+            side_effect=httpx.ReadTimeout("audit timeout"),
+        ),
+    ):
+        result = await mcp_server._send_message("bob", "hello")
+
+    assert "timed out" in result
+    mock_client.post.assert_not_awaited()
+
+
 async def test_check_messages_calls_relay():
     """check_messages should GET from relay for this instance."""
     # Manual ACK response format: {"messages": [...], "ack_token": "..."}
@@ -88,6 +108,32 @@ async def test_check_messages_calls_relay():
         # Should ACK after processing
         mock_client.post.assert_called_once()
         assert "bob" in result
+
+
+async def test_list_participants_optional_audit_timeout_does_not_block():
+    """Read-only tools should continue when best-effort audit times out."""
+    # The module-level fixture patches audit out for most MCP tests. Reload here
+    # to exercise the actual optional-audit timeout branch.
+    importlib.reload(mcp_server.tools)
+    mock_client = _make_mock_client("get", ["alice", "bob"])
+    audit_calls = 0
+
+    async def fake_post(*args, **kwargs):
+        nonlocal audit_calls
+        audit_calls += 1
+        raise httpx.ReadTimeout("audit timeout")
+
+    mock_client.post = AsyncMock(side_effect=fake_post)
+
+    with (
+        patch("quorus.mcp_server._get_http_client", return_value=mock_client),
+        patch("quorus_mcp.server._get_http_client", return_value=mock_client),
+    ):
+        result = await mcp_server.tools.list_participants()
+
+    assert result == "Participants: alice, bob"
+    assert audit_calls == 1
+    mock_client.get.assert_awaited_once()
 
 
 async def test_check_messages_always_uses_nonblocking_fetch():

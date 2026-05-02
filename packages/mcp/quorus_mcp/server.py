@@ -177,6 +177,8 @@ def _auth_headers() -> dict[str, str]:
 def _relay_error_message(exc: Exception) -> str:
     if isinstance(exc, httpx.ConnectError):
         return f"Error: Cannot reach relay server at {RELAY_URL}"
+    if isinstance(exc, httpx.TimeoutException):
+        return f"Error: Relay request timed out at {RELAY_URL}"
     if isinstance(exc, httpx.HTTPStatusError):
         return f"Error: Relay returned {exc.response.status_code}: {exc.response.text}"
     return f"Error: {exc}"

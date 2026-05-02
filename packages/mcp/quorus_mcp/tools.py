@@ -18,6 +18,8 @@ import httpx
 if TYPE_CHECKING:
     from mcp.server.fastmcp import Context
 
+_AUDIT_TIMEOUT_SECONDS = 3.0
+
 
 def _srv():
     """Import the server module lazily to avoid a circular import."""
@@ -41,9 +43,29 @@ async def _audit_tool_call(
         "arguments": arguments,
         "mutating": mutating,
     }
-    resp = await client.post(url, json=payload, headers=s._auth_headers(), timeout=10)
+    try:
+        resp = await client.post(
+            url,
+            json=payload,
+            headers=s._auth_headers(),
+            timeout=_AUDIT_TIMEOUT_SECONDS,
+        )
+    except httpx.RequestError:
+        if required:
+            raise
+        return
     if resp.status_code == 401 and await s._refresh_jwt_on_401():
-        resp = await client.post(url, json=payload, headers=s._auth_headers(), timeout=10)
+        try:
+            resp = await client.post(
+                url,
+                json=payload,
+                headers=s._auth_headers(),
+                timeout=_AUDIT_TIMEOUT_SECONDS,
+            )
+        except httpx.RequestError:
+            if required:
+                raise
+            return
     if resp.status_code in {404, 501} and not required:
         return
     resp.raise_for_status()
@@ -69,7 +91,7 @@ async def send_message(
         resp.raise_for_status()
         data = resp.json()
         return f"Message sent (id: {data['id']})"
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
 
 
@@ -92,7 +114,7 @@ async def check_messages(context: "Context | None" = None) -> str:
         if ack_token:
             await s._ack_messages(ack_token)
         return result
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
 
 
@@ -109,7 +131,7 @@ async def list_participants(context: "Context | None" = None) -> str:
         if not ps:
             return "No participants yet."
         return "Participants: " + ", ".join(ps)
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
 
 
@@ -143,7 +165,7 @@ async def send_room_message(
         )
         resp.raise_for_status()
         return f"Room message sent (id: {resp.json()['id']})"
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
 
 
@@ -163,7 +185,7 @@ async def join_room(room_id: str, context: "Context | None" = None) -> str:
         )
         resp.raise_for_status()
         return f"Joined room {room_id}"
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
 
 
@@ -184,7 +206,7 @@ async def list_rooms(context: "Context | None" = None) -> str:
             f"members: {', '.join(r['members'])}"
             for r in rooms_list
         )
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
 
 
@@ -208,7 +230,7 @@ async def search_room(
             },
             mutating=False,
         )
-    except (httpx.ConnectError, httpx.HTTPStatusError):
+    except (httpx.HTTPStatusError, httpx.RequestError):
         pass
     params: dict[str, str | int] = {"limit": limit}
     if q:
@@ -244,7 +266,7 @@ async def room_metrics(room_id: str) -> str:
             {"room_id": room_id},
             mutating=False,
         )
-    except (httpx.ConnectError, httpx.HTTPStatusError):
+    except (httpx.HTTPStatusError, httpx.RequestError):
         pass
     resp = await s._get_http_client().get(
         f"{s.RELAY_URL}/rooms/{room_id}/history",
@@ -322,7 +344,7 @@ async def claim_task(
             f"GRANTED: lock_token={data['lock_token']} "
             f"expires={data['expires_at']}"
         )
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
 
 
@@ -348,7 +370,7 @@ async def release_task(room_id: str, file_path: str, lock_token: str) -> str:
             )
         resp.raise_for_status()
         return f"RELEASED: {file_path}"
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
 
 
@@ -396,5 +418,5 @@ async def get_room_state(room_id: str) -> str:
             for d in data["resolved_decisions"][-5:]:
                 lines.append(f"  [{d.get('decided_by', '?')}] {d['decision']}")
         return "\n".join(lines)
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
