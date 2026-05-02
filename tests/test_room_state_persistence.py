@@ -1,9 +1,10 @@
-import asyncio
-import socket
 from unittest.mock import patch
+
 import pytest
-from httpx import AsyncClient, ASGITransport
-from quorus.relay import _save_to_file, _load_from_file, _reset_state, app
+from httpx import ASGITransport, AsyncClient
+
+from quorus.relay import _load_from_file, _reset_state, _save_to_file, app
+
 
 @pytest.fixture(autouse=True)
 async def clean_state():
@@ -25,7 +26,7 @@ async def client():
 async def test_room_state_persistence(client: AsyncClient, auth_headers: dict, tmp_path):
     """Verify that room goal and locks survive a reload."""
     filepath = str(tmp_path / "messages.json")
-    
+
     with patch("quorus.relay.MESSAGES_FILE", filepath):
         # 1. Create a room
         resp = await client.post(
@@ -67,10 +68,12 @@ async def test_room_state_persistence(client: AsyncClient, auth_headers: dict, t
         assert state["locked_files"]["src/main.py"]["held_by"] == "alice"
 
 @pytest.mark.asyncio
-async def test_analytics_and_participants_persistence(client: AsyncClient, auth_headers: dict, tmp_path):
+async def test_analytics_and_participants_persistence(
+    client: AsyncClient, auth_headers: dict, tmp_path
+):
     """Verify that analytics and participants survive a reload."""
     filepath = str(tmp_path / "messages.json")
-    
+
     with patch("quorus.relay.MESSAGES_FILE", filepath):
         # 1. Trigger some activity
         await client.post(
@@ -78,7 +81,7 @@ async def test_analytics_and_participants_persistence(client: AsyncClient, auth_
             json={"from_name": "alice", "to": "bob", "content": "hello"},
             headers=auth_headers,
         )
-        
+
         # 2. Verify participants recorded
         resp = await client.get("/participants", headers=auth_headers)
         participants = resp.json()

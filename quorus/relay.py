@@ -248,9 +248,16 @@ def _apply_loaded_state(data: dict) -> None:
     # Participants
     for tid, names in data.get("participants", {}).items():
         backends.participants._participants[tid] = set(names)
-    # Analytics
+    # Analytics — restore defaultdict(int) for inner counters so += works
+    from collections import defaultdict as _dd
     for tid, stats in data.get("analytics", {}).items():
-        backends.analytics._stats[tid] = stats
+        backends.analytics._stats[tid] = {
+            "total_sent": stats.get("total_sent", 0),
+            "total_delivered": stats.get("total_delivered", 0),
+            "per_sender": _dd(int, stats.get("per_sender", {})),
+            "per_recipient": _dd(int, stats.get("per_recipient", {})),
+            "hourly_volume": _dd(int, stats.get("hourly_volume", {})),
+        }
 
 
 def _save_to_file():

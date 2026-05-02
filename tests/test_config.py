@@ -43,6 +43,7 @@ def test_load_config_missing_file_uses_defaults(tmp_path, monkeypatch):
 
 def test_resolve_config_file_legacy_fallback(tmp_path, monkeypatch):
     """Should fall back to legacy dir when default doesn't exist."""
+    monkeypatch.delenv("QUORUS_CONFIG_DIR", raising=False)
     monkeypatch.delenv("MCP_TUNNEL_CONFIG_DIR", raising=False)
     monkeypatch.setattr("quorus.config.DEFAULT_CONFIG_DIR", tmp_path / ".quorus")
     monkeypatch.setattr("quorus.config.LEGACY_CONFIG_DIR", tmp_path / "claude-tunnel")
@@ -57,6 +58,7 @@ def test_resolve_config_file_legacy_fallback(tmp_path, monkeypatch):
 
 def test_resolve_config_file_prefers_default_over_legacy(tmp_path, monkeypatch):
     """Default dir should take priority when both exist."""
+    monkeypatch.delenv("QUORUS_CONFIG_DIR", raising=False)
     monkeypatch.delenv("MCP_TUNNEL_CONFIG_DIR", raising=False)
     monkeypatch.setattr("quorus.config.DEFAULT_CONFIG_DIR", tmp_path / ".quorus")
     monkeypatch.setattr("quorus.config.LEGACY_CONFIG_DIR", tmp_path / "claude-tunnel")

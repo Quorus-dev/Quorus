@@ -23,3 +23,7 @@ website/vite.config.d.ts
 website/vite.config.js
 website/*.tsbuildinfo
 MagicMock/
+
+# Graphify local knowledge graph (do not commit)
+graphify-out/
+.graphify/

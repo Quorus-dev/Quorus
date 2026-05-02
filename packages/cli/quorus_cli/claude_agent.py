@@ -886,7 +886,7 @@ def run_autonomous_loop(
         )
 
         if verbose:
-            sys.stderr.write(f"[quorus claude-agent] Spawning claude -p turn\n")
+            sys.stderr.write("[quorus claude-agent] Spawning claude -p turn\n")
             sys.stderr.flush()
 
         rc = subprocess.call(cmd, cwd=str(cwd) if cwd else None)
@@ -988,7 +988,7 @@ def run_claude_agent(
             )
             if verbose:
                 sys.stderr.write(
-                    f"[quorus claude-agent] join returned 403; room state readable — "
+                    "[quorus claude-agent] join returned 403; room state readable — "
                     "treating as existing member.\n"
                 )
                 sys.stderr.flush()

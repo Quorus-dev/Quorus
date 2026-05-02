@@ -13,22 +13,21 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 from quorus_cli.claude_agent import (
     ClaudeAgentError,
+    _autonomous_prompt,
     _build_mcp_config,
     _format_room_context,
-    _autonomous_prompt,
     build_claude_command,
     build_claude_print_command,
     build_prompt,
-    resolve_identity,
-    send_heartbeat,
     join_room,
     parent_join_room,
+    resolve_identity,
+    send_heartbeat,
 )
 
 
@@ -395,7 +394,9 @@ class TestSendHeartbeat:
                 api_key="mct_test",
             )
 
-        assert any("heartbeat" in u for u in captured_url), f"No heartbeat URL found in {captured_url}"
+        assert any("heartbeat" in u for u in captured_url), (
+            f"No heartbeat URL found in {captured_url}"
+        )
         assert not any("/rooms/" in u for u in captured_url), \
             f"Used wrong room-scoped heartbeat endpoint: {captured_url}"
 

@@ -34,3 +34,4 @@ def reset_state():
     from quorus.routes.analytics import reset_analytics
     _init_services(app)
     reset_analytics()
+    app.state.__dict__.pop("_metrics_cache", None)

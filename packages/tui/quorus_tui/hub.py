@@ -1791,7 +1791,8 @@ def _main_input_loop(
                 # Persistent nav hint — always visible so users know how
                 # to switch rooms without having to discover /help first.
                 console.print(Text.from_markup(
-                    "  [dim]Tab — switch room · Enter — open selected room · /rooms — list · /help — all commands[/]"
+                    "  [dim]Tab — switch room · Enter — open selected room"
+                    " · /rooms — list · /help — all commands[/]"
                 ))
                 console.print()
                 # Flat chat feed — grouped, centered empty states.
