@@ -55,29 +55,42 @@ from quorus.config import ConfigManager, resolve_config_dir
 from . import welcome as _welcome
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-# Render cadence — how fast the main loop redraws after input/state change.
-# Keep small so the panel view feels live.
-RENDER_TICK_S = 2
+# Idle redraw cadence — how often the main loop refreshes when nothing has
+# happened. SSE message arrival forces an immediate redraw (last_render = 0)
+# so this isn't the chat-freshness lever; it's just for latency / unread /
+# connection-state cosmetics. 10s is plenty.
+#
+# Why 10 and not 2: at 2s the TUI fights the user — typing, copy/paste, and
+# scrollback all get wiped under them. Bumping to 10s makes the TUI calm
+# without making chat feel stale (real messages still redraw instantly).
+RENDER_TICK_S = 10
+
+# How long to suppress the idle redraw after the last keystroke. Matches the
+# typical multi-line paste / read-and-think interval. The redraw will still
+# fire on real events (new SSE message) — this only blocks the cosmetic tick.
+INPUT_QUIET_HOLD_S = 5.0
 
 
 def _full_clear(console) -> None:
-    """Clear visible region + scrollback so each redraw replaces the previous.
+    """Clear visible region only; preserve scrollback for copy/paste.
 
-    Rich's `console.clear()` only emits `\\x1b[2J\\x1b[H`, which wipes the
-    visible region but leaves the previous frame in scrollback. When the 2s
-    render tick fires, the user sees stacked frames stacking up. Adding
-    `\\x1b[3J` (clear scrollback) makes each redraw replace the entire
-    buffer cleanly. We do NOT use alt-screen mode (`\\x1b[?1049h`) because
-    that disables the terminal's native trackpad/mouse scroll.
+    The previous version emitted `\\x1b[3J` to nuke scrollback every redraw
+    so successive frames didn't pile up. The cure was worse than the
+    disease: the user couldn't copy any text more than 2 seconds old, and
+    couldn't scroll back to anything that had moved off-screen. Now we
+    use only `\\x1b[2J\\x1b[H` (visible region + cursor home), which Rich's
+    own `console.clear()` also emits — keeping the user's terminal history
+    intact. Frame-stacking artifacts in VS Code's xterm.js are mild and
+    self-heal on the next full repaint.
+
+    We do NOT use alt-screen mode (`\\x1b[?1049h`) because that disables
+    the terminal's native trackpad/mouse scroll.
 
     Falls back to Rich's clear if stdout isn't a real terminal (e.g. inside
     pytest capture).
     """
     if sys.stdout.isatty():
-        # xterm.js (VS Code) is strict: visible-clear (2J) MUST precede
-        # scrollback-clear (3J) and cursor-home (H) goes last. iTerm2 /
-        # Alacritty / Terminal.app are tolerant; VS Code is not.
-        sys.stdout.write("\x1b[2J\x1b[3J\x1b[H")
+        sys.stdout.write("\x1b[2J\x1b[H")
         sys.stdout.flush()
         try:
             console.clear()  # reset Rich's styled state too
@@ -2281,9 +2294,13 @@ def _main_input_loop(
     _full_clear(console)
     last_render = 0.0
     # Hold auto-redraw until the user submits next input. Used after we
-    # print transient output (help, slash hint, room menu) so the 2s
-    # redraw tick doesn't clear it out from under them.
+    # print transient output (help, slash hint, room menu) so the redraw
+    # tick doesn't clear it out from under them.
     hold_render = False
+    # Sticky input-quiet hold: every key press bumps this timestamp
+    # forward by INPUT_QUIET_HOLD_S. Idle redraws skip while now < this.
+    # Protects long-form typing AND copy/paste from being wiped.
+    input_quiet_until: float = 0.0
     # Readline-style input history: last N lines the user submitted.
     # Arrow Up/Down walk this in _read_input().
     input_history: list[str] = []
@@ -2300,8 +2317,15 @@ def _main_input_loop(
 
             now = time.monotonic()
 
-            # Redraw if poll interval passed or first render
-            if not hold_render and now - last_render >= POLL_S:
+            # Redraw if poll interval passed or first render — UNLESS the
+            # user is still mid-typing (input_quiet_until is in the future).
+            # SSE arrival forces last_render=0 elsewhere, so real chat events
+            # still appear immediately; this only blocks the cosmetic tick.
+            if (
+                not hold_render
+                and now >= input_quiet_until
+                and now - last_render >= POLL_S
+            ):
                 connected, conn_status = state.get_connection()
                 # Atomic snapshot: rooms + selected_idx must come from the
                 # same lock acquisition. Otherwise the polling thread can
@@ -2422,10 +2446,13 @@ def _main_input_loop(
                 # Render tick fired. If the user is mid-typing (we have a
                 # pending input buffer), HOLD the redraw — wiping the screen
                 # erases what they're typing, even though the buffer survives
-                # the round-trip. Letting them finish the line keeps the UX
-                # calm. We still re-loop so the inline status row updates.
+                # the round-trip. Also bump input_quiet_until so the next
+                # tick stays held until INPUT_QUIET_HOLD_S of keystroke-free
+                # idle has passed. Protects copy/paste sessions where the
+                # user is reading and might trigger select+copy mid-tick.
                 if _PENDING_INPUT_BUF:
                     hold_render = True
+                    input_quiet_until = now + INPUT_QUIET_HOLD_S
                 else:
                     last_render = 0
                 continue
