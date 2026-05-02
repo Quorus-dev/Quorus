@@ -1892,29 +1892,40 @@ def _read_input(
         sys.stdout.write("".join(buf_list))
         sys.stdout.flush()
 
+    # Optional diagnostics — set QUORUS_DEBUG=1 in the env to log every
+    # keystroke + redraw + timeout to /tmp/quorus-input.log so we can
+    # diagnose "text disappears as I type" reports without guessing.
+    _debug = bool(os.environ.get("QUORUS_DEBUG"))
+
+    def _dlog(msg: str) -> None:
+        if not _debug:
+            return
+        try:
+            with open("/tmp/quorus-input.log", "a") as fp:
+                import time as _t
+                fp.write(f"[{_t.strftime('%H:%M:%S')}] {msg}\n")
+        except Exception:
+            pass
+
     # Restore in-progress buffer from a prior render-tick timeout so the user
     # never loses what they were typing when the 2s redraw fires.
     buf: list[str] = list(_PENDING_INPUT_BUF)
     _PENDING_INPUT_BUF.clear()
     _redraw_line(buf)
+    _dlog(f"_read_input start; restored buf={buf!r}")
     try:
         while True:
             import select as _sel
             ready, _, _ = _sel.select([sys.stdin], [], [], RENDER_TICK_S)
             if not ready:
-                # If the user is actively composing — even one character —
-                # the auto-redraw must NOT fire. Wiping the screen mid-thought
-                # erases what they're typing and produces the "instant erase"
-                # bug reported on 2026-05-02. Just keep waiting for input.
-                # The header / room state will catch up the next time the
-                # user pauses typing or hits Enter.
+                _dlog(f"select timeout; buf={buf!r}")
                 if buf:
+                    # User is composing — never trigger a redraw mid-typing.
                     continue
-                # Buffer empty → safe to trigger a redraw so live status
-                # (latency, presence, unread badges) refresh while idle.
                 _PENDING_INPUT_BUF.clear()
                 sys.stdout.write("\r\x1b[K")
                 sys.stdout.flush()
+                _dlog("returning _KEY_TIMEOUT")
                 return _KEY_TIMEOUT
             key = readchar.readkey()
             if key in (readchar.key.ENTER, "\r", "\n"):
@@ -1972,6 +1983,7 @@ def _read_input(
             buf.append(key)
             sys.stdout.write(key)
             sys.stdout.flush()
+            _dlog(f"keystroke {key!r}; buf now {buf!r}")
     except (EOFError, KeyboardInterrupt):
         sys.stdout.write("\n")
         sys.stdout.flush()
