@@ -184,13 +184,17 @@ async def destroy_room(
     actor_role = "agent" if (auth.sub or "").endswith(("-claude", "-codex",
         "-cursor", "-gemini", "-claude-1m")) else "human"
     policy = load_policy_for_tenant(_tid(auth))
-    pol = evaluate(PolicyContext(
+    policy_ctx = PolicyContext(
         actor=requested_by or "anonymous",
         action="room.delete",
         resource=room_id,
         role=actor_role,
         tenant_id=_tid(auth),
-    ), policy)
+    )
+    pol = evaluate(policy_ctx, policy)
+    audit_svc = getattr(request.app.state, "audit_service", None)
+    if audit_svc is not None:
+        await audit_svc.record_policy_evaluation(_tid(auth), policy_ctx, pol)
     if pol.effective_decision == Decision.DENY:
         raise HTTPException(
             status_code=403,

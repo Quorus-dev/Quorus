@@ -47,6 +47,9 @@ class AuditEvent(str, Enum):
     # MCP tool execution
     MCP_TOOL_CALLED = "mcp_tool_called"
 
+    # Policy engine decisions
+    POLICY_EVALUATED = "policy_evaluated"
+
 
 class AuditLedger(Base):
     """Audit ledger entry for message tracing.

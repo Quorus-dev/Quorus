@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 from sqlalchemy import delete, select, text
 
+from quorus.auth.policy import PolicyContext, PolicyResult
 from quorus.models.audit import AuditEvent, AuditLedger
 from quorus.storage.postgres import get_db_session
 
@@ -251,6 +252,40 @@ class AuditService:
                 "arguments": _redact(arguments),
                 "mutating": mutating,
             },
+        )
+        return {
+            "id": str(event.id),
+            "entry_hash": event.entry_hash,
+            "prev_hash": event.prev_hash,
+            "receipt_signature": event.receipt_signature,
+        }
+
+    async def record_policy_evaluation(
+        self,
+        tenant_id: str,
+        ctx: PolicyContext,
+        result: PolicyResult,
+        session: Any | None = None,
+    ) -> dict:
+        """Record a policy engine decision before the gated mutation runs."""
+        event = await self.record(
+            tenant_id=tenant_id,
+            message_id=uuid.uuid4(),
+            event_type=AuditEvent.POLICY_EVALUATED,
+            actor=ctx.actor,
+            target=ctx.action,
+            details={
+                "action": ctx.action,
+                "resource": ctx.resource,
+                "role": ctx.role,
+                "rule_id": result.rule_id,
+                "decision": result.decision.value,
+                "effective_decision": result.effective_decision.value,
+                "reason": result.reason,
+                "mode": result.mode.value,
+                "extra": _redact(ctx.extra or {}),
+            },
+            session=session,
         )
         return {
             "id": str(event.id),

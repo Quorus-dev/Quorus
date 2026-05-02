@@ -100,13 +100,17 @@ async def mint_code(
         ("-claude", "-codex", "-cursor", "-gemini", "-claude-1m")
     ) else "human"
     _tid_str = auth.tenant_id or "_legacy"
-    _pol = _eval(_PC(
+    _policy_ctx = _PC(
         actor=auth.sub or "anonymous",
         action="invite.mint",
         resource=req.room,
         role=_actor_role,
         tenant_id=_tid_str,
-    ), _load(_tid_str))
+    )
+    _pol = _eval(_policy_ctx, _load(_tid_str))
+    _audit_svc = getattr(request.app.state, "audit_service", None)
+    if _audit_svc is not None:
+        await _audit_svc.record_policy_evaluation(_tid_str, _policy_ctx, _pol)
     if _pol.effective_decision == _D.DENY:
         raise HTTPException(status_code=403, detail=f"policy_denied: {_pol.reason}")
     if _pol.effective_decision == _D.REQUIRE_HUMAN:

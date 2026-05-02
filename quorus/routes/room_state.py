@@ -173,13 +173,17 @@ async def claim_task(
     _actor_role = "agent" if (auth.sub or "").endswith(
         ("-claude", "-codex", "-cursor", "-gemini", "-claude-1m")
     ) else "human"
-    _pol = _eval(_PC(
+    _policy_ctx = _PC(
         actor=auth.sub or "anonymous",
         action="lock.acquire",
         resource=body.file_path,
         role=_actor_role,
         tenant_id=_tid(auth),
-    ), _load(_tid(auth)))
+    )
+    _pol = _eval(_policy_ctx, _load(_tid(auth)))
+    _audit_svc = getattr(request.app.state, "audit_service", None)
+    if _audit_svc is not None:
+        await _audit_svc.record_policy_evaluation(_tid(auth), _policy_ctx, _pol)
     if _pol.effective_decision == _D.DENY:
         raise HTTPException(status_code=403, detail=f"policy_denied: {_pol.reason}")
     if _pol.effective_decision == _D.REQUIRE_HUMAN:
