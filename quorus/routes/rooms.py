@@ -170,6 +170,38 @@ async def destroy_room(
     requested_by = auth.sub or req.requested_by
     if auth.sub and req.requested_by != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot destroy room as another user")
+
+    # Policy gate — first call site of the new policy engine. Default
+    # mode is SHADOW (logs decisions, never blocks). Tenant can switch
+    # to SOFT/HARD by writing /policy/<tenant>.json with mode=hard.
+    # See quorus/auth/policy.py for the full design.
+    from quorus.auth.policy import (
+        Decision,
+        PolicyContext,
+        evaluate,
+        load_policy_for_tenant,
+    )
+    actor_role = "agent" if (auth.sub or "").endswith(("-claude", "-codex",
+        "-cursor", "-gemini", "-claude-1m")) else "human"
+    policy = load_policy_for_tenant(_tid(auth))
+    pol = evaluate(PolicyContext(
+        actor=requested_by or "anonymous",
+        action="room.delete",
+        resource=room_id,
+        role=actor_role,
+        tenant_id=_tid(auth),
+    ), policy)
+    if pol.effective_decision == Decision.DENY:
+        raise HTTPException(
+            status_code=403,
+            detail=f"policy_denied: {pol.reason}",
+        )
+    if pol.effective_decision == Decision.REQUIRE_HUMAN:
+        raise HTTPException(
+            status_code=403,
+            detail=f"approval_required: {pol.reason}",
+        )
+
     svc = request.app.state.room_service
     rid, _ = await svc.get(_tid(auth), room_id)
     is_admin = not auth.is_legacy and auth.role == "admin"
