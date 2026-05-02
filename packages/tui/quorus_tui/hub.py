@@ -1908,12 +1908,31 @@ def _read_input(
         except Exception:
             pass
 
+    # CRITICAL: put stdin in cbreak (character-at-a-time) mode for the
+    # duration of this call, otherwise the kernel buffers each char until
+    # the user presses Enter — so `select()` never sees them, the 2s tick
+    # fires, the screen wipes, and the user sees "type → appears (terminal
+    # echo) → vanishes (our wipe) → typed nothing reaches our buffer."
+    # readchar.readkey() does its own raw-mode dance internally, but ONLY
+    # after select() returns ready. We need stdin raw BEFORE select() so
+    # bytes arrive char-by-char.
+    import termios
+    import tty
+    _stdin_fd = sys.stdin.fileno() if sys.stdin.isatty() else -1
+    _saved_termios = None
+    if _stdin_fd >= 0:
+        try:
+            _saved_termios = termios.tcgetattr(_stdin_fd)
+            tty.setcbreak(_stdin_fd)
+        except (termios.error, OSError):
+            _saved_termios = None  # not a real tty (CI / pipe) — fall through
+
     # Restore in-progress buffer from a prior render-tick timeout so the user
     # never loses what they were typing when the 2s redraw fires.
     buf: list[str] = list(_PENDING_INPUT_BUF)
     _PENDING_INPUT_BUF.clear()
     _redraw_line(buf)
-    _dlog(f"_read_input start; restored buf={buf!r}")
+    _dlog(f"_read_input start; restored buf={buf!r}; tty_raw={_saved_termios is not None}")
     try:
         while True:
             import select as _sel
@@ -1989,6 +2008,14 @@ def _read_input(
         sys.stdout.write("\n")
         sys.stdout.flush()
         return _KEY_QUIT
+    finally:
+        # Restore the terminal to its prior mode so the parent shell
+        # behaves normally after we exit.
+        if _saved_termios is not None and _stdin_fd >= 0:
+            try:
+                termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, _saved_termios)
+            except (termios.error, OSError):
+                pass
 
 
 # ── Main hub loop ─────────────────────────────────────────────────────────────
