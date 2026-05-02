@@ -1638,13 +1638,15 @@ def _slash_invite(arg, state, relay_url, secret, agent_name, console):
 
 
 def _slash_share(arg, state, relay_url, secret, agent_name, console):
-    """`/share <room>` — mint a portable invite token and print it inline.
+    """`/share <room>` — mint a portable invite token and show the share card.
 
-    Mirrors the [s] welcome shortcut; here as a slash command so the
-    palette is complete. Argument is the room name (defaults to the
-    currently-selected room).
+    Mirrors the [s] in-room shortcut. Defaults to the currently-selected
+    room. Renders the polished share card from chat.render_share_card and
+    blocks until the user presses ``c`` (copy) or any key (dismiss).
     """
     del agent_name
+    from . import slash as _slash
+
     target = (arg.strip() or state.selected_room_name()).lstrip("#")
     if not target:
         state.set_status_bar("usage: /share <room>")
@@ -1653,18 +1655,28 @@ def _slash_share(arg, state, relay_url, secret, agent_name, console):
     if not any((r.get("name") or "") == target for r in rooms_snap):
         state.set_status_bar(f"no room '{target}' — try /rooms")
         return True
-    token = _mint_join_token(relay_url, secret, target)
-    console.print()
-    console.print(f"  [bold]Share #{target}[/bold]")
-    console.print(f"  [primary]{token}[/]")
-    console.print(f"  [dim]They run: quorus join {token}[/dim]")
-    console.print()
-    try:
-        input("  [Press Enter to return to the hub] ")
-    except EOFError:
-        pass
-    state.set_status_bar(f"Token generated for #{target}")
+    code = _mint_join_token(relay_url, secret, target)
+    install_url = _share_install_url(code)
+    status = _slash.run_share_flow(
+        console=console,
+        room_name=target,
+        code=code,
+        install_url=install_url,
+    )
+    state.set_status_bar(status)
     return True
+
+
+def _share_install_url(code: str) -> str | None:
+    """One-line install URL for the share card.
+
+    Server-issued short codes (no underscores, no `quorus_join_` prefix)
+    fit nicely under the q.dev/r/<code>.sh installer; the legacy base64
+    envelope is too long for a curl URL so we omit it.
+    """
+    if not code or code.startswith("quorus_join_"):
+        return None
+    return f"curl -sSL https://q.dev/r/{code}.sh | sh"
 
 
 def _slash_delete(arg, state, relay_url, secret, agent_name, console):
@@ -1807,6 +1819,26 @@ def _slash_workspace(arg, state, relay_url, secret, agent_name, console):
     return True
 
 
+def _slash_leave(arg, state, relay_url, secret, agent_name, console):
+    from . import slash as _slash
+    return _slash.slash_leave(arg, state, relay_url, secret, agent_name, console)
+
+
+def _slash_info(arg, state, relay_url, secret, agent_name, console):
+    from . import slash as _slash
+    return _slash.slash_info(arg, state, relay_url, secret, agent_name, console)
+
+
+def _slash_me(arg, state, relay_url, secret, agent_name, console):
+    from . import slash as _slash
+    return _slash.slash_me(arg, state, relay_url, secret, agent_name, console)
+
+
+def _slash_mute(arg, state, relay_url, secret, agent_name, console):
+    from . import slash as _slash
+    return _slash.slash_mute(arg, state, relay_url, secret, agent_name, console)
+
+
 SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/help":       ("show keybinds + all commands",        _slash_help),
     "/home":       ("return to the welcome view",           _slash_home),
@@ -1816,8 +1848,12 @@ SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/new":        ("/new <name> — alias for /create",      _slash_new),
     "/create":     ("/create <name> — make a new room",     _slash_create),
     "/share":      ("/share <room> — mint a join token",    _slash_share),
+    "/leave":      ("/leave — exit current room",           _slash_leave),
     "/delete":     ("/delete <room> — destroy a room",      _slash_delete),
     "/invite":     ("show how to share the current room",   _slash_invite),
+    "/info":       ("members + last-active for this room",  _slash_info),
+    "/me":         ("/me <action> — IRC-style action line", _slash_me),
+    "/mute":       ("/mute <duration> — silence (preview)", _slash_mute),
     "/workspace":  ("list / switch workspaces",             _slash_workspace),
     "/status":     ("connection + relay info",              _slash_status),
     "/clear":      ("clear the chat pane",                  _slash_clear),
@@ -2164,28 +2200,47 @@ def _main_input_loop(
                         workspace_label=workspace_label,
                     )
                 else:
-                    # Inline room strip (horizontal, not a sidebar).
+                    # iMessage-style in-room view: pinned app-bar on top,
+                    # bubble feed in the middle, slim composer hint above
+                    # the prompt. The room strip is folded into the app-bar
+                    # actions so the screen real estate stays focused on
+                    # the conversation, not the navigation chrome.
+                    from . import chat as _chat
+
+                    members = (selected.get("members") or []) if selected else []
+                    last_active = _chat.last_active_label(msgs_snap)
+                    console.print(
+                        _chat.render_app_bar(
+                            room_name=room_name,
+                            member_count=len(members),
+                            last_active=last_active,
+                            console_width=console_width,
+                        )
+                    )
+                    # Inline room strip stays as a one-liner so Tab still
+                    # has a visual reference. Dim & compact.
                     console.print(
                         _render_room_strip(
                             rooms_snap, selected_idx,
                             unread_by_room=unread_by_room,
                         )
                     )
-                    # Persistent nav hint — always visible so users know how
-                    # to switch rooms without discovering /help. Dim,
-                    # comma-separated, single line: doesn't compete with chat.
-                    console.print(Text.from_markup(
-                        "  [dim]Tab — switch room, Enter — open, "
-                        "Esc — back home, / — slash command[/]"
-                    ))
                     console.print()
-                    # Flat chat feed — grouped, centered empty states.
-                    for feed_line in _render_chat_feed(
+                    # Bubble feed — grouped, with optional unread divider.
+                    first_unread = state.get_unread(room_name)
+                    feed_unread_idx = (
+                        max(0, len(msgs_snap) - first_unread)
+                        if first_unread
+                        else None
+                    )
+                    for feed_line in _chat.render_bubble_feed(
                         msgs_snap, room_name, agent_name,
                         console_width=console_width,
+                        first_unread_index=feed_unread_idx,
                     ):
                         console.print(feed_line)
                     console.print()
+                    console.print(_chat.render_composer_hint())
                 # Transient status line (if any) above the bare prompt.
                 status_line = _render_status_line(status_bar)
                 if status_line is not None:
@@ -2295,18 +2350,22 @@ def _main_input_loop(
                 continue
 
             if cmd_lower == "s":
-                # Share <room> — mint a portable invite token. Prompts for
-                # the room name so this works from the welcome view (no
-                # selected room) AND from inside an open room.
-                console.print()
+                # Share — the easier path the user asked for. Behavior:
+                #   * In a room → mint + show card immediately, no prompt.
+                #   * Welcome view, exactly one room → share that one.
+                #   * Welcome view, multiple rooms → prompt for which.
+                from . import slash as _slash_mod
+
                 rooms_snap = state.get_rooms()
-                default_name = state.selected_room_name() or (
-                    rooms_snap[0].get("name") if rooms_snap else ""
-                )
-                target = Prompt.ask(
-                    "  Share which room",
-                    default=default_name or "",
-                ).strip().lstrip("#")
+                target = state.selected_room_name()
+                if not target and len(rooms_snap) == 1:
+                    target = rooms_snap[0].get("name") or ""
+                if not target:
+                    console.print()
+                    target = Prompt.ask(
+                        "  Share which room",
+                        default=(rooms_snap[0].get("name") if rooms_snap else ""),
+                    ).strip().lstrip("#")
                 if not target:
                     state.set_status_bar("Cancelled — no room name.")
                 elif not any(
@@ -2316,19 +2375,38 @@ def _main_input_loop(
                         f"No room '{target}' — press r for the list."
                     )
                 else:
-                    token = _mint_join_token(relay_url, secret, target)
-                    console.print()
-                    console.print(f"  [bold]Share #{target}[/bold]")
-                    console.print(f"  [primary]{token}[/]")
-                    console.print(
-                        f"  [dim]They run: quorus join {token}[/dim]"
+                    code = _mint_join_token(relay_url, secret, target)
+                    install_url = _share_install_url(code)
+                    status = _slash_mod.run_share_flow(
+                        console=console,
+                        room_name=target,
+                        code=code,
+                        install_url=install_url,
                     )
-                    console.print()
-                    try:
-                        input("  [Press Enter to return to the hub] ")
-                    except EOFError:
-                        pass
-                    state.set_status_bar(f"Token generated for #{target}")
+                    state.set_status_bar(status)
+                last_render = 0
+                continue
+
+            # In-room single-key shortcuts: i (info), m (members), l (leave).
+            # Only act when the user is *inside* a room — the welcome view
+            # owns its own letters (n/j/r/s/d). Skip when an in-progress
+            # message would be ambiguous (we already passed the "submit"
+            # gate, so single-letter input here is intentional).
+            if cmd_lower in {"i", "m", "l"} and state.get_selected_room():
+                from . import slash as _slash_mod
+
+                if cmd_lower == "l":
+                    _slash_mod.slash_leave(
+                        "", state, relay_url, secret, agent_name, console,
+                    )
+                else:
+                    # 'i' and 'm' both surface the info pane — members are
+                    # the dominant fact in it, and there's no separate
+                    # "members" endpoint to query.
+                    _slash_mod.slash_info(
+                        "", state, relay_url, secret, agent_name, console,
+                    )
+                    hold_render = True
                 last_render = 0
                 continue
 
@@ -2424,7 +2502,10 @@ def _main_input_loop(
                 # redraw so the output isn't wiped on the next tick.
                 # /status and /invite only set the status bar — they
                 # NEED a redraw for the bar to appear.
-                printing_verbs = {"/help", "/rooms", "/workspace", "/share", "/delete"}
+                printing_verbs = {
+                    "/help", "/rooms", "/workspace", "/share", "/delete",
+                    "/info",
+                }
                 handled = _dispatch_slash(
                     verb, arg, state, relay_url, secret, agent_name, console,
                 )
