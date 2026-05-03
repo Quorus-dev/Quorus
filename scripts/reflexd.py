@@ -1204,7 +1204,12 @@ class Reflexd:
             return
 
         thread_root_id = envelope_thread_root(envelope)
-        parent_id = envelope.get("id")
+        # SSE fan-out gives each recipient a per-envelope id while the
+        # canonical room-history id is in `message_id`. Prefer the
+        # canonical id so reply_to actually resolves on the relay side
+        # (otherwise the room_msg_svc returns 422 — the parent isn't
+        # found because envelope.id is the recipient-scoped id).
+        parent_id = envelope.get("message_id") or envelope.get("id")
         try:
             posted = await relay.post_reply(
                 room=room, from_name=self.config.participant_name,

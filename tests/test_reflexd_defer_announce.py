@@ -85,6 +85,16 @@ def test_envelope_thread_root_returns_none_when_blank():
     assert reflexd.envelope_thread_root({}) is None
 
 
+def test_envelope_thread_root_prefers_canonical_message_id():
+    """SSE fan-out gives each recipient their own envelope id but the
+    canonical room-history id is in ``message_id``. envelope_thread_root
+    must prefer the canonical id so the resulting thread_root resolves
+    against room history (not the per-recipient envelope id).
+    """
+    env = {"id": "recipient-env-id", "message_id": "canonical-msg-id"}
+    assert reflexd.envelope_thread_root(env) == "canonical-msg-id"
+
+
 # ---------------------------------------------------------------------------
 # 2. Memory load → wake-prompt → memory append (end-to-end on the daemon)
 # ---------------------------------------------------------------------------

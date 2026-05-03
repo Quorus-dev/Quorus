@@ -1,17 +1,14 @@
 import { useState } from "react";
-import { motion, useReducedMotion } from "framer-motion";
-import BrainHero from "./illustrations/BrainHero";
+import { motion } from "framer-motion";
+import HeroRoom from "./HeroRoom";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 const INSTALL_CMD = "pip install quorus";
 
 /**
  * HeroLight — cream split hero. Left: badge + headline + subhead + waitlist
- * + install command. Right: the Stitch "Hybrid Elite" hero image — a
- * cinematic teal-lit brain with a baked-in orchestrator terminal.
- *
- * Source: /public/stitch/brain-scene.webp (cropped from Stitch screen
- * b94ee1506d6541939266712982a0dfe4).
+ * + install command. Right: HeroRoom — a live browser-frame card showing a
+ * Quorus room with four agents coordinating in real time.
  */
 export default function HeroLight() {
   return (
@@ -140,9 +137,8 @@ export default function HeroLight() {
           </motion.div>
         </div>
 
-        {/* Right column — Stitch brain hero (image asset). The image already
-            includes the orchestrator terminal panel, baked into the
-            composition. We add only a soft accent halo + subtle float. */}
+        {/* Right column — live Quorus room mock. Browser-frame card with a
+            cycling message stream, participants, lock events, and rev tick. */}
         <div className="lg:col-span-6">
           <HeroBrain />
         </div>
@@ -151,41 +147,10 @@ export default function HeroLight() {
   );
 }
 
-/* ── Stitch brain — cinematic teal-lit hero asset ────────────────────────── */
+/* ── Live Quorus room — cinematic browser-frame hero card ───────────────── */
 
 function HeroBrain() {
-  const prefersReduced = useReducedMotion();
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.96 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 1.1, delay: 0.35, ease: EASE }}
-      className="relative mx-auto w-full max-w-[640px] lg:ml-auto lg:mr-0"
-    >
-      {/* Soft accent halo behind the brain */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -m-8"
-        style={{
-          background:
-            "radial-gradient(circle at 60% 50%, rgba(94,179,168,0.20), rgba(13,77,74,0.05) 40%, transparent 70%)",
-          filter: "blur(28px)",
-        }}
-      />
-
-      {/* Hand-crafted vector brain — scales crisply on any DPR. Internal
-          teal synapses pulse and connect with shimmering edges. The wrapper
-          floats subtly to add ambient life. */}
-      <motion.div
-        className="relative block w-full"
-        animate={prefersReduced ? undefined : { y: [0, -6, 0] }}
-        transition={{ duration: 9, ease: "easeInOut", repeat: Infinity }}
-      >
-        <BrainHero />
-      </motion.div>
-    </motion.div>
-  );
+  return <HeroRoom />;
 }
 
 /* ── Install command ─────────────────────────────────────────────────────── */

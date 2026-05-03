@@ -83,15 +83,22 @@ def envelope_thread_root(envelope: dict[str, Any]) -> str | None:
 
     Resolution rules — same as the relay endpoint:
       1. Explicit ``thread_root_id``.
-      2. Else fall back to ``id`` (the parent IS the root if it has no root).
+      2. Else fall back to the canonical room-message id (``message_id``
+         on SSE-fanned-out envelopes, ``id`` on direct envelopes).
       3. Else None.
 
     Reflexd uses this so its reply inherits the thread of the message that
     triggered the wake — multi-turn debates stay grouped in the TUI.
+    Note: the SSE fan-out gives each recipient its own ``id`` while the
+    canonical id lives in ``message_id``; we prefer the canonical id
+    because the relay's reply_to validation looks it up in room_history.
     """
     explicit = envelope.get("thread_root_id")
     if explicit:
         return str(explicit)
+    canonical = envelope.get("message_id")
+    if canonical:
+        return str(canonical)
     parent_id = envelope.get("id")
     if parent_id:
         return str(parent_id)
