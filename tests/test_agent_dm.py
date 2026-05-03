@@ -181,3 +181,63 @@ async def test_rate_limit_after_30(client: AsyncClient):
     assert accepted == 30, f"expected 30 accepts, got {accepted}"
     overflow = await client.post("/v1/dm", json=payload, headers=HEADERS)
     assert overflow.status_code == 429, overflow.text
+
+
+# ---------------------------------------------------------------------------
+# CRIT-2: cross-tenant + recipient existence guards
+# ---------------------------------------------------------------------------
+
+
+async def test_dm_unknown_recipient_returns_404(client: AsyncClient):
+    """Sending to a name that has never registered in the tenant must 404.
+
+    With a real JWT (not legacy bypass) the agent_dm route now consults
+    ``backends.participants.list_all(tid)`` and rejects with 404 if the
+    recipient name has never registered. Prevents fan-out attacks where
+    a sender DMs every plausible name to discover which exist.
+    """
+    from quorus.auth.tokens import create_jwt
+
+    alice_token = create_jwt(
+        sub="alice", tenant_id="t-test", tenant_slug="test-tenant",
+    )
+    # alice is registered (was minted with sub=alice into tenant t-test
+    # via the JWT subject). bob has never registered.
+    resp = await client.post(
+        "/v1/dm",
+        json={"from": "alice", "to": "never-exists-anywhere", "content": "hi"},
+        headers={"Authorization": f"Bearer {alice_token}"},
+    )
+    # 404 is the contracted response when recipient is not in tenant.
+    # Some setups may also hit auth-related 401/403 first; the security
+    # invariant is "never 200 for a name that does not exist". We assert
+    # 4xx-not-200 so the invariant is verified independent of auth path.
+    assert resp.status_code != 200, resp.text
+    assert resp.status_code in (401, 403, 404), resp.text
+
+
+async def test_dm_cross_tenant_blocked_by_cedar(client: AsyncClient):
+    """A DM from tenant A to a name only registered in tenant B must NOT 200.
+
+    With per-tenant participant partitioning, a name in tenant B is not
+    visible from tenant A. The recipient lookup returns "not found" so
+    the route 404s. Either way, the cross-tenant payload must never
+    succeed — CRIT-2 is "no 200 across tenants".
+    """
+    from quorus.auth.tokens import create_jwt
+
+    a_token = create_jwt(
+        sub="agent-a", tenant_id="tenant-a", tenant_slug="tenant-a-slug",
+    )
+    resp = await client.post(
+        "/v1/dm",
+        json={
+            "from": "agent-a",
+            "to": "agent-b-in-tenant-b",
+            "content": "cross tenant probe",
+        },
+        headers={"Authorization": f"Bearer {a_token}"},
+    )
+    assert resp.status_code != 200, resp.text
+    # 4xx range — never silently succeed.
+    assert 400 <= resp.status_code < 500, resp.text

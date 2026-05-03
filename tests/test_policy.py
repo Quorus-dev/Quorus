@@ -360,6 +360,47 @@ class TestDMScopedChecks:
         assert evaluate_scoped(ctx, policy).decision == Decision.DENY
 
 
+class TestSocialRouteCedarGate:
+    """CRIT-3: ``social:<verb>`` Cedar gate enforces room membership in HARD."""
+
+    def setup_method(self):
+        reset_rate_limits()
+
+    def test_work_queue_blocked_by_cedar_for_non_member(self):
+        """CRIT-3: the work-queue route maps ops to ``social:claim`` etc.
+
+        A non-member actor with HARD policy mode must be denied. The
+        route's runtime piggy-backs on the social membership gate so
+        a single policy controls both surfaces.
+        """
+        policy = {"mode": "hard", "rules": [], "default_decision": "allow"}
+        ctx = PolicyContext(
+            actor="rogue-bot",
+            action="social:claim",  # work_queue.op="claim" maps to this
+            resource="proj",
+            role="agent",
+            extra={"room_members": ["alice", "bob"]},
+        )
+        r = evaluate_scoped(ctx, policy)
+        assert r.decision == Decision.DENY
+        assert r.rule_id == "scoped.room_membership"
+
+    def test_dm_unknown_recipient_denied_in_hard_mode(self):
+        """A DM to a recipient absent from the sender's tenant denies."""
+        policy = {"mode": "hard", "rules": [], "default_decision": "allow"}
+        ctx = PolicyContext(
+            actor="agent-a",
+            action="dm:agent",
+            resource="agent-b-in-other-tenant",
+            role="agent",
+            tenant_id="tenant-a",
+            extra={"recipient_tenant_id": "tenant-b"},
+        )
+        r = evaluate_scoped(ctx, policy)
+        assert r.decision == Decision.DENY
+        assert r.rule_id == "scoped.dm_tenant"
+
+
 class TestEvaluateScopedFallthrough:
     """Unrelated actions pass through ``evaluate_scoped`` unchanged."""
 

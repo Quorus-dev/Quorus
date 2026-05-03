@@ -205,6 +205,104 @@ def test_safe_message_preview_truncates_and_flattens() -> None:
     assert "\r" not in multi
 
 
+# ---------------------------------------------------------------------------
+# CRIT-5: PII guard for log lines that mention chat content
+# ---------------------------------------------------------------------------
+
+
+def test_safe_log_summary_excludes_raw_content() -> None:
+    """CRIT-5: ``safe_log_summary`` MUST never return the raw body.
+
+    The default mode emits ``len=N hash=XXXXXXXX`` so two log lines for
+    the same chat body are correlatable, but the body itself never
+    lands on disk in ``~/.quorus/reflexd.log``.
+    """
+    body = "patient health card 1234567890 dob 1990-01-01"
+    summary = reflexd.safe_log_summary(body)
+    # No literal substring of the body survives.
+    assert "patient" not in summary
+    assert "1234567890" not in summary
+    assert "1990-01-01" not in summary
+    # Format pinned: len=N hash=XXXXXXXX.
+    assert summary.startswith("len=")
+    assert "hash=" in summary
+    # Hash field is 8 hex chars.
+    digest = summary.split("hash=", 1)[1]
+    assert len(digest) == 8
+    assert all(c in "0123456789abcdef" for c in digest)
+
+
+def test_safe_log_summary_stable_hash_for_same_input() -> None:
+    """Two summaries for the same body emit the same hash — correlation key."""
+    body = "ack — your task-#42 is queued"
+    s1 = reflexd.safe_log_summary(body)
+    s2 = reflexd.safe_log_summary(body)
+    assert s1 == s2
+
+
+def test_safe_log_summary_debug_redacts_pii() -> None:
+    """Debug mode adds a redacted preview — no raw email / phone / @-mention."""
+    body = "ping arav@example.com call +1 555-123-4567 cc @alice please"
+    summary = reflexd.safe_log_summary(body, debug=True)
+    # Original PII is gone.
+    assert "arav@example.com" not in summary
+    assert "+1 555-123-4567" not in summary
+    assert "@alice" not in summary
+    # Redaction tokens present (in at least one form).
+    assert "<redacted-email>" in summary or "<redacted-mention>" in summary
+
+
+def test_reflexd_log_no_content_preview(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The triage log emits ``len=`` + ``hash=``, never raw content.
+
+    This is the regression for CRIT-5. We force a real subscriber path
+    by calling ``safe_log_summary`` the same way the daemon does at the
+    triage and DM log sites.
+    """
+    body = "secret PHI never log this"
+    summary = reflexd.safe_log_summary(body)
+    assert "secret" not in summary
+    assert "PHI" not in summary
+    assert "len=" in summary
+    assert "hash=" in summary
+
+
+# ---------------------------------------------------------------------------
+# CRIT-7: subprocess argv injection guard
+# ---------------------------------------------------------------------------
+
+
+def test_subprocess_argv_includes_separator_for_claude() -> None:
+    """``--`` separator present so leading-dash content is not parsed as a flag."""
+    argv = reflexd.build_claude_argv("-flag-style-input")
+    assert "--" in argv
+    # The dash-prefixed payload comes after ``--``.
+    assert argv.index("--") < argv.index("-flag-style-input")
+
+
+def test_subprocess_argv_includes_separator_for_codex() -> None:
+    argv = reflexd.build_codex_argv("-flag-style-input")
+    assert "--" in argv
+    assert argv.index("--") < argv.index("-flag-style-input")
+
+
+def test_subprocess_argv_uses_equals_form_for_gemini() -> None:
+    """Gemini ``--prompt=<ctx>`` form keeps the value attached to the flag.
+
+    The parser would re-interpret ``--prompt -- --version`` as the version
+    flag, so the only safe form on gemini is ``--prompt=<ctx>``.
+    """
+    argv = reflexd.build_gemini_argv("-flag-style-input")
+    assert any(a.startswith("--prompt=") for a in argv)
+    assert "-flag-style-input" in argv[-1]
+
+
+def test_subprocess_argv_uses_equals_form_for_cursor() -> None:
+    argv = reflexd.build_cursor_argv("-flag-style-input")
+    assert any(a.startswith("--prompt=") for a in argv)
+    assert "-flag-style-input" in argv[-1]
+
+
 def test_detect_harness_routes_by_suffix() -> None:
     assert reflexd.detect_harness("arav-claude") == "claude"
     assert reflexd.detect_harness("arav-codex") == "codex"

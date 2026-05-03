@@ -263,8 +263,9 @@ def test_reflexd_uses_claude_cli_when_present(
     adapter = reflexd.HeadlessAdapter(timeout_s=2)
     out = asyncio.run(adapter.run("claude", context="hi-claude"))
     assert out == "hello team"
-    # Argv must be the pinned shape: ["claude", "--print", <ctx>].
-    assert captured["argv"] == ["claude", "--print", "hi-claude"]
+    # Argv pinned shape after CRIT-7: ``--`` separates options from prompt
+    # so a leading-dash chat body is not parsed as a flag.
+    assert captured["argv"] == ["claude", "--print", "--", "hi-claude"]
 
 
 def test_reflexd_explicit_stub_reports_stub_state(
@@ -488,9 +489,10 @@ def test_claude_subprocess_receives_verbatim_qod_prompt(
     out = asyncio.run(adapter.run("claude", context=prompt))
     assert out == "Looking now."
     # Pinned argv shape — flag rename / stringification regression catcher.
-    assert captured["argv"][:2] == ["claude", "--print"]
-    assert captured["argv"][2] == prompt
-    assert len(captured["argv"]) == 3
+    # After CRIT-7 the prompt sits at argv[3], past the ``--`` separator.
+    assert captured["argv"][:3] == ["claude", "--print", "--"]
+    assert captured["argv"][3] == prompt
+    assert len(captured["argv"]) == 4
 
 
 # ---------------------------------------------------------------------------

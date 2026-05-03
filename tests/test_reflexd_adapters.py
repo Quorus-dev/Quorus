@@ -43,31 +43,47 @@ SELF = "arav-claude"
 
 
 def test_build_claude_argv_pins_exact_shape() -> None:
-    """Claude CLI contract: ``claude --print <ctx>``.
+    """Claude CLI contract: ``claude --print -- <ctx>``.
 
     Headless mode in the Claude Code CLI. No ANTHROPIC_API_KEY needed —
-    the binary uses its own OAuth/keychain credentials.
+    the binary uses its own OAuth/keychain credentials. The trailing
+    ``--`` separates options from the positional prompt so a leading-
+    dash chat body is not re-interpreted as a flag (CRIT-7).
     """
     out = reflexd.build_claude_argv("hello world")
-    assert out == ["claude", "--print", "hello world"]
+    assert out == ["claude", "--print", "--", "hello world"]
 
 
 def test_build_codex_argv_pins_exact_shape() -> None:
-    """Codex CLI contract: ``codex exec --json --prompt <ctx>``."""
+    """Codex CLI contract: ``codex exec --json -- <ctx>``.
+
+    The legacy ``codex exec --json --prompt <ctx>`` shape was broken
+    (codex rejects ``--prompt``); the prompt is positional. ``--``
+    keeps a leading-dash payload from being re-parsed as a flag.
+    """
     out = reflexd.build_codex_argv("hello world")
-    assert out == ["codex", "exec", "--json", "--prompt", "hello world"]
+    assert out == ["codex", "exec", "--json", "--", "hello world"]
 
 
 def test_build_gemini_argv_pins_exact_shape() -> None:
-    """Gemini CLI contract: ``gemini --prompt <ctx>``."""
+    """Gemini CLI contract: ``gemini --prompt=<ctx>``.
+
+    The ``--key=value`` form keeps the prompt's value attached to the
+    flag, defending against argv-injection on leading-dash bodies.
+    Gemini's parser does NOT accept ``--prompt -- <ctx>``.
+    """
     out = reflexd.build_gemini_argv("hello world")
-    assert out == ["gemini", "--prompt", "hello world"]
+    assert out == ["gemini", "--prompt=hello world"]
 
 
 def test_build_cursor_argv_pins_exact_shape() -> None:
-    """Cursor CLI contract: ``cursor-agent --headless --prompt <ctx>``."""
+    """Cursor CLI contract: ``cursor-agent --headless --prompt=<ctx>``.
+
+    Same defensive ``--key=value`` shape as gemini. A future cursor-
+    agent build that breaks the equals form will fail this test.
+    """
     out = reflexd.build_cursor_argv("hello world")
-    assert out == ["cursor-agent", "--headless", "--prompt", "hello world"]
+    assert out == ["cursor-agent", "--headless", "--prompt=hello world"]
 
 
 # ---------------------------------------------------------------------------
@@ -134,11 +150,12 @@ def _qod_prompt(self_name: str = SELF) -> str:
 
 
 def test_claude_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Claude must be spawned with EXACTLY ``claude --print <ctx>``.
+    """Claude must be spawned with EXACTLY ``claude --print -- <ctx>``.
 
     This is the regression that caught the SDK→CLI swap. If a future
     Claude Code release renames ``--print`` (or anyone reverts to the
-    SDK), this test fails first.
+    SDK), this test fails first. The ``--`` separator is the argv-
+    injection guard from CRIT-7.
     """
     seen_argv: list[str] = []
 
@@ -152,7 +169,7 @@ def test_claude_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) 
     out = _run_adapter("claude", context="hello-claude")
     assert out == "hello-from-claude-cli"
     assert seen_argv == reflexd.build_claude_argv("hello-claude")
-    assert seen_argv == ["claude", "--print", "hello-claude"]
+    assert seen_argv == ["claude", "--print", "--", "hello-claude"]
 
 
 def test_claude_adapter_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,7 +235,13 @@ def test_claude_adapter_passes_qod_constitution(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_codex_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Codex must be spawned with EXACTLY ``codex exec --json --prompt <ctx>``."""
+    """Codex must be spawned with EXACTLY ``codex exec --json -- <ctx>``.
+
+    The legacy shape passed ``--prompt`` which codex rejects with
+    "unexpected argument" (verified on v0.128.0). The fix moves the
+    prompt to the positional slot and inserts ``--`` as the argv-
+    injection guard from CRIT-7.
+    """
     seen_argv: list[str] = []
 
     async def fake_exec(*argv: str, **_k: Any) -> _FakeProc:
@@ -231,7 +254,7 @@ def test_codex_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -
     out = _run_adapter("codex", context="my-prompt-text")
     assert "hi codex" in out
     assert seen_argv == reflexd.build_codex_argv("my-prompt-text")
-    assert seen_argv == ["codex", "exec", "--json", "--prompt", "my-prompt-text"]
+    assert seen_argv == ["codex", "exec", "--json", "--", "my-prompt-text"]
 
 
 def test_codex_adapter_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -298,7 +321,13 @@ def test_codex_adapter_passes_qod_constitution(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_gemini_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Gemini contract: ``gemini --prompt <ctx>``."""
+    """Gemini contract: ``gemini --prompt=<ctx>``.
+
+    Gemini rejects the ``--prompt -- <ctx>`` form ("Not enough arguments
+    following: prompt"). The ``--key=value`` shape keeps the prompt's
+    value attached to the flag, defending against argv-injection on
+    leading-dash bodies. CRIT-7.
+    """
     seen_argv: list[str] = []
 
     async def fake_exec(*argv: str, **_k: Any) -> _FakeProc:
@@ -311,7 +340,7 @@ def test_gemini_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) 
     out = _run_adapter("gemini", context="hello-gemini")
     assert out == "hi gemini"
     assert seen_argv == reflexd.build_gemini_argv("hello-gemini")
-    assert seen_argv == ["gemini", "--prompt", "hello-gemini"]
+    assert seen_argv == ["gemini", "--prompt=hello-gemini"]
 
 
 def test_gemini_adapter_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -358,8 +387,12 @@ def test_gemini_adapter_passes_qod_constitution(monkeypatch: pytest.MonkeyPatch)
 
     prompt = _qod_prompt()
     asyncio.run(reflexd.HeadlessAdapter(timeout_s=2).run("gemini", context=prompt))
-    # argv = [gemini, --prompt, <context>]
-    assert seen_argv[-1].startswith("# Quorus Operating Discipline (QOD)")
+    # argv = [gemini, --prompt=<context>] — last element starts with the
+    # ``--prompt=`` prefix because we use the equals-form for argv-injection
+    # safety (CRIT-7). The QOD must follow that prefix.
+    assert seen_argv[-1].startswith(
+        "--prompt=# Quorus Operating Discipline (QOD)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +401,10 @@ def test_gemini_adapter_passes_qod_constitution(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_cursor_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Cursor contract: ``cursor-agent --headless --prompt <ctx>``."""
+    """Cursor contract: ``cursor-agent --headless --prompt=<ctx>``.
+
+    Same defensive ``--key=value`` shape as gemini (CRIT-7).
+    """
     seen_argv: list[str] = []
 
     async def fake_exec(*argv: str, **_k: Any) -> _FakeProc:
@@ -381,7 +417,7 @@ def test_cursor_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) 
     out = _run_adapter("cursor", context="hello-cursor")
     assert out == "hi cursor"
     assert seen_argv == reflexd.build_cursor_argv("hello-cursor")
-    assert seen_argv == ["cursor-agent", "--headless", "--prompt", "hello-cursor"]
+    assert seen_argv == ["cursor-agent", "--headless", "--prompt=hello-cursor"]
 
 
 def test_cursor_adapter_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -448,8 +484,12 @@ def test_cursor_adapter_passes_qod_constitution(monkeypatch: pytest.MonkeyPatch)
 
     prompt = _qod_prompt()
     asyncio.run(reflexd.HeadlessAdapter(timeout_s=2).run("cursor", context=prompt))
-    # argv = [cursor-agent, --headless, --prompt, <context>]
-    assert seen_argv[-1].startswith("# Quorus Operating Discipline (QOD)")
+    # argv = [cursor-agent, --headless, --prompt=<context>] — last element
+    # starts with the ``--prompt=`` prefix because we use the equals-form
+    # for argv-injection safety (CRIT-7).
+    assert seen_argv[-1].startswith(
+        "--prompt=# Quorus Operating Discipline (QOD)"
+    )
 
 
 def test_cursor_inbox_sanitises_participant_name(
@@ -541,10 +581,15 @@ def test_log_adapter_versions_warns_on_unknown_version(
 @pytest.mark.parametrize(
     "harness, expected_argv",
     [
-        ("claude", ["claude", "--print", "ctx"]),
-        ("codex", ["codex", "exec", "--json", "--prompt", "ctx"]),
-        ("gemini", ["gemini", "--prompt", "ctx"]),
-        ("cursor", ["cursor-agent", "--headless", "--prompt", "ctx"]),
+        # Argv shapes after CRIT-7 (argv-injection guard):
+        # - claude/codex use ``--`` to separate options from the positional
+        #   prompt
+        # - gemini/cursor use ``--prompt=<ctx>`` because their parsers
+        #   reject ``-- <ctx>`` after ``--prompt``
+        ("claude", ["claude", "--print", "--", "ctx"]),
+        ("codex", ["codex", "exec", "--json", "--", "ctx"]),
+        ("gemini", ["gemini", "--prompt=ctx"]),
+        ("cursor", ["cursor-agent", "--headless", "--prompt=ctx"]),
     ],
 )
 def test_adapter_dry_run_records_argv_without_spawning(

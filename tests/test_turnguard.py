@@ -149,6 +149,57 @@ def test_busy_path_rejects_empty_participant(tg) -> None:
         tg.busy_path("   ")
 
 
+def test_turnguard_busy_path_traversal_sanitized(tg, runtime_home: Path) -> None:
+    """CRIT-4: hostile participant names cannot escape the runtime dir.
+
+    A literal ``"../../../etc/passwd"`` participant must NOT produce a
+    busy-file outside ``~/.quorus/runtime/``. The path-sanitiser
+    replaces every ``[^A-Za-z0-9._-]`` character with ``_``, so the
+    final path stays inside the runtime dir even for hostile input.
+    """
+    rd = tg.runtime_dir()
+    # Hostile name: classic path-traversal payload.
+    p = tg.busy_path("../../../etc/passwd")
+    # The result MUST be a child of the runtime dir, not /etc/passwd.
+    assert str(p).startswith(str(rd)), (
+        f"path escaped runtime dir: {p}"
+    )
+    # No literal slashes survived the sanitiser.
+    assert p.parent == rd, f"unexpected parent: {p.parent}"
+    # Verify writing actually lands inside the dir, not at /etc/passwd.
+    written = tg.begin("../../../etc/passwd", tool="x", ttl=60)
+    assert written.parent == rd, (
+        f"begin() escaped runtime dir: {written}"
+    )
+    # The hostile filename must NOT contain any path separator. ``.`` is
+    # allowed in the safe-name regex (so e.g. ``alice.dev`` works), but
+    # ``/`` is not — that's the actual traversal vector.
+    assert "/" not in written.name
+    # The /etc/passwd file at the OS root MUST NOT have been touched.
+    import os
+    assert not os.path.exists("/etc/passwd.busy")
+
+
+def test_turnguard_busy_path_sanitises_special_chars(tg, runtime_home: Path) -> None:
+    """Various non-alphanumeric chars get replaced with ``_``."""
+    rd = tg.runtime_dir()
+    cases = [
+        "alice;rm -rf /",
+        "alice\nbob",
+        "alice/etc",
+        "alice\\windows",
+        "alice$(whoami)",
+    ]
+    for name in cases:
+        p = tg.busy_path(name)
+        assert p.parent == rd, f"{name!r} escaped: {p}"
+        assert "/" not in p.name
+        assert "\\" not in p.name
+        assert "\n" not in p.name
+        assert ";" not in p.name
+        assert "$" not in p.name
+
+
 def test_busy_context_manager_clears_on_exception(tg, runtime_home: Path) -> None:
     """``with busy(...):`` must always remove the file, even on exception."""
     p = "arav-claude"

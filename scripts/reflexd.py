@@ -306,29 +306,65 @@ CURSOR_BIN = "cursor-agent"
 
 
 def build_claude_argv(context: str) -> list[str]:
-    """Pinned argv shape for Claude Code CLI. Contract: ``claude --print <ctx>``.
+    """Pinned argv shape for Claude Code CLI.
+
+    Contract: ``claude --print -- <ctx>``.
 
     ``--print`` (alias ``-p``) is the headless / non-interactive mode in the
     Claude Code CLI (verified on v2.1.126). It reads the prompt from argv,
     streams the response, then exits. Auth is whatever ``claude /login`` set
     up — we never read ``ANTHROPIC_API_KEY``.
+
+    Argv-injection guard: ``--`` separates options from positional args so
+    a chat body that starts with a dash (e.g. ``"-config /etc/passwd"``) is
+    parsed as the prompt, not as a CLI flag. Verified via ``claude --print
+    --help`` (parses help) vs ``claude --print -- --help`` (treated as prompt).
     """
-    return [CLAUDE_BIN, "--print", context]
+    return [CLAUDE_BIN, "--print", "--", context]
 
 
 def build_codex_argv(context: str) -> list[str]:
-    """Pinned argv shape for codex. Contract: ``codex exec --json --prompt <ctx>``."""
-    return [CODEX_BIN, "exec", "--json", "--prompt", context]
+    """Pinned argv shape for codex CLI.
+
+    Contract: ``codex exec --json -- <ctx>``.
+
+    ``codex exec`` takes the prompt as a positional [PROMPT] arg (verified on
+    OpenAI Codex v0.128.0). The ``--prompt`` flag does NOT exist; the legacy
+    shape ``codex exec --json --prompt <ctx>`` was broken in production
+    because codex rejects ``--prompt`` as ``unexpected argument``.
+
+    Argv-injection guard: ``--`` separates options from the positional
+    prompt so a leading-dash chat body cannot be re-interpreted as a flag.
+    """
+    return [CODEX_BIN, "exec", "--json", "--", context]
 
 
 def build_gemini_argv(context: str) -> list[str]:
-    """Pinned argv shape for gemini. Contract: ``gemini --prompt <ctx>``."""
-    return [GEMINI_BIN, "--prompt", context]
+    """Pinned argv shape for gemini CLI.
+
+    Contract: ``gemini --prompt=<ctx>``.
+
+    Argv-injection guard: gemini parses ``--prompt --version`` as the
+    ``--version`` flag (verified). It also rejects ``--prompt -- --version``
+    with "Not enough arguments following: prompt". The safe form is the
+    ``--key=value`` shape, which keeps the value attached to the flag and
+    out of the option-parser's consideration.
+    """
+    return [GEMINI_BIN, f"--prompt={context}"]
 
 
 def build_cursor_argv(context: str) -> list[str]:
-    """Pinned argv shape for cursor-agent. Contract: ``cursor-agent --headless --prompt <ctx>``."""
-    return [CURSOR_BIN, "--headless", "--prompt", context]
+    """Pinned argv shape for cursor-agent.
+
+    Contract: ``cursor-agent --headless --prompt=<ctx>``.
+
+    Cursor-agent is not always installed locally so we cannot empirically
+    verify; we apply the same defensive ``--key=value`` shape as gemini so
+    a leading-dash payload never reaches the option parser. If a future
+    cursor-agent release breaks the equals form, the contract test will
+    catch it before production.
+    """
+    return [CURSOR_BIN, "--headless", f"--prompt={context}"]
 
 
 # Version-probe argv per binary (NOT prompt-bearing — safe to run on startup).
