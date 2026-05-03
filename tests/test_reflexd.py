@@ -633,6 +633,79 @@ def test_cli_help_runs() -> None:
     assert ns.command == "status"
 
 
+def test_reflexd_queue_logs_warn_on_drop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """L29 — when the bounded busy-queue overflows, the dropped envelope
+    must be surfaced via ``logger.warning`` so operators can detect it.
+
+    The previous behaviour silently popped the oldest envelope, which
+    masked load problems where reflexd was busy for so long that real
+    user mentions were dropped on the floor.
+    """
+    import logging as _logging
+
+    cfg = reflexd.ReflexdConfig(
+        relay_url="http://test",
+        api_key="mct_test_secret",
+        participant_name=SELF,
+        runtime_dir=tmp_path / "runtime",
+        log_path=tmp_path / "reflexd.log",
+        spawn_enabled=False,
+    )
+    cfg.runtime_dir.mkdir()
+
+    # Force the busy-file branch on every call.
+    from quorus.runtime import turnguard as _tg
+    _tg.begin(SELF, tool="Bash", ttl=60, dir_override=cfg.runtime_dir)
+
+    daemon = reflexd.Reflexd(cfg)
+    fake = FakeRelay(sse_payload=b"")
+
+    async def push_n(n: int) -> None:
+        async with reflexd.RelayClient(
+            relay_url=cfg.relay_url, api_key=cfg.api_key
+        ) as relay:
+            await relay._client.aclose()  # type: ignore[union-attr]
+            relay._client = httpx.AsyncClient(
+                base_url=cfg.relay_url,
+                transport=fake.transport(),
+                follow_redirects=True,
+            )
+            for i in range(n):
+                env = {
+                    "id": f"msg-{i:03d}",
+                    "from_name": "arav",
+                    "to": SELF,
+                    "room": "r",
+                    "content": f"@{SELF} #{i}?",
+                    "message_type": "chat",
+                    "timestamp": "2026-05-02T12:00:00+00:00",
+                }
+                await daemon.handle_room_message(relay, env)
+
+    # Cap is 32 — push 35 to overflow by 3 and ensure 3 warning lines.
+    caplog.set_level(_logging.WARNING, logger="reflexd")
+    asyncio.run(push_n(35))
+
+    assert len(daemon._queue) == 32
+    drop_warnings = [
+        rec for rec in caplog.records
+        if rec.levelno == _logging.WARNING
+        and "queue cap (32) exceeded" in rec.getMessage()
+    ]
+    assert len(drop_warnings) == 3, (
+        f"expected 3 drop warnings, got {len(drop_warnings)}: "
+        f"{[r.getMessage() for r in drop_warnings]}"
+    )
+    # FIFO eviction: msg-000, msg-001, msg-002 are gone; survivors run
+    # from msg-003 to msg-034 (32 entries).
+    assert daemon._queue[0]["id"] == "msg-003"
+    assert daemon._queue[-1]["id"] == "msg-034"
+
+
 # ---------------------------------------------------------------------------
 # Participant-name safety check (refuse non-agent suffix)
 # ---------------------------------------------------------------------------

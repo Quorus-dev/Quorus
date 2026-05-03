@@ -181,6 +181,26 @@ def _read_lines_safe(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def _truncate_utf8(s: str, max_bytes: int) -> str:
+    """Truncate *s* so the UTF-8 encoding is at most *max_bytes* bytes.
+
+    L30 fix: a plain ``s[:n]`` slice cuts by Unicode code points, which
+    can leave the encoded payload above an N-byte budget when the string
+    contains multi-byte chars (CJK, emoji, combining marks). The downstream
+    JSONL file budget is byte-bound, so the cap must be too.
+
+    We encode-then-decode with ``errors="ignore"`` after slicing the
+    encoded bytes to *max_bytes*. ``ignore`` drops a partial multi-byte
+    sequence at the boundary cleanly, so we never emit invalid UTF-8.
+    """
+    if not s:
+        return s
+    encoded = s.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return s
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
 def _trim_to_cap(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop oldest entries until the encoded payload fits MAX_BYTES."""
     if not entries:
@@ -229,7 +249,7 @@ async def append(
     entry: dict[str, Any] = dict(extra or {})
     entry["ts"] = ts or datetime.now(timezone.utc).isoformat()
     entry["room"] = room
-    entry["summary"] = summary.strip()[:500]  # hard-cap each line
+    entry["summary"] = _truncate_utf8(summary.strip(), 500)
 
     async with _lock_for(path):
         existing = _read_lines_safe(path)

@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -302,8 +303,13 @@ def is_dm_action(action: str) -> bool:
 
 
 _RATE_LIMIT_LOCK = threading.Lock()
-# Map of "<actor>:<action>" -> last-allowed monotonic timestamp.
-_RATE_LIMIT_LAST: dict[str, float] = {}
+# LRU map of "<actor>:<action>" -> last-allowed monotonic timestamp.
+# Hard-capped at _RATE_LIMIT_MAX entries to bound memory growth in
+# long-running relays. Eviction is FIFO (oldest insertion first), which
+# is fine because cooldowns are minute-scale: any evicted entry has long
+# since fallen out of its rate-limit window.
+_RATE_LIMIT_MAX = 10_000
+_RATE_LIMIT_LAST: OrderedDict[str, float] = OrderedDict()
 
 # Default cooldown for blocking-disagree, in seconds. Mirrors the QOD rule
 # "blocking = production safety, not style" — 5 minutes between blocking
@@ -349,7 +355,15 @@ def _check_disagree_blocking_rate(ctx: PolicyContext, *,
                 f"blocking disagree rate-limited: "
                 f"{remaining:.0f}s remaining in cooldown"
             )
+        # LRU bookkeeping: refresh recency on update, evict oldest when
+        # the table exceeds _RATE_LIMIT_MAX. Move-to-end on existing keys
+        # keeps actively-rate-limited callers from being evicted while
+        # idle keys age out first.
+        if key in _RATE_LIMIT_LAST:
+            _RATE_LIMIT_LAST.move_to_end(key)
         _RATE_LIMIT_LAST[key] = t
+        while len(_RATE_LIMIT_LAST) > _RATE_LIMIT_MAX:
+            _RATE_LIMIT_LAST.popitem(last=False)
     return True, "within rate limit"
 
 

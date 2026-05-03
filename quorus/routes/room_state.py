@@ -98,6 +98,14 @@ class ClaimTaskRequest(BaseModel):
     file_path: str = Field(min_length=1, max_length=500)
     claimed_by: str
     description: str = ""
+    # ttl_seconds semantics (L21):
+    #   The lock is granted with ``expires_at = now + ttl_seconds``. The
+    #   sweeper compares ``started_epoch < cutoff`` (strict less-than),
+    #   so a lock is honored for the FULL ``ttl_seconds`` window — a lock
+    #   created at t=0 with ttl=300 is still valid at t=300.0 and only
+    #   becomes eligible for expiry at t > 300.0. Callers that need
+    #   inclusive expiry (e.g. "expire AT 300s, not after") should
+    #   pre-decrement their ttl by 1.
     ttl_seconds: int = 300
 
     @field_validator("file_path")

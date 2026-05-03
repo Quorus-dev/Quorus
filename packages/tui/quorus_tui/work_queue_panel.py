@@ -42,6 +42,12 @@ _STATUS_GLYPH: dict[str, str] = {
     "cancelled": "·",
 }
 
+# L27: lifted to a module-level frozenset so the comprehension below
+# does a single ``in`` lookup per task instead of re-allocating a set
+# literal on every iteration. Frozenset makes accidental mutation a
+# TypeError.
+_ACTIVE_STATUSES: frozenset[str] = frozenset({"pending", "in_progress", "blocked"})
+
 
 def _pluralise(count: int, singular: str) -> str:
     return singular if count == 1 else singular + "s"
@@ -104,10 +110,7 @@ def render_work_queue_panel(
     if not tasks:
         return []
 
-    active = [
-        t for t in tasks
-        if t.get("status") in {"pending", "in_progress", "blocked"}
-    ]
+    active = [t for t in tasks if t.get("status") in _ACTIVE_STATUSES]
     if not active:
         return []
 
@@ -193,11 +196,9 @@ def render_work_queue_panel(
 
 def panel_summary(tasks: Sequence[dict[str, Any]]) -> str:
     """One-line text summary used by Hub status-bar / OS notifications."""
-    active = [
-        t for t in tasks
-        if t.get("status") in {"pending", "in_progress", "blocked"}
-    ]
-    n = len(active)
+    # L27: single-pass count over a frozenset membership check; avoids
+    # the list-then-len round trip the previous implementation did.
+    n = sum(1 for t in tasks if t.get("status") in _ACTIVE_STATUSES)
     if n == 0:
         return ""
     return f"Active work — {n} {_pluralise(n, 'task')}"

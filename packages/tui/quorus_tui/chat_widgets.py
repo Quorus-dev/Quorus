@@ -751,5 +751,4 @@ __all__ = [
     "typing_indicator",
     "verb_decoration",
     "wrap_lines",
-    "_INTERRUPT_BORDER_MARKER",
 ]

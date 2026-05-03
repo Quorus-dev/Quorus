@@ -415,3 +415,71 @@ class TestEvaluateScopedFallthrough:
         ctx = PolicyContext(actor="arav", action="room.delete", role="agent")
         # Routes through evaluate() first, hits destructive default.
         assert evaluate_scoped(ctx).decision == Decision.REQUIRE_HUMAN
+
+
+class TestRateLimitLruCap:
+    """L24 — ``_RATE_LIMIT_LAST`` must not grow without bound.
+
+    The previous implementation was a plain ``dict`` that accumulated one
+    entry per unique ``(actor, action)`` pair forever. With agent fleets
+    using rotating ephemeral identities this could grow into millions of
+    entries before a relay restart. We cap it at ``_RATE_LIMIT_MAX``
+    using FIFO eviction.
+    """
+
+    def setup_method(self):
+        reset_rate_limits()
+
+    def test_rate_limit_last_lru_evicts_at_10k(self):
+        from quorus.auth import policy as _policy
+        # Insert _RATE_LIMIT_MAX + 50 distinct actors each issuing one
+        # blocking disagree. After the cap is exceeded the oldest
+        # entries should be evicted FIFO and the table size should
+        # never exceed the cap.
+        policy = {"mode": "hard", "rules": [], "default_decision": "allow"}
+        cap = _policy._RATE_LIMIT_MAX
+        n_extra = 50
+        members = {"actor-0"}  # placeholder; rebuilt per actor below
+        for i in range(cap + n_extra):
+            actor = f"lru-actor-{i}"
+            members = {actor}
+            ctx = PolicyContext(
+                actor=actor,
+                action="social:disagree",
+                resource="lru-room",
+                role="agent",
+                extra={"room_members": members, "mode": "blocking"},
+            )
+            r = evaluate_scoped(ctx, policy)
+            assert r.decision == Decision.ALLOW
+
+        # Cap holds — never exceeds the configured maximum.
+        assert len(_policy._RATE_LIMIT_LAST) <= cap
+
+        # FIFO eviction means the first 50 actors got evicted while the
+        # most-recent ``cap`` survive. A re-rate-limit attempt for an
+        # evicted actor should ALLOW (no record => fresh window), while
+        # a re-attempt for a surviving actor should DENY (still cooling
+        # down).
+        evicted_actor = "lru-actor-0"
+        evicted_ctx = PolicyContext(
+            actor=evicted_actor,
+            action="social:disagree",
+            resource="lru-room",
+            role="agent",
+            extra={"room_members": {evicted_actor}, "mode": "blocking"},
+        )
+        r_evicted = evaluate_scoped(evicted_ctx, policy)
+        assert r_evicted.decision == Decision.ALLOW
+
+        survivor_actor = f"lru-actor-{cap + n_extra - 1}"
+        survivor_ctx = PolicyContext(
+            actor=survivor_actor,
+            action="social:disagree",
+            resource="lru-room",
+            role="agent",
+            extra={"room_members": {survivor_actor}, "mode": "blocking"},
+        )
+        r_survivor = evaluate_scoped(survivor_ctx, policy)
+        assert r_survivor.decision == Decision.DENY
+        assert "rate-limited" in r_survivor.reason

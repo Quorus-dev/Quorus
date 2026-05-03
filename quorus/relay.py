@@ -792,7 +792,12 @@ if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_list,
-        allow_methods=["GET", "POST", "DELETE", "PATCH"],
+        # L2 (security): tighten browser-accessible verbs to read + write
+        # only. DELETE/PATCH endpoints exist (admin tenants, room delete,
+        # webhooks, dm purge) but are CLI/server-driven only — the
+        # dashboard frontend issues only GET and POST. Keeping the CORS
+        # surface smaller reduces what a stolen origin token can do.
+        allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "Bootstrap-Secret"],
     )
 

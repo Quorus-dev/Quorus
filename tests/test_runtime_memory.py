@@ -370,3 +370,68 @@ def test_memory_purge_sync_wrapper_round_trips(base_dir: Path):
     result = mem.purge_sync("alice", "sprint", base_dir=base_dir)
     assert result["purged_count"] == 1
     assert not path.exists()
+
+
+# ---------------------------------------------------------------------------
+# L30 — UTF-8-safe truncation at the 500-byte boundary
+# ---------------------------------------------------------------------------
+
+
+def test_truncate_utf8_below_cap_passthrough():
+    """ASCII strings under cap return unchanged."""
+    assert mem._truncate_utf8("hello", 500) == "hello"
+    assert mem._truncate_utf8("", 500) == ""
+
+
+def test_truncate_utf8_ascii_at_boundary():
+    """Pure-ASCII string longer than cap truncates exactly to cap bytes."""
+    long_ascii = "x" * 800
+    out = mem._truncate_utf8(long_ascii, 500)
+    assert len(out) == 500
+    assert len(out.encode("utf-8")) == 500
+
+
+def test_truncate_utf8_never_emits_invalid_bytes():
+    """Multi-byte chars at the boundary must NOT produce torn UTF-8.
+
+    Each ``é`` is 2 bytes in UTF-8. A pure ``[:n]`` byte slice at an odd
+    boundary would leave a half-character; the helper must clip to a
+    valid code-point boundary instead.
+    """
+    payload = "é" * 400  # 800 bytes
+    out = mem._truncate_utf8(payload, 501)
+    encoded = out.encode("utf-8")
+    # Must fit under cap and decode as valid UTF-8.
+    assert len(encoded) <= 501
+    # Round-trip is lossless — no replacement chars introduced.
+    assert all(c == "é" for c in out)
+    # 501 byte budget / 2 bytes per char = 250 full chars, dropping the
+    # half-char at the boundary.
+    assert len(out) == 250
+
+
+def test_truncate_utf8_emoji_boundary():
+    """4-byte UTF-8 emojis must clip cleanly, never half-emoji."""
+    payload = "🎉" * 200  # each = 4 bytes -> 800 bytes
+    out = mem._truncate_utf8(payload, 500)
+    assert len(out.encode("utf-8")) <= 500
+    # 500 / 4 = 125 full emojis; everything remaining is decodable.
+    assert all(c == "🎉" for c in out)
+
+
+async def test_memory_summary_truncation_at_utf8_boundary(base_dir: Path):
+    """End-to-end: appended summaries are clipped at 500 bytes, not chars,
+    and the on-disk JSONL line is always valid UTF-8."""
+    # 600 emojis -> 2400 raw bytes; must clip to <=500 bytes.
+    summary = "🎉" * 600
+    entry = await mem.append("alice", "ops", summary, base_dir=base_dir)
+    assert "summary" in entry
+    assert len(entry["summary"].encode("utf-8")) <= 500
+    # The persisted file must be readable JSONL (no torn UTF-8).
+    path = mem.memory_path("alice", "ops", base_dir=base_dir)
+    raw = path.read_bytes()
+    # Decoding fails loudly if we left a half-emoji in the file.
+    decoded = raw.decode("utf-8")
+    line = decoded.splitlines()[0]
+    parsed = json.loads(line)
+    assert parsed["summary"] == entry["summary"]

@@ -298,9 +298,12 @@ async def post_work_queue(
     except WorkQueueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    raise HTTPException(
-        status_code=400, detail=f"unknown op {body.op!r}",
-    )
+    # Unreachable: ``WorkQueueRequest.op`` is a closed Literal of the five
+    # branches handled above, so Pydantic rejects unknown ops at the
+    # validation layer before we ever reach this point. Keeping the type
+    # checker honest with an explicit unreachable assertion rather than a
+    # dead ``raise HTTPException`` (L28).
+    raise AssertionError(f"unreachable: unknown op {body.op!r}")  # pragma: no cover
 
 
 __all__ = ["router"]

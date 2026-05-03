@@ -55,6 +55,13 @@ class DoubleVoteError(SocialProtocolError):
 
 # Small fairness adjustments per verb. Tuned conservatively so a single
 # session can't dominate the metric. Stream B may adjust.
+#
+# L26 — process-local; reset on restart. The credit deltas live in
+# memory only and are not persisted to disk or a backing store. A relay
+# restart drops accumulated credit; this is intentional for now since
+# credit is a soft fairness signal, not an audit-grade ledger. If we
+# later need cross-restart durability, push the deltas through the
+# audit-service (hash-chained) rather than this static map.
 _CREDIT_DELTA: dict[str, float] = {
     "claim": 0.05,
     "release": 0.0,

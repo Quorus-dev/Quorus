@@ -1167,7 +1167,16 @@ class Reflexd:
             logger.info("busy-file present, queueing wake room=%s id=%s", room, message_id)
             self._queue.append(envelope)
             if len(self._queue) > 32:
-                self._queue.pop(0)
+                # L29: surface the drop so operators don't lose envelopes
+                # silently. Cap is 32 to bound memory while busy; older
+                # entries are dropped FIFO.
+                dropped = self._queue.pop(0)
+                logger.warning(
+                    "reflexd queue cap (32) exceeded — dropping oldest "
+                    "envelope room=%s id=%s",
+                    dropped.get("room") or "",
+                    dropped.get("id") or "",
+                )
             return False
 
         # Capability-aware bid scoring. Score 0.0 ⇒ this agent isn't a fit;
