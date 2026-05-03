@@ -35,6 +35,7 @@ import os
 import re
 import tempfile
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,11 +52,16 @@ FILE_MODE = 0o600
 # Same conservative shape used elsewhere (cursor inbox dir, busy-file path).
 _SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
-# Per-process locks so concurrent appends from the same daemon instance
+# Per-process LRU lock cache so concurrent appends from the same daemon
 # don't tear the JSONL file. Cross-process safety is handled by the
 # atomic-replace pattern (oldest-evict path) — a torn line on read is
 # discarded by the corruption-recovery branch.
-_LOCKS: dict[str, asyncio.Lock] = {}
+#
+# H9 fix: bound the lock map at _LOCKS_MAX entries. Long-running daemons
+# accumulate one lock per (participant, room) forever otherwise. We keep
+# the most recently used N locks and evict the LRU entry when full.
+_LOCKS_MAX = 1024
+_LOCKS_LRU: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
 
 
 def _safe(name: str, *, fallback: str = "default") -> str:
@@ -102,11 +108,23 @@ def _ensure_parent(path: Path) -> None:
 
 
 def _lock_for(path: Path) -> asyncio.Lock:
+    """Return (creating if needed) an asyncio.Lock for ``path``.
+
+    H9 fix: backed by an LRU dict capped at ``_LOCKS_MAX`` entries. Each
+    access promotes the key to the right end; eviction drops the oldest.
+    Evicting a lock is safe because any caller currently holding it owns
+    the strong reference; new callers will mint a fresh lock — at worst
+    serialisation degrades to "no contention" for an evicted (rare) key.
+    """
     key = str(path)
-    lock = _LOCKS.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _LOCKS[key] = lock
+    lock = _LOCKS_LRU.get(key)
+    if lock is not None:
+        _LOCKS_LRU.move_to_end(key)
+        return lock
+    if len(_LOCKS_LRU) >= _LOCKS_MAX:
+        _LOCKS_LRU.popitem(last=False)
+    lock = asyncio.Lock()
+    _LOCKS_LRU[key] = lock
     return lock
 
 

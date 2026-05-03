@@ -21,6 +21,7 @@ import asyncio
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from quorus.auth.tokens import create_jwt
 from quorus.relay import _reset_state, app
 from quorus.services.work_queue_svc import (
     ClaimRaceError,
@@ -29,6 +30,19 @@ from quorus.services.work_queue_svc import (
 )
 
 HEADERS = {"Authorization": "Bearer test-secret"}
+
+_TEST_TENANT_ID = "t-wq"
+_TEST_TENANT_SLUG = "wq-test"
+
+
+def _user_headers(name: str) -> dict[str, str]:
+    """Return a Bearer-JWT header for ``name`` in the test tenant."""
+    token = create_jwt(
+        sub=name,
+        tenant_id=_TEST_TENANT_ID,
+        tenant_slug=_TEST_TENANT_SLUG,
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture(autouse=True)
@@ -47,10 +61,14 @@ async def client():
 
 @pytest.fixture
 async def room_id(client: AsyncClient) -> str:
+    """Create a room via real JWT (alice). H6 hardening rejects legacy
+    bearer on /v1/work_queue and /v1/social, so the room must live in the
+    same tenant the JWT identifies (``_TEST_TENANT_ID``).
+    """
     resp = await client.post(
         "/rooms",
         json={"name": "wq-test-room", "created_by": "alice"},
-        headers=HEADERS,
+        headers=_user_headers("alice"),
     )
     assert resp.status_code == 200, resp.text
     rid = resp.json()["id"]
@@ -58,7 +76,7 @@ async def room_id(client: AsyncClient) -> str:
         join = await client.post(
             f"/rooms/{rid}/join",
             json={"participant": who, "role": "member"},
-            headers=HEADERS,
+            headers=_user_headers("alice"),
         )
         assert join.status_code == 200, join.text
     return rid
@@ -256,11 +274,11 @@ class TestWorkQueueRoutes:
                 "summary": "build /v1/healthz",
                 "eta_seconds": 600,
             },
-            headers=HEADERS,
+            headers=_user_headers("alice"),
         )
         assert resp.status_code == 200, resp.text
         get_resp = await client.get(
-            f"/v1/work_queue/{room_id}", headers=HEADERS,
+            f"/v1/work_queue/{room_id}", headers=_user_headers("alice"),
         )
         assert get_resp.status_code == 200
         body = get_resp.json()
@@ -278,7 +296,7 @@ class TestWorkQueueRoutes:
                 "summary": "race", "eta_seconds": 60,
                 "task_id": "race-1",
             },
-            headers=HEADERS,
+            headers=_user_headers("alice"),
         )
         assert add.status_code == 200, add.text
 
@@ -287,7 +305,7 @@ class TestWorkQueueRoutes:
             return await client.post(
                 f"/v1/work_queue/{room_id}",
                 json={"op": "claim", "actor": actor, "task_id": "race-1"},
-                headers=HEADERS,
+                headers=_user_headers(actor),
             )
 
         r1, r2 = await asyncio.gather(_claim("alice"), _claim("bob"))
@@ -310,13 +328,13 @@ class TestWorkQueueRoutes:
                     "scope": "ship the demo",
                 },
             },
-            headers=HEADERS,
+            headers=_user_headers("alice"),
         )
         assert resp.status_code == 200, resp.text
 
         # The work queue should now reflect the claim
         get_resp = await client.get(
-            f"/v1/work_queue/{room_id}", headers=HEADERS,
+            f"/v1/work_queue/{room_id}", headers=_user_headers("alice"),
         )
         assert get_resp.status_code == 200
         body = get_resp.json()
@@ -339,7 +357,7 @@ class TestWorkQueueRoutes:
                 "summary": "pending one",
                 "task_id": "p1",
             },
-            headers=HEADERS,
+            headers=_user_headers("alice"),
         )
         await client.post(
             f"/v1/work_queue/{room_id}",
@@ -348,17 +366,38 @@ class TestWorkQueueRoutes:
                 "summary": "claimable",
                 "task_id": "p2",
             },
-            headers=HEADERS,
+            headers=_user_headers("alice"),
         )
         await client.post(
             f"/v1/work_queue/{room_id}",
             json={"op": "claim", "actor": "alice", "task_id": "p2"},
-            headers=HEADERS,
+            headers=_user_headers("alice"),
         )
         # Filter for in_progress only
         resp = await client.get(
             f"/v1/work_queue/{room_id}?status=in_progress",
-            headers=HEADERS,
+            headers=_user_headers("alice"),
         )
         ids = [t["task_id"] for t in resp.json()["tasks"]]
         assert ids == ["p2"]
+
+
+# ---------------------------------------------------------------------------
+# Wave-2 regression — H6 legacy bearer rejection on /v1/work_queue/*
+# ---------------------------------------------------------------------------
+
+
+async def test_legacy_bearer_rejected_on_work_queue(
+    client: AsyncClient, room_id: str,
+):
+    """H6 — POST /v1/work_queue/{room_id} must reject ``Bearer test-secret``."""
+    resp = await client.post(
+        f"/v1/work_queue/{room_id}",
+        json={
+            "op": "add", "actor": "alice",
+            "summary": "rejected", "eta_seconds": 60,
+        },
+        headers=HEADERS,  # legacy bearer
+    )
+    assert resp.status_code == 403, resp.text
+    assert "legacy auth not permitted" in resp.text

@@ -148,9 +148,16 @@ async def send_agent_dm(
     sender = body.from_name
     recipient = body.to
 
-    # Identity binding — the JWT sub must match the from field unless
-    # legacy admin auth is in play (auth.sub absent and role=admin).
-    if auth.sub and sender != auth.sub:
+    # H6 fix — reject legacy bearer entirely. Without ``auth.sub`` an
+    # attacker can pass arbitrary ``from`` and impersonate another agent.
+    if auth.is_legacy:
+        raise HTTPException(
+            status_code=403,
+            detail="legacy auth not permitted on this endpoint",
+        )
+    if not auth.sub:
+        raise HTTPException(status_code=401, detail="auth.sub required")
+    if sender != auth.sub:
         raise HTTPException(
             status_code=403, detail="cannot send DM as another user",
         )
@@ -180,46 +187,44 @@ async def send_agent_dm(
     # Cross-tenant + recipient-existence guard. Recipient MUST be a
     # registered participant in the sender's tenant. Participants are
     # partitioned per-tenant so this naturally rejects any attempt to
-    # DM a name that only lives in a different tenant. Legacy auth
-    # (no real JWT) skips the lookup so existing single-tenant flows
-    # keep working — same exemption shape as require_room_member.
-    if not auth.is_legacy:
-        backends = getattr(request.app.state, "backends", None)
-        participants = (
-            getattr(backends, "participants", None) if backends else None
-        )
-        if participants is not None:
-            try:
-                known = await participants.list_all(tid)
-            except Exception:
-                known = []
-            if recipient not in known:
-                raise HTTPException(
-                    status_code=404,
-                    detail="recipient not found in tenant",
-                )
-
-        # Cedar policy gate — same shape as social/work_queue. The DM
-        # scoped check ensures sender_tenant == recipient_tenant; we
-        # pass tid as both because the membership lookup above already
-        # enforced co-tenancy, so any name that survived the lookup is
-        # by definition in the sender's tenant.
-        policy_dir = getattr(request.app.state, "policy_dir", None)
-        policy = load_policy_for_tenant(tid, policy_dir=policy_dir)
-        ctx = PolicyContext(
-            actor=sender,
-            action="dm:agent",
-            resource=recipient,
-            role=auth.role or ("human" if auth.sub else "agent"),
-            tenant_id=tid,
-            extra={"recipient_tenant_id": tid},
-        )
-        result = evaluate_scoped(ctx, policy)
-        if result.effective_decision != Decision.ALLOW:
+    # DM a name that only lives in a different tenant. Legacy auth was
+    # rejected above, so we always run this check now.
+    backends = getattr(request.app.state, "backends", None)
+    participants = (
+        getattr(backends, "participants", None) if backends else None
+    )
+    if participants is not None:
+        try:
+            known = await participants.list_all(tid)
+        except Exception:
+            known = []
+        if recipient not in known:
             raise HTTPException(
-                status_code=403,
-                detail=f"dm policy: {result.reason}",
+                status_code=404,
+                detail="recipient not found in tenant",
             )
+
+    # Cedar policy gate — same shape as social/work_queue. The DM
+    # scoped check ensures sender_tenant == recipient_tenant; we
+    # pass tid as both because the membership lookup above already
+    # enforced co-tenancy, so any name that survived the lookup is
+    # by definition in the sender's tenant.
+    policy_dir = getattr(request.app.state, "policy_dir", None)
+    policy = load_policy_for_tenant(tid, policy_dir=policy_dir)
+    ctx = PolicyContext(
+        actor=sender,
+        action="dm:agent",
+        resource=recipient,
+        role=auth.role or "agent",
+        tenant_id=tid,
+        extra={"recipient_tenant_id": tid},
+    )
+    result = evaluate_scoped(ctx, policy)
+    if result.effective_decision != Decision.ALLOW:
+        raise HTTPException(
+            status_code=403,
+            detail=f"dm policy: {result.reason}",
+        )
 
     # Build the envelope. Mirrors the social-verb envelope shape so
     # reflexd's DM handler can route on `kind` without forking.
@@ -260,6 +265,33 @@ async def send_agent_dm(
                 q.put_nowait(envelope)
             except Exception:
                 pass
+
+    # H1 fix — audit trail for SOC2 + GDPR. Record sender/recipient
+    # metadata only, never the DM body content. Best-effort: missing
+    # ledger (non-Postgres rigs) is non-fatal.
+    audit_svc = getattr(request.app.state, "audit_service", None)
+    if audit_svc is not None:
+        try:
+            try:
+                msg_uuid = uuid.UUID(message_id)
+            except ValueError:
+                msg_uuid = uuid.uuid4()
+            await audit_svc.record(
+                tenant_id=tid,
+                message_id=msg_uuid,
+                event_type="dm:agent",
+                actor=sender,
+                target=recipient,
+                details={
+                    "in_reply_to": body.in_reply_to,
+                    "metadata_keys": (
+                        sorted(body.metadata.keys())
+                        if isinstance(body.metadata, dict) else []
+                    ),
+                },
+            )
+        except Exception:
+            pass
 
     return {"ok": True, "id": message_id, "timestamp": now_iso}
 

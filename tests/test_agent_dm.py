@@ -15,9 +15,23 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from quorus.auth.tokens import create_jwt
 from quorus.relay import _reset_state, app
 
 HEADERS = {"Authorization": "Bearer test-secret"}
+
+_TEST_TENANT_ID = "t-dm"
+_TEST_TENANT_SLUG = "dm-test"
+
+
+def _user_headers(name: str) -> dict[str, str]:
+    """Return a Bearer-JWT header for ``name`` in the test tenant."""
+    token = create_jwt(
+        sub=name,
+        tenant_id=_TEST_TENANT_ID,
+        tenant_slug=_TEST_TENANT_SLUG,
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture(autouse=True)
@@ -34,12 +48,29 @@ async def client():
         yield c
 
 
+@pytest.fixture
+async def registered_participants():
+    """Register alice + bob + carol in the DM test tenant.
+
+    H6 hardening rejects legacy auth on /v1/dm so we exercise the route via
+    real JWTs. Recipient lookup requires the recipient to be a registered
+    participant in the sender's tenant — this fixture seeds both names so
+    the happy paths can run.
+    """
+    backends = app.state.backends
+    for name in ("alice", "bob", "carol"):
+        await backends.participants.add(_TEST_TENANT_ID, name)
+    yield
+
+
 # ---------------------------------------------------------------------------
 # Happy paths
 # ---------------------------------------------------------------------------
 
 
-async def test_send_then_list_roundtrip(client: AsyncClient):
+async def test_send_then_list_roundtrip(
+    client: AsyncClient, registered_participants,
+):
     resp = await client.post(
         "/v1/dm",
         json={
@@ -47,11 +78,11 @@ async def test_send_then_list_roundtrip(client: AsyncClient):
             "to": "bob",
             "content": "ack — your task-#42 is queued",
         },
-        headers=HEADERS,
+        headers=_user_headers("alice"),
     )
     assert resp.status_code == 200, resp.text
 
-    inbox = await client.get("/v1/dm/bob", headers=HEADERS)
+    inbox = await client.get("/v1/dm/bob", headers=_user_headers("bob"))
     assert inbox.status_code == 200
     body = inbox.json()
     assert body["count"] == 1
@@ -62,11 +93,13 @@ async def test_send_then_list_roundtrip(client: AsyncClient):
     assert msg["content"].startswith("ack")
 
 
-async def test_in_reply_to_roundtrips(client: AsyncClient):
+async def test_in_reply_to_roundtrips(
+    client: AsyncClient, registered_participants,
+):
     first = await client.post(
         "/v1/dm",
         json={"from": "alice", "to": "bob", "content": "ping"},
-        headers=HEADERS,
+        headers=_user_headers("alice"),
     )
     parent_id = first.json()["id"]
 
@@ -78,10 +111,10 @@ async def test_in_reply_to_roundtrips(client: AsyncClient):
             "content": "pong",
             "in_reply_to": parent_id,
         },
-        headers=HEADERS,
+        headers=_user_headers("bob"),
     )
     assert reply.status_code == 200, reply.text
-    inbox = await client.get("/v1/dm/alice", headers=HEADERS)
+    inbox = await client.get("/v1/dm/alice", headers=_user_headers("alice"))
     assert inbox.json()["messages"][-1]["in_reply_to"] == parent_id
 
 
@@ -90,12 +123,14 @@ async def test_in_reply_to_roundtrips(client: AsyncClient):
 # ---------------------------------------------------------------------------
 
 
-async def test_isolation_from_human_dm_stream(client: AsyncClient):
+async def test_isolation_from_human_dm_stream(
+    client: AsyncClient, registered_participants,
+):
     """An agent-DM must NOT show up in the human ``/messages/{recipient}`` queue."""
     await client.post(
         "/v1/dm",
         json={"from": "alice", "to": "bob", "content": "agent-only"},
-        headers=HEADERS,
+        headers=_user_headers("alice"),
     )
     # Human DM fetch — this is the regular per-recipient inbox endpoint.
     human = await client.get("/messages/bob", headers=HEADERS)
@@ -135,18 +170,22 @@ async def test_cannot_send_as_another_user(client: AsyncClient):
     assert resp.status_code == 403, resp.text
 
 
-async def test_cannot_dm_self(client: AsyncClient):
+async def test_cannot_dm_self(client: AsyncClient, registered_participants):
     resp = await client.post(
         "/v1/dm",
         json={"from": "alice", "to": "alice", "content": "..."},
-        headers=HEADERS,
+        headers=_user_headers("alice"),
     )
     assert resp.status_code == 400, resp.text
     assert "yourself" in resp.text.lower()
 
 
 async def test_unknown_participant_inbox_empty(client: AsyncClient):
-    resp = await client.get("/v1/dm/never-existed", headers=HEADERS)
+    # Listing your own (empty) inbox under a real JWT should 200 cleanly.
+    resp = await client.get(
+        "/v1/dm/never-existed",
+        headers=_user_headers("never-existed"),
+    )
     assert resp.status_code == 200
     assert resp.json()["count"] == 0
 
@@ -170,16 +209,19 @@ async def test_third_party_cannot_read_inbox(client: AsyncClient):
 # ---------------------------------------------------------------------------
 
 
-async def test_rate_limit_after_30(client: AsyncClient):
+async def test_rate_limit_after_30(
+    client: AsyncClient, registered_participants,
+):
     """30 sends within the window pass; the 31st must 429."""
     accepted = 0
     payload = {"from": "alice", "to": "bob", "content": "noisy"}
+    headers = _user_headers("alice")
     for _ in range(30):
-        r = await client.post("/v1/dm", json=payload, headers=HEADERS)
+        r = await client.post("/v1/dm", json=payload, headers=headers)
         if r.status_code == 200:
             accepted += 1
     assert accepted == 30, f"expected 30 accepts, got {accepted}"
-    overflow = await client.post("/v1/dm", json=payload, headers=HEADERS)
+    overflow = await client.post("/v1/dm", json=payload, headers=headers)
     assert overflow.status_code == 429, overflow.text
 
 
@@ -214,6 +256,17 @@ async def test_dm_unknown_recipient_returns_404(client: AsyncClient):
     # 4xx-not-200 so the invariant is verified independent of auth path.
     assert resp.status_code != 200, resp.text
     assert resp.status_code in (401, 403, 404), resp.text
+
+
+async def test_legacy_bearer_rejected_on_dm(client: AsyncClient):
+    """H6 — POST /v1/dm must reject ``Bearer test-secret``."""
+    resp = await client.post(
+        "/v1/dm",
+        json={"from": "alice", "to": "bob", "content": "no legacy"},
+        headers=HEADERS,  # legacy bearer
+    )
+    assert resp.status_code == 403, resp.text
+    assert "legacy auth not permitted" in resp.text
 
 
 async def test_dm_cross_tenant_blocked_by_cedar(client: AsyncClient):

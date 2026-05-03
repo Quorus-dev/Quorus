@@ -18,6 +18,7 @@ import uuid as _uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field, field_validator
 
 from quorus.auth.middleware import AuthContext, verify_auth
 from quorus.auth.policy import (
@@ -41,6 +42,31 @@ router = APIRouter()
 _LEGACY_TENANT = "_legacy"
 
 
+class SocialVerbBody(BaseModel):
+    """Strict body model for ``POST /v1/social/{verb}``.
+
+    H8 fix: replaces the loose ``body.get("actor")`` chain with Pydantic
+    validation so empty/null actor and missing room_id fail fast with a 422
+    instead of silently propagating into the state machine.
+    """
+
+    model_config = {"extra": "allow"}
+
+    actor: str = Field(min_length=1, max_length=200)
+    room_id: str | None = Field(default=None, max_length=200)
+    room: str | None = Field(default=None, max_length=200)
+    ref_message_id: str | None = Field(default=None, max_length=200)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("actor")
+    @classmethod
+    def _strip_actor(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("actor required")
+        return v
+
+
 def _tid(auth: AuthContext) -> str:
     return auth.tenant_id or _LEGACY_TENANT
 
@@ -58,7 +84,7 @@ def _social_svc(request: Request) -> SocialSvc:
 @router.post("/v1/social/{verb}")
 async def post_social_verb(
     verb: str,
-    body: dict[str, Any],
+    body: SocialVerbBody,
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
@@ -72,26 +98,40 @@ async def post_social_verb(
             ),
         )
 
-    body = dict(body or {})
-    actor = (auth.sub or body.get("actor") or "").strip()
-    if not actor:
-        raise HTTPException(status_code=400, detail="actor required")
-    if auth.sub and body.get("actor") and body["actor"] != auth.sub:
+    # H6 (code-review) — reject legacy bearer entirely on this endpoint.
+    # Legacy auth has ``auth.sub=None``, which would let any caller pass
+    # an arbitrary ``actor`` field and impersonate another participant.
+    # The route requires a real JWT so the actor is bound to ``auth.sub``.
+    if auth.is_legacy:
         raise HTTPException(
-            status_code=403, detail="cannot post as another actor",
+            status_code=403,
+            detail="legacy auth not permitted on this endpoint",
+        )
+    if not auth.sub:
+        raise HTTPException(status_code=401, detail="auth.sub required")
+
+    actor = body.actor
+    # H6 (code-review) — strict actor/JWT binding. Anti-impersonation must
+    # not depend on ``auth.sub`` being present.
+    if actor != auth.sub:
+        raise HTTPException(
+            status_code=403,
+            detail="cannot post as another actor",
         )
 
-    room_ref = body.get("room_id") or body.get("room")
+    room_ref = body.room_id or body.room
     if not room_ref:
         raise HTTPException(status_code=400, detail="room_id required")
 
-    body["kind"] = "social"
-    body["verb"] = verb
-    body["actor"] = actor
-    body.setdefault("room_id", room_ref)
+    raw = body.model_dump()
+    raw["kind"] = "social"
+    raw["verb"] = verb
+    raw["actor"] = actor
+    raw.setdefault("room_id", room_ref)
+    raw.pop("room", None)
 
     try:
-        sv = SocialVerb.model_validate(body)
+        sv = SocialVerb.model_validate(raw)
     except Exception as e:  # ValidationError or ValueError
         raise HTTPException(
             status_code=400, detail=f"invalid payload: {e}",
@@ -105,37 +145,66 @@ async def post_social_verb(
         else sv.payload.model_dump()
     )
 
+    # H7 fix — for blocking-disagree, validate the ref_message_id resolves
+    # to a real message in recent room history. Without this an attacker
+    # can freeze the room indefinitely by referencing a fabricated id.
+    if verb == "disagree" and payload_dict.get("mode") == "blocking":
+        ref_id = payload_dict.get("ref_message_id")
+        if ref_id:
+            backends = getattr(request.app.state, "backends", None)
+            history_backend = (
+                getattr(backends, "room_history", None)
+                if backends else None
+            )
+            history: list[dict[str, Any]] = []
+            if history_backend is not None:
+                try:
+                    history = await history_backend.get_recent(
+                        tid, rid, limit=500,
+                    )
+                except Exception:
+                    history = []
+            if not any(
+                m.get("id") == ref_id or m.get("message_id") == ref_id
+                for m in history
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"ref_message_id {ref_id!r} not found in recent "
+                        "room history"
+                    ),
+                )
+
     # Cedar policy gate — runs AFTER membership and BEFORE the rate
     # limit / state-machine mutation so a denied actor never gets
-    # a counter increment. Legacy auth keeps the historical
-    # single-tenant flow open. ``room_members`` is normalised to a
+    # a counter increment. ``room_members`` is normalised to a
     # list-of-names regardless of whether the backend returns a dict
     # or a list (RoomService can shape it either way under tests).
-    if not auth.is_legacy:
-        policy_dir = getattr(request.app.state, "policy_dir", None)
-        policy = load_policy_for_tenant(tid, policy_dir=policy_dir)
-        raw_members = room_data.get("members") or {}
-        if isinstance(raw_members, dict):
-            members = list(raw_members.keys())
-        else:
-            members = list(raw_members)
-        ctx = PolicyContext(
-            actor=actor,
-            action=f"social:{verb}",
-            resource=rid,
-            role=auth.role or ("human" if auth.sub else "agent"),
-            tenant_id=tid,
-            extra={
-                "room_members": members,
-                "mode": payload_dict.get("mode"),
-            },
+    policy_dir = getattr(request.app.state, "policy_dir", None)
+    policy = load_policy_for_tenant(tid, policy_dir=policy_dir)
+    raw_members = room_data.get("members") or {}
+    if isinstance(raw_members, dict):
+        members = list(raw_members.keys())
+    else:
+        members = list(raw_members)
+    ctx = PolicyContext(
+        actor=actor,
+        action=f"social:{verb}",
+        resource=rid,
+        role=auth.role or ("human" if auth.sub else "agent"),
+        tenant_id=tid,
+        extra={
+            "room_members": members,
+            "mode": payload_dict.get("mode"),
+        },
+    )
+    result = evaluate_scoped(ctx, policy)
+    if result.effective_decision != Decision.ALLOW:
+        raise HTTPException(
+            status_code=403,
+            detail=f"social policy: {result.reason}",
         )
-        result = evaluate_scoped(ctx, policy)
-        if result.effective_decision != Decision.ALLOW:
-            raise HTTPException(
-                status_code=403,
-                detail=f"social policy: {result.reason}",
-            )
 
     rate_limit_svc = request.app.state.rate_limit_service
     is_blocking_disagree = (
@@ -165,7 +234,9 @@ async def post_social_verb(
 
     svc = _social_svc(request)
     try:
-        result = await svc.apply(tid, rid, sv)
+        result = await svc.apply(
+            tid, rid, sv, room_member_count=len(members),
+        )
     except BlockedError as e:
         raise HTTPException(
             status_code=409, detail=f"room_blocked: {e}",
@@ -228,6 +299,53 @@ async def post_social_verb(
             )
         except Exception:
             # SSE-only delivery is acceptable fallback for Stream A.
+            pass
+
+    # H1 fix — audit trail. Record the social verb for SOC2 / GDPR
+    # compliance. Best-effort: audit failures must NOT break the verb post.
+    # Message content / payload secrets stay out of the ledger; we record
+    # the structural fields only (verb, room, actor, ref_message_id, mode).
+    audit_svc = getattr(request.app.state, "audit_service", None)
+    if audit_svc is not None:
+        try:
+            audit_details = {
+                "verb": verb,
+                "room_id": rid,
+                "ref_message_id": sv.ref_message_id,
+            }
+            # Surface a tiny set of safe payload fields per verb so the
+            # audit row has enough context for incident review without
+            # leaking content/reason text.
+            if verb == "claim":
+                audit_details["task_id"] = payload_dict.get("task_id")
+                audit_details["eta_seconds"] = payload_dict.get("eta_seconds")
+            elif verb == "release":
+                audit_details["task_id"] = payload_dict.get("task_id")
+                audit_details["handoff_to"] = payload_dict.get("handoff_to")
+            elif verb == "disagree":
+                audit_details["mode"] = payload_dict.get("mode")
+            elif verb == "defer":
+                audit_details["to"] = payload_dict.get("to")
+                audit_details["ttl_seconds"] = payload_dict.get("ttl_seconds")
+            elif verb == "vote":
+                audit_details["poll_id"] = payload_dict.get("poll_id")
+                audit_details["option"] = payload_dict.get("option")
+            elif verb == "queue":
+                audit_details["after"] = payload_dict.get("after")
+            await audit_svc.record(
+                tenant_id=tid,
+                message_id=_uuid.uuid4(),
+                event_type=f"social:{verb}",
+                actor=actor,
+                target=rid,
+                room_id=rid,
+                room_name=room_data.get("name"),
+                details=audit_details,
+            )
+        except Exception:
+            # Audit ledger may be unavailable (e.g. non-Postgres test rigs).
+            # Stream A authoritative truth lives in the in-memory state,
+            # so audit gap is non-fatal but logged elsewhere.
             pass
 
     return {

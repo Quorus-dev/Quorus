@@ -235,3 +235,59 @@ async def test_empty_summary_is_noop(base_dir: Path):
     await mem.append("alice", "ops", "   ", base_dir=base_dir)
     recent = await mem.read_recent("alice", "ops", base_dir=base_dir)
     assert recent == []
+
+
+# ---------------------------------------------------------------------------
+# H9 regression — _LOCKS LRU cap evicts oldest at capacity
+# ---------------------------------------------------------------------------
+
+
+async def test_locks_lru_evicts_oldest_at_capacity(monkeypatch, base_dir: Path):
+    """H9 — long-running daemon must not accumulate one lock per
+    (participant, room) forever. Verify the LRU drops the oldest entry
+    when adding past the cap.
+    """
+    # Shrink the cap so the test runs in O(N) tiny iterations.
+    monkeypatch.setattr(mem, "_LOCKS_MAX", 4, raising=True)
+    monkeypatch.setattr(
+        mem, "_LOCKS_LRU", type(mem._LOCKS_LRU)(), raising=True,
+    )
+
+    # Touch 6 distinct (participant, room) pairs — capacity is 4 so the
+    # oldest two MUST have been evicted.
+    for i in range(6):
+        await mem.append(
+            f"agent-{i}", "ops", f"line {i}", base_dir=base_dir,
+        )
+
+    assert len(mem._LOCKS_LRU) == 4
+    keys = [str(mem.memory_path(f"agent-{i}", "ops", base_dir=base_dir))
+            for i in range(6)]
+    # Oldest two evicted.
+    for evicted in keys[:2]:
+        assert evicted not in mem._LOCKS_LRU
+    # Newest four retained.
+    for retained in keys[2:]:
+        assert retained in mem._LOCKS_LRU
+
+
+async def test_locks_lru_promotes_recent_access(monkeypatch, base_dir: Path):
+    """Accessing an existing entry promotes it to the recent end."""
+    monkeypatch.setattr(mem, "_LOCKS_MAX", 3, raising=True)
+    monkeypatch.setattr(
+        mem, "_LOCKS_LRU", type(mem._LOCKS_LRU)(), raising=True,
+    )
+
+    # Seed three entries.
+    for name in ("a", "b", "c"):
+        await mem.append(name, "ops", "x", base_dir=base_dir)
+
+    # Re-touch "a" so it becomes the most-recent.
+    await mem.append("a", "ops", "again", base_dir=base_dir)
+
+    # Add a fourth — "b" (now LRU) should evict, not "a".
+    await mem.append("d", "ops", "y", base_dir=base_dir)
+
+    keys = list(mem._LOCKS_LRU.keys())
+    assert any("/a/" in k for k in keys), "promoted entry was evicted"
+    assert not any("/b/" in k for k in keys), "stale entry not evicted"

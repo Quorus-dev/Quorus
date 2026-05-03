@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "_security_notes": [
+    "wave-2 H5: ran `npm audit fix` (smol-toml advisory resolved).",
+    "Remaining 6 high-severity advisories live transitively under",
+    "@vercel/node 5.x → undici and ajv. `npm audit fix --force` would",
+    "downgrade @vercel/node to v4 (breaking change). Track for next",
+    "@vercel/node major bump rather than force-downgrade.",
+    "Same for vitest/vite/esbuild moderate chain — wait for vitest 4."
+  ],
   "engines": {
     "node": ">=20.9.0"
   },

@@ -855,6 +855,10 @@ class RelayClient:
         )
         if resp.status_code == 404:
             return {"claimed": False}
+        # H11 fix — distinguish unrecoverable 4xx from retryable 5xx.
+        # 401/403/422 are auth/policy/validation errors that won't fix
+        # themselves inside the bid window; raising HTTPStatusError lets
+        # the caller break the polling loop instead of burning retries.
         resp.raise_for_status()
         return resp.json()
 
@@ -1198,11 +1202,30 @@ class Reflexd:
             return False
 
         # Poll claim until BID_WINDOW_SECONDS elapses or we see a winner.
+        # H11 fix: 401/403/422 from the relay are unrecoverable inside the
+        # bid window — break the loop and surface the error so the daemon
+        # doesn't burn 8 retries on a permanent failure.
         deadline = time.time() + BID_WINDOW_SECONDS
         winner: str | None = None
         while time.time() < deadline:
             try:
                 claim = await relay.claim(room_id=room, message_id=message_id)
+            except httpx.HTTPStatusError as exc:
+                code = exc.response.status_code if exc.response else 0
+                if code in (401, 403, 422):
+                    logger.error(
+                        "claim aborted (unrecoverable %d): "
+                        "room=%s id=%s detail=%s",
+                        code, room, message_id, exc.response.text[:200],
+                    )
+                    return True
+                logger.debug("claim retry (status %s): %s", code, exc)
+                await asyncio.sleep(0.25)
+                continue
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                logger.debug("claim retry (transport): %s", exc)
+                await asyncio.sleep(0.25)
+                continue
             except httpx.HTTPError as exc:
                 logger.debug("claim retry: %s", exc)
                 await asyncio.sleep(0.25)

@@ -748,13 +748,25 @@ async def metrics(request: Request):
     return Response(content=generate_latest(), media_type="text/plain")
 
 # CORS
+# H6 (security) — refuse to start with wildcard origins unless the
+# operator opts in. ``Origin: *`` combined with ``Authorization`` headers
+# is a textbook misconfig; we want fail-closed in production.
 _cors_origins = os.environ.get("CORS_ORIGINS", "")
 if _cors_origins:
+    _cors_list = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+    if "*" in _cors_list and os.environ.get(
+        "QUORUS_ALLOW_WILDCARD_CORS", ""
+    ).lower() not in ("1", "true", "yes"):
+        raise RuntimeError(
+            "CORS_ORIGINS must not contain '*' in production. "
+            "Set explicit https origins, or export "
+            "QUORUS_ALLOW_WILDCARD_CORS=1 for local dev."
+        )
     from starlette.middleware.cors import CORSMiddleware
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[o.strip() for o in _cors_origins.split(",")],
+        allow_origins=_cors_list,
         allow_methods=["GET", "POST", "DELETE", "PATCH"],
         allow_headers=["Authorization", "Content-Type", "Bootstrap-Secret"],
     )

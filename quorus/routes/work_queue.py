@@ -151,55 +151,63 @@ async def post_work_queue(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
+    # H6 fix — reject legacy bearer entirely on this endpoint.
+    if auth.is_legacy:
+        raise HTTPException(
+            status_code=403,
+            detail="legacy auth not permitted on this endpoint",
+        )
+    if not auth.sub:
+        raise HTTPException(status_code=401, detail="auth.sub required")
+
     tid = _tid(auth)
     rid, room_data = await require_room_member(request, auth, tid, room_id)
 
     actor = (body.actor or auth.sub or "").strip()
     if not actor:
         raise HTTPException(status_code=400, detail="actor required")
-    if auth.sub and body.actor and body.actor != auth.sub:
+    if actor != auth.sub:
         raise HTTPException(
             status_code=403, detail="cannot mutate as another actor",
         )
 
     # Cedar policy gate — same pattern as routes/social.py. Reuses the
     # social membership check (the room_members extra) so any non-member
-    # who slipped past require_room_member (e.g. via legacy auth flag)
-    # still gets denied at the policy layer when in HARD mode. We map
-    # work-queue ops to the closest social verb so a single policy file
-    # can express "agent X may claim but not release".
-    if not auth.is_legacy:
-        policy_dir = getattr(request.app.state, "policy_dir", None)
-        policy = load_policy_for_tenant(tid, policy_dir=policy_dir)
-        raw_members = room_data.get("members") or {}
-        if isinstance(raw_members, dict):
-            members = list(raw_members.keys())
-        else:
-            members = list(raw_members)
-        # Map work-queue op → Cedar action. We piggyback on the social
-        # vocabulary so a single policy controls both surfaces.
-        op_to_action = {
-            "add": "social:queue",
-            "claim": "social:claim",
-            "update": "social:claim",
-            "complete": "social:release",
-            "release": "social:release",
-        }
-        action = op_to_action.get(body.op, f"work_queue:{body.op}")
-        ctx = PolicyContext(
-            actor=actor,
-            action=action,
-            resource=rid,
-            role=auth.role or ("human" if auth.sub else "agent"),
-            tenant_id=tid,
-            extra={"room_members": members},
+    # who slipped past require_room_member still gets denied at the policy
+    # layer when in HARD mode. We map work-queue ops to the closest social
+    # verb so a single policy file can express
+    # "agent X may claim but not release".
+    policy_dir = getattr(request.app.state, "policy_dir", None)
+    policy = load_policy_for_tenant(tid, policy_dir=policy_dir)
+    raw_members = room_data.get("members") or {}
+    if isinstance(raw_members, dict):
+        members = list(raw_members.keys())
+    else:
+        members = list(raw_members)
+    # Map work-queue op → Cedar action. We piggyback on the social
+    # vocabulary so a single policy controls both surfaces.
+    op_to_action = {
+        "add": "social:queue",
+        "claim": "social:claim",
+        "update": "social:claim",
+        "complete": "social:release",
+        "release": "social:release",
+    }
+    action = op_to_action.get(body.op, f"work_queue:{body.op}")
+    ctx = PolicyContext(
+        actor=actor,
+        action=action,
+        resource=rid,
+        role=auth.role or "agent",
+        tenant_id=tid,
+        extra={"room_members": members},
+    )
+    result = evaluate_scoped(ctx, policy)
+    if result.effective_decision != Decision.ALLOW:
+        raise HTTPException(
+            status_code=403,
+            detail=f"work_queue policy: {result.reason}",
         )
-        result = evaluate_scoped(ctx, policy)
-        if result.effective_decision != Decision.ALLOW:
-            raise HTTPException(
-                status_code=403,
-                detail=f"work_queue policy: {result.reason}",
-            )
 
     # Rate-limit per actor — same shape as Stream A's social rate limit.
     rate_limit_svc = request.app.state.rate_limit_service

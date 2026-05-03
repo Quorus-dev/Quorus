@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -18,6 +19,12 @@ from quorus.routes.room_auth import require_room_member
 router = APIRouter(prefix="/v1", tags=["triage"])
 _LEGACY_TENANT = "_legacy"
 _DEFAULT_BID_TTL_SECONDS = 5
+# H4 fix — bound _bid_windows. Hand-rolled LRU + per-entry TTL because
+# cachetools is not in the dependency set. _BID_WINDOW_MAX is a hard cap;
+# _BID_WINDOW_TTL is a wall-clock timeout that protects us when an
+# orphan window's expires_at field somehow gets stuck in the future.
+_BID_WINDOW_MAX = 10_000
+_BID_WINDOW_TTL_S = 600.0
 _QUESTION_WORDS = re.compile(
     r"\b(who|what|when|where|why|how|can|could|should|would|will|does|do|did|is|are)\b",
     re.IGNORECASE,
@@ -100,9 +107,14 @@ class _BidWindow:
     expires_at: datetime
     bids: dict[str, _Bid] = field(default_factory=dict)
     claim: ClaimResponse | None = None
+    inserted_at: datetime = field(default_factory=_now)
 
 
-_bid_windows: dict[tuple[str, str, str], _BidWindow] = {}
+# H4 fix — LRU-bounded with TTL evict on every read. OrderedDict gives O(1)
+# move-to-end on access and O(1) popitem(last=False) on eviction. The
+# _BID_WINDOW_TTL_S floor is a belt-and-braces timeout in case some window
+# gets stuck.
+_bid_windows: "OrderedDict[tuple[str, str, str], _BidWindow]" = OrderedDict()
 _fairness_credit: dict[tuple[str, str], float] = {}
 
 
@@ -111,14 +123,33 @@ def _window_key(tid: str, room_id: str, message_id: str) -> tuple[str, str, str]
 
 
 def _cleanup_expired() -> None:
+    """Drop windows whose expires_at is in the past AND have no claim,
+    plus any window older than ``_BID_WINDOW_TTL_S`` regardless of claim
+    status, plus enforce the LRU cap.
+    """
     now = _now()
-    expired = [
-        key
-        for key, window in _bid_windows.items()
-        if window.expires_at < now and window.claim is None
-    ]
+    ttl_floor = now - timedelta(seconds=_BID_WINDOW_TTL_S)
+    expired: list[tuple[str, str, str]] = []
+    for key, window in _bid_windows.items():
+        if window.expires_at < now and window.claim is None:
+            expired.append(key)
+        elif window.inserted_at < ttl_floor:
+            # Hard TTL — even claimed windows get evicted eventually so
+            # the dict cannot grow unbounded if claim never expires.
+            expired.append(key)
     for key in expired:
         _bid_windows.pop(key, None)
+    # H4 LRU cap — evict oldest (insertion-order) entries until under cap.
+    while len(_bid_windows) > _BID_WINDOW_MAX:
+        _bid_windows.popitem(last=False)
+
+
+def _record_window(key: tuple[str, str, str], window: _BidWindow) -> None:
+    """Insert / refresh a window in the LRU."""
+    _bid_windows[key] = window
+    _bid_windows.move_to_end(key)
+    while len(_bid_windows) > _BID_WINDOW_MAX:
+        _bid_windows.popitem(last=False)
 
 
 def _candidate_members(members: dict, sender: str | None) -> list[str]:
@@ -230,7 +261,10 @@ async def submit_bid(
         window = _BidWindow(
             expires_at=_now() + timedelta(seconds=body.ttl_seconds),
         )
-        _bid_windows[key] = window
+        _record_window(key, window)
+    else:
+        # Promote LRU recency on each touch.
+        _bid_windows.move_to_end(key)
 
     window.bids[body.participant] = _Bid(
         participant=body.participant,

@@ -11,10 +11,21 @@ state; clients must replay from history if continuity is required.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any, Callable
 
 from quorus.protocol.social_verbs import SocialVerb
+
+_logger = logging.getLogger("quorus.services.social")
+
+# H3 caps — soft limits per room/poll/tenant so a noisy actor cannot
+# unbound state. Values chosen well above any legitimate workflow
+# (rooms typically have <50 participants, polls <100 voters).
+_MAX_QUEUE_PER_ROOM = 1000
+_MAX_DEFER_EDGES_PER_ROOM = 256
+_MAX_VOTERS_PER_POLL = 1024
+_MAX_SOCIAL_CREDIT = 10_000
 
 
 class SocialProtocolError(Exception):
@@ -124,9 +135,16 @@ class SocialSvc:
 
     async def apply(
         self, tid: str, rid: str, sv: SocialVerb,
+        *,
+        room_member_count: int | None = None,
     ) -> dict[str, Any]:
         """Apply *sv* to the (tid, rid) state. Returns a small state-change
         summary the route uses as the response body's ``state_change`` field.
+
+        ``room_member_count`` (H2 fix): when supplied, votes require both a
+        quorum (ceil(N/2) distinct voters) AND a strict majority of weight.
+        When ``None`` (legacy callers) we fall back to the strict-majority
+        check only — the route layer should always pass it.
 
         Raises one of the SocialProtocolError subclasses on rejection.
         """
@@ -138,16 +156,23 @@ class SocialSvc:
                 sv.payload if isinstance(sv.payload, dict)
                 else sv.payload.model_dump()
             )
-            handler = {
-                "claim": self._apply_claim,
-                "release": self._apply_release,
-                "disagree": self._apply_disagree,
-                "defer": self._apply_defer,
-                "queue": self._apply_queue,
-                "vote": self._apply_vote,
-                "interrupt": self._apply_interrupt,
-            }[verb]
-            result = handler(state, sv, payload)
+            if verb == "vote":
+                result = self._apply_vote(
+                    state, sv, payload,
+                    room_member_count=room_member_count,
+                )
+            else:
+                handler = {
+                    "claim": self._apply_claim,
+                    "release": self._apply_release,
+                    "disagree": self._apply_disagree,
+                    "defer": self._apply_defer,
+                    "queue": self._apply_queue,
+                    "interrupt": self._apply_interrupt,
+                }[verb]
+                result = handler(state, sv, payload)
+            # H3 cap fairness/social_credit dict per tenant.
+            self._cap_room_state(state, tid)
             # Fairness counter — tiny nudge per verb. Caller-side noise.
             delta = _CREDIT_DELTA.get(verb, 0.0)
             if delta:
@@ -251,6 +276,13 @@ class SocialSvc:
             raise CycleError(
                 f"defer({sv.actor} -> {target}) would create a cycle"
             )
+        # H3 cap — bound outstanding defer edges per room. We count
+        # active edges across the whole graph (not just per src).
+        active = sum(len(edges) for edges in graph.values())
+        if active >= _MAX_DEFER_EDGES_PER_ROOM:
+            raise SocialProtocolError(
+                f"defer-graph cap reached ({_MAX_DEFER_EDGES_PER_ROOM})"
+            )
         edges = graph.setdefault(sv.actor, {})
         edges[target] = self._clock() + ttl
         return {
@@ -269,45 +301,72 @@ class SocialSvc:
             "eta_seconds": int(payload.get("eta_seconds") or 0),
             "ts": sv.ts,
         }
-        state["queue"].append(entry)
+        queue = state["queue"]
+        # H3 cap — bound queue per room. Drop oldest with WARN log.
+        if len(queue) >= _MAX_QUEUE_PER_ROOM:
+            dropped = queue.pop(0)
+            _logger.warning(
+                "social_queue_evict actor=%s after=%s cap=%d dropped_actor=%s",
+                sv.actor, entry["after"], _MAX_QUEUE_PER_ROOM,
+                dropped.get("actor", "?"),
+            )
+        queue.append(entry)
         return {"action": "queued", "after": entry["after"]}
 
     def _apply_vote(
         self, state: dict, sv: SocialVerb, payload: dict,
+        *,
+        room_member_count: int | None = None,
     ) -> dict[str, Any]:
         option = str(payload.get("option") or "")
         if not option:
             raise SocialProtocolError("vote.option required")
         weight = float(payload.get("weight") or 1.0)
-        # Resolve poll_id: prefer explicit, else the active block, else default.
-        poll_id = (
-            payload.get("poll_id")
-            or (
-                f"vote_{state.get('blocking_disagree_ref')}"
-                if state.get("blocking_disagree_ref")
-                else None
+
+        # H10 fix — reject implicit "_default" poll_id when no active
+        # blocking-disagree exists. A single shared bucket let voting
+        # once on _default freeze across unrelated polls. Callers MUST
+        # supply ``poll_id`` explicitly unless they're voting in the
+        # currently-active block.
+        explicit_poll = payload.get("poll_id")
+        active_block_ref = state.get("blocking_disagree_ref")
+        if explicit_poll:
+            poll_id = str(explicit_poll)
+        elif active_block_ref:
+            poll_id = f"vote_{active_block_ref}"
+        elif sv.ref_message_id:
+            poll_id = f"vote_{sv.ref_message_id}"
+        else:
+            raise SocialProtocolError(
+                "vote requires poll_id when not resolving an active "
+                "blocking-disagree"
             )
-            or (
-                f"vote_{sv.ref_message_id}" if sv.ref_message_id else "_default"
-            )
-        )
+
         voters = state["voters"].setdefault(poll_id, set())
         if sv.actor in voters:
             raise DoubleVoteError(
                 f"actor {sv.actor!r} already voted in {poll_id!r}"
             )
+        # H3 cap — bound voters set per poll.
+        if len(voters) >= _MAX_VOTERS_PER_POLL:
+            raise SocialProtocolError(
+                f"poll {poll_id!r} reached voter cap "
+                f"({_MAX_VOTERS_PER_POLL})"
+            )
         voters.add(sv.actor)
         tally = state["votes"].setdefault(poll_id, {})
         tally[option] = tally.get(option, 0.0) + weight
 
-        # Resolve block if a majority winner exists in the blocking poll.
+        # Resolve block if quorum + majority winner exists in the blocking poll.
         cleared = False
         active_block_poll = (
             f"vote_{state['blocking_disagree_ref']}"
             if state.get("blocking_disagree_ref") else None
         )
         if active_block_poll and poll_id == active_block_poll:
-            if self._has_majority(tally):
+            if self._has_majority(
+                tally, voters, room_member_count=room_member_count,
+            ):
                 state["blocked_until_resolved"] = False
                 state["blocking_disagree_ref"] = None
                 cleared = True
@@ -368,13 +427,53 @@ class SocialSvc:
                     stack.append(nxt)
         return False
 
-    def _has_majority(self, tally: dict[str, float]) -> bool:
-        """True when a single option strictly exceeds 50% of total weight."""
+    def _has_majority(
+        self,
+        tally: dict[str, float],
+        voters: set[str] | None = None,
+        *,
+        room_member_count: int | None = None,
+    ) -> bool:
+        """True when a single option strictly exceeds 50% of total weight
+        AND (when room_member_count is known) at least ceil(N/2) distinct
+        voters have participated.
+
+        H2 fix: a single voter posting weight=1 cannot pass alone.
+        """
         total = sum(tally.values())
         if total <= 0.0:
             return False
         leader = max(tally.values())
-        return leader > total * 0.5
+        majority = leader > total * 0.5
+        if not majority:
+            return False
+        if room_member_count is None or room_member_count <= 1:
+            # Without member-count context fall back to the legacy
+            # strict-majority semantics (still defended by the new
+            # voter cap and route-level quorum check).
+            return True
+        quorum_required = (room_member_count + 1) // 2
+        if voters is None:
+            return False
+        return len(voters) >= quorum_required
+
+    def _cap_room_state(self, state: dict[str, Any], tid: str) -> None:
+        """Apply H3 caps that don't fit cleanly inside a single verb path.
+
+        * social_credit dict per room: cap to ``_MAX_SOCIAL_CREDIT`` actors,
+          LRU-evict via insertion order so the noisiest recent actor stays.
+        * defer_graph: prune empty src buckets so the active-edge count stays
+          honest after expirations.
+        """
+        credit = state.get("social_credit", {})
+        if len(credit) > _MAX_SOCIAL_CREDIT:
+            # Keep the newest _MAX_SOCIAL_CREDIT entries (insertion order).
+            keep = list(credit.items())[-_MAX_SOCIAL_CREDIT:]
+            state["social_credit"] = dict(keep)
+        graph = state.get("defer_graph", {})
+        for src in list(graph.keys()):
+            if not graph[src]:
+                graph.pop(src, None)
 
     def _snapshot(self, state: dict[str, Any]) -> dict[str, Any]:
         """Return a JSON-safe deep-ish copy (sets → sorted lists)."""
