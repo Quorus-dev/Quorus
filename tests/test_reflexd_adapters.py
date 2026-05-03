@@ -3,9 +3,13 @@
 These tests pin the exact argv shape, timeout behaviour, error handling, and
 QOD-injection contract for {claude, codex, gemini, cursor}. They run in <1s
 total because every external call (subprocess.run, asyncio.create_subprocess_exec,
-shutil.which, claude_agent_sdk.query) is mocked. If a vendor renames a flag or
-the daemon stops injecting the QOD, the corresponding test here fails — which
-is the point.
+shutil.which) is mocked. If a vendor renames a flag or the daemon stops
+injecting the QOD, the corresponding test here fails — which is the point.
+
+All four adapters now shell out to a user-installed CLI binary (claude --print,
+codex exec --json --prompt, gemini --prompt, cursor-agent --headless --prompt).
+None of them require a Quorus-specific API key; auth flows through whatever the
+user already configured for the underlying tool (Claude Code OAuth, etc).
 """
 
 from __future__ import annotations
@@ -36,6 +40,16 @@ SELF = "arav-claude"
 # ---------------------------------------------------------------------------
 # Argv-shape pinning helpers — purely synchronous, no IO
 # ---------------------------------------------------------------------------
+
+
+def test_build_claude_argv_pins_exact_shape() -> None:
+    """Claude CLI contract: ``claude --print <ctx>``.
+
+    Headless mode in the Claude Code CLI. No ANTHROPIC_API_KEY needed —
+    the binary uses its own OAuth/keychain credentials.
+    """
+    out = reflexd.build_claude_argv("hello world")
+    assert out == ["claude", "--print", "hello world"]
 
 
 def test_build_codex_argv_pins_exact_shape() -> None:
@@ -112,111 +126,90 @@ def _qod_prompt(self_name: str = SELF) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Claude adapter contract — uses claude_agent_sdk.query, not subprocess
+# Claude adapter contract — subprocess (claude --print)
 # ---------------------------------------------------------------------------
+# The claude adapter shells out to ``claude --print`` so reflexd inherits
+# Claude Code's OAuth/keychain auth. No ANTHROPIC_API_KEY needed — the same
+# pattern the codex/gemini/cursor adapters use against their vendor logins.
 
 
 def test_claude_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Claude path goes through claude_agent_sdk.query — assert the call shape.
+    """Claude must be spawned with EXACTLY ``claude --print <ctx>``.
 
-    Contract: ``claude_agent_sdk.query(prompt=<ctx>, options=ClaudeAgentOptions(...))``.
+    This is the regression that caught the SDK→CLI swap. If a future
+    Claude Code release renames ``--print`` (or anyone reverts to the
+    SDK), this test fails first.
     """
-    captured: dict[str, Any] = {}
+    seen_argv: list[str] = []
 
-    async def fake_query(*, prompt: str, options: Any = None) -> Any:
-        captured["prompt"] = prompt
-        captured["options"] = options
+    async def fake_exec(*argv: str, **_k: Any) -> _FakeProc:
+        seen_argv.extend(argv)
+        return _FakeProc(stdout=b"hello-from-claude-cli\n")
 
-        class _Block:
-            text = "ok"
-
-        class _Msg:
-            content = [_Block()]
-
-        yield _Msg()
-
-    fake_module = type(sys)("claude_agent_sdk")
-    fake_module.query = fake_query
-    fake_module.ClaudeAgentOptions = lambda **kw: kw  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_module)
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: "/fake/claude")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
     out = _run_adapter("claude", context="hello-claude")
-    assert out == "ok"
-    assert captured["prompt"] == "hello-claude"
-    # Options must request bypassPermissions and a single turn.
-    assert captured["options"] == {"permission_mode": "bypassPermissions", "max_turns": 1}
+    assert out == "hello-from-claude-cli"
+    assert seen_argv == reflexd.build_claude_argv("hello-claude")
+    assert seen_argv == ["claude", "--print", "hello-claude"]
 
 
 def test_claude_adapter_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hanging claude_agent_sdk.query is caught by the adapter's broad except."""
-    async def hanging_query(*, prompt: str, options: Any = None) -> Any:
-        raise asyncio.TimeoutError("simulated hang")
-        yield  # pragma: no cover — make this an async-gen syntactically
+    """A hanging claude process must be killed and we return a timeout sentinel."""
+    proc = _FakeProc(hang=True)
 
-    fake_module = type(sys)("claude_agent_sdk")
-    fake_module.query = hanging_query
-    fake_module.ClaudeAgentOptions = lambda **kw: kw  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_module)
+    async def fake_exec(*_a: str, **_k: Any) -> _FakeProc:
+        return proc
 
-    out = _run_adapter("claude", context="ctx")
-    assert "claude harness errored" in out
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: "/fake/claude")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    adapter = reflexd.HeadlessAdapter(timeout_s=0)  # immediate timeout
+    out = asyncio.run(adapter.run("claude", context="ctx"))
+    assert "timed out" in out
+    assert proc.killed is True
 
 
 def test_claude_adapter_handles_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Claude SDK throwing maps to a clean error sentinel, not a crash."""
-    async def boom_query(*, prompt: str, options: Any = None) -> Any:
-        raise RuntimeError("sdk exploded")
-        yield  # pragma: no cover
+    """Non-zero exit (e.g. claude /login expired) → 'errored' sentinel."""
+    async def fake_exec(*_a: str, **_k: Any) -> _FakeProc:
+        return _FakeProc(stdout=b"", stderr=b"not authenticated", returncode=1)
 
-    fake_module = type(sys)("claude_agent_sdk")
-    fake_module.query = boom_query
-    fake_module.ClaudeAgentOptions = lambda **kw: kw  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_module)
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: "/fake/claude")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
     out = _run_adapter("claude", context="ctx")
-    assert out.startswith("[reflexd]")
     assert "errored" in out
 
 
 def test_claude_adapter_handles_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No claude_agent_sdk installed → return a clear sentinel, no exception."""
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", None)
-    # And ensure import yields ImportError.
-    if isinstance(__builtins__, dict):
-        real_import = __builtins__["__import__"]
-    else:
-        real_import = __builtins__.__import__
+    """shutil.which returns None → 'claude not installed' sentinel, no exception."""
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: None)
 
-    def bad_import(name: str, *a: Any, **k: Any) -> Any:
-        if name == "claude_agent_sdk":
-            raise ImportError("not installed")
-        return real_import(name, *a, **k)
+    async def must_not_run(*_a: str, **_k: Any) -> _FakeProc:  # pragma: no cover
+        raise AssertionError("subprocess should not run when claude binary is missing")
 
-    monkeypatch.setattr("builtins.__import__", bad_import)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", must_not_run)
     out = _run_adapter("claude", context="ctx")
-    assert "claude_agent_sdk not installed" in out
+    assert "claude not installed" in out
 
 
 def test_claude_adapter_passes_qod_constitution(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The prompt context the daemon sends must START with the rendered QOD."""
-    captured: dict[str, str] = {}
+    """The prompt argument to claude must START with the rendered QOD."""
+    seen_argv: list[str] = []
 
-    async def fake_query(*, prompt: str, options: Any = None) -> Any:
-        captured["prompt"] = prompt
+    async def fake_exec(*argv: str, **_k: Any) -> _FakeProc:
+        seen_argv.extend(argv)
+        return _FakeProc(stdout=b"ok")
 
-        class _Msg:
-            content = "noop"
-
-        yield _Msg()
-
-    fake_module = type(sys)("claude_agent_sdk")
-    fake_module.query = fake_query
-    fake_module.ClaudeAgentOptions = lambda **kw: kw  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_module)
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: "/fake/claude")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
     prompt = _qod_prompt()
     asyncio.run(reflexd.HeadlessAdapter(timeout_s=2).run("claude", context=prompt))
-    assert captured["prompt"].startswith("# Quorus Operating Discipline (QOD)")
+    # argv = [claude, --print, <context>]
+    assert seen_argv[-1].startswith("# Quorus Operating Discipline (QOD)")
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +541,7 @@ def test_log_adapter_versions_warns_on_unknown_version(
 @pytest.mark.parametrize(
     "harness, expected_argv",
     [
+        ("claude", ["claude", "--print", "ctx"]),
         ("codex", ["codex", "exec", "--json", "--prompt", "ctx"]),
         ("gemini", ["gemini", "--prompt", "ctx"]),
         ("cursor", ["cursor-agent", "--headless", "--prompt", "ctx"]),
@@ -556,7 +550,11 @@ def test_log_adapter_versions_warns_on_unknown_version(
 def test_adapter_dry_run_records_argv_without_spawning(
     monkeypatch: pytest.MonkeyPatch, harness: str, expected_argv: list[str],
 ) -> None:
-    """In dry-run, the adapter must record argv and never call create_subprocess_exec."""
+    """In dry-run, the adapter must record argv and never call create_subprocess_exec.
+
+    All four adapters now record a plain argv list — the old SDK-call shape
+    for claude went away with the SDK→CLI swap.
+    """
     async def must_not_run(*_a: str, **_k: Any) -> Any:  # pragma: no cover
         raise AssertionError("dry-run must not spawn subprocesses")
 
@@ -568,19 +566,3 @@ def test_adapter_dry_run_records_argv_without_spawning(
     assert adapter.last_dry_run is not None
     assert adapter.last_dry_run["harness"] == harness
     assert adapter.last_dry_run["argv"] == expected_argv
-
-
-def test_adapter_dry_run_claude_records_sdk_call_shape(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Dry-run for claude records the SDK kwargs, not an argv list."""
-    adapter = reflexd.HeadlessAdapter(timeout_s=2, dry_run=True)
-    out = asyncio.run(adapter.run("claude", context="hello"))
-    assert "[reflexd:dry-run]" in out
-    rec = adapter.last_dry_run
-    assert rec is not None
-    assert rec["harness"] == "claude"
-    sdk_call = rec["argv"]
-    assert isinstance(sdk_call, dict)
-    assert sdk_call["module"] == "claude_agent_sdk"
-    assert sdk_call["callable"] == "query"
-    assert sdk_call["kwargs"]["prompt"] == "hello"
-    assert sdk_call["kwargs"]["options"]["max_turns"] == 1

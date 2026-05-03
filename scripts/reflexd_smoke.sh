@@ -95,7 +95,7 @@ check_harness() {
 
 # Each call asserts a substring that uniquely identifies the pinned argv shape
 # for that harness — so a flag rename in any one of them flunks this script.
-check_harness "claude" "smoke-claude" "claude_agent_sdk"
+check_harness "claude" "smoke-claude" "--print"
 check_harness "codex"  "smoke-codex"  "exec"
 check_harness "gemini" "smoke-gemini" "--prompt"
 check_harness "cursor" "smoke-cursor" "--headless"

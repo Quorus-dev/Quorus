@@ -1399,20 +1399,51 @@ def _reflexd_logs(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _reflexd_doctor_probe_sdk() -> tuple[bool, str]:
-    """Return ``(installed, version-or-error)`` for claude_agent_sdk."""
+def _reflexd_doctor_probe_claude_cli() -> tuple[bool, str]:
+    """Return ``(ok, detail)`` for the Claude Code CLI binary.
+
+    Reflexd's claude adapter shells out to ``claude --print``. This probe
+    checks two things: (1) the ``claude`` binary is on PATH and prints a
+    version, and (2) ``claude --help`` exposes the ``--print`` flag (so
+    we know the headless mode we depend on is wired up). If either fails
+    we surface a single line so the operator knows what to install.
+
+    Auth is NOT checked here — Claude Code uses its own OAuth/keychain;
+    reflexd never reads ``ANTHROPIC_API_KEY``.
+    """
+    if shutil.which("claude") is None:
+        return False, "claude CLI not on PATH — install from https://claude.ai/code"
     try:
-        import claude_agent_sdk  # type: ignore
-    except ImportError as exc:
-        return False, f"not importable ({exc})"
-    ver = getattr(claude_agent_sdk, "__version__", None)
-    if not ver:
-        try:
-            from importlib.metadata import version as _ver
-            ver = _ver("claude-agent-sdk")
-        except Exception:
-            ver = "unknown"
-    return True, str(ver)
+        ver_proc = subprocess.run(  # noqa: S603,S607 — argv pinned, no shell
+            ["claude", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return False, f"`claude --version` failed: {exc.__class__.__name__}"
+    if ver_proc.returncode != 0:
+        return False, f"`claude --version` exited {ver_proc.returncode}"
+    version = (ver_proc.stdout or ver_proc.stderr or "").strip().splitlines()
+    version_line = version[0][:120] if version else "unknown"
+    # Probe --print availability: the single flag this whole adapter hangs
+    # off. If a future Claude Code release ever renames it, this row goes
+    # red instead of the daemon failing silently per-wake.
+    try:
+        help_proc = subprocess.run(  # noqa: S603,S607 — argv pinned, no shell
+            ["claude", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return False, f"`claude --help` failed: {exc.__class__.__name__}"
+    help_text = (help_proc.stdout or "") + (help_proc.stderr or "")
+    if "--print" not in help_text:
+        return False, f"v{version_line} but `--print` flag missing from --help"
+    return True, f"v{version_line} (Claude Code OAuth handles auth)"
 
 
 def _reflexd_doctor_probe_relay(relay_url: str) -> tuple[bool, str]:
@@ -1434,8 +1465,10 @@ def _reflexd_doctor(args) -> None:
 
     Probes (each emits one line):
 
-    * ``claude_agent_sdk`` importable + version
-    * ``ANTHROPIC_API_KEY`` present in env
+    * ``claude`` CLI on PATH, ``--version`` succeeds, ``--print`` flag exists.
+      Auth is handled by Claude Code's own OAuth — we never check
+      ``ANTHROPIC_API_KEY`` here. As of the May-2026 sprint, Quorus's MVP
+      requires NO new API keys for the user.
     * ``REFLEXD_API_KEY`` present, OR active profile has ``api_key``
     * reflexd daemon running for the resolved participant
       (``~/.quorus/runtime/reflexd.<participant>.pid``)
@@ -1447,21 +1480,11 @@ def _reflexd_doctor(args) -> None:
     """
     rows: list[tuple[bool, str, str]] = []
 
-    # 1) claude_agent_sdk importable + version
-    sdk_ok, sdk_detail = _reflexd_doctor_probe_sdk()
-    rows.append((sdk_ok, "claude_agent_sdk",
-                 f"v{sdk_detail}" if sdk_ok else sdk_detail))
+    # 1) claude CLI present + headless mode wired
+    cli_ok, cli_detail = _reflexd_doctor_probe_claude_cli()
+    rows.append((cli_ok, "claude CLI", cli_detail))
 
-    # 2) ANTHROPIC_API_KEY set?
-    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    rows.append((
-        has_anthropic,
-        "ANTHROPIC_API_KEY",
-        "set" if has_anthropic
-        else "missing — export ANTHROPIC_API_KEY=sk-ant-... or rely on stub",
-    ))
-
-    # 3) reflexd auth: REFLEXD_API_KEY env OR active profile api_key
+    # 2) reflexd auth: REFLEXD_API_KEY env OR active profile api_key
     has_reflexd_key = bool(os.environ.get("REFLEXD_API_KEY")) \
         or bool(os.environ.get("API_KEY"))
     profile_api_key = ""
@@ -1480,7 +1503,7 @@ def _reflexd_doctor(args) -> None:
     )
     rows.append((has_relay_auth, "relay auth", auth_detail))
 
-    # 4) Daemon running for the resolved participant?
+    # 3) Daemon running for the resolved participant?
     try:
         participant = _resolve_reflexd_participant(
             getattr(args, "participant", None)
@@ -1502,7 +1525,7 @@ def _reflexd_doctor(args) -> None:
                      "participant unresolved — pass --participant or set "
                      "REFLEXD_PARTICIPANT"))
 
-    # 5) Relay reachable?
+    # 4) Relay reachable?
     relay_url = (
         os.environ.get("REFLEXD_RELAY_URL")
         or os.environ.get("RELAY_URL")

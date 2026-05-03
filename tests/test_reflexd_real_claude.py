@@ -1,13 +1,19 @@
-"""Real-claude reflexd path tests — never make real API calls in CI.
+"""Real-claude reflexd path tests — never make real CLI calls in CI.
 
 Covers the non-stub claude adapter path, the QOD voice section, the
-reply-depth anti-loop guard, the startup warning when ANTHROPIC_API_KEY
+reply-depth anti-loop guard, the startup warning when the claude binary
 is missing, and the ``quorus reflexd doctor`` checklist.
 
-Every claude_agent_sdk import is replaced with a fake module so these
-tests never reach the real SDK or the Anthropic API. The contract here
-is "the daemon called the SDK with the expected args and the wire shape
-is preserved" — not "Anthropic is reachable".
+The claude adapter shells out to ``claude --print`` (Claude Code CLI in
+headless mode) instead of the old ``claude_agent_sdk`` Python import.
+That swap is what gives Quorus a "no new API key" MVP — Claude Code's
+own OAuth/keychain handles auth. ``ANTHROPIC_API_KEY`` is no longer
+consulted by reflexd at all.
+
+Every subprocess spawn is mocked so these tests never reach the real
+binary. The contract here is "the daemon called the CLI with the
+expected argv and the wire shape is preserved" — not "Claude Code is
+reachable".
 """
 from __future__ import annotations
 
@@ -69,41 +75,65 @@ def _isolate_claude_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _install_fake_claude_sdk(
+class _FakeProc:
+    """Async-subprocess test double matching ``asyncio.subprocess.Process``.
+
+    Mirrors the helper in test_reflexd_adapters.py — kept local so this
+    file stays self-contained.
+    """
+
+    def __init__(
+        self,
+        *,
+        stdout: bytes = b"",
+        stderr: bytes = b"",
+        returncode: int = 0,
+    ) -> None:
+        self._stdout = stdout
+        self._stderr = stderr
+        self.returncode = returncode
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return self._stdout, self._stderr
+
+    def kill(self) -> None:  # pragma: no cover — no timeouts in this file
+        pass
+
+    async def wait(self) -> int:  # pragma: no cover
+        return self.returncode
+
+
+def _install_fake_claude_cli(
     monkeypatch: pytest.MonkeyPatch,
     *,
     captured: dict[str, Any] | None = None,
     reply_text: str = "ok",
 ) -> dict[str, Any]:
-    """Replace ``claude_agent_sdk`` in sys.modules with a controllable fake.
+    """Pretend the ``claude`` CLI is on PATH and capture the argv it's invoked with.
 
-    Returns the ``captured`` dict so the caller can assert on the prompt
-    and options passed to ``query``. Pass a pre-existing dict to share
-    state between calls.
+    Returns the ``captured`` dict so the caller can assert on the argv
+    (and therefore the prompt) the adapter passes to subprocess.
+    Pass a pre-existing dict to share state between calls.
     """
     captured = captured if captured is not None else {}
 
-    async def fake_query(*, prompt: str, options: Any = None) -> Any:
-        captured["prompt"] = prompt
-        captured["options"] = options
+    async def fake_exec(*argv: str, **_k: Any) -> _FakeProc:
+        captured["argv"] = list(argv)
+        captured["prompt"] = argv[-1] if argv else ""
+        return _FakeProc(stdout=reply_text.encode() + b"\n")
 
-        class _Block:
-            text = reply_text
-
-        class _Msg:
-            content = [_Block()]
-
-        yield _Msg()
-
-    fake_module = type(sys)("claude_agent_sdk")
-    fake_module.query = fake_query
-    fake_module.ClaudeAgentOptions = lambda **kw: kw  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_module)
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: "/fake/claude")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     return captured
 
 
 def _strip_claude_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Drop env vars that influence the real-vs-stub branch decision."""
+    """Drop env vars that influence the real-vs-stub branch decision.
+
+    ``ANTHROPIC_API_KEY`` is no longer consulted by reflexd, but we still
+    strip it to keep tests deterministic across environments where it
+    happens to be set.
+    """
     for key in (
         "ANTHROPIC_API_KEY",
         "REFLEXD_STUB_REPLY",
@@ -111,6 +141,26 @@ def _strip_claude_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "API_KEY",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+def _stub_claude_version_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    version: str | None,
+) -> None:
+    """Pin ``probe_harness_version("claude")`` to a deterministic answer.
+
+    Used by the startup-warning tests so we don't depend on whether the
+    real Claude Code CLI happens to be installed on the test host.
+    """
+    real_probe = reflexd.probe_harness_version
+
+    def fake_probe(harness: str, *, timeout_s: float = 3.0) -> str | None:
+        if harness == "claude":
+            return version
+        return real_probe(harness, timeout_s=timeout_s)
+
+    monkeypatch.setattr(reflexd, "probe_harness_version", fake_probe)
 
 
 class _OkResp:
@@ -146,20 +196,24 @@ def _reload_cli_for_doctor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> A
 
 
 # ---------------------------------------------------------------------------
-# Startup-warning tests — log_anthropic_api_key_status()
+# Startup-warning tests — log_claude_adapter_status()
 # ---------------------------------------------------------------------------
+# After the SDK→CLI swap the fallback decision is keyed off "is the claude
+# binary on PATH" instead of "is ANTHROPIC_API_KEY set". The old name
+# log_anthropic_api_key_status is preserved as a back-compat alias.
 
 
-def test_reflexd_logs_warning_when_no_anthropic_key(
+def test_reflexd_logs_warning_when_claude_cli_missing(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """No key + no stub flag → WARNING logged, returns 'fallback-stub'."""
+    """No claude CLI + no stub flag → WARNING logged, returns 'fallback-stub'."""
     _strip_claude_env(monkeypatch)
+    _stub_claude_version_probe(monkeypatch, version=None)
     caplog.set_level(logging.WARNING, logger="reflexd")
-    state = reflexd.log_anthropic_api_key_status()
+    state = reflexd.log_claude_adapter_status()
     assert state == "fallback-stub"
     assert any(
-        "ANTHROPIC_API_KEY not set" in rec.message
+        "claude CLI not found" in rec.message
         and "REFLEXD_STUB_REPLY" in rec.message
         for rec in caplog.records
     ), f"Expected fallback warning in log; got {[r.message for r in caplog.records]}"
@@ -170,60 +224,72 @@ def test_reflexd_logs_warning_when_no_anthropic_key(
     assert __import__("os").environ.get("REFLEXD_STUB_REPLY") is None
 
 
-def test_reflexd_falls_back_to_stub_when_no_key(
+def test_reflexd_falls_back_to_stub_when_no_claude_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No key + auto-fallback set → adapter.run returns the stub sentinel."""
+    """Claude CLI missing + auto-fallback set → adapter.run returns the stub."""
     _strip_claude_env(monkeypatch)
-    reflexd.log_anthropic_api_key_status()  # triggers the auto-fallback
+    _stub_claude_version_probe(monkeypatch, version=None)
+    reflexd.log_claude_adapter_status()  # triggers the auto-fallback
     adapter = reflexd.HeadlessAdapter(timeout_s=2)
     out = asyncio.run(
         adapter.run("claude", context="@me what is the stack?")
     )
     assert out.startswith("(reflexd-stub)"), out
-    # No exception, no API call, just a stub reply.
+    # No exception, no subprocess spawn, just a stub reply.
 
 
-def test_reflexd_uses_claude_sdk_when_key_present(
+def test_reflexd_uses_claude_cli_when_present(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Key present → INFO log includes sdk version, adapter calls fake query."""
+    """Claude CLI on PATH → INFO log names the version, adapter spawns subprocess.
+
+    No ANTHROPIC_API_KEY is required — that's the whole point of the
+    SDK→CLI swap. The Claude Code CLI's own OAuth handles auth.
+    """
     _strip_claude_env(monkeypatch)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-fake")
-    captured = _install_fake_claude_sdk(monkeypatch, reply_text="hello team")
+    _stub_claude_version_probe(monkeypatch, version="2.1.126 (Claude Code)")
+    captured = _install_fake_claude_cli(monkeypatch, reply_text="hello team")
     caplog.set_level(logging.INFO, logger="reflexd")
-    state = reflexd.log_anthropic_api_key_status()
+    state = reflexd.log_claude_adapter_status()
     assert state == "real"
     # Log line shape matches the contract.
     assert any(
         "real-claude adapter active" in rec.message
+        and "claude CLI 2.1.126" in rec.message
         for rec in caplog.records
     )
 
     adapter = reflexd.HeadlessAdapter(timeout_s=2)
     out = asyncio.run(adapter.run("claude", context="hi-claude"))
     assert out == "hello team"
-    assert captured["prompt"] == "hi-claude"
-    assert captured["options"] == {
-        "permission_mode": "bypassPermissions",
-        "max_turns": 1,
-    }
+    # Argv must be the pinned shape: ["claude", "--print", <ctx>].
+    assert captured["argv"] == ["claude", "--print", "hi-claude"]
 
 
 def test_reflexd_explicit_stub_reports_stub_state(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """REFLEXD_STUB_REPLY=1 + no key → state='stub', no warning."""
+    """REFLEXD_STUB_REPLY=1 → state='stub' regardless of CLI presence."""
     _strip_claude_env(monkeypatch)
     monkeypatch.setenv("REFLEXD_STUB_REPLY", "1")
     caplog.set_level(logging.INFO, logger="reflexd")
-    state = reflexd.log_anthropic_api_key_status()
+    state = reflexd.log_claude_adapter_status()
     assert state == "stub"
     # No fallback warning when explicit stub mode.
     assert not any(
-        "ANTHROPIC_API_KEY not set" in rec.message
+        "claude CLI not found" in rec.message
         for rec in caplog.records
     )
+
+
+def test_log_anthropic_api_key_status_is_back_compat_alias() -> None:
+    """The old name still resolves to the new implementation.
+
+    External callers (older docs, support scripts) can keep the import
+    path working through one release while we update them in lock step.
+    """
+    assert reflexd.log_anthropic_api_key_status is reflexd.log_claude_adapter_status
 
 
 # ---------------------------------------------------------------------------
@@ -384,43 +450,47 @@ def test_reply_depth_appears_in_wake_context() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AssistantMessage filtering — TextBlock-only extraction
+# Subprocess argv — verbatim wire-format regression
 # ---------------------------------------------------------------------------
+# Replaces the old TextBlock/ToolUseBlock filtering test. The Claude Code
+# CLI in --print mode emits plain text on stdout, so the adapter no longer
+# needs to skip non-text content blocks. What we still pin is the argv
+# shape — every reflexd→claude call MUST go through ``claude --print
+# <context>`` with the full QOD prompt as a single argv element. If
+# anything in the build path stringifies the context wrong (e.g. coerces
+# to repr) this test fails.
 
 
-def test_run_claude_extracts_only_text_blocks(
+def test_claude_subprocess_receives_verbatim_qod_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ToolUseBlock-style objects must NOT be concatenated into the reply."""
-
+    """The exact prompt the daemon builds must reach claude --print verbatim."""
     captured: dict[str, Any] = {}
 
-    async def fake_query(*, prompt: str, options: Any = None) -> Any:
-        captured["prompt"] = prompt
+    async def fake_exec(*argv: str, **_k: Any) -> _FakeProc:
+        captured["argv"] = list(argv)
+        return _FakeProc(stdout=b"Looking now.\n")
 
-        class _TextBlock:
-            text = "Looking now."
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: "/fake/claude")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-        class _ToolBlock:
-            # No `.text` attr — would be silently included if we just
-            # walked .content.
-            id = "tool-1"
-            name = "Read"
-            input = {"file_path": "/x"}
-
-        class _Msg:
-            content = [_ToolBlock(), _TextBlock(), _ToolBlock()]
-
-        yield _Msg()
-
-    fake_module = type(sys)("claude_agent_sdk")
-    fake_module.query = fake_query
-    fake_module.ClaudeAgentOptions = lambda **kw: kw  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_module)
+    cfg = reflexd.ReflexdConfig(
+        relay_url="http://test", api_key="k",
+        participant_name=SELF, spawn_enabled=False,
+    )
+    daemon = reflexd.Reflexd(cfg)
+    prompt = daemon._build_prompt(
+        {"id": "x", "from_name": "u", "room": "r", "content": "ping"},
+        history=[],
+    )
 
     adapter = reflexd.HeadlessAdapter(timeout_s=2)
-    out = asyncio.run(adapter.run("claude", context="ping"))
+    out = asyncio.run(adapter.run("claude", context=prompt))
     assert out == "Looking now."
+    # Pinned argv shape — flag rename / stringification regression catcher.
+    assert captured["argv"][:2] == ["claude", "--print"]
+    assert captured["argv"][2] == prompt
+    assert len(captured["argv"]) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -428,13 +498,38 @@ def test_run_claude_extracts_only_text_blocks(
 # ---------------------------------------------------------------------------
 
 
+def _stub_doctor_claude_cli(
+    monkeypatch: pytest.MonkeyPatch, _cli: Any, *, present: bool,
+) -> None:
+    """Pin ``_reflexd_doctor_probe_claude_cli`` for the doctor tests.
+
+    The doctor probe shells out to ``claude --version`` and ``claude
+    --help`` — both calls would actually run the real binary on the test
+    host. Pin the function so tests don't depend on what's installed.
+    """
+    if present:
+        monkeypatch.setattr(
+            _cli, "_reflexd_doctor_probe_claude_cli",
+            lambda: (True, "v2.1.126 (Claude Code) (Claude Code OAuth handles auth)"),
+        )
+    else:
+        monkeypatch.setattr(
+            _cli, "_reflexd_doctor_probe_claude_cli",
+            lambda: (False, "claude CLI not on PATH — install from https://claude.ai/code"),
+        )
+
+
 def test_doctor_prints_green_check_when_all_ok(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """All probes green → 'all checks passed', exit 0."""
+    """All probes green → 'all checks passed', exit 0.
+
+    The claude CLI row replaces the old claude_agent_sdk + ANTHROPIC_API_KEY
+    rows. No new API key needed — Claude Code OAuth handles auth.
+    """
     _cli = _reload_cli_for_doctor(tmp_path, monkeypatch)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    _stub_doctor_claude_cli(monkeypatch, _cli, present=True)
     monkeypatch.setenv("REFLEXD_API_KEY", "rfx-test")
     monkeypatch.setenv("REFLEXD_PARTICIPANT", "arav-claude")
     monkeypatch.setenv("RELAY_URL", "http://localhost:65535")
@@ -450,19 +545,23 @@ def test_doctor_prints_green_check_when_all_ok(
         _cli._reflexd_doctor(args)
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert "claude_agent_sdk" in out
+    # New row label is "claude CLI", not "claude_agent_sdk".
+    assert "claude CLI" in out
+    # And the doctor MUST NOT print an ANTHROPIC_API_KEY check anymore —
+    # that's the whole "no new keys" guarantee.
+    assert "ANTHROPIC_API_KEY" not in out
     assert "all checks passed" in out
     assert "✓" in out
     assert "✗" not in out
 
 
-def test_doctor_prints_red_check_when_anthropic_missing(
+def test_doctor_prints_red_check_when_claude_cli_missing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """Missing ANTHROPIC_API_KEY → red ✗ on that line, exit 1."""
+    """Missing claude CLI → red ✗ on that line, exit 1."""
     _cli = _reload_cli_for_doctor(tmp_path, monkeypatch)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    _stub_doctor_claude_cli(monkeypatch, _cli, present=False)
     monkeypatch.setenv("REFLEXD_API_KEY", "rfx-test")
     monkeypatch.setenv("REFLEXD_PARTICIPANT", "arav-claude")
     monkeypatch.setenv("RELAY_URL", "http://localhost:65535")
@@ -473,6 +572,6 @@ def test_doctor_prints_red_check_when_anthropic_missing(
         _cli._reflexd_doctor(args)
     assert exc.value.code == 1
     out = capsys.readouterr().out
-    assert "ANTHROPIC_API_KEY" in out
+    assert "claude CLI" in out
     assert "✗" in out
-    assert "missing" in out.lower()
+    assert "not on path" in out.lower()

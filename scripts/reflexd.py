@@ -233,13 +233,27 @@ _HARNESS_SUFFIXES = (
 # breaks and the corresponding contract test fails — instead of the daemon
 # silently invoking a non-existent flag at runtime.
 #
-# claude does NOT appear here: the claude_agent_sdk is a Python import, not a
-# subprocess — its "argv" is ``query(prompt=..., options=ClaudeAgentOptions(...))``
-# and is exercised by the dedicated claude contract test below.
+# All four adapters now shell out to a user-installed CLI binary. Reflexd
+# never needs ANTHROPIC_API_KEY for claude — Claude Code's own OAuth /
+# keychain handles auth, exactly the way ``codex``/``gemini``/``cursor-agent``
+# rely on their vendor login state. The MVP runs end-to-end with zero new
+# API keys for the user.
 
+CLAUDE_BIN = "claude"
 CODEX_BIN = "codex"
 GEMINI_BIN = "gemini"
 CURSOR_BIN = "cursor-agent"
+
+
+def build_claude_argv(context: str) -> list[str]:
+    """Pinned argv shape for Claude Code CLI. Contract: ``claude --print <ctx>``.
+
+    ``--print`` (alias ``-p``) is the headless / non-interactive mode in the
+    Claude Code CLI (verified on v2.1.126). It reads the prompt from argv,
+    streams the response, then exits. Auth is whatever ``claude /login`` set
+    up — we never read ``ANTHROPIC_API_KEY``.
+    """
+    return [CLAUDE_BIN, "--print", context]
 
 
 def build_codex_argv(context: str) -> list[str]:
@@ -259,6 +273,7 @@ def build_cursor_argv(context: str) -> list[str]:
 
 # Version-probe argv per binary (NOT prompt-bearing — safe to run on startup).
 _VERSION_PROBE_ARGV: dict[str, list[str]] = {
+    "claude": [CLAUDE_BIN, "--version"],
     "codex": [CODEX_BIN, "--version"],
     "gemini": [GEMINI_BIN, "--version"],
     "cursor": [CURSOR_BIN, "--version"],
@@ -268,33 +283,14 @@ _VERSION_PROBE_ARGV: dict[str, list[str]] = {
 # CLI working with these versions". Outside the range we still try, just with
 # a logged WARNING. Keep the format substring-match to avoid SemVer parsing
 # brittleness — vendors emit version strings in different shapes.
+#
+# Claude Code CLI prints e.g. ``2.1.126 (Claude Code)`` — leading "2." matches.
 KNOWN_GOOD_VERSIONS: dict[str, tuple[str, ...]] = {
-    "claude": ("0.0.", "0.1.", "0.2.", "0.3.", "0.4.", "1.", "2."),
+    "claude": ("1.", "2.", "3."),
     "codex": ("0.", "1.", "2.", "3."),
     "gemini": ("0.", "1.", "2.", "3."),
     "cursor": ("0.", "1.", "2.", "3."),
 }
-
-
-def _claude_sdk_version() -> str | None:
-    """Best-effort version pull for the claude_agent_sdk Python module."""
-    try:
-        import claude_agent_sdk  # type: ignore
-
-        ver = getattr(claude_agent_sdk, "__version__", None)
-        if isinstance(ver, str) and ver:
-            return ver
-    except Exception:
-        return None
-    # Fall back to importlib.metadata for installed dist version.
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-
-        return version("claude-agent-sdk")
-    except PackageNotFoundError:
-        return None
-    except Exception:
-        return None
 
 
 def probe_harness_version(harness: str, *, timeout_s: float = 3.0) -> str | None:
@@ -303,9 +299,12 @@ def probe_harness_version(harness: str, *, timeout_s: float = 3.0) -> str | None
     Synchronous on purpose — runs once on daemon startup, not per wake. Uses
     ``shutil.which`` to short-circuit when the binary is missing so we don't
     leak a FileNotFoundError into startup logs.
+
+    All four harnesses (claude, codex, gemini, cursor) follow the same
+    pattern now: a user-installed CLI on PATH that prints its version when
+    invoked with ``--version``. Claude Code OAuth handles its own auth; we
+    never check ``ANTHROPIC_API_KEY``.
     """
-    if harness == "claude":
-        return _claude_sdk_version()
     argv = _VERSION_PROBE_ARGV.get(harness)
     if not argv:
         return None
@@ -330,11 +329,11 @@ def probe_harness_version(harness: str, *, timeout_s: float = 3.0) -> str | None
     return None
 
 
-# Module-level fallback flag. Set by ``log_anthropic_api_key_status`` when
-# we auto-fallback to stub mode (no key + no explicit stub flag). The
-# adapter's run() consults this OR the env var so the fallback works
-# whether the daemon was bootstrapped through cmd_start (which calls the
-# logger) or driven directly from a test (which sets env).
+# Module-level fallback flag. Set by ``log_claude_adapter_status`` when
+# we auto-fallback to stub mode (claude CLI missing + no explicit stub
+# flag). The adapter's run() consults this OR the env var so the fallback
+# works whether the daemon was bootstrapped through cmd_start (which calls
+# the logger) or driven directly from a test (which sets env).
 _AUTO_FALLBACK_TO_STUB = False
 
 
@@ -343,7 +342,7 @@ def reset_auto_fallback() -> None:
 
     Production code never calls this; the daemon process is short-lived so
     in-memory state never crosses runs. Tests need it because the flag is
-    set by ``log_anthropic_api_key_status`` and persists in the imported
+    set by ``log_claude_adapter_status`` and persists in the imported
     module across tests in the same process.
     """
     global _AUTO_FALLBACK_TO_STUB
@@ -351,24 +350,31 @@ def reset_auto_fallback() -> None:
 
 
 def is_stub_mode() -> bool:
-    """True iff the adapter should reply with the stub instead of the SDK."""
+    """True iff the adapter should reply with the stub instead of the CLI."""
     if os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes"):
         return True
     return _AUTO_FALLBACK_TO_STUB
 
 
-def log_anthropic_api_key_status() -> str:
+def log_claude_adapter_status(
+    *, version_probe: Callable[[str], str | None] | None = None,
+) -> str:
     """Emit one startup line announcing whether the real-claude path is wired.
+
+    The claude adapter now shells out to ``claude --print`` instead of the
+    Python ``claude_agent_sdk``. Auth is handled by the Claude Code CLI's
+    own OAuth / keychain — reflexd never reads ``ANTHROPIC_API_KEY``.
 
     Three states matter (returned as the string for caller introspection):
 
-    * ``"real"`` — ``ANTHROPIC_API_KEY`` is set; the claude adapter will
-      drive a real SDK call. Logs an INFO line.
+    * ``"real"`` — ``claude --version`` succeeds; the adapter will drive
+      real subprocess calls. Logs an INFO line with the detected version.
     * ``"stub"`` — ``REFLEXD_STUB_REPLY=1`` is set explicitly; we never
       attempt a real call. Logs an INFO line.
-    * ``"fallback-stub"`` — neither is set. We auto-fall-back to stub mode
-      so the daemon doesn't refuse to start, but we log a WARNING so the
-      operator sees how to upgrade. The auto-fallback is implemented via
+    * ``"fallback-stub"`` — claude binary is missing AND the explicit stub
+      flag is not set. We auto-fall-back to stub mode so the daemon
+      doesn't refuse to start, but we log a WARNING so the operator sees
+      how to upgrade. The auto-fallback is implemented via
       :data:`_AUTO_FALLBACK_TO_STUB` — a module-level flag that
       :meth:`HeadlessAdapter.run` consults alongside ``REFLEXD_STUB_REPLY``.
       We deliberately do NOT mutate ``os.environ`` because env mutations
@@ -376,29 +382,37 @@ def log_anthropic_api_key_status() -> str:
       assume a clean environment.
     """
     global _AUTO_FALLBACK_TO_STUB
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     has_stub = os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes")
-    if has_key:
-        sdk_ver = _claude_sdk_version() or "unknown"
-        logger.info(
-            "reflexd: real-claude adapter active (claude_agent_sdk %s)", sdk_ver,
-        )
-        return "real"
     if has_stub:
         logger.info(
             "reflexd: stub adapter active (REFLEXD_STUB_REPLY=1) — no API spend"
         )
         return "stub"
-    # No key, no explicit stub. Auto-fall-back so we don't crash, but make
-    # the misconfig loud. This is the friendliest behaviour for first-time
-    # users running the demo without the env var.
+    probe = version_probe or probe_harness_version
+    cli_ver = probe("claude")
+    if cli_ver:
+        logger.info(
+            "reflexd: real-claude adapter active (claude CLI %s, OAuth handles auth)",
+            cli_ver,
+        )
+        return "real"
+    # claude binary missing. Auto-fall-back so we don't crash, but make
+    # the misconfig loud. This is the friendliest behaviour for hosts
+    # without Claude Code installed.
     logger.warning(
-        "reflexd: ANTHROPIC_API_KEY not set + REFLEXD_STUB_REPLY not set. "
+        "reflexd: claude CLI not found on PATH and REFLEXD_STUB_REPLY not set. "
         "Reflexd will fall back to stub replies. To enable real Claude "
-        "replies: export ANTHROPIC_API_KEY=sk-ant-..."
+        "replies: install Claude Code (https://claude.ai/code) and run "
+        "`claude /login`."
     )
     _AUTO_FALLBACK_TO_STUB = True
     return "fallback-stub"
+
+
+# Backwards-compat alias. Older callers + tests reference the old name; keep
+# it pointing at the new implementation so they don't have to change in lock
+# step. The new name is preferred for new code.
+log_anthropic_api_key_status = log_claude_adapter_status
 
 
 def log_adapter_versions(probe: Callable[[str], str | None] | None = None) -> dict[str, str | None]:
@@ -541,14 +555,17 @@ class HeadlessAdapter:
     async def run(self, harness: str, *, context: str) -> str:
         # Smoke / demo path: avoid spawning any real harness. ~10 LoC, off
         # the regular path. Triggered by an explicit env var OR by the
-        # module-level auto-fallback flag set when ANTHROPIC_API_KEY is
+        # module-level auto-fallback flag set when the claude binary is
         # missing at startup. ``is_stub_mode`` consults both.
         if is_stub_mode():
             return self._stub_reply(context)
         if self.dry_run:
             return self._record_dry_run(harness, context)
         if harness == "claude":
-            return await self._run_claude(context)
+            return await self._run_subprocess(
+                build_claude_argv(context),
+                parser=lambda out: out.strip(),
+            )
         if harness == "codex":
             return await self._run_subprocess(
                 build_codex_argv(context),
@@ -571,15 +588,7 @@ class HeadlessAdapter:
         ``adapter.last_dry_run`` to confirm the wire-format we picked.
         """
         if harness == "claude":
-            argv: Any = {
-                "kind": "sdk-call",
-                "module": "claude_agent_sdk",
-                "callable": "query",
-                "kwargs": {
-                    "prompt": context,
-                    "options": {"permission_mode": "bypassPermissions", "max_turns": 1},
-                },
-            }
+            argv: list[str] = build_claude_argv(context)
         elif harness == "codex":
             argv = build_codex_argv(context)
         elif harness == "gemini":
@@ -589,87 +598,8 @@ class HeadlessAdapter:
         else:
             raise ValueError(f"unknown harness {harness!r}")
         self.last_dry_run = {"harness": harness, "argv": argv}
-        logger.info(
-            "dry_run harness=%s argv=%s",
-            harness,
-            argv if isinstance(argv, list) else argv.get("callable", "<sdk-call>"),
-        )
+        logger.info("dry_run harness=%s argv=%s", harness, argv)
         return f"[reflexd:dry-run] would invoke {harness} adapter (see last_dry_run)"
-
-    async def _run_claude(self, context: str) -> str:
-        """Drive ``claude_agent_sdk.query`` and return the final assistant text.
-
-        Contract notes (claude_agent_sdk 0.1.72):
-
-        * ``query`` is an async iterator yielding ``SystemMessage`` first,
-          then zero or more ``AssistantMessage`` (each with a ``content``
-          list of ``TextBlock|ThinkingBlock|ToolUseBlock|...``), then a
-          terminal ``ResultMessage``. Only ``AssistantMessage`` carries
-          user-visible text — ``ResultMessage`` has no ``content`` attr at
-          all and ``SystemMessage`` carries init metadata.
-        * We extract text ONLY from ``TextBlock`` instances (``.text``
-          attr). ToolUseBlock / ThinkingBlock are NOT user-visible reply
-          text — concatenating them produces blank or garbled replies.
-        * If the only AssistantMessage we saw had ``error`` set we surface
-          a sentinel; the daemon treats that as "don't post". This is the
-          shape billing/rate-limit/auth errors take in this SDK.
-        """
-        try:
-            from claude_agent_sdk import ClaudeAgentOptions, query
-        except ImportError:
-            logger.warning("claude_agent_sdk not installed; skipping claude wake")
-            return "[reflexd] claude_agent_sdk not installed on this host"
-
-        # AssistantMessage / TextBlock are best-effort imports — older SDK
-        # builds and test fakes (which only stub query+ClaudeAgentOptions)
-        # don't expose them. When absent we fall back to the duck-typed
-        # extraction path below — same behaviour the original code had.
-        try:
-            from claude_agent_sdk import AssistantMessage, TextBlock
-        except ImportError:
-            AssistantMessage = None  # type: ignore[assignment]
-            TextBlock = None  # type: ignore[assignment]
-
-        options = ClaudeAgentOptions(permission_mode="bypassPermissions", max_turns=1)
-        chunks: list[str] = []
-        sdk_error: str | None = None
-        try:
-            async for message in query(prompt=context, options=options):
-                # Surface AssistantMessage.error before content so we don't
-                # accidentally post a half-baked reply that ended in a
-                # billing/rate-limit error.
-                err = getattr(message, "error", None)
-                if err:
-                    sdk_error = str(err)
-                    continue
-                # Real-SDK path: AssistantMessage with a list of blocks.
-                # Use isinstance so TextBlock filtering is enforced —
-                # ToolUseBlock / ThinkingBlock content is NOT user-visible.
-                if AssistantMessage is not None and isinstance(message, AssistantMessage):
-                    for block in message.content or []:
-                        if TextBlock is not None and isinstance(block, TextBlock):
-                            chunks.append(block.text)
-                    continue
-                # Test/fake path: any object with a string or list[block]
-                # ``content``. Mirrors the duck-typed shape used by the
-                # adapter contract tests in tests/test_reflexd_adapters.py.
-                content = getattr(message, "content", None)
-                if isinstance(content, str):
-                    chunks.append(content)
-                elif isinstance(content, list):
-                    for block in content:
-                        text = getattr(block, "text", None) or (
-                            block.get("text") if isinstance(block, dict) else None
-                        )
-                        if text:
-                            chunks.append(text)
-        except Exception as exc:  # pragma: no cover — SDK runtime errors
-            logger.warning("claude_agent_sdk.query failed: %s", exc)
-            return "[reflexd] claude harness errored"
-        if sdk_error and not chunks:
-            logger.warning("claude_agent_sdk returned error=%s", sdk_error)
-            return "[reflexd] claude harness errored"
-        return "".join(chunks).strip() or "[reflexd] (no reply)"
 
     async def _run_subprocess(
         self,
@@ -1449,10 +1379,11 @@ async def cmd_start(args: argparse.Namespace) -> int:
     log_adapter_versions()
 
     # Announce real-vs-stub mode so the operator knows immediately whether
-    # ANTHROPIC_API_KEY made it into the environment. Auto-falls-back to
-    # stub mode when neither key nor REFLEXD_STUB_REPLY is set — the daemon
-    # never refuses to start over a missing key.
-    log_anthropic_api_key_status()
+    # the claude CLI is reachable. Auto-falls-back to stub mode when the
+    # binary is missing AND REFLEXD_STUB_REPLY is not set — the daemon
+    # never refuses to start. Claude Code's own OAuth handles auth; we
+    # never check ANTHROPIC_API_KEY here.
+    log_claude_adapter_status()
 
     if args.once:
         return await _run_once(cfg, args.once)

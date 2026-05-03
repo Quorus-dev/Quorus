@@ -3,7 +3,7 @@
 # AI-native chat pipeline. No Fly. No Anthropic spend (stub mode by default).
 #
 #   ./scripts/demo_reflex.sh           # stub adapter, no API spend
-#   ./scripts/demo_reflex.sh --real    # real claude_agent_sdk (needs ANTHROPIC_API_KEY)
+#   ./scripts/demo_reflex.sh --real    # real claude --print (needs `claude /login`)
 #
 # Exits non-zero on any failure. Idempotent: re-running cleans up first.
 
@@ -71,7 +71,9 @@ Spins up a local Quorus relay, two participants (arav human + arav-claude
 agent), starts reflexd against the agent, posts an @-mention from arav,
 and prints the full pipeline timeline.
 
-  --real   use the real claude_agent_sdk harness (requires ANTHROPIC_API_KEY).
+  --real   use the real Claude Code CLI harness (claude --print).
+           Requires the claude binary on PATH and a valid `claude /login`.
+           No new API key needed — Claude Code OAuth handles auth.
            Default is a stub adapter that echoes a canned reply — no spend.
 EOF
       exit 0 ;;
@@ -79,9 +81,9 @@ EOF
 done
 
 if [[ "$USE_REAL" == "1" ]]; then
-  if [[ -z "${ANTHROPIC_API_KEY-}" ]]; then
-    fail "--real requires ANTHROPIC_API_KEY in env"
-    hint "set ANTHROPIC_API_KEY=sk-ant-... or omit --real to use the stub"
+  if ! command -v claude >/dev/null 2>&1; then
+    fail "--real requires the claude CLI on PATH"
+    hint "install Claude Code (https://claude.ai/code) and run \`claude /login\`"
     exit 2
   fi
 fi
@@ -185,7 +187,7 @@ cat <<EOF
 ${C_BOLD}${C_MAGENTA}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                  ${C_RESET}${C_BOLD}Quorus · Reflex AI-native chat demo${C_RESET}${C_BOLD}${C_MAGENTA}              ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${C_RESET}
-${C_DIM}port=${C_RESET}$PORT  ${C_DIM}work=${C_RESET}$WORK_DIR  ${C_DIM}adapter=${C_RESET}$([[ $USE_REAL == 1 ]] && echo "real (claude_agent_sdk)" || echo "stub (no API spend)")
+${C_DIM}port=${C_RESET}$PORT  ${C_DIM}work=${C_RESET}$WORK_DIR  ${C_DIM}adapter=${C_RESET}$([[ $USE_REAL == 1 ]] && echo "real (claude --print)" || echo "stub (no API spend)")
 EOF
 
 # ---------------------------------------------------------------------------
@@ -416,7 +418,7 @@ if [[ -z "$REPLY_CONTENT" ]]; then
   echo "${C_DIM}---- room history ----${C_RESET}" >&2
   api GET "/rooms/$ROOM_ID/history?limit=20" >&2 || true
   if [[ "$USE_REAL" == "1" ]]; then
-    hint "real harness path — check ANTHROPIC_API_KEY validity"
+    hint "real harness path — check claude /login state and ~/.quorus/reflexd.*.log"
   else
     hint "stub mode — this should never time out; check reflexd log above"
   fi
@@ -495,7 +497,7 @@ printf "\n  %sTotal e2e latency:%s %s%s%s\n" \
 
 if [[ "$USE_REAL" != "1" ]]; then
   printf "\n  %s%sno API spend — this was the stub adapter.%s\n" "$C_DIM" "$C_BOLD" "$C_RESET"
-  printf "  %sFor a real model reply, set ANTHROPIC_API_KEY and pass --real.%s\n" "$C_DIM" "$C_RESET"
+  printf "  %sFor a real model reply, install Claude Code and pass --real.%s\n" "$C_DIM" "$C_RESET"
 fi
 
 divider

@@ -141,25 +141,15 @@ def test_detect_harness_routes_by_suffix() -> None:
 
 
 def test_headless_adapter_routes_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Each harness routes to a different code path; this is purely a smoke."""
+    """Each harness routes to a different subprocess argv shape.
+
+    All four harnesses (claude, codex, gemini, cursor) shell out now —
+    claude moved from claude_agent_sdk.query to ``claude --print``. This
+    is the smoke test that proves the dispatch table still routes
+    correctly per name.
+    """
     adapter = reflexd.HeadlessAdapter(timeout_s=5)
 
-    # Mock claude_agent_sdk.query with an async-iter stub.
-    async def fake_query(*, prompt: str, options: Any = None) -> Any:
-        class _Block:
-            text = "hello from claude"
-
-        class _Msg:
-            content = [_Block()]
-
-        yield _Msg()
-
-    fake_module = type(sys)("claude_agent_sdk")
-    fake_module.query = fake_query
-    fake_module.ClaudeAgentOptions = lambda **kw: kw  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_module)
-
-    # Mock asyncio.create_subprocess_exec for codex / gemini.
     class FakeProc:
         def __init__(self, stdout: bytes) -> None:
             self._stdout = stdout
@@ -174,21 +164,20 @@ def test_headless_adapter_routes_by_name(monkeypatch: pytest.MonkeyPatch) -> Non
         async def wait(self) -> int:  # pragma: no cover
             return 0
 
-    async def fake_exec_codex(*argv: str, **_k: Any) -> FakeProc:
-        ndjson = (
-            json.dumps({"delta": "hi "}) + "\n" + json.dumps({"delta": "codex"}) + "\n"
-        ).encode()
-        return FakeProc(ndjson)
+    # Pretend every harness binary is on PATH so the pre-flight check passes.
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: f"/fake/{_b}")
 
-    async def fake_exec_gemini(*argv: str, **_k: Any) -> FakeProc:
-        return FakeProc(b"hi gemini")
-
-    # Route based on argv[0]
-    async def dispatch(*argv: str, **k: Any) -> FakeProc:
+    async def dispatch(*argv: str, **_k: Any) -> FakeProc:
+        if argv[0] == "claude":
+            return FakeProc(b"hello from claude\n")
         if argv[0] == "codex":
-            return await fake_exec_codex(*argv, **k)
+            ndjson = (
+                json.dumps({"delta": "hi "}) + "\n"
+                + json.dumps({"delta": "codex"}) + "\n"
+            ).encode()
+            return FakeProc(ndjson)
         if argv[0] == "gemini":
-            return await fake_exec_gemini(*argv, **k)
+            return FakeProc(b"hi gemini")
         raise FileNotFoundError(argv[0])
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", dispatch)
