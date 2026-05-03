@@ -138,16 +138,33 @@ export default function HeroLight() {
           </motion.div>
         </div>
 
-        {/* Right column — terminal/state panel */}
+        {/* Right column — cinematic neural sphere with floating terminal overlay.
+            Layout matches the Stitch composite: dense node graph as the dominant
+            visual, debugger watch panel offset into the lower-right, partially
+            overlapping the sphere. */}
         <div className="lg:col-span-5">
-          <motion.div
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.4, ease: EASE }}
-            className="mx-auto max-w-[520px] lg:ml-auto lg:mr-0"
-          >
-            <RoomStatePanel />
-          </motion.div>
+          <div className="relative mx-auto aspect-square w-full max-w-[560px] lg:ml-auto lg:mr-0">
+            {/* Neural sphere — the primary visual */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 1.1, delay: 0.35, ease: EASE }}
+              className="absolute inset-0"
+            >
+              <NeuralSphere />
+            </motion.div>
+
+            {/* Floating terminal overlay — sits over the lower-right of the
+                sphere, like the Stitch hero-hybrid-elite composition. */}
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.9, delay: 0.7, ease: EASE }}
+              className="absolute -bottom-2 -right-2 w-[78%] max-w-[400px] sm:bottom-2 sm:right-2"
+            >
+              <RoomStatePanel compact />
+            </motion.div>
+          </div>
         </div>
       </div>
     </section>
@@ -258,7 +275,7 @@ const STATES: RoomState[] = [
   },
 ];
 
-function RoomStatePanel() {
+function RoomStatePanel({ compact = false }: { compact?: boolean }) {
   const prefersReduced = useReducedMotion();
   const [idx, setIdx] = useState(0);
 
@@ -273,12 +290,20 @@ function RoomStatePanel() {
   // Format like a debugger watch panel — JSON-shaped, expandable feel.
   const json = useMemo(() => formatState(state), [state]);
 
+  // Compact variant: smaller body min-height, tighter padding, smaller font.
+  const padX = compact ? "px-3" : "px-4";
+  const padY = compact ? "py-3" : "py-4";
+  const fontSize = compact ? "text-[10.5px]" : "text-[12px]";
+  const minBodyH = compact ? 220 : 290;
+
   return (
     <div
-      className="overflow-hidden rounded-xl border shadow-lg"
+      className="overflow-hidden rounded-xl border shadow-2xl backdrop-blur-sm"
       style={{
-        backgroundColor: "var(--color-ink)",
+        backgroundColor: "rgba(10,10,15,0.94)",
         borderColor: "var(--color-border-dark-strong)",
+        boxShadow:
+          "0 24px 60px rgba(10,10,15,0.18), 0 8px 24px rgba(13,77,74,0.08)",
       }}
     >
       {/* Title bar */}
@@ -308,8 +333,8 @@ function RoomStatePanel() {
       {/* Watch body */}
       <div
         key={state.rev}
-        className="px-4 py-4 font-mono text-[12px] leading-[1.55]"
-        style={{ color: "var(--color-text-on-ink)", minHeight: 290 }}
+        className={`${padX} ${padY} font-mono ${fontSize} leading-[1.55]`}
+        style={{ color: "var(--color-text-on-ink)", minHeight: minBodyH }}
       >
         {json.map((line, i) => (
           <motion.div
