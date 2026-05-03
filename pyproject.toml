@@ -40,6 +40,7 @@ dependencies = [
     "bcrypt>=4.1.0",
     "redis[hiredis]>=5.0.0",
     "anthropic>=0.94.0",
+    "claude-agent-sdk>=0.1.72",
     "tomli>=2.0.0; python_version < '3.11'",
 ]
 

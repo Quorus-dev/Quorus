@@ -100,6 +100,12 @@ BID_TTL_SECONDS = 5
 SUBPROCESS_TIMEOUT_S = 120
 HEARTBEAT_HISTORY_LIMIT = 10
 MENTION_PREVIEW_CHARS = 80
+# Anti-loop guard: if we are about to reply to a message that itself was
+# spawned in response to one of OUR prior replies, and the chain is already
+# this deep, break it. Three is the soft ceiling because debug-and-fix
+# threads commonly run two ping-pongs before a human steps in; four+ is
+# almost always a runaway.
+MAX_REPLY_DEPTH = 3
 
 logger = logging.getLogger("reflexd")
 
@@ -480,16 +486,57 @@ class HeadlessAdapter:
         return f"[reflexd:dry-run] would invoke {harness} adapter (see last_dry_run)"
 
     async def _run_claude(self, context: str) -> str:
+        """Drive ``claude_agent_sdk.query`` and return the final assistant text.
+
+        Contract notes (claude_agent_sdk 0.1.72):
+
+        * ``query`` is an async iterator yielding ``SystemMessage`` first,
+          then zero or more ``AssistantMessage`` (each with a ``content``
+          list of ``TextBlock|ThinkingBlock|ToolUseBlock|...``), then a
+          terminal ``ResultMessage``. Only ``AssistantMessage`` carries
+          user-visible text — ``ResultMessage`` has no ``content`` attr at
+          all and ``SystemMessage`` carries init metadata.
+        * We extract text ONLY from ``TextBlock`` instances (``.text``
+          attr). ToolUseBlock / ThinkingBlock are NOT user-visible reply
+          text — concatenating them produces blank or garbled replies.
+        * If the only AssistantMessage we saw had ``error`` set we surface
+          a sentinel; the daemon treats that as "don't post". This is the
+          shape billing/rate-limit/auth errors take in this SDK.
+        """
         try:
-            from claude_agent_sdk import ClaudeAgentOptions, query
+            from claude_agent_sdk import (
+                AssistantMessage,
+                ClaudeAgentOptions,
+                TextBlock,
+                query,
+            )
         except ImportError:
             logger.warning("claude_agent_sdk not installed; skipping claude wake")
             return "[reflexd] claude_agent_sdk not installed on this host"
 
         options = ClaudeAgentOptions(permission_mode="bypassPermissions", max_turns=1)
         chunks: list[str] = []
+        sdk_error: str | None = None
         try:
             async for message in query(prompt=context, options=options):
+                # Surface AssistantMessage.error before content so we don't
+                # accidentally post a half-baked reply that ended in a
+                # billing/rate-limit error.
+                err = getattr(message, "error", None)
+                if err:
+                    sdk_error = str(err)
+                    continue
+                # Real-SDK path: AssistantMessage with a list of blocks.
+                # Use isinstance so TextBlock filtering is enforced —
+                # ToolUseBlock / ThinkingBlock content is NOT user-visible.
+                if isinstance(message, AssistantMessage):
+                    for block in message.content or []:
+                        if isinstance(block, TextBlock):
+                            chunks.append(block.text)
+                    continue
+                # Test/fake path: any object with a string or list[block]
+                # ``content``. Mirrors the duck-typed shape used by the
+                # adapter contract tests in tests/test_reflexd_adapters.py.
                 content = getattr(message, "content", None)
                 if isinstance(content, str):
                     chunks.append(content)
@@ -502,6 +549,9 @@ class HeadlessAdapter:
                             chunks.append(text)
         except Exception as exc:  # pragma: no cover — SDK runtime errors
             logger.warning("claude_agent_sdk.query failed: %s", exc)
+            return "[reflexd] claude harness errored"
+        if sdk_error and not chunks:
+            logger.warning("claude_agent_sdk returned error=%s", sdk_error)
             return "[reflexd] claude harness errored"
         return "".join(chunks).strip() or "[reflexd] (no reply)"
 
@@ -871,6 +921,24 @@ class Reflexd:
         )
         if triage.action != "RESPOND":
             return False
+
+        # OS-level notification: fire BEFORE bid/claim so the user gets a
+        # real macOS banner (or notify-send / fallback log) even if this
+        # daemon loses the auction. Per-(sender, room) rate-limit in the
+        # notifications module dedupes when several reflexd instances run
+        # on the same host. PII guard: the body we pass IS the chat
+        # content but the notifications module never persists it — only
+        # sender+room hit disk.
+        try:
+            from quorus.notifications import notify as _notify
+            _notify(
+                f"Quorus — {room or 'DM'}",
+                content,
+                sender=sender,
+                room=room,
+            )
+        except Exception as exc:  # pragma: no cover — notifications are best-effort
+            logger.debug("notify dispatch failed: %s", exc)
 
         if is_busy(self.config.participant_name, self.config.runtime_dir):
             logger.info("busy-file present, queueing wake room=%s id=%s", room, message_id)

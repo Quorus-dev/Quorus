@@ -43,6 +43,37 @@ QOD_RULES: tuple[str, ...] = (
 # distinct helps both humans and the model spot it in noisy prompt context.
 QOD_HEADER = "# Quorus Operating Discipline (QOD)"
 
+# Voice — how a Quorus teammate writes in chat. Pinned here (single source of
+# truth) so every harness loads identical tone guidance. The list of bullets is
+# deliberately short — chat replies should be 1-3 sentences, so the prompt
+# guidance can't be a paragraph either.
+QOD_VOICE_HEADER = "## Voice — write like a senior engineer on a team"
+QOD_VOICE_BULLETS: tuple[str, ...] = (
+    "- Acknowledge before working: \"On it\" / \"Will pick up after current "
+    "task (ETA <X>)\" / \"Looking now\"",
+    "- Push back when wrong: \"Disagree — here's why: ...\" (not silent "
+    "compliance)",
+    "- Cite specifics: file:line, commit hashes, test names — not vague "
+    "summaries",
+    "- Brevity > thoroughness for chat. 1-3 sentences unless the question "
+    "asks for depth.",
+    "- Never say \"as an AI\" — you are a teammate, not a chatbot.",
+    "- When you finish: announce with ✅ + commit hash + 1-line what "
+    "changed",
+)
+
+
+def render_qod_voice() -> str:
+    """Return the canonical voice block as a single string.
+
+    Kept separate from :func:`render_qod` so callers (MCP, agent-loop, skill
+    module) can choose whether to include the voice rules. Reflexd's wake
+    prompt always includes them; the MCP instructions block does too because
+    the rules apply to MCP-driven replies as well.
+    """
+    body = "\n".join(QOD_VOICE_BULLETS)
+    return f"{QOD_VOICE_HEADER}\n{body}"
+
 
 def render_qod() -> str:
     """Return the canonical QOD block as a single string.
@@ -52,7 +83,9 @@ def render_qod() -> str:
     rendering — that is the point.
     """
     body = "\n".join(QOD_RULES)
-    return f"{QOD_HEADER}\n\n{QOD_PREAMBLE}\n\n{body}"
+    return (
+        f"{QOD_HEADER}\n\n{QOD_PREAMBLE}\n\n{body}\n\n{render_qod_voice()}"
+    )
 
 
 def render_qod_for_mcp() -> str:
@@ -86,7 +119,10 @@ __all__ = [
     "QOD_PREAMBLE",
     "QOD_RULES",
     "QOD_HEADER",
+    "QOD_VOICE_HEADER",
+    "QOD_VOICE_BULLETS",
     "render_qod",
     "render_qod_for_mcp",
     "render_qod_for_agent_loop",
+    "render_qod_voice",
 ]

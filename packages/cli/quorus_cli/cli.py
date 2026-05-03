@@ -1392,6 +1392,259 @@ def _reflexd_logs(args) -> None:
         console.print(line, markup=False, highlight=False)
 
 
+# ---------------------------------------------------------------------------
+# reflexd-manager — multi-agent supervisor (one daemon per agent identity)
+# ---------------------------------------------------------------------------
+
+_SUPERVISOR_PIDFILE = _REFLEXD_RUNTIME_DIR / "supervisor.pid"
+_SUPERVISOR_LOG = Path.home() / ".quorus" / "reflexd-manager.log"
+
+
+def _resolve_manager_participants(explicit_csv: str | None) -> tuple[list[str], dict[str, str], str | None]:
+    """Resolve the set of agent participants for ``reflexd-manager``.
+
+    Priority: explicit ``--participants`` CSV > the active profile's
+    ``agent_api_keys`` keys (each minted via /v1/auth/register-agent during
+    init). Returns ``(participants, api_keys, relay_url)``.
+    """
+    pm = ProfileManager()
+    profile = pm.current_profile() or {}
+    base = (profile.get("instance_name") or "").strip()
+    relay_url = profile.get("relay_url")
+    agent_keys = profile.get("agent_api_keys") or {}
+    if not isinstance(agent_keys, dict):
+        agent_keys = {}
+
+    if explicit_csv:
+        names = [p.strip() for p in explicit_csv.split(",") if p.strip()]
+        keys = {n: agent_keys.get(n, "") for n in names}
+        return names, keys, relay_url
+
+    # Default: every key under agent_api_keys whose value is non-empty.
+    names = [n for n, k in agent_keys.items() if isinstance(k, str) and k]
+    if not names and base:
+        # No registered child keys — synthesize the four canonical suffixes.
+        # Each will fall back to REFLEXD_API_KEY at spawn time if present.
+        names = [f"{base}-{suffix}" for suffix in ("claude", "codex", "gemini", "cursor")]
+    return names, {n: agent_keys.get(n, "") for n in names}, relay_url
+
+
+def _read_supervisor_pid() -> int | None:
+    if not _SUPERVISOR_PIDFILE.exists():
+        return None
+    try:
+        return int(_SUPERVISOR_PIDFILE.read_text(encoding="utf-8").strip() or "0") or None
+    except (OSError, ValueError):
+        return None
+
+
+def _supervisor_alive() -> bool:
+    pid = _read_supervisor_pid()
+    return bool(pid and _pid_is_alive(pid))
+
+
+def _cmd_reflexd_manager(args):
+    """Dispatcher for ``quorus reflexd-manager start|stop|status|restart|install-launchd``."""
+    action = getattr(args, "manager_action", None)
+    if action is None:
+        _ui.error(
+            "reflexd-manager: missing subcommand.",
+            hint="usage: [accent]quorus reflexd-manager start|stop|status|restart|install-launchd[/]",
+        )
+        raise SystemExit(5)
+    if action == "start":
+        return _manager_start(args)
+    if action == "stop":
+        return _manager_stop(args)
+    if action == "status":
+        return _manager_status(args)
+    if action == "restart":
+        _manager_stop(args)
+        return _manager_start(args)
+    if action == "install-launchd":
+        return _manager_install_launchd(args)
+    _ui.error(f"reflexd-manager: unknown action {action!r}")
+    raise SystemExit(5)
+
+
+def _manager_start(args) -> None:
+    """Daemonize the supervisor (one PID supervising N reflexd children)."""
+    import time as _time
+    from quorus.runtime.supervisor import Supervisor
+
+    if _supervisor_alive():
+        existing = _read_supervisor_pid()
+        _ui.error(
+            f"reflexd-manager already running (pid {existing}).",
+            hint="stop it first with [accent]quorus reflexd-manager stop[/]",
+        )
+        raise SystemExit(5)
+
+    participants, api_keys, relay_url = _resolve_manager_participants(
+        getattr(args, "participants", None)
+    )
+    if not participants:
+        _ui.error(
+            "reflexd-manager: no agent participants resolved.",
+            hint=(
+                "Pass [accent]--participants a,b,c[/] or run "
+                "[accent]quorus init[/] to register agent identities."
+            ),
+        )
+        raise SystemExit(5)
+
+    _REFLEXD_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    _SUPERVISOR_LOG.parent.mkdir(parents=True, exist_ok=True)
+
+    sup = Supervisor(participants, api_keys=api_keys, relay_url=relay_url)
+    spawned = sup.start_all()
+    sup.start_watchdog()
+
+    _SUPERVISOR_PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
+    try:
+        os.chmod(_SUPERVISOR_PIDFILE, 0o600)
+    except OSError:
+        pass
+
+    console.print(
+        f"[dim]reflexd-manager:[/] STARTED "
+        f"supervisor=[accent]{os.getpid()}[/] children=[primary]{len(spawned)}[/]"
+    )
+    for name, pid in sorted(spawned.items()):
+        console.print(f"  [muted]•[/] [primary]{name}[/] [dim]pid={pid}[/]")
+
+    if not getattr(args, "foreground", False):
+        # The CLI wrapper itself plays the role of the supervisor process — we
+        # exit here in --detach mode (the children carry on with start_new_session).
+        if getattr(args, "detach", False):
+            return
+
+    # Foreground / launchd-managed mode: hold the supervisor alive until SIGTERM.
+    import signal as _signal
+
+    stop_evt = {"flag": False}
+
+    def _on_signal(*_a):
+        stop_evt["flag"] = True
+
+    _signal.signal(_signal.SIGTERM, _on_signal)
+    _signal.signal(_signal.SIGINT, _on_signal)
+
+    try:
+        while not stop_evt["flag"]:
+            _time.sleep(0.5)
+    finally:
+        sup.stop_watchdog()
+        try:
+            _SUPERVISOR_PIDFILE.unlink()
+        except OSError:
+            pass
+
+
+def _manager_stop(args) -> None:
+    """SIGTERM each reflexd child + clear pidfile."""
+    from quorus.runtime.supervisor import Supervisor
+
+    participants, api_keys, relay_url = _resolve_manager_participants(
+        getattr(args, "participants", None)
+    )
+    sup = Supervisor(participants, api_keys=api_keys, relay_url=relay_url)
+    sup.stop_all()
+
+    pid = _read_supervisor_pid()
+    if pid and _pid_is_alive(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    try:
+        _SUPERVISOR_PIDFILE.unlink()
+    except OSError:
+        pass
+    console.print("[dim]reflexd-manager:[/] STOPPED")
+
+
+def _manager_status(args) -> None:
+    """Show health of every supervised reflexd child."""
+    from quorus.runtime.supervisor import Supervisor
+
+    participants, api_keys, relay_url = _resolve_manager_participants(
+        getattr(args, "participants", None)
+    )
+    sup = Supervisor(participants, api_keys=api_keys, relay_url=relay_url)
+    health = sup.health()
+
+    pid = _read_supervisor_pid()
+    if pid and _pid_is_alive(pid):
+        console.print(f"[primary]reflexd-manager running[/] pid=[accent]{pid}[/]")
+    else:
+        console.print("[dim]reflexd-manager: not running[/]")
+
+    if not health:
+        console.print("[dim]  (no participants resolved)[/]")
+        raise SystemExit(1 if not (pid and _pid_is_alive(pid)) else 0)
+
+    for name in sorted(health):
+        state = health[name]
+        sup._load()  # type: ignore[attr-defined]
+        rec = sup._children.get(name)  # type: ignore[attr-defined]
+        rec_pid = rec.pid if rec else None
+        color = {"alive": "green", "dead": "red", "unknown": "dim"}.get(state, "dim")
+        if rec_pid and state == "alive":
+            console.print(f"  [muted]•[/] [primary]{name}[/] [{color}]{state}[/] [dim](pid {rec_pid})[/]")
+        else:
+            console.print(f"  [muted]•[/] [primary]{name}[/] [{color}]{state}[/]")
+    raise SystemExit(0 if pid and _pid_is_alive(pid) else 1)
+
+
+def _manager_install_launchd(args) -> None:
+    """Write the launchd plist after explicit user confirmation. macOS-only path."""
+    from quorus.runtime.launchd import (
+        DEFAULT_PLIST_PATH,
+        install_launchd,
+        render_systemd_unit,
+    )
+
+    if sys.platform == "linux":
+        # Print the systemd template; never auto-install on Linux (distro variance).
+        bin_path = shutil.which("quorus") or "quorus"
+        console.print("[dim]Linux detected — paste this into ~/.config/systemd/user/:[/]")
+        console.print(render_systemd_unit(quorus_bin=bin_path), markup=False, highlight=False)
+        return
+
+    if sys.platform != "darwin":
+        _ui.error(f"install-launchd: unsupported platform {sys.platform!r}")
+        raise SystemExit(2)
+
+    plist_path = DEFAULT_PLIST_PATH
+    bin_path = shutil.which("quorus")
+    if not bin_path:
+        _ui.error(
+            "install-launchd: cannot find `quorus` on PATH",
+            hint="install via [accent]pipx install quorus[/] first.",
+        )
+        raise SystemExit(2)
+
+    console.print(
+        f"[yellow]This will write a launchd plist to [bold]{plist_path}[/].[/]"
+    )
+    console.print(
+        "[dim]It auto-starts `quorus reflexd-manager start` on login and "
+        "asks launchd to re-spawn the supervisor on crash.[/]"
+    )
+    if not getattr(args, "yes", False):
+        if not Confirm.ask("Proceed?", default=False):
+            console.print("[dim]aborted.[/]")
+            raise SystemExit(0)
+
+    written = install_launchd(plist_path, quorus_bin=bin_path)
+    console.print(f"[green]Wrote[/] [primary]{written}[/]")
+    console.print(
+        "[dim]Activate with:[/] "
+        f"[accent]launchctl load {written}[/]"
+    )
+
+
 def _cmd_hook(args):
     """Manage Claude Code message hook OR run a per-harness hook entrypoint.
 
@@ -3611,11 +3864,16 @@ def _cmd_init(args):
     next_steps.extend(manual_hints[:3])  # keep the panel tight
     ui.hint_next_steps(next_steps)
     # AI-native notification daemon hint — opt-in per Arav's name-editability
-    # principle. We surface the command but never auto-launch it here.
+    # principle. We surface the commands but never auto-launch them here.
     console.print(
         "[muted]→ to enable AI-native notifications, run:[/] "
-        "[accent]quorus reflexd start --detach[/]"
+        "[accent]quorus reflexd-manager start[/]"
     )
+    if sys.platform == "darwin":
+        console.print(
+            "[muted]→ to auto-start on login (macOS):[/] "
+            "[accent]quorus reflexd-manager install-launchd[/]"
+        )
 
 
 def _cmd_invite_link(args):
@@ -7609,6 +7867,42 @@ def main():
     p_rx_logs.add_argument("--tail", type=int, default=50,
                            help="Number of trailing log lines to print (default 50)")
 
+    # ── reflexd-manager: multi-agent supervisor (one daemon per agent identity).
+    p_mgr = sub.add_parser("reflexd-manager", **_help_block(
+        synopsis="Run reflexd for ALL agent identities under one supervisor.",
+        description=(
+            "Brings up the whole notification swarm in one shot. The "
+            "supervisor manages N reflexd subprocesses (one per agent "
+            "participant), persists state to ~/.quorus/runtime/supervisor.json, "
+            "and restarts dead children up to 5 times in 10 minutes. Pair "
+            "with `install-launchd` for survive-reboot auto-start on macOS."
+        ),
+        example="quorus reflexd-manager start",
+        help_text="Multi-agent reflexd supervisor",
+    ))
+    mgr_sub = p_mgr.add_subparsers(dest="manager_action")
+    p_mgr_start = mgr_sub.add_parser("start", help="Start supervisor + all reflexd children")
+    p_mgr_start.add_argument("--participants", default=None,
+                             help="CSV of participant names (defaults to active profile's agent_api_keys)")
+    p_mgr_start.add_argument("--detach", action="store_true",
+                             help="Spawn supervisor in background and exit immediately")
+    p_mgr_start.add_argument("--foreground", action="store_true",
+                             help="Stay in the foreground (launchd / systemd will use this)")
+    p_mgr_stop = mgr_sub.add_parser("stop", help="SIGTERM all reflexd children + supervisor")
+    p_mgr_stop.add_argument("--participants", default=None,
+                            help="CSV of participants to stop (default: all known)")
+    p_mgr_status = mgr_sub.add_parser("status", help="Show health of every supervised child")
+    p_mgr_status.add_argument("--participants", default=None,
+                              help="CSV of participants to inspect")
+    p_mgr_restart = mgr_sub.add_parser("restart", help="Stop all then start all")
+    p_mgr_restart.add_argument("--participants", default=None)
+    p_mgr_install = mgr_sub.add_parser(
+        "install-launchd",
+        help="Write ~/Library/LaunchAgents/dev.quorus.reflexd.plist (macOS, prompts to confirm)",
+    )
+    p_mgr_install.add_argument("--yes", action="store_true",
+                               help="Skip the confirm prompt (DESTRUCTIVE — opt-in only)")
+
     p_workspaces = sub.add_parser("workspaces", **_help_block(
         synopsis="Manage Quorus workspace profiles.",
         description=(
@@ -7715,6 +8009,7 @@ def main():
         "begin": _cmd_begin,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
+        "reflexd-manager": _cmd_reflexd_manager,
         "workspaces": _cmd_workspaces,
         "login": _cmd_login,
         "whoami": _cmd_whoami,

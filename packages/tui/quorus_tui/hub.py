@@ -2121,6 +2121,33 @@ def _dispatch_slash(
 # this buffer on every call.
 _PENDING_INPUT_BUF: list[str] = []
 
+# Last-keystroke wall-clock used as a "is the human at the keyboard?" proxy
+# for OS-level notification gating. Updated in _read_input on every real
+# keystroke; consulted in _sse_loop before deciding to fire a banner.
+# 30s of keystroke silence ⇒ TUI is effectively unfocused and we should
+# surface inbound @-mentions / DMs through the OS notification center.
+_LAST_KEYSTROKE_AT: float = 0.0
+_FOCUS_IDLE_THRESHOLD_S = 30.0
+
+
+def _stamp_focus_now() -> None:
+    """Mark the TUI as foregrounded right now (called from _read_input)."""
+    global _LAST_KEYSTROKE_AT
+    _LAST_KEYSTROKE_AT = time.monotonic()
+
+
+def _tui_is_unfocused(now: float | None = None) -> bool:
+    """Return True iff no keystroke has hit _read_input in >30s.
+
+    Falls back to "unfocused" before the first keystroke ever lands so
+    notifications fire on the very first message of a session — better
+    UX than silence until the user types.
+    """
+    clock = now if now is not None else time.monotonic()
+    if _LAST_KEYSTROKE_AT == 0.0:
+        return True
+    return (clock - _LAST_KEYSTROKE_AT) >= _FOCUS_IDLE_THRESHOLD_S
+
 
 # Special sentinel strings returned by _read_input() for non-text keys.
 _KEY_UP      = "__UP__"
@@ -2243,6 +2270,9 @@ def _read_input(
                 _b = ""
             if not _b:
                 continue
+            # Real keystroke — used by _sse_loop to decide whether the user
+            # is "present" or whether to surface an OS notification.
+            _stamp_focus_now()
             if _b == "\x1b":
                 # Possible escape sequence — peek for trailing bytes.
                 _follow = ""
