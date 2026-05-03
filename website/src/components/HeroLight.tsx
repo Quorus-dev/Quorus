@@ -3,8 +3,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import BrainSynapses from "./illustrations/BrainSynapses";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
-const INSTALL_CMD =
-  'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"';
+const INSTALL_CMD = "pip install quorus";
 
 /**
  * HeroLight — cream split hero. Left: badge + headline + subhead + waitlist

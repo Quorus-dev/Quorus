@@ -99,7 +99,7 @@ export default function BentoCard({
         <div
           className={
             wide
-              ? "grid h-full grid-cols-1 gap-6 p-7 sm:p-8 md:grid-cols-[minmax(0,220px)_1fr] md:items-center md:gap-8"
+              ? "grid h-full grid-cols-1 gap-6 p-7 sm:p-8 md:grid-cols-[minmax(0,140px)_1fr] md:items-center md:gap-7"
               : "flex h-full flex-col p-7 sm:p-8"
           }
         >
@@ -142,7 +142,8 @@ export default function BentoCard({
                 fontWeight: 600,
                 letterSpacing: "-0.018em",
                 lineHeight: 1.15,
-                fontSize: wide ? "clamp(20px, 1.6vw, 24px)" : "19px",
+                fontSize: wide ? "clamp(19px, 1.4vw, 22px)" : "19px",
+                hyphens: "manual",
               }}
             >
               {title}

@@ -27,7 +27,6 @@ const SITEMAP: { title: string; links: FooterLink[] }[] = [
     links: [
       { label: "Features", href: "/#features" },
       { label: "Console", href: "/console" },
-      { label: "Pricing", href: "/pricing" },
       {
         label: "Changelog",
         href: "https://github.com/Quorus-dev/Quorus/releases",

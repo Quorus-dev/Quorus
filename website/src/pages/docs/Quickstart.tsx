@@ -71,22 +71,15 @@ export default function Quickstart() {
         />
 
         <DocsH2>1. Install</DocsH2>
-        <DocsP>
-          Pull the latest beta from GitHub. The package ships the relay, the
-          CLI, and the MCP server in one bundle.
-        </DocsP>
-        <CodeBlock
-          command={
-            'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"'
-          }
-          lang="bash"
-        />
+        <DocsP>One package ships the relay, the CLI, and the MCP server.</DocsP>
+        <CodeBlock command="pip install quorus" lang="bash" />
 
         <DocsH2>2. Verify the install</DocsH2>
         <DocsP>
           Confirm the CLI is on your PATH and reports a version. If this fails,
-          run <DocsInlineCode>pipx ensurepath</DocsInlineCode> and reopen your
-          shell.
+          run <DocsInlineCode>python -m site --user-base</DocsInlineCode> and
+          add the printed <DocsInlineCode>bin/</DocsInlineCode> directory to
+          your PATH.
         </DocsP>
         <CodeBlock command="quorus --version" lang="bash" />
 

@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { lazy, Suspense, useEffect } from "react";
 import NavV2 from "./components/NavV2";
 import Home from "./pages/Home";
@@ -6,7 +6,6 @@ import Home from "./pages/Home";
 // Code-split everything that isn't the LCP path. Console + Docs ship in their
 // own chunks so the marketing JS stays small.
 const Console = lazy(() => import("./pages/Console"));
-const Pricing = lazy(() => import("./pages/Pricing"));
 const DocsLayout = lazy(() => import("./components/DocsLayout"));
 const DocsIndex = lazy(() => import("./pages/docs/DocsIndex"));
 const Quickstart = lazy(() => import("./pages/docs/Quickstart"));
@@ -52,13 +51,14 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/console" element={<Console />} />
-          <Route path="/pricing" element={<Pricing />} />
           <Route path="/docs" element={<DocsLayout />}>
             <Route index element={<DocsIndex />} />
             <Route path="quickstart" element={<Quickstart />} />
             <Route path="mcp-tools" element={<McpTools />} />
             <Route path="why-cross-vendor" element={<WhyCrossVendor />} />
           </Route>
+          {/* Anything else (including legacy /pricing) goes home. */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
     </>

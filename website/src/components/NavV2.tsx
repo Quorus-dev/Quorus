@@ -16,7 +16,6 @@ type NavLink = { label: string; href: string; external?: boolean };
 const NAV_LINKS: NavLink[] = [
   { label: "Features", href: "/#features" },
   { label: "Console", href: "/console" },
-  { label: "Pricing", href: "/pricing" },
   { label: "Docs", href: "/docs/quickstart" },
 ];
 

@@ -28,8 +28,7 @@ const TABS: Tab[] = [
   {
     id: "install",
     label: "Install",
-    command:
-      'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"',
+    command: "pip install quorus",
     lang: "bash",
   },
   {
@@ -106,7 +105,7 @@ export default function QuickstartBand(): JSX.Element {
           className="mt-5 max-w-2xl text-[18px] leading-[1.55]"
           style={{ color: "var(--color-text-on-cream-secondary)" }}
         >
-          pipx install. quorus init. Done. Drop the MCP server into Claude Code,
+          pip install. quorus init. Done. Drop the MCP server into Claude Code,
           Cursor, or whatever you use today.
         </motion.p>
 

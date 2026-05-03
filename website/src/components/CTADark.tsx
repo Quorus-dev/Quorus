@@ -15,8 +15,7 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 const MONO = "'JetBrains Mono', ui-monospace, monospace";
 const SANS = "'Plus Jakarta Sans', system-ui, sans-serif";
 
-const INSTALL_CMD =
-  'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"';
+const INSTALL_CMD = "pip install quorus";
 
 const NOISE_SVG =
   "data:image/svg+xml;utf8," +
