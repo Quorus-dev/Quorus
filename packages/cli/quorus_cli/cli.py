@@ -3711,6 +3711,38 @@ def _register_agent_identity(
         return None
 
 
+def _register_agent_identity_full(
+    relay_url: str,
+    parent_api_key: str,
+    suffix: str,
+) -> tuple[str, str] | None:
+    """Like :func:`_register_agent_identity`, but returns ``(agent_name, key)``.
+
+    Necessary because the relay derives the agent name from the PARENT
+    participant — not from whatever ``name`` the CLI happened to receive at
+    init time. Using the server's authoritative name avoids the failure
+    mode where reflexd-manager tries to authenticate as a participant the
+    relay has never seen.
+    """
+    try:
+        resp = httpx.post(
+            f"{relay_url}/v1/auth/register-agent",
+            json={"suffix": suffix},
+            headers={"Authorization": f"Bearer {parent_api_key}"},
+            timeout=10,
+            follow_redirects=True,
+        )
+        if resp.status_code == 200:
+            data = resp.json() or {}
+            agent_name = data.get("agent_name") or ""
+            api_key = data.get("api_key") or ""
+            if agent_name and api_key:
+                return agent_name, api_key
+        return None
+    except Exception:
+        return None
+
+
 def _resolve_explicit_agent_auth(
     *,
     requested_name: str,
@@ -3927,59 +3959,59 @@ def _mint_init_agent_keys(
     name: str,
     relay_url: str,
     api_key: str,
-    profile_slug: str,
+    already_minted: dict[str, str],
     ui,
 ) -> dict[str, str]:
-    """Mint per-platform agent keys for ``quorus init``.
+    """Mint per-platform agent keys for ``quorus init`` (ALL canonical platforms).
 
-    For each canonical platform suffix in :data:`_INIT_AGENT_PLATFORMS`, calls
-    :func:`_register_agent_identity` and persists the resulting
-    ``{name}-{suffix} -> api_key`` mapping under the given profile's
-    ``agent_api_keys`` field. The relay's ``register-agent`` is idempotent on
-    the server side (revokes old keys, returns a fresh one), so re-running
-    ``quorus init`` does NOT pile up duplicate participants.
+    ``_register_mcp_everywhere`` only mints keys for platforms it actually
+    detected on disk. We want the user to leave ``quorus init`` with all four
+    canonical agents minted regardless of which CLIs are installed locally,
+    so reflexd-manager can supervise every identity from the very first run.
+
+    For each canonical suffix in :data:`_INIT_AGENT_PLATFORMS`:
+
+    * If a key was already minted in step 3, reuse it verbatim — never
+      double-mint, because the relay revokes prior keys on every call and
+      that would invalidate the MCP env files we just wrote.
+    * Otherwise call :func:`_register_agent_identity` to mint a fresh one.
+
+    The relay's ``register-agent`` endpoint is idempotent at the participant
+    level (re-uses the participant, revokes prior keys, mints a fresh one),
+    so re-running ``quorus init`` does NOT pile up duplicate identities.
 
     A failure for ONE platform must not abort the whole init: we log the
-    error and continue. Returns the dict of successfully minted keys.
+    error and continue. Returns the merged dict keyed by full agent name.
     """
     if not api_key:
         return {}
 
-    pm = ProfileManager()
-    profile = pm.get(profile_slug) or {}
-    existing = profile.get("agent_api_keys") or {}
-    if not isinstance(existing, dict):
-        existing = {}
-    minted: dict[str, str] = dict(existing)
-    fresh_count = 0
+    minted: dict[str, str] = {}
     failures: list[str] = []
 
     for suffix in _INIT_AGENT_PLATFORMS:
         agent_name = f"{name}-{suffix}"
+        # Step 3 (_register_mcp_everywhere) returned per-platform keys in a
+        # dict keyed by SUFFIX. Reuse those — never double-mint or we revoke
+        # the credentials that the freshly-written MCP env files depend on.
+        if suffix in already_minted and already_minted[suffix]:
+            minted[agent_name] = already_minted[suffix]
+            continue
+
         try:
             agent_key = _register_agent_identity(
                 relay_url=relay_url,
                 parent_api_key=api_key,
                 suffix=suffix,
             )
-        except Exception as exc:  # defensive — _register_agent already swallows
+        except Exception as exc:  # defensive — helper already swallows
             failures.append(f"{agent_name} ({exc.__class__.__name__})")
             continue
 
         if not agent_key:
             failures.append(agent_name)
             continue
-
-        # Detect "fresh mint vs returned existing" by comparing against prior:
-        # if the value changed (or wasn't there), count it as freshly written.
-        if minted.get(agent_name) != agent_key:
-            fresh_count += 1
         minted[agent_name] = agent_key
-
-    # Persist the merged map back into the profile.
-    if minted:
-        profile["agent_api_keys"] = minted
-        pm.save(profile_slug, profile)
 
     if minted:
         ui.console.print(
@@ -4253,10 +4285,13 @@ def _init_maybe_install_launchd(
     # User said yes (or --auto-launchd). Re-enter our own dispatcher with the
     # 'install-launchd' subcommand so the existing helper does the heavy
     # lifting — it already handles plist discovery, idempotency, and the
-    # `launchctl load` invocation.
+    # `launchctl load` invocation. Resolve the helper through the module
+    # global at call time so test monkeypatches see it.
     fake_args = argparse.Namespace(manager_action="install-launchd")
+    import sys as _sys
+    install_fn = getattr(_sys.modules[__name__], "_manager_install_launchd")
     try:
-        _manager_install_launchd(fake_args)
+        install_fn(fake_args)
         return True
     except SystemExit as exc:
         if exc.code in (None, 0):
@@ -4464,8 +4499,10 @@ def _cmd_init(args):
     mcp_command, mcp_args = _mcp_server_command()
 
     # 3. Register MCP server with every detected MCP-compatible client
-    # via the shared multi-platform helper.
-    registered_labels, _agent_keys = _register_mcp_everywhere(
+    # via the shared multi-platform helper. ``per_platform_keys`` is keyed
+    # by platform suffix (claude/codex/...) and is reused by the agent-mint
+    # step below so we never double-mint and revoke in-flight credentials.
+    registered_labels, per_platform_keys = _register_mcp_everywhere(
         name=name,
         relay_url=relay_url,
         api_key=api_key,
@@ -4496,21 +4533,50 @@ def _cmd_init(args):
     no_smoke = bool(getattr(args, "no_smoke", False))
     no_launchd = bool(getattr(args, "no_launchd", False))
     auto_launchd = bool(getattr(args, "auto_launchd", False))
-    workspace_slug = "default"  # canonical agent profile name post-init
 
-    # 5. Mint per-platform agent keys (under the active profile).
-    pm = ProfileManager(config_dir=config_dir)
-    pm.migrate_legacy_if_needed()
-    active_slug = pm.current() or workspace_slug
+    # 5. Mint the canonical four agent keys (claude/codex/gemini/cursor).
+    # Reuse the keys ``_register_mcp_everywhere`` already minted so we never
+    # double-mint and revoke fresh MCP env credentials in-flight.
     minted_keys: dict[str, str] = {}
     if api_key:
         minted_keys = _mint_init_agent_keys(
             name=name,
             relay_url=relay_url,
             api_key=api_key,
-            profile_slug=active_slug,
+            already_minted=per_platform_keys or {},
             ui=ui,
         )
+
+    # 5b. Persist agent_api_keys into BOTH the flat config (so existing
+    # readers find them) AND the canonical 'default' profile (so the
+    # supervisor's _resolve_manager_participants picks them up via
+    # pm.current_profile()). The flat config is the legacy shape readers
+    # like load_config() auto-migrate on next boot, so this is forward-
+    # compatible.
+    if minted_keys:
+        try:
+            existing = json.loads(config_path.read_text()) if config_path.exists() else {}
+        except (json.JSONDecodeError, ValueError, OSError):
+            existing = {}
+        existing.update(config)
+        # Preserve previously-saved agent keys for platforms we didn't touch.
+        prior = existing.get("agent_api_keys") or {}
+        if not isinstance(prior, dict):
+            prior = {}
+        prior.update(minted_keys)
+        existing["agent_api_keys"] = prior
+        _write_sensitive_json(config_path, existing)
+        # Also stash a 'default' profile under profiles/ so the supervisor
+        # has a stable slug to read from regardless of legacy migration state.
+        try:
+            pm = ProfileManager(config_dir=config_dir)
+            default_profile = dict(existing)
+            pm.save("default", default_profile)
+        except (OSError, ValueError):
+            # Non-fatal: the flat config above is the primary store.
+            pm = ProfileManager(config_dir=config_dir)
+    else:
+        pm = ProfileManager(config_dir=config_dir)
 
     # 6. Auto-create the 'human' profile alongside the agent default.
     interactive = bool(getattr(sys.stdin, "isatty", lambda: False)())
@@ -4529,7 +4595,9 @@ def _cmd_init(args):
             human_profile = pm.get(human_slug) or {}
             human_key = human_profile.get("api_key", "") or ""
             # Default the active profile to 'human' so the TUI renders the
-            # owner as their human identity straight away.
+            # owner as their human identity straight away. Requires a
+            # 'default' profile to exist (which we wrote above) so the
+            # pointer file remains coherent.
             try:
                 pm.set_current(human_slug)
             except FileNotFoundError:
@@ -4578,7 +4646,7 @@ def _cmd_init(args):
         checklist.append("[yellow]·[/] agents: [dim]none minted (check warnings above)[/]")
     if human_slug:
         checklist.append(
-            f"[green]✓[/] profiles: [primary]human[/] (active), [dim]{active_slug}[/]"
+            "[green]✓[/] profiles: [primary]human[/] (active), [dim]default[/]"
         )
     if supervisor_pid:
         checklist.append(
