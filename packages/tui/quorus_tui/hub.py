@@ -52,7 +52,9 @@ from quorus_cli import ui as _ui  # noqa: E402
 
 from quorus.config import ConfigManager, resolve_config_dir
 
+from . import autocomplete as _autocomplete
 from . import welcome as _welcome
+from .autocomplete import AutocompletePopover
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 # Idle redraw cadence — how often the main loop refreshes when nothing has
@@ -2209,6 +2211,9 @@ _KEY_TIMEOUT = "__TIMEOUT__"   # no keypress within render tick — re-render
 def _read_input(
     prompt: str = "❯ ",
     history: list[str] | None = None,
+    *,
+    popover: "AutocompletePopover | None" = None,
+    on_popover_change: "callable | None" = None,
 ) -> str:
     """Read one line of input, handling special keys properly.
 
@@ -2219,6 +2224,17 @@ def _read_input(
 
     Without readchar (fallback): behaves like plain input(). Arrow keys
     will still show ^[[A in this path.
+
+    Popover integration:
+        When ``popover`` is provided and ``popover.is_open`` becomes True,
+        UP / DOWN / TAB / ENTER / ESC are routed to it FIRST. Tab/Enter
+        accept the selection (the typed prefix is replaced with the full
+        label + space) instead of cycling rooms. Esc dismisses the popover
+        instead of returning to welcome.
+
+        ``on_popover_change(buf, popover)`` is invoked whenever the popover
+        opens, dismisses, or its prefix changes. The hub uses this to
+        repaint the popover above the prompt.
     """
     if not _READCHAR_AVAILABLE:
         try:
@@ -2341,6 +2357,90 @@ def _read_input(
                 key = readchar.key.CTRL_D
             else:
                 key = _b
+            # ── Popover-aware dispatch ──────────────────────────────────
+            # When the popover is open, intercept UP / DOWN / TAB / ENTER /
+            # ESC / printable chars FIRST so they don't fall into the
+            # history-walk / room-cycle paths below. The popover handles
+            # its own state mutation; the buffer is updated here so the
+            # input line stays in sync with what the user sees.
+            if popover is not None and popover.is_open:
+                _popover_action: "str | None" = None
+                if key == readchar.key.UP:
+                    _popover_action = popover.handle_key("UP")
+                elif key == readchar.key.DOWN:
+                    _popover_action = popover.handle_key("DOWN")
+                elif key == readchar.key.TAB:
+                    _popover_action = popover.handle_key("TAB")
+                elif key in (readchar.key.ENTER, "\r", "\n"):
+                    _popover_action = popover.handle_key("ENTER")
+                elif key == readchar.key.ESC:
+                    _popover_action = popover.handle_key("ESC")
+                elif key in (readchar.key.BACKSPACE, "\x7f"):
+                    # Backspace shrinks the buffer AND the popover prefix.
+                    if buf:
+                        buf.pop()
+                        sys.stdout.write("\b \b")
+                        sys.stdout.flush()
+                    _popover_action = popover.handle_key("BACKSPACE")
+                elif len(key) == 1 and key.isprintable():
+                    # Echo + buffer + popover update for printable chars.
+                    buf.append(key)
+                    sys.stdout.write(key)
+                    sys.stdout.flush()
+                    _popover_action = popover.handle_key(key)
+                if _popover_action == "accept":
+                    # Replace the typed prefix in `buf` with the chosen
+                    # label + trailing space. The label always starts
+                    # with `/` or `@`, matching the prefix at the tail
+                    # of the buffer.
+                    label = popover.selected_label() or ""
+                    prefix_len = len(popover.prefix)
+                    # Drop the prefix off the end of the buffer; replace
+                    # with full label + space.
+                    if prefix_len > 0 and len(buf) >= prefix_len:
+                        del buf[-prefix_len:]
+                    for ch in label + " ":
+                        buf.append(ch)
+                    popover.dismiss()
+                    _redraw_line(buf)
+                    if on_popover_change is not None:
+                        on_popover_change(buf, popover)
+                    continue
+                if _popover_action in ("next", "prev", "consume", "dismiss"):
+                    if on_popover_change is not None:
+                        on_popover_change(buf, popover)
+                    continue
+                # _popover_action is None — fall through to the normal
+                # key handling. Should not happen because we covered all
+                # the keys above, but defensive.
+            # Pre-dispatch popover-open trigger detection: if the popover
+            # is currently HIDDEN, decide whether THIS keystroke should
+            # open it. We trigger BEFORE echoing so the trigger char ends
+            # up in the buffer along with the popover prefix in lockstep.
+            if (
+                popover is not None
+                and not popover.is_open
+                and len(key) == 1
+                and key.isprintable()
+            ):
+                _trigger = _autocomplete.detect_open_trigger(buf, key)
+                if _trigger == "slash":
+                    buf.append(key)
+                    sys.stdout.write(key)
+                    sys.stdout.flush()
+                    popover.open_slash()
+                    if on_popover_change is not None:
+                        on_popover_change(buf, popover)
+                    continue
+                if _trigger == "mention":
+                    buf.append(key)
+                    sys.stdout.write(key)
+                    sys.stdout.flush()
+                    popover.open_mention()
+                    if on_popover_change is not None:
+                        on_popover_change(buf, popover)
+                    continue
+
             if key in (readchar.key.ENTER, "\r", "\n"):
                 # Multi-line paste detection: if more bytes are pending in
                 # stdin within 5ms, this \n is part of a paste — append it
@@ -2476,6 +2576,60 @@ def _main_input_loop(
     input_history: list[str] = []
     HISTORY_MAX = 100
 
+    # ── Autocomplete popover ───────────────────────────────────────────
+    # Single instance lives for the lifetime of the loop. Providers close
+    # over `state` so each open() picks up the live room members and the
+    # current SLASH_COMMANDS registry. Imported lazily inside the closure
+    # so chat.py / autocomplete.py don't form an import cycle on startup.
+    def _slash_provider() -> list[tuple[str, str]]:
+        return _autocomplete.slash_items_from_registry(SLASH_COMMANDS)
+
+    def _mention_provider() -> list[tuple[str, str]]:
+        sel = state.get_selected_room()
+        if not sel:
+            return []
+        members = sel.get("members") or []
+        from . import chat as _chat_mod
+        return _autocomplete.mention_items_from_room(
+            list(members), is_human=_chat_mod._is_human_sender,
+        )
+
+    popover = AutocompletePopover(
+        slash_items_provider=_slash_provider,
+        mention_items_provider=_mention_provider,
+    )
+
+    def _redraw_popover(buf_chars: list[str], pop: AutocompletePopover) -> None:
+        """Repaint the popover above the prompt as the user types.
+
+        Strategy: clear the current line, print popover rows on fresh
+        lines above, then redraw the prompt + buffer on a new line. We
+        deliberately do NOT _full_clear — that nukes scrollback and
+        fights the existing render loop. Instead we use ANSI cursor-up
+        to overwrite our own previous popover footprint.
+        """
+        # Step 1: clear the input line.
+        sys.stdout.write("\r\x1b[K")
+        # Step 2: walk back over the previous popover footprint (if any)
+        # and erase each line. We track the row count on the popover
+        # instance so we can clean up when it dismisses too.
+        prev_rows = getattr(pop, "_last_render_rows", 0)
+        for _ in range(prev_rows):
+            sys.stdout.write("\x1b[1A\r\x1b[K")
+        # Step 3: render the popover (if open).
+        if pop.is_open:
+            console_width = max(40, console.size.width)
+            rows = pop.render(console_width)
+            for row in rows:
+                console.print(row)
+            pop._last_render_rows = len(rows)
+        else:
+            pop._last_render_rows = 0
+        # Step 4: redraw the prompt + buffer.
+        sys.stdout.write("❯ ")
+        sys.stdout.write("".join(buf_chars))
+        sys.stdout.flush()
+
     try:
         while True:
             # Pending workspace switch? Exit the loop so _run_session
@@ -2603,7 +2757,10 @@ def _main_input_loop(
                 last_render = now
 
             # Bare prompt — no panel, no border.
-            line = _read_input("❯ ", history=input_history)
+            line = _read_input(
+                "❯ ", history=input_history,
+                popover=popover, on_popover_change=_redraw_popover,
+            )
 
             # Once the user submits anything, clear the render hold so the
             # UI catches up on the next tick.
