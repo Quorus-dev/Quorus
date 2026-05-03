@@ -1,0 +1,237 @@
+"""Tests for :mod:`quorus.runtime.memory` — Stream B persistent agent memory.
+
+Coverage targets the 10 cases called out in the Stream B plan:
+* basic round-trip (write/read)
+* eviction at 5KB cap (oldest first)
+* atomic replace under concurrent writes
+* corruption recovery (truncated/garbled lines silently dropped)
+* missing dir auto-created
+* file mode 0o600
+* path sanitisation (participant + room with special chars)
+* read_recent honors n
+* read_recent on empty/missing returns []
+* cap_to_5kb returns 0 when nothing remains
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import stat
+from pathlib import Path
+
+import pytest
+
+from quorus.runtime import memory as mem
+
+
+@pytest.fixture
+def base_dir(tmp_path: Path) -> Path:
+    """Isolated memory dir per test — never touches the real ~/.quorus."""
+    return tmp_path / "memory_root"
+
+
+# ---------------------------------------------------------------------------
+# 1. Basic round-trip
+# ---------------------------------------------------------------------------
+
+
+async def test_append_then_read_roundtrip(base_dir: Path):
+    entry = await mem.append(
+        "alice", "general", "filed PR-1234", base_dir=base_dir,
+    )
+    assert entry["summary"] == "filed PR-1234"
+    assert entry["room"] == "general"
+    assert "ts" in entry
+
+    recent = await mem.read_recent("alice", "general", base_dir=base_dir)
+    assert len(recent) == 1
+    assert recent[0]["summary"] == "filed PR-1234"
+
+
+# ---------------------------------------------------------------------------
+# 2. Eviction at 5KB cap (oldest first)
+# ---------------------------------------------------------------------------
+
+
+async def test_eviction_drops_oldest_at_5kb(base_dir: Path):
+    # Each entry is ~80B serialised. 200 entries ≈ 16KB → must trim to ≤5KB.
+    for i in range(200):
+        await mem.append(
+            "agent-codex", "swarm", f"summary-{i:03d}", base_dir=base_dir,
+        )
+    size = mem.memory_size_bytes("agent-codex", "swarm", base_dir=base_dir)
+    assert size <= mem.MAX_BYTES, (
+        f"file should be <= {mem.MAX_BYTES} bytes, got {size}"
+    )
+    recent = await mem.read_recent(
+        "agent-codex", "swarm", n=200, base_dir=base_dir,
+    )
+    # All retained entries must be a contiguous *tail* of the original
+    # write sequence — eviction is oldest-first.
+    nums = [int(e["summary"].split("-")[1]) for e in recent]
+    assert nums == sorted(nums)
+    assert nums[-1] == 199, "newest write must survive"
+    assert nums[0] > 0, "oldest write should have been evicted"
+
+
+# ---------------------------------------------------------------------------
+# 3. Atomic replace under concurrent writes
+# ---------------------------------------------------------------------------
+
+
+async def test_atomic_replace_under_concurrent_writes(base_dir: Path):
+    async def writer(idx: int):
+        await mem.append(
+            "agent-claude", "ops", f"task-{idx}", base_dir=base_dir,
+        )
+
+    await asyncio.gather(*(writer(i) for i in range(50)))
+    # All 50 writes must end up in the file in some order, with no torn
+    # JSON lines (corruption recovery would mask torn lines on read; we
+    # check the raw file has 50 valid lines).
+    path = mem.memory_path("agent-claude", "ops", base_dir=base_dir)
+    raw = path.read_bytes().decode("utf-8")
+    lines = [line for line in raw.splitlines() if line.strip()]
+    assert len(lines) == 50
+    for line in lines:
+        json.loads(line)  # raises if any line is torn
+
+
+# ---------------------------------------------------------------------------
+# 4. Corruption recovery — truncated last line is silently skipped
+# ---------------------------------------------------------------------------
+
+
+async def test_truncated_last_line_skipped_on_read(base_dir: Path):
+    await mem.append(
+        "alice", "ops", "valid entry one", base_dir=base_dir,
+    )
+    await mem.append(
+        "alice", "ops", "valid entry two", base_dir=base_dir,
+    )
+
+    # Corrupt the file by appending a torn line
+    path = mem.memory_path("alice", "ops", base_dir=base_dir)
+    with path.open("ab") as f:
+        f.write(b'{"ts":"2026-05-02T00:00:00","summa')  # truncated
+
+    # Reader must not raise; should return only the two clean entries.
+    recent = await mem.read_recent("alice", "ops", base_dir=base_dir)
+    summaries = [e["summary"] for e in recent]
+    assert "valid entry one" in summaries
+    assert "valid entry two" in summaries
+    assert len(recent) == 2
+
+
+async def test_unparseable_line_in_middle_is_skipped(base_dir: Path):
+    path = mem.memory_path("alice", "ops", base_dir=base_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (
+        b'{"ts":"2026-01-01T00:00:00","room":"ops","summary":"a"}\n'
+        b'this is not json at all\n'
+        b'{"ts":"2026-01-02T00:00:00","room":"ops","summary":"b"}\n'
+    )
+    path.write_bytes(payload)
+    recent = await mem.read_recent("alice", "ops", base_dir=base_dir)
+    assert [e["summary"] for e in recent] == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# 5. Missing dir auto-created
+# ---------------------------------------------------------------------------
+
+
+async def test_missing_dir_auto_created(base_dir: Path):
+    assert not base_dir.exists()
+    await mem.append(
+        "fresh-agent", "fresh-room", "first ever", base_dir=base_dir,
+    )
+    path = mem.memory_path(
+        "fresh-agent", "fresh-room", base_dir=base_dir,
+    )
+    assert path.parent.exists()
+    assert path.exists()
+
+
+# ---------------------------------------------------------------------------
+# 6. File mode 0o600
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="POSIX-only file-mode check",
+)
+async def test_file_mode_0o600(base_dir: Path):
+    await mem.append(
+        "alice", "ops", "secret summary", base_dir=base_dir,
+    )
+    path = mem.memory_path("alice", "ops", base_dir=base_dir)
+    mode = stat.S_IMODE(path.stat().st_mode)
+    assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+
+# ---------------------------------------------------------------------------
+# 7. Path sanitisation (participant + room with special chars)
+# ---------------------------------------------------------------------------
+
+
+async def test_path_sanitisation(base_dir: Path):
+    # Path-traversal-shaped name must not escape the memory dir.
+    bad_participant = "../../etc/passwd"
+    bad_room = "../../../tmp/evil"
+    await mem.append(
+        bad_participant, bad_room, "do not escape", base_dir=base_dir,
+    )
+    # The escaped path stays under base_dir
+    path = mem.memory_path(bad_participant, bad_room, base_dir=base_dir)
+    assert base_dir in path.parents
+
+
+# ---------------------------------------------------------------------------
+# 8. read_recent honors n
+# ---------------------------------------------------------------------------
+
+
+async def test_read_recent_honors_n(base_dir: Path):
+    for i in range(20):
+        await mem.append(
+            "alice", "ops", f"entry-{i:02d}", base_dir=base_dir,
+        )
+    recent = await mem.read_recent("alice", "ops", n=5, base_dir=base_dir)
+    assert len(recent) == 5
+    # newest last
+    nums = [int(e["summary"].split("-")[1]) for e in recent]
+    assert nums == [15, 16, 17, 18, 19]
+
+
+# ---------------------------------------------------------------------------
+# 9. read_recent on empty/missing returns []
+# ---------------------------------------------------------------------------
+
+
+async def test_read_recent_missing_file(base_dir: Path):
+    recent = await mem.read_recent(
+        "never-wrote", "anything", base_dir=base_dir,
+    )
+    assert recent == []
+
+
+# ---------------------------------------------------------------------------
+# 10. cap_to_5kb on missing file returns 0
+# ---------------------------------------------------------------------------
+
+
+async def test_cap_to_5kb_missing_file(base_dir: Path):
+    size = await mem.cap_to_5kb(
+        "never-wrote", "anything", base_dir=base_dir,
+    )
+    assert size == 0
+
+
+async def test_empty_summary_is_noop(base_dir: Path):
+    # Empty / whitespace-only summaries should not pollute the log.
+    await mem.append("alice", "ops", "   ", base_dir=base_dir)
+    recent = await mem.read_recent("alice", "ops", base_dir=base_dir)
+    assert recent == []

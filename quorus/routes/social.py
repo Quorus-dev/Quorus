@@ -137,6 +137,20 @@ async def post_social_verb(
     except SocialProtocolError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    # Stream B mirror — propagate claim/release/queue into the work-queue.
+    # Best-effort: a queue mutation failure must NOT roll back the verb,
+    # since the social-state matrix is the authoritative truth and the
+    # queue is only the TUI-friendly view of it.
+    work_queue = getattr(request.app.state, "work_queue_service", None)
+    if work_queue is not None and verb in {"claim", "release", "queue"}:
+        try:
+            await work_queue.apply_social_event(
+                tid, rid, verb=verb, actor=actor, payload=payload_dict,
+            )
+        except Exception:
+            # Never break the verb post on a queue mirror failure.
+            pass
+
     # SSE broadcast — all members get the typed envelope as a "social"
     # message so reflexd / TUI can detect and route it.
     sse_svc = request.app.state.sse_service

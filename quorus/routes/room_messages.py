@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
@@ -19,6 +20,34 @@ _IDEMPOTENCY_TTL = int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "300"))
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
 _logger = logging.getLogger(__name__)
+
+
+# Stream B threading index: ``thread_root_id -> [message_id, ...]`` per room.
+# Process-local; the source of truth is room_history (Postgres or
+# InMemory backend) via ``reply_to`` chains. The index is just a fast lookup
+# for ``GET /rooms/{room}/threads/{root_id}``. Cleared by reset_state via
+# :func:`reset_thread_index`.
+_THREAD_INDEX: dict[tuple[str, str], dict[str, list[str]]] = defaultdict(
+    lambda: defaultdict(list)
+)
+
+
+def reset_thread_index() -> None:
+    """Wipe the per-room thread index. Called from reset_state for tests."""
+    _THREAD_INDEX.clear()
+
+
+def _record_thread(
+    tenant_id: str, room_id: str, root_id: str | None, message_id: str,
+) -> None:
+    """Append *message_id* under *root_id* in the thread index. No-op when
+    root_id is missing — non-threaded messages aren't indexed."""
+    if not root_id or not message_id:
+        return
+    bucket = _THREAD_INDEX[(tenant_id, room_id)]
+    if message_id in bucket[root_id]:
+        return
+    bucket[root_id].append(message_id)
 
 
 def _body_fingerprint(body: dict) -> str:
@@ -87,6 +116,38 @@ async def send_room_message(
             await backends.idempotency.delete(tid, idempotency_cache_key)
         raise
 
+    # Stream B threading — record the (root_id → message_id) link.
+    # Resolution rules:
+    #   1. Explicit ``thread_root_id`` on the request wins.
+    #   2. If absent but ``reply_to`` is set, the message inherits the
+    #      parent's root_id (or the parent's own id if the parent had no
+    #      root, i.e. parent IS the root).
+    # The index is process-local; the canonical store is room_history
+    # via reply_to chains, so a process restart silently rebuilds on
+    # demand the next time a thread is requested.
+    msg_id = result.get("id") if isinstance(result, dict) else None
+    root_id = msg.thread_root_id
+    if not root_id and msg.reply_to:
+        try:
+            parent = await backends.room_history.get_by_id(
+                tid, room_id, msg.reply_to,
+            )
+        except Exception:
+            parent = None
+        if parent:
+            root_id = parent.get("thread_root_id") or parent.get("id")
+    if root_id and msg_id:
+        # Tolerate the get_by_id call above failing — we still want to
+        # record this message against any explicit root the caller set.
+        rid_resolved = result.get("room_id", room_id) if isinstance(
+            result, dict
+        ) else room_id
+        _record_thread(tid, rid_resolved, root_id, msg_id)
+        # Propagate the resolved root_id back to the client so callers
+        # don't have to walk the parent chain themselves.
+        if isinstance(result, dict):
+            result["thread_root_id"] = root_id
+
     # Store result in idempotency cache (replaces pending marker)
     # If this fails, log warning but still return result — the message was sent
     if idempotency_cache_key:
@@ -140,6 +201,79 @@ async def get_message_thread(
     if not thread:
         raise HTTPException(status_code=404, detail="Message not found")
     return thread
+
+
+@router.get("/rooms/{room_id}/threads/{root_id}")
+async def get_thread_by_root(
+    room_id: str,
+    root_id: str,
+    request: Request,
+    auth: AuthContext = Depends(verify_auth),
+):
+    """Return all messages sharing ``thread_root_id == root_id``.
+
+    Distinct from ``/thread/{message_id}`` which uses parent-child via
+    ``reply_to``. The Stream-B contract is "every message tagged with
+    this root_id, oldest first". The relay's process-local index is the
+    fast path; the room_history is the source of truth and is consulted
+    if the index is empty (e.g. after a restart).
+    """
+    tid = _tid(auth)
+    rid, _room = await require_room_member(request, auth, tid, room_id)
+
+    bucket = _THREAD_INDEX.get((tid, rid), {})
+    indexed_ids = list(bucket.get(root_id, []))
+
+    backends = request.app.state.backends
+    history = await backends.room_history.get_recent(tid, rid, limit=500)
+
+    by_id = {m.get("id"): m for m in history if m.get("id")}
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    # Always start with the root itself if present.
+    root_msg = by_id.get(root_id)
+    if root_msg:
+        out.append(dict(root_msg))
+        seen.add(root_id)
+
+    # Add indexed messages first (preserves insertion order = chrono).
+    for mid in indexed_ids:
+        if mid in seen:
+            continue
+        m = by_id.get(mid)
+        if m is None:
+            continue
+        out.append(dict(m))
+        seen.add(mid)
+
+    # Fallback walk: messages that explicitly carry thread_root_id but
+    # weren't in the index (e.g. relay restart cleared the index, or a
+    # different replica wrote them). Sort by timestamp so the chrono
+    # invariant holds.
+    fallback: list[dict] = []
+    for m in history:
+        mid = m.get("id")
+        if not mid or mid in seen:
+            continue
+        if m.get("thread_root_id") == root_id:
+            fallback.append(dict(m))
+            seen.add(mid)
+    fallback.sort(key=lambda m: m.get("timestamp", ""))
+    out.extend(fallback)
+
+    if not out:
+        # Distinguish "no such thread" from "thread is empty" — empty
+        # threads can't exist by construction (the root is always in the
+        # thread). 404 is the right code per the existing /thread/ route.
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    return {
+        "room_id": rid,
+        "root_id": root_id,
+        "messages": out,
+        "count": len(out),
+    }
 
 
 @router.get("/rooms/{room_id}/search")

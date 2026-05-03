@@ -32,6 +32,8 @@ def reset_state():
     """
     from quorus.relay import _init_services, app
     from quorus.routes.analytics import reset_analytics
+    from quorus.routes.room_messages import reset_thread_index
     _init_services(app)
     reset_analytics()
+    reset_thread_index()
     app.state.__dict__.pop("_metrics_cache", None)

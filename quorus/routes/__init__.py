@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from quorus.routes.agent_dm import router as agent_dm_router
 from quorus.routes.agents import router as agents_router
 from quorus.routes.analytics import router as analytics_router
 from quorus.routes.audit import router as audit_router
@@ -17,6 +18,7 @@ from quorus.routes.sse import router as sse_router
 from quorus.routes.triage import router as triage_router
 from quorus.routes.usage import router as usage_router
 from quorus.routes.webhooks import router as webhooks_router
+from quorus.routes.work_queue import router as work_queue_router
 
 router = APIRouter()
 router.include_router(health_router)
@@ -34,3 +36,5 @@ router.include_router(usage_router)
 router.include_router(audit_router)
 router.include_router(triage_router)
 router.include_router(social_router)
+router.include_router(work_queue_router)
+router.include_router(agent_dm_router)

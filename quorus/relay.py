@@ -414,6 +414,18 @@ def _init_services(app_instance, redis_conn=None):
     from quorus.services.social_svc import SocialSvc
     app_instance.state.social_service = SocialSvc()
 
+    # Stream B work-queue — durable counterpart to the social-verb claim
+    # graph. Shared singleton across requests; re-created on reset_state()
+    # so each test starts with a clean queue.
+    from quorus.services.work_queue_svc import WorkQueueSvc
+    app_instance.state.work_queue_service = WorkQueueSvc()
+
+    # Stream B agent-DM inbox — distinct from human DMs. A bare dict; the
+    # route initializes the per-recipient deque on first send. We attach
+    # here so reset_state() wipes the slate without scattering init logic.
+    app_instance.state.agent_dm_inbox = {}
+    app_instance.state.agent_dm_queues = {}
+
     # Create outbox worker if enabled (requires Postgres)
     if USE_OUTBOX and DATABASE_URL:
         from quorus.services.outbox_svc import OutboxWorker

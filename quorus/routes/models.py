@@ -52,6 +52,12 @@ class RoomMessageRequest(BaseModel):
     message_type: str = "chat"
     reply_to: str | None = None
     brief_id: str | None = None
+    # Stream B threading — optional root-id that groups this message with
+    # all other messages sharing the same root. ``reply_to`` is the
+    # parent-pointer (one level), ``thread_root_id`` is the conversation
+    # anchor (any depth). Reflexd propagates root_id on replies so
+    # nested conversations stay grouped in the TUI.
+    thread_root_id: str | None = None
 
     @field_validator("from_name")
     @classmethod
