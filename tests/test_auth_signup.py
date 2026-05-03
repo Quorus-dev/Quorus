@@ -200,3 +200,134 @@ async def test_register_agent_creates_peer_in_parent_tenant(monkeypatch):
     assert resp.agent_name == "arav-codex-claude-1m"
     assert resp.tenant_slug == parent_tenant.slug
     assert "/v1/auth/token" in resp.next_step
+
+
+@pytest.mark.asyncio
+async def test_register_agent_rotates_existing_keys_without_500(monkeypatch):
+    """Regression: production hit MultipleResultsFound 500 when an agent
+    accumulated multiple unrevoked keys from prior register-agent calls.
+    Old code used scalar_one_or_none() which crashed on duplicates. New
+    code returns ALL matches, revokes them, and mints a single fresh key.
+
+    Repro path: register-agent agent_X → mints key_1. Register-agent
+    agent_X again → mints key_2 (key_1 left active). Third call →
+    scalar_one_or_none() with 2 active rows → 500. Fixed by listing all
+    + revoking before mint.
+    """
+    from datetime import datetime, timezone
+
+    parent_raw_key, parent_prefix, parent_key_hash = generate_api_key()
+    parent_tenant = Tenant(id="tenant-parent", slug="medbuddy", display_name="MedBuddy")
+    parent_participant = Participant(
+        id="participant-parent",
+        tenant_id=parent_tenant.id,
+        name="arav-codex",
+        role="admin",
+    )
+    parent_key = ApiKey(
+        id="key-parent",
+        participant_id=parent_participant.id,
+        label="parent",
+        key_prefix=parent_prefix,
+        key_hash=parent_key_hash,
+    )
+    existing_agent = Participant(
+        id="participant-child",
+        tenant_id=parent_tenant.id,
+        name="arav-codex-claude-1m",
+        role="agent",
+    )
+    # Two pre-existing unrevoked keys — exactly the state that 500'd in prod.
+    old_key_1 = ApiKey(
+        id="key-old-1",
+        participant_id=existing_agent.id,
+        label="old-1",
+        key_prefix="old1prefix",
+        key_hash="old1hash",
+        revoked_at=None,
+    )
+    old_key_2 = ApiKey(
+        id="key-old-2",
+        participant_id=existing_agent.id,
+        label="old-2",
+        key_prefix="old2prefix",
+        key_hash="old2hash",
+        revoked_at=None,
+    )
+    added = []
+
+    class FakeScalars:
+        def __init__(self, items):
+            self.items = list(items)
+
+        def __iter__(self):
+            return iter(self.items)
+
+    class FakeResult:
+        def __init__(self, single=None, many=None):
+            self.single = single
+            self.many = many
+
+        def scalar_one_or_none(self):
+            return self.single
+
+        def scalars(self):
+            return FakeScalars(self.many or [])
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query):
+            self.calls += 1
+            if self.calls == 1:
+                # parent key lookup
+                return FakeResult(single=parent_key)
+            if self.calls == 2:
+                # existing agent lookup
+                return FakeResult(single=existing_agent)
+            # Active-key lookup — returns BOTH unrevoked keys (the
+            # production state that previously crashed).
+            return FakeResult(many=[old_key_1, old_key_2])
+
+        async def get(self, model, obj_id):
+            if model is Participant and obj_id == parent_participant.id:
+                return parent_participant
+            if model is Tenant and obj_id == parent_tenant.id:
+                return parent_tenant
+            return None
+
+        def add(self, obj):
+            added.append(obj)
+
+        async def flush(self):
+            return None
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(auth_routes, "get_db_session", lambda: fake_session)
+
+    # Must NOT raise MultipleResultsFound or any other exception.
+    resp = await auth_routes.register_agent(
+        RegisterAgentRequest(suffix="claude-1m"),
+        request=SimpleNamespace(),
+        authorization=f"Bearer {parent_raw_key}",
+    )
+
+    # Both old keys must now be revoked.
+    assert old_key_1.revoked_at is not None
+    assert old_key_2.revoked_at is not None
+    assert old_key_1.revoked_at.tzinfo is timezone.utc
+    # A fresh key must have been minted (it's in `added`).
+    new_keys = [obj for obj in added if isinstance(obj, ApiKey)]
+    assert len(new_keys) == 1
+    assert new_keys[0].participant_id == existing_agent.id
+    # Response carries a working raw api_key + the next_step hint.
+    assert resp.agent_name == "arav-codex-claude-1m"
+    assert resp.api_key.startswith("mct_") or len(resp.api_key) > 20
+    assert "/v1/auth/token" in resp.next_step

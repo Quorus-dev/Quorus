@@ -359,16 +359,30 @@ async def register_agent(
         existing_agent = existing_result.scalar_one_or_none()
 
         if existing_agent:
-            # Agent exists — find its active API key
+            # Agent exists — find ALL active API keys (we may have minted
+            # multiple over time on repeat register-agent calls). Don't use
+            # scalar_one_or_none() here: in practice we accumulate duplicates
+            # because the old code never revoked prior keys before minting
+            # a fresh one. A 500 (MultipleResultsFound) was the production
+            # symptom that brought us here.
+            from datetime import datetime, timezone
+
             key_result = await session.execute(
                 select(ApiKey).where(
                     ApiKey.participant_id == existing_agent.id,
                     ApiKey.revoked_at.is_(None),
                 )
             )
-            existing_key = key_result.scalar_one_or_none()
-            if existing_key:
-                # Can't return the raw key (it's hashed), so create a new one
+            existing_keys = list(key_result.scalars())
+            if existing_keys:
+                # Revoke ALL prior unrevoked keys so we don't keep
+                # accumulating duplicates on every re-register. Treats the
+                # newly-minted key as the single canonical credential.
+                now = datetime.now(timezone.utc)
+                for old_key in existing_keys:
+                    old_key.revoked_at = now
+
+                # Can't return any raw key (they're hashed), so mint fresh.
                 raw_key, new_prefix, key_hash = generate_api_key()
                 new_api_key = ApiKey(
                     participant_id=existing_agent.id,
