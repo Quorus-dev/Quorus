@@ -760,10 +760,26 @@ class ReflexdConfig:
     def from_env(cls) -> "ReflexdConfig":
         data = ConfigManager().load() or {}
         relay_url = (
-            os.environ.get("RELAY_URL") or data.get("relay_url")
+            os.environ.get("REFLEXD_RELAY_URL")
+            or os.environ.get("RELAY_URL")
+            or data.get("relay_url")
             or "http://localhost:8080"
         )
-        api_key = os.environ.get("API_KEY") or data.get("api_key") or ""
+        # Env precedence (REFLEXD_API_KEY > API_KEY > active profile) lets the
+        # operator point reflexd at a DIFFERENT identity than the active TUI
+        # profile. Without it, when the user has switched their TUI to the
+        # `human` profile (instance=arav), reflexd silently picks up arav's
+        # key and JWT.sub becomes 'arav' — but reflexd's participant_name is
+        # 'arav-claude' (the agent it's meant to wake). The /stream/token
+        # endpoint enforces recipient == JWT.sub and 403s on the mismatch.
+        # Concrete prod incident this prevents: 2026-05-03 00:33-00:34 UTC
+        # reflexd loop emitting 403 every retry, never subscribing to SSE.
+        api_key = (
+            os.environ.get("REFLEXD_API_KEY")
+            or os.environ.get("API_KEY")
+            or data.get("api_key")
+            or ""
+        )
         participant = (
             os.environ.get("REFLEXD_PARTICIPANT") or data.get("instance_name") or ""
         )
@@ -775,7 +791,7 @@ class ReflexdConfig:
             )
         if not api_key:
             raise SystemExit(
-                "reflexd: no API key. Set API_KEY or run `quorus init`."
+                "reflexd: no API key. Set REFLEXD_API_KEY or run `quorus init`."
             )
         return cls(
             relay_url=relay_url.rstrip("/"),
@@ -1021,6 +1037,43 @@ class Reflexd:
                 "reflexd starting participant=%s relay=%s",
                 self.config.participant_name, self.config.relay_url,
             )
+            # Fail loud when the configured api_key resolves to a JWT sub
+            # that doesn't match the configured participant. /stream/token
+            # would 403 in an infinite retry loop with no actionable hint.
+            # See ReflexdConfig.from_env() for the env precedence that
+            # caused the original incident (2026-05-03 00:33 UTC).
+            if not self.config.legacy_bearer:
+                try:
+                    headers = await relay._headers()
+                    bearer = headers.get("Authorization", "").removeprefix("Bearer ").strip()
+                    if bearer:
+                        import base64 as _b64
+                        import json as _json
+                        parts = bearer.split(".")
+                        if len(parts) == 3:
+                            payload_raw = parts[1] + "=" * (-len(parts[1]) % 4)
+                            sub = _json.loads(
+                                _b64.urlsafe_b64decode(payload_raw)
+                            ).get("sub", "")
+                            if sub and sub != self.config.participant_name:
+                                logger.error(
+                                    "reflexd: JWT sub=%r != participant=%r — "
+                                    "the api_key you provided belongs to a "
+                                    "DIFFERENT identity than the one this "
+                                    "daemon is supposed to wake. /stream/token "
+                                    "will 403 forever. Set REFLEXD_API_KEY to "
+                                    "the api_key of participant %r, or change "
+                                    "REFLEXD_PARTICIPANT to %r.",
+                                    sub, self.config.participant_name,
+                                    self.config.participant_name, sub,
+                                )
+                                raise SystemExit(3)
+                except SystemExit:
+                    raise
+                except Exception as exc:  # noqa: BLE001 — best-effort preflight
+                    logger.warning(
+                        "preflight JWT-sub check skipped: %s", exc,
+                    )
             while not self._stop.is_set():
                 try:
                     stream_token = await relay.mint_stream_token(self.config.participant_name)
