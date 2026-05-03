@@ -676,15 +676,29 @@ class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
 
         client_ip = _get_client_ip(request)
 
-        # Try Redis-backed rate limiter if available
+        # Try Redis-backed rate limiter if available. Fail OPEN on Redis
+        # errors (quota exhaustion, network blip) — the alternative is
+        # the entire relay returning 500 to every request, which is a
+        # far worse outcome than briefly skipping anti-abuse checks.
         rate_limit_svc = getattr(request.app.state, "rate_limit_service", None)
         use_redis = rate_limit_svc is not None and REDIS_URL
+        redis_failed = False
 
         if use_redis:
-            # Check if already blocked (read-only, does not increment)
-            blocked = await rate_limit_svc.is_rate_limited(
-                "global", f"404:{client_ip}", NOT_FOUND_LIMIT, window=NOT_FOUND_WINDOW
-            )
+            try:
+                # Check if already blocked (read-only, does not increment)
+                blocked = await rate_limit_svc.is_rate_limited(
+                    "global", f"404:{client_ip}", NOT_FOUND_LIMIT, window=NOT_FOUND_WINDOW
+                )
+            except Exception as exc:
+                redis_failed = True
+                logger.warning(
+                    "Redis rate-limit check failed; failing open",
+                    ip=client_ip,
+                    error=str(exc)[:200],
+                    error_type=type(exc).__name__,
+                )
+                blocked = False
             if blocked:
                 logger.warning(
                     "Blocking IP for repeated 404s (Redis)",
@@ -700,8 +714,9 @@ class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
                     },
                     headers={"Retry-After": str(NOT_FOUND_BLOCK_DURATION)},
                 )
-        else:
-            # In-memory fallback
+
+        if not use_redis or redis_failed:
+            # In-memory fallback (also covers Redis-failed-open path)
             blocked, retry_after = await _is_blocked_memory(client_ip)
             if blocked:
                 return JSONResponse(
@@ -715,12 +730,22 @@ class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        # Only record 404s (not other status codes)
+        # Only record 404s (not other status codes). Same fail-open
+        # discipline applies to the increment path.
         if response.status_code == 404:
-            if use_redis:
-                await rate_limit_svc.record(
-                    "global", f"404:{client_ip}", window=NOT_FOUND_WINDOW
-                )
+            if use_redis and not redis_failed:
+                try:
+                    await rate_limit_svc.record(
+                        "global", f"404:{client_ip}", window=NOT_FOUND_WINDOW
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Redis 404-record failed; falling back to in-memory",
+                        ip=client_ip,
+                        error=str(exc)[:200],
+                        error_type=type(exc).__name__,
+                    )
+                    await _record_not_found_memory(client_ip)
             else:
                 await _record_not_found_memory(client_ip)
 

@@ -561,8 +561,3 @@ async def stream_agent_dms(
 
 
 __all__ = ["router", "DM_EVENT_KIND"]
-
-
-# Keep `time` referenced even if the module gets refactored — used by tests
-# patching the wall clock in the future.
-_ = time

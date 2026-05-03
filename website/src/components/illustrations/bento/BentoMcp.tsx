@@ -150,14 +150,19 @@ export default function BentoMcp() {
 
       {/* Data dots — animateMotion along the fiber path. SVG-native motion
           here because Framer's MotionPath doesn't support text/circle along
-          an arbitrary path without extra deps. */}
+          an arbitrary path without extra deps. Each dot traverses the full
+          path (keyPoints 0;1) but enters at a staggered begin time, giving
+          the illusion of continuous flow. (Earlier we offset keyPoints with
+          values >1, which is invalid per SVG spec and printed a console
+          warning in Chromium.) */}
       {!prefersReduced &&
         dotOffsets.map((offset, i) => (
           <circle key={i} r="2.4" fill="var(--color-accent-on-ink)">
             <animateMotion
               dur="2.6s"
               repeatCount="indefinite"
-              keyPoints={`${offset};${(offset + 1).toFixed(3)}`}
+              begin={`${(-offset * 2.6).toFixed(3)}s`}
+              keyPoints="0;1"
               keyTimes="0;1"
               calcMode="linear"
             >

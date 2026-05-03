@@ -8,14 +8,21 @@ Asserts that:
   2. The in-memory fallback (``_record_not_found_memory`` /
      ``_is_blocked_memory``) blocks an IP after ``NOT_FOUND_LIMIT``
      consecutive 404s and unblocks once the window expires.
+  3. The middleware fails OPEN when Redis raises (e.g. Upstash quota
+     exhaustion). On 2026-05-03 the Upstash request quota was exhausted
+     and the middleware re-raised ``ResponseError``, taking the entire
+     relay down with 500s on every request. Anti-abuse must never be a
+     single point of failure for the whole service.
 """
 
 from __future__ import annotations
 
 import asyncio
 import inspect
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from starlette.responses import JSONResponse
 
 from quorus import relay
 
@@ -97,6 +104,94 @@ def test_exempt_paths_skip_the_limiter():
     misbehaving probe could lock itself out."""
     assert "/health" in relay._NOT_FOUND_EXEMPT_PATHS
     assert "/metrics" in relay._NOT_FOUND_EXEMPT_PATHS
+
+
+def test_middleware_fails_open_on_redis_error(monkeypatch):
+    """If Redis raises (quota exhausted, network blip, anything) the
+    middleware MUST log + fall back to the in-memory limiter and let the
+    request through. The bug we are guarding against: on 2026-05-03 the
+    Upstash quota was exhausted and ResponseError propagated, returning
+    500 on every relay request including /v1/auth/token.
+    """
+    relay._not_found_counts.clear()
+    relay._blocked_ips.clear()
+    monkeypatch.setattr(relay, "REDIS_URL", "redis://stub")
+
+    # Build a fake rate_limit_service that raises like Upstash does.
+    class _StubResponseError(Exception):
+        pass
+
+    failing_svc = MagicMock()
+    failing_svc.is_rate_limited = AsyncMock(
+        side_effect=_StubResponseError(
+            "max requests limit exceeded. Limit: 500000, Usage: 500000"
+        )
+    )
+    failing_svc.record = AsyncMock(side_effect=_StubResponseError("quota"))
+
+    # Fake Request with state.app.state.rate_limit_service set.
+    fake_app = MagicMock()
+    fake_app.state.rate_limit_service = failing_svc
+
+    fake_request = MagicMock()
+    fake_request.url.path = "/rooms"  # NOT in the exempt set
+    fake_request.app = fake_app
+    fake_request.headers = {"x-forwarded-for": "203.0.113.99"}
+    fake_request.client = None
+
+    # call_next returns a 200 response to keep the test focused on the
+    # rate-limit branch; we just need the middleware to not raise.
+    sentinel_response = JSONResponse(status_code=200, content={"ok": True})
+    call_next = AsyncMock(return_value=sentinel_response)
+
+    middleware = relay.NotFoundRateLimitMiddleware(app=lambda *a, **kw: None)
+
+    async def _run():
+        return await middleware.dispatch(fake_request, call_next)
+
+    response = asyncio.run(_run())
+    assert response is sentinel_response, (
+        "middleware must return the call_next response after failing open"
+    )
+    failing_svc.is_rate_limited.assert_awaited_once()
+    call_next.assert_awaited_once_with(fake_request)
+
+
+def test_middleware_fails_open_on_record_redis_error(monkeypatch):
+    """The 404-record path also runs Redis. If that errors, the response
+    must still be returned to the client — we just lose anti-abuse for
+    that one request."""
+    relay._not_found_counts.clear()
+    relay._blocked_ips.clear()
+    monkeypatch.setattr(relay, "REDIS_URL", "redis://stub")
+
+    failing_svc = MagicMock()
+    failing_svc.is_rate_limited = AsyncMock(return_value=False)  # not blocked
+    failing_svc.record = AsyncMock(
+        side_effect=Exception("max requests limit exceeded")
+    )
+
+    fake_app = MagicMock()
+    fake_app.state.rate_limit_service = failing_svc
+
+    fake_request = MagicMock()
+    fake_request.url.path = "/rooms/does-not-exist"
+    fake_request.app = fake_app
+    fake_request.headers = {"x-forwarded-for": "203.0.113.100"}
+    fake_request.client = None
+
+    not_found = JSONResponse(status_code=404, content={"detail": "nope"})
+    call_next = AsyncMock(return_value=not_found)
+
+    middleware = relay.NotFoundRateLimitMiddleware(app=lambda *a, **kw: None)
+
+    async def _run():
+        return await middleware.dispatch(fake_request, call_next)
+
+    response = asyncio.run(_run())
+    assert response is not_found, (
+        "client must still receive the 404 even when Redis record() fails"
+    )
 
 
 @pytest.mark.parametrize(

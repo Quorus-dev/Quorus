@@ -34,7 +34,6 @@ import json
 import os
 import re
 import tempfile
-import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -491,7 +490,3 @@ __all__ = [
     "read_recent",
     "read_recent_sync",
 ]
-
-
-# Ensure ``time`` import isn't dead code if optimisation strips it later.
-_ = time
