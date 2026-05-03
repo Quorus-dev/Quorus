@@ -2850,18 +2850,28 @@ def _main_input_loop(
                 last_render = 0
                 continue
 
-            sent_id = _send_message(relay_url, secret, room_name, chat_identity, cmd)
+            # IMPORTANT: post as agent_name, not chat_identity.
+            # The relay enforces JWT.sub == from_name (anti-impersonation:
+            # 403 "Cannot send as another user"). chat_identity is a
+            # display-only suffix-strip; until the relay supports tenant
+            # aliases (codex's lane), every outbound message must carry
+            # the JWT subject's actual participant name.
+            sent_id = _send_message(relay_url, secret, room_name, agent_name, cmd)
             if sent_id is not None:
                 state.set_status_bar("")
                 # Optimistic local echo — render immediately, don't wait for SSE
                 # round-trip. The server-assigned ID pre-arms the dedup set so
                 # when SSE (or the reconciliation poll) redelivers the same
-                # message, it won't render twice. MUST use chat_identity, not
-                # agent_name, or the user sees their own message tagged with
-                # the agent suffix while the relay (and every other client)
-                # correctly sees it as the human.
+                # message, it won't render twice.
+                #
+                # Echo from_name uses agent_name to MATCH the wire — the SSE
+                # round-trip will return the same value and the dedup set
+                # keys on (id, message_id) so the visual stays consistent
+                # with what other clients see. (Showing chat_identity here
+                # while the wire carries agent_name causes a flicker when
+                # SSE replaces the optimistic echo with the real message.)
                 echo = {
-                    "from_name": chat_identity,
+                    "from_name": agent_name,
                     "content": cmd,
                     "message_type": "chat",
                     "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -24,34 +24,43 @@ import inspect
 from quorus import tui_hub
 
 
-def test_local_echo_uses_chat_identity_not_agent_name() -> None:
-    """The optimistic echo dict's from_name must come from chat_identity.
+def test_send_and_echo_both_use_agent_name() -> None:
+    """The send path AND the optimistic echo MUST use agent_name.
 
-    Reading the real source instead of running the loop because the loop
-    is a giant cbreak-mode reader that's not unit-testable. The test acts
-    as a live spec: if anyone replaces `chat_identity` with `agent_name`
-    in the echo, this fails loud.
+    Why this rule (reversed from the earlier chat_identity attempt):
+    the relay enforces JWT.sub == from_name with `Cannot send as another
+    user` (403). chat_identity is suffix-stripped from agent_name for
+    DISPLAY ONLY (header, glyph) — using it on the wire makes the
+    relay reject every send and the user gets "Couldn't reach the
+    relay." The local echo must also use agent_name so it MATCHES the
+    SSE round-trip (otherwise the bubble flickers when the real
+    message replaces the echo).
+
+    Identity disambiguation across the wire requires relay support for
+    tenant aliases (a Participant.aliases field that the relay accepts
+    in from_name). Until then, agent_name is the only safe value.
     """
     src = inspect.getsource(tui_hub)
-    # Find the echo dict near the optimistic-echo comment and verify it
-    # references chat_identity. Locating by the surrounding comment text
-    # keeps the test stable across line moves.
     anchor = "Optimistic local echo"
     assert anchor in src, "echo block comment moved — re-pin the test"
     block_start = src.index(anchor)
-    # Look in the next 800 chars for the echo dict; chat_identity must
-    # appear before agent_name there (the echo block sets from_name).
     block = src[block_start : block_start + 800]
-    chat_idx = block.find("chat_identity")
+    # echo dict's from_name must reference agent_name, not chat_identity.
+    # The first occurrence of either inside the block represents the
+    # `from_name: ...` value (the echo dict is the only assignment in
+    # this region).
     agent_idx = block.find("agent_name")
-    assert chat_idx != -1, (
-        "chat_identity reference removed from echo block — "
-        "user will see own messages tagged as the agent again"
+    chat_idx = block.find("chat_identity")
+    assert agent_idx != -1, (
+        "agent_name reference missing from echo block — "
+        "regressed to a chat_identity send that the relay 403s"
     )
-    assert chat_idx < agent_idx or agent_idx == -1, (
-        "agent_name appears before chat_identity in echo block — "
-        "this is exactly the bug we fixed; revert"
-    )
+    if chat_idx != -1:
+        assert agent_idx < chat_idx, (
+            "chat_identity appears before agent_name in echo block — "
+            "the relay rejects from_name != JWT.sub. agent_name must "
+            "be the from_name value; chat_identity is display-only."
+        )
 
 
 def test_enter_handler_peeks_for_more_bytes() -> None:
