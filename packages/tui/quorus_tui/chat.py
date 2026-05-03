@@ -126,6 +126,8 @@ def _own_bubble(
     *,
     receipt: str,  # legacy positional — receipt is now rendered as its own row
     position: str = "only",
+    sender: str = "",
+    show_header: bool = False,
 ) -> list[Text]:
     """Right-aligned own-message bubble.
 
@@ -133,11 +135,34 @@ def _own_bubble(
     dedicated micro-row by :func:`render_bubble_feed` — never inline. The
     bubble body itself stays clean: just the message text and a tiny
     timestamp at the right edge of the final line.
+
+    sender + show_header: when True (set by the feed for the FIRST message
+    in a same-sender group), render a tiny right-aligned `@<sender> ●`
+    header above the bubble — symmetric with :func:`_other_bubble`. Humans
+    get a green dot, agents get the hashed sender color. Without this the
+    user kept asking "where's my @arav green-dot label?"
     """
     inner = bubble_width(console_width)
     body = _wrap_lines(content, inner)
     out: list[Text] = []
     top_glyph, bot_glyph = bubble_corners(position=position, side="right")
+
+    if show_header and sender:
+        color = sender_color(sender)
+        glyph_color = "success" if is_human_sender(sender) else color
+        head = Text()
+        # Right-align: pad to console_width minus the glyph + name + corner.
+        name_part = f"@{sender}"
+        # Account for: 1 ● + 2 spaces + name + 2 spaces + 1 corner glyph
+        used = 1 + 2 + len(name_part) + 2 + 1
+        pad = max(2, console_width - 2 - used)
+        head.append(" " * pad)
+        head.append(f"@{sender}", style=f"bold {color}")
+        head.append("  ")
+        head.append("●", style=glyph_color)
+        head.append("  ")
+        head.append(top_glyph, style="dim")
+        out.append(head)
 
     for i, line in enumerate(body):
         is_last = i == len(body) - 1
@@ -150,9 +175,13 @@ def _own_bubble(
         if is_last and hhmm_str:
             row.append("  ")
             row.append(hhmm_str, style="ts")
-        # Decorative right-edge corner. First line shows top, last shows
-        # bottom; mid-lines show a continuation bar.
-        glyph = top_glyph if i == 0 else (bot_glyph if is_last else "│")
+        # Decorative right-edge corner. With a header, the FIRST body line
+        # gets a continuation bar (the corner already rendered above);
+        # without a header, the first line renders the top corner itself.
+        if show_header and sender:
+            glyph = bot_glyph if is_last else "│"
+        else:
+            glyph = top_glyph if i == 0 else (bot_glyph if is_last else "│")
         row.append("  ")
         row.append(glyph, style="dim")
         out.append(row)
@@ -423,6 +452,8 @@ def render_bubble_feed(
                     body, ts_show, console_width,
                     receipt="",  # receipts are now a dedicated row
                     position=position,
+                    sender=sender,
+                    show_header=not same_group,
                 ))
             else:
                 out.extend(_other_bubble(

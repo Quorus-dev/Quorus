@@ -1,0 +1,223 @@
+/**
+ * Quorus Design Tokens — v1
+ *
+ * Three-layer architecture:
+ *   primitive  →  raw values that never appear in components directly
+ *   semantic   →  purpose-named aliases that components actually consume
+ *   component  →  per-component overrides, scoped where they live
+ *
+ * Components reference --color-*, --font-*, --radius-*, --space-*, --motion-*.
+ * They MUST NOT reach for primitive --gray-200 or raw hex.
+ */
+
+:root {
+  /* ────────────────────────────────────────────────────────────────────────
+   * Layer 1 — primitives (raw scales)
+   * ──────────────────────────────────────────────────────────────────────── */
+
+  /* Cream scale — warm parchment for light surfaces */
+  --cream-50: #faf7f0;
+  --cream-100: #f5f1ea;
+  --cream-200: #ebe5d6;
+  --cream-300: #ddd5c0;
+
+  /* Ink scale — deep near-black with a subtle blue undertone */
+  --ink-50: #4a4a52;
+  --ink-100: #2a2a32;
+  --ink-200: #14141c;
+  --ink-300: #0a0a0f;
+
+  /* Slate — neutral mid-tones for body text on cream */
+  --slate-300: #a8a8b0;
+  --slate-400: #7a7a82;
+  --slate-500: #6a6a72;
+  --slate-600: #4a4a52;
+
+  /* Accent — deep ocean teal. Used SPARINGLY. */
+  --teal-700: #0d4d4a;
+  --teal-500: #2e7d77;
+  --teal-300: #5eb3a8;
+
+  /* Status — semantic-only. Never used decoratively. */
+  --green-500: #16a34a;
+  --amber-500: #d97706;
+  --red-500: #dc2626;
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * Layer 2 — semantics (what components consume)
+   * ──────────────────────────────────────────────────────────────────────── */
+
+  /* Surfaces */
+  --color-cream: var(--cream-100);
+  --color-cream-2: var(--cream-200);
+  --color-ink: var(--ink-300);
+  --color-ink-2: var(--ink-200);
+
+  /* Borders — hairline, almost imperceptible */
+  --color-border-light: rgba(10, 10, 15, 0.08);
+  --color-border-light-strong: rgba(10, 10, 15, 0.12);
+  --color-border-dark: rgba(255, 255, 255, 0.08);
+  --color-border-dark-strong: rgba(255, 255, 255, 0.12);
+
+  /* Text on cream */
+  --color-text-on-cream: var(--ink-300);
+  --color-text-on-cream-secondary: var(--slate-600);
+  --color-text-on-cream-muted: var(--slate-400);
+
+  /* Text on ink */
+  --color-text-on-ink: var(--cream-100);
+  --color-text-on-ink-secondary: var(--slate-300);
+  --color-text-on-ink-muted: var(--slate-500);
+
+  /* Accent — deep on cream, lifted on ink */
+  --color-accent: var(--teal-700);
+  --color-accent-on-ink: var(--teal-300);
+
+  /* Typography */
+  --font-sans:
+    "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Radius — single source of truth. Stitch shipped ROUND_TWELVE. */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* Spacing rhythm — 8/12/16/24/32/48/64/96/128 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+  --space-32: 128px;
+
+  /* Motion — out-expo for everything. No bounce, ever. */
+  --motion-duration-fast: 0.15s;
+  --motion-duration-base: 0.3s;
+  --motion-duration-slow: 0.6s;
+  --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Shadows — restrained. Real depth comes from atmosphere, not drop shadow. */
+  --shadow-sm: 0 1px 2px rgba(10, 10, 15, 0.04);
+  --shadow-md: 0 4px 12px rgba(10, 10, 15, 0.06);
+  --shadow-lg: 0 12px 32px rgba(10, 10, 15, 0.08);
+  --shadow-card-hover: 0 8px 24px rgba(13, 77, 74, 0.06);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Layer 3 — global element defaults
+ * ────────────────────────────────────────────────────────────────────────── */
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01", "cv11";
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-text-on-cream);
+}
+
+/* Headlines: tight, balanced, slightly negative tracking */
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-sans);
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+  font-weight: 600;
+}
+
+h1 {
+  /* Hero scale — locked to the contract */
+  font-size: clamp(44px, 6vw, 76px);
+  line-height: 0.98;
+}
+
+h2 {
+  /* Section heading — slightly smaller, still display-grade */
+  font-size: clamp(36px, 4.5vw, 56px);
+  line-height: 1.05;
+}
+
+/* Selection — accent on cream, accent-on-ink on dark */
+::selection {
+  background: var(--color-accent);
+  color: var(--color-cream);
+}
+
+/* Focus ring — accessible, visible, brand-aligned */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Reduced motion — kill animation, render final state */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Utility helpers — tiny, semantic, only what's reused
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Eyebrow text — small mono caps used in section headers */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+/* Hairline divider */
+.hairline {
+  height: 1px;
+  background: var(--color-border-light);
+  border: 0;
+}
+
+/* Hand-tuned grain — 1px noise via inline SVG. Use on dark surfaces.
+   Subtle (~3% opacity). Keeps flat color from feeling like flat CSS. */
+.grain-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.06 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+}
+
+/* Cream surface card — used by the bento and the hero terminal frame */
+.surface-cream {
+  background: var(--color-cream);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+}
+
+.surface-ink {
+  background: var(--color-ink-2);
+  border: 1px solid var(--color-border-dark);
+  border-radius: var(--radius-md);
+}

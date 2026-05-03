@@ -63,21 +63,29 @@ def test_send_and_echo_both_use_agent_name() -> None:
         )
 
 
+def _find_submit_enter_block(src: str) -> str:
+    """Return the slice of source containing the SUBMIT-mode ENTER handler.
+
+    The autocomplete popover added a SECOND ENTER branch at the top of
+    `_read_input` that intercepts ENTER while the popover is open. The
+    submit-mode handler lives further down. We locate it by anchoring on
+    the paste-detection comment that's only in the submit branch.
+    """
+    paste_anchor = "Multi-line paste detection"
+    assert paste_anchor in src, "paste-detect comment moved or removed"
+    block_start = src.index(paste_anchor)
+    return src[block_start : block_start + 1200]
+
+
 def test_enter_handler_peeks_for_more_bytes() -> None:
-    """The ENTER branch must call select() before submitting.
+    """The submit-mode ENTER branch must call select() before submitting.
 
     Multi-line paste arrived as N successive `\\n` bytes. Without a
     peek, each one hit the submit path. With the peek (5ms timeout),
     paste bytes are detected and appended to the buf instead.
     """
     src = inspect.getsource(tui_hub)
-    # Locate the enter handler by looking for the readchar.key.ENTER tuple
-    enter_anchor = 'if key in (readchar.key.ENTER, "\\r", "\\n"):'
-    assert enter_anchor in src, "enter handler comment/key tuple moved"
-    block_start = src.index(enter_anchor)
-    block = src[block_start : block_start + 1200]
-    # The peek call must appear before the _PENDING_INPUT_BUF.clear()
-    # commit. Otherwise the paste-handling is dead code.
+    block = _find_submit_enter_block(src)
     peek_call = "_sel.select([sys.stdin], [], [], 0.005)"
     commit_call = "_PENDING_INPUT_BUF.clear()"
     assert peek_call in block, (
@@ -92,9 +100,7 @@ def test_enter_handler_peeks_for_more_bytes() -> None:
 def test_enter_handler_appends_newline_when_more_pending() -> None:
     """When the peek finds more bytes, the handler must append `\\n` to buf."""
     src = inspect.getsource(tui_hub)
-    enter_anchor = 'if key in (readchar.key.ENTER, "\\r", "\\n"):'
-    block_start = src.index(enter_anchor)
-    block = src[block_start : block_start + 1200]
+    block = _find_submit_enter_block(src)
     assert 'buf.append("\\n")' in block, (
         "buf.append('\\\\n') missing from paste path — pasted newlines "
         "will be silently dropped instead of preserved in the message"

@@ -79,13 +79,20 @@ def test_bubble_feed_separates_distinct_senders():
     assert "@ada" in out and "@bob" in out
 
 
-def test_bubble_feed_own_messages_omit_sender_label():
+def test_bubble_feed_own_messages_render_sender_label():
+    """Reversed from the previous "omit sender label" rule. arav explicitly
+    asked for own messages to carry an `@arav ●` header (green dot for
+    humans) so there's symmetry with other senders. iMessage conventionally
+    hides the name on outgoing bubbles, but for a multi-agent room where
+    your own identity matters at a glance, the label is the clearer UX."""
     msgs = [{"from_name": "arav", "content": "mine", "timestamp": _now_iso(-1)}]
     out = _render_to_str(
         chat.render_bubble_feed(msgs, "dev", "arav", console_width=80)
     )
-    # Own messages don't render a sender label — it's you.
-    assert "@arav" not in out
+    assert "@arav" in out, (
+        "own message must carry the @sender header — was reverted from "
+        "the iMessage-style omit per arav's UX request"
+    )
 
 
 def test_bubble_feed_renders_unread_divider():
@@ -626,7 +633,10 @@ def test_golden_five_message_mixed_human_agent_snapshot():
     # robust to harmless tweaks like padding adjustments.
     assert "@ada" in snap                        # other-bubble header
     assert "@arav-codex" in snap                 # mixed agent identity
-    assert "@arav" not in snap.replace("@arav-codex", "")  # own msgs hide self-label
+    # Own messages now render the @arav header too (reverted from
+    # iMessage-omit per arav's UX request — see
+    # test_bubble_feed_own_messages_render_sender_label).
+    assert "@arav" in snap.replace("@arav-codex", "")
     assert "#design" in snap                     # inline highlight
     # Round-corner glyphs render on standalone bubbles.
     assert "╭" in snap or "╰" in snap
