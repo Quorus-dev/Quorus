@@ -174,9 +174,10 @@ function HeroBrain() {
         }}
       />
 
-      {/* Brain image + animated synapse overlay. The image is the static
-          Stitch crop (776×700); BrainSynapses is a transparent SVG layer
-          positioned over it so the synapses pulse on top of the brain. */}
+      {/* Brain image + animated synapse overlay. The image is a FLUX-rendered
+          glass brain with internal teal synapses (1880×1254, served as WebP).
+          BrainSynapses is a transparent SVG layer positioned over it so the
+          synapses pulse on top of the brain. */}
       <motion.div
         className="relative block w-full"
         animate={prefersReduced ? undefined : { y: [0, -6, 0] }}
@@ -184,9 +185,9 @@ function HeroBrain() {
       >
         <img
           src="/stitch/brain-scene.webp"
-          alt="A glowing teal-lit brain with an orchestrator terminal showing Quorus initializing a multi-model swarm"
-          width={776}
-          height={700}
+          alt="A transparent glass brain with bright teal synapses glowing from within, representing the Quorus coordination network"
+          width={1880}
+          height={1254}
           draggable={false}
           className="relative block h-auto w-full select-none"
           loading="eager"
