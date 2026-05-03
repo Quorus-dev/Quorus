@@ -36,7 +36,7 @@ class RoomService:
     # ------------------------------------------------------------------
 
     async def create(
-        self, tenant_id: str, name: str, creator: str
+        self, tenant_id: str, name: str, creator: str, private: bool = False
     ) -> dict:
         """Create a new room.  Raises 409 if name is taken (atomic check)."""
         room_id = str(uuid.uuid4())
@@ -46,6 +46,7 @@ class RoomService:
             "created_by": creator,
             "tenant_id": tenant_id,
             "created_at": created_at,
+            "private": private,
             "members": {creator: "builder"},
         }
         created = await self._backend.create_if_name_available(
@@ -64,6 +65,7 @@ class RoomService:
             "created_by": creator,
             "members": [creator],
             "member_roles": {creator: "builder"},
+            "private": private,
             "created_at": created_at,
         }
 
@@ -131,6 +133,7 @@ class RoomService:
                     "name": data.get("name", ""),
                     "members": sorted(members.keys()),
                     "member_roles": members,
+                    "private": bool(data.get("private", False)),
                     "created_at": data.get("created_at", ""),
                 }
             )

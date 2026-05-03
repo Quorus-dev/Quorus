@@ -41,7 +41,7 @@ async def create_room(
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     svc = request.app.state.room_service
-    result = await svc.create(tid, req.name, creator)
+    result = await svc.create(tid, req.name, creator, private=req.private)
     await request.app.state.backends.participants.add(tid, creator)
     return result
 
@@ -80,6 +80,7 @@ async def get_room(
         "name": data.get("name", ""),
         "members": sorted(members.keys()),
         "member_roles": members,
+        "private": bool(data.get("private", False)),
         "created_at": data.get("created_at", ""),
     }
 

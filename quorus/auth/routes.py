@@ -77,6 +77,7 @@ class TokenResponse(BaseModel):
 class RegisterAgentRequest(BaseModel):
     """Register an agent identity under an existing account."""
     suffix: str  # e.g. "claude", "codex", "cursor"
+    inherit_rooms: str = "public"  # public | all | none
 
     @field_validator("suffix")
     @classmethod
@@ -84,6 +85,14 @@ class RegisterAgentRequest(BaseModel):
         v = v.strip().lower()
         if not v or len(v) > 32 or not _NAME_RE.match(v):
             raise ValueError("Suffix must be 1-32 alphanumeric chars, hyphens, or underscores")
+        return v
+
+    @field_validator("inherit_rooms")
+    @classmethod
+    def check_inherit_rooms(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in {"public", "all", "none"}:
+            raise ValueError("inherit_rooms must be one of: public, all, none")
         return v
 
 
@@ -100,8 +109,9 @@ async def _sync_agent_room_memberships(
     tenant_id: str,
     parent_name: str,
     agent_name: str,
+    inherit_rooms: str,
 ) -> int:
-    """Add the registered agent to every room the parent can already see."""
+    """Add the registered agent to parent rooms allowed by inheritance policy."""
     state = getattr(getattr(request, "app", None), "state", None)
     room_svc = getattr(state, "room_service", None)
     backends = getattr(state, "backends", None)
@@ -110,14 +120,20 @@ async def _sync_agent_room_memberships(
         return 0
 
     parent_rooms = await room_svc.list_for_member(tenant_id, parent_name)
+    synced = 0
     for room in parent_rooms:
+        if inherit_rooms == "none":
+            continue
+        if inherit_rooms == "public" and bool(room.get("private", False)):
+            continue
         await rooms_backend.add_member(tenant_id, room["id"], agent_name, "agent")
+        synced += 1
 
     participants_backend = getattr(backends, "participants", None)
     if participants_backend is not None:
         await participants_backend.add(tenant_id, agent_name)
 
-    return len(parent_rooms)
+    return synced
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +455,7 @@ async def register_agent(
                     parent_tenant_id,
                     parent_participant.name,
                     existing_agent.name,
+                    req.inherit_rooms,
                 )
 
                 logger.info(
@@ -477,6 +494,7 @@ async def register_agent(
             parent_tenant_id,
             parent_participant.name,
             agent_name,
+            req.inherit_rooms,
         )
 
         logger.info(

@@ -37,6 +37,7 @@ class RegisterWebhookRequest(BaseModel):
 class CreateRoomRequest(BaseModel):
     name: str
     created_by: str
+    private: bool = False
 
     @field_validator("name", "created_by")
     @classmethod

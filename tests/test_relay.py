@@ -806,6 +806,29 @@ async def test_create_room(client: AsyncClient, auth_headers: dict):
     assert "alice" in data["members"]
     assert "id" in data
     assert "created_at" in data
+    assert data["private"] is False
+
+
+async def test_create_private_room_surfaces_privacy_flag(
+    client: AsyncClient, auth_headers: dict
+):
+    create = await client.post(
+        "/rooms",
+        json={"name": "private-room", "created_by": "alice", "private": True},
+        headers=auth_headers,
+    )
+    assert create.status_code == 200
+    assert create.json()["private"] is True
+
+    room_id = create.json()["id"]
+    by_id = await client.get(f"/rooms/{room_id}", headers=auth_headers)
+    assert by_id.status_code == 200
+    assert by_id.json()["private"] is True
+
+    listed = await client.get("/rooms", headers=auth_headers)
+    assert listed.status_code == 200
+    private_room = next(room for room in listed.json() if room["id"] == room_id)
+    assert private_room["private"] is True
 
 
 async def test_create_room_duplicate_name_rejected(

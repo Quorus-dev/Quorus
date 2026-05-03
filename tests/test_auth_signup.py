@@ -126,6 +126,14 @@ def test_register_agent_response_includes_token_exchange_hint():
     assert "/v1/auth/token" in resp.next_step
 
 
+def test_register_agent_inherit_rooms_validation():
+    assert RegisterAgentRequest(suffix="codex").inherit_rooms == "public"
+    assert RegisterAgentRequest(suffix="codex", inherit_rooms="all").inherit_rooms == "all"
+    assert RegisterAgentRequest(suffix="codex", inherit_rooms="none").inherit_rooms == "none"
+    with pytest.raises(ValueError):
+        RegisterAgentRequest(suffix="codex", inherit_rooms="private")
+
+
 @pytest.mark.asyncio
 async def test_register_agent_creates_peer_in_parent_tenant(monkeypatch):
     parent_raw_key, parent_prefix, parent_key_hash = generate_api_key()
@@ -203,7 +211,7 @@ async def test_register_agent_creates_peer_in_parent_tenant(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_register_agent_auto_joins_parent_rooms(monkeypatch):
+async def test_register_agent_auto_joins_public_parent_rooms(monkeypatch):
     parent_raw_key, parent_prefix, parent_key_hash = generate_api_key()
     parent_tenant = Tenant(id="tenant-parent", slug="medbuddy", display_name="MedBuddy")
     parent_participant = Participant(
@@ -264,8 +272,8 @@ async def test_register_agent_auto_joins_parent_rooms(monkeypatch):
             assert tenant_id == parent_tenant.id
             assert member_name == parent_participant.name
             return [
-                {"id": "room-1", "name": "sprint"},
-                {"id": "room-2", "name": "demo"},
+                {"id": "room-1", "name": "sprint", "private": False},
+                {"id": "room-2", "name": "demo", "private": True},
             ]
 
     class FakeRoomsBackend:
@@ -299,9 +307,105 @@ async def test_register_agent_auto_joins_parent_rooms(monkeypatch):
     assert resp.agent_name == "arav-codex-claude-1m"
     assert room_members == [
         (parent_tenant.id, "room-1", "arav-codex-claude-1m", "agent"),
-        (parent_tenant.id, "room-2", "arav-codex-claude-1m", "agent"),
     ]
     assert participants == [(parent_tenant.id, "arav-codex-claude-1m")]
+
+
+@pytest.mark.asyncio
+async def test_register_agent_can_explicitly_inherit_private_rooms(monkeypatch):
+    parent_raw_key, parent_prefix, parent_key_hash = generate_api_key()
+    parent_tenant = Tenant(id="tenant-parent", slug="medbuddy", display_name="MedBuddy")
+    parent_participant = Participant(
+        id="participant-parent",
+        tenant_id=parent_tenant.id,
+        name="arav-codex",
+        role="admin",
+    )
+    parent_key = ApiKey(
+        id="key-parent",
+        participant_id=parent_participant.id,
+        label="parent",
+        key_prefix=parent_prefix,
+        key_hash=parent_key_hash,
+    )
+    added = []
+    room_members = []
+
+    class FakeResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class FakeSession:
+        def __init__(self):
+            self.execute_calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query):
+            self.execute_calls += 1
+            if self.execute_calls == 1:
+                return FakeResult(parent_key)
+            return FakeResult(None)
+
+        async def get(self, model, obj_id):
+            if model is Participant and obj_id == parent_participant.id:
+                return parent_participant
+            if model is Tenant and obj_id == parent_tenant.id:
+                return parent_tenant
+            return None
+
+        def add(self, obj):
+            added.append(obj)
+
+        async def flush(self):
+            return None
+
+    class FakeRoomService:
+        async def list_for_member(self, tenant_id, member_name):
+            return [
+                {"id": "room-1", "name": "sprint", "private": False},
+                {"id": "room-2", "name": "sensitive", "private": True},
+            ]
+
+    class FakeRoomsBackend:
+        async def add_member(self, tenant_id, room_id, name, role):
+            room_members.append((tenant_id, room_id, name, role))
+
+    class FakeParticipantsBackend:
+        async def add(self, tenant_id, name):
+            return None
+
+    monkeypatch.setattr(auth_routes, "get_db_session", lambda: FakeSession())
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                room_service=FakeRoomService(),
+                backends=SimpleNamespace(
+                    rooms=FakeRoomsBackend(),
+                    participants=FakeParticipantsBackend(),
+                ),
+            ),
+        ),
+    )
+
+    resp = await auth_routes.register_agent(
+        RegisterAgentRequest(suffix="claude-1m", inherit_rooms="all"),
+        request=request,
+        authorization=f"Bearer {parent_raw_key}",
+    )
+
+    assert resp.agent_name == "arav-codex-claude-1m"
+    assert room_members == [
+        (parent_tenant.id, "room-1", "arav-codex-claude-1m", "agent"),
+        (parent_tenant.id, "room-2", "arav-codex-claude-1m", "agent"),
+    ]
 
 
 @pytest.mark.asyncio
