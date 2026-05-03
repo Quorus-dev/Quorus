@@ -420,3 +420,52 @@ async def get_room_state(room_id: str) -> str:
         return "\n".join(lines)
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
+
+
+async def social_verb(
+    verb: str,
+    room_id: str,
+    payload: dict,
+    ref_message_id: str | None = None,
+    context: "Context | None" = None,
+) -> str:
+    """POST a Quorus Social Protocol v1 verb to ``/v1/social/{verb}``.
+
+    Submits as the configured ``INSTANCE_NAME``. Returns a human-readable
+    confirmation string for the model.
+    """
+    s = _srv()
+    await s._remember_session(context)
+    body = {
+        "actor": s.INSTANCE_NAME,
+        "room_id": room_id,
+        "ref_message_id": ref_message_id,
+        "payload": payload,
+    }
+    try:
+        await _audit_tool_call(
+            "social_verb",
+            {
+                "verb": verb,
+                "room_id": room_id,
+                "payload": payload,
+                "ref_message_id": ref_message_id,
+            },
+            mutating=True,
+        )
+        client = s._get_http_client()
+        resp = await client.post(
+            f"{s.RELAY_URL}/v1/social/{verb}",
+            json=body,
+            headers=s._auth_headers(),
+        )
+        if resp.status_code == 401 and await s._refresh_jwt_on_401():
+            resp = await client.post(
+                f"{s.RELAY_URL}/v1/social/{verb}",
+                json=body,
+                headers=s._auth_headers(),
+            )
+        resp.raise_for_status()
+        return f"OK: {verb} accepted"
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return s._relay_error_message(e)

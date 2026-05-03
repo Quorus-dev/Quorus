@@ -71,12 +71,17 @@ class TriageResult:
     ``action``: "RESPOND" or "IGNORE" — same contract as v0 ``triage_local``.
     ``reason``: short human-readable label, used in bid metadata + logs.
     ``kind``:   one of {"mention", "question", "open_todo", "role_request",
-                "none"}. ``"none"`` ↔ ``action == "IGNORE"``.
+                "social_verb", "none"}. ``"none"`` ↔ ``action == "IGNORE"``
+                except for ``social_verb`` which is also IGNORE — see below.
     ``role``:   role token from ``role_request`` (e.g. "frontend"). ``None``
                 for other kinds.
     ``description``: the open-work description for ``open_todo`` /
                 ``role_request`` so capability matching has something to
                 grep. Empty string for other kinds.
+    ``verb``:   social-protocol verb when ``kind == 'social_verb'``. The
+                relay's social state-machine handles state mutations from
+                wire-typed verbs; reflexd intentionally abstains so prose
+                replies don't add noise to a structured handoff.
     """
 
     action: str
@@ -84,6 +89,7 @@ class TriageResult:
     kind: str = "none"
     role: str | None = None
     description: str = ""
+    verb: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +113,62 @@ _WHO_CAN_RE = re.compile(
     r"\bwho\s+can\s+\S+.*\?\s*$",
     re.IGNORECASE,
 )
+
+
+# Social Protocol v1 verb prefixes — a leading "/<verb>" or a JSON envelope
+# with kind=="social". When detected, the relay's social state-machine owns
+# the response; reflexd abstains.
+_SOCIAL_VERBS: tuple[str, ...] = (
+    "claim", "release", "disagree", "defer", "queue", "vote", "interrupt",
+)
+_VERB_PREFIXES: tuple[str, ...] = tuple(f"/{v}" for v in _SOCIAL_VERBS)
+
+
+def detect_social_verb(content: str) -> tuple[str, str] | None:
+    """Detect Quorus Social Protocol v1 verbs in *content*.
+
+    Recognizes two forms::
+
+        "/disagree blocking ..."  → ("disagree", "blocking ...")
+        '{"kind":"social","verb":"defer", ...}' → ("defer", "")
+
+    Returns ``(verb, suffix)`` on a hit, ``None`` otherwise. Pure function —
+    no allocation outside the regex/json branch when no verb is detected.
+    """
+    if not content:
+        return None
+    text = content.strip()
+    for prefix in _VERB_PREFIXES:
+        if text.startswith(prefix) and (
+            len(text) == len(prefix) or text[len(prefix)].isspace()
+        ):
+            return prefix[1:], text[len(prefix):].strip()
+    if text.startswith("{") and '"kind":"social"' in text.replace(" ", ""):
+        try:
+            import json as _json
+            data = _json.loads(text)
+        except (ValueError, _json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        verb = data.get("verb")
+        if isinstance(verb, str) and verb in _SOCIAL_VERBS:
+            return verb, ""
+    return None
+
+
+def has_outstanding_defer(
+    *, defer_graph: dict, target: str, source: str, now: float,
+) -> bool:
+    """True iff ``source`` has an unexpired ``defer(to=target)`` edge.
+
+    Pure function — reads a snapshot of the relay's defer-graph (e.g. the
+    one returned by ``GET /v1/social/state/{room_id}``) and answers whether
+    ``source`` is currently deferring to ``target``.
+    """
+    edges = defer_graph.get(source, {}) if isinstance(defer_graph, dict) else {}
+    expires = edges.get(target) if isinstance(edges, dict) else None
+    return expires is not None and float(expires) > now
 
 
 def _has_literal_mention(text: str, self_name: str) -> bool:
@@ -137,10 +199,34 @@ def classify_message(
     """
     if sender and sender == self_name:
         return TriageResult("IGNORE", "self message")
+    if message_type == "social":
+        # Wire-typed social verbs are handled by the relay state-machine, not
+        # reflexd. Surface the verb in the result so the daemon can log it,
+        # but do not bid a prose reply on top of structured coordination.
+        verb_match = detect_social_verb(content or "")
+        if verb_match is not None:
+            return TriageResult(
+                "IGNORE",
+                f"social_verb:{verb_match[0]}",
+                kind="social_verb",
+                verb=verb_match[0],
+            )
+        return TriageResult("IGNORE", "social_message_type_no_verb")
     if message_type not in {"chat", "request", "question"}:
         return TriageResult("IGNORE", f"non-conversational type {message_type!r}")
 
     text = content or ""
+
+    # 0. Verb-prefixed prose ("/disagree blocking ...") in a chat-typed
+    #    message — same abstention as the message_type=="social" branch.
+    verb_match = detect_social_verb(text)
+    if verb_match is not None:
+        return TriageResult(
+            "IGNORE",
+            f"social_verb:{verb_match[0]}",
+            kind="social_verb",
+            verb=verb_match[0],
+        )
 
     # 1. Literal @-mention wins outright — preserve Phase 1 wire reason.
     if _has_literal_mention(text, self_name):

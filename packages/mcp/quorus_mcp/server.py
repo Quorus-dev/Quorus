@@ -499,6 +499,22 @@ async def get_room_state(room_id: str) -> str:
     return await tools.get_room_state(room_id)
 
 
+@mcp.tool()
+async def social_verb(
+    verb: str,
+    room_id: str,
+    payload: dict,
+    ref_message_id: str | None = None,
+    context: Context = None,
+) -> str:
+    """Submit a Quorus Social Protocol v1 verb to a room.
+
+    Verbs: claim, release, disagree, defer, queue, vote, interrupt.
+    See docs/SOCIAL_PROTOCOL_v1.md for the per-verb payload schema.
+    """
+    return await tools.social_verb(verb, room_id, payload, ref_message_id, context)
+
+
 def main_cli() -> None:
     """Console entry point for the ``quorus-mcp`` command (stdio transport)."""
     mcp.run(transport="stdio")

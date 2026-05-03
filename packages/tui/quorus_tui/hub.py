@@ -2122,6 +2122,175 @@ def _slash_identity(arg, state, relay_url, secret, agent_name, console):
     return True
 
 
+# ── Social Protocol v1 verb handlers ─────────────────────────────────────────
+# Each handler is a tiny POST to /v1/social/<verb>. Argument parsing is
+# deliberately permissive — the relay validates the typed payload and surfaces
+# the error to the status bar.
+def _post_social_verb(
+    verb: str, payload: dict, state, relay_url, secret, agent_name, console,
+):
+    import httpx as _httpx
+    sel = state.get_selected_room() if hasattr(state, "get_selected_room") else None
+    if not sel:
+        state.set_status_bar(f"/{verb}: no room selected")
+        return True
+    headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+    body = {
+        "actor": agent_name,
+        "room_id": sel.get("id") if isinstance(sel, dict) else sel,
+        "payload": payload,
+    }
+    try:
+        with _httpx.Client(timeout=5) as cli:
+            r = cli.post(
+                f"{relay_url}/v1/social/{verb}",
+                json=body,
+                headers=headers,
+            )
+        if r.status_code == 200:
+            state.set_status_bar(f"/{verb} ✓")
+        else:
+            state.set_status_bar(f"/{verb}: {r.status_code} {r.text[:80]}")
+    except Exception as e:  # noqa: BLE001 — surface to status bar
+        state.set_status_bar(f"/{verb}: {e}")
+    return True
+
+
+def _slash_claim(arg, state, relay_url, secret, agent_name, console):
+    parts = (arg or "").split(maxsplit=2)
+    if len(parts) < 3:
+        state.set_status_bar(
+            "usage: /claim <task_id> <eta_minutes> <scope>",
+        )
+        return True
+    try:
+        eta_seconds = int(float(parts[1]) * 60)
+    except ValueError:
+        state.set_status_bar("/claim: <eta_minutes> must be a number")
+        return True
+    return _post_social_verb(
+        "claim",
+        {"task_id": parts[0], "eta_seconds": eta_seconds, "scope": parts[2]},
+        state, relay_url, secret, agent_name, console,
+    )
+
+
+def _slash_release(arg, state, relay_url, secret, agent_name, console):
+    parts = (arg or "").split(maxsplit=2)
+    if len(parts) < 2:
+        state.set_status_bar(
+            "usage: /release <task_id> <reason> [@to]",
+        )
+        return True
+    payload: dict = {"task_id": parts[0], "reason": parts[1]}
+    if len(parts) == 3:
+        rest = parts[2].strip()
+        if rest.startswith("@"):
+            payload["handoff_to"] = rest[1:]
+        else:
+            payload["reason"] = f"{parts[1]} {rest}"
+    return _post_social_verb(
+        "release", payload,
+        state, relay_url, secret, agent_name, console,
+    )
+
+
+def _slash_disagree(arg, state, relay_url, secret, agent_name, console):
+    parts = (arg or "").split(maxsplit=1)
+    if len(parts) < 2 or parts[0] not in {"blocking", "advisory"}:
+        state.set_status_bar(
+            "usage: /disagree blocking|advisory <reason>",
+        )
+        return True
+    return _post_social_verb(
+        "disagree",
+        {
+            "ref_message_id": "_pending",
+            "reason": parts[1],
+            "mode": parts[0],
+        },
+        state, relay_url, secret, agent_name, console,
+    )
+
+
+def _slash_defer(arg, state, relay_url, secret, agent_name, console):
+    parts = (arg or "").split()
+    if not parts:
+        state.set_status_bar(
+            "usage: /defer @<participant> [ttl_seconds]",
+        )
+        return True
+    target = parts[0].lstrip("@")
+    payload: dict = {"to": target}
+    if len(parts) >= 2:
+        try:
+            payload["ttl_seconds"] = int(parts[1])
+        except ValueError:
+            state.set_status_bar("/defer: <ttl_seconds> must be an integer")
+            return True
+    return _post_social_verb(
+        "defer", payload,
+        state, relay_url, secret, agent_name, console,
+    )
+
+
+def _slash_queue(arg, state, relay_url, secret, agent_name, console):
+    parts = (arg or "").split(maxsplit=2)
+    if len(parts) < 3:
+        state.set_status_bar(
+            "usage: /queue after=<id> <summary> <eta_minutes>",
+        )
+        return True
+    after_token = parts[0]
+    if after_token.startswith("after="):
+        after = after_token[len("after="):]
+    else:
+        after = after_token
+    summary = parts[1]
+    try:
+        eta_seconds = int(float(parts[2]) * 60)
+    except ValueError:
+        state.set_status_bar("/queue: <eta_minutes> must be a number")
+        return True
+    return _post_social_verb(
+        "queue",
+        {"after": after, "task_summary": summary, "eta_seconds": eta_seconds},
+        state, relay_url, secret, agent_name, console,
+    )
+
+
+def _slash_vote(arg, state, relay_url, secret, agent_name, console):
+    parts = (arg or "").split()
+    if not parts:
+        state.set_status_bar("usage: /vote <option> [weight]")
+        return True
+    payload: dict = {"option": parts[0]}
+    if len(parts) >= 2:
+        try:
+            payload["weight"] = float(parts[1])
+        except ValueError:
+            state.set_status_bar("/vote: <weight> must be a number")
+            return True
+    return _post_social_verb(
+        "vote", payload,
+        state, relay_url, secret, agent_name, console,
+    )
+
+
+def _slash_interrupt(arg, state, relay_url, secret, agent_name, console):
+    parts = (arg or "").split(maxsplit=1)
+    if len(parts) < 2:
+        state.set_status_bar(
+            "usage: /interrupt <ref_message_id> <reason>",
+        )
+        return True
+    return _post_social_verb(
+        "interrupt",
+        {"ref_message_id": parts[0], "reason": parts[1]},
+        state, relay_url, secret, agent_name, console,
+    )
+
+
 SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/help":       ("show keybinds + all commands",        _slash_help),
     "/home":       ("return to the welcome view",           _slash_home),
@@ -2144,6 +2313,14 @@ SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/status":     ("connection + relay info",              _slash_status),
     "/clear":      ("clear the chat pane",                  _slash_clear),
     "/quit":       ("close the hub",                        _slash_quit),
+    # Quorus Social Protocol v1 — typed wire primitives over /v1/social/{verb}
+    "/claim":      ("/claim <task_id> <eta_min> <scope>",   _slash_claim),
+    "/release":    ("/release <task_id> <reason> [@to]",    _slash_release),
+    "/disagree":   ("/disagree blocking|advisory <reason>", _slash_disagree),
+    "/defer":      ("/defer @<participant> [ttl_seconds]",  _slash_defer),
+    "/queue":      ("/queue after=<id> <summary> <eta_min>", _slash_queue),
+    "/vote":       ("/vote <option> [weight]",              _slash_vote),
+    "/interrupt":  ("/interrupt <ref_msg_id> <reason>",     _slash_interrupt),
 }
 
 

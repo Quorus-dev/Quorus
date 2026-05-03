@@ -103,6 +103,20 @@ def test_qod_for_agent_loop_under_token_budget():
     )
 
 
+def test_qod_voice_includes_social_verbs_bullet():
+    """The voice block must mention social verbs as the canonical handoff
+    primitive — Stream A locks in /claim, /release, /disagree, /defer,
+    /queue, /vote, /interrupt as wire-typed coordination signals."""
+    from quorus.operating_discipline import QOD_VOICE_BULLETS, render_qod
+
+    bullets = "\n".join(QOD_VOICE_BULLETS)
+    assert "social verbs" in bullets.lower()
+    for v in ("/claim", "/release", "/disagree", "/defer", "/queue", "/vote", "/interrupt"):
+        assert v in bullets, f"voice bullet must mention {v}"
+    # And the rendered QOD must include the bullet too.
+    assert "social verbs" in render_qod().lower()
+
+
 def test_mcp_server_instructions_carry_qod():
     """The MCP server's ``instructions`` field must include the full QOD.
 

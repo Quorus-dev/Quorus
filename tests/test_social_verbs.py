@@ -29,7 +29,6 @@ from quorus.protocol.social_verbs import (
     parse_envelope,
 )
 
-
 # ---------------------------------------------------------------------------
 # Round-trip serialize/parse — one test per verb (7 tests)
 # ---------------------------------------------------------------------------

@@ -88,6 +88,85 @@ def test_triage_non_conversational_returns_IGNORE() -> None:
     assert action == "IGNORE"
 
 
+def test_detect_social_verb_recognizes_slash_prefix() -> None:
+    """`/disagree blocking ...` is a wire-typed verb prefix."""
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location(
+        "reflexd_triage",
+        _REPO_ROOT / "scripts" / "reflexd_triage.py",
+    )
+    assert spec is not None and spec.loader is not None
+    triage = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(triage)
+
+    assert triage.detect_social_verb("/disagree blocking wrong path") == (
+        "disagree", "blocking wrong path",
+    )
+    assert triage.detect_social_verb("/claim t-1 60 ship") == (
+        "claim", "t-1 60 ship",
+    )
+    # Non-verb shapes return None.
+    assert triage.detect_social_verb("hello world") is None
+    assert triage.detect_social_verb("/joinsomeroom") is None  # no boundary
+
+
+def test_detect_social_verb_recognizes_json_envelope() -> None:
+    """A wire envelope JSON body counts as a verb hit."""
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location(
+        "reflexd_triage",
+        _REPO_ROOT / "scripts" / "reflexd_triage.py",
+    )
+    assert spec is not None and spec.loader is not None
+    triage = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(triage)
+
+    envelope = (
+        '{"kind":"social","verb":"defer","actor":"alice","room_id":"r1",'
+        '"ts":"2026-05-03T08:00:00Z","payload":{"to":"bob"}}'
+    )
+    hit = triage.detect_social_verb(envelope)
+    assert hit is not None
+    assert hit[0] == "defer"
+
+
+def test_classify_message_short_circuits_verb_prefix() -> None:
+    """A `/release ...` chat must IGNORE — relay state-machine handles it."""
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location(
+        "reflexd_triage",
+        _REPO_ROOT / "scripts" / "reflexd_triage.py",
+    )
+    assert spec is not None and spec.loader is not None
+    triage = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(triage)
+
+    result = triage.classify_message(
+        content="/release t1 finished",
+        sender="bob",
+        self_name="arav-claude",
+        message_type="chat",
+    )
+    assert result.action == "IGNORE"
+    assert result.kind == "social_verb"
+    assert result.verb == "release"
+
+    # message_type=='social' with a JSON envelope also short-circuits.
+    envelope = (
+        '{"kind":"social","verb":"vote","actor":"bob","room_id":"r1",'
+        '"ts":"2026-05-03T08:00:00Z","payload":{"option":"approve"}}'
+    )
+    result2 = triage.classify_message(
+        content=envelope,
+        sender="bob",
+        self_name="arav-claude",
+        message_type="social",
+    )
+    assert result2.action == "IGNORE"
+    assert result2.kind == "social_verb"
+    assert result2.verb == "vote"
+
+
 def test_busyfile_skips_wake(tmp_path: Path) -> None:
     runtime = tmp_path / "runtime"
     runtime.mkdir()

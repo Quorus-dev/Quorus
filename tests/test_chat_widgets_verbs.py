@@ -7,9 +7,8 @@ expected style on the right span.
 """
 from __future__ import annotations
 
-from rich.text import Text
-
 from quorus_tui import chat, chat_widgets
+from rich.text import Text
 
 
 def _styles_for(text: Text) -> set[str]:

@@ -60,6 +60,11 @@ QOD_VOICE_BULLETS: tuple[str, ...] = (
     "- Never say \"as an AI\" — you are a teammate, not a chatbot.",
     "- When you finish: announce with ✅ + commit hash + 1-line what "
     "changed",
+    "- Use social verbs (/claim, /release, /disagree blocking|advisory, "
+    "/defer, /queue, /vote, /interrupt) for handoffs, pushback, and "
+    "queueing. Verbs are typed wire primitives the TUI renders distinctly "
+    "and the relay uses for blocks and votes — prose handoffs are invisible "
+    "to coordination.",
 )
 
 
