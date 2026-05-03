@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -217,6 +218,49 @@ def safe_message_preview(content: str) -> str:
     if len(flat) <= MENTION_PREVIEW_CHARS:
         return flat
     return flat[: MENTION_PREVIEW_CHARS - 1] + "…"
+
+
+# Regex set for redacting common PII when --debug surfaces preview text.
+# Conservative: emails, north-american-style phone numbers, and @-mentions
+# (which can identify a participant or a private agent name).
+_PII_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"), "<redacted-email>"),
+    (re.compile(r"\b\+?\d[\d\s().-]{7,}\d\b"), "<redacted-phone>"),
+    (re.compile(r"@[A-Za-z0-9._-]{1,80}"), "<redacted-mention>"),
+)
+
+
+def _redact_pii(s: str) -> str:
+    out = s
+    for pat, repl in _PII_PATTERNS:
+        out = pat.sub(repl, out)
+    return out
+
+
+def safe_log_summary(content: str, *, debug: bool = False) -> str:
+    """Return a log-safe summary of *content* — never the raw body.
+
+    Default: ``"len=N hash=XXXXXXXX"`` so an operator can correlate two
+    log lines that mention the same chat body without the body itself
+    landing in ``~/.quorus/reflexd.log`` (or its rotated 30MB tail).
+
+    When *debug* is True, append a redacted preview (emails / phone /
+    @-mentions stripped). Only call with debug=True from --debug paths.
+
+    PII guard: this is the canonical helper for any per-message log
+    line touching chat content. The function is pure and total — the
+    fingerprint stays stable across re-invocations so two related
+    events emit the same hash.
+    """
+    if not content:
+        return "len=0 hash=00000000"
+    encoded = content.encode("utf-8", errors="replace")
+    digest = hashlib.sha256(encoded).hexdigest()[:8]
+    base = f"len={len(encoded)} hash={digest}"
+    if debug:
+        preview = safe_message_preview(_redact_pii(content))
+        return f"{base} preview={preview!r}"
+    return base
 
 
 # Stream B helpers (memory + defer + thread + DM loop) live in a sibling
@@ -1037,9 +1081,14 @@ class Reflexd:
             content=content, sender=sender,
             self_name=self.config.participant_name, message_type=message_type,
         )
+        # PII guard: never log raw chat content (including the truncated
+        # preview) at INFO. ``safe_log_summary`` returns ``len=N hash=...``
+        # which is enough to correlate two log lines without persisting
+        # the body. Debug mode adds a PII-redacted preview.
         logger.debug(
-            "triage room=%s sender=%s id=%s preview=%r → %s kind=%s reason=%s",
-            room, sender, message_id, safe_message_preview(content),
+            "triage room=%s sender=%s id=%s %s → %s kind=%s reason=%s",
+            room, sender, message_id,
+            safe_log_summary(content, debug=logger.isEnabledFor(logging.DEBUG)),
             triage.action, triage.kind, triage.reason,
         )
         if triage.action != "RESPOND":
@@ -1317,10 +1366,15 @@ class Reflexd:
         """
         sender = envelope.get("from") or envelope.get("from_name") or "?"
         recipient = envelope.get("to") or "?"
-        preview = safe_message_preview(envelope.get("content") or "")
+        # PII guard: don't persist DM body content. See safe_log_summary
+        # docstring for the trade-off; debug-mode adds a redacted preview.
+        summary = safe_log_summary(
+            envelope.get("content") or "",
+            debug=logger.isEnabledFor(logging.DEBUG),
+        )
         logger.info(
-            "agent_dm received from=%s to=%s preview=%r",
-            sender, recipient, preview,
+            "agent_dm received from=%s to=%s %s",
+            sender, recipient, summary,
         )
 
     async def _dm_loop(self, relay: RelayClient) -> None:

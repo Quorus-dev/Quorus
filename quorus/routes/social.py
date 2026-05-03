@@ -20,10 +20,17 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.auth.policy import (
+    Decision,
+    PolicyContext,
+    evaluate_scoped,
+    load_policy_for_tenant,
+)
 from quorus.protocol import VERBS, SocialVerb
 from quorus.routes.room_auth import require_room_member
 from quorus.services.social_svc import (
     BlockedError,
+    ClaimRaceError,
     CycleError,
     DoubleVoteError,
     SocialProtocolError,
@@ -93,25 +100,62 @@ async def post_social_verb(
     tid = _tid(auth)
     rid, room_data = await require_room_member(request, auth, tid, room_ref)
 
-    rate_limit_svc = request.app.state.rate_limit_service
     payload_dict = (
         sv.payload if isinstance(sv.payload, dict)
         else sv.payload.model_dump()
     )
+
+    # Cedar policy gate — runs AFTER membership and BEFORE the rate
+    # limit / state-machine mutation so a denied actor never gets
+    # a counter increment. Legacy auth keeps the historical
+    # single-tenant flow open. ``room_members`` is normalised to a
+    # list-of-names regardless of whether the backend returns a dict
+    # or a list (RoomService can shape it either way under tests).
+    if not auth.is_legacy:
+        policy_dir = getattr(request.app.state, "policy_dir", None)
+        policy = load_policy_for_tenant(tid, policy_dir=policy_dir)
+        raw_members = room_data.get("members") or {}
+        if isinstance(raw_members, dict):
+            members = list(raw_members.keys())
+        else:
+            members = list(raw_members)
+        ctx = PolicyContext(
+            actor=actor,
+            action=f"social:{verb}",
+            resource=rid,
+            role=auth.role or ("human" if auth.sub else "agent"),
+            tenant_id=tid,
+            extra={
+                "room_members": members,
+                "mode": payload_dict.get("mode"),
+            },
+        )
+        result = evaluate_scoped(ctx, policy)
+        if result.effective_decision != Decision.ALLOW:
+            raise HTTPException(
+                status_code=403,
+                detail=f"social policy: {result.reason}",
+            )
+
+    rate_limit_svc = request.app.state.rate_limit_service
     is_blocking_disagree = (
         verb == "disagree"
         and payload_dict.get("mode", "advisory") == "blocking"
     )
     if is_blocking_disagree:
-        # Stricter limit on the most disruptive verb: 12 / 5min per actor.
+        # Hard cap: 1 blocking-disagree per actor per 5 minutes. Mirrors
+        # the Cedar policy ``_DISAGREE_BLOCKING_COOLDOWN_S`` so route
+        # and policy agree on the same intent — blocking is production
+        # safety, not a style verb. The Cedar gate (CRIT-3) is the
+        # primary enforcement; this is the route-layer fallback.
         if not await rate_limit_svc.check_with_limit(
             tid,
             f"social_disagree_blocking:{actor}",
-            12,
+            1,
             window=300,
         ):
             raise HTTPException(
-                429, detail="blocking-disagree rate limit (12/5min)",
+                429, detail="blocking-disagree rate limit (1/5min)",
             )
     else:
         if not await rate_limit_svc.check_with_limit(
@@ -125,6 +169,10 @@ async def post_social_verb(
     except BlockedError as e:
         raise HTTPException(
             status_code=409, detail=f"room_blocked: {e}",
+        ) from e
+    except ClaimRaceError as e:
+        raise HTTPException(
+            status_code=409, detail=f"claim_race: {e}",
         ) from e
     except CycleError as e:
         raise HTTPException(

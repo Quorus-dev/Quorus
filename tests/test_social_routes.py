@@ -383,10 +383,11 @@ async def test_unauthorized_returns_401(
     assert resp.status_code == 401, resp.text
 
 
-async def test_blocking_disagree_rate_limited_after_12(
+async def test_blocking_disagree_rate_limited_one_per_5min(
     client: AsyncClient, room_id: str,
 ):
-    # The limit is 12 per 5min window — fire 12 then expect 429 on the 13th.
+    # The limit is 1 per 5min window — first call accepts, second 429s.
+    # Mirrors quorus/auth/policy.py::_DISAGREE_BLOCKING_COOLDOWN_S.
     payload = {
         "actor": "alice", "room_id": room_id,
         "payload": {
@@ -395,16 +396,13 @@ async def test_blocking_disagree_rate_limited_after_12(
             "mode": "blocking",
         },
     }
-    accepted = 0
-    for _ in range(12):
-        r = await client.post(
-            "/v1/social/disagree", json=payload, headers=HEADERS,
-        )
-        if r.status_code == 200:
-            accepted += 1
-    assert accepted == 12, f"expected 12 accepts, got {accepted}"
-    # 13th must 429
-    r = await client.post(
+    first = await client.post(
         "/v1/social/disagree", json=payload, headers=HEADERS,
     )
-    assert r.status_code == 429, r.text
+    assert first.status_code == 200, first.text
+    # Second blocking-disagree within window must 429.
+    second = await client.post(
+        "/v1/social/disagree", json=payload, headers=HEADERS,
+    )
+    assert second.status_code == 429, second.text
+    assert "1/5min" in second.text

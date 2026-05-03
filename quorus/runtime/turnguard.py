@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,13 @@ BUSY_FILE_SUFFIX = ".busy"
 DEFAULT_TTL_SECONDS = 300  # 5 minutes — long enough for slow tool calls.
 _RUNTIME_DIR_NAME = "runtime"
 _QUORUS_DIR_NAME = ".quorus"
+
+# Path-traversal guard — keep alphanumerics, dot, underscore, hyphen. Same
+# regex shape as quorus/runtime/memory.py::_SAFE so writers cannot escape
+# the runtime dir via "../../../etc/passwd"-style participant names.
+_SAFE_PARTICIPANT = re.compile(r"[^A-Za-z0-9._-]")
+_PARTICIPANT_FALLBACK = "anonymous"
+_PARTICIPANT_MAX_LEN = 64
 
 
 def runtime_dir() -> Path:
@@ -45,11 +53,22 @@ def runtime_dir() -> Path:
 
 
 def busy_path(participant: str, dir_override: Path | None = None) -> Path:
-    """Return the busy-file path for ``participant`` (no I/O)."""
+    """Return the busy-file path for ``participant`` (no I/O).
+
+    Path-traversal guard: characters outside ``[A-Za-z0-9._-]`` are
+    replaced with ``_`` so a hostile participant string like
+    ``"../../../etc/passwd"`` lands inside the runtime dir, not outside.
+    Empty/whitespace-only input falls back to ``anonymous`` rather than
+    raising — the caller can still feed a sanitised constant for cases
+    like daemon startup. Trailing trim caps the filename at 64 chars.
+    """
     base = dir_override if dir_override is not None else runtime_dir()
-    safe = participant.strip()
-    if not safe:
+    stripped = (participant or "").strip()
+    if not stripped:
         raise ValueError("participant must be non-empty")
+    safe = _SAFE_PARTICIPANT.sub("_", stripped)[:_PARTICIPANT_MAX_LEN]
+    if not safe:
+        safe = _PARTICIPANT_FALLBACK
     return base / f"{safe}{BUSY_FILE_SUFFIX}"
 
 

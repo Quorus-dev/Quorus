@@ -26,6 +26,12 @@ class BlockedError(SocialProtocolError):
     blocking-disagree halt. Maps to HTTP 409."""
 
 
+class ClaimRaceError(SocialProtocolError):
+    """Raised when a `claim` is rejected because another actor already
+    owns the task. Mirrors :class:`work_queue_svc.ClaimRaceError` so the
+    Stream A surface refuses silent task-hijack. Maps to HTTP 409."""
+
+
 class CycleError(SocialProtocolError):
     """Raised when a `defer` would close a cycle in the dependency graph.
     Maps to HTTP 400."""
@@ -164,6 +170,15 @@ class SocialSvc:
         task_id = str(payload.get("task_id") or "")
         if not task_id:
             raise SocialProtocolError("claim.task_id required")
+        # Reject silent task hijack — second actor cannot overwrite an
+        # active claim. A re-claim by the same actor extends/refreshes
+        # the existing claim (idempotent).
+        existing = state["claims"].get(task_id)
+        if existing and existing.get("actor") != sv.actor:
+            raise ClaimRaceError(
+                f"task_id={task_id!r} already claimed by "
+                f"{existing.get('actor')!r}"
+            )
         state["claims"][task_id] = {
             "actor": sv.actor,
             "eta_seconds": int(payload.get("eta_seconds") or 0),
@@ -386,6 +401,7 @@ __all__ = [
     "SocialSvc",
     "SocialProtocolError",
     "BlockedError",
+    "ClaimRaceError",
     "CycleError",
     "DoubleVoteError",
 ]

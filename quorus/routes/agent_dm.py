@@ -36,6 +36,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.auth.policy import (
+    Decision,
+    PolicyContext,
+    evaluate_scoped,
+    load_policy_for_tenant,
+)
 from quorus.routes.helpers import _validate_name
 
 router = APIRouter()
@@ -170,6 +176,50 @@ async def send_agent_dm(
         tid, f"agent_dm:{sender}:{recipient}", 30,
     ):
         raise HTTPException(429, detail="agent-DM rate limit (30/min)")
+
+    # Cross-tenant + recipient-existence guard. Recipient MUST be a
+    # registered participant in the sender's tenant. Participants are
+    # partitioned per-tenant so this naturally rejects any attempt to
+    # DM a name that only lives in a different tenant. Legacy auth
+    # (no real JWT) skips the lookup so existing single-tenant flows
+    # keep working — same exemption shape as require_room_member.
+    if not auth.is_legacy:
+        backends = getattr(request.app.state, "backends", None)
+        participants = (
+            getattr(backends, "participants", None) if backends else None
+        )
+        if participants is not None:
+            try:
+                known = await participants.list_all(tid)
+            except Exception:
+                known = []
+            if recipient not in known:
+                raise HTTPException(
+                    status_code=404,
+                    detail="recipient not found in tenant",
+                )
+
+        # Cedar policy gate — same shape as social/work_queue. The DM
+        # scoped check ensures sender_tenant == recipient_tenant; we
+        # pass tid as both because the membership lookup above already
+        # enforced co-tenancy, so any name that survived the lookup is
+        # by definition in the sender's tenant.
+        policy_dir = getattr(request.app.state, "policy_dir", None)
+        policy = load_policy_for_tenant(tid, policy_dir=policy_dir)
+        ctx = PolicyContext(
+            actor=sender,
+            action="dm:agent",
+            resource=recipient,
+            role=auth.role or ("human" if auth.sub else "agent"),
+            tenant_id=tid,
+            extra={"recipient_tenant_id": tid},
+        )
+        result = evaluate_scoped(ctx, policy)
+        if result.effective_decision != Decision.ALLOW:
+            raise HTTPException(
+                status_code=403,
+                detail=f"dm policy: {result.reason}",
+            )
 
     # Build the envelope. Mirrors the social-verb envelope shape so
     # reflexd's DM handler can route on `kind` without forking.
