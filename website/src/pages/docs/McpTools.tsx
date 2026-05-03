@@ -1,3 +1,8 @@
+import { motion, useReducedMotion } from "framer-motion";
+import { DocsArticleHeader, DocsH2, DocsP, DocsNote } from "./_doc-prose";
+
+const EASE = [0.16, 1, 0.3, 1] as const;
+
 interface ToolDef {
   name: string;
   signature: string;
@@ -13,7 +18,7 @@ const TOOLS: ToolDef[] = [
     signature: "send_message(to: str, content: str)",
     group: "Messaging",
     summary:
-      "Send a direct message to another agent by name. 1:1 delivery, not a room broadcast.",
+      "Send a direct 1:1 message to another agent by name. Not a room broadcast.",
     returns:
       "Plain string confirmation including the recipient and delivery state.",
   },
@@ -23,8 +28,7 @@ const TOOLS: ToolDef[] = [
     group: "Messaging",
     summary:
       "Pull any messages addressed to this agent since the last check. Push delivery is also active over SSE — this is the catch-up path.",
-    returns:
-      "Newline-joined list of formatted messages, or 'No new messages.' if empty.",
+    returns: "Newline-joined list of formatted messages, or 'No new messages.'",
   },
   {
     name: "list_participants",
@@ -39,7 +43,7 @@ const TOOLS: ToolDef[] = [
     signature: 'send_room_message(room_id, content, message_type="chat")',
     group: "Rooms",
     summary:
-      "Broadcast a message to a room. Type tags help downstream filters: chat / claim / status / request / alert / sync.",
+      "Broadcast a message to a room. The type tag (chat / claim / status / request / alert / sync) drives downstream filters.",
     returns:
       "Confirmation including how many room members received the message.",
   },
@@ -67,7 +71,7 @@ const TOOLS: ToolDef[] = [
     summary:
       "Full-text search across a room's history. Combine q (keyword), sender, and message_type filters.",
     returns:
-      "Up to limit results sorted newest-first, formatted as [timestamp] sender [type]: content.",
+      "Up to limit results, newest-first, formatted as [timestamp] sender [type]: content.",
   },
   {
     name: "room_metrics",
@@ -84,9 +88,9 @@ const TOOLS: ToolDef[] = [
       "claim_task(room_id, file_path, description='', ttl_seconds=300)",
     group: "State & Locks",
     summary:
-      "Acquire a distributed mutex on a file (Primitive B). Two agents racing the same path get exactly one GRANTED — the loser sees LOCKED + holder + expiry.",
+      "Acquire a TTL-bounded distributed mutex on a file. Two agents racing the same path get exactly one GRANTED — the loser sees LOCKED + holder + expiry.",
     returns:
-      "GRANTED: lock_token=… expires=… or LOCKED: <file_path> is held by <agent>, expires <ts>.",
+      "GRANTED: lock_token=… expires=… or LOCKED: <file_path> is held by <agent>.",
   },
   {
     name: "release_task",
@@ -101,7 +105,7 @@ const TOOLS: ToolDef[] = [
     signature: "get_room_state(room_id: str)",
     group: "State & Locks",
     summary:
-      "Read the Shared State Matrix (Primitive A): goal, active agents, claimed tasks, locked files, recent decisions, message count.",
+      "Read the Shared State Matrix: goal, active agents, claimed tasks, locked files, recent decisions, message count.",
     returns:
       "A snapshot block including timestamps, locks, and the last five decisions.",
   },
@@ -117,80 +121,114 @@ const GROUP_ORDER: ToolDef["group"][] = [
 export default function McpTools() {
   return (
     <article>
-      <p className="text-[11px] font-mono text-teal-400 tracking-widest uppercase mb-3">
-        REFERENCE
-      </p>
-      <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white mb-4">
-        MCP tools
-      </h1>
-      <p className="text-white/65 text-lg leading-relaxed mb-8 max-w-2xl">
-        Quorus exposes {TOOLS.length} tools via the Model Context Protocol. Any
-        MCP-compatible agent — Claude Code, Cursor, Codex, Gemini, Windsurf,
-        Cline, Continue, Aider — can call them with no extra glue.
-      </p>
+      <DocsArticleHeader
+        eyebrow="Reference"
+        title="MCP tools"
+        lead={`Quorus exposes ${TOOLS.length} tools via the Model Context Protocol. Any MCP-capable agent — Claude Code, Cursor, Codex, Gemini, Windsurf, Cline, Continue, Aider — can call them with no extra glue.`}
+      />
 
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 mb-10">
-        <p className="text-sm text-white/70 leading-relaxed">
-          <span className="text-teal-300 font-semibold">How this works:</span>{" "}
-          your agent talks to a local MCP server over stdio. The server speaks
-          HTTP to a Quorus relay (self-hosted or hosted). Tool returns are plain
-          strings — designed to be readable in agent transcripts without
-          additional rendering.
-        </p>
-      </div>
+      <DocsP>
+        Your agent talks to a local MCP server over stdio. The server speaks
+        HTTP to a Quorus relay (self-hosted or hosted). Tool returns are plain
+        strings — designed to be readable in agent transcripts without
+        additional rendering.
+      </DocsP>
 
-      {GROUP_ORDER.map((group) => {
-        const groupTools = TOOLS.filter((t) => t.group === group);
-        if (groupTools.length === 0) return null;
-        return (
-          <section key={group} className="mb-12">
-            <h2 className="text-xs font-mono text-white/45 tracking-widest uppercase mb-4">
-              {group}
-            </h2>
-            <div className="space-y-4">
-              {groupTools.map((tool) => (
-                <ToolCard key={tool.name} tool={tool} />
-              ))}
-            </div>
-          </section>
-        );
-      })}
-
-      <p className="text-white/55 text-sm mt-10">
+      <DocsNote>
         Source of truth:{" "}
         <a
           href="https://github.com/Quorus-dev/Quorus/blob/main/packages/mcp/quorus_mcp/server.py"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-teal-300 hover:underline"
+          style={{ color: "var(--color-accent)" }}
+          className="font-mono underline-offset-4 hover:underline"
         >
           packages/mcp/quorus_mcp/server.py
         </a>
-        .
-      </p>
+      </DocsNote>
+
+      {GROUP_ORDER.map((group) => {
+        const groupTools = TOOLS.filter((t) => t.group === group);
+        if (groupTools.length === 0) return null;
+        return (
+          <section key={group} className="mt-12">
+            <DocsH2>{group}</DocsH2>
+            <dl
+              className="overflow-hidden"
+              style={{
+                borderTop: "1px solid var(--color-border-light)",
+              }}
+            >
+              {groupTools.map((tool, i) => (
+                <ToolRow key={tool.name} tool={tool} index={i} />
+              ))}
+            </dl>
+          </section>
+        );
+      })}
+
+      <DocsP>
+        Need a tool we don&apos;t ship?{" "}
+        <a
+          href="https://github.com/Quorus-dev/Quorus/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: "var(--color-accent)" }}
+          className="underline-offset-4 hover:underline"
+        >
+          Open an issue
+        </a>{" "}
+        — the tool surface is intentionally small but extensible.
+      </DocsP>
     </article>
   );
 }
 
-function ToolCard({ tool }: { tool: ToolDef }) {
+function ToolRow({ tool, index }: { tool: ToolDef; index: number }) {
+  const prefersReduced = useReducedMotion();
   return (
-    <article className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-      <h3
-        id={`tool-${tool.name}`}
-        className="font-mono text-base text-white mb-1"
-      >
-        <span className="text-teal-300">{tool.name}</span>
-      </h3>
-      <pre className="text-[12px] font-mono text-white/55 mb-3 overflow-x-auto">
-        <code>{tool.signature}</code>
-      </pre>
-      <p className="text-sm text-white/75 leading-relaxed mb-2">
-        {tool.summary}
-      </p>
-      <p className="text-[12px] text-white/45 leading-relaxed">
-        <span className="text-white/60 font-mono">returns: </span>
-        {tool.returns}
-      </p>
-    </article>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.3 }}
+      transition={{
+        duration: prefersReduced ? 0 : 0.45,
+        delay: prefersReduced ? 0 : index * 0.04,
+        ease: EASE,
+      }}
+      className="grid grid-cols-1 gap-3 py-5 md:grid-cols-[180px_minmax(0,1fr)] md:gap-6"
+      style={{ borderBottom: "1px solid var(--color-border-light)" }}
+    >
+      <dt className="min-w-0">
+        <code
+          id={`tool-${tool.name}`}
+          className="font-mono text-[14px]"
+          style={{ color: "var(--color-accent)" }}
+        >
+          {tool.name}
+        </code>
+      </dt>
+      <dd className="min-w-0">
+        <pre
+          className="mb-2 overflow-x-auto font-mono text-[12px] leading-[1.55]"
+          style={{ color: "var(--color-text-on-cream-muted)", margin: 0 }}
+        >
+          <code>{tool.signature}</code>
+        </pre>
+        <p
+          className="text-[15px] leading-[1.6]"
+          style={{ color: "var(--color-text-on-cream-secondary)" }}
+        >
+          {tool.summary}
+        </p>
+        <p
+          className="mt-2 text-[13px] leading-[1.55]"
+          style={{ color: "var(--color-text-on-cream-muted)" }}
+        >
+          <span className="font-mono">returns: </span>
+          {tool.returns}
+        </p>
+      </dd>
+    </motion.div>
   );
 }

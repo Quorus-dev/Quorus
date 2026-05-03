@@ -1,96 +1,470 @@
 import { useEffect } from "react";
-import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import Nav from "../components/Nav";
-import Footer from "../components/Footer";
+import CTADark from "../components/CTADark";
+import FooterV2 from "../components/FooterV2";
+import PricingTable from "../components/PricingTable";
+import PricingFaq from "../components/PricingFaq";
 
-interface Plan {
+const COLORS = {
+  cream: "#f5f1ea",
+  ink: "#0a0a0f",
+  borderLight: "rgba(10,10,15,0.08)",
+  borderLightStrong: "rgba(10,10,15,0.12)",
+  textPrimary: "#0a0a0f",
+  textSecondary: "#4a4a52",
+  textMuted: "#7a7a82",
+  accent: "#0d4d4a",
+} as const;
+
+const EASE = [0.16, 1, 0.3, 1] as const;
+const SANS = "'Plus Jakarta Sans', system-ui, sans-serif";
+const MONO = "'JetBrains Mono', ui-monospace, monospace";
+
+interface Tier {
   name: string;
+  eyebrow: string;
   price: string;
   cadence: string;
-  blurb: string;
-  features: string[];
+  tagline: string;
   cta: { label: string; href: string; external?: boolean };
-  accent?: boolean;
+  features: string[];
+  recommended?: boolean;
 }
 
-const PLANS: Plan[] = [
+const TIERS: Tier[] = [
   {
     name: "Free",
+    eyebrow: "INDIVIDUAL",
     price: "$0",
     cadence: "forever",
-    blurb: "For solo builders and side projects. Public relay, no card.",
-    features: [
-      "3 agents per room",
-      "Public relay (quorus.dev)",
-      "Rooms, locks, SSE push",
-      "MCP tools, full source",
-      "Community support",
-    ],
+    tagline: "For solo builders running a couple of agents on the side.",
     cta: {
       label: "Start free",
       href: "https://github.com/Quorus-dev/Quorus",
       external: true,
     },
+    features: [
+      "3 active rooms",
+      "5 agents per room",
+      "Public relay (quorus.dev)",
+      "All 12 MCP coordination tools",
+      "Distributed locks + shared state",
+      "Community support on Discord",
+    ],
   },
   {
     name: "Pro",
+    eyebrow: "RECOMMENDED",
     price: "$20",
-    cadence: "/agent/month",
-    blurb: "For working engineers running larger swarms.",
-    features: [
-      "Unlimited agents per room",
-      "Private rooms, custom relay",
-      "Audit log + replay",
-      "Priority distributed locks",
-      "Email support",
-    ],
+    cadence: "/ user / month",
+    tagline:
+      "For working engineers running real swarms across Claude, Cursor, and Codex.",
     cta: {
-      label: "Join waitlist",
+      label: "Join the waitlist",
       href: "mailto:hi@quorus.dev?subject=Pro%20waitlist",
     },
-    accent: true,
+    features: [
+      "50 active rooms",
+      "25 agents per room",
+      "99.9% SSE delivery SLA",
+      "30-day audit log + replay",
+      "Workspace admin + roles",
+      "US / EU data residency",
+      "Email support · 1-day response",
+    ],
+    recommended: true,
   },
   {
-    name: "Team",
-    price: "$200",
-    cadence: "/month flat",
-    blurb: "For teams shipping with mixed Claude / Cursor / Codex stacks.",
-    features: [
-      "5 humans + 25 agents",
-      "Self-hosted relay (Fly / Railway)",
-      "SSO + workspace admin",
-      "SLA on the public relay",
-      "Slack/Discord support",
-    ],
+    name: "Enterprise",
+    eyebrow: "TEAM",
+    price: "Custom",
+    cadence: "annual",
+    tagline:
+      "For platform teams shipping coordinated agents in regulated environments.",
     cta: {
       label: "Talk to us",
-      href: "mailto:hi@quorus.dev?subject=Team%20plan",
+      href: "mailto:hi@quorus.dev?subject=Enterprise",
     },
+    features: [
+      "Unlimited rooms + agents",
+      "Dedicated relay, your region",
+      "SSO (SAML / OIDC) + SCIM",
+      "99.99% delivery SLA",
+      "Custom MSA, DPA, BAA",
+      "Onboarding + dedicated channel",
+    ],
   },
 ];
 
-const FAQ: { q: string; a: string }[] = [
-  {
-    q: "Is this live today?",
-    a: "Quorus is open-source and the public relay is live. Paid plans are forward-looking — Pro and Team open as the relay graduates from open beta. Free will always exist.",
-  },
-  {
-    q: "What counts as an agent?",
-    a: "Any client that joins a room — Claude Code, Cursor, Codex, a script, an MCP server, anything that holds a session. Humans don't count as agents.",
-  },
-  {
-    q: "Can I self-host?",
-    a: "Yes. The relay is one Python process — pipx install, set the URL, done. Self-hosted is free forever; paid plans cover the managed relay and admin tooling.",
-  },
-  {
-    q: "MIT, really?",
-    a: "Yes. Code, MCP server, CLI, TUI — all MIT. Forks welcome.",
-  },
-];
+/* ── Tiny SVG icons — no Lucide, no emoji ─────────────────────────────────── */
+
+function CheckIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden
+      style={{ flexShrink: 0, marginTop: 4 }}
+    >
+      <path
+        d="M3.5 8.5l3 3 6-6"
+        stroke={COLORS.accent}
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ArrowIcon({ color }: { color: string }) {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 12 12"
+      fill="none"
+      aria-hidden
+      style={{ marginLeft: 4 }}
+    >
+      <path
+        d="M3 9l6-6M9 3H4.5M9 3v4.5"
+        stroke={color}
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+
+function Hero() {
+  return (
+    <section
+      aria-labelledby="pricing-heading"
+      className="relative w-full overflow-hidden"
+      style={{ backgroundColor: COLORS.cream }}
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-32 -right-32 h-[480px] w-[480px] rounded-full"
+        style={{
+          background:
+            "radial-gradient(circle at 70% 30%, rgba(13,77,74,0.05), transparent 60%)",
+        }}
+      />
+      <div className="relative mx-auto max-w-4xl px-6 pt-32 pb-20 text-center md:pt-40 md:pb-24">
+        <motion.p
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: EASE }}
+          className="text-[11px] uppercase"
+          style={{
+            color: COLORS.accent,
+            fontFamily: MONO,
+            letterSpacing: "0.22em",
+          }}
+        >
+          Pricing
+        </motion.p>
+        <motion.h1
+          id="pricing-heading"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, delay: 0.05, ease: EASE }}
+          className="mt-5 text-balance"
+          style={{
+            color: COLORS.textPrimary,
+            fontFamily: SANS,
+            fontWeight: 600,
+            letterSpacing: "-0.022em",
+            lineHeight: 0.98,
+            fontSize: "clamp(44px, 6vw, 76px)",
+          }}
+        >
+          Build with the relay.
+          <br />
+          Pay when you&apos;re real.
+        </motion.h1>
+        <motion.p
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.15, ease: EASE }}
+          className="mx-auto mt-6 max-w-xl text-pretty"
+          style={{
+            color: COLORS.textSecondary,
+            fontFamily: SANS,
+            fontSize: 18,
+            lineHeight: 1.55,
+          }}
+        >
+          Quorus is open source and free to self-host. The hosted relay scales
+          with your team — same primitives, more shoulders.
+        </motion.p>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.25, ease: EASE }}
+          className="mt-7"
+        >
+          <a
+            href="https://github.com/Quorus-dev/Quorus"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center text-[13px] transition-colors duration-200"
+            style={{ color: COLORS.accent, fontFamily: MONO }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.color = COLORS.textPrimary)
+            }
+            onMouseLeave={(e) => (e.currentTarget.style.color = COLORS.accent)}
+          >
+            View open-source repo
+            <ArrowIcon color="currentColor" />
+          </a>
+        </motion.div>
+      </div>
+    </section>
+  );
+}
+
+/* ── Tier cards ───────────────────────────────────────────────────────────── */
+
+function CtaButton({
+  href,
+  external,
+  emphasis,
+  children,
+}: {
+  href: string;
+  external?: boolean;
+  emphasis?: boolean;
+  children: React.ReactNode;
+}) {
+  const sharedStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 44,
+    width: "100%",
+    borderRadius: 12,
+    fontFamily: SANS,
+    fontSize: 14,
+    fontWeight: 500,
+    letterSpacing: "-0.005em",
+    transition:
+      "transform 200ms cubic-bezier(0.16,1,0.3,1), background-color 200ms",
+    marginTop: 28,
+  };
+
+  const emphasisStyle: React.CSSProperties = emphasis
+    ? { backgroundColor: COLORS.ink, color: COLORS.cream }
+    : {
+        backgroundColor: "transparent",
+        color: COLORS.textPrimary,
+        border: `1px solid ${COLORS.borderLightStrong}`,
+      };
+
+  const onMouseEnter = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.currentTarget.style.transform = "translateY(-1px)";
+    if (!emphasis) {
+      e.currentTarget.style.backgroundColor = "rgba(10,10,15,0.04)";
+    }
+  };
+  const onMouseLeave = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.currentTarget.style.transform = "translateY(0)";
+    if (!emphasis) {
+      e.currentTarget.style.backgroundColor = "transparent";
+    }
+  };
+
+  if (external) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ ...sharedStyle, ...emphasisStyle }}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
+        {children}
+      </a>
+    );
+  }
+  return (
+    <a
+      href={href}
+      style={{ ...sharedStyle, ...emphasisStyle }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      {children}
+    </a>
+  );
+}
+
+function TierCard({ tier, index }: { tier: Tier; index: number }) {
+  const recommended = !!tier.recommended;
+  const isExternal = !!tier.cta.external;
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.3 }}
+      transition={{ duration: 0.6, delay: index * 0.08, ease: EASE }}
+      className="relative flex flex-col"
+      style={{
+        backgroundColor: recommended
+          ? "rgba(13,77,74,0.025)"
+          : "rgba(255,255,255,0.45)",
+        border: `1px solid ${
+          recommended ? "rgba(13,77,74,0.35)" : COLORS.borderLight
+        }`,
+        borderRadius: 12,
+        padding: recommended ? "36px 28px" : "28px",
+        marginTop: recommended ? -12 : 0,
+        boxShadow: recommended ? "0 12px 32px rgba(13,77,74,0.08)" : "none",
+      }}
+    >
+      <div className="flex items-center justify-between">
+        <p
+          className="text-[11px] uppercase"
+          style={{
+            color: recommended ? COLORS.accent : COLORS.textMuted,
+            fontFamily: MONO,
+            letterSpacing: "0.22em",
+          }}
+        >
+          {tier.eyebrow}
+        </p>
+        {recommended && (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase"
+            style={{
+              color: COLORS.cream,
+              backgroundColor: COLORS.accent,
+              fontFamily: MONO,
+              letterSpacing: "0.18em",
+            }}
+          >
+            Most teams
+          </span>
+        )}
+      </div>
+
+      <h3
+        className="mt-5"
+        style={{
+          color: COLORS.textPrimary,
+          fontFamily: SANS,
+          fontSize: 28,
+          fontWeight: 600,
+          letterSpacing: "-0.022em",
+          lineHeight: 1.1,
+        }}
+      >
+        {tier.name}
+      </h3>
+
+      <p
+        className="mt-2 text-[14px] leading-[1.55]"
+        style={{ color: COLORS.textSecondary, fontFamily: SANS }}
+      >
+        {tier.tagline}
+      </p>
+
+      <div className="mt-7 flex items-baseline gap-2">
+        <span
+          style={{
+            color: COLORS.textPrimary,
+            fontFamily: SANS,
+            fontSize: 44,
+            fontWeight: 600,
+            letterSpacing: "-0.022em",
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+          }}
+        >
+          {tier.price}
+        </span>
+        <span
+          className="text-[13px]"
+          style={{ color: COLORS.textMuted, fontFamily: MONO }}
+        >
+          {tier.cadence}
+        </span>
+      </div>
+
+      <CtaButton
+        href={tier.cta.href}
+        external={isExternal}
+        emphasis={recommended}
+      >
+        {tier.cta.label}
+      </CtaButton>
+
+      <ul className="mt-7 flex flex-1 flex-col">
+        {tier.features.map((f, idx) => (
+          <li
+            key={f}
+            className="flex items-start gap-3 py-3"
+            style={{
+              borderTop: idx === 0 ? "none" : `1px solid ${COLORS.borderLight}`,
+            }}
+          >
+            <CheckIcon />
+            <span
+              className="text-[13.5px] leading-[1.5]"
+              style={{ color: COLORS.textSecondary, fontFamily: SANS }}
+            >
+              {f}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </motion.article>
+  );
+}
+
+function TierGrid() {
+  return (
+    <section
+      aria-labelledby="tiers-heading"
+      className="relative w-full"
+      style={{ backgroundColor: COLORS.cream }}
+    >
+      <h2 id="tiers-heading" className="sr-only">
+        Pricing tiers
+      </h2>
+      <div className="mx-auto max-w-7xl px-6 pb-24 md:pb-32">
+        <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-3 md:gap-6">
+          {TIERS.map((tier, i) => (
+            <TierCard key={tier.name} tier={tier} index={i} />
+          ))}
+        </div>
+        <p
+          className="mt-10 text-center text-[12px]"
+          style={{
+            color: COLORS.textMuted,
+            fontFamily: MONO,
+            letterSpacing: "0.04em",
+          }}
+        >
+          All prices in USD · cancel any time · no card required to start
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/* ── Page ─────────────────────────────────────────────────────────────────── */
 
 export default function Pricing() {
-  // Per-route meta. Updates the document head on mount; restored on unmount.
   useEffect(() => {
     const prevTitle = document.title;
     document.title = "Pricing — Quorus";
@@ -98,7 +472,7 @@ export default function Pricing() {
     const prevDesc = desc?.getAttribute("content") ?? null;
     desc?.setAttribute(
       "content",
-      "Quorus pricing — free for solo builders, $20/agent/mo for Pro, $200/mo flat for teams. Self-hosted is free forever.",
+      "Quorus pricing — open source and free to self-host. Hosted Free, Pro at $20/user/mo, and Enterprise with SSO and dedicated relay.",
     );
     return () => {
       document.title = prevTitle;
@@ -109,198 +483,15 @@ export default function Pricing() {
   return (
     <main
       id="main"
-      className="min-h-screen flex flex-col"
-      style={{ background: "var(--background)" }}
+      className="min-h-screen"
+      style={{ backgroundColor: COLORS.cream }}
     >
-      <Nav />
-
-      <section className="relative pt-32 pb-16 px-6 overflow-hidden">
-        {/* Ambient gradient */}
-        <div
-          aria-hidden="true"
-          className="absolute pointer-events-none"
-          style={{
-            inset: 0,
-            background:
-              "radial-gradient(ellipse 60% 50% at 50% 0%, rgba(20,184,166,0.10) 0%, transparent 70%)",
-          }}
-        />
-
-        <div className="relative max-w-6xl mx-auto text-center">
-          <motion.p
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="text-xs font-mono text-teal-300 tracking-[0.2em] uppercase mb-4"
-          >
-            Pricing · Forward-looking
-          </motion.p>
-          <motion.h1
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.05 }}
-            className="text-5xl md:text-6xl font-bold tracking-[-0.03em] text-white mb-5"
-          >
-            Free for builders.
-            <span className="block gradient-text">Fair for teams.</span>
-          </motion.h1>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.7, delay: 0.15 }}
-            className="text-white/60 text-base md:text-lg max-w-2xl mx-auto"
-          >
-            Self-hosted is free forever. Managed plans below are how we keep the
-            public relay fast.
-          </motion.p>
-        </div>
-      </section>
-
-      <section className="px-6 pb-20">
-        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-5">
-          {PLANS.map((plan, i) => (
-            <motion.article
-              key={plan.name}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: i * 0.08 }}
-              className={`relative rounded-2xl border p-6 flex flex-col ${
-                plan.accent
-                  ? "border-teal-500/40 bg-teal-500/[0.04] shadow-[0_0_60px_-20px_rgba(20,184,166,0.5)]"
-                  : "border-white/10 bg-white/[0.02]"
-              }`}
-            >
-              {plan.accent && (
-                <span className="absolute -top-3 left-6 px-2.5 py-0.5 rounded-full bg-teal-500 text-[10px] font-mono font-semibold text-black tracking-widest uppercase">
-                  Recommended
-                </span>
-              )}
-
-              <h2 className="text-lg font-semibold text-white tracking-tight mb-1">
-                {plan.name}
-              </h2>
-              <p className="text-sm text-white/50 mb-5">{plan.blurb}</p>
-
-              <div className="flex items-baseline gap-1 mb-6">
-                <span className="text-4xl font-bold tracking-tight text-white tabular-nums">
-                  {plan.price}
-                </span>
-                <span className="text-sm text-white/45 font-mono">
-                  {plan.cadence}
-                </span>
-              </div>
-
-              <ul className="space-y-2.5 mb-8 flex-1">
-                {plan.features.map((f) => (
-                  <li
-                    key={f}
-                    className="flex items-start gap-2.5 text-sm text-white/75"
-                  >
-                    <svg
-                      className="w-4 h-4 mt-0.5 shrink-0 text-teal-400"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M16.7 5.3a1 1 0 010 1.4l-7.5 7.5a1 1 0 01-1.4 0L3.3 9.7a1 1 0 011.4-1.4L8.5 12 15.3 5.3a1 1 0 011.4 0z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                    <span>{f}</span>
-                  </li>
-                ))}
-              </ul>
-
-              {plan.cta.external ? (
-                <a
-                  href={plan.cta.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`text-center rounded-full px-4 py-2.5 text-sm font-semibold transition-all focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 ${
-                    plan.accent
-                      ? "bg-teal-500 hover:bg-teal-400 text-black shadow-[0_0_24px_rgba(20,184,166,0.4)]"
-                      : "bg-white/[0.06] hover:bg-white/[0.12] text-white border border-white/10"
-                  }`}
-                >
-                  {plan.cta.label}
-                </a>
-              ) : (
-                <a
-                  href={plan.cta.href}
-                  className={`text-center rounded-full px-4 py-2.5 text-sm font-semibold transition-all focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2 ${
-                    plan.accent
-                      ? "bg-teal-500 hover:bg-teal-400 text-black shadow-[0_0_24px_rgba(20,184,166,0.4)]"
-                      : "bg-white/[0.06] hover:bg-white/[0.12] text-white border border-white/10"
-                  }`}
-                >
-                  {plan.cta.label}
-                </a>
-              )}
-            </motion.article>
-          ))}
-        </div>
-
-        <p className="text-center text-xs text-white/40 mt-10 font-mono">
-          Self-host the relay yourself — it&apos;s one Python process. Forever
-          free.
-        </p>
-      </section>
-
-      <section className="px-6 pb-28">
-        <div className="max-w-3xl mx-auto">
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-8 text-center">
-            Common questions
-          </h2>
-          <dl className="space-y-5">
-            {FAQ.map((item) => (
-              <div
-                key={item.q}
-                className="rounded-xl border border-white/10 bg-white/[0.02] p-5"
-              >
-                <dt className="text-white font-semibold mb-1.5">{item.q}</dt>
-                <dd className="text-sm text-white/65 leading-relaxed">
-                  {item.a}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </section>
-
-      <section className="px-6 pb-24">
-        <div className="max-w-3xl mx-auto text-center rounded-2xl border border-teal-500/30 bg-teal-500/[0.04] p-10">
-          <h2 className="text-3xl font-bold tracking-tight text-white mb-3">
-            Start free.
-          </h2>
-          <p className="text-white/60 mb-7">
-            One pipx install. No account. Three agents in a room in under a
-            minute.
-          </p>
-          <Link
-            to="/docs/quickstart"
-            className="inline-flex items-center gap-2 rounded-full bg-teal-500 hover:bg-teal-400 text-black font-semibold px-5 py-2.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-teal-400 focus-visible:outline-offset-2"
-          >
-            Read the quickstart
-            <svg
-              className="w-4 h-4"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              aria-hidden="true"
-            >
-              <path
-                fillRule="evenodd"
-                d="M7.3 5.3a1 1 0 011.4 0l4 4a1 1 0 010 1.4l-4 4a1 1 0 01-1.4-1.4L10.6 10 7.3 6.7a1 1 0 010-1.4z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </Link>
-        </div>
-      </section>
-
-      <Footer />
+      <Hero />
+      <TierGrid />
+      <PricingTable />
+      <PricingFaq />
+      <CTADark />
+      <FooterV2 />
     </main>
   );
 }
