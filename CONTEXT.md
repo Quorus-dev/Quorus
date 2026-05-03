@@ -138,6 +138,7 @@ the April 23 2026 hackathon failure mode where `pytest` was green but
 
 | Date       | What                                                                           |
 | ---------- | ------------------------------------------------------------------------------ |
+| 2026-05-03 | feat: reflexd-manager — multi-agent supervisor + launchd plist auto-restart    |
 | 2026-05-03 | fix: register-agent 500 + 5xx retry + reflexd participant assert + bulk revoke |
 | 2026-05-03 | fix: TUI header + send error surfaces + chat_identity dead-code cleanup        |
 | 2026-05-02 | feat: Reflex PR-C1+C2+C3 + Phase 2 self-assignment + iMessage TUI polish       |

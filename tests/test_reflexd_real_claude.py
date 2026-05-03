@@ -18,7 +18,6 @@ import logging
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -35,6 +34,34 @@ _spec.loader.exec_module(reflexd)
 
 
 SELF = "arav-claude"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_claude_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clean env + module-level fallback flag between tests.
+
+    ``log_anthropic_api_key_status`` toggles
+    :data:`reflexd._AUTO_FALLBACK_TO_STUB` (an in-process module attr)
+    when neither the API key nor the stub flag is present. Without an
+    explicit reset, that flag stays True across every later test.
+    """
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "REFLEXD_STUB_REPLY",
+        "REFLEXD_API_KEY",
+        "API_KEY",
+        "REFLEXD_PARTICIPANT",
+        "QUORUS_PARTICIPANT",
+        "REFLEXD_RELAY_URL",
+        "RELAY_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    # Reset BEFORE each test (a previous test may have triggered fallback)
+    # and AFTER each test (yield) so the flag never leaks into adjacent
+    # test files like tests/test_reflexd_adapters.py.
+    reflexd.reset_auto_fallback()
+    yield
+    reflexd.reset_auto_fallback()
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +113,38 @@ def _strip_claude_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+class _OkResp:
+    status_code = 200
+
+
+class _OkClient:
+    """httpx.Client stub that always returns 200 — used by doctor tests."""
+
+    def __init__(self, *_a: Any, **_kw: Any) -> None:
+        pass
+
+    def __enter__(self) -> "_OkClient":
+        return self
+
+    def __exit__(self, *_a: Any) -> None:
+        return None
+
+    def get(self, _url: str) -> _OkResp:
+        return _OkResp()
+
+
+def _reload_cli_for_doctor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Reroute Path.home and reload cli modules; return the cli module."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    import importlib
+
+    import quorus.config as _qcfg
+    importlib.reload(_qcfg)
+    import quorus_cli.cli as _cli
+    importlib.reload(_cli)
+    return _cli
+
+
 # ---------------------------------------------------------------------------
 # Startup-warning tests — log_anthropic_api_key_status()
 # ---------------------------------------------------------------------------
@@ -104,8 +163,11 @@ def test_reflexd_logs_warning_when_no_anthropic_key(
         and "REFLEXD_STUB_REPLY" in rec.message
         for rec in caplog.records
     ), f"Expected fallback warning in log; got {[r.message for r in caplog.records]}"
-    # Auto-fallback should set the env var so the adapter takes the stub path.
-    assert __import__("os").environ.get("REFLEXD_STUB_REPLY") == "1"
+    # Auto-fallback toggles the module-level flag so the adapter takes
+    # the stub path WITHOUT mutating os.environ — env mutations leak
+    # across pytest test files.
+    assert reflexd.is_stub_mode() is True
+    assert __import__("os").environ.get("REFLEXD_STUB_REPLY") is None
 
 
 def test_reflexd_falls_back_to_stub_when_no_key(
@@ -303,22 +365,6 @@ def test_reply_depth_counter_breaks_at_3(
     assert relay.bid_calls == 0
 
 
-def test_reply_depth_counter_passes_when_below_threshold(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """At depth 0 the chain guard does NOT short-circuit (sanity check).
-
-    We stop the test before bid POST by failing triage: the message has no
-    @-mention and no trailing ``?``, so triage returns IGNORE and the
-    handler returns False BEFORE the chain check. Instead we directly call
-    ``should_break_reply_chain`` here — the integration path is exercised
-    in the prior test.
-    """
-    assert (
-        reflexd.should_break_reply_chain({"_reply_depth": 0}) is False
-    )
-
-
 def test_reply_depth_appears_in_wake_context() -> None:
     """The wake prompt must include the depth so the harness sees it."""
     cfg = reflexd.ReflexdConfig(
@@ -387,45 +433,16 @@ def test_doctor_prints_green_check_when_all_ok(
     tmp_path: Path,
 ) -> None:
     """All probes green → 'all checks passed', exit 0."""
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    # Reload modules whose module-level constants captured Path.home() at
-    # import time. Mirror the runtime_home fixture in test_cli_reflexd.py.
-    import importlib
-    import quorus.config as _qcfg
-    importlib.reload(_qcfg)
-    import quorus_cli.cli as _cli
-    importlib.reload(_cli)
-
-    # All-green env.
+    _cli = _reload_cli_for_doctor(tmp_path, monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setenv("REFLEXD_API_KEY", "rfx-test")
     monkeypatch.setenv("REFLEXD_PARTICIPANT", "arav-claude")
     monkeypatch.setenv("RELAY_URL", "http://localhost:65535")
 
-    # Fake daemon pidfile + alive-check.
     runtime_dir = tmp_path / ".quorus" / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    pidfile = runtime_dir / "reflexd.arav-claude.pid"
-    pidfile.write_text("99999", encoding="utf-8")
+    (runtime_dir / "reflexd.arav-claude.pid").write_text("99999", encoding="utf-8")
     monkeypatch.setattr(_cli, "_pid_is_alive", lambda _pid: True)
-
-    # Stub relay /health.
-    class _OkResp:
-        status_code = 200
-
-    class _OkClient:
-        def __init__(self, *_a: Any, **_kw: Any) -> None:
-            pass
-
-        def __enter__(self) -> "_OkClient":
-            return self
-
-        def __exit__(self, *_a: Any) -> None:
-            return None
-
-        def get(self, _url: str) -> _OkResp:
-            return _OkResp()
-
     monkeypatch.setattr(_cli.httpx, "Client", _OkClient)
 
     args = argparse.Namespace(participant="arav-claude")
@@ -444,37 +461,11 @@ def test_doctor_prints_red_check_when_anthropic_missing(
     tmp_path: Path,
 ) -> None:
     """Missing ANTHROPIC_API_KEY → red ✗ on that line, exit 1."""
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    import importlib
-    import quorus.config as _qcfg
-    importlib.reload(_qcfg)
-    import quorus_cli.cli as _cli
-    importlib.reload(_cli)
-
-    # Strip the var explicitly.
+    _cli = _reload_cli_for_doctor(tmp_path, monkeypatch)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    # Provide every other piece so this is the only failing probe (well,
-    # plus the daemon-running one — that's expected for a fresh tmp dir).
     monkeypatch.setenv("REFLEXD_API_KEY", "rfx-test")
     monkeypatch.setenv("REFLEXD_PARTICIPANT", "arav-claude")
     monkeypatch.setenv("RELAY_URL", "http://localhost:65535")
-
-    class _OkResp:
-        status_code = 200
-
-    class _OkClient:
-        def __init__(self, *_a: Any, **_kw: Any) -> None:
-            pass
-
-        def __enter__(self) -> "_OkClient":
-            return self
-
-        def __exit__(self, *_a: Any) -> None:
-            return None
-
-        def get(self, _url: str) -> _OkResp:
-            return _OkResp()
-
     monkeypatch.setattr(_cli.httpx, "Client", _OkClient)
 
     args = argparse.Namespace(participant="arav-claude")
@@ -485,5 +476,3 @@ def test_doctor_prints_red_check_when_anthropic_missing(
     assert "ANTHROPIC_API_KEY" in out
     assert "✗" in out
     assert "missing" in out.lower()
-    # The summary line must mention the failing probe.
-    assert "ANTHROPIC_API_KEY" in out

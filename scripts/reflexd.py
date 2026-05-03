@@ -330,6 +330,33 @@ def probe_harness_version(harness: str, *, timeout_s: float = 3.0) -> str | None
     return None
 
 
+# Module-level fallback flag. Set by ``log_anthropic_api_key_status`` when
+# we auto-fallback to stub mode (no key + no explicit stub flag). The
+# adapter's run() consults this OR the env var so the fallback works
+# whether the daemon was bootstrapped through cmd_start (which calls the
+# logger) or driven directly from a test (which sets env).
+_AUTO_FALLBACK_TO_STUB = False
+
+
+def reset_auto_fallback() -> None:
+    """Test seam: reset the module-level auto-fallback flag.
+
+    Production code never calls this; the daemon process is short-lived so
+    in-memory state never crosses runs. Tests need it because the flag is
+    set by ``log_anthropic_api_key_status`` and persists in the imported
+    module across tests in the same process.
+    """
+    global _AUTO_FALLBACK_TO_STUB
+    _AUTO_FALLBACK_TO_STUB = False
+
+
+def is_stub_mode() -> bool:
+    """True iff the adapter should reply with the stub instead of the SDK."""
+    if os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes"):
+        return True
+    return _AUTO_FALLBACK_TO_STUB
+
+
 def log_anthropic_api_key_status() -> str:
     """Emit one startup line announcing whether the real-claude path is wired.
 
@@ -341,13 +368,14 @@ def log_anthropic_api_key_status() -> str:
       attempt a real call. Logs an INFO line.
     * ``"fallback-stub"`` — neither is set. We auto-fall-back to stub mode
       so the daemon doesn't refuse to start, but we log a WARNING so the
-      operator sees how to upgrade. The auto-fallback is implemented by
-      setting ``REFLEXD_STUB_REPLY=1`` in-process — that's the same flag
-      the adapter checks on every wake.
-
-    Returning the state lets ``cmd_start`` skip a redundant probe and lets
-    tests assert on the chosen branch without reading the log.
+      operator sees how to upgrade. The auto-fallback is implemented via
+      :data:`_AUTO_FALLBACK_TO_STUB` — a module-level flag that
+      :meth:`HeadlessAdapter.run` consults alongside ``REFLEXD_STUB_REPLY``.
+      We deliberately do NOT mutate ``os.environ`` because env mutations
+      leak across pytest test files and the adapter contract tests
+      assume a clean environment.
     """
+    global _AUTO_FALLBACK_TO_STUB
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     has_stub = os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes")
     if has_key:
@@ -369,7 +397,7 @@ def log_anthropic_api_key_status() -> str:
         "Reflexd will fall back to stub replies. To enable real Claude "
         "replies: export ANTHROPIC_API_KEY=sk-ant-..."
     )
-    os.environ.setdefault("REFLEXD_STUB_REPLY", "1")
+    _AUTO_FALLBACK_TO_STUB = True
     return "fallback-stub"
 
 
@@ -512,8 +540,10 @@ class HeadlessAdapter:
 
     async def run(self, harness: str, *, context: str) -> str:
         # Smoke / demo path: avoid spawning any real harness. ~10 LoC, off
-        # the regular path, only triggered by an explicit env var.
-        if os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes"):
+        # the regular path. Triggered by an explicit env var OR by the
+        # module-level auto-fallback flag set when ANTHROPIC_API_KEY is
+        # missing at startup. ``is_stub_mode`` consults both.
+        if is_stub_mode():
             return self._stub_reply(context)
         if self.dry_run:
             return self._record_dry_run(harness, context)

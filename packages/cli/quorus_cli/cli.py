@@ -1610,7 +1610,13 @@ def _cmd_reflexd_manager(args):
 
 
 def _manager_start(args) -> None:
-    """Daemonize the supervisor (one PID supervising N reflexd children)."""
+    """Daemonize the supervisor (one PID supervising N reflexd children).
+
+    Without ``--foreground``, the supervisor double-forks via ``Popen`` with
+    ``start_new_session=True`` so it survives the CLI exiting. The watchdog
+    runs inside that detached process. Foreground mode is what launchd /
+    systemd uses — we stay in the foreground and react to SIGTERM.
+    """
     import time as _time
 
     from quorus.runtime.supervisor import Supervisor
@@ -1639,45 +1645,90 @@ def _manager_start(args) -> None:
     _REFLEXD_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     _SUPERVISOR_LOG.parent.mkdir(parents=True, exist_ok=True)
 
+    foreground = bool(getattr(args, "foreground", False))
+    detach = bool(getattr(args, "detach", False))
+    # Default behaviour: detach. ``--foreground`` is the explicit opt-out
+    # (used by launchd/systemd), and ``--detach`` is just an alias kept
+    # for parity with ``quorus reflexd start``.
+    should_detach = (not foreground) or detach
+
+    if should_detach and not os.environ.get("_QUORUS_MGR_INTERNAL_FOREGROUND"):
+        # Re-exec ourselves with --foreground in a fresh session group. The
+        # child becomes the long-lived supervisor; the CLI parent exits.
+        env = os.environ.copy()
+        env["_QUORUS_MGR_INTERNAL_FOREGROUND"] = "1"
+        cmd = [sys.executable, "-m", "quorus_cli.cli", "reflexd-manager", "start",
+               "--foreground"]
+        if getattr(args, "participants", None):
+            cmd.extend(["--participants", args.participants])
+        try:
+            log_fp = open(_SUPERVISOR_LOG, "ab", buffering=0)
+        except OSError as exc:
+            _ui.error(f"reflexd-manager: cannot open {_SUPERVISOR_LOG}: {exc}")
+            raise SystemExit(1) from exc
+        try:
+            proc = subprocess.Popen(  # noqa: S603 — args program-controlled
+                cmd, env=env, stdin=subprocess.DEVNULL,
+                stdout=log_fp, stderr=log_fp,
+                start_new_session=True, close_fds=True,
+            )
+        finally:
+            log_fp.close()
+        _time.sleep(0.4)  # let the child write its pidfile + spawn children
+        if not _pid_is_alive(proc.pid):
+            _ui.error(
+                "reflexd-manager: supervisor exited immediately. Check the log.",
+                hint=f"tail [accent]{_SUPERVISOR_LOG}[/]",
+            )
+            raise SystemExit(1)
+        # Read the children's PIDs out of the persisted state file.
+        sup_view = Supervisor(participants, runtime_dir=_REFLEXD_RUNTIME_DIR)
+        sup_view._load()  # type: ignore[attr-defined]
+        spawned = {p: r.pid for p, r in sup_view._children.items()}  # type: ignore[attr-defined]
+        console.print(
+            f"[dim]reflexd-manager:[/] STARTED "
+            f"supervisor=[accent]{proc.pid}[/] children=[primary]{len(spawned)}[/]"
+        )
+        for name, pid in sorted(spawned.items()):
+            console.print(f"  [muted]•[/] [primary]{name}[/] [dim]pid={pid}[/]")
+        return
+
+    # Foreground (or detached child re-entering with the env flag set):
+    # become the long-lived supervisor.
     sup = Supervisor(participants, api_keys=api_keys, relay_url=relay_url)
     spawned = sup.start_all()
     sup.start_watchdog()
-
     _SUPERVISOR_PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
     try:
         os.chmod(_SUPERVISOR_PIDFILE, 0o600)
     except OSError:
         pass
+    if not os.environ.get("_QUORUS_MGR_INTERNAL_FOREGROUND"):
+        console.print(
+            f"[dim]reflexd-manager:[/] STARTED (foreground) "
+            f"supervisor=[accent]{os.getpid()}[/] children=[primary]{len(spawned)}[/]"
+        )
+        for name, pid in sorted(spawned.items()):
+            console.print(f"  [muted]•[/] [primary]{name}[/] [dim]pid={pid}[/]")
 
-    console.print(
-        f"[dim]reflexd-manager:[/] STARTED "
-        f"supervisor=[accent]{os.getpid()}[/] children=[primary]{len(spawned)}[/]"
-    )
-    for name, pid in sorted(spawned.items()):
-        console.print(f"  [muted]•[/] [primary]{name}[/] [dim]pid={pid}[/]")
-
-    if not getattr(args, "foreground", False):
-        # The CLI wrapper itself plays the role of the supervisor process — we
-        # exit here in --detach mode (the children carry on with start_new_session).
-        if getattr(args, "detach", False):
-            return
-
-    # Foreground / launchd-managed mode: hold the supervisor alive until SIGTERM.
     import signal as _signal
+    import threading as _threading
 
-    stop_evt = {"flag": False}
+    stop_evt = _threading.Event()
 
     def _on_signal(*_a):
-        stop_evt["flag"] = True
+        stop_evt.set()
 
     _signal.signal(_signal.SIGTERM, _on_signal)
     _signal.signal(_signal.SIGINT, _on_signal)
 
     try:
-        while not stop_evt["flag"]:
-            _time.sleep(0.5)
+        # Event-based wait so SIGTERM wakes us instantly instead of after a
+        # 500ms sleep tick. Important for snappy stop semantics.
+        stop_evt.wait()
     finally:
-        sup.stop_watchdog()
+        sup.stop_watchdog(timeout=1.0)
+        sup.stop_all(grace_s=2.0)
         try:
             _SUPERVISOR_PIDFILE.unlink()
         except OSError:
