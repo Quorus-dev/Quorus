@@ -219,23 +219,15 @@ def safe_message_preview(content: str) -> str:
     return flat[: MENTION_PREVIEW_CHARS - 1] + "…"
 
 
-# ---------------------------------------------------------------------------
-# Stream B helpers — persistent memory + defer-announce + thread inheritance
-# ---------------------------------------------------------------------------
-# The helper bodies live in ``scripts/reflexd_streamb.py`` so this module
-# stays under its 1700-LoC cap. We do the same path-aware loader dance the
-# triage module uses — ``scripts/`` is not a package — and re-export the
-# names so existing call sites keep working.
-
+# Stream B helpers (memory + defer + thread + DM loop) live in a sibling
+# module to keep this file under its LoC cap. Same path-aware loader
+# pattern as reflexd_triage above.
 _STREAMB_PATH = Path(__file__).resolve().parent / "reflexd_streamb.py"
-_streamb_spec = _ilu.spec_from_file_location(
-    "reflexd_streamb", _STREAMB_PATH,
-)
+_streamb_spec = _ilu.spec_from_file_location("reflexd_streamb", _STREAMB_PATH)
 assert _streamb_spec is not None and _streamb_spec.loader is not None
 reflexd_streamb = _ilu.module_from_spec(_streamb_spec)
 sys.modules.setdefault("reflexd_streamb", reflexd_streamb)
 _streamb_spec.loader.exec_module(reflexd_streamb)
-
 MEMORY_CONTEXT_LIMIT = reflexd_streamb.MEMORY_CONTEXT_LIMIT
 render_memory_context = reflexd_streamb.render_memory_context
 summarise_reply_for_memory = reflexd_streamb.summarise_reply_for_memory
@@ -1140,10 +1132,8 @@ class Reflexd:
                 "lost or no claim room=%s id=%s winner=%s",
                 room, message_id, winner,
             )
-            # Stream B defer-announce — when we lose the auction, post a
-            # `defer(to=<winner>)` social verb so the room state machine
-            # records the dependency edge. Best-effort: a 4xx/5xx must
-            # NOT keep us from continuing the SSE loop.
+            # Stream B defer-announce: post `defer(to=<winner>)` so the
+            # room state machine records the dependency edge. Best-effort.
             if winner and winner != self.config.participant_name:
                 try:
                     await relay.post_social_defer(
@@ -1158,9 +1148,7 @@ class Reflexd:
                         winner, message_id,
                     )
                 except Exception as exc:
-                    logger.debug(
-                        "defer-announce failed (non-fatal): %s", exc,
-                    )
+                    logger.debug("defer-announce failed (non-fatal): %s", exc)
             return True
 
         await self._wake_and_reply(relay, envelope, triage=triage)
@@ -1171,19 +1159,12 @@ class Reflexd:
         self, relay: RelayClient, envelope: dict[str, Any], *,
         triage: "TriageResult | None" = None, reason: str | None = None,
     ) -> None:
-        """Render the wake context and hand it to the headless harness.
+        """Render wake context, dispatch to the harness, post the reply.
 
-        ``triage`` (Phase 2) carries the full classification so the
-        prompt can include the self-assign preamble for open tasks.
-        ``reason`` (legacy) is still accepted for callers that haven't
-        migrated yet — used only for log lines.
-
-        Stream B: prepends a "RECENT MEMORY" block from
-        ``~/.quorus/memory/<participant>/<room>.jsonl`` so the harness
-        recalls its own prior actions in the room. After a successful
-        reply, appends a 1-sentence summary back to the same file. The
-        reply itself is also tagged with ``thread_root_id`` so multi-turn
-        debates stay visually grouped in the TUI.
+        Stream B additions:
+        * loads the per-room memory log into the prompt (RECENT MEMORY block)
+        * inherits the wake envelope's thread_root_id on the reply post
+        * appends a 1-sentence memory entry after a successful POST
         """
         room = envelope.get("room") or ""
         if not self.config.spawn_enabled:
@@ -1193,15 +1174,10 @@ class Reflexd:
         history = await relay.fetch_recent(
             room=room, limit=HEARTBEAT_HISTORY_LIMIT,
         )
-
-        # Stream B memory load — best-effort. A bad/missing memory file
-        # MUST never break the wake; the reflexd memory module guards
-        # all reads with corruption recovery.
         memory_entries: list[dict[str, Any]] = []
         try:
             memory_entries = await _mem.read_recent(
-                self.config.participant_name, room,
-                n=MEMORY_CONTEXT_LIMIT,
+                self.config.participant_name, room, n=MEMORY_CONTEXT_LIMIT,
             )
         except Exception as exc:
             logger.debug("memory read failed: %s", exc)
@@ -1227,12 +1203,8 @@ class Reflexd:
             logger.info("harness produced empty reply, skipping post")
             return
 
-        # Stream B threading: if the wake envelope carried a thread root
-        # id (or the parent's own id when no root was set), inherit it
-        # so the reply stays grouped with the parent in the TUI.
         thread_root_id = envelope_thread_root(envelope)
         parent_id = envelope.get("id")
-
         try:
             posted = await relay.post_reply(
                 room=room, from_name=self.config.participant_name,
@@ -1249,7 +1221,6 @@ class Reflexd:
             logger.warning("reply POST failed: %s", exc)
             return
 
-        # Stream B memory append — only after a successful POST.
         try:
             summary = summarise_reply_for_memory(
                 envelope=envelope, reply_text=reply, triage=triage,
@@ -1348,53 +1319,20 @@ class Reflexd:
         )
 
     async def _dm_loop(self, relay: RelayClient) -> None:
-        """Background coroutine: subscribe to ``/stream/dm/{participant}``.
-
-        Mirrors the main SSE loop's reconnect/backoff dance. Lives in
-        its own task so room-message handling and DM handling can run
-        concurrently.
+        """Subscribe to ``/stream/dm/{participant}``. Body lives in
+        :mod:`reflexd_streamb` so this file stays under its LoC cap.
         """
-        backoff = SSE_RECONNECT_S
-        while not self._stop.is_set():
-            try:
-                token = await relay.mint_stream_token(
-                    self.config.participant_name,
-                )
-            except httpx.HTTPError as exc:
-                logger.warning("dm-stream token mint failed: %s", exc)
-                await self._sleep_or_stop(backoff)
-                backoff = min(backoff * 2, SSE_RECONNECT_MAX_S)
-                continue
-
-            url = relay.dm_stream_url(self.config.participant_name, token)
-            try:
-                logger.info("dm stream subscribing url=%s", url)
-                async for event_name, data in iter_sse_events(
-                    relay.client, url,
-                ):
-                    if self._stop.is_set():
-                        return
-                    if event_name == "connected":
-                        logger.info("dm stream connected")
-                        continue
-                    if event_name != "agent_dm":
-                        continue
-                    if not isinstance(data, dict):
-                        continue
-                    try:
-                        await self.handle_agent_dm(relay, data)
-                    except Exception as exc:  # pragma: no cover
-                        logger.exception("dm handler failed: %s", exc)
-                backoff = SSE_RECONNECT_S
-            except httpx.HTTPError as exc:
-                logger.warning("dm sse stream dropped: %s", exc)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # pragma: no cover
-                logger.exception("dm sse loop unexpected error: %s", exc)
-
-            await self._sleep_or_stop(backoff)
-            backoff = min(backoff * 2, SSE_RECONNECT_MAX_S)
+        await reflexd_streamb.run_dm_loop(
+            relay=relay,
+            participant=self.config.participant_name,
+            on_event=self.handle_agent_dm,
+            stop_event=self._stop,
+            iter_sse_events=iter_sse_events,
+            sleep_or_stop=self._sleep_or_stop,
+            sse_reconnect_s=SSE_RECONNECT_S,
+            sse_reconnect_max_s=SSE_RECONNECT_MAX_S,
+            log=logger,
+        )
 
     async def run(self) -> None:
         """Connect, subscribe, and dispatch until ``stop()`` is called."""

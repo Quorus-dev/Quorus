@@ -276,9 +276,10 @@ async def stream_agent_dms(
     valid, tid = await sse_svc.verify_token(token, participant)
     if not valid:
         # Optional legacy fallback — kept symmetric with /stream/{recipient}.
-        from quorus.auth.middleware import ALLOW_LEGACY_AUTH
         import hmac as _hmac
         import os as _os
+
+        from quorus.auth.middleware import ALLOW_LEGACY_AUTH
         legacy_secret = _os.environ.get("RELAY_SECRET", "")
         if not (
             ALLOW_LEGACY_AUTH

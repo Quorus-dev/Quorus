@@ -98,9 +98,70 @@ def envelope_thread_root(envelope: dict[str, Any]) -> str | None:
     return None
 
 
+async def run_dm_loop(
+    *,
+    relay,  # RelayClient — typed Any to avoid circular imports
+    participant: str,
+    on_event,  # async callable: (relay, envelope) → None
+    stop_event,
+    iter_sse_events,  # callable from reflexd
+    sleep_or_stop,  # async callable: (seconds) → None
+    sse_reconnect_s: float,
+    sse_reconnect_max_s: float,
+    log,  # logger
+) -> None:
+    """Background coroutine: subscribe to ``/stream/dm/{participant}``.
+
+    Mirrors reflexd's main SSE-loop reconnect/backoff dance, but kept
+    out-of-line so reflexd.py doesn't blow its LoC budget. Failures
+    here never propagate up — every drop is logged and we just
+    re-mint a token.
+    """
+    import httpx
+
+    backoff = sse_reconnect_s
+    while not stop_event.is_set():
+        try:
+            token = await relay.mint_stream_token(participant)
+        except httpx.HTTPError as exc:
+            log.warning("dm-stream token mint failed: %s", exc)
+            await sleep_or_stop(backoff)
+            backoff = min(backoff * 2, sse_reconnect_max_s)
+            continue
+
+        url = relay.dm_stream_url(participant, token)
+        try:
+            log.info("dm stream subscribing url=%s", url)
+            async for event_name, data in iter_sse_events(
+                relay.client, url,
+            ):
+                if stop_event.is_set():
+                    return
+                if event_name == "connected":
+                    log.info("dm stream connected")
+                    continue
+                if event_name != "agent_dm":
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                try:
+                    await on_event(relay, data)
+                except Exception as exc:  # pragma: no cover
+                    log.exception("dm handler failed: %s", exc)
+            backoff = sse_reconnect_s
+        except httpx.HTTPError as exc:
+            log.warning("dm sse stream dropped: %s", exc)
+        except Exception as exc:  # pragma: no cover
+            log.exception("dm sse loop unexpected error: %s", exc)
+
+        await sleep_or_stop(backoff)
+        backoff = min(backoff * 2, sse_reconnect_max_s)
+
+
 __all__ = [
     "MEMORY_CONTEXT_LIMIT",
     "envelope_thread_root",
     "render_memory_context",
+    "run_dm_loop",
     "summarise_reply_for_memory",
 ]

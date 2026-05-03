@@ -79,6 +79,42 @@ def parse_verb(content: str):
         return None
 
 
+# Stream B threading — helpers for grouping a flat message list by
+# ``thread_root_id``. The feed renderer uses these to collapse a parent
+# bubble into a 1-line summary and indent the first N children.
+THREAD_VISIBLE_CHILDREN = 3
+
+
+def group_by_thread(
+    messages: list[dict],
+) -> dict[str, list[dict]]:
+    """Bucket messages by ``thread_root_id``. Messages without a root are
+    bucketed under their own ``id`` (each is its own degenerate thread).
+
+    Order within each bucket follows the input order — usually chrono.
+    The caller decides how to render each bucket; this is a pure split.
+    """
+    buckets: dict[str, list[dict]] = {}
+    for msg in messages:
+        root = (
+            msg.get("thread_root_id")
+            or msg.get("id")
+            or "_unrooted"
+        )
+        buckets.setdefault(root, []).append(msg)
+    return buckets
+
+
+def thread_summary_line(parent: dict, child_count: int) -> str:
+    """1-line rollup of a thread: ``@sender: snippet  · 4 replies``."""
+    sender = parent.get("from_name") or parent.get("sender") or "?"
+    body = (parent.get("content") or "").replace("\n", " ").strip()
+    if len(body) > 60:
+        body = body[:59] + "…"
+    label = "reply" if child_count == 1 else "replies"
+    return f"@{sender}: {body}  ·  {child_count} {label}"
+
+
 # ── Top app-bar ──────────────────────────────────────────────────────────────
 
 
