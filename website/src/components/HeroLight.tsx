@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { NeuralSphere } from "./illustrations/NeuralSphere";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 const INSTALL_CMD =
