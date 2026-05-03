@@ -2,17 +2,24 @@ import { useId, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import HarnessFlow from "./illustrations/HarnessFlow";
 import CodeBlock from "./CodeBlock";
+import AsciinemaPlayer from "./AsciinemaPlayer";
+import { CROSS_HARNESS_COPY, HARNESS_LABELS } from "../data/cross_harness_copy";
 
 /**
  * CrossHarnessBand — the cross-vendor compatibility section.
  *
  * Quorus's defensible moat: works across Claude Code, Cursor, Gemini CLI,
  * and Codex CLI without code changes on the user side. This band leads
- * with that claim, illustrates it via HarnessFlow (4 vendors → 1 relay),
- * and proves it with a tabbed install snippet for each harness.
+ * with that claim, illustrates it via HarnessFlow (4 vendors → 1 relay) +
+ * an asciinema demo recording, and proves it with a tabbed install
+ * snippet for each harness.
  *
  * Surface theme: dark (data-theme="dark", --color-ink background).
  * Self-contained: no props, no external state.
+ *
+ * Visible strings (headline / subline / CTA) are sourced from
+ * `src/data/cross_harness_copy.ts` so the test suite can assert verbatim
+ * matches and so doc edits travel with code edits.
  */
 
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -164,7 +171,7 @@ export default function CrossHarnessBand(): JSX.Element {
               letterSpacing: "0.22em",
             }}
           >
-            Cross-vendor by default
+            {CROSS_HARNESS_COPY.eyebrow}
           </motion.p>
           <motion.h2
             id="cross-harness-heading"
@@ -182,7 +189,7 @@ export default function CrossHarnessBand(): JSX.Element {
               letterSpacing: "-0.02em",
             }}
           >
-            Run Claude, Cursor, Codex, and Gemini on the same task.
+            {CROSS_HARNESS_COPY.headline}
           </motion.h2>
           <motion.p
             initial={prefersReduced ? false : { opacity: 0, y: 12 }}
@@ -197,8 +204,7 @@ export default function CrossHarnessBand(): JSX.Element {
               lineHeight: 1.6,
             }}
           >
-            Every agent picks up new messages on their next turn. No code
-            changes. No vendor lock-in.
+            {CROSS_HARNESS_COPY.subline}
           </motion.p>
         </div>
 
@@ -211,6 +217,26 @@ export default function CrossHarnessBand(): JSX.Element {
           className="mx-auto mt-16 w-full max-w-5xl"
         >
           <HarnessFlow />
+          <p className="sr-only" aria-label="Supported coding agents">
+            Supported coding agents: {HARNESS_LABELS.join(", ")}.
+          </p>
+        </motion.div>
+
+        {/* Demo terminal — lazy-loaded asciinema */}
+        <motion.div
+          initial={prefersReduced ? false : { opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, amount: 0.15 }}
+          transition={{ duration: 0.7, ease: EASE, delay: 0.18 }}
+          className="mx-auto mt-12 w-full max-w-4xl"
+        >
+          <AsciinemaPlayer
+            castUrl="/casts/demo_reflex.cast"
+            autoPlay
+            loop
+            idleTimeLimit={1.5}
+            caption="quorus init — one command, four agents, zero cloud."
+          />
         </motion.div>
 
         {/* Tab switcher */}
@@ -303,6 +329,29 @@ export default function CrossHarnessBand(): JSX.Element {
             >
               {tab.note}
             </p>
+          </div>
+
+          {/* CTA — mono accent link, not a button */}
+          <div className="mt-8 flex items-center justify-center">
+            <a
+              href={CROSS_HARNESS_COPY.ctaHref}
+              data-testid="cross-harness-cta"
+              className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2"
+              style={{
+                color: "var(--color-accent-on-ink)",
+                fontFamily: "var(--font-mono)",
+                letterSpacing: "0.04em",
+                borderBottom: "1px solid rgba(94,179,168,0.4)",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--color-text-on-ink)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--color-accent-on-ink)";
+              }}
+            >
+              {CROSS_HARNESS_COPY.ctaLabel}
+            </a>
           </div>
         </motion.div>
       </div>

@@ -288,6 +288,100 @@ def receipt_label(msg: dict) -> str:
     return "Sending…"
 
 
+# ── Social Protocol v1 — verb decoration ─────────────────────────────────────
+# Zero-width marker that chat.render_bubble_feed reads to know it should swap
+# the bubble's border style to ``danger`` for the immediately-following bubble.
+# Marker text is NOT rendered to the user; the surrounding zero-width spaces
+# are deliberate so re-rendering the line in unrelated tests doesn't hit a
+# cosmetic snag.
+_INTERRUPT_BORDER_MARKER = "​__quorus_interrupt_border__​"
+
+
+def verb_decoration(
+    verb: str,
+    payload: dict,
+    console_width: int,
+    *,
+    sender: str = "",
+) -> list[Text]:
+    """Render the decoration row(s) for a Quorus social verb.
+
+    Returns 1 :class:`Text` for most verbs; 2 for ``interrupt`` (the second
+    row carries :data:`_INTERRUPT_BORDER_MARKER` which signals
+    ``chat.render_bubble_feed`` to swap the bubble corner style to
+    ``danger``). Theme tokens only — no literal hex, no emoji.
+
+    Per the Stream A render contract::
+
+        claim     → "▶ claimed <task> · ETA <m>m"     sender_color
+        release   → "■ released <task> → @x"          dim
+        disagree  → "⚠ disagree (blocking|advisory)"  danger | warning
+        defer     → "↪ deferring to @x"               dim
+        queue     → "≡ queued after #<after>"         info
+        vote      → "✓ vote: <option> (<weight>)"     success
+        interrupt → "! INTERRUPT — <reason>"          danger + border marker
+
+    *console_width* is accepted for symmetry with siblings (e.g.
+    :func:`reaction_row`); the decoration itself is a single-line caption,
+    not a wrapped block.
+    """
+    del console_width  # currently single-line; reserved for future wrapping
+    if not verb or not isinstance(payload, dict):
+        return []
+    color = sender_color(sender) if sender else "muted"
+    line = Text(INDENT)
+
+    if verb == "claim":
+        task = str(payload.get("task_id", "?"))[:60]
+        eta = int(payload.get("eta_seconds", 0))
+        eta_label = f"{eta // 60}m" if eta >= 60 else f"{eta}s"
+        line.append("▶ ", style=color)
+        line.append(f"claimed {task}", style="bright")
+        line.append(f"  ·  ETA {eta_label}", style="muted")
+    elif verb == "release":
+        task = str(payload.get("task_id", "?"))[:60]
+        handoff = payload.get("handoff_to")
+        line.append("■ ", style="dim")
+        line.append(f"released {task}", style="bright")
+        if handoff:
+            line.append(f" → @{handoff}", style="muted")
+    elif verb == "disagree":
+        mode = str(payload.get("mode", "advisory"))
+        style = "danger" if mode == "blocking" else "warning"
+        line.append("⚠ ", style=style)
+        line.append(f"disagree ({mode})", style=f"bold {style}")
+        reason = str(payload.get("reason", ""))[:80]
+        if reason:
+            line.append(f" — {reason}", style="muted")
+    elif verb == "defer":
+        target = str(payload.get("to", "?"))
+        line.append("↪ ", style="dim")
+        line.append(f"deferring to @{target}", style="muted")
+    elif verb == "queue":
+        after = str(payload.get("after", "?"))[:40]
+        summary = str(payload.get("task_summary", ""))[:60]
+        line.append("≡ ", style="info")
+        line.append(f"queued after #{after}", style="info")
+        if summary:
+            line.append(f" — {summary}", style="muted")
+    elif verb == "vote":
+        option = str(payload.get("option", "?"))[:40]
+        weight = float(payload.get("weight", 1.0))
+        line.append("✓ ", style="success")
+        line.append(f"vote: {option}", style="bold success")
+        line.append(f"  ({weight:g})", style="muted")
+    elif verb == "interrupt":
+        reason = str(payload.get("reason", ""))[:120]
+        line.append("! INTERRUPT", style="bold danger")
+        if reason:
+            line.append(f" — {reason}", style="danger")
+        marker = Text(_INTERRUPT_BORDER_MARKER, style="danger")
+        return [line, marker]
+    else:
+        return []
+    return [line]
+
+
 def reaction_row(reactions: dict[str, int], console_width: int) -> Text:
     """Render a row of ``[heart 2] [thumbs-up 1]`` chip-pills.
 
@@ -655,5 +749,7 @@ __all__ = [
     "time_divider_label",
     "ts_epoch",
     "typing_indicator",
+    "verb_decoration",
     "wrap_lines",
+    "_INTERRUPT_BORDER_MARKER",
 ]

@@ -1,0 +1,5 @@
+{"version":2,"width":120,"height":30,"timestamp":1714003200,"title":"quorus demo (placeholder)","env":{"SHELL":"/bin/zsh","TERM":"xterm-256color"}}
+[0.1,"o","$ quorus init\r\n"]
+[1.0,"o","→ harnesses configured: claude, cursor, codex, gemini\r\n"]
+[2.0,"o","→ relay running at https://quorus-relay.fly.dev\r\n"]
+[3.0,"o","→ ready. (placeholder cast — real recording coming)\r\n"]

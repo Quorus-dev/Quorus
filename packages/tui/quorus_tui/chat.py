@@ -46,6 +46,8 @@ sender_color = _p.sender_color
 time_divider = _p.time_divider
 time_divider_label = _p.time_divider_label
 typing_indicator = _p.typing_indicator
+verb_decoration = _p.verb_decoration
+_INTERRUPT_BORDER_MARKER = _p._INTERRUPT_BORDER_MARKER
 _hhmm, _ts_epoch, _wrap_lines = _p.hhmm, _p.ts_epoch, _p.wrap_lines
 # Leading-underscore back-compat aliases used by older tests/hub.py.
 _SENDER_PALETTE, _is_human_sender, _sender_color = (
@@ -54,6 +56,27 @@ _SENDER_PALETTE, _is_human_sender, _sender_color = (
 
 GROUP_GAP_S = 60  # tighter rhythm — iMessage groups within ~1 minute
 _SYSTEM_TYPES = frozenset({"join", "leave", "lock", "decision", "system"})
+
+
+def parse_verb(content: str):
+    """Best-effort parse of a chat content body into a SocialVerb.
+
+    Returns ``None`` if content is not a JSON envelope with ``kind=='social'``.
+    Never raises — non-JSON content is the common case and must not break the
+    feed renderer.
+    """
+    if not content or not content.startswith("{"):
+        return None
+    try:
+        import json
+
+        from quorus.protocol import parse_envelope
+        data = json.loads(content)
+        if not isinstance(data, dict) or data.get("kind") != "social":
+            return None
+        return parse_envelope(data)
+    except Exception:
+        return None
 
 
 # ── Top app-bar ──────────────────────────────────────────────────────────────
@@ -344,6 +367,33 @@ def _bubble_position(
     return "only"
 
 
+def _verb_summary_body(verb: str, payload: dict) -> str:
+    """One-line natural-language summary of a verb payload — what gets put
+    INSIDE the bubble. Decoration row above is the styled label; this is
+    the readable fallback for SSE-only clients."""
+    if verb == "claim":
+        return f"claimed {payload.get('task_id', '?')}"
+    if verb == "release":
+        target = payload.get("handoff_to")
+        if target:
+            return f"released {payload.get('task_id', '?')} → @{target}"
+        return f"released {payload.get('task_id', '?')}"
+    if verb == "disagree":
+        return str(payload.get("reason", "disagree"))
+    if verb == "defer":
+        return f"deferring to @{payload.get('to', '?')}"
+    if verb == "queue":
+        return str(
+            payload.get("task_summary")
+            or f"queued after #{payload.get('after', '?')}"
+        )
+    if verb == "vote":
+        return f"vote: {payload.get('option', '?')}"
+    if verb == "interrupt":
+        return str(payload.get("reason", "interrupt"))
+    return ""
+
+
 def render_bubble_feed(
     messages: list[dict],
     room_name: str,
@@ -408,6 +458,24 @@ def render_bubble_feed(
             prev_ts = ts
             continue
 
+        # Social verb? Render decoration above the bubble; replace the bubble
+        # body with a natural-language summary so SSE-only clients still see
+        # something meaningful even without verb-aware rendering.
+        social_decoration: list[Text] = []
+        social_summary: str | None = None
+        if mtype == "social":
+            sv = parse_verb(content)
+            if sv is not None:
+                payload_dict = (
+                    sv.payload if isinstance(sv.payload, dict)
+                    else sv.payload.model_dump()
+                )
+                social_decoration = list(verb_decoration(
+                    sv.verb, payload_dict, console_width, sender=sender,
+                ))
+                social_summary = _verb_summary_body(sv.verb, payload_dict)
+                content = social_summary or content
+
         is_me = sender == my_name
         same_group = (
             sender == prev_sender
@@ -440,6 +508,14 @@ def render_bubble_feed(
         show_ts = (not same_group) or ((ts - prev_ts) > TIME_DIVIDER_GAP_S)
         ts_show = hhmm_str if show_ts else ""
         position = _bubble_position(messages, i, sender, ts)
+
+        # Social-verb decoration row(s) go ABOVE the bubble so the verb is
+        # legible at a glance. Drop the synthetic interrupt-border marker
+        # before printing — its only consumer is structural tests.
+        for deco in social_decoration:
+            if _INTERRUPT_BORDER_MARKER in deco.plain:
+                continue
+            out.append(deco)
 
         for kind, body in _split_code_fences(content):
             if not body and kind == "text":
@@ -540,9 +616,11 @@ __all__ = [
     "TIME_DIVIDER_GAP_S",
     "copy_to_clipboard",
     "last_active_label",
+    "parse_verb",
     "render_app_bar",
     "render_bubble_feed",
     "render_composer_hint",
     "render_mention_popover",
     "render_share_card",
+    "verb_decoration",
 ]

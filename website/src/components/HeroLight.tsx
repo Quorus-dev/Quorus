@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import BrainSynapses from "./illustrations/BrainSynapses";
+import BrainHero from "./illustrations/BrainHero";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 const INSTALL_CMD = "pip install quorus";
@@ -174,26 +174,15 @@ function HeroBrain() {
         }}
       />
 
-      {/* Brain image + animated synapse overlay. The image is a FLUX-rendered
-          glass brain with internal teal synapses (1880×1254, served as WebP).
-          BrainSynapses is a transparent SVG layer positioned over it so the
-          synapses pulse on top of the brain. */}
+      {/* Hand-crafted vector brain — scales crisply on any DPR. Internal
+          teal synapses pulse and connect with shimmering edges. The wrapper
+          floats subtly to add ambient life. */}
       <motion.div
         className="relative block w-full"
         animate={prefersReduced ? undefined : { y: [0, -6, 0] }}
         transition={{ duration: 9, ease: "easeInOut", repeat: Infinity }}
       >
-        <img
-          src="/stitch/brain-scene.webp"
-          alt="A transparent glass brain with bright teal synapses glowing from within, representing the Quorus coordination network"
-          width={1880}
-          height={1254}
-          draggable={false}
-          className="relative block h-auto w-full select-none"
-          loading="eager"
-          decoding="async"
-        />
-        <BrainSynapses />
+        <BrainHero />
       </motion.div>
     </motion.div>
   );

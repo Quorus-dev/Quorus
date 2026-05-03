@@ -14,14 +14,14 @@ import FooterV2 from "../components/FooterV2";
  * Quorus landing — 11-band composition.
  *
  *   1. Hero (cream)              — brain + headline + waitlist + install
- *   2. Logo cloud (cream)        — provider wordmarks
- *   3. Cross-Harness (ink)       — Claude · Cursor · Gemini · Codex flow
+ *   2. Cross-Harness (ink)       — Claude · Cursor · Gemini · Codex flow
+ *   3. Logo cloud (cream)        — provider wordmarks
  *   4. How it works (cream)      — 3-step diagram
  *   5. Control Center (ink)      — live coordination dashboard mock
  *   6. Quickstart (cream)        — tabbed code blocks
  *   7. Bento (ink)               — six interactive primitives
  *   8. Console teaser (cream)    — framed live preview
- *   9. Comparison (cream)        — vs LangGraph / vs CrewAI
+ *   9. Comparison (cream)        — vs Devin / OpenAgents / TAP / AutoGen
  *  10. CTA (ink)                 — install command + secondary links
  *  11. Footer (cream)            — sitemap + tagline
  *
@@ -32,8 +32,8 @@ export default function Home() {
   return (
     <main id="main" className="min-h-screen">
       <HeroLight />
-      <LogoCloud />
       <CrossHarnessBand />
+      <LogoCloud />
       <HowItWorksBand />
       <ControlCenterDark />
       <QuickstartBand />

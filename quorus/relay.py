@@ -408,6 +408,12 @@ def _init_services(app_instance, redis_conn=None):
     app_instance.state.join_code_service = join_code
     app_instance.state.backends = backends
 
+    # Social Protocol v1 — in-memory state machine. Stream A only; Stream B
+    # owns persistence. Re-creating on every _init_services() ensures
+    # _reset_state() in tests starts each test with a clean slate.
+    from quorus.services.social_svc import SocialSvc
+    app_instance.state.social_service = SocialSvc()
+
     # Create outbox worker if enabled (requires Postgres)
     if USE_OUTBOX and DATABASE_URL:
         from quorus.services.outbox_svc import OutboxWorker

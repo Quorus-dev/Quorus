@@ -7,7 +7,8 @@ from pydantic import BaseModel, field_validator
 from quorus.routes.helpers import _validate_name
 
 VALID_MESSAGE_TYPES = {
-    "chat", "claim", "status", "request", "alert", "sync", "brief", "subtask", "decision"
+    "chat", "claim", "status", "request", "alert", "sync", "brief", "subtask", "decision",
+    "social",
 }
 VALID_ROLES = {"builder", "reviewer", "researcher", "pm", "qa", "member"}
 

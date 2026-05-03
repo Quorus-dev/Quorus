@@ -1,84 +1,23 @@
 import { motion } from "framer-motion";
+import {
+  COMPARISON_COLUMNS,
+  COMPARISON_ROWS,
+  type CellValue,
+  type ComparisonRow,
+} from "../data/cross_harness_copy";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
 /**
- * ComparisonTable — three-vendor feature matrix rendered on cream.
+ * ComparisonTable — five-vendor capability matrix rendered on cream.
+ *
  * Quorus column is visually highlighted with a thin accent border + tint.
+ * The "Social grammar verbs" row is the moat — it carries
+ * `data-emphasis="moat"`, a left accent bar, and a "NEW" pill badge.
  *
  * Table-only: header copy lives in <ComparisonBand>. Mobile pattern mirrors
  * <PricingTable>: horizontal scroll, sticky first column.
  */
-
-type Vendor = "quorus" | "langgraph" | "crewai";
-
-type CellValue = "yes" | "no" | string;
-
-interface FeatureRow {
-  feature: string;
-  quorus: CellValue;
-  langgraph: CellValue;
-  crewai: CellValue;
-}
-
-const ROWS: FeatureRow[] = [
-  {
-    feature: "Cross-vendor (Claude + GPT + Gemini in one swarm)",
-    quorus: "yes",
-    langgraph: "partial",
-    crewai: "no",
-  },
-  {
-    feature: "MCP-native server",
-    quorus: "yes",
-    langgraph: "no",
-    crewai: "no",
-  },
-  {
-    feature: "Distributed locks (atomic file claim)",
-    quorus: "yes",
-    langgraph: "no",
-    crewai: "no",
-  },
-  {
-    feature: "Real-time SSE state",
-    quorus: "yes",
-    langgraph: "partial",
-    crewai: "no",
-  },
-  {
-    feature: "Self-hostable",
-    quorus: "yes",
-    langgraph: "yes",
-    crewai: "yes",
-  },
-  { feature: "Python", quorus: "yes", langgraph: "yes", crewai: "yes" },
-  {
-    feature: "TypeScript SDK",
-    quorus: "planned",
-    langgraph: "yes",
-    crewai: "no",
-  },
-  { feature: "License", quorus: "MIT", langgraph: "MIT", crewai: "MIT" },
-  {
-    feature: "Setup time",
-    quorus: "<30s",
-    langgraph: "~10min",
-    crewai: "~5min",
-  },
-  {
-    feature: "Production coordination",
-    quorus: "yes",
-    langgraph: "partial",
-    crewai: "partial",
-  },
-];
-
-const COLUMNS: ReadonlyArray<{ key: Vendor; label: string }> = [
-  { key: "quorus", label: "Quorus" },
-  { key: "langgraph", label: "LangGraph" },
-  { key: "crewai", label: "CrewAI" },
-];
 
 function CheckMark() {
   return (
@@ -101,7 +40,7 @@ function CheckMark() {
   );
 }
 
-function DashMark() {
+function CrossMark() {
   return (
     <svg
       width="14"
@@ -112,12 +51,25 @@ function DashMark() {
       role="img"
     >
       <path
-        d="M4 8h8"
+        d="M4 4l8 8M12 4l-8 8"
         stroke="var(--color-text-on-cream-muted)"
         strokeWidth="1.5"
         strokeLinecap="round"
       />
     </svg>
+  );
+}
+
+function PartialMark() {
+  return (
+    <span
+      aria-label="Partial"
+      role="img"
+      className="font-mono text-[11.5px] uppercase tracking-[0.08em]"
+      style={{ color: "var(--color-text-on-cream-secondary)" }}
+    >
+      partial
+    </span>
   );
 }
 
@@ -132,16 +84,40 @@ function Cell({ value }: { value: CellValue }) {
   if (value === "no") {
     return (
       <span className="inline-flex items-center justify-center">
-        <DashMark />
+        <CrossMark />
       </span>
     );
   }
+  if (value === "partial") {
+    return (
+      <span className="inline-flex items-center justify-center">
+        <PartialMark />
+      </span>
+    );
+  }
+  // Free-form strings (e.g., "—" for "not applicable") — neutral mono treatment.
   return (
     <span
       className="font-mono text-[12px]"
       style={{ color: "var(--color-text-on-cream-secondary)" }}
     >
       {value}
+    </span>
+  );
+}
+
+function MoatBadge() {
+  return (
+    <span
+      className="ml-2 inline-flex items-center rounded-full px-2 py-[2px] font-mono text-[9.5px] uppercase tracking-[0.14em]"
+      style={{
+        backgroundColor: "var(--color-accent)",
+        color: "var(--color-accent-on-ink)",
+        fontWeight: 600,
+        letterSpacing: "0.16em",
+      }}
+    >
+      New
     </span>
   );
 }
@@ -161,7 +137,7 @@ export default function ComparisonTable() {
       }}
     >
       <table
-        className="w-full min-w-[640px] border-collapse"
+        className="w-full min-w-[720px] border-collapse"
         style={{ fontFamily: "var(--font-sans)" }}
       >
         <thead>
@@ -175,12 +151,12 @@ export default function ComparisonTable() {
                 letterSpacing: "0.18em",
                 backgroundColor: "var(--color-cream)",
                 borderBottom: "1px solid var(--color-border-light-strong)",
-                minWidth: 260,
+                minWidth: 240,
               }}
             >
-              Feature
+              Capability
             </th>
-            {COLUMNS.map((col) => {
+            {COMPARISON_COLUMNS.map((col) => {
               const isQuorus = col.key === "quorus";
               return (
                 <th
@@ -195,7 +171,7 @@ export default function ComparisonTable() {
                     letterSpacing: "0.18em",
                     fontWeight: 600,
                     borderBottom: "1px solid var(--color-border-light-strong)",
-                    minWidth: 140,
+                    minWidth: 110,
                     backgroundColor: isQuorus
                       ? "rgba(13,77,74,0.04)"
                       : undefined,
@@ -217,43 +193,57 @@ export default function ComparisonTable() {
           </tr>
         </thead>
         <tbody>
-          {ROWS.map((row, rIdx) => {
-            const isLast = rIdx === ROWS.length - 1;
+          {COMPARISON_ROWS.map((row, rIdx) => {
+            const isLast = rIdx === COMPARISON_ROWS.length - 1;
             const dividerStyle = isLast
               ? undefined
               : "1px solid var(--color-border-light)";
+            const moat = row.highlight === true;
+            const rowBg = moat ? "rgba(94,179,168,0.06)" : undefined;
             return (
-              <tr key={row.feature}>
+              <tr
+                key={row.feature}
+                data-emphasis={moat ? "moat" : undefined}
+                className={moat ? "comparison-row-moat" : undefined}
+                style={moat ? { backgroundColor: rowBg } : undefined}
+              >
                 <th
                   scope="row"
                   className="sticky left-0 z-10 px-5 py-3.5 text-left text-[13px]"
                   style={{
                     color: "var(--color-text-on-cream)",
                     fontFamily: "var(--font-sans)",
-                    fontWeight: 500,
-                    backgroundColor: "var(--color-cream)",
+                    fontWeight: moat ? 600 : 500,
+                    backgroundColor: rowBg ?? "var(--color-cream)",
                     borderBottom: dividerStyle,
+                    borderLeft: moat
+                      ? "3px solid var(--color-accent)"
+                      : undefined,
                   }}
                 >
-                  {row.feature}
+                  <span className="inline-flex items-center">
+                    {row.feature}
+                    {moat ? <MoatBadge /> : null}
+                  </span>
                 </th>
-                {COLUMNS.map((col) => {
+                {COMPARISON_COLUMNS.map((col) => {
                   const isQuorus = col.key === "quorus";
-                  const value = row[col.key];
-                  const isLastRow = isLast;
+                  const value = row[
+                    col.key as keyof ComparisonRow
+                  ] as CellValue;
                   return (
                     <td
                       key={col.key}
                       className="px-5 py-3.5 text-center"
                       style={{
                         borderBottom: isQuorus
-                          ? isLastRow
+                          ? isLast
                             ? "1.5px solid var(--color-accent)"
                             : "1px solid var(--color-border-light)"
                           : dividerStyle,
                         backgroundColor: isQuorus
                           ? "rgba(13,77,74,0.04)"
-                          : undefined,
+                          : rowBg,
                         borderLeft: isQuorus
                           ? "1.5px solid var(--color-accent)"
                           : undefined,
