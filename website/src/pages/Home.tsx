@@ -1,7 +1,7 @@
 import HeroLight from "../components/HeroLight";
 import LogoCloud from "../components/LogoCloud";
 import ControlCenterDark from "../components/ControlCenterDark";
-import BentoLight from "../components/BentoLight";
+import BentoStitch from "../components/BentoStitch";
 import CTADark from "../components/CTADark";
 import FooterV2 from "../components/FooterV2";
 
@@ -23,7 +23,7 @@ export default function Home() {
       <HeroLight />
       <LogoCloud />
       <ControlCenterDark />
-      <BentoLight />
+      <BentoStitch />
       <CTADark />
       <FooterV2 />
     </main>

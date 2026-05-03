@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { NeuralSphere } from "./illustrations/NeuralSphere";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 const INSTALL_CMD =
@@ -8,8 +7,11 @@ const INSTALL_CMD =
 
 /**
  * HeroLight — cream split hero. Left: badge + headline + subhead + waitlist
- * + install command. Right: a debugger-style "watch panel" that morphs JSON
- * room state every couple of seconds. NOT a chat log.
+ * + install command. Right: the Stitch "Hybrid Elite" hero image — a
+ * cinematic teal-lit brain with a baked-in orchestrator terminal.
+ *
+ * Source: /public/stitch/brain-scene.webp (cropped from Stitch screen
+ * b94ee1506d6541939266712982a0dfe4).
  */
 export default function HeroLight() {
   return (
@@ -38,7 +40,7 @@ export default function HeroLight() {
 
       <div className="relative mx-auto grid max-w-7xl grid-cols-1 items-center gap-12 px-6 pb-24 pt-32 lg:grid-cols-12 lg:gap-10 lg:pt-40">
         {/* Left column — copy + CTA */}
-        <div className="lg:col-span-7">
+        <div className="lg:col-span-6">
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -138,36 +140,52 @@ export default function HeroLight() {
           </motion.div>
         </div>
 
-        {/* Right column — cinematic neural sphere with floating terminal overlay.
-            Layout matches the Stitch composite: dense node graph as the dominant
-            visual, debugger watch panel offset into the lower-right, partially
-            overlapping the sphere. */}
-        <div className="lg:col-span-5">
-          <div className="relative mx-auto aspect-square w-full max-w-[560px] lg:ml-auto lg:mr-0">
-            {/* Neural sphere — the primary visual */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 1.1, delay: 0.35, ease: EASE }}
-              className="absolute inset-0"
-            >
-              <NeuralSphere />
-            </motion.div>
-
-            {/* Floating terminal overlay — sits over the lower-right of the
-                sphere, like the Stitch hero-hybrid-elite composition. */}
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.9, delay: 0.7, ease: EASE }}
-              className="absolute -bottom-2 -right-2 w-[78%] max-w-[400px] sm:bottom-2 sm:right-2"
-            >
-              <RoomStatePanel compact />
-            </motion.div>
-          </div>
+        {/* Right column — Stitch brain hero (image asset). The image already
+            includes the orchestrator terminal panel, baked into the
+            composition. We add only a soft accent halo + subtle float. */}
+        <div className="lg:col-span-6">
+          <HeroBrain />
         </div>
       </div>
     </section>
+  );
+}
+
+/* ── Stitch brain — cinematic teal-lit hero asset ────────────────────────── */
+
+function HeroBrain() {
+  const prefersReduced = useReducedMotion();
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 1.1, delay: 0.35, ease: EASE }}
+      className="relative mx-auto w-full max-w-[640px] lg:ml-auto lg:mr-0"
+    >
+      {/* Soft accent halo behind the brain */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -m-8"
+        style={{
+          background:
+            "radial-gradient(circle at 60% 50%, rgba(94,179,168,0.20), rgba(13,77,74,0.05) 40%, transparent 70%)",
+          filter: "blur(28px)",
+        }}
+      />
+
+      {/* Brain image with subtle drift. The Stitch crop is 776×700 ≈ 1.11:1 */}
+      <motion.img
+        src="/stitch/brain-scene.webp"
+        alt="A glowing teal-lit brain with an orchestrator terminal showing Quorus initializing a multi-model swarm"
+        width={776}
+        height={700}
+        draggable={false}
+        className="relative block h-auto w-full select-none"
+        animate={prefersReduced ? undefined : { y: [0, -6, 0] }}
+        transition={{ duration: 9, ease: "easeInOut", repeat: Infinity }}
+      />
+    </motion.div>
   );
 }
 
@@ -220,308 +238,5 @@ function InstallCommand() {
         {copied ? "copied" : "copy"}
       </button>
     </div>
-  );
-}
-
-/* ── Room state panel — debugger watch ───────────────────────────────────── */
-
-type RoomState = {
-  room: string;
-  participants: Array<{ name: string; model: string }>;
-  locks: Record<string, string>;
-  last_message: { from: string; preview: string };
-  rev: number;
-};
-
-const STATES: RoomState[] = [
-  {
-    room: "dev-sprint",
-    participants: [
-      { name: "claude-1", model: "claude-sonnet-4-6" },
-      { name: "cursor-2", model: "gpt-5" },
-      { name: "codex-3", model: "claude-haiku-4-5" },
-    ],
-    locks: { "auth.py": "claude-1", "tests/": "cursor-2" },
-    last_message: { from: "claude-1", preview: "claiming auth.py" },
-    rev: 41,
-  },
-  {
-    room: "dev-sprint",
-    participants: [
-      { name: "claude-1", model: "claude-sonnet-4-6" },
-      { name: "cursor-2", model: "gpt-5" },
-      { name: "codex-3", model: "claude-haiku-4-5" },
-      { name: "gemini-4", model: "gemini-3-pro" },
-    ],
-    locks: {
-      "auth.py": "claude-1",
-      "tests/": "cursor-2",
-      "routes.py": "gemini-4",
-    },
-    last_message: { from: "gemini-4", preview: "joined room" },
-    rev: 42,
-  },
-  {
-    room: "dev-sprint",
-    participants: [
-      { name: "claude-1", model: "claude-sonnet-4-6" },
-      { name: "cursor-2", model: "gpt-5" },
-      { name: "codex-3", model: "claude-haiku-4-5" },
-      { name: "gemini-4", model: "gemini-3-pro" },
-    ],
-    locks: { "tests/": "cursor-2", "routes.py": "gemini-4" },
-    last_message: { from: "claude-1", preview: "released auth.py" },
-    rev: 43,
-  },
-];
-
-function RoomStatePanel({ compact = false }: { compact?: boolean }) {
-  const prefersReduced = useReducedMotion();
-  const [idx, setIdx] = useState(0);
-
-  useEffect(() => {
-    if (prefersReduced) return;
-    const t = setInterval(() => setIdx((i) => (i + 1) % STATES.length), 2800);
-    return () => clearInterval(t);
-  }, [prefersReduced]);
-
-  const state = STATES[idx];
-
-  // Format like a debugger watch panel — JSON-shaped, expandable feel.
-  const json = useMemo(() => formatState(state), [state]);
-
-  // Compact variant: smaller body min-height, tighter padding, smaller font.
-  const padX = compact ? "px-3" : "px-4";
-  const padY = compact ? "py-3" : "py-4";
-  const fontSize = compact ? "text-[10.5px]" : "text-[12px]";
-  const minBodyH = compact ? 220 : 290;
-
-  return (
-    <div
-      className="overflow-hidden rounded-xl border shadow-2xl backdrop-blur-sm"
-      style={{
-        backgroundColor: "rgba(10,10,15,0.94)",
-        borderColor: "var(--color-border-dark-strong)",
-        boxShadow:
-          "0 24px 60px rgba(10,10,15,0.18), 0 8px 24px rgba(13,77,74,0.08)",
-      }}
-    >
-      {/* Title bar */}
-      <div
-        className="flex items-center gap-3 border-b px-4 py-2.5"
-        style={{ borderColor: "var(--color-border-dark)" }}
-      >
-        <div className="flex gap-1.5">
-          <span className="block h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
-          <span className="block h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
-          <span className="block h-2.5 w-2.5 rounded-full bg-[#28c840]" />
-        </div>
-        <div
-          className="ml-2 flex-1 font-mono text-[11px]"
-          style={{ color: "var(--color-text-on-ink-muted)" }}
-        >
-          watch · quorus.rooms[&quot;{state.room}&quot;]
-        </div>
-        <div
-          className="font-mono text-[10px]"
-          style={{ color: "var(--color-accent-on-ink)" }}
-        >
-          rev {state.rev}
-        </div>
-      </div>
-
-      {/* Watch body */}
-      <div
-        key={state.rev}
-        className={`${padX} ${padY} font-mono ${fontSize} leading-[1.55]`}
-        style={{ color: "var(--color-text-on-ink)", minHeight: minBodyH }}
-      >
-        {json.map((line, i) => (
-          <motion.div
-            key={`${state.rev}-${i}`}
-            initial={{ opacity: 0, x: -4 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{
-              duration: 0.4,
-              delay: prefersReduced ? 0 : i * 0.025,
-              ease: EASE,
-            }}
-            style={{ paddingLeft: line.indent * 14 }}
-            className="whitespace-pre"
-          >
-            <KeyValueLine line={line} />
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Bottom strip */}
-      <div
-        className="flex items-center justify-between border-t px-4 py-2 font-mono text-[10px]"
-        style={{
-          borderColor: "var(--color-border-dark)",
-          color: "var(--color-text-on-ink-muted)",
-        }}
-      >
-        <span>
-          <span style={{ color: "var(--color-accent-on-ink)" }}>●</span> relay ·
-          connected
-        </span>
-        <span>{state.participants.length} agents · SSE 12 evt/s</span>
-      </div>
-    </div>
-  );
-}
-
-type Line =
-  | { kind: "open"; indent: number; key?: string; bracket: "{" | "[" }
-  | { kind: "close"; indent: number; bracket: "}" | "]"; comma?: boolean }
-  | {
-      kind: "field";
-      indent: number;
-      key: string;
-      value: string;
-      comma?: boolean;
-    }
-  | { kind: "raw"; indent: number; text: string };
-
-function formatState(s: RoomState): Line[] {
-  const lines: Line[] = [];
-  lines.push({ kind: "open", indent: 0, bracket: "{" });
-  lines.push({
-    kind: "field",
-    indent: 1,
-    key: "room",
-    value: `"${s.room}"`,
-    comma: true,
-  });
-  lines.push({ kind: "open", indent: 1, key: "participants", bracket: "[" });
-  s.participants.forEach((p, i) => {
-    lines.push({
-      kind: "raw",
-      indent: 2,
-      text: `{ name: "${p.name}", model: "${p.model}" }${i < s.participants.length - 1 ? "," : ""}`,
-    });
-  });
-  lines.push({ kind: "close", indent: 1, bracket: "]", comma: true });
-  lines.push({ kind: "open", indent: 1, key: "locks", bracket: "{" });
-  const lockEntries = Object.entries(s.locks);
-  lockEntries.forEach(([k, v], i) => {
-    lines.push({
-      kind: "raw",
-      indent: 2,
-      text: `"${k}": "${v}"${i < lockEntries.length - 1 ? "," : ""}`,
-    });
-  });
-  lines.push({ kind: "close", indent: 1, bracket: "}", comma: true });
-  lines.push({ kind: "open", indent: 1, key: "last_message", bracket: "{" });
-  lines.push({
-    kind: "field",
-    indent: 2,
-    key: "from",
-    value: `"${s.last_message.from}"`,
-    comma: true,
-  });
-  lines.push({
-    kind: "field",
-    indent: 2,
-    key: "preview",
-    value: `"${s.last_message.preview}"`,
-  });
-  lines.push({ kind: "close", indent: 1, bracket: "}" });
-  lines.push({ kind: "close", indent: 0, bracket: "}" });
-  return lines;
-}
-
-function KeyValueLine({ line }: { line: Line }) {
-  const KEY_COLOR = "var(--color-accent-on-ink)";
-  const PUNCT = "var(--color-text-on-ink-muted)";
-  const STRING = "#e8c598"; // warm sand — the only place we use this color
-  const NUMBER = "#a8a8b0";
-
-  if (line.kind === "open") {
-    return (
-      <>
-        {line.key && (
-          <>
-            <span style={{ color: KEY_COLOR }}>{line.key}</span>
-            <span style={{ color: PUNCT }}>: </span>
-          </>
-        )}
-        <span style={{ color: PUNCT }}>{line.bracket}</span>
-      </>
-    );
-  }
-  if (line.kind === "close") {
-    return (
-      <span style={{ color: PUNCT }}>
-        {line.bracket}
-        {line.comma ? "," : ""}
-      </span>
-    );
-  }
-  if (line.kind === "field") {
-    const isString = line.value.startsWith('"');
-    return (
-      <>
-        <span style={{ color: KEY_COLOR }}>{line.key}</span>
-        <span style={{ color: PUNCT }}>: </span>
-        <span style={{ color: isString ? STRING : NUMBER }}>{line.value}</span>
-        {line.comma && <span style={{ color: PUNCT }}>,</span>}
-      </>
-    );
-  }
-  // raw — color-aware: split on quoted segments
-  return <RawLine text={line.text} />;
-}
-
-function RawLine({ text }: { text: string }) {
-  const PUNCT = "var(--color-text-on-ink-muted)";
-  const KEY_COLOR = "var(--color-accent-on-ink)";
-  const STRING = "#e8c598";
-
-  // Tokenize: keys (identifier:), strings ("..."), and punctuation
-  const parts: Array<{ t: string; kind: "string" | "key" | "punct" }> = [];
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    if (c === '"') {
-      const end = text.indexOf('"', i + 1);
-      if (end === -1) {
-        parts.push({ t: text.slice(i), kind: "string" });
-        break;
-      }
-      parts.push({ t: text.slice(i, end + 1), kind: "string" });
-      i = end + 1;
-      continue;
-    }
-    // identifier followed by ":" → key
-    const idMatch = text.slice(i).match(/^([a-zA-Z_][a-zA-Z0-9_]*):\s*/);
-    if (idMatch) {
-      parts.push({ t: idMatch[1], kind: "key" });
-      parts.push({ t: ": ", kind: "punct" });
-      i += idMatch[0].length;
-      continue;
-    }
-    parts.push({ t: c, kind: "punct" });
-    i += 1;
-  }
-  return (
-    <>
-      {parts.map((p, idx) => (
-        <span
-          key={idx}
-          style={{
-            color:
-              p.kind === "string"
-                ? STRING
-                : p.kind === "key"
-                  ? KEY_COLOR
-                  : PUNCT,
-          }}
-        >
-          {p.t}
-        </span>
-      ))}
-    </>
   );
 }
