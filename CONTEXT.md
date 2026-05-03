@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-04-15 (Quorus rebrand, TUI/CLI polish, security hardening)
+Last updated: 2026-05-03 (Reflex AI-native chat shipped, identity disambiguation, prod-deploy fixes)
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-04-15 (Quorus rebrand, TUI/CLI polish, security hardening)
 
 Quorus (package: quorus) is the coordination layer for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `main` (905 tests passing — post-rebrand + polish)
+**Branch:** `feat/may4-sprint` (1421+ tests passing — Reflex AI-native chat + identity disambiguation + production-deploy hardening)
 
 **Package:** `pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"`
 
@@ -41,7 +41,16 @@ quorus init <your-name> --relay-url <url> --secret <secret>
 quorus           # opens the hub
 ```
 
-**Config:** `~/.quorus/config.json` (legacy `~/mcp-tunnel/` + `~/.murmur/` still read)
+**Config:** `~/.quorus/config.json` (pointer) + `~/.quorus/profiles/<name>.json` (per-profile data). Legacy `~/mcp-tunnel/` + `~/.murmur/` still read.
+
+**Profile split for cross-identity coordination:**
+
+The TUI uses ONE profile at a time; switch via `quorus -w <name>` or by editing `~/.quorus/config.json`'s `current` field. Conventional split:
+
+- `default` profile — `instance_name=arav-codex`, used by the Codex CLI / MCP servers / agents (so they continue to post under their agent identity).
+- `human` profile — `instance_name=arav`, used by the human owner when typing in the TUI (so messages render as `@arav` not `@arav-codex`).
+
+Why this matters: the relay enforces `JWT.sub == from_name` (anti-impersonation; returns 403 `Cannot send as another user`). For the human and the agent to appear as distinct senders, each must have its own participant + api_key in the same tenant. `quorus whoami` confirms the active identity.
 
 **What's built:**
 
@@ -104,6 +113,12 @@ Remaining medium-severity items tracked in code review output.
 
 ## Recent Changes
 
+### Reflex — AI-native cross-harness chat (2026-05-02 → 2026-05-03)
+
+Ships the autonomous-engineering-team wedge described in `QUORUS_AUTONOMY_PLAN.md`. Distributes a Quorus Operating Discipline (QOD) constitution via three channels (MCP `instructions` field + `~/.claude/skills/` + agent-loop sysprompt prepend), runs a per-host `reflexd` daemon that subscribes to relay SSE, classifies room messages via `/v1/triage`, computes a local bid via `/v1/bid`, claims via `/v1/claim`, and spawns a headless harness session (claude-agent-sdk / `codex exec` / `gemini --prompt` / `cursor-agent --headless`). TurnGuard busy-files prevent waking agents mid-tool-call. Phase 2 self-assignment landed: `@open <work>` and `TODO @<role>: ...` patterns route to capability-matched agents (claude→{tui,react,tests}, codex→{relay,backend,audit}, gemini→{docs,research}, cursor→{refactor}). Local end-to-end demo at `scripts/demo_reflex.sh` runs the full pipeline in ~60ms with a stub adapter (no API spend).
+
+Production-deploy bugs caught + fixed during shipping: register-agent 500 (MultipleResultsFound on duplicate unrevoked keys → bulk revoke + mint single canonical key), tenant peering for child agents (b4d4c1d), cold-install smoke clobbering host `~/.gemini` (HOME isolation + atexit backup), TUI auth precedence preferring legacy `relay_secret` over real `api_key` (silent 401), TUI 2-second screen-wipe + scrollback nuke killing copy/paste, multi-line paste exploding into N separate messages, `_send_message` swallowing 4xx response bodies and surfacing misleading "Couldn't reach the relay" errors, identity disambiguation (humans get `@arav` + green ●; agents keep their hashed-color suffix). 5xx retry with exponential backoff added to `_send_message`. reflexd refuses to start with non-agent participant names (must end in claude/codex/gemini/cursor).
+
 ### Cold-install CI (2026-05-01)
 
 Added `.github/workflows/cold-install.yml` — runs on every PR, every push to
@@ -121,17 +136,24 @@ A pytest skeleton at `tests/test_cold_install.py` runs the smoke against
 the April 23 2026 hackathon failure mode where `pytest` was green but
 `pipx install` produced a binary that wouldn't open.
 
-| Date       | What                                                                     |
-| ---------- | ------------------------------------------------------------------------ |
-| 2026-05-01 | feat: cold-install CI — `pipx`-from-checkout smoke + nightly cron        |
-| 2026-04-15 | feat: rebrand Murmur → Quorus (package, CLI, TUI, entry point, configs)  |
-| 2026-04-15 | feat: beautiful CLI — grouped help, teal banner, spinners, styled errors |
-| 2026-04-15 | feat: new ui.py module with Theme, banner, spinner, status helpers       |
-| 2026-04-15 | fix: 4 critical security issues (osascript, bootstrap, invite, TOCTOU)   |
-| 2026-04-15 | fix: deploy configs (Dockerfile, alembic.ini, railway.toml, render.yaml) |
-| 2026-04-15 | feat: `quorus` with no args opens TUI (like claude/gemini)               |
-| 2026-04-15 | feat: key prefix `quorus_sk_` / token `quorus_join_` (legacy-compat)     |
-| 2026-04-14 | feat: website Lighthouse polish — 100% SEO, 93% a11y                     |
+| Date       | What                                                                           |
+| ---------- | ------------------------------------------------------------------------------ |
+| 2026-05-03 | fix: register-agent 500 + 5xx retry + reflexd participant assert + bulk revoke |
+| 2026-05-03 | fix: TUI header + send error surfaces + chat_identity dead-code cleanup        |
+| 2026-05-02 | feat: Reflex PR-C1+C2+C3 + Phase 2 self-assignment + iMessage TUI polish       |
+| 2026-05-02 | feat: Quorus Operating Discipline (QOD) — cross-harness 6-rule constitution    |
+| 2026-05-02 | feat: identity disambiguation (humans @arav green ●; agents hashed-color)      |
+| 2026-05-02 | fix: TUI race conditions + 2s screen-wipe + scrollback nuke + paste-split      |
+| 2026-05-02 | fix: cold-install host isolation + Gemini settings clobber + tenant peering    |
+| 2026-05-01 | feat: cold-install CI — `pipx`-from-checkout smoke + nightly cron              |
+| 2026-04-15 | feat: rebrand Murmur → Quorus (package, CLI, TUI, entry point, configs)        |
+| 2026-04-15 | feat: beautiful CLI — grouped help, teal banner, spinners, styled errors       |
+| 2026-04-15 | feat: new ui.py module with Theme, banner, spinner, status helpers             |
+| 2026-04-15 | fix: 4 critical security issues (osascript, bootstrap, invite, TOCTOU)         |
+| 2026-04-15 | fix: deploy configs (Dockerfile, alembic.ini, railway.toml, render.yaml)       |
+| 2026-04-15 | feat: `quorus` with no args opens TUI (like claude/gemini)                     |
+| 2026-04-15 | feat: key prefix `quorus_sk_` / token `quorus_join_` (legacy-compat)           |
+| 2026-04-14 | feat: website Lighthouse polish — 100% SEO, 93% a11y                           |
 
 ---
 
@@ -166,4 +188,5 @@ Each member's inbox → agent reads via check_messages / HTTP GET / SSE stream
 ## Contributors
 
 - **Arav** (aravkek) — co-founder, parent Claude directing agents
+- **Saad** — co-founder
 - **Aarya** (Aarya2004) — co-founder

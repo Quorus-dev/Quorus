@@ -616,30 +616,83 @@ def _load_history_into(state: "HubState", relay: str, secret: str, room: str) ->
         state.set_messages(msgs)
 
 
+# Module-level "out parameter" used by _send_message to surface the relay's
+# rejection reason back to the caller without breaking the Optional[str]
+# (sent_id-or-None) return contract that other call sites rely on.
+#
+# Why a module global instead of returning a tuple: only one caller (the
+# main input loop) cares about the error string, and the alternative —
+# changing the return type — propagates type churn through every importer
+# (tests, mocks, the optimistic-echo path). The send path is single-threaded
+# from the user's keyboard, so contention is impossible.
+#
+# Contract: callers MUST read this immediately after a None return. Any
+# subsequent _send_message call clears it. None means "connection error or
+# 5xx — show the generic 'couldn't reach the relay' hint".
+_LAST_SEND_ERROR: Optional[str] = None
+
+
 def _send_message(
     relay: str, secret: str, room: str, sender: str, content: str,
 ) -> Optional[str]:
     """Send a chat message. Returns the server-assigned message ID on success,
     else None. The ID lets the caller dedup its own optimistic echo against
-    the real message coming back through SSE / history."""
-    try:
-        r = httpx.post(
-            f"{relay}/rooms/{room}/messages",
-            headers=_auth_headers(secret),
-            json={"from_name": sender, "content": content, "message_type": "chat"},
-            timeout=5,
-            follow_redirects=True,
-        )
-        if r.status_code in (200, 201):
-            try:
-                data = r.json()
-                mid = data.get("id") or data.get("message_id") or ""
-                return str(mid) if mid else ""
-            except (ValueError, TypeError):
-                return ""
-        return None
-    except Exception:
-        return None
+    the real message coming back through SSE / history.
+
+    On a 4xx response, the relay's `detail` field is captured into the
+    module-level ``_LAST_SEND_ERROR`` so the caller can surface the actual
+    reason ("Cannot send as another user", "Room not found", etc.) instead
+    of the misleading generic "Couldn't reach the relay" hint. 5xx and
+    connection errors leave ``_LAST_SEND_ERROR`` as None — those genuinely
+    are reachability problems and the generic hint is correct.
+    """
+    global _LAST_SEND_ERROR
+    _LAST_SEND_ERROR = None  # reset before each send
+    # Retry transient failures (relay restart, brief 5xx blip): 4 total
+    # attempts with backoff [0.2, 0.5, 1.0] s — 1.7 s max wait. 4xx is
+    # NOT retried (those are real client errors — wrong identity, missing
+    # room, etc.) and the existing _LAST_SEND_ERROR plumbing stays intact.
+    _RETRY_BACKOFF = (0.2, 0.5, 1.0)
+    _RETRY_EXC = (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError)
+    last_5xx_status: Optional[int] = None
+    for attempt in range(len(_RETRY_BACKOFF) + 1):
+        try:
+            r = httpx.post(
+                f"{relay}/rooms/{room}/messages",
+                headers=_auth_headers(secret),
+                json={"from_name": sender, "content": content, "message_type": "chat"},
+                timeout=5,
+                follow_redirects=True,
+            )
+            if r.status_code in (200, 201):
+                try:
+                    data = r.json()
+                    mid = data.get("id") or data.get("message_id") or ""
+                    return str(mid) if mid else ""
+                except (ValueError, TypeError):
+                    return ""
+            if 400 <= r.status_code < 500:
+                # Relay rejected — surface its reason, not a connection lie.
+                try:
+                    data = r.json()
+                    detail = data.get("detail") if isinstance(data, dict) else None
+                    if isinstance(detail, str) and detail:
+                        _LAST_SEND_ERROR = detail
+                    else:
+                        _LAST_SEND_ERROR = f"Relay rejected send (HTTP {r.status_code})"
+                except (ValueError, TypeError):
+                    _LAST_SEND_ERROR = f"Relay rejected send (HTTP {r.status_code})"
+                return None
+            # 5xx — retry on next iteration; preserve generic-hint semantics.
+            last_5xx_status = r.status_code
+        except _RETRY_EXC:
+            pass  # transient — retry
+        except Exception:
+            return None  # bare exception — preserve original fail-closed behavior
+        if attempt < len(_RETRY_BACKOFF):
+            time.sleep(_RETRY_BACKOFF[attempt])
+    _ = last_5xx_status  # silence unused — kept for future logging
+    return None
 
 
 def _join_room(relay: str, secret: str, room: str, participant: str) -> None:
@@ -1299,6 +1352,7 @@ def _render_header(
     latency_ms: int | None = None,
     workspace_label: str = "",
     console_width: int | None = None,
+    chat_identity: str = "",
 ) -> Text:
     """Premium one-line header.
 
@@ -1311,6 +1365,12 @@ def _render_header(
     unread badge, host, connection pulse, latency. We omit the
     textual status when latency is known (silence reads cleaner than
     a stale "Connecting…").
+
+    `chat_identity` is the display-only short form of the participant
+    (e.g. ``arav`` for an ``arav-codex`` profile). When set, the header
+    shows ``@arav`` even though the wire still carries ``agent_name``
+    (the relay enforces JWT.sub == from_name; see _send_message). Falls
+    back to ``agent_name`` when not set.
     """
     from rich.text import Text as _Text
 
@@ -1321,9 +1381,13 @@ def _render_header(
     )
     dot_style = "bold success" if connected else "bold error"
 
-    # Left half — identity + counts.
+    # Left half — identity + counts. Display the short chat_identity
+    # ("@arav") when set; the wire still carries agent_name ("arav-codex")
+    # — the relay rejects from_name != JWT.sub, so display and transport
+    # are intentionally decoupled here.
+    display_name = chat_identity if chat_identity else agent_name
     left = _Text("  ")
-    left.append(f"@{agent_name}", style="bold agent")
+    left.append(f"@{display_name}", style="bold agent")
     if workspace_label:
         left.append(SEP, style="dim")
         left.append(workspace_label, style="accent")
@@ -2297,6 +2361,14 @@ def _main_input_loop(
     secret: str,
     agent_name: str,
     workspace_label: str = "",
+    # DISPLAY-ONLY identity. `chat_identity` flows into the header
+    # ("@arav" instead of "@arav-codex") and the /identity slash command,
+    # but NEVER reaches the wire — the relay enforces
+    # JWT.sub == from_name and rejects mismatches with 403 "Cannot send
+    # as another user". Outbound messages and the optimistic echo both
+    # use `agent_name`. Tenant-aliasing on the relay (codex's lane)
+    # would let us collapse this; until then, display and transport are
+    # intentionally decoupled here.
     chat_identity: str = "",
 ) -> "str | tuple[str, str]":
     """The render+input loop. Returns 'quit' or ('switch', slug).
@@ -2304,10 +2376,10 @@ def _main_input_loop(
     Body of the old run_hub main loop, plus a per-tick check for
     pending workspace-switch requests set by /workspace.
 
-    `chat_identity` overrides `agent_name` for outbound message
-    `from_name` so the human owner of an agent profile types as
-    themselves (e.g., @arav) instead of their agent (@arav-codex).
-    Falls back to `agent_name` when not provided.
+    `chat_identity` is the display-only short form (e.g., @arav for an
+    @arav-codex profile). It's used for the header and the /identity
+    slash command but the wire (and optimistic echo) stays on
+    `agent_name` because the relay rejects from_name != JWT.sub.
     """
     if not chat_identity:
         chat_identity = agent_name
@@ -2383,6 +2455,7 @@ def _main_input_loop(
                         latency_ms=latency_ms,
                         workspace_label=workspace_label,
                         console_width=console_width,
+                        chat_identity=chat_identity,
                     )
                 )
                 console.print(_Rule(style="dim"))
@@ -2885,10 +2958,19 @@ def _main_input_loop(
                     echo["message_id"] = sent_id
                 state.append_message(echo)
             else:
-                state.set_status_bar(
-                    "Couldn't reach the relay. Is it running? "
-                    "Try: RELAY_SECRET=x python -m quorus.relay"
-                )
+                # Distinguish "relay rejected the send" (4xx with detail —
+                # e.g. 403 "Cannot send as another user") from "couldn't
+                # reach the relay" (5xx/connection error). The old code
+                # collapsed both into the generic hint, which lied to
+                # the user when the relay was actually up and just
+                # refusing the message.
+                if _LAST_SEND_ERROR:
+                    state.set_status_bar(_LAST_SEND_ERROR)
+                else:
+                    state.set_status_bar(
+                        "Couldn't reach the relay. Is it running? "
+                        "Try: RELAY_SECRET=x python -m quorus.relay"
+                    )
 
             last_render = 0  # force immediate redraw after send
 

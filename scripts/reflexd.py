@@ -325,6 +325,38 @@ def detect_harness(participant: str) -> str:
     return "claude"
 
 
+# Suffixes the strict participant-name check accepts. Mirrors
+# ``_HARNESS_SUFFIXES`` plus a few well-known per-host claude variants
+# (claude-1m, claude-2, claude-3, claude-desktop) so power users running
+# multiple claude tabs from one host don't get rejected.
+_AGENT_PARTICIPANT_SUFFIXES: tuple[str, ...] = (
+    "-claude",
+    "-claude-1m",
+    "-claude-2",
+    "-claude-3",
+    "-claude-desktop",
+    "-codex",
+    "-gemini",
+    "-cursor",
+)
+
+
+def is_agent_participant(participant: str) -> bool:
+    """True iff ``participant`` ends with a recognised agent-harness suffix.
+
+    Reflexd silently mis-routes when started under a non-agent participant
+    name (e.g. the human "arav") because triage IGNOREs ``sender ==
+    self_name`` — every message from arav is then dropped before bidding.
+    This check fails closed at daemon-construction time so the operator
+    sees the misconfig immediately instead of in a chat-message black
+    hole.
+    """
+    if not participant:
+        return False
+    name = participant.lower()
+    return any(name.endswith(suffix) for suffix in _AGENT_PARTICIPANT_SUFFIXES)
+
+
 # ---------------------------------------------------------------------------
 # Headless adapter — routes a context prompt to the right harness
 # ---------------------------------------------------------------------------
@@ -719,6 +751,10 @@ class ReflexdConfig:
     spawn_enabled: bool = True
     legacy_bearer: bool = False
     dry_run: bool = False
+    # Escape hatch: skip the strict agent-suffix check on participant_name.
+    # Power users only — bypassing causes silent mis-routing if the name
+    # collides with a real chat sender (see ``is_agent_participant``).
+    allow_non_agent: bool = False
 
     @classmethod
     def from_env(cls) -> "ReflexdConfig":
@@ -755,6 +791,24 @@ class Reflexd:
     def __init__(
         self, config: ReflexdConfig, *, adapter: HeadlessAdapter | None = None,
     ) -> None:
+        # Fail closed on misconfigured participant names. Reflexd's triage
+        # treats ``sender == self_name`` as a self-message and IGNOREs it,
+        # so a daemon started as the human's name (e.g. "arav") silently
+        # drops every chat from that human before bidding. Refuse to start
+        # unless the participant ends in a recognised agent-harness suffix
+        # — or the operator opted into the escape hatch.
+        if not config.allow_non_agent and not is_agent_participant(
+            config.participant_name
+        ):
+            allowed = "{claude|codex|gemini|cursor}"
+            sys.stderr.write(
+                "reflexd: refusing to start — participant "
+                f"'{config.participant_name}' has no agent suffix. "
+                f"Set REFLEXD_PARTICIPANT={config.participant_name}-{allowed} "
+                "or use a name ending in one of those keywords.\n"
+            )
+            sys.stderr.flush()
+            raise SystemExit(2)
         self.config = config
         self.adapter = adapter or HeadlessAdapter()
         self._stop = asyncio.Event()
@@ -1078,6 +1132,13 @@ def build_argparser() -> argparse.ArgumentParser:
                         help=("trigger a synthetic wake_intent on ROOM, run one "
                               "adapter pass (honoring --dry-run), then exit. "
                               "Used by scripts/reflexd_smoke.sh in CI."))
+    parser.add_argument("--allow-non-agent-participant",
+                        dest="allow_non_agent_participant",
+                        action="store_true",
+                        help=("ESCAPE HATCH: skip the strict agent-suffix check "
+                              "on participant name. Causes silent mis-routing "
+                              "if the name collides with a real chat sender — "
+                              "use only for testing."))
     return parser
 
 
@@ -1188,6 +1249,8 @@ def _config_from_args(args: argparse.Namespace) -> ReflexdConfig:
         cfg.spawn_enabled = False
     if getattr(args, "dry_run", False):
         cfg.dry_run = True
+    if getattr(args, "allow_non_agent_participant", False):
+        cfg.allow_non_agent = True
     return cfg
 
 

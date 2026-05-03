@@ -467,6 +467,132 @@ def test_cli_help_runs() -> None:
     assert ns.command == "status"
 
 
+# ---------------------------------------------------------------------------
+# Participant-name safety check (refuse non-agent suffix)
+# ---------------------------------------------------------------------------
+
+
+def _mk_cfg(name: str, *, allow_non_agent: bool = False) -> "reflexd.ReflexdConfig":
+    """Minimal in-memory ReflexdConfig for participant-validation tests."""
+    return reflexd.ReflexdConfig(
+        relay_url="http://test",
+        api_key="k",
+        participant_name=name,
+        spawn_enabled=False,
+        allow_non_agent=allow_non_agent,
+    )
+
+
+def test_reflexd_refuses_human_participant_name(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Daemon must refuse to construct under a non-agent participant name.
+
+    Without this guard, ``triage_local`` would IGNORE every chat from "arav"
+    as a self-message and the daemon would never wake — silent failure.
+    """
+    cfg = _mk_cfg("arav")
+    with pytest.raises(SystemExit) as exc_info:
+        reflexd.Reflexd(cfg)
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "refusing to start" in err
+    assert "'arav'" in err
+    assert "no agent suffix" in err
+
+
+def test_reflexd_accepts_claude_suffix() -> None:
+    cfg = _mk_cfg("arav-claude")
+    daemon = reflexd.Reflexd(cfg)
+    assert daemon.config.participant_name == "arav-claude"
+
+
+def test_reflexd_accepts_claude_1m_suffix() -> None:
+    cfg = _mk_cfg("arav-claude-1m")
+    daemon = reflexd.Reflexd(cfg)
+    assert daemon.config.participant_name == "arav-claude-1m"
+
+
+def test_reflexd_accepts_claude_2_suffix() -> None:
+    cfg = _mk_cfg("arav-claude-2")
+    daemon = reflexd.Reflexd(cfg)
+    assert daemon.config.participant_name == "arav-claude-2"
+
+
+def test_reflexd_accepts_claude_desktop_suffix() -> None:
+    cfg = _mk_cfg("arav-claude-desktop")
+    daemon = reflexd.Reflexd(cfg)
+    assert daemon.config.participant_name == "arav-claude-desktop"
+
+
+def test_reflexd_accepts_codex_suffix() -> None:
+    cfg = _mk_cfg("arav-codex")
+    daemon = reflexd.Reflexd(cfg)
+    assert daemon.config.participant_name == "arav-codex"
+
+
+def test_reflexd_accepts_gemini_suffix() -> None:
+    cfg = _mk_cfg("arav-gemini")
+    daemon = reflexd.Reflexd(cfg)
+    assert daemon.config.participant_name == "arav-gemini"
+
+
+def test_reflexd_accepts_cursor_suffix() -> None:
+    cfg = _mk_cfg("arav-cursor")
+    daemon = reflexd.Reflexd(cfg)
+    assert daemon.config.participant_name == "arav-cursor"
+
+
+def test_reflexd_allow_non_agent_participant_override() -> None:
+    """``--allow-non-agent-participant`` (allow_non_agent=True) bypasses check."""
+    cfg = _mk_cfg("arav", allow_non_agent=True)
+    daemon = reflexd.Reflexd(cfg)  # must not raise
+    assert daemon.config.participant_name == "arav"
+    assert daemon.config.allow_non_agent is True
+
+
+def test_reflexd_refuses_empty_participant() -> None:
+    """Empty / whitespace participants must also fail closed."""
+    with pytest.raises(SystemExit) as exc_info:
+        reflexd.Reflexd(_mk_cfg(""))
+    assert exc_info.value.code == 2
+
+
+def test_reflexd_refuses_substring_match_without_suffix() -> None:
+    """``claude-arav`` (claude as prefix) is NOT a valid agent name.
+
+    Only end-anchored suffixes are accepted — guards against confused
+    routing where ``detect_harness`` substring-matches but the triage
+    self-message check uses literal equality on full name.
+    """
+    cfg = _mk_cfg("claude-arav")
+    with pytest.raises(SystemExit) as exc_info:
+        reflexd.Reflexd(cfg)
+    assert exc_info.value.code == 2
+
+
+def test_is_agent_participant_helper() -> None:
+    """The exposed helper agrees with the constructor check."""
+    assert reflexd.is_agent_participant("arav-claude") is True
+    assert reflexd.is_agent_participant("arav-claude-1m") is True
+    assert reflexd.is_agent_participant("arav-codex") is True
+    assert reflexd.is_agent_participant("arav-gemini") is True
+    assert reflexd.is_agent_participant("arav-cursor") is True
+    assert reflexd.is_agent_participant("ARAV-CLAUDE") is True  # case-insensitive
+    assert reflexd.is_agent_participant("arav") is False
+    assert reflexd.is_agent_participant("") is False
+    assert reflexd.is_agent_participant("claude-arav") is False  # prefix only
+
+
+def test_cli_parses_allow_non_agent_flag() -> None:
+    """argparse exposes ``--allow-non-agent-participant`` on start."""
+    parser = reflexd.build_argparser()
+    ns = parser.parse_args(["start", "--allow-non-agent-participant"])
+    assert ns.allow_non_agent_participant is True
+    ns2 = parser.parse_args(["start"])
+    assert ns2.allow_non_agent_participant is False
+
+
 def test_iter_sse_events_parses_block(monkeypatch: pytest.MonkeyPatch) -> None:
     """Cover the SSE parser path independently of the daemon."""
     payload = (

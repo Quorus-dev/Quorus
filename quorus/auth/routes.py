@@ -8,7 +8,7 @@ import re
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, field_validator
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from quorus.admin.models import ApiKey, Participant, Tenant
 from quorus.auth.tokens import create_jwt, extract_key_prefix, generate_api_key, verify_api_key
@@ -403,7 +403,24 @@ async def register_agent(
                 # Revoke ALL prior unrevoked keys so we don't keep
                 # accumulating duplicates on every re-register. Treats the
                 # newly-minted key as the single canonical credential.
+                #
+                # One bulk UPDATE instead of N per-row UPDATEs: atomic at
+                # the SQL level, no N+1 risk if a misconfigured client loop
+                # ever piles up 100+ active keys. The in-Python loop after
+                # the statement keeps the already-loaded session objects in
+                # sync with the DB (equivalent to synchronize_session="fetch"
+                # but works under unit-test mocks that don't round-trip a
+                # real UPDATE — the regression test reads `.revoked_at` on
+                # the Python instances directly).
                 now = datetime.now(timezone.utc)
+                await session.execute(
+                    update(ApiKey)
+                    .where(
+                        ApiKey.participant_id == existing_agent.id,
+                        ApiKey.revoked_at.is_(None),
+                    )
+                    .values(revoked_at=now)
+                )
                 for old_key in existing_keys:
                     old_key.revoked_at = now
 
