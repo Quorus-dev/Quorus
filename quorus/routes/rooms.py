@@ -7,6 +7,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.routes.helpers import _coerce_bool
 from quorus.routes.models import (
     CreateRoomRequest,
     DestroyRoomRequest,
@@ -80,7 +81,7 @@ async def get_room(
         "name": data.get("name", ""),
         "members": sorted(members.keys()),
         "member_roles": members,
-        "private": bool(data.get("private", False)),
+        "private": _coerce_bool(data.get("private")),
         "created_at": data.get("created_at", ""),
     }
 

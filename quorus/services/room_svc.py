@@ -9,6 +9,7 @@ import structlog
 from fastapi import HTTPException
 
 from quorus.backends.protocol import RoomBackend
+from quorus.routes.helpers import _coerce_bool
 
 logger = structlog.get_logger("quorus.services.room")
 
@@ -133,7 +134,7 @@ class RoomService:
                     "name": data.get("name", ""),
                     "members": sorted(members.keys()),
                     "member_roles": members,
-                    "private": bool(data.get("private", False)),
+                    "private": _coerce_bool(data.get("private")),
                     "created_at": data.get("created_at", ""),
                 }
             )

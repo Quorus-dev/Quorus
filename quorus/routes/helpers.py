@@ -21,6 +21,23 @@ def _validate_name(value: str) -> str:
     return value
 
 
+def _coerce_bool(value: object, *, default: bool = False) -> bool:
+    """Parse bool-ish values from JSON/Redis room metadata."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return default
+
+
 def _chunk_content(content: str, max_size: int) -> list[str]:
     """Split *content* into UTF-8 safe chunks of at most *max_size* bytes each."""
     chunks: list[str] = []

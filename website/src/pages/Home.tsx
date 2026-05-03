@@ -1,29 +1,45 @@
 import HeroLight from "../components/HeroLight";
 import LogoCloud from "../components/LogoCloud";
+import CrossHarnessBand from "../components/CrossHarnessBand";
+import HowItWorksBand from "../components/HowItWorksBand";
 import ControlCenterDark from "../components/ControlCenterDark";
+import QuickstartBand from "../components/QuickstartBand";
 import BentoStitch from "../components/BentoStitch";
+import ConsoleTeaserBand from "../components/ConsoleTeaserBand";
+import ComparisonBand from "../components/ComparisonBand";
 import CTADark from "../components/CTADark";
 import FooterV2 from "../components/FooterV2";
 
 /**
- * Quorus landing — 6-band composition.
+ * Quorus landing — 11-band composition.
  *
- *   1. Hero (cream)            — left copy, right room-state watch panel
- *   2. Logo cloud (cream)      — provider wordmarks
- *   3. Control Center (ink)    — live coordination dashboard mock
- *   4. Bento (cream)           — six primitives, asymmetric grid
- *   5. CTA (ink)               — install command + secondary links
- *   6. Footer (cream)          — sitemap + tagline
+ *   1. Hero (cream)              — brain + headline + waitlist + install
+ *   2. Logo cloud (cream)        — provider wordmarks
+ *   3. Cross-Harness (ink)       — Claude · Cursor · Gemini · Codex flow
+ *   4. How it works (cream)      — 3-step diagram
+ *   5. Control Center (ink)      — live coordination dashboard mock
+ *   6. Quickstart (cream)        — tabbed code blocks
+ *   7. Bento (ink)               — six interactive primitives
+ *   8. Console teaser (cream)    — framed live preview
+ *   9. Comparison (cream)        — vs LangGraph / vs CrewAI
+ *  10. CTA (ink)                 — install command + secondary links
+ *  11. Footer (cream)            — sitemap + tagline
  *
- * The Nav inverts itself when scrolled over `data-theme="dark"` sections.
+ * The Nav inverts itself when scrolled over `data-theme="dark"` sections
+ * (Cross-Harness, Control Center, Bento, CTA).
  */
 export default function Home() {
   return (
     <main id="main" className="min-h-screen">
       <HeroLight />
       <LogoCloud />
+      <CrossHarnessBand />
+      <HowItWorksBand />
       <ControlCenterDark />
+      <QuickstartBand />
       <BentoStitch />
+      <ConsoleTeaserBand />
+      <ComparisonBand />
       <CTADark />
       <FooterV2 />
     </main>

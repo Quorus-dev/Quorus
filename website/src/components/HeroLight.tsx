@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import BrainSynapses from "./illustrations/BrainSynapses";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 const INSTALL_CMD =
@@ -174,17 +175,26 @@ function HeroBrain() {
         }}
       />
 
-      {/* Brain image with subtle drift. The Stitch crop is 776×700 ≈ 1.11:1 */}
-      <motion.img
-        src="/stitch/brain-scene.webp"
-        alt="A glowing teal-lit brain with an orchestrator terminal showing Quorus initializing a multi-model swarm"
-        width={776}
-        height={700}
-        draggable={false}
-        className="relative block h-auto w-full select-none"
+      {/* Brain image + animated synapse overlay. The image is the static
+          Stitch crop (776×700); BrainSynapses is a transparent SVG layer
+          positioned over it so the synapses pulse on top of the brain. */}
+      <motion.div
+        className="relative block w-full"
         animate={prefersReduced ? undefined : { y: [0, -6, 0] }}
         transition={{ duration: 9, ease: "easeInOut", repeat: Infinity }}
-      />
+      >
+        <img
+          src="/stitch/brain-scene.webp"
+          alt="A glowing teal-lit brain with an orchestrator terminal showing Quorus initializing a multi-model swarm"
+          width={776}
+          height={700}
+          draggable={false}
+          className="relative block h-auto w-full select-none"
+          loading="eager"
+          decoding="async"
+        />
+        <BrainSynapses />
+      </motion.div>
     </motion.div>
   );
 }

@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 
 from quorus.admin.models import ApiKey, Participant, Tenant
 from quorus.auth.tokens import create_jwt, extract_key_prefix, generate_api_key, verify_api_key
+from quorus.routes.helpers import _coerce_bool
 from quorus.storage.postgres import get_db_session
 
 logger = logging.getLogger("quorus.auth")
@@ -124,7 +125,7 @@ async def _sync_agent_room_memberships(
     for room in parent_rooms:
         if inherit_rooms == "none":
             continue
-        if inherit_rooms == "public" and bool(room.get("private", False)):
+        if inherit_rooms == "public" and _coerce_bool(room.get("private")):
             continue
         await rooms_backend.add_member(tenant_id, room["id"], agent_name, "agent")
         synced += 1

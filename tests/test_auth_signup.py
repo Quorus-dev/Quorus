@@ -272,8 +272,8 @@ async def test_register_agent_auto_joins_public_parent_rooms(monkeypatch):
             assert tenant_id == parent_tenant.id
             assert member_name == parent_participant.name
             return [
-                {"id": "room-1", "name": "sprint", "private": False},
-                {"id": "room-2", "name": "demo", "private": True},
+                {"id": "room-1", "name": "sprint", "private": "False"},
+                {"id": "room-2", "name": "demo", "private": "True"},
             ]
 
     class FakeRoomsBackend:
