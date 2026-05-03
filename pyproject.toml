@@ -81,6 +81,7 @@ filterwarnings = [
 ]
 markers = [
     "integration: marks tests as integration tests requiring Docker (deselect with '-m \"not integration\"')",
+    "real_harness: opt-in tests that spawn real claude/codex/gemini/cursor binaries. Run with `pytest -m real_harness`. Skipped by default.",
 ]
 
 [tool.hatch.build.targets.wheel]

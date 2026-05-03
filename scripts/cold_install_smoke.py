@@ -292,12 +292,18 @@ def run(port: int, timeout: int) -> None:
 
         # Step 5: quorus init in the isolated config dir
         # Use --secret (legacy auth) so we don't need bootstrap onboarding.
+        # Pass productized init escape hatches so CI never spawns a daemon
+        # / prompts for launchd / runs the wake smoke — keeps the cell
+        # hermetic and < 60s.
         init_result = subprocess.run(
             [
                 quorus_bin, "init", PARTICIPANT,
                 "--relay-url", f"http://127.0.0.1:{port}",
                 "--secret", RELAY_SECRET,
                 "--config-dir", str(config_dir),
+                "--no-autostart",
+                "--no-smoke",
+                "--no-launchd",
             ],
             env=env,
             capture_output=True,

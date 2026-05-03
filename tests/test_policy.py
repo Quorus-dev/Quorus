@@ -7,12 +7,20 @@ from pathlib import Path
 import pytest
 
 from quorus.auth.policy import (
+    ALL_DM_ACTIONS,
+    ALL_REFLEX_ACTIONS,
+    ALL_SOCIAL_ACTIONS,
     Decision,
     Mode,
     PolicyContext,
     evaluate,
+    evaluate_scoped,
     is_destructive,
+    is_dm_action,
+    is_reflex_action,
+    is_social_action,
     load_policy_for_tenant,
+    reset_rate_limits,
 )
 
 
@@ -159,3 +167,210 @@ class TestIsDestructive:
     )
     def test_destructive_classification(self, action, expected):
         assert is_destructive(action) is expected
+
+
+# ── Stream D — reflex / social / dm scoped checks ───────────────────────────
+
+
+class TestActionEnumeration:
+    """Sanity that the action vocabulary stays in lockstep with the verb-set."""
+
+    def test_reflex_actions_present(self):
+        assert "reflex:bid" in ALL_REFLEX_ACTIONS
+        assert "reflex:claim" in ALL_REFLEX_ACTIONS
+
+    def test_social_actions_cover_all_seven_verbs(self):
+        for verb in ("claim", "release", "disagree", "defer",
+                     "queue", "vote", "interrupt"):
+            assert f"social:{verb}" in ALL_SOCIAL_ACTIONS
+
+    def test_dm_actions(self):
+        assert "dm:agent" in ALL_DM_ACTIONS
+
+    def test_classifiers(self):
+        assert is_reflex_action("reflex:bid")
+        assert not is_reflex_action("social:claim")
+        assert is_social_action("social:disagree")
+        assert not is_social_action("reflex:claim")
+        assert is_dm_action("dm:agent")
+        assert not is_dm_action("social:claim")
+
+
+class TestReflexScopedChecks:
+    """``reflex:bid`` / ``reflex:claim`` are gated on room membership."""
+
+    def setup_method(self):
+        reset_rate_limits()
+
+    def test_reflex_bid_allowed_for_room_member(self):
+        ctx = PolicyContext(
+            actor="arav-codex",
+            action="reflex:bid",
+            resource="proj",
+            role="agent",
+            extra={"room_members": {"arav-codex", "arav-claude"}},
+        )
+        r = evaluate_scoped(ctx)
+        assert r.decision == Decision.ALLOW
+
+    def test_reflex_bid_denied_for_non_member(self):
+        policy = {"mode": "hard", "rules": [], "default_decision": "allow"}
+        ctx = PolicyContext(
+            actor="rogue-bot",
+            action="reflex:bid",
+            resource="proj",
+            role="agent",
+            extra={"room_members": {"arav-codex"}},
+        )
+        r = evaluate_scoped(ctx, policy)
+        assert r.decision == Decision.DENY
+        assert r.rule_id == "scoped.room_membership"
+        assert r.effective_decision == Decision.DENY
+
+    def test_reflex_claim_denied_when_membership_missing_for_agent(self):
+        policy = {"mode": "hard", "rules": [], "default_decision": "allow"}
+        ctx = PolicyContext(
+            actor="arav-codex",
+            action="reflex:claim",
+            resource="proj",
+            role="agent",
+            extra=None,  # no membership info supplied
+        )
+        r = evaluate_scoped(ctx, policy)
+        assert r.decision == Decision.DENY
+        assert r.rule_id == "scoped.room_membership"
+
+
+class TestSocialScopedChecks:
+    """``social:<verb>`` actions: membership for all, rate-limit on blocking."""
+
+    def setup_method(self):
+        reset_rate_limits()
+
+    def test_social_claim_allowed_for_member(self):
+        ctx = PolicyContext(
+            actor="arav-codex",
+            action="social:claim",
+            resource="proj",
+            role="agent",
+            extra={"room_members": ["arav-codex"]},
+        )
+        assert evaluate_scoped(ctx).decision == Decision.ALLOW
+
+    def test_social_vote_denied_for_non_member(self):
+        policy = {"mode": "hard", "rules": [], "default_decision": "allow"}
+        ctx = PolicyContext(
+            actor="rogue-bot",
+            action="social:vote",
+            resource="proj",
+            role="agent",
+            extra={"room_members": ["arav-codex"]},
+        )
+        r = evaluate_scoped(ctx, policy)
+        assert r.decision == Decision.DENY
+
+    def test_disagree_blocking_first_call_allowed(self):
+        ctx = PolicyContext(
+            actor="arav-claude",
+            action="social:disagree",
+            resource="proj",
+            role="agent",
+            extra={"room_members": {"arav-claude"}, "mode": "blocking"},
+        )
+        assert evaluate_scoped(ctx).decision == Decision.ALLOW
+
+    def test_disagree_blocking_second_call_within_window_rate_limited(self):
+        policy = {"mode": "hard", "rules": [], "default_decision": "allow"}
+        members = {"arav-claude"}
+        first = PolicyContext(
+            actor="arav-claude",
+            action="social:disagree",
+            resource="proj",
+            role="agent",
+            extra={"room_members": members, "mode": "blocking"},
+        )
+        assert evaluate_scoped(first, policy).decision == Decision.ALLOW
+        second = PolicyContext(
+            actor="arav-claude",
+            action="social:disagree",
+            resource="proj",
+            role="agent",
+            extra={"room_members": members, "mode": "blocking"},
+        )
+        r = evaluate_scoped(second, policy)
+        assert r.decision == Decision.DENY
+        assert r.rule_id == "scoped.disagree_blocking_rate"
+        assert "rate-limited" in r.reason
+
+    def test_disagree_advisory_not_rate_limited(self):
+        members = {"arav-claude"}
+        for _ in range(5):
+            ctx = PolicyContext(
+                actor="arav-claude",
+                action="social:disagree",
+                resource="proj",
+                role="agent",
+                extra={"room_members": members, "mode": "advisory"},
+            )
+            assert evaluate_scoped(ctx).decision == Decision.ALLOW
+
+
+class TestDMScopedChecks:
+    """``dm:agent`` requires sender + recipient share a tenant."""
+
+    def setup_method(self):
+        reset_rate_limits()
+
+    def test_dm_same_tenant_allowed(self):
+        ctx = PolicyContext(
+            actor="arav-codex",
+            action="dm:agent",
+            resource="arav-claude",
+            role="agent",
+            tenant_id="t1",
+            extra={"recipient_tenant_id": "t1"},
+        )
+        assert evaluate_scoped(ctx).decision == Decision.ALLOW
+
+    def test_dm_cross_tenant_denied(self):
+        policy = {"mode": "hard", "rules": [], "default_decision": "allow"}
+        ctx = PolicyContext(
+            actor="arav-codex",
+            action="dm:agent",
+            resource="other-tenant-bot",
+            role="agent",
+            tenant_id="t1",
+            extra={"recipient_tenant_id": "t2"},
+        )
+        r = evaluate_scoped(ctx, policy)
+        assert r.decision == Decision.DENY
+        assert r.rule_id == "scoped.dm_tenant"
+        assert "cross-tenant" in r.reason
+
+    def test_dm_missing_tenant_denied(self):
+        policy = {"mode": "hard", "rules": [], "default_decision": "allow"}
+        ctx = PolicyContext(
+            actor="arav-codex",
+            action="dm:agent",
+            resource="x",
+            role="agent",
+            tenant_id=None,
+            extra={"recipient_tenant_id": "t1"},
+        )
+        assert evaluate_scoped(ctx, policy).decision == Decision.DENY
+
+
+class TestEvaluateScopedFallthrough:
+    """Unrelated actions pass through ``evaluate_scoped`` unchanged."""
+
+    def setup_method(self):
+        reset_rate_limits()
+
+    def test_message_send_unaffected(self):
+        ctx = PolicyContext(actor="arav", action="message.send", role="agent")
+        assert evaluate_scoped(ctx).decision == Decision.ALLOW
+
+    def test_destructive_default_still_applies(self):
+        ctx = PolicyContext(actor="arav", action="room.delete", role="agent")
+        # Routes through evaluate() first, hits destructive default.
+        assert evaluate_scoped(ctx).decision == Decision.REQUIRE_HUMAN

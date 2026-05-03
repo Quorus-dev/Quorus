@@ -1124,6 +1124,22 @@ def _reflexd_script_path() -> Path:
     raise FileNotFoundError("reflexd.py not found relative to quorus_cli.cli")
 
 
+def _cmd_reflex(args):
+    """Dispatcher for ``quorus reflex <subcommand>`` (read-only obs).
+
+    Distinct from ``quorus reflexd`` (lifecycle: start/stop/status/logs).
+    `reflex` is the swarm-wide dashboard; `reflexd` operates on one daemon
+    at a time.
+    """
+    action = getattr(args, "reflex_action", None)
+    if action in (None, "status"):
+        from .reflex_status import cmd_reflex_status
+        cmd_reflex_status(args)
+        return
+    _ui.error(f"reflex: unknown action {action!r}")
+    raise SystemExit(2)
+
+
 def _cmd_reflexd(args):
     """Dispatcher for ``quorus reflexd start|stop|status|logs``.
 
@@ -8812,6 +8828,38 @@ def main():
     p_mgr_install.add_argument("--yes", action="store_true",
                                help="Skip the confirm prompt (DESTRUCTIVE — opt-in only)")
 
+    # ── reflex: read-only observability over the reflexd swarm.
+    p_reflex = sub.add_parser("reflex", **_help_block(
+        synopsis="Inspect the local Reflex agent swarm at a glance.",
+        description=(
+            "Read-only dashboard over the reflexd processes managed by "
+            "`quorus reflexd-manager`. Reads ~/.quorus/runtime/*.pid for "
+            "liveness, tails ~/.quorus/reflexd.log for SSE state and last "
+            "activity, and detects whether each harness CLI (claude / "
+            "codex / gemini / cursor) is on PATH. No psutil dependency; "
+            "uses os.kill(pid, 0) for liveness probes."
+        ),
+        example="quorus reflex status",
+        help_text="Inspect the reflex daemon swarm",
+    ))
+    rx_obs_sub = p_reflex.add_subparsers(dest="reflex_action")
+    p_rx_obs_status = rx_obs_sub.add_parser(
+        "status",
+        help="Print a Rich table of every agent's reflexd state",
+    )
+    p_rx_obs_status.add_argument(
+        "--json", action="store_true",
+        help="Emit JSON instead of a Rich table (machine-readable).",
+    )
+    p_rx_obs_status.add_argument(
+        "--watch", action="store_true",
+        help="Refresh every --interval seconds. Ctrl-C to exit.",
+    )
+    p_rx_obs_status.add_argument(
+        "--interval", type=int, default=2,
+        help="Refresh interval in seconds for --watch (default 2).",
+    )
+
     p_workspaces = sub.add_parser("workspaces", **_help_block(
         synopsis="Manage Quorus workspace profiles.",
         description=(
@@ -8920,6 +8968,7 @@ def main():
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,
+        "reflex": _cmd_reflex,
         "workspaces": _cmd_workspaces,
         "login": _cmd_login,
         "whoami": _cmd_whoami,
