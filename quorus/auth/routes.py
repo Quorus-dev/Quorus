@@ -95,6 +95,31 @@ class RegisterAgentResponse(BaseModel):
     next_step: str
 
 
+async def _sync_agent_room_memberships(
+    request: Request,
+    tenant_id: str,
+    parent_name: str,
+    agent_name: str,
+) -> int:
+    """Add the registered agent to every room the parent can already see."""
+    state = getattr(getattr(request, "app", None), "state", None)
+    room_svc = getattr(state, "room_service", None)
+    backends = getattr(state, "backends", None)
+    rooms_backend = getattr(backends, "rooms", None)
+    if room_svc is None or rooms_backend is None:
+        return 0
+
+    parent_rooms = await room_svc.list_for_member(tenant_id, parent_name)
+    for room in parent_rooms:
+        await rooms_backend.add_member(tenant_id, room["id"], agent_name, "agent")
+
+    participants_backend = getattr(backends, "participants", None)
+    if participants_backend is not None:
+        await participants_backend.add(tenant_id, agent_name)
+
+    return len(parent_rooms)
+
+
 # ---------------------------------------------------------------------------
 # Self-service signup
 # ---------------------------------------------------------------------------
@@ -392,10 +417,16 @@ async def register_agent(
                 )
                 session.add(new_api_key)
                 await session.flush()
+                synced_rooms = await _sync_agent_room_memberships(
+                    request,
+                    parent_tenant_id,
+                    parent_participant.name,
+                    existing_agent.name,
+                )
 
                 logger.info(
-                    "Agent key regenerated: %s (tenant=%s, suffix=%s)",
-                    agent_name, tenant.slug, req.suffix,
+                    "Agent key regenerated: %s (tenant=%s, suffix=%s, rooms_synced=%s)",
+                    agent_name, tenant.slug, req.suffix, synced_rooms,
                 )
                 return RegisterAgentResponse(
                     agent_name=agent_name,
@@ -424,10 +455,16 @@ async def register_agent(
         )
         session.add(agent_api_key)
         await session.flush()
+        synced_rooms = await _sync_agent_room_memberships(
+            request,
+            parent_tenant_id,
+            parent_participant.name,
+            agent_name,
+        )
 
         logger.info(
-            "Agent registered: %s (tenant=%s, suffix=%s, parent=%s)",
-            agent_name, tenant.slug, req.suffix, parent_participant.name,
+            "Agent registered: %s (tenant=%s, suffix=%s, parent=%s, rooms_synced=%s)",
+            agent_name, tenant.slug, req.suffix, parent_participant.name, synced_rooms,
         )
 
         return RegisterAgentResponse(
