@@ -1124,6 +1124,74 @@ def _reflexd_script_path() -> Path:
     raise FileNotFoundError("reflexd.py not found relative to quorus_cli.cli")
 
 
+def _cmd_memory(args) -> None:
+    """Dispatcher for ``quorus memory <subcommand>``.
+
+    Currently exposes ``purge`` for GDPR right-to-erasure. Reads
+    ``~/.quorus/memory/<participant>/<room>.jsonl`` and removes it via
+    :func:`quorus.runtime.memory.purge` (atomic tmpfile-replace + unlink).
+
+    Exit codes:
+    * 0 — success (count printed)
+    * 2 — invalid arguments
+    * 5 — runtime error during purge
+    """
+    action = getattr(args, "memory_action", None)
+    if action != "purge":
+        _ui.error(
+            "memory: missing subcommand.",
+            hint="usage: [accent]quorus memory purge --participant NAME[/]",
+        )
+        raise SystemExit(2)
+
+    participant = getattr(args, "participant", None)
+    room = getattr(args, "room", None)
+    purge_all = bool(getattr(args, "all", False))
+
+    if not participant or not str(participant).strip():
+        _ui.error("memory purge: --participant required.")
+        raise SystemExit(2)
+
+    if room and purge_all:
+        _ui.error(
+            "memory purge: --room and --all are mutually exclusive.",
+        )
+        raise SystemExit(2)
+
+    # Default behaviour without --room or --all is to refuse rather
+    # than silently wipe everything; require an explicit --all.
+    if not room and not purge_all:
+        _ui.error(
+            "memory purge: pass --room ROOM, or --all to purge every room.",
+        )
+        raise SystemExit(2)
+
+    from quorus.runtime import memory as _mem
+
+    try:
+        result = _mem.purge_sync(
+            participant.strip(),
+            room.strip() if room else None,
+        )
+    except Exception as exc:
+        _ui.error(f"memory purge failed: {exc}")
+        raise SystemExit(5) from exc
+
+    purged = int(result.get("purged_count", 0))
+    target = (
+        f"{result.get('participant')}/{result.get('room')}.jsonl"
+        if result.get("room")
+        else f"{result.get('participant')} (all rooms)"
+    )
+    if purged == 0:
+        console.print(f"[dim]memory: nothing to purge for {target}.[/]")
+    else:
+        console.print(
+            f"[green]memory: purged {purged} file(s) for {target}.[/]"
+        )
+    raise SystemExit(0)
+
+
 def _cmd_reflex(args):
     """Dispatcher for ``quorus reflex <subcommand>`` (read-only obs).
 
@@ -8860,6 +8928,35 @@ def main():
         help="Refresh interval in seconds for --watch (default 2).",
     )
 
+    # ── memory: GDPR right-to-erasure for ~/.quorus/memory/<participant>/.
+    p_memory = sub.add_parser("memory", **_help_block(
+        synopsis="Manage local agent memory files (GDPR erasure).",
+        description=(
+            "Purge per-agent room memory written by reflexd. "
+            "Files live under ~/.quorus/memory/<participant>/<room>.jsonl "
+            "and are erased atomically via tmpfile-replace + unlink."
+        ),
+        example="quorus memory purge --participant arav-codex --room sprint",
+        help_text="Manage local agent memory files",
+    ))
+    mem_sub = p_memory.add_subparsers(dest="memory_action")
+    p_mem_purge = mem_sub.add_parser(
+        "purge",
+        help="Erase memory file(s) for a participant (GDPR)",
+    )
+    p_mem_purge.add_argument(
+        "--participant", required=True,
+        help="Participant whose memory should be erased (required).",
+    )
+    p_mem_purge.add_argument(
+        "--room",
+        help="Specific room file to erase. Mutually exclusive with --all.",
+    )
+    p_mem_purge.add_argument(
+        "--all", action="store_true",
+        help="Erase every room file for the participant.",
+    )
+
     p_workspaces = sub.add_parser("workspaces", **_help_block(
         synopsis="Manage Quorus workspace profiles.",
         description=(
@@ -8969,6 +9066,7 @@ def main():
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,
         "reflex": _cmd_reflex,
+        "memory": _cmd_memory,
         "workspaces": _cmd_workspaces,
         "login": _cmd_login,
         "whoami": _cmd_whoami,

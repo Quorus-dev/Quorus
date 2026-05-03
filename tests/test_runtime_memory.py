@@ -291,3 +291,82 @@ async def test_locks_lru_promotes_recent_access(monkeypatch, base_dir: Path):
     keys = list(mem._LOCKS_LRU.keys())
     assert any("/a/" in k for k in keys), "promoted entry was evicted"
     assert not any("/b/" in k for k in keys), "stale entry not evicted"
+
+
+# ---------------------------------------------------------------------------
+# M3 — GDPR right-to-erasure (purge)
+# ---------------------------------------------------------------------------
+
+
+async def test_memory_purge_deletes_room_file(base_dir: Path):
+    """M3 — purge(participant, room=R) atomically erases just R's file.
+
+    Other rooms for the same participant must survive; the file-gone
+    counter is reflected in the return dict so the audit trail can log
+    the exact erasure.
+    """
+    await mem.append("alice", "sprint", "did the thing", base_dir=base_dir)
+    await mem.append("alice", "demo", "another thing", base_dir=base_dir)
+
+    target = mem.memory_path("alice", "sprint", base_dir=base_dir)
+    other = mem.memory_path("alice", "demo", base_dir=base_dir)
+    assert target.exists()
+    assert other.exists()
+
+    result = await mem.purge("alice", "sprint", base_dir=base_dir)
+    assert result["purged_count"] == 1
+    assert any("sprint" in p for p in result["removed"])
+
+    # The targeted room file is gone; the other room survives.
+    assert not target.exists()
+    assert other.exists()
+
+
+async def test_memory_purge_all_clears_participant_dir(base_dir: Path):
+    """M3 — purge(participant, room=None) erases every room file and the dir."""
+    for room in ("sprint", "demo", "build"):
+        await mem.append("alice", room, f"note-{room}", base_dir=base_dir)
+
+    participant_dir = mem.memory_dir(base_dir=base_dir) / "alice"
+    assert participant_dir.is_dir()
+
+    result = await mem.purge("alice", base_dir=base_dir)
+    assert result["purged_count"] == 3
+    assert not participant_dir.exists()
+
+
+async def test_memory_purge_idempotent_on_missing(base_dir: Path):
+    """M3 — purging a participant who has no memory returns purged_count=0."""
+    result = await mem.purge("ghost", base_dir=base_dir)
+    assert result["purged_count"] == 0
+    assert result["removed"] == []
+
+
+async def test_memory_purge_atomic_replace_no_partial_read(base_dir: Path):
+    """M3 — after purge() returns, a stat() must show the file gone.
+
+    Also asserts no leftover .tmp files in the parent dir — the
+    atomic-replace path must clean up after itself even on the happy
+    path.
+    """
+    await mem.append("alice", "sprint", "x", base_dir=base_dir)
+    path = mem.memory_path("alice", "sprint", base_dir=base_dir)
+    assert path.exists()
+    await mem.purge("alice", "sprint", base_dir=base_dir)
+    assert not path.exists()
+    leftovers = (
+        list(path.parent.glob(".memory_purge_*.tmp"))
+        if path.parent.exists() else []
+    )
+    assert not leftovers, f"tmpfile leftover after purge: {leftovers}"
+
+
+def test_memory_purge_sync_wrapper_round_trips(base_dir: Path):
+    """M3 — purge_sync() mirrors purge() for the CLI path."""
+    mem.append_sync("alice", "sprint", "via cli", base_dir=base_dir)
+    path = mem.memory_path("alice", "sprint", base_dir=base_dir)
+    assert path.exists()
+
+    result = mem.purge_sync("alice", "sprint", base_dir=base_dir)
+    assert result["purged_count"] == 1
+    assert not path.exists()

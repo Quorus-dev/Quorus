@@ -345,6 +345,16 @@ async def exchange_api_key(req: TokenRequest):
 # ---------------------------------------------------------------------------
 
 
+# M1 fix — DoS + lateral-movement guard. A stolen parent API key can
+# otherwise mint unlimited agent identities, each carrying its own key,
+# and flood the relay with newly-trusted participants. Cap to a tight
+# per-(parent, IP) bucket so a stolen key in the wild has at most 10
+# child mints/hour to play with before tripping a 429 (which the
+# audit pipeline can alert on).
+_REGISTER_AGENT_LIMIT = 10
+_REGISTER_AGENT_WINDOW = 3600  # 1 hour
+
+
 @router.post("/register-agent", response_model=RegisterAgentResponse)
 async def register_agent(
     req: RegisterAgentRequest,
@@ -387,6 +397,37 @@ async def register_agent(
         tenant = await session.get(Tenant, parent_tenant_id)
         if not tenant:
             raise HTTPException(status_code=401, detail="Tenant not found")
+
+        # M1 — rate limit AFTER parent verification so unauthenticated
+        # callers can't burn buckets on random prefixes. The bucket is
+        # keyed on (parent_id, client_ip) so a single compromised key
+        # from one host can't be amplified by IP-rotation; conversely a
+        # legitimate parent can still register from multiple hosts.
+        # Best-effort: tests that don't wire app.state.rate_limit_service
+        # skip the check (legacy tests still pass without modification).
+        rate_svc = getattr(
+            getattr(getattr(request, "app", None), "state", None),
+            "rate_limit_service",
+            None,
+        )
+        if rate_svc is not None:
+            client_ip = (
+                request.client.host
+                if getattr(request, "client", None) else "unknown"
+            )
+            allowed = await rate_svc.check_with_limit(
+                "global",
+                f"register-agent:{parent_participant.id}:{client_ip}",
+                _REGISTER_AGENT_LIMIT,
+                window=_REGISTER_AGENT_WINDOW,
+            )
+            if not allowed:
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        "Too many register-agent calls; retry in 1 hour"
+                    ),
+                )
 
         # Build agent name: {parent_name}-{suffix}
         agent_name = f"{parent_participant.name}-{req.suffix}"

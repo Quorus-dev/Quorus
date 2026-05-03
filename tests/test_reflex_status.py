@@ -282,3 +282,106 @@ class TestCliSmoke:
         out = capsys.readouterr().out
         parsed = json.loads(out)
         assert parsed["agents"] == []
+
+
+# ── 8. M18 — single-pass log parser fans out signals to every agent ────────
+
+
+class TestSinglePassLogFanout:
+    """M18 — _parse_log_fanout walks the log ONCE for N agents.
+
+    The pre-fix path called ``_parse_log_for(p, lines)`` per agent,
+    making the cost O(N · log_size). The fix consolidates this into one
+    reverse-scan of the log that fans signals out via dict-of-dicts.
+    """
+
+    def test_single_pass_fans_signals_per_agent(self):
+        from quorus_cli import reflex_status as rs
+
+        lines = [
+            "2026-05-01T10:00:00 arav-codex sse connected",
+            "2026-05-01T10:00:05 arav-claude sse connected",
+            "2026-05-01T10:01:00 arav-codex posted reply to msg-1",
+            "2026-05-01T10:01:30 arav-claude WARNING flaky route",
+            "2026-05-01T10:02:00 arav-codex ERROR token refresh failed",
+            "2026-05-01T10:02:30 arav-gemini sse disconnected",
+        ]
+        out = rs._parse_log_fanout(
+            lines, ["arav-codex", "arav-claude", "arav-gemini"],
+        )
+        assert out["arav-codex"]["sse_state"] == "connected"
+        assert "token refresh failed" in out["arav-codex"]["last_error"]
+        assert out["arav-claude"]["sse_state"] == "connected"
+        # last_error captures any "warning" hit too.
+        assert "flaky route" in out["arav-claude"]["last_error"].lower()
+        assert out["arav-gemini"]["sse_state"] == "disconnected"
+
+    def test_fanout_returns_default_for_unmentioned_participant(self):
+        from quorus_cli import reflex_status as rs
+
+        out = rs._parse_log_fanout(
+            ["2026-05-01T10:00:00 arav-codex sse connected"],
+            ["unmentioned-agent"],
+        )
+        sig = out["unmentioned-agent"]
+        assert sig["sse_state"] == "?"
+        assert sig["last_error"] == "—"
+        assert sig["last_wake"] == "—"
+        assert sig["last_bids"] == []
+
+    def test_fanout_matches_legacy_parse_log_for_per_agent(self):
+        """Behaviour parity — fanout output for one agent equals legacy
+        _parse_log_for output. Guards against subtle drift."""
+        from quorus_cli import reflex_status as rs
+
+        lines = [
+            "2026-05-01T10:00:00 arav-codex sse connected",
+            "2026-05-01T10:01:00 arav-codex posted reply",
+            "2026-05-01T10:02:00 arav-codex ERROR boom",
+        ]
+        legacy = rs._parse_log_for("arav-codex", lines)
+        fan = rs._parse_log_fanout(lines, ["arav-codex"])["arav-codex"]
+        # Same shape and same fields. last_wake is humanized so it
+        # depends on time.time(); skip equality there.
+        assert fan["sse_state"] == legacy["sse_state"]
+        assert fan["last_error"] == legacy["last_error"]
+        assert fan["last_bids"] == legacy["last_bids"]
+
+    def test_collect_state_uses_single_pass_for_multi_agent(self, tmp_path: Path):
+        """Smoke test — multi-agent collect_state pulls signals for each
+        from one log read. Counts the number of times the fanout helper
+        is invoked to prove we're not back to per-agent loops."""
+        runtime = tmp_path / "runtime"
+        runtime.mkdir()
+        for name in ("arav-codex", "arav-claude", "arav-gemini"):
+            (runtime / f"reflexd.{name}.pid").write_text(str(os.getpid()))
+
+        log = tmp_path / "reflexd.log"
+        log.write_text(
+            "2026-05-01T10:00:00 arav-codex sse connected\n"
+            "2026-05-01T10:00:00 arav-claude sse disconnected\n"
+            "2026-05-01T10:00:00 arav-gemini sse connected\n",
+        )
+
+        from quorus_cli import reflex_status as rs
+
+        call_count = {"n": 0}
+        original = rs._parse_log_fanout
+
+        def counting(lines, participants):
+            call_count["n"] += 1
+            return original(lines, participants)
+
+        # Patch on the module so collect_state uses the wrapper.
+        rs._parse_log_fanout = counting
+        try:
+            state = rs.collect_state(runtime_dir=runtime, log_path=log)
+        finally:
+            rs._parse_log_fanout = original
+
+        # Exactly ONE fanout call regardless of agent count.
+        assert call_count["n"] == 1
+        sse_by_agent = {a["participant"]: a["sse_state"] for a in state["agents"]}
+        assert sse_by_agent["arav-codex"] == "connected"
+        assert sse_by_agent["arav-claude"] == "disconnected"
+        assert sse_by_agent["arav-gemini"] == "connected"

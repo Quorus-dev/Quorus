@@ -2503,3 +2503,96 @@ def test_cmd_join_registers_mcp_on_first_config_write(tmp_path, monkeypatch, cap
     assert claude_config.exists()
     data = json.loads(claude_config.read_text())
     assert "quorus" in data["mcpServers"]
+
+
+# ---------------------------------------------------------------------------
+# M3 — `quorus memory purge` CLI command (GDPR self-service erasure)
+# ---------------------------------------------------------------------------
+
+
+def test_quorus_memory_purge_cli_exits_zero_with_purged_count(
+    tmp_path, monkeypatch, capsys,
+):
+    """M3 — ``quorus memory purge --participant alice --room sprint`` exits 0
+    after the file is removed, prints the purged count.
+
+    Verifies the integration: argparse → _cmd_memory → memory.purge_sync →
+    on-disk file gone.
+    """
+    from quorus.cli import _cmd_memory
+    from quorus.runtime import memory as mem
+
+    base_dir = tmp_path / "memory_root"
+    # Seed the file via the public memory API.
+    mem.append_sync("alice", "sprint", "did the thing", base_dir=base_dir)
+    target = mem.memory_path("alice", "sprint", base_dir=base_dir)
+    assert target.exists()
+
+    # The CLI calls ``memory.purge_sync`` with no base_dir, which would
+    # default to ``~/.quorus/memory``. Redirect at the module level so
+    # the test stays sandboxed in tmp_path.
+    real_purge_sync = mem.purge_sync
+
+    def fake_purge_sync(participant, room=None, *, base_dir=None):
+        return real_purge_sync(participant, room, base_dir=tmp_path / "memory_root")
+
+    monkeypatch.setattr(mem, "purge_sync", fake_purge_sync)
+
+    args = MagicMock()
+    args.memory_action = "purge"
+    args.participant = "alice"
+    args.room = "sprint"
+    args.all = False
+
+    with pytest.raises(SystemExit) as excinfo:
+        _cmd_memory(args)
+    assert excinfo.value.code == 0
+    assert not target.exists()
+    captured = capsys.readouterr().out
+    assert "purged" in captured.lower()
+
+
+def test_quorus_memory_purge_cli_requires_room_or_all(monkeypatch, capsys):
+    """M3 — without --room and without --all, the CLI must refuse rather
+    than silently wipe everything. Defensive default."""
+    from quorus.cli import _cmd_memory
+
+    args = MagicMock()
+    args.memory_action = "purge"
+    args.participant = "alice"
+    args.room = None
+    args.all = False
+
+    with pytest.raises(SystemExit) as excinfo:
+        _cmd_memory(args)
+    assert excinfo.value.code == 2
+
+
+def test_quorus_memory_purge_cli_rejects_room_and_all(monkeypatch):
+    """M3 — --room R + --all together is ambiguous; CLI exits 2."""
+    from quorus.cli import _cmd_memory
+
+    args = MagicMock()
+    args.memory_action = "purge"
+    args.participant = "alice"
+    args.room = "sprint"
+    args.all = True
+
+    with pytest.raises(SystemExit) as excinfo:
+        _cmd_memory(args)
+    assert excinfo.value.code == 2
+
+
+def test_quorus_memory_purge_cli_rejects_missing_participant():
+    """M3 — --participant is required."""
+    from quorus.cli import _cmd_memory
+
+    args = MagicMock()
+    args.memory_action = "purge"
+    args.participant = None
+    args.room = "sprint"
+    args.all = False
+
+    with pytest.raises(SystemExit) as excinfo:
+        _cmd_memory(args)
+    assert excinfo.value.code == 2

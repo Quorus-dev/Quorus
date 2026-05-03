@@ -29,6 +29,7 @@ from quorus.auth.policy import (
 from quorus.routes.room_auth import require_room_member
 from quorus.services.work_queue_svc import (
     ClaimRaceError,
+    QuotaExceededError,
     TaskNotFoundError,
     WorkQueueError,
     WorkQueueSvc,
@@ -285,6 +286,11 @@ async def post_work_queue(
             )
             return {"ok": True, "task": task}
 
+    except QuotaExceededError as e:
+        # M13 — per-actor active-task quota exceeded. Mirrors the
+        # backpressure shape of the rate limiter (429) so clients see one
+        # consistent retry signal.
+        raise HTTPException(status_code=429, detail=str(e)) from e
     except ClaimRaceError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except TaskNotFoundError as e:

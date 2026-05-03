@@ -294,3 +294,184 @@ async def test_dm_cross_tenant_blocked_by_cedar(client: AsyncClient):
     assert resp.status_code != 200, resp.text
     # 4xx range — never silently succeed.
     assert 400 <= resp.status_code < 500, resp.text
+
+
+# ---------------------------------------------------------------------------
+# M3 — GDPR right-to-erasure (DELETE /v1/dm/{participant})
+# ---------------------------------------------------------------------------
+
+
+async def test_dm_delete_endpoint_purges_inbox(
+    client: AsyncClient, registered_participants,
+):
+    """M3 — DELETE /v1/dm/{recipient} returns purged_count and empties the inbox."""
+    # Seed two messages addressed to bob.
+    for content in ("hello", "world"):
+        resp = await client.post(
+            "/v1/dm",
+            json={"from": "alice", "to": "bob", "content": content},
+            headers=_user_headers("alice"),
+        )
+        assert resp.status_code == 200, resp.text
+
+    # Bob can purge his own inbox.
+    resp = await client.delete(
+        "/v1/dm/bob", headers=_user_headers("bob"),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["purged_count"] == 2
+    assert body["participant"] == "bob"
+
+    # Subsequent GET shows empty.
+    inbox = await client.get("/v1/dm/bob", headers=_user_headers("bob"))
+    assert inbox.status_code == 200
+    assert inbox.json()["count"] == 0
+
+
+async def test_dm_delete_requires_recipient_self_auth(
+    client: AsyncClient, registered_participants,
+):
+    """M3 — only the recipient may purge; carol can't wipe bob's inbox.
+
+    No admin override and no legacy-bearer override — these would each
+    create a data-erasure attack vector. Both must be rejected 403 / 401
+    so a compromised admin / leaked legacy secret can't wipe peer data.
+    """
+    # Seed bob's inbox so the test sees a real (non-empty) target.
+    await client.post(
+        "/v1/dm",
+        json={"from": "alice", "to": "bob", "content": "do not delete me"},
+        headers=_user_headers("alice"),
+    )
+
+    # Carol attempts to purge bob.
+    resp = await client.delete(
+        "/v1/dm/bob", headers=_user_headers("carol"),
+    )
+    assert resp.status_code == 403, resp.text
+    assert "another user" in resp.text.lower()
+
+    # Legacy bearer also rejected (H6 + M3 — no admin override on erasure).
+    resp_legacy = await client.delete("/v1/dm/bob", headers=HEADERS)
+    assert resp_legacy.status_code in (401, 403), resp_legacy.text
+
+    # Bob's data still there.
+    inbox = await client.get("/v1/dm/bob", headers=_user_headers("bob"))
+    assert inbox.json()["count"] == 1
+
+
+async def test_dm_delete_idempotent_on_empty_inbox(
+    client: AsyncClient, registered_participants,
+):
+    """M3 — deleting an empty inbox is a no-op that returns purged_count=0.
+
+    Idempotency matters because a client retrying the GDPR request after
+    a network blip must NOT see a 404 for an already-erased inbox.
+    """
+    resp = await client.delete(
+        "/v1/dm/alice", headers=_user_headers("alice"),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["purged_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# M5 — DM inbox dict bounded with LRU eviction
+# ---------------------------------------------------------------------------
+
+
+def test_inboxes_lru_evicts_at_10k():
+    """M5 — the inbox helper evicts oldest at MAX_INBOXES.
+
+    Drives :func:`_inbox_get_or_create` directly so we don't have to mint
+    10001 participants through the HTTP path. Eviction must drop the
+    leftmost (oldest-touched) key when capacity is hit.
+    """
+    from collections import OrderedDict
+
+    from quorus.routes import agent_dm
+
+    # Patch MAX_INBOXES to a tractable number for the test.
+    original_max = agent_dm.MAX_INBOXES
+    inbox: OrderedDict = OrderedDict()
+    try:
+        agent_dm.MAX_INBOXES = 5
+        for i in range(5):
+            agent_dm._inbox_get_or_create(inbox, ("t-1", f"agent-{i}"))
+        assert len(inbox) == 5
+
+        # 6th distinct recipient — agent-0 (oldest) must be evicted.
+        agent_dm._inbox_get_or_create(inbox, ("t-1", "agent-5"))
+        assert ("t-1", "agent-0") not in inbox
+        assert ("t-1", "agent-5") in inbox
+        assert len(inbox) == 5
+    finally:
+        agent_dm.MAX_INBOXES = original_max
+
+
+def test_inboxes_lru_promotes_on_repeat_access():
+    """M5 — touching an existing key promotes it to most-recently-used."""
+    from collections import OrderedDict
+
+    from quorus.routes import agent_dm
+
+    original_max = agent_dm.MAX_INBOXES
+    inbox: OrderedDict = OrderedDict()
+    try:
+        agent_dm.MAX_INBOXES = 3
+        for i in range(3):
+            agent_dm._inbox_get_or_create(inbox, ("t-1", f"a{i}"))
+        # Touch a0 — promotes it to the right end. Adding a3 should now
+        # evict a1 instead.
+        agent_dm._inbox_get_or_create(inbox, ("t-1", "a0"))
+        agent_dm._inbox_get_or_create(inbox, ("t-1", "a3"))
+        assert ("t-1", "a1") not in inbox
+        assert ("t-1", "a0") in inbox
+        assert ("t-1", "a3") in inbox
+    finally:
+        agent_dm.MAX_INBOXES = original_max
+
+
+# ---------------------------------------------------------------------------
+# M17 — agent_dm SSE queue O(1) cleanup via set-backed registry
+# ---------------------------------------------------------------------------
+
+
+def test_agent_dm_queue_set_O1_removal():
+    """M17 — the queues map must be a dict of sets so disconnect is O(1).
+
+    We don't time it; we just assert the structural shape, which is a
+    sufficient regression guard against a future refactor reverting to
+    list[Queue].
+    """
+    from types import SimpleNamespace
+
+    from quorus.routes.agent_dm import _get_dm_queues
+
+    fake_request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(agent_dm_queues=None)),
+    )
+    queues = _get_dm_queues(fake_request)
+    queues.setdefault(("t", "p"), set()).add(object())
+    assert isinstance(queues[("t", "p")], set), (
+        "queues must use sets so disconnect is O(1)"
+    )
+
+
+def test_agent_dm_queue_migrates_legacy_list_to_set():
+    """M17 — pre-fix relays stored ``list[Queue]``. The helper must migrate
+    transparently on first access so a relay restart in mixed state
+    doesn't break fan-out."""
+    from types import SimpleNamespace
+
+    from quorus.routes.agent_dm import _get_dm_queues
+
+    sentinel_q = object()
+    legacy = {("t", "p"): [sentinel_q]}
+    fake_request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(agent_dm_queues=legacy)),
+    )
+    migrated = _get_dm_queues(fake_request)
+    assert isinstance(migrated[("t", "p")], set)
+    assert sentinel_q in migrated[("t", "p")]

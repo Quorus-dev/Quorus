@@ -27,7 +27,7 @@ import asyncio
 import json
 import time
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import datetime, timezone
 from typing import Any, Deque
 
@@ -56,6 +56,15 @@ DM_EVENT_KIND = "agent_dm"
 # to drain.
 INBOX_MAXLEN = 1000
 
+# M5 fix — global cap on the number of distinct recipient inboxes per
+# tenant slice held in memory. Without this, an attacker with a compromised
+# parent key can use register-agent + DM-spam to mint 100K recipient names
+# and push the relay's RSS into OOM. We use an OrderedDict so eviction is
+# strict-LRU (oldest-touched out first). The number is generous enough that
+# real swarms (typical < 1k participants) never see eviction; only the
+# adversarial path triggers it.
+MAX_INBOXES = 10_000
+
 # Max DM body bytes. Agent DMs are typically status pings; cap small to
 # discourage shipping artefacts through DM.
 MAX_DM_BYTES = 16 * 1024  # 16KB
@@ -67,7 +76,7 @@ def _tid(auth: AuthContext) -> str:
 
 def _get_inbox(
     request: Request,
-) -> dict[tuple[str, str], Deque[dict[str, Any]]]:
+) -> "OrderedDict[tuple[str, str], Deque[dict[str, Any]]]":
     """Lazily create the in-memory agent-DM inbox on app.state.
 
     Keyed by ``(tenant_id, recipient)``. Distinct from the human DM
@@ -75,25 +84,77 @@ def _get_inbox(
       1. Agent traffic doesn't compete with human DM rate limits.
       2. ``reset_state()`` for tests gets a clean slate without
          touching the human inboxes.
+
+    M5 fix: backed by an OrderedDict so callers can perform strict-LRU
+    eviction via :func:`_inbox_get_or_create`. Existing dict deployments
+    (pre-fix relays) gracefully migrate at first access — the legacy
+    plain dict gets re-wrapped on the first call.
     """
     inbox = getattr(request.app.state, "agent_dm_inbox", None)
     if inbox is None:
-        inbox = {}
+        inbox = OrderedDict()
+        request.app.state.agent_dm_inbox = inbox
+    elif not isinstance(inbox, OrderedDict):
+        # Migrate a legacy dict (e.g. relay restarted into mixed state).
+        # Order is undefined here so eviction starts deterministic again.
+        inbox = OrderedDict(inbox)
         request.app.state.agent_dm_inbox = inbox
     return inbox
 
 
+def _inbox_get_or_create(
+    inbox: "OrderedDict[tuple[str, str], Deque[dict[str, Any]]]",
+    key: tuple[str, str],
+) -> Deque[dict[str, Any]]:
+    """Return the deque for *key*, evicting the LRU inbox if MAX_INBOXES
+    would be exceeded. Promotes existing entries to the right end.
+
+    The eviction policy is strict-LRU: the leftmost (oldest-touched)
+    inbox loses its queue when capacity is hit. That deque's contents
+    are dropped — the OrderedDict slot is reused. A subsequent
+    ``GET /v1/dm/<evicted>`` returns an empty deque rather than 404
+    so the API surface stays uniform; callers that genuinely needed
+    durability should subscribe to /stream/dm/{participant}, which is
+    bounded by per-subscriber queues that the consumer drains.
+    """
+    queue = inbox.get(key)
+    if queue is not None:
+        inbox.move_to_end(key)
+        return queue
+    if len(inbox) >= MAX_INBOXES:
+        inbox.popitem(last=False)
+    queue = deque(maxlen=INBOX_MAXLEN)
+    inbox[key] = queue
+    return queue
+
+
 def _get_dm_queues(
     request: Request,
-) -> dict[tuple[str, str], list[asyncio.Queue]]:
-    """Per-(tenant, participant) list of subscriber queues for the agent
+) -> dict[tuple[str, str], set[asyncio.Queue]]:
+    """Per-(tenant, participant) set of subscriber queues for the agent
     DM SSE stream. Mirrors :class:`SSEService._queues` but kept distinct
     so subscriptions don't collide.
+
+    M17 fix: switched from ``list[asyncio.Queue]`` to ``set`` so
+    cleanup-on-disconnect is O(1) instead of O(n). Iteration order on a
+    set is undefined, but DM fan-out is order-agnostic — every queue
+    receives a copy of the envelope and the order they're dispatched in
+    is irrelevant to downstream consumers (each subscriber sees a
+    self-consistent ordering of arrival on its own queue). Legacy lists
+    on app.state are migrated transparently.
     """
     queues = getattr(request.app.state, "agent_dm_queues", None)
     if queues is None:
         queues = {}
         request.app.state.agent_dm_queues = queues
+    elif queues:
+        # Migrate any legacy list-of-queues shape from a relay running
+        # the pre-M17 code path. Done lazily on first access so the cost
+        # is bounded by the number of (tid, participant) keys, not by
+        # the request rate.
+        for key, val in list(queues.items()):
+            if isinstance(val, list):
+                queues[key] = set(val)
     return queues
 
 
@@ -243,28 +304,34 @@ async def send_agent_dm(
         "metadata": dict(body.metadata or {}),
     }
 
-    # Persist to the recipient inbox (ring buffer eviction).
+    # Persist to the recipient inbox (ring buffer eviction). M5 — uses
+    # the LRU-bounded helper so a flood of distinct recipients can't OOM
+    # the relay; oldest-touched inbox is evicted at MAX_INBOXES.
     inbox = _get_inbox(request)
     key = (tid, recipient)
-    queue = inbox.get(key)
-    if queue is None:
-        queue = deque(maxlen=INBOX_MAXLEN)
-        inbox[key] = queue
+    queue = _inbox_get_or_create(inbox, key)
     queue.append(envelope)
 
     # Push to any active SSE subscribers. We deliberately skip
     # ``backends.messages`` so this DM never appears in the human inbox.
+    # M17 — `queues[key]` is now a set; iteration is unordered but
+    # fan-out is order-agnostic. We snapshot the set into a tuple before
+    # iterating so a concurrent stream-handler ``add``/``discard`` (the
+    # producer side runs without holding the lock) can't trip
+    # ``RuntimeError: Set changed size during iteration``.
     queues = _get_dm_queues(request)
-    for q in queues.get(key, []):
-        try:
-            q.put_nowait(envelope)
-        except asyncio.QueueFull:
-            # Slow consumer — drop oldest queued item to make room.
+    subscribers = queues.get(key)
+    if subscribers:
+        for q in tuple(subscribers):
             try:
-                _ = q.get_nowait()
                 q.put_nowait(envelope)
-            except Exception:
-                pass
+            except asyncio.QueueFull:
+                # Slow consumer — drop oldest queued item to make room.
+                try:
+                    _ = q.get_nowait()
+                    q.put_nowait(envelope)
+                except Exception:
+                    pass
 
     # H1 fix — audit trail for SOC2 + GDPR. Record sender/recipient
     # metadata only, never the DM body content. Best-effort: missing
@@ -338,6 +405,75 @@ async def list_agent_dms(
 
 
 # ---------------------------------------------------------------------------
+# DELETE — purge inbox (GDPR right-to-erasure)
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/v1/dm/{participant}")
+async def delete_agent_dms(
+    participant: str,
+    request: Request,
+    auth: AuthContext = Depends(verify_auth),
+):
+    """Erase a participant's agent-DM inbox.
+
+    GDPR Article 17 ("right to erasure") requires self-serve purge.
+    Recipient-only — no admin override and no legacy-bearer override,
+    because once a delete-on-behalf-of path exists every operator
+    becomes a data-erasure attack vector. Auth.sub MUST equal the
+    target participant.
+
+    Returns ``{"purged_count": N}`` so callers can prove the operation
+    landed (and supplies an audit-trail hook for SOC2).
+    """
+    # Reject legacy bearer entirely — see H6 reasoning in send_agent_dm.
+    if auth.is_legacy:
+        raise HTTPException(
+            status_code=403,
+            detail="legacy auth not permitted on this endpoint",
+        )
+    if not auth.sub:
+        raise HTTPException(status_code=401, detail="auth.sub required")
+    if auth.sub != participant:
+        # Only the recipient can erase their own data. No admin override:
+        # GDPR erasure is a strictly self-driven right and an admin path
+        # would let one compromised account wipe peer inboxes.
+        raise HTTPException(
+            status_code=403,
+            detail="cannot purge another user's DMs",
+        )
+
+    tid = _tid(auth)
+    inbox = _get_inbox(request)
+    key = (tid, participant)
+    queue = inbox.get(key)
+    purged_count = len(queue) if queue is not None else 0
+
+    if queue is not None:
+        # Drop the deque entirely (also evicts the OrderedDict slot under
+        # the M5 LRU cap so deleted recipients free up the inbox budget).
+        inbox.pop(key, None)
+
+    # Best-effort audit record. Body content was never logged; we record
+    # only the count so SOC2 / GDPR can prove the erasure happened.
+    audit_svc = getattr(request.app.state, "audit_service", None)
+    if audit_svc is not None:
+        try:
+            await audit_svc.record(
+                tenant_id=tid,
+                message_id=uuid.uuid4(),
+                event_type="dm:agent:purge",
+                actor=auth.sub,
+                target=participant,
+                details={"purged_count": purged_count},
+            )
+        except Exception:
+            pass
+
+    return {"purged_count": purged_count, "participant": participant}
+
+
+# ---------------------------------------------------------------------------
 # GET — SSE stream
 # ---------------------------------------------------------------------------
 
@@ -374,7 +510,8 @@ async def stream_agent_dms(
     queues = _get_dm_queues(request)
     key = (tid, participant)
     q: asyncio.Queue = asyncio.Queue(maxsize=256)
-    queues.setdefault(key, []).append(q)
+    # M17 — set-based fan-out: O(1) add and O(1) remove on disconnect.
+    queues.setdefault(key, set()).add(q)
 
     async def _gen():
         try:
@@ -401,10 +538,16 @@ async def stream_agent_dms(
         except asyncio.CancelledError:
             pass
         finally:
-            try:
-                queues[key].remove(q)
-            except (KeyError, ValueError):
-                pass
+            # M17 — set.discard is O(1) and silent on a missing element,
+            # so we don't need the (KeyError, ValueError) catch the
+            # list-based version required.
+            subs = queues.get(key)
+            if subs is not None:
+                subs.discard(q)
+                if not subs:
+                    # Drop the empty bucket so the queues map doesn't
+                    # accumulate idle keys after every disconnect.
+                    queues.pop(key, None)
 
     return StreamingResponse(
         _gen(),

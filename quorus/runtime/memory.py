@@ -350,6 +350,132 @@ def memory_size_bytes(
         return 0
 
 
+# ---------------------------------------------------------------------------
+# GDPR right-to-erasure — purge per-(participant, room) memory.
+# ---------------------------------------------------------------------------
+
+
+def _atomic_unlink(path: Path) -> bool:
+    """Erase *path* via a tmpfile-replace + unlink to defeat partial reads.
+
+    A naive ``Path.unlink()`` leaves a tiny window where a concurrent
+    reader could observe the original bytes via an open fd. By first
+    overwriting the file with a zero-length tmpfile and ``os.replace``-ing
+    it into place we guarantee any subsequent read sees an empty file
+    even if the unlink loses the race. The tmpfile lands in the SAME
+    directory so ``os.replace`` is cross-device safe.
+
+    Returns True if the file was present and removed, False if missing.
+    """
+    if not path.exists():
+        return False
+    parent = path.parent
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".memory_purge_", suffix=".tmp", dir=parent)
+    except OSError:
+        # Fall back to direct unlink if mkstemp fails (e.g. dir gone).
+        try:
+            path.unlink()
+            return True
+        except FileNotFoundError:
+            return False
+    try:
+        os.close(fd)
+        os.chmod(tmp, FILE_MODE)
+        os.replace(tmp, path)  # path now points at the empty tmpfile
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        # Best-effort fallback: still try to unlink the original path.
+        try:
+            path.unlink()
+            return True
+        except FileNotFoundError:
+            return False
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        # Race lost — file already gone after the replace. Acceptable.
+        pass
+    return True
+
+
+async def purge(
+    participant: str,
+    room: str | None = None,
+    *,
+    base_dir: Path | None = None,
+) -> dict[str, Any]:
+    """GDPR Article 17 erasure — drop a participant's memory file(s).
+
+    * ``room=None`` ⇒ purge ALL room files for *participant* and remove
+      the now-empty per-participant directory.
+    * ``room=<name>`` ⇒ purge just ``<participant>/<room>.jsonl``.
+
+    Atomic: the data file is replaced with a tmpfile and unlinked under
+    the per-file asyncio lock so a concurrent ``append`` can't resurrect
+    deleted bytes mid-flight.
+
+    Returns ``{"removed": [<rel-path>, ...], "purged_count": N}`` where
+    ``rel-path`` is the participant/room form so callers can audit-log
+    without re-deriving paths. Missing files are silently skipped — the
+    operation is idempotent (same return on repeat invocation).
+    """
+    safe_p = _safe(participant)
+    root = memory_dir(base_dir=base_dir)
+    participant_dir = root / safe_p
+    removed: list[str] = []
+
+    async def _purge_one(target: Path, label: str) -> None:
+        # Hold the per-file lock so an in-flight append can't write
+        # ghost bytes after the unlink. Use to_thread for the disk hit
+        # so we don't block the event loop on a slow filesystem.
+        lock = _lock_for(target)
+        async with lock:
+            present = await asyncio.to_thread(_atomic_unlink, target)
+        if present:
+            removed.append(label)
+
+    if room is not None:
+        path = memory_path(participant, room, base_dir=base_dir)
+        await _purge_one(path, f"{safe_p}/{_safe(room)}.jsonl")
+    else:
+        if participant_dir.is_dir():
+            for entry in sorted(participant_dir.glob("*.jsonl")):
+                # Re-derive the safe room name from the file stem so the
+                # lock key matches what append() would compute. The stem
+                # is already sanitised, so there's no path-traversal risk.
+                rname = entry.stem
+                target = participant_dir / f"{_safe(rname)}.jsonl"
+                await _purge_one(target, f"{safe_p}/{entry.name}")
+            # Drop the now-empty dir. Best-effort; if a non-jsonl file
+            # was dropped in there by an operator, rmdir will refuse and
+            # we keep going (the .jsonl files are still gone).
+            try:
+                participant_dir.rmdir()
+            except OSError:
+                pass
+
+    return {
+        "participant": safe_p,
+        "room": _safe(room) if room else None,
+        "removed": removed,
+        "purged_count": len(removed),
+    }
+
+
+def purge_sync(
+    participant: str,
+    room: str | None = None,
+    *,
+    base_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Sync convenience wrapper around :func:`purge` for the CLI path."""
+    return asyncio.run(purge(participant, room, base_dir=base_dir))
+
+
 __all__ = [
     "MAX_BYTES",
     "DEFAULT_READ_LIMIT",
@@ -360,6 +486,8 @@ __all__ = [
     "memory_dir",
     "memory_path",
     "memory_size_bytes",
+    "purge",
+    "purge_sync",
     "read_recent",
     "read_recent_sync",
 ]

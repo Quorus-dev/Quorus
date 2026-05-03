@@ -537,3 +537,217 @@ async def test_register_agent_rotates_existing_keys_without_500(monkeypatch):
     assert resp.agent_name == "arav-codex-claude-1m"
     assert resp.api_key.startswith("mct_") or len(resp.api_key) > 20
     assert "/v1/auth/token" in resp.next_step
+
+
+# ---------------------------------------------------------------------------
+# M1 — register-agent rate limit
+# ---------------------------------------------------------------------------
+
+
+def _make_register_agent_session(parent_key, parent_participant, parent_tenant):
+    """Build a FakeSession reusable across the rate-limit tests below.
+
+    Mirrors the production code path: parent-key lookup (call 1) succeeds,
+    existing-agent lookup (call 2) returns None so we hit the create path.
+    """
+    added: list = []
+
+    class FakeResult:
+        def __init__(self, value=None, many=None):
+            self.value = value
+            self.many = many
+
+        def scalar_one_or_none(self):
+            return self.value
+
+        def scalars(self):
+            class _S:
+                def __init__(self, items):
+                    self.items = list(items)
+
+                def __iter__(self):
+                    return iter(self.items)
+
+            return _S(self.many or [])
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query):
+            self.calls += 1
+            if self.calls == 1:
+                return FakeResult(value=parent_key)
+            return FakeResult(value=None)
+
+        async def get(self, model, obj_id):
+            if model is Participant and obj_id == parent_participant.id:
+                return parent_participant
+            if model is Tenant and obj_id == parent_tenant.id:
+                return parent_tenant
+            return None
+
+        def add(self, obj):
+            added.append(obj)
+
+        async def flush(self):
+            return None
+
+    return FakeSession(), added
+
+
+def _build_register_agent_request(
+    rate_svc, room_service=None, rooms_backend=None, participants_backend=None,
+    client_ip: str = "203.0.113.10",
+):
+    """Build a request namespace with the app.state.rate_limit_service wired.
+
+    The rate-limit checks pull from app.state.rate_limit_service; tests
+    that don't set it short-circuit (legacy behaviour). Including it
+    here exercises the new M1 fix.
+    """
+    return SimpleNamespace(
+        client=SimpleNamespace(host=client_ip),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                rate_limit_service=rate_svc,
+                room_service=room_service,
+                backends=SimpleNamespace(
+                    rooms=rooms_backend,
+                    participants=participants_backend,
+                ),
+            ),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_register_agent_rate_limit_429_at_eleventh_call(monkeypatch):
+    """M1 — 11th register-agent call within 1h returns 429.
+
+    Verifies the per-(parent, IP) bucket limits 10 mints/hour. Uses the
+    in-memory rate-limit backend so we don't need Redis or Postgres.
+    """
+    from fastapi import HTTPException
+
+    from quorus.backends.memory import InMemoryRateLimitBackend
+    from quorus.services.rate_limit_svc import RateLimitService
+
+    parent_raw_key, parent_prefix, parent_key_hash = generate_api_key()
+    parent_tenant = Tenant(
+        id="tenant-rate", slug="medbuddy", display_name="MedBuddy",
+    )
+    parent_participant = Participant(
+        id="participant-rate", tenant_id=parent_tenant.id,
+        name="arav", role="admin",
+    )
+    parent_key = ApiKey(
+        id="key-rate", participant_id=parent_participant.id,
+        label="parent",
+        key_prefix=parent_prefix, key_hash=parent_key_hash,
+    )
+
+    rate_svc = RateLimitService(
+        InMemoryRateLimitBackend(), window=60, max_count=60,
+    )
+    request = _build_register_agent_request(rate_svc)
+
+    # Each mint creates a fresh session so the FakeSession.calls counter
+    # restarts; matches production where every request opens a new
+    # session.
+    for i in range(10):
+        fake_session, _added = _make_register_agent_session(
+            parent_key, parent_participant, parent_tenant,
+        )
+        monkeypatch.setattr(
+            auth_routes, "get_db_session", lambda fs=fake_session: fs,
+        )
+        # Allow each of the first ten — bucket capacity = 10.
+        resp = await auth_routes.register_agent(
+            RegisterAgentRequest(suffix=f"agent-{i}"),
+            request=request,
+            authorization=f"Bearer {parent_raw_key}",
+        )
+        assert resp.agent_name == f"arav-agent-{i}"
+
+    # The 11th call must trip the limit.
+    fake_session, _added = _make_register_agent_session(
+        parent_key, parent_participant, parent_tenant,
+    )
+    monkeypatch.setattr(
+        auth_routes, "get_db_session", lambda fs=fake_session: fs,
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        await auth_routes.register_agent(
+            RegisterAgentRequest(suffix="agent-11"),
+            request=request,
+            authorization=f"Bearer {parent_raw_key}",
+        )
+    assert excinfo.value.status_code == 429
+    assert "register-agent" in excinfo.value.detail.lower() or \
+        "1 hour" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_register_agent_rate_limit_buckets_per_ip(monkeypatch):
+    """M1 — different client IPs get distinct buckets.
+
+    A real parent agent legitimately registering from two hosts must NOT
+    burn one bucket between them.
+    """
+    from quorus.backends.memory import InMemoryRateLimitBackend
+    from quorus.services.rate_limit_svc import RateLimitService
+
+    parent_raw_key, parent_prefix, parent_key_hash = generate_api_key()
+    parent_tenant = Tenant(
+        id="tenant-ip", slug="medbuddy-ip", display_name="MedBuddy",
+    )
+    parent_participant = Participant(
+        id="participant-ip", tenant_id=parent_tenant.id,
+        name="arav", role="admin",
+    )
+    parent_key = ApiKey(
+        id="key-ip", participant_id=parent_participant.id,
+        label="parent",
+        key_prefix=parent_prefix, key_hash=parent_key_hash,
+    )
+
+    rate_svc = RateLimitService(
+        InMemoryRateLimitBackend(), window=60, max_count=60,
+    )
+    request_a = _build_register_agent_request(rate_svc, client_ip="10.0.0.1")
+    request_b = _build_register_agent_request(rate_svc, client_ip="10.0.0.2")
+
+    # Burn IP-A's bucket (10 mints).
+    for i in range(10):
+        fake_session, _ = _make_register_agent_session(
+            parent_key, parent_participant, parent_tenant,
+        )
+        monkeypatch.setattr(
+            auth_routes, "get_db_session", lambda fs=fake_session: fs,
+        )
+        await auth_routes.register_agent(
+            RegisterAgentRequest(suffix=f"a-{i}"),
+            request=request_a,
+            authorization=f"Bearer {parent_raw_key}",
+        )
+
+    # IP-B should still have a fresh budget.
+    fake_session, _ = _make_register_agent_session(
+        parent_key, parent_participant, parent_tenant,
+    )
+    monkeypatch.setattr(
+        auth_routes, "get_db_session", lambda fs=fake_session: fs,
+    )
+    resp = await auth_routes.register_agent(
+        RegisterAgentRequest(suffix="b-0"),
+        request=request_b,
+        authorization=f"Bearer {parent_raw_key}",
+    )
+    assert resp.agent_name == "arav-b-0"

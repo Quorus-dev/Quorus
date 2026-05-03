@@ -401,3 +401,116 @@ async def test_legacy_bearer_rejected_on_work_queue(
     )
     assert resp.status_code == 403, resp.text
     assert "legacy auth not permitted" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# M13 — per-actor active-task quota
+# ---------------------------------------------------------------------------
+
+
+async def test_work_queue_per_actor_quota_50():
+    """M13 — the 51st distinct active claim by the same actor raises QuotaExceededError.
+
+    Drives the service directly (no HTTP) so we don't have to fight the
+    rate limiter at 60/min while also asserting the 50-claim cap.
+    """
+    from quorus.services.work_queue_svc import (
+        MAX_ACTIVE_PER_ACTOR,
+        QuotaExceededError,
+    )
+
+    svc = WorkQueueSvc()
+    tid, rid = "t-quota", "r-quota"
+    actor = "spam-agent"
+
+    # Burn the quota — each claim is a distinct task_id.
+    for i in range(MAX_ACTIVE_PER_ACTOR):
+        await svc.claim(tid, rid, task_id=f"task-{i}", actor=actor)
+
+    # 51st must trip.
+    with pytest.raises(QuotaExceededError) as excinfo:
+        await svc.claim(
+            tid, rid, task_id=f"task-{MAX_ACTIVE_PER_ACTOR}", actor=actor,
+        )
+    assert str(MAX_ACTIVE_PER_ACTOR) in str(excinfo.value)
+
+
+async def test_work_queue_quota_releases_on_complete():
+    """M13 — completing a task frees a slot under the quota.
+
+    Without this, an agent that legitimately churned 50 tasks could
+    never claim again — quota must reflect *active* state, not lifetime.
+    """
+    from quorus.services.work_queue_svc import (
+        MAX_ACTIVE_PER_ACTOR,
+        QuotaExceededError,
+    )
+
+    svc = WorkQueueSvc()
+    tid, rid = "t-q2", "r-q2"
+    actor = "pacer"
+
+    for i in range(MAX_ACTIVE_PER_ACTOR):
+        await svc.claim(tid, rid, task_id=f"task-{i}", actor=actor)
+    # Free one.
+    await svc.complete(tid, rid, task_id="task-0", actor=actor)
+
+    # The next claim must succeed.
+    task = await svc.claim(
+        tid, rid, task_id=f"task-{MAX_ACTIVE_PER_ACTOR}", actor=actor,
+    )
+    assert task["claimed_by"] == actor
+
+    # Hitting the cap again must still fail.
+    with pytest.raises(QuotaExceededError):
+        await svc.claim(
+            tid, rid, task_id=f"task-{MAX_ACTIVE_PER_ACTOR + 1}", actor=actor,
+        )
+
+
+async def test_work_queue_quota_idempotent_reclaim():
+    """M13 — re-claiming an existing in-flight task by the same actor is
+    idempotent and does NOT count against the quota again."""
+    from quorus.services.work_queue_svc import MAX_ACTIVE_PER_ACTOR
+
+    svc = WorkQueueSvc()
+    tid, rid = "t-q3", "r-q3"
+    actor = "idem"
+
+    for i in range(MAX_ACTIVE_PER_ACTOR):
+        await svc.claim(tid, rid, task_id=f"task-{i}", actor=actor)
+
+    # Re-claim one that's already owned — should not raise.
+    task = await svc.claim(tid, rid, task_id="task-0", actor=actor)
+    assert task["claimed_by"] == actor
+
+
+async def test_work_queue_quota_route_returns_429(
+    client: AsyncClient, room_id: str,
+):
+    """M13 — the HTTP route maps QuotaExceededError to 429.
+
+    Asserts the integration with routes/work_queue.py: 429 + a detail
+    string containing the actor name and the cap so the client can
+    surface a useful error.
+    """
+    from quorus.services.work_queue_svc import MAX_ACTIVE_PER_ACTOR
+
+    # Seed the in-memory work-queue service with 50 active claims for
+    # alice in this room. Bypassing HTTP for the seed step keeps us
+    # inside the per-minute rate limit.
+    svc = WorkQueueSvc()
+    app.state.work_queue_service = svc
+    for i in range(MAX_ACTIVE_PER_ACTOR):
+        await svc.claim(
+            _TEST_TENANT_ID, room_id,
+            task_id=f"seed-{i}", actor="alice",
+        )
+
+    resp = await client.post(
+        f"/v1/work_queue/{room_id}",
+        json={"op": "claim", "actor": "alice", "task_id": "overflow"},
+        headers=_user_headers("alice"),
+    )
+    assert resp.status_code == 429, resp.text
+    assert "active tasks" in resp.text or "max" in resp.text

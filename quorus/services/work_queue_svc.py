@@ -58,6 +58,20 @@ STATUSES: frozenset[str] = frozenset({
 
 DEFAULT_TASK_TTL_SECONDS = 60 * 60  # 1h soft TTL — only used by `expire()`
 
+# M13 fix — per-actor concurrency quota. The rate limit (60/min in
+# routes/work_queue.py) bounds *requests*, not *active tasks*: a malicious
+# agent can churn at the rate-limit ceiling and accumulate hundreds of
+# in-flight claims, each one a piece of state the relay has to track and
+# the TUI has to render. Cap the working set at 50 per actor per (tid,
+# rid). Anything beyond that is almost certainly a runaway loop or an
+# attacker; the legitimate usage pattern is "claim, work for a few
+# seconds, complete/release", which never approaches 50 concurrent.
+MAX_ACTIVE_PER_ACTOR = 50
+
+# Statuses that count toward the per-actor quota — anything still
+# representing live work owned by the actor.
+_ACTIVE_STATUSES: frozenset[str] = frozenset({"pending", "in_progress", "blocked"})
+
 
 class WorkQueueError(Exception):
     """Base for queue-mutation rejections."""
@@ -71,6 +85,14 @@ class ClaimRaceError(WorkQueueError):
 
 class TaskNotFoundError(WorkQueueError):
     """Raised when a referenced task isn't in the queue. Maps to HTTP 404."""
+
+
+class QuotaExceededError(WorkQueueError):
+    """Raised when an actor exceeds the per-(tid, rid) active-task quota.
+
+    Maps to HTTP 429 in the route layer — same status the upstream rate
+    limiter uses, so clients see one consistent backpressure signal.
+    """
 
 
 def _now_iso() -> str:
@@ -256,6 +278,28 @@ class WorkQueueSvc:
         async with lock:
             bucket = self._bucket(tid, rid)
             task = bucket.get(task_id)
+            # M13 — count this actor's active workload BEFORE we mutate
+            # state. If the incoming claim would push us past the quota
+            # AND the actor is not just re-asserting an existing claim
+            # (idempotent re-claims by the same actor are harmless), we
+            # reject with QuotaExceededError so the caller sees 429.
+            already_owned = (
+                task is not None
+                and task.get("claimed_by") == actor
+                and task.get("status") in _ACTIVE_STATUSES
+            )
+            if not already_owned:
+                active_count = sum(
+                    1
+                    for t in bucket.values()
+                    if t.get("claimed_by") == actor
+                    and t.get("status") in _ACTIVE_STATUSES
+                )
+                if active_count >= MAX_ACTIVE_PER_ACTOR:
+                    raise QuotaExceededError(
+                        f"actor {actor!r} has {active_count} active tasks "
+                        f"(max {MAX_ACTIVE_PER_ACTOR})"
+                    )
             if task is None:
                 # Auto-register on first claim — keeps the verb-driven
                 # path symmetric with the explicit POST /work_queue path.
@@ -540,8 +584,10 @@ class WorkQueueSvc:
 
 __all__ = [
     "STATUSES",
+    "MAX_ACTIVE_PER_ACTOR",
     "WorkQueueSvc",
     "WorkQueueError",
     "ClaimRaceError",
+    "QuotaExceededError",
     "TaskNotFoundError",
 ]
