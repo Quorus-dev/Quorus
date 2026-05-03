@@ -3919,6 +3919,465 @@ def _platform_key_for(label: str) -> str:
     return m.get(label, label.lower().replace(" ", "-"))
 
 
+_INIT_AGENT_PLATFORMS: tuple[str, ...] = ("claude", "codex", "gemini", "cursor")
+
+
+def _mint_init_agent_keys(
+    *,
+    name: str,
+    relay_url: str,
+    api_key: str,
+    profile_slug: str,
+    ui,
+) -> dict[str, str]:
+    """Mint per-platform agent keys for ``quorus init``.
+
+    For each canonical platform suffix in :data:`_INIT_AGENT_PLATFORMS`, calls
+    :func:`_register_agent_identity` and persists the resulting
+    ``{name}-{suffix} -> api_key`` mapping under the given profile's
+    ``agent_api_keys`` field. The relay's ``register-agent`` is idempotent on
+    the server side (revokes old keys, returns a fresh one), so re-running
+    ``quorus init`` does NOT pile up duplicate participants.
+
+    A failure for ONE platform must not abort the whole init: we log the
+    error and continue. Returns the dict of successfully minted keys.
+    """
+    if not api_key:
+        return {}
+
+    pm = ProfileManager()
+    profile = pm.get(profile_slug) or {}
+    existing = profile.get("agent_api_keys") or {}
+    if not isinstance(existing, dict):
+        existing = {}
+    minted: dict[str, str] = dict(existing)
+    fresh_count = 0
+    failures: list[str] = []
+
+    for suffix in _INIT_AGENT_PLATFORMS:
+        agent_name = f"{name}-{suffix}"
+        try:
+            agent_key = _register_agent_identity(
+                relay_url=relay_url,
+                parent_api_key=api_key,
+                suffix=suffix,
+            )
+        except Exception as exc:  # defensive — _register_agent already swallows
+            failures.append(f"{agent_name} ({exc.__class__.__name__})")
+            continue
+
+        if not agent_key:
+            failures.append(agent_name)
+            continue
+
+        # Detect "fresh mint vs returned existing" by comparing against prior:
+        # if the value changed (or wasn't there), count it as freshly written.
+        if minted.get(agent_name) != agent_key:
+            fresh_count += 1
+        minted[agent_name] = agent_key
+
+    # Persist the merged map back into the profile.
+    if minted:
+        profile["agent_api_keys"] = minted
+        pm.save(profile_slug, profile)
+
+    if minted:
+        ui.console.print(
+            f"  [muted]agents minted:[/] [primary]{len(minted)}[/] "
+            f"({', '.join(sorted(minted.keys()))})"
+        )
+    if failures:
+        ui.warn(
+            f"Couldn't mint {len(failures)} agent key(s): "
+            f"{', '.join(failures)}",
+            hint="run [accent]quorus connect <platform>[/] later to retry",
+        )
+    return minted
+
+
+def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
+    """Resolve the parent's tenant UUID via ``GET /v1/usage``.
+
+    Required so we can ``signup --join_tenant_id=<uuid>`` for the human
+    profile and land it inside the same workspace as the agent identities.
+    Returns ``None`` on any failure — caller falls back to a fresh tenant.
+    """
+    try:
+        token_resp = httpx.post(
+            f"{relay_url}/v1/auth/token",
+            json={"api_key": api_key},
+            timeout=10,
+            follow_redirects=True,
+        )
+        if token_resp.status_code != 200:
+            return None
+        jwt = (token_resp.json() or {}).get("token", "")
+        if not jwt:
+            return None
+        usage_resp = httpx.get(
+            f"{relay_url}/v1/usage",
+            headers={"Authorization": f"Bearer {jwt}"},
+            timeout=10,
+            follow_redirects=True,
+        )
+        if usage_resp.status_code != 200:
+            return None
+        tid = (usage_resp.json() or {}).get("tenant_id")
+        return tid if isinstance(tid, str) and tid else None
+    except Exception:
+        return None
+
+
+def _create_init_human_profile(
+    *,
+    name: str,
+    relay_url: str,
+    api_key: str,
+    config_dir: Path,
+    interactive: bool,
+    ui,
+) -> str | None:
+    """Create the ``human`` profile alongside the agent ``default`` profile.
+
+    Calls ``POST /v1/auth/signup`` joining the same tenant as the agent
+    identity (so human + agent appear in the same workspace, share rooms,
+    and the relay's anti-impersonation rule sees them as distinct senders).
+
+    Returns the profile slug (``"human"``) on success, ``None`` otherwise.
+
+    Idempotency rule: never overwrite an existing ``human`` profile silently.
+    If the file is already present we keep it and return its slug — the
+    same UX rule the launchd prompt follows.
+    """
+    pm = ProfileManager(config_dir=config_dir)
+    if pm.get("human") is not None:
+        # Already exists — surface the choice to the user instead of clobbering.
+        if interactive:
+            keep = Confirm.ask(
+                f"[yellow]Profile 'human' already exists at "
+                f"{pm.profiles_dir / 'human.json'}. Keep it?[/]",
+                default=True,
+            )
+            if keep:
+                ui.console.print("  [muted]profile:[/] [dim]kept existing 'human'[/]")
+                return "human"
+        else:
+            # Non-interactive: never auto-overwrite.
+            ui.console.print(
+                "  [muted]profile:[/] [dim]existing 'human' kept "
+                "(use --force-human to overwrite)[/]"
+            )
+            return "human"
+
+    if not api_key:
+        ui.warn(
+            "Skipping 'human' profile creation — only API-key auth is supported.",
+            hint="re-run with [accent]--api-key[/] to mint a separate human identity",
+        )
+        return None
+
+    tenant_id = _discover_tenant_id(relay_url=relay_url, api_key=api_key)
+    if not tenant_id:
+        ui.warn(
+            "Couldn't discover tenant — skipping 'human' profile creation",
+            hint="run [accent]quorus whoami[/] to verify your account",
+        )
+        return None
+
+    # Strip a trailing '-agent' suffix if the parent name was already a
+    # platform-suffixed identity (e.g. arav-codex -> arav). Otherwise just
+    # use the parent name verbatim so the human is recognisably "Arav".
+    human_name = name
+    for suffix in _INIT_AGENT_PLATFORMS:
+        marker = f"-{suffix}"
+        if name.endswith(marker):
+            human_name = name[: -len(marker)] or name
+            break
+
+    try:
+        signup_resp = httpx.post(
+            f"{relay_url}/v1/auth/signup",
+            json={
+                "name": human_name,
+                "workspace": "human-placeholder",  # ignored when join_tenant_id set
+                "join_tenant_id": tenant_id,
+            },
+            headers={"X-Quorus-Setup-Local": "1"},
+            timeout=15,
+            follow_redirects=True,
+        )
+    except Exception as exc:
+        ui.warn(f"Human signup failed: {exc.__class__.__name__}")
+        return None
+
+    if signup_resp.status_code != 200:
+        ui.warn(
+            f"Human signup returned HTTP {signup_resp.status_code}",
+            hint="re-run [accent]quorus init[/] later or create the profile manually",
+        )
+        return None
+
+    data = signup_resp.json() or {}
+    human_key = data.get("api_key") or ""
+    if not human_key:
+        # Server didn't return raw key (maybe missing the setup-local header) —
+        # still write a profile that points at the same tenant; the user can
+        # add the key later.
+        ui.warn("Human signup succeeded but no API key was returned")
+        return None
+
+    human_profile = {
+        "relay_url": relay_url,
+        "instance_name": human_name,
+        "api_key": human_key,
+        "poll_mode": "sse",
+        "push_notification_method": "notifications/claude/channel",
+        "push_notification_channel": "quorus",
+        "chat_identity": human_name,
+    }
+    pm.save("human", human_profile)
+    ui.console.print(
+        f"  [muted]profile:[/] [primary]human[/] [dim](→ @{human_name})[/]"
+    )
+    return "human"
+
+
+def _init_autostart_supervisor(*, ui) -> int | None:
+    """Spawn ``quorus reflexd-manager start`` detached after init.
+
+    Returns the supervisor PID on success, ``None`` if it could not be
+    started or was already running. We deliberately call back into the same
+    CLI binary instead of importing the supervisor in-process so the daemon
+    inherits a clean argv/cwd and exits cleanly when the user types Ctrl-C
+    later.
+    """
+    if _supervisor_alive():
+        existing = _read_supervisor_pid()
+        ui.console.print(
+            f"  [muted]reflexd-manager:[/] [dim]already running (pid {existing})[/]"
+        )
+        return existing
+
+    # Find a `quorus` binary. PATH lookup first; fall back to `python -m`.
+    quorus_bin = shutil.which("quorus")
+    if quorus_bin:
+        cmd = [quorus_bin, "reflexd-manager", "start"]
+    else:
+        cmd = [sys.executable, "-m", "quorus_cli.cli", "reflexd-manager", "start"]
+
+    _SUPERVISOR_LOG.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        log_fp = open(_SUPERVISOR_LOG, "ab", buffering=0)
+    except OSError as exc:
+        ui.warn(f"Couldn't open supervisor log: {exc}")
+        return None
+    try:
+        proc = subprocess.Popen(  # noqa: S603 — args program-controlled
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fp,
+            stderr=log_fp,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except Exception as exc:
+        log_fp.close()
+        ui.warn(f"Couldn't spawn reflexd-manager: {exc.__class__.__name__}")
+        return None
+    finally:
+        try:
+            log_fp.close()
+        except OSError:
+            pass
+
+    # Give the launcher half a second to write its pidfile + spawn children.
+    import time as _time
+    for _ in range(20):
+        _time.sleep(0.1)
+        if _supervisor_alive():
+            break
+
+    pid = _read_supervisor_pid()
+    if pid and _pid_is_alive(pid):
+        ui.console.print(
+            f"  [green]reflexd-manager:[/] running [dim](pid {pid})[/]"
+        )
+        return pid
+
+    # Couldn't bring it up. Stay non-fatal — print a hint and let the user
+    # try again with `quorus reflexd-manager start`.
+    if proc.poll() is not None:
+        ui.warn(
+            "reflexd-manager exited before the pidfile appeared",
+            hint=f"tail [accent]{_SUPERVISOR_LOG}[/] for the supervisor log",
+        )
+    return None
+
+
+def _init_maybe_install_launchd(
+    *,
+    auto_yes: bool,
+    no_launchd: bool,
+    ui,
+) -> bool:
+    """Optionally install the macOS launchd plist after init.
+
+    Behaviour matrix:
+      * ``no_launchd=True``               → never prompt, never install.
+      * ``auto_yes=True``                 → install without prompting.
+      * stdin is a TTY (interactive)       → prompt y/N (default: N).
+      * non-interactive + neither flag set → skip silently (CI-safe).
+
+    Returns ``True`` if the plist was installed.
+    """
+    if no_launchd:
+        return False
+    if sys.platform != "darwin":
+        return False
+
+    interactive = bool(getattr(sys.stdin, "isatty", lambda: False)())
+
+    if not auto_yes:
+        if not interactive:
+            return False
+        try:
+            confirmed = Confirm.ask(
+                "[yellow]Install launchd plist so agents auto-start on login?[/]",
+                default=False,
+            )
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if not confirmed:
+            return False
+
+    # User said yes (or --auto-launchd). Re-enter our own dispatcher with the
+    # 'install-launchd' subcommand so the existing helper does the heavy
+    # lifting — it already handles plist discovery, idempotency, and the
+    # `launchctl load` invocation.
+    fake_args = argparse.Namespace(manager_action="install-launchd")
+    try:
+        _manager_install_launchd(fake_args)
+        return True
+    except SystemExit as exc:
+        if exc.code in (None, 0):
+            return True
+        ui.warn(f"launchd install exited with code {exc.code}")
+        return False
+    except Exception as exc:
+        ui.warn(f"launchd install failed: {exc.__class__.__name__}")
+        return False
+
+
+def _init_run_wake_smoke(
+    *,
+    relay_url: str,
+    human_api_key: str,
+    agent_api_keys: dict[str, str],
+    base_name: str,
+    ui,
+    timeout_s: float = 10.0,
+) -> tuple[bool, float, str]:
+    """Send a `@<base>-claude smoke ping` from the human profile and wait.
+
+    Returns ``(ok, elapsed_seconds, detail)``. ``ok`` is True only if a
+    reply from the targeted agent was observed in-room within ``timeout_s``.
+    """
+    import time as _time
+
+    if not human_api_key:
+        return False, 0.0, "no human api_key — skipped"
+
+    target_agent = f"{base_name}-claude"
+    if target_agent not in agent_api_keys:
+        return False, 0.0, f"agent {target_agent} not registered"
+
+    room_name = f"init-smoke-{int(_time.time())}"
+
+    try:
+        # Exchange human api_key for a JWT.
+        token_resp = httpx.post(
+            f"{relay_url}/v1/auth/token",
+            json={"api_key": human_api_key},
+            timeout=10,
+            follow_redirects=True,
+        )
+        if token_resp.status_code != 200:
+            return False, 0.0, f"token exchange HTTP {token_resp.status_code}"
+        jwt = (token_resp.json() or {}).get("token", "")
+        if not jwt:
+            return False, 0.0, "no token returned"
+        headers = {"Authorization": f"Bearer {jwt}"}
+
+        # Create + join the smoke room.
+        room_resp = httpx.post(
+            f"{relay_url}/rooms",
+            json={"name": room_name},
+            headers=headers,
+            timeout=10,
+            follow_redirects=True,
+        )
+        if room_resp.status_code not in (200, 201):
+            return False, 0.0, f"create-room HTTP {room_resp.status_code}"
+        room_id = (room_resp.json() or {}).get("id")
+        if not room_id:
+            return False, 0.0, "no room id returned"
+
+        # Add the target agent to the room (use the agent's own key so the
+        # add-member call is authoritative against the relay's tenant rules).
+        # Ignore the response — the relay returns 409 if already a member.
+        try:
+            httpx.post(
+                f"{relay_url}/rooms/{room_id}/join",
+                headers=headers,
+                params={"member": target_agent},
+                timeout=10,
+                follow_redirects=True,
+            )
+        except Exception:
+            pass
+
+        # Send the @-mention.
+        body = f"@{target_agent} smoke ping"
+        send_resp = httpx.post(
+            f"{relay_url}/rooms/{room_id}/messages",
+            json={"text": body},
+            headers=headers,
+            timeout=10,
+            follow_redirects=True,
+        )
+        if send_resp.status_code not in (200, 201):
+            return False, 0.0, f"send HTTP {send_resp.status_code}"
+
+        # Poll history for a reply from the agent.
+        deadline = _time.monotonic() + timeout_s
+        sent_at = _time.monotonic()
+        last_seen = 0
+        while _time.monotonic() < deadline:
+            try:
+                hist = httpx.get(
+                    f"{relay_url}/rooms/{room_id}/messages",
+                    headers=headers,
+                    params={"limit": 50},
+                    timeout=5,
+                    follow_redirects=True,
+                )
+            except Exception:
+                _time.sleep(0.5)
+                continue
+            if hist.status_code == 200:
+                msgs = hist.json() or []
+                for m in msgs[last_seen:]:
+                    if m.get("from") == target_agent or m.get("from_name") == target_agent:
+                        elapsed = _time.monotonic() - sent_at
+                        return True, elapsed, f"reply from @{target_agent}"
+                last_seen = len(msgs)
+            _time.sleep(0.5)
+
+        return False, timeout_s, "timed out waiting for reply"
+    except Exception as exc:
+        return False, 0.0, f"{exc.__class__.__name__}: {exc}"
+
+
 def _cmd_init(args):
     """One-command setup: write config, auto-register MCP with every installed
     MCP-compatible client (Claude Code, Claude Desktop, Cursor, Windsurf,
@@ -4032,45 +4491,138 @@ def _cmd_init(args):
             "Start it with: quorus relay[/yellow]"
         )
 
-    # 5. Summary
+    # ── Productized init steps (mint, profile, daemon, smoke) ──────────────
+    no_autostart = bool(getattr(args, "no_autostart", False))
+    no_smoke = bool(getattr(args, "no_smoke", False))
+    no_launchd = bool(getattr(args, "no_launchd", False))
+    auto_launchd = bool(getattr(args, "auto_launchd", False))
+    workspace_slug = "default"  # canonical agent profile name post-init
+
+    # 5. Mint per-platform agent keys (under the active profile).
+    pm = ProfileManager(config_dir=config_dir)
+    pm.migrate_legacy_if_needed()
+    active_slug = pm.current() or workspace_slug
+    minted_keys: dict[str, str] = {}
+    if api_key:
+        minted_keys = _mint_init_agent_keys(
+            name=name,
+            relay_url=relay_url,
+            api_key=api_key,
+            profile_slug=active_slug,
+            ui=ui,
+        )
+
+    # 6. Auto-create the 'human' profile alongside the agent default.
+    interactive = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    human_slug = None
+    human_key = ""
+    if api_key:
+        human_slug = _create_init_human_profile(
+            name=name,
+            relay_url=relay_url,
+            api_key=api_key,
+            config_dir=config_dir,
+            interactive=interactive,
+            ui=ui,
+        )
+        if human_slug:
+            human_profile = pm.get(human_slug) or {}
+            human_key = human_profile.get("api_key", "") or ""
+            # Default the active profile to 'human' so the TUI renders the
+            # owner as their human identity straight away.
+            try:
+                pm.set_current(human_slug)
+            except FileNotFoundError:
+                pass
+
+    # 7. Auto-start the supervisor unless the user opted out.
+    supervisor_pid: int | None = None
+    if not no_autostart and minted_keys:
+        supervisor_pid = _init_autostart_supervisor(ui=ui)
+
+    # 8. Optionally install launchd (macOS only, opt-in/out via flags + TTY).
+    launchd_installed = _init_maybe_install_launchd(
+        auto_yes=auto_launchd,
+        no_launchd=no_launchd,
+        ui=ui,
+    )
+
+    # 9. Wake-smoke: prove an agent actually replies to an @-mention.
+    smoke_result: tuple[bool, float, str] | None = None
+    if not no_smoke and human_key and minted_keys:
+        smoke_result = _init_run_wake_smoke(
+            relay_url=relay_url,
+            human_api_key=human_key,
+            agent_api_keys=minted_keys,
+            base_name=name,
+            ui=ui,
+        )
+
+    # 10. Final summary — checklist
     ui.console.print()
     ui.success(f"Quorus initialized for [agent]{name}[/]")
     ui.console.print(f"  [muted]Relay:[/]      [primary]{relay_url}[/]")
     ui.console.print(f"  [muted]Config:[/]     [dim]{config_path}[/]")
     ui.console.print(f"  [muted]MCP server:[/] [dim]{mcp_command} {' '.join(mcp_args)}[/]")
+
+    # Compact production-style checklist.
+    checklist: list[str] = []
+    checklist.append(f"[green]✓[/] relay: [primary]{relay_url}[/]")
+    checklist.append(f"[green]✓[/] config: [dim]{config_path}[/]")
+    if minted_keys:
+        names = ", ".join(sorted(minted_keys))
+        checklist.append(
+            f"[green]✓[/] agents minted: [primary]{len(minted_keys)}[/] ({names})"
+        )
+    elif api_key:
+        checklist.append("[yellow]·[/] agents: [dim]none minted (check warnings above)[/]")
+    if human_slug:
+        checklist.append(
+            f"[green]✓[/] profiles: [primary]human[/] (active), [dim]{active_slug}[/]"
+        )
+    if supervisor_pid:
+        checklist.append(
+            f"[green]✓[/] reflexd-manager: running [dim](pid {supervisor_pid})[/]"
+        )
+    elif no_autostart:
+        checklist.append("[yellow]·[/] reflexd-manager: [dim]skipped (--no-autostart)[/]")
+    if launchd_installed:
+        checklist.append("[green]✓[/] launchd: installed (auto-start on login)")
+    elif sys.platform == "darwin" and not no_launchd:
+        checklist.append("[yellow]·[/] launchd: [dim]not installed (run install-launchd later)[/]")
+    if smoke_result is not None:
+        ok, elapsed, detail = smoke_result
+        if ok:
+            checklist.append(
+                f"[green]✓[/] wake smoke: {detail} in [primary]{elapsed:.1f}s[/]"
+            )
+        else:
+            checklist.append(
+                f"[red]✗[/] wake smoke: {detail} — try [accent]quorus reflexd doctor[/]"
+            )
+
+    for line in checklist:
+        ui.console.print(f"  {line}")
+
     if registered_labels:
         ui.warn(
             f"Restart {' / '.join(registered_labels)} to pick up the MCP server"
         )
-    next_steps = [
-        "quorus create <room-name>   — create a coordination room",
-        "quorus begin                — open the interactive hub",
-        "quorus doctor               — verify everything is wired up",
-    ]
-    # Tell users about other agents we didn't auto-wire.
-    auto_wired = set(registered_labels)
-    manual_hints = []
-    if "Cursor" not in auto_wired:
-        manual_hints.append("quorus connect cursor    — set up Cursor")
-    if "Windsurf" not in auto_wired:
-        manual_hints.append("quorus connect windsurf  — set up Windsurf")
-    if "Gemini CLI" not in auto_wired:
-        manual_hints.append("quorus connect gemini    — set up Gemini CLI")
-    if "Opencode" not in auto_wired:
-        manual_hints.append("quorus connect opencode  — set up Opencode")
-    manual_hints.append("quorus connect codex     — set up OpenAI Codex CLI")
-    manual_hints.append("quorus connect http      — any HTTP-speaking agent")
-    next_steps.extend(manual_hints[:3])  # keep the panel tight
-    ui.hint_next_steps(next_steps)
-    # AI-native notification daemon hint — opt-in per Arav's name-editability
-    # principle. We surface the commands but never auto-launch them here.
-    console.print(
-        "[muted]→ to enable AI-native notifications, run:[/] "
-        "[accent]quorus reflexd-manager start[/]"
+
+    ui.console.print()
+    ui.console.print(
+        "[muted]Next:[/] open the TUI with [accent]quorus[/]. "
+        f"Type [accent]@{name}-claude what's up?[/] to see it work."
     )
-    if sys.platform == "darwin":
-        console.print(
-            "[muted]→ to auto-start on login (macOS):[/] "
+
+    if no_autostart:
+        ui.console.print(
+            "  [muted]→ start the daemon manually:[/] "
+            "[accent]quorus reflexd-manager start[/]"
+        )
+    if sys.platform == "darwin" and not launchd_installed and not no_launchd:
+        ui.console.print(
+            "  [muted]→ to auto-start on login (macOS):[/] "
             "[accent]quorus reflexd-manager install-launchd[/]"
         )
 
@@ -7305,6 +7857,27 @@ def main():
     p_init_auth = p_init.add_mutually_exclusive_group(required=True)
     p_init_auth.add_argument("--secret", help="Shared secret (legacy auth)")
     p_init_auth.add_argument("--api-key", help="API key (production auth)")
+    # Productized init flags (escape hatches for CI / non-interactive shells).
+    p_init.add_argument(
+        "--no-autostart",
+        action="store_true",
+        help="Skip auto-starting `quorus reflexd-manager start` after init",
+    )
+    p_init.add_argument(
+        "--no-smoke",
+        action="store_true",
+        help="Skip the post-init wake-smoke (no temp room, no @-mention)",
+    )
+    p_init.add_argument(
+        "--no-launchd",
+        action="store_true",
+        help="On macOS: never prompt for or install the launchd plist",
+    )
+    p_init.add_argument(
+        "--auto-launchd",
+        action="store_true",
+        help="On macOS: install the launchd plist without prompting",
+    )
 
     p_relay = sub.add_parser("relay", **_help_block(
         synopsis="Start the Quorus relay server locally.",

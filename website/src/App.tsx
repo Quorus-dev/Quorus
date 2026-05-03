@@ -1,7 +1,6 @@
 import { Routes, Route } from "react-router-dom";
 import { lazy, Suspense, useEffect } from "react";
-import CursorGlow from "./components/CursorGlow";
-import AnnouncementBar from "./components/AnnouncementBar";
+import NavV2 from "./components/NavV2";
 import Home from "./pages/Home";
 
 // Code-split everything that isn't the LCP path. Console + Docs ship in their
@@ -26,7 +25,8 @@ function RouteFallback() {
     <div
       role="status"
       aria-live="polite"
-      className="min-h-screen flex items-center justify-center text-white/40 text-sm font-mono"
+      className="flex min-h-screen items-center justify-center font-mono text-sm"
+      style={{ color: "var(--color-text-on-cream-muted)" }}
     >
       Loading…
     </div>
@@ -37,11 +37,14 @@ export default function App() {
   return (
     <>
       <ScrollReset />
-      <CursorGlow />
-      <AnnouncementBar />
+      <NavV2 />
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-md focus:bg-teal-500 focus:text-black focus:font-mono focus:text-xs"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[100] focus:rounded-md focus:px-3 focus:py-2 focus:font-mono focus:text-xs"
+        style={{
+          backgroundColor: "var(--color-accent)",
+          color: "var(--color-cream)",
+        }}
       >
         Skip to main content
       </a>
