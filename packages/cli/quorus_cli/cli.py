@@ -1148,6 +1148,8 @@ def _cmd_reflexd(args):
         return _reflexd_status(args)
     if action == "logs":
         return _reflexd_logs(args)
+    if action == "doctor":
+        return _reflexd_doctor(args)
 
     _ui.error(f"reflexd: unknown action {action!r}")
     raise SystemExit(5)
@@ -1393,6 +1395,141 @@ def _reflexd_logs(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# reflexd doctor — actionable green/red checklist for the wake pipeline.
+# ---------------------------------------------------------------------------
+
+
+def _reflexd_doctor_probe_sdk() -> tuple[bool, str]:
+    """Return ``(installed, version-or-error)`` for claude_agent_sdk."""
+    try:
+        import claude_agent_sdk  # type: ignore
+    except ImportError as exc:
+        return False, f"not importable ({exc})"
+    ver = getattr(claude_agent_sdk, "__version__", None)
+    if not ver:
+        try:
+            from importlib.metadata import version as _ver
+            ver = _ver("claude-agent-sdk")
+        except Exception:
+            ver = "unknown"
+    return True, str(ver)
+
+
+def _reflexd_doctor_probe_relay(relay_url: str) -> tuple[bool, str]:
+    """GET ``/health`` on the relay; report reachability."""
+    try:
+        with httpx.Client(timeout=httpx.Timeout(2.0)) as client:
+            resp = client.get(f"{relay_url.rstrip('/')}/health")
+            if resp.status_code == 200:
+                return True, f"{relay_url} → 200 OK"
+            return False, f"{relay_url} → HTTP {resp.status_code}"
+    except httpx.HTTPError as exc:
+        return False, f"{relay_url} → {exc.__class__.__name__}: {exc}"
+    except Exception as exc:  # noqa: BLE001 — defensive
+        return False, f"{relay_url} → {exc.__class__.__name__}: {exc}"
+
+
+def _reflexd_doctor(args) -> None:
+    """Print a green-check / red-x checklist of the reflexd wake pipeline.
+
+    Probes (each emits one line):
+
+    * ``claude_agent_sdk`` importable + version
+    * ``ANTHROPIC_API_KEY`` present in env
+    * ``REFLEXD_API_KEY`` present, OR active profile has ``api_key``
+    * reflexd daemon running for the resolved participant
+      (``~/.quorus/runtime/reflexd.<participant>.pid``)
+    * relay reachable at the resolved ``relay_url``
+
+    Exit code: 0 when every check is green, 1 otherwise. The output is
+    machine-friendly enough for a follow-up grep but human-friendly first
+    (rich markup, mostly single-line items).
+    """
+    rows: list[tuple[bool, str, str]] = []
+
+    # 1) claude_agent_sdk importable + version
+    sdk_ok, sdk_detail = _reflexd_doctor_probe_sdk()
+    rows.append((sdk_ok, "claude_agent_sdk",
+                 f"v{sdk_detail}" if sdk_ok else sdk_detail))
+
+    # 2) ANTHROPIC_API_KEY set?
+    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    rows.append((
+        has_anthropic,
+        "ANTHROPIC_API_KEY",
+        "set" if has_anthropic
+        else "missing — export ANTHROPIC_API_KEY=sk-ant-... or rely on stub",
+    ))
+
+    # 3) reflexd auth: REFLEXD_API_KEY env OR active profile api_key
+    has_reflexd_key = bool(os.environ.get("REFLEXD_API_KEY")) \
+        or bool(os.environ.get("API_KEY"))
+    profile_api_key = ""
+    try:
+        from quorus.config import ConfigManager as _CM
+        cfg_data = _CM().load() or {}
+        profile_api_key = cfg_data.get("api_key", "") or ""
+    except Exception:
+        profile_api_key = ""
+    has_relay_auth = has_reflexd_key or bool(profile_api_key)
+    auth_detail = (
+        "REFLEXD_API_KEY/API_KEY env" if has_reflexd_key
+        else "active profile api_key"
+        if profile_api_key
+        else "missing — set REFLEXD_API_KEY or run `quorus init`"
+    )
+    rows.append((has_relay_auth, "relay auth", auth_detail))
+
+    # 4) Daemon running for the resolved participant?
+    try:
+        participant = _resolve_reflexd_participant(
+            getattr(args, "participant", None)
+        )
+    except SystemExit:
+        # _resolve_reflexd_participant prints its own error; surface a row.
+        participant = "<unresolved>"
+    if participant != "<unresolved>":
+        pid = _read_reflexd_pid(participant)
+        if pid is not None and _pid_is_alive(pid):
+            rows.append((True, "daemon running",
+                         f"pid={pid} participant={participant}"))
+        else:
+            rows.append((False, "daemon running",
+                         f"no pid for {participant} "
+                         f"(start with `quorus reflexd start --detach`)"))
+    else:
+        rows.append((False, "daemon running",
+                     "participant unresolved — pass --participant or set "
+                     "REFLEXD_PARTICIPANT"))
+
+    # 5) Relay reachable?
+    relay_url = (
+        os.environ.get("REFLEXD_RELAY_URL")
+        or os.environ.get("RELAY_URL")
+        or RELAY_URL
+        or "http://localhost:8080"
+    )
+    relay_ok, relay_detail = _reflexd_doctor_probe_relay(relay_url)
+    rows.append((relay_ok, "relay reachable", relay_detail))
+
+    # ─ render ─
+    console.print("[bold]reflexd doctor[/]")
+    for ok, label, detail in rows:
+        mark = "[green]✓[/]" if ok else "[red]✗[/]"
+        console.print(f"  {mark} {label:<22} [dim]{detail}[/]")
+
+    failed = [label for ok, label, _ in rows if not ok]
+    if failed:
+        console.print(
+            f"\n[red]{len(failed)} check(s) failed[/]: "
+            f"{', '.join(failed)}"
+        )
+        raise SystemExit(1)
+    console.print("\n[green]all checks passed[/]")
+    raise SystemExit(0)
+
+
+# ---------------------------------------------------------------------------
 # reflexd-manager — multi-agent supervisor (one daemon per agent identity)
 # ---------------------------------------------------------------------------
 
@@ -1400,7 +1537,9 @@ _SUPERVISOR_PIDFILE = _REFLEXD_RUNTIME_DIR / "supervisor.pid"
 _SUPERVISOR_LOG = Path.home() / ".quorus" / "reflexd-manager.log"
 
 
-def _resolve_manager_participants(explicit_csv: str | None) -> tuple[list[str], dict[str, str], str | None]:
+def _resolve_manager_participants(
+    explicit_csv: str | None,
+) -> tuple[list[str], dict[str, str], str | None]:
     """Resolve the set of agent participants for ``reflexd-manager``.
 
     Priority: explicit ``--participants`` CSV > the active profile's
@@ -1449,7 +1588,10 @@ def _cmd_reflexd_manager(args):
     if action is None:
         _ui.error(
             "reflexd-manager: missing subcommand.",
-            hint="usage: [accent]quorus reflexd-manager start|stop|status|restart|install-launchd[/]",
+            hint=(
+                "usage: [accent]quorus reflexd-manager "
+                "start|stop|status|restart|install-launchd[/]"
+            ),
         )
         raise SystemExit(5)
     if action == "start":
@@ -1470,6 +1612,7 @@ def _cmd_reflexd_manager(args):
 def _manager_start(args) -> None:
     """Daemonize the supervisor (one PID supervising N reflexd children)."""
     import time as _time
+
     from quorus.runtime.supervisor import Supervisor
 
     if _supervisor_alive():
@@ -1543,6 +1686,8 @@ def _manager_start(args) -> None:
 
 def _manager_stop(args) -> None:
     """SIGTERM each reflexd child + clear pidfile."""
+    import signal as _signal
+
     from quorus.runtime.supervisor import Supervisor
 
     participants, api_keys, relay_url = _resolve_manager_participants(
@@ -1554,7 +1699,7 @@ def _manager_stop(args) -> None:
     pid = _read_supervisor_pid()
     if pid and _pid_is_alive(pid):
         try:
-            os.kill(pid, signal.SIGTERM)
+            os.kill(pid, _signal.SIGTERM)
         except OSError:
             pass
     try:
@@ -1591,7 +1736,10 @@ def _manager_status(args) -> None:
         rec_pid = rec.pid if rec else None
         color = {"alive": "green", "dead": "red", "unknown": "dim"}.get(state, "dim")
         if rec_pid and state == "alive":
-            console.print(f"  [muted]•[/] [primary]{name}[/] [{color}]{state}[/] [dim](pid {rec_pid})[/]")
+            console.print(
+                f"  [muted]•[/] [primary]{name}[/] "
+                f"[{color}]{state}[/] [dim](pid {rec_pid})[/]"
+            )
         else:
             console.print(f"  [muted]•[/] [primary]{name}[/] [{color}]{state}[/]")
     raise SystemExit(0 if pid and _pid_is_alive(pid) else 1)
@@ -5825,6 +5973,40 @@ def _cmd_version(args):
     ui.info(f"Config:    [muted]{_config.get('config_file', '~/.quorus/config.json')}[/]")
 
 
+def _cmd_notify_test(args):
+    """Fire a test OS notification through quorus.notifications.native.
+
+    On macOS, the FIRST run will require granting notification permission
+    via System Settings → Notifications → Script Editor (or osascript) →
+    Allow Notifications. We print the hint after the call so a silent
+    failure is debuggable.
+    """
+    import sys as _sys
+
+    from quorus.notifications import notify as _notify
+
+    ok = _notify(
+        "Quorus test",
+        "this is a test from quorus notify-test",
+        sender="quorus",
+        room="test",
+    )
+    if ok:
+        console.print("[success]✓ notification dispatched[/success]")
+    else:
+        console.print("[muted]· notification dispatch returned False[/muted]")
+        console.print(
+            "[muted]  (rate-limited, unsupported platform, or banner suppressed)[/muted]",
+        )
+
+    if _sys.platform == "darwin":
+        console.print(
+            "\n[muted]if you don't see a banner, check System Settings → "
+            "Notifications → Script Editor (or osascript) → Allow "
+            "Notifications.[/muted]",
+        )
+
+
 def _cmd_logs(args):
     """Tail relay analytics and recent activity."""
     import httpx as httpx_mod
@@ -7257,6 +7439,10 @@ def main():
     p_doctor.add_argument("--verbose", "-v", action="store_true", help="Show extra details")
     sub.add_parser("version", help="Show quorus-ai version")
     sub.add_parser("logs", help="Show relay activity and per-participant stats")
+    sub.add_parser(
+        "notify-test",
+        help="Fire a test OS notification (verifies your desktop notification setup)",
+    )
 
     p_invite_link = sub.add_parser(
         "invite-link", help="Generate a join command to share"
@@ -7866,6 +8052,12 @@ def main():
                            help="Override resolved participant name")
     p_rx_logs.add_argument("--tail", type=int, default=50,
                            help="Number of trailing log lines to print (default 50)")
+    p_rx_doctor = rx_sub.add_parser(
+        "doctor",
+        help="Probe SDK / API key / daemon / relay; print a ✓/✗ checklist.",
+    )
+    p_rx_doctor.add_argument("--participant", default=None,
+                             help="Override resolved participant name")
 
     # ── reflexd-manager: multi-agent supervisor (one daemon per agent identity).
     p_mgr = sub.add_parser("reflexd-manager", **_help_block(
@@ -7882,8 +8074,10 @@ def main():
     ))
     mgr_sub = p_mgr.add_subparsers(dest="manager_action")
     p_mgr_start = mgr_sub.add_parser("start", help="Start supervisor + all reflexd children")
-    p_mgr_start.add_argument("--participants", default=None,
-                             help="CSV of participant names (defaults to active profile's agent_api_keys)")
+    p_mgr_start.add_argument(
+        "--participants", default=None,
+        help="CSV of participant names (default: active profile's agent_api_keys)",
+    )
     p_mgr_start.add_argument("--detach", action="store_true",
                              help="Spawn supervisor in background and exit immediately")
     p_mgr_start.add_argument("--foreground", action="store_true",
@@ -7976,6 +8170,7 @@ def main():
         "doctor": _cmd_doctor,
         "version": _cmd_version,
         "logs": _cmd_logs,
+        "notify-test": _cmd_notify_test,
         "join": _cmd_join,
         "share": _cmd_share,
         "quickjoin": _cmd_quickjoin,

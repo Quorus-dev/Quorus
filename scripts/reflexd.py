@@ -150,6 +150,44 @@ def compute_bid(*, is_mention: bool, recency_seconds: float) -> float:
     return max(0.0, min(1.0, base - 0.1 * max(0.0, recency_seconds)))
 
 
+def envelope_reply_depth(envelope: dict[str, Any]) -> int:
+    """Pull the parent-chain reply depth from an envelope, default 0.
+
+    Wire format: an envelope MAY carry ``_reply_depth`` at the top level OR
+    ``metadata.reply_depth``. Both are accepted because the relay's
+    ``/rooms/{room}/messages`` route currently strips unknown top-level
+    keys but preserves ``metadata`` — so over-the-wire propagation has to
+    happen via metadata, while in-process propagation (within reflexd's
+    own queue) uses the top-level field.
+
+    Treats negative or non-int values as 0 — defensive against
+    contributor-chosen string formats from upstream relays.
+    """
+    raw = envelope.get("_reply_depth")
+    if raw is None:
+        meta = envelope.get("metadata")
+        if isinstance(meta, dict):
+            raw = meta.get("reply_depth")
+    try:
+        depth = int(raw) if raw is not None else 0
+    except (TypeError, ValueError):
+        return 0
+    return max(0, depth)
+
+
+def should_break_reply_chain(envelope: dict[str, Any], *, max_depth: int = MAX_REPLY_DEPTH) -> bool:
+    """Return True iff replying to ``envelope`` would extend a chain past max_depth.
+
+    A reply we would emit lives at depth ``parent + 1``. We refuse when
+    that successor depth would equal-or-exceed ``max_depth`` — i.e. we
+    allow chains up to depth ``max_depth`` and break the next one.
+    Concretely with the default of 3: depths 0, 1, 2, 3 are fine, depth-4
+    replies are dropped.
+    """
+    parent_depth = envelope_reply_depth(envelope)
+    return (parent_depth + 1) > max_depth
+
+
 def busy_path(participant: str, runtime_dir: Path | None = None) -> Path:
     """Return the busy-file path for ``participant``.
 
@@ -290,6 +328,49 @@ def probe_harness_version(harness: str, *, timeout_s: float = 3.0) -> str | None
         if line:
             return line[:200]
     return None
+
+
+def log_anthropic_api_key_status() -> str:
+    """Emit one startup line announcing whether the real-claude path is wired.
+
+    Three states matter (returned as the string for caller introspection):
+
+    * ``"real"`` — ``ANTHROPIC_API_KEY`` is set; the claude adapter will
+      drive a real SDK call. Logs an INFO line.
+    * ``"stub"`` — ``REFLEXD_STUB_REPLY=1`` is set explicitly; we never
+      attempt a real call. Logs an INFO line.
+    * ``"fallback-stub"`` — neither is set. We auto-fall-back to stub mode
+      so the daemon doesn't refuse to start, but we log a WARNING so the
+      operator sees how to upgrade. The auto-fallback is implemented by
+      setting ``REFLEXD_STUB_REPLY=1`` in-process — that's the same flag
+      the adapter checks on every wake.
+
+    Returning the state lets ``cmd_start`` skip a redundant probe and lets
+    tests assert on the chosen branch without reading the log.
+    """
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_stub = os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes")
+    if has_key:
+        sdk_ver = _claude_sdk_version() or "unknown"
+        logger.info(
+            "reflexd: real-claude adapter active (claude_agent_sdk %s)", sdk_ver,
+        )
+        return "real"
+    if has_stub:
+        logger.info(
+            "reflexd: stub adapter active (REFLEXD_STUB_REPLY=1) — no API spend"
+        )
+        return "stub"
+    # No key, no explicit stub. Auto-fall-back so we don't crash, but make
+    # the misconfig loud. This is the friendliest behaviour for first-time
+    # users running the demo without the env var.
+    logger.warning(
+        "reflexd: ANTHROPIC_API_KEY not set + REFLEXD_STUB_REPLY not set. "
+        "Reflexd will fall back to stub replies. To enable real Claude "
+        "replies: export ANTHROPIC_API_KEY=sk-ant-..."
+    )
+    os.environ.setdefault("REFLEXD_STUB_REPLY", "1")
+    return "fallback-stub"
 
 
 def log_adapter_versions(probe: Callable[[str], str | None] | None = None) -> dict[str, str | None]:
@@ -504,15 +585,20 @@ class HeadlessAdapter:
           shape billing/rate-limit/auth errors take in this SDK.
         """
         try:
-            from claude_agent_sdk import (
-                AssistantMessage,
-                ClaudeAgentOptions,
-                TextBlock,
-                query,
-            )
+            from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
             logger.warning("claude_agent_sdk not installed; skipping claude wake")
             return "[reflexd] claude_agent_sdk not installed on this host"
+
+        # AssistantMessage / TextBlock are best-effort imports — older SDK
+        # builds and test fakes (which only stub query+ClaudeAgentOptions)
+        # don't expose them. When absent we fall back to the duck-typed
+        # extraction path below — same behaviour the original code had.
+        try:
+            from claude_agent_sdk import AssistantMessage, TextBlock
+        except ImportError:
+            AssistantMessage = None  # type: ignore[assignment]
+            TextBlock = None  # type: ignore[assignment]
 
         options = ClaudeAgentOptions(permission_mode="bypassPermissions", max_turns=1)
         chunks: list[str] = []
@@ -529,9 +615,9 @@ class HeadlessAdapter:
                 # Real-SDK path: AssistantMessage with a list of blocks.
                 # Use isinstance so TextBlock filtering is enforced —
                 # ToolUseBlock / ThinkingBlock content is NOT user-visible.
-                if isinstance(message, AssistantMessage):
+                if AssistantMessage is not None and isinstance(message, AssistantMessage):
                     for block in message.content or []:
-                        if isinstance(block, TextBlock):
+                        if TextBlock is not None and isinstance(block, TextBlock):
                             chunks.append(block.text)
                     continue
                 # Test/fake path: any object with a string or list[block]
@@ -922,6 +1008,17 @@ class Reflexd:
         if triage.action != "RESPOND":
             return False
 
+        # Anti-loop guard: if this envelope is already deep in a reply
+        # chain we ourselves spawned, refuse to bid. Without this, two
+        # agents in a room can ping-pong indefinitely once one of them
+        # asks a trailing-? question.
+        if should_break_reply_chain(envelope):
+            logger.info(
+                "reply chain depth >= %d — breaking room=%s id=%s",
+                MAX_REPLY_DEPTH, room, message_id,
+            )
+            return False
+
         # OS-level notification: fire BEFORE bid/claim so the user gets a
         # real macOS banner (or notify-send / fallback log) even if this
         # daemon loses the auction. Per-(sender, room) rate-limit in the
@@ -1059,6 +1156,7 @@ class Reflexd:
         wake_sender = envelope.get("from_name") or "?"
         wake_content = envelope.get("content") or ""
         wake_room = envelope.get("room") or "?"
+        wake_depth = envelope_reply_depth(envelope)
 
         # Phase-2: open_todo kinds get a self-assignment preamble that
         # tells the harness it just *picked up* this work.
@@ -1087,6 +1185,7 @@ class Reflexd:
             f"{render_qod_for_agent_loop()}\n\n"
             f"# Wake Intent\n"
             f"{intent_blurb}\n\n"
+            f"# Reply chain depth: {wake_depth} (max {MAX_REPLY_DEPTH})\n\n"
             f"# Recent room transcript (most recent last)\n{history_block}\n\n"
             f"# Triggering message\n@{wake_sender}: {wake_content}\n"
         )
@@ -1318,6 +1417,12 @@ async def cmd_start(args: argparse.Namespace) -> int:
     # Probe each adapter's version once at startup so support has a paper
     # trail when a vendor flag changes. Logged to ~/.quorus/reflexd.log.
     log_adapter_versions()
+
+    # Announce real-vs-stub mode so the operator knows immediately whether
+    # ANTHROPIC_API_KEY made it into the environment. Auto-falls-back to
+    # stub mode when neither key nor REFLEXD_STUB_REPLY is set — the daemon
+    # never refuses to start over a missing key.
+    log_anthropic_api_key_status()
 
     if args.once:
         return await _run_once(cfg, args.once)

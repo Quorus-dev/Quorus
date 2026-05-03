@@ -1253,6 +1253,7 @@ def _sse_loop(
     state: HubState,
     console: Console,
     stop_event: threading.Event,
+    chat_identity: str = "",
 ) -> None:
     """Subscribe to SSE push and apply messages as they arrive.
 
@@ -1261,7 +1262,23 @@ def _sse_loop(
     to the current selected room only — cross-room chatter is filtered out.
     Messages also print inline so the user sees them without waiting for
     the main loop to redraw.
+
+    OS-level notifications: when an inbound message contains ``@<chat_identity>``
+    OR is a DM, AND the sender is not us, AND the TUI hasn't seen a keystroke
+    for >30s, fire a native banner so the human sees it even with the
+    terminal in the background. Rate-limiting + sanitisation live in
+    :mod:`quorus.notifications.native`.
     """
+    # Build the lowercase mention tokens we want to scan for. We accept
+    # both the wire identity (``recipient``) and the human-facing
+    # ``chat_identity`` (e.g., agent_name="arav-codex" + chat_identity="arav"
+    # so an "@arav" mention also lights up).
+    _mention_tokens = {
+        f"@{(recipient or '').lower()}",
+    }
+    if chat_identity:
+        _mention_tokens.add(f"@{chat_identity.lower()}")
+    _mention_tokens.discard("@")
     while not stop_event.is_set():
         token = _mint_sse_token(relay, secret, recipient)
         if not token:
@@ -1306,6 +1323,37 @@ def _sse_loop(
                                     # badge so the header + room strip
                                     # reflect the activity next redraw.
                                     state.increment_unread(msg_room)
+                                # OS-level banner gate: @-mention or DM, not from
+                                # us, and the TUI is unfocused (no keystrokes
+                                # for >30s). Best-effort — wrapped so a flaky
+                                # osascript NEVER drops the SSE stream.
+                                try:
+                                    _from = (msg.get("from_name") or "")
+                                    _content = msg.get("content") or ""
+                                    _is_dm = bool(msg.get("is_dm")) or msg.get(
+                                        "message_type",
+                                    ) == "dm"
+                                    _hit_mention = any(
+                                        tok in _content.lower()
+                                        for tok in _mention_tokens
+                                    )
+                                    if (
+                                        _from
+                                        and _from != recipient
+                                        and (_hit_mention or _is_dm)
+                                        and _tui_is_unfocused()
+                                    ):
+                                        from quorus.notifications import (
+                                            notify as _notify,
+                                        )
+                                        _notify(
+                                            f"Quorus — {msg_room or 'DM'}",
+                                            _content,
+                                            sender=_from,
+                                            room=msg_room,
+                                        )
+                                except Exception:
+                                    pass
                         event_name = ""
                         data_buf = []
                         continue
@@ -3121,7 +3169,8 @@ def _run_session(
     poller.start()
     sse_listener = threading.Thread(
         target=_sse_loop,
-        args=(relay_url, secret, agent_name, state, console, stop_event),
+        args=(relay_url, secret, agent_name, state, console, stop_event,
+              chat_identity),
         daemon=True,
     )
     sse_listener.start()
