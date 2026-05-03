@@ -69,8 +69,8 @@ export default function ConsoleTeaserBand() {
             className="mt-5 max-w-2xl text-[18px] leading-[1.55]"
             style={{ color: "var(--color-text-on-cream-secondary)" }}
           >
-            The Quorus console shows rooms, messages, and locks in real time.
-            Try it now — no install, no signup.
+            The Quorus console shows rooms, messages, and shared state in real
+            time. Try it now — no install, no signup.
           </motion.p>
         </div>
 

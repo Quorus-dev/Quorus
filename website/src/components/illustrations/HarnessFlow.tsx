@@ -1,5 +1,6 @@
 import { useId } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { AnimatedBeam, BorderBeam } from "../effects/AnimatedBeam";
 
 /**
  * HarnessFlow — animated 4-vendor → 1-relay flow diagram for the
@@ -8,12 +9,16 @@ import { motion, useReducedMotion } from "framer-motion";
  * Layout:
  *   Desktop  — four vendor cards across the top, single QUORUS relay
  *              centered below, curved SVG paths connecting each vendor to
- *              the relay. Paths light up in sequence (1s gap, looping).
+ *              the relay. A teal "comet" travels each path, firing in
+ *              sequence (Claude → Cursor → Gemini → Codex → repeat). The
+ *              relay node is wrapped by a slow border beam that orbits its
+ *              perimeter.
  *   Mobile   — vendor cards stack vertically, paths become short downward
  *              arrows between them and the relay block at the bottom.
  *
- * Honors prefers-reduced-motion: paths render at full opacity, no sequence
- * animation, no dash flow.
+ * Honors prefers-reduced-motion: only the dim base paths render, the
+ * comet overlays and border beam are suppressed. Layout, typography,
+ * relay halo, and ARIA semantics are unchanged from prior version.
  *
  * Wordmarks only — no logo image files. Pure SVG + text.
  */
@@ -43,6 +48,13 @@ const RELAY_W = 260;
 const RELAY_H = 96;
 const RELAY_X = (VB_W - RELAY_W) / 2;
 const RELAY_Y = VB_H - RELAY_H - 24;
+
+// Beam timing — comet sweep duration and per-vendor stagger.
+// 4 vendors × 0.6s offset = 2.4s between each vendor's own re-fire,
+// which lines up cleanly with the 2.5s sweep so the band feels full
+// without overlapping comets crashing into each other.
+const BEAM_DURATION = 2.5;
+const BEAM_STAGGER = 0.6;
 
 function vendorCenter(i: number): { x: number; y: number } {
   const x = CARD_GAP + CARD_W / 2 + i * (CARD_W + CARD_GAP);
@@ -129,7 +141,7 @@ function VendorCard({
 
 export default function HarnessFlow(): JSX.Element {
   const prefersReduced = useReducedMotion();
-  const gradId = useId();
+  const animate = !prefersReduced;
   const relayGlowId = useId();
 
   return (
@@ -157,19 +169,6 @@ export default function HarnessFlow(): JSX.Element {
                 stopOpacity={0}
               />
             </radialGradient>
-            {/* Gradient stroke for the lit-up state of each path */}
-            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop
-                offset="0%"
-                stopColor="var(--color-accent-on-ink)"
-                stopOpacity={0.2}
-              />
-              <stop
-                offset="100%"
-                stopColor="var(--color-accent-on-ink)"
-                stopOpacity={1}
-              />
-            </linearGradient>
           </defs>
 
           {/* Vendor cards */}
@@ -177,50 +176,29 @@ export default function HarnessFlow(): JSX.Element {
             <VendorCard key={v.id} vendor={v} index={i} />
           ))}
 
-          {/* Connector paths — base layer (dim, always visible) */}
+          {/*
+            Connector beams — each Magic-UI-style: dim base path + a teal
+            comet that sweeps from vendor down to the relay. The four
+            vendors are staggered by BEAM_STAGGER so the beams cascade
+            instead of firing in unison, which would feel busy. Total
+            cycle = BEAM_DURATION + (n-1) * BEAM_STAGGER ≈ 4.3s, slow
+            enough to read as a heartbeat rather than a strobe.
+          */}
           {VENDORS.map((v, i) => (
-            <path
-              key={`base-${v.id}`}
+            <AnimatedBeam
+              key={`beam-${v.id}`}
               d={curvePath(i)}
-              stroke="var(--color-accent-on-ink)"
-              strokeOpacity={0.4}
-              strokeWidth={1}
-              fill="none"
+              animate={animate}
+              duration={BEAM_DURATION}
+              delay={i * BEAM_STAGGER}
+              baseOpacity={0.2}
+              baseWidth={1}
+              beamWidth={2}
+              cometSpan={0.18}
             />
           ))}
 
-          {/* Connector paths — animated overlay (the "lighting up" sweep) */}
-          {!prefersReduced &&
-            VENDORS.map((v, i) => {
-              // 4 vendors, 1s offset each, 4s loop -> staggered round-robin
-              const delay = i * 1;
-              const cycle = VENDORS.length;
-              return (
-                <motion.path
-                  key={`pulse-${v.id}`}
-                  d={curvePath(i)}
-                  stroke={`url(#${gradId})`}
-                  strokeWidth={2}
-                  fill="none"
-                  strokeDasharray="6 8"
-                  initial={{ opacity: 0, strokeDashoffset: 0 }}
-                  animate={{
-                    opacity: [0, 0.95, 0.95, 0],
-                    strokeDashoffset: [0, -120],
-                  }}
-                  transition={{
-                    duration: 1.4,
-                    repeat: Infinity,
-                    repeatDelay: cycle - 1.4,
-                    delay,
-                    ease: "linear",
-                    times: [0, 0.2, 0.8, 1],
-                  }}
-                />
-              );
-            })}
-
-          {/* Relay halo */}
+          {/* Relay halo — soft radial wash, not animated */}
           <ellipse
             cx={VB_W / 2}
             cy={RELAY_Y + RELAY_H / 2}
@@ -229,7 +207,7 @@ export default function HarnessFlow(): JSX.Element {
             fill={`url(#${relayGlowId})`}
           />
 
-          {/* Relay node — visually heavier */}
+          {/* Relay node — visually heavier, with orbiting border beam */}
           <g>
             <rect
               x={RELAY_X}
@@ -240,6 +218,21 @@ export default function HarnessFlow(): JSX.Element {
               fill="var(--color-ink-2)"
               stroke="var(--color-accent-on-ink)"
               strokeWidth={1.25}
+            />
+            {/* Border beam orbits the relay perimeter on a 4s loop. The
+                static border above stays visible at all times; this layer
+                is purely decorative. */}
+            <BorderBeam
+              x={RELAY_X}
+              y={RELAY_Y}
+              width={RELAY_W}
+              height={RELAY_H}
+              rx={12}
+              animate={animate}
+              duration={4}
+              arcSpan={0.15}
+              beamWidth={1.5}
+              beamOpacity={0.75}
             />
             <text
               x={VB_W / 2}

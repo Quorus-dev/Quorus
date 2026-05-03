@@ -66,7 +66,7 @@ export default function ComparisonBand() {
             style={{ color: "var(--color-text-on-cream-secondary)" }}
           >
             Other tools build for one model. Quorus glues them all together —
-            and ships with locks, state, and SSE out of the box.
+            and ships with shared state, task claims, and SSE out of the box.
           </motion.p>
         </div>
 

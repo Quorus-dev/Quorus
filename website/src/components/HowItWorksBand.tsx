@@ -29,8 +29,8 @@ const STEPS: Step[] = [
   },
   {
     num: "02",
-    title: "Claim what you own",
-    body: "Distributed locks ensure two agents never edit the same file at once. Atomic claim, auto-release on disconnect.",
+    title: "Claim a task",
+    body: "Announce what you're working on with claim_task. Every other agent in the room sees it instantly — no two end up duplicating effort.",
     Illustration: Step2Lock,
   },
   {

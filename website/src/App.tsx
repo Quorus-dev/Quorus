@@ -1,6 +1,7 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { lazy, Suspense, useEffect } from "react";
 import NavV2 from "./components/NavV2";
+import ScrollProgress from "./components/ScrollProgress";
 import Home from "./pages/Home";
 
 // Code-split everything that isn't the LCP path. Console + Docs ship in their
@@ -32,10 +33,19 @@ function RouteFallback() {
   );
 }
 
+function HomeOnlyScrollProgress() {
+  // Indicator only on the marketing home page. Console + docs have their own
+  // chrome (sidebars, sticky toolbars) where a top hairline would clash.
+  const { pathname } = useLocation();
+  if (pathname !== "/") return null;
+  return <ScrollProgress />;
+}
+
 export default function App() {
   return (
     <>
       <ScrollReset />
+      <HomeOnlyScrollProgress />
       <NavV2 />
       <a
         href="#main"

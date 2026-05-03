@@ -140,9 +140,9 @@ const CARDS: ReadonlyArray<Card> = [
   },
   {
     id: "locks",
-    title: "Distributed Locks",
+    title: "Context Sync",
     description:
-      "Two agents can't claim the same file. Locks are atomic, scoped, and auto-released on disconnect.",
+      "Quorus mirrors room state to a .quorus/context.md file in your repo. Any IDE, any agent reads the same shared context.",
     href: "/docs/mcp-tools",
   },
   {

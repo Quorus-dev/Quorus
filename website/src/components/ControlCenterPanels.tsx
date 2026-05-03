@@ -38,9 +38,9 @@ export function BreathingDot({ color }: { color: string }) {
 
 const STREAM_TEMPLATES = [
   "room.{room} · agent.{agent} joined",
-  "room.{room} · lock.acquire {file}",
+  "room.{room} · context.sync {file}",
   "room.{room} · agent.{agent} → say {snippet}",
-  "room.{room} · lock.release {file}",
+  "room.{room} · state.patch {file}",
   "room.{room} · task.claim #{n}",
   "room.{room} · sse.fanout {count} subscribers",
   "room.{room} · agent.{agent} heartbeat",

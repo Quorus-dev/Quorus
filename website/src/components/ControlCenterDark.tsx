@@ -125,7 +125,7 @@ export default function ControlCenterDark() {
               lineHeight: 1.6,
             }}
           >
-            Real-time room state, distributed locks, and SSE fan-out — without a
+            Real-time room state, task claims, and SSE fan-out — without a
             single line of glue code.
           </motion.p>
         </div>

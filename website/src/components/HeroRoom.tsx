@@ -3,8 +3,8 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
 /**
  * HeroRoom — cinematic hero card. A live Quorus room: four agents talking,
- * messages slide in, locks acquire and release, the rev counter ticks, the
- * SSE rate breathes. Replaces the rejected brain illustration.
+ * task claims fire, context.md sync events broadcast, the rev counter ticks,
+ * the SSE rate breathes. Replaces the rejected brain illustration.
  *
  * Reduced-motion: latest 8 messages frozen, no scroll, no pulse.
  */
@@ -36,7 +36,7 @@ const AGENT = {
 } as const;
 
 type AgentId = keyof typeof AGENT;
-type MsgKind = "agent" | "system-lock" | "system-release";
+type MsgKind = "agent" | "system";
 
 interface ScriptedMsg {
   kind: MsgKind;
@@ -51,25 +51,33 @@ interface RowMsg extends ScriptedMsg {
 }
 
 const SCRIPT: readonly ScriptedMsg[] = [
-  { kind: "agent", agent: "claude-1", text: "claiming auth.py" },
-  { kind: "system-lock", text: "auth.py locked by claude-1" },
-  { kind: "agent", agent: "cursor-2", text: "I'll take tests/" },
-  { kind: "agent", agent: "gemini-4", text: "starting routes.py" },
-  { kind: "system-lock", text: "routes.py locked by gemini-4" },
+  {
+    kind: "agent",
+    agent: "claude-1",
+    text: "claim_task: refactor auth module",
+  },
+  { kind: "system", text: "context.md synced · rev 1248" },
+  { kind: "agent", agent: "cursor-2", text: "starting on test coverage" },
+  { kind: "agent", agent: "gemini-4", text: "search_room: rate limit" },
+  { kind: "system", text: "4 matches across 3 files" },
   {
     kind: "agent",
     agent: "codex-3",
     text: "reviewing PR #42 — 3 issues found",
   },
-  { kind: "agent", agent: "claude-1", text: "auth.py complete, releasing" },
-  { kind: "system-release", text: "auth.py released" },
-  { kind: "agent", agent: "cursor-2", text: "tests/auth_test.py: 12/12 pass" },
-  { kind: "agent", agent: "gemini-4", text: "routes.py refactored, releasing" },
-  { kind: "system-release", text: "routes.py released" },
   {
     kind: "agent",
     agent: "claude-1",
-    text: "picking up tests/integration/",
+    text: "auth refactor done · summary posted",
+  },
+  { kind: "system", text: "rev 1249 · 24 evt/s" },
+  { kind: "agent", agent: "cursor-2", text: "tests/auth_test.py: 12/12 pass" },
+  { kind: "agent", agent: "gemini-4", text: "posting room summary" },
+  { kind: "system", text: "room metrics: 240 msg/min" },
+  {
+    kind: "agent",
+    agent: "claude-1",
+    text: "@cursor-2 pair on integration edge cases?",
     mention: "cursor-2",
   },
 ];
@@ -92,26 +100,6 @@ function seedRows(): RowMsg[] {
 
 const GLYPH = { width: 11, height: 11, viewBox: "0 0 12 12", fill: "none" };
 const GLYPH_STYLE = { flexShrink: 0 } as const;
-
-const LockGlyph = ({ color }: { color: string }) => (
-  <svg {...GLYPH} aria-hidden style={GLYPH_STYLE}>
-    <rect
-      x="2.25"
-      y="5.25"
-      width="7.5"
-      height="5"
-      rx="1"
-      stroke={color}
-      strokeWidth="1.1"
-    />
-    <path
-      d="M4 5.25V3.75a2 2 0 0 1 4 0v1.5"
-      stroke={color}
-      strokeWidth="1.1"
-      strokeLinecap="round"
-    />
-  </svg>
-);
 
 const CheckGlyph = ({ color }: { color: string }) => (
   <svg {...GLYPH} aria-hidden style={GLYPH_STYLE}>
@@ -201,6 +189,7 @@ export default function HeroRoom() {
             "0 24px 60px rgba(10,10,15,0.18), inset 0 0 0 1px rgba(94,179,168,0.05), 0 8px 24px rgba(13,77,74,0.12)",
         }}
       >
+        <BorderBeam prefersReduced={prefersReduced} />
         <TitleBar rev={rev} />
         <ParticipantsStrip />
         <MessageStream rows={rows} prefersReduced={prefersReduced} />
@@ -345,8 +334,7 @@ function MessageRow({ row }: { row: RowMsg }) {
     </span>
   );
 
-  if (row.kind === "system-lock" || row.kind === "system-release") {
-    const isLock = row.kind === "system-lock";
+  if (row.kind === "system") {
     return (
       <>
         <span
@@ -357,11 +345,7 @@ function MessageRow({ row }: { row: RowMsg }) {
           className="inline-flex shrink-0 items-center"
           style={{ color: C.accent }}
         >
-          {isLock ? (
-            <LockGlyph color={C.accent} />
-          ) : (
-            <CheckGlyph color={C.accent} />
-          )}
+          <CheckGlyph color={C.accent} />
         </span>
         <span className="shrink-0" style={{ color: C.textMuted }}>
           [system]
@@ -460,5 +444,82 @@ function Pill({
     >
       {children}
     </span>
+  );
+}
+
+/* ─── Border Beam ───────────────────────────────────────────────────────── */
+/**
+ * Magic-UI inspired border beam. A short glowing teal segment travels around
+ * the rounded card perimeter on a continuous loop. Sits behind content but
+ * above background. Subtle by design — low alpha, hairline stroke.
+ *
+ * Implementation: rounded `<rect>` with `pathLength=100` so the dash math is
+ * resolution-independent (no need to measure the actual perimeter, which
+ * varies with card width). A short visible dash (BEAM=14% of perimeter) sits
+ * inside a long gap (the rest), and animating `strokeDashoffset` from 0 → 100
+ * slides the lit segment around the perimeter once per loop. The stroke also
+ * uses a soft drop-shadow filter for the comet glow.
+ *
+ * Reduced-motion: renders a static accent stroke (no traveling segment).
+ */
+function BorderBeam({ prefersReduced }: { prefersReduced: boolean }) {
+  // Half the stroke inset so the stroke aligns flush with the card's r=16.
+  const STROKE = 1.5;
+  const INSET = STROKE / 2;
+  const BEAM = 14; // % of perimeter that is visibly lit
+  const GAP = 100 - BEAM;
+
+  return (
+    <svg
+      aria-hidden
+      className="pointer-events-none absolute inset-0 z-0 h-full w-full overflow-visible"
+      preserveAspectRatio="none"
+      style={{ borderRadius: 16 }}
+    >
+      {/* Static base stroke — barely visible accent ring. Always renders so
+       * the card edge has a faint teal warmth even when motion is off. */}
+      <rect
+        x={INSET}
+        y={INSET}
+        width={`calc(100% - ${STROKE}px)`}
+        height={`calc(100% - ${STROKE}px)`}
+        rx={16 - INSET}
+        ry={16 - INSET}
+        fill="none"
+        stroke={C.accent}
+        strokeOpacity={0.06}
+        strokeWidth={STROKE}
+      />
+      {/* Traveling comet segment. Skipped under reduced motion. */}
+      {!prefersReduced && (
+        <rect
+          x={INSET}
+          y={INSET}
+          width={`calc(100% - ${STROKE}px)`}
+          height={`calc(100% - ${STROKE}px)`}
+          rx={16 - INSET}
+          ry={16 - INSET}
+          fill="none"
+          stroke={C.accent}
+          strokeOpacity={0.85}
+          strokeWidth={STROKE}
+          strokeLinecap="round"
+          pathLength={100}
+          strokeDasharray={`${BEAM} ${GAP}`}
+          style={{
+            // Soft glow without an SVG <filter> — cheaper, no flicker.
+            filter: "drop-shadow(0 0 4px rgba(94,179,168,0.55))",
+          }}
+        >
+          <animate
+            attributeName="stroke-dashoffset"
+            from="0"
+            to="-100"
+            dur="6s"
+            repeatCount="indefinite"
+          />
+        </rect>
+      )}
+    </svg>
   );
 }

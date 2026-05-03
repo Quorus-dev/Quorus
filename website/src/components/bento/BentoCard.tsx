@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Link } from "react-router-dom";
+import Spotlight from "../effects/Spotlight";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 const MONO = "'JetBrains Mono', ui-monospace, monospace";
@@ -64,8 +65,10 @@ export default function BentoCard({
     borderColor: hover
       ? "var(--color-border-dark-strong)"
       : "var(--color-border-dark)",
+    // On hover we layer three shadows: the lift, the existing inset bloom,
+    // and a 1px teal halo that rides just outside the border for the glow.
     boxShadow: hover
-      ? "0 24px 60px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(94, 179, 168, 0.06) inset"
+      ? "0 24px 60px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(94, 179, 168, 0.20), 0 0 0 1px rgba(94, 179, 168, 0.06) inset"
       : "0 1px 2px rgba(0, 0, 0, 0.25)",
     transitionProperty: "border-color, box-shadow",
     transitionDuration: "0.4s",
@@ -88,12 +91,16 @@ export default function BentoCard({
       onHoverStart={() => setHover(true)}
       onHoverEnd={() => setHover(false)}
     >
+      {/* Cursor-tracked spotlight. Listens on this motion.div (its parent),
+          sits behind the link content via z-index, never blocks pointer events. */}
+      <Spotlight />
+
       <Link
         to={href}
         aria-labelledby={titleId}
         onFocus={() => setHover(true)}
         onBlur={() => setHover(false)}
-        className="flex h-full flex-col outline-none"
+        className="relative z-[2] flex h-full flex-col outline-none"
       >
         {/* Two layouts: wide (illustration left, copy right) vs stacked. */}
         <div
