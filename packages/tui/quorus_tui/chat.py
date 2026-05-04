@@ -430,6 +430,59 @@ def _verb_summary_body(verb: str, payload: dict) -> str:
     return ""
 
 
+def _has_threads(messages: list[dict]) -> bool:
+    """True iff any message references a ``thread_root_id`` distinct from
+    its own ``id``. Pure threading-detection — when False, the feed
+    renders flat (all existing call-sites preserved unchanged)."""
+    for m in messages:
+        root = m.get("thread_root_id")
+        if root and root != m.get("id"):
+            return True
+    return False
+
+
+def _filter_thread_children(
+    messages: list[dict],
+    thread_collapsed: dict[str, bool] | None,
+) -> tuple[list[dict], dict[str, int], dict[str, dict]]:
+    """Reorder *messages* so children render under their root and tag
+    each child / parent with a marker the caller uses to indent or emit
+    a collapsed summary line. Default-collapsed: ``thread_collapsed`` is
+    consulted with ``True`` as the fallback for any unknown root.
+    """
+    collapsed = thread_collapsed or {}
+    buckets = group_by_thread(messages)
+    seen_roots: list[str] = []
+    for m in messages:
+        root = m.get("thread_root_id") or m.get("id") or "_unrooted"
+        if root not in seen_roots:
+            seen_roots.append(root)
+
+    filtered: list[dict] = []
+    child_count: dict[str, int] = {}
+    marks: dict[str, dict] = {}
+    for root_id in seen_roots:
+        bucket = buckets.get(root_id, [])
+        if not bucket:
+            continue
+        parent = next(
+            (m for m in bucket if m.get("id") == root_id), bucket[0],
+        )
+        children = [m for m in bucket if m is not parent]
+        child_count[root_id] = len(children)
+        filtered.append(parent)
+        if children and collapsed.get(root_id, True):
+            marks[id(parent).__str__() + ":summary"] = {
+                "root_id": root_id, "parent": parent,
+                "child_count": len(children),
+            }
+        else:
+            for child in children:
+                filtered.append(child)
+                marks[id(child).__str__()] = {"root_id": root_id}
+    return filtered, child_count, marks
+
+
 def render_bubble_feed(
     messages: list[dict],
     room_name: str,
@@ -439,6 +492,7 @@ def render_bubble_feed(
     first_unread_index: int | None = None,
     typing: str | None = None,
     reactions_by_index: dict[int, dict[str, int]] | None = None,
+    thread_collapsed: dict[str, bool] | None = None,
 ) -> list[Text]:
     """Render *messages* as a bubble feed.
 
@@ -453,6 +507,11 @@ def render_bubble_feed(
       older own bubbles drop the receipt to reduce noise.
     * Reactions — opt-in via *reactions_by_index*; renders tiny pill chips.
     * Empty-room card — iMessage-y centered illustration.
+    * Threaded replies — when any message carries ``thread_root_id``,
+      :func:`group_by_thread` reorders so children render directly under
+      their root. Children get a 2-space left indent and a ``└─`` glyph.
+      ``thread_collapsed[root_id]`` (default ``True``) hides children
+      behind a 1-line ``thread_summary_line``; toggle via /expand <root>.
     """
     if not room_name:
         return _empty_card(
@@ -462,6 +521,23 @@ def render_bubble_feed(
         )
     if not messages:
         return empty_room_card(room_name, console_width)
+
+    # Stream B threading: only re-order when any message actually carries a
+    # thread_root_id. Without this guard, every existing call-site (which
+    # passes flat lists) would silently hit the threading path.
+    thread_indent: dict[str, dict] = {}
+    thread_summaries: dict[str, dict] = {}
+    if _has_threads(messages):
+        messages, _ccount, marks = _filter_thread_children(
+            messages, thread_collapsed,
+        )
+        # Split the marks dict into per-message-indent and per-root-summary
+        # so the inner loop reads them with one lookup.
+        for k, v in marks.items():
+            if k.endswith(":summary"):
+                thread_summaries[v["root_id"]] = v
+            else:
+                thread_indent[k] = v
 
     out: list[Text] = []
     prev_sender: str | None = None
@@ -476,6 +552,12 @@ def render_bubble_feed(
             out.append(_unread_divider(console_width))
             out.append(Text(""))
             prev_sender = None  # force a fresh header on the next bubble
+
+        # Stream B: track row count BEFORE rendering this message so we
+        # can post-indent thread-child rows once they're appended below.
+        # rows_before is finalised AFTER the pre-bubble blank-line / divider
+        # logic below — see the assignment just before the bubble-render loop.
+        is_thread_child = id(msg).__str__() in thread_indent
 
         sender = msg.get("from_name") or msg.get("sender") or "?"
         content = str(msg.get("content", ""))
@@ -553,6 +635,11 @@ def render_bubble_feed(
                 continue
             out.append(deco)
 
+        # Stream B: capture the count NOW (after pre-bubble blanks and
+        # social decoration) so thread-child indent only wraps the
+        # actual bubble rows, not the inter-bubble whitespace above.
+        rows_before = len(out)
+
         for kind, body in _split_code_fences(content):
             if not body and kind == "text":
                 continue
@@ -586,6 +673,33 @@ def render_bubble_feed(
             label = receipt_label(msg)
             if label:
                 out.append(read_receipt_row(label, console_width))
+
+        # Stream B threading: indent newly-rendered thread-child rows by
+        # 2 cells so children read as a reply chain under their parent.
+        # The first row gets the ``└─`` connector; subsequent rows just
+        # get spaces. Pure post-processing — preserves all bubble logic.
+        if is_thread_child:
+            new_rows = out[rows_before:]
+            for j, row in enumerate(new_rows):
+                if not row.plain.strip():
+                    continue  # blank line — leave alone for rhythm
+                pad = Text("  └─ " if j == 0 else "     ", style="dim")
+                pad.append_text(row)
+                out[rows_before + j] = pad
+
+        # Stream B: if this message is a thread root with a collapsed
+        # summary marker, append the rollup line directly under it.
+        msg_id = msg.get("id") or ""
+        if msg_id and msg_id in thread_summaries:
+            info = thread_summaries[msg_id]
+            summary = thread_summary_line(info["parent"], info["child_count"])
+            tail = Text(INDENT)
+            tail.append("    └─ ", style="dim")
+            tail.append(summary, style="muted")
+            tail.append("   (", style="dim")
+            tail.append(f"/expand {msg_id[:8]}", style="kbd")
+            tail.append(")", style="dim")
+            out.append(tail)
 
         prev_sender = sender
         prev_ts = ts

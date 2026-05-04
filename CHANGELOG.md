@@ -3,7 +3,27 @@
 All notable changes to Quorus are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.4.0] — 2026-04-15
+## [Unreleased]
+
+### Added — Wave 9 (TUI)
+
+- **Work-queue panel** — `Ctrl-W` toggles a fold-up panel above the chat
+  feed showing every active task in the current room (`task_id`,
+  `claimed_by`, `status`, `started_at`, `eta`). Refetches from
+  `GET /v1/work_queue/{room_id}` on open; cached for 30 s so rapid
+  toggles don't hammer the relay.
+- **Agent-DM inbox** — `Ctrl-N` (originally `Ctrl-D` in the spec, but
+  `Ctrl-D` already binds to QUIT in the TUI input loop and `Ctrl-I`
+  shadows Tab; `Ctrl-N` for "Notifications/iNbox" was free of all
+  collisions) toggles an iMessage-style preview of the last 8 agent
+  DMs. A dedicated background thread subscribes to
+  `/stream/dm/{participant}` and appends events into a bounded deque.
+- **Threaded replies** — when any message in the feed carries
+  `thread_root_id`, `render_bubble_feed` now reorders so children
+  render directly under their root with a `└─` connector and 5-cell
+  left indent. Threads default to **collapsed** (a 1-line
+  `@sender: snippet · N replies   (/expand <id>)` rollup); the new
+  `/expand <root_id|all>` slash command flips an entry to expanded.
 
 Public beta launch. Full rebrand from Murmur, coordination-layer positioning.
 

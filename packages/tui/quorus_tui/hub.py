@@ -21,6 +21,7 @@ import re
 import sys
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -55,6 +56,8 @@ from quorus.config import ConfigManager, resolve_config_dir
 from . import autocomplete as _autocomplete
 from . import welcome as _welcome
 from .autocomplete import AutocompletePopover
+from .dm_inbox import render_dm_inbox_panel
+from .work_queue_panel import render_work_queue_panel
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 # Idle redraw cadence — how often the main loop refreshes when nothing has
@@ -618,6 +621,29 @@ def _load_history_into(state: "HubState", relay: str, secret: str, room: str) ->
         state.set_messages(msgs)
 
 
+def _fetch_work_queue(relay: str, secret: str, room: str) -> list[dict]:
+    """Stream B — fetch active tasks for *room* from the relay.
+
+    Returns ``[]`` on any failure (network, 4xx). The panel renders an
+    empty list as "no active tasks" so a transient blip never explodes
+    the TUI.
+    """
+    try:
+        r = httpx.get(
+            f"{relay}/v1/work_queue/{room}",
+            headers=_auth_headers(secret),
+            timeout=5,
+            follow_redirects=True,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            tasks = data.get("tasks", []) if isinstance(data, dict) else []
+            return tasks if isinstance(tasks, list) else []
+        return []
+    except Exception:
+        return []
+
+
 # Module-level "out parameter" used by _send_message to surface the relay's
 # rejection reason back to the caller without breaking the Optional[str]
 # (sent_id-or-None) return contract that other call sites rely on.
@@ -880,6 +906,19 @@ class HubState:
         # Pending workspace switch requested via /workspace. The main loop
         # checks this on each tick and tears down cleanly when set.
         self._pending_switch: str | None = None
+        # Stream B: panel toggles + per-panel state. Both panels default
+        # to closed; Ctrl-W and Ctrl-N flip the booleans. The work-queue
+        # panel re-fetches on toggle (cached for 30s); the DM inbox is
+        # populated by a dedicated SSE thread (see _dm_sse_loop).
+        self._work_queue_panel_open: bool = False
+        self._work_queue_tasks: list[dict] = []
+        self._work_queue_room: str = ""
+        self._work_queue_fetched_at: float = 0.0
+        self._dm_inbox_open: bool = False
+        self._dm_messages: deque = deque(maxlen=200)
+        # Threading: per-root collapsed flag. Default-collapsed; /expand
+        # <root_id> flips an entry to False so children render inline.
+        self._thread_collapsed: dict[str, bool] = {}
 
     def request_workspace_switch(self, slug: str) -> None:
         """Signal the main loop to tear down and switch to *slug*."""
@@ -925,6 +964,64 @@ class HubState:
     def is_help_visible(self) -> bool:
         with self._lock:
             return self.help_visible
+
+    # Stream B — panel toggles
+    def toggle_work_queue_panel(self) -> bool:
+        """Flip the work-queue panel open/closed. Returns the new state."""
+        with self._lock:
+            self._work_queue_panel_open = not self._work_queue_panel_open
+            return self._work_queue_panel_open
+
+    def is_work_queue_panel_open(self) -> bool:
+        with self._lock:
+            return self._work_queue_panel_open
+
+    def set_work_queue_tasks(
+        self, room: str, tasks: list[dict], fetched_at: float,
+    ) -> None:
+        with self._lock:
+            self._work_queue_room = room
+            self._work_queue_tasks = list(tasks)
+            self._work_queue_fetched_at = fetched_at
+
+    def get_work_queue(self) -> tuple[str, list[dict], float]:
+        with self._lock:
+            return (
+                self._work_queue_room,
+                list(self._work_queue_tasks),
+                self._work_queue_fetched_at,
+            )
+
+    def toggle_dm_inbox(self) -> bool:
+        with self._lock:
+            self._dm_inbox_open = not self._dm_inbox_open
+            return self._dm_inbox_open
+
+    def is_dm_inbox_open(self) -> bool:
+        with self._lock:
+            return self._dm_inbox_open
+
+    def append_dm_message(self, msg: dict) -> None:
+        """Append a DM envelope from the /stream/dm SSE listener."""
+        with self._lock:
+            self._dm_messages.append(msg)
+
+    def get_dm_messages(self) -> list[dict]:
+        with self._lock:
+            return list(self._dm_messages)
+
+    def expand_thread(self, root_id: str) -> None:
+        """Flip a thread root from collapsed to expanded."""
+        with self._lock:
+            self._thread_collapsed[root_id] = False
+
+    def collapse_thread(self, root_id: str) -> None:
+        with self._lock:
+            self._thread_collapsed[root_id] = True
+
+    def get_thread_collapsed(self) -> dict[str, bool]:
+        with self._lock:
+            return dict(self._thread_collapsed)
 
     def mark_inline_rule_if_fresh(self) -> bool:
         """Claim the 'first inline message' slot. Returns True iff this call
@@ -1369,6 +1466,57 @@ def _sse_loop(
             # Stream dropped — reconnect after a backoff
             pass
 
+        stop_event.wait(SSE_RECONNECT_S)
+
+
+def _dm_sse_loop(
+    relay: str,
+    secret: str,
+    recipient: str,
+    state: HubState,
+    stop_event: threading.Event,
+) -> None:
+    """Stream B — subscribe to the agent-DM SSE stream for *recipient*.
+
+    Mirrors :func:`_sse_loop` but listens on ``/stream/dm/{participant}``
+    and appends each ``agent_dm`` event to the inbox deque. Runs in a
+    daemon thread; reconnects with backoff on disconnect. Failures are
+    silent (the inbox panel just stays empty).
+    """
+    while not stop_event.is_set():
+        token = _mint_sse_token(relay, secret, recipient)
+        if not token:
+            stop_event.wait(SSE_RECONNECT_S)
+            continue
+        url = f"{relay}/stream/dm/{recipient}?token={token}"
+        try:
+            with httpx.stream("GET", url, timeout=None) as resp:
+                if resp.status_code != 200:
+                    stop_event.wait(SSE_RECONNECT_S)
+                    continue
+                event_name = ""
+                data_buf: list[str] = []
+                for line in resp.iter_lines():
+                    if stop_event.is_set():
+                        return
+                    if not line:
+                        if event_name == "agent_dm" and data_buf:
+                            raw = "\n".join(data_buf)
+                            try:
+                                env = json.loads(raw)
+                            except (json.JSONDecodeError, ValueError):
+                                env = None
+                            if isinstance(env, dict):
+                                state.append_dm_message(env)
+                        event_name = ""
+                        data_buf = []
+                        continue
+                    if line.startswith("event:"):
+                        event_name = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_buf.append(line[5:].lstrip())
+        except Exception:
+            pass
         stop_event.wait(SSE_RECONNECT_S)
 
 
@@ -1978,6 +2126,37 @@ def _slash_clear(arg, state, relay_url, secret, agent_name, console):
     return True
 
 
+def _slash_expand(arg, state, relay_url, secret, agent_name, console):
+    """``/expand <root_id|all>`` — open a collapsed thread. Matches by the
+    8-char prefix from the thread-summary hint."""
+    del relay_url, secret, agent_name, console
+    arg = (arg or "").strip()
+    if not arg:
+        state.set_status_bar("/expand <root_id> — see the thread hint")
+        return True
+    if arg.lower() == "all":
+        roots = {
+            (m.get("thread_root_id") or m.get("id") or "")
+            for m in state.get_messages()
+        }
+        for r in roots:
+            if r:
+                state.expand_thread(r)
+        state.set_status_bar(f"expanded {len(roots)} threads")
+        return True
+    target = next(
+        (m.get("id", "") for m in state.get_messages()
+         if (m.get("id") or "").startswith(arg)),
+        "",
+    )
+    if not target:
+        state.set_status_bar(f"no thread root matches '{arg}'")
+        return True
+    state.expand_thread(target)
+    state.set_status_bar(f"expanded thread {target[:8]}")
+    return True
+
+
 def _slash_quit(arg, state, relay_url, secret, agent_name, console):
     del arg, state, relay_url, secret, agent_name, console
     return "__QUIT__"
@@ -2312,6 +2491,7 @@ SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/workspace":  ("list / switch workspaces",             _slash_workspace),
     "/status":     ("connection + relay info",              _slash_status),
     "/clear":      ("clear the chat pane",                  _slash_clear),
+    "/expand":     ("/expand <root_id>|all — open a thread", _slash_expand),
     "/quit":       ("close the hub",                        _slash_quit),
     # Quorus Social Protocol v1 — typed wire primitives over /v1/social/{verb}
     "/claim":      ("/claim <task_id> <eta_min> <scope>",   _slash_claim),
@@ -2383,6 +2563,12 @@ _KEY_TAB     = "__TAB__"
 _KEY_ESC     = "__ESC__"       # Esc — return to welcome / home view
 _KEY_QUIT    = "__QUIT_KEY__"
 _KEY_TIMEOUT = "__TIMEOUT__"   # no keypress within render tick — re-render
+# Stream B panel toggles. Ctrl-W (\x17) → work-queue; Ctrl-N (\x0e) → DM
+# inbox. Ctrl-D was the original audit pick for the DM inbox but it
+# already binds to QUIT here; Ctrl-I would shadow Tab. Ctrl-N ("Notify")
+# is unused upstream and free of collisions — see CHANGELOG.
+_KEY_TOGGLE_WORK_QUEUE = "__TOGGLE_WQ__"
+_KEY_TOGGLE_DM_INBOX   = "__TOGGLE_DM__"
 
 
 def _read_input(
@@ -2532,6 +2718,19 @@ def _read_input(
                 key = readchar.key.CTRL_C
             elif _b == "\x04":
                 key = readchar.key.CTRL_D
+            elif _b == "\x17":
+                # Stream B — Ctrl-W toggles the work-queue panel. Returned
+                # as a sentinel so the main loop refetches+redraws.
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                _PENDING_INPUT_BUF[:] = list(buf)
+                return _KEY_TOGGLE_WORK_QUEUE
+            elif _b == "\x0e":
+                # Stream B — Ctrl-N toggles the agent-DM inbox panel.
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                _PENDING_INPUT_BUF[:] = list(buf)
+                return _KEY_TOGGLE_DM_INBOX
             else:
                 key = _b
             # ── Popover-aware dispatch ──────────────────────────────────
@@ -2912,6 +3111,24 @@ def _main_input_loop(
                         )
                     )
                     console.print()
+                    # Stream B — fold-up panels above the feed. Both are
+                    # opt-in (Ctrl-W / Ctrl-N) so the feed remains the
+                    # default surface. Pure render — no I/O at this point.
+                    if state.is_work_queue_panel_open():
+                        _, wq_tasks, _wq_at = state.get_work_queue()
+                        for wq_row in render_work_queue_panel(
+                            wq_tasks, expanded=True,
+                            console_width=console_width,
+                        ):
+                            console.print(wq_row)
+                        console.print()
+                    if state.is_dm_inbox_open():
+                        for dm_row in render_dm_inbox_panel(
+                            state.get_dm_messages(),
+                            console_width=console_width,
+                        ):
+                            console.print(dm_row)
+                        console.print()
                     # Bubble feed — grouped, with optional unread divider.
                     first_unread = state.get_unread(room_name)
                     feed_unread_idx = (
@@ -2923,6 +3140,7 @@ def _main_input_loop(
                         msgs_snap, room_name, agent_name,
                         console_width=console_width,
                         first_unread_index=feed_unread_idx,
+                        thread_collapsed=state.get_thread_collapsed(),
                     ):
                         console.print(feed_line)
                     console.print()
@@ -2986,6 +3204,39 @@ def _main_input_loop(
                     if rname:
                         _join_room(relay_url, secret, rname, agent_name)
                         _load_history_into(state, relay_url, secret, rname)
+                last_render = 0
+                continue
+
+            # Stream B — Ctrl-W: toggle the work-queue panel. On open,
+            # refetch the active task list for the current room (cached
+            # for ~30s so rapid toggles don't hammer the relay).
+            if line == _KEY_TOGGLE_WORK_QUEUE:
+                opened = state.toggle_work_queue_panel()
+                if opened:
+                    sel = state.get_selected_room()
+                    rname = (
+                        (sel.get("name") or sel.get("id", "")) if sel else ""
+                    )
+                    if rname:
+                        _, _, fetched = state.get_work_queue()
+                        if (
+                            time.monotonic() - fetched > 30
+                            or state.get_work_queue()[0] != rname
+                        ):
+                            tasks = _fetch_work_queue(
+                                relay_url, secret, rname,
+                            )
+                            state.set_work_queue_tasks(
+                                rname, tasks, time.monotonic(),
+                            )
+                last_render = 0
+                continue
+
+            # Stream B — Ctrl-N: toggle the agent-DM inbox panel.
+            # The inbox deque is populated by _dm_sse_loop in the
+            # background, so toggling is purely a render switch.
+            if line == _KEY_TOGGLE_DM_INBOX:
+                state.toggle_dm_inbox()
                 last_render = 0
                 continue
 
@@ -3508,6 +3759,15 @@ def _run_session(
         daemon=True,
     )
     sse_listener.start()
+    # Stream B — agent-DM SSE stream. Populates state._dm_messages so the
+    # Ctrl-N inbox panel renders live envelopes. Independent backoff so a
+    # flaky DM stream never affects the room SSE listener above.
+    dm_listener = threading.Thread(
+        target=_dm_sse_loop,
+        args=(relay_url, secret, agent_name, state, stop_event),
+        daemon=True,
+    )
+    dm_listener.start()
 
     try:
         return _main_input_loop(
@@ -3523,6 +3783,7 @@ def _run_session(
         stop_event.set()
         poller.join(timeout=2)
         sse_listener.join(timeout=2)
+        dm_listener.join(timeout=2)
 
 
 def run_hub() -> None:

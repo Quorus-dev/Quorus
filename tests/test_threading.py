@@ -256,3 +256,120 @@ async def test_mixed_history_threaded_and_orphan(
     assert history.status_code == 200
     contents = [m.get("content") for m in history.json()]
     assert {"root", "child", "orphan"}.issubset(set(contents))
+
+
+# ---------------------------------------------------------------------------
+# Wave-9 — TUI render: threaded messages indent + collapsed summary line.
+# ---------------------------------------------------------------------------
+
+
+def _now_iso(offset_sec: int = 0) -> str:
+    """Return a chrono-ordered ISO timestamp shifted by offset_sec seconds."""
+    from datetime import datetime, timedelta, timezone
+
+    return (
+        datetime.now(timezone.utc) + timedelta(seconds=offset_sec)
+    ).isoformat()
+
+
+def _render_to_str(lines, *, width: int = 80) -> str:
+    import io
+
+    from rich.console import Console
+    buf = io.StringIO()
+    console = Console(
+        file=buf, width=width, force_terminal=False,
+        no_color=True, legacy_windows=False,
+    )
+    for line in lines:
+        console.print(line)
+    return buf.getvalue()
+
+
+def test_threaded_messages_render_indented():
+    """When a child carries thread_root_id and the user has expanded the
+    thread, the child renders BELOW its parent with the └─ connector.
+    """
+    from quorus_tui import chat as _chat
+    msgs = [
+        {
+            "id": "root-1", "from_name": "alice",
+            "content": "kicking off thread",
+            "timestamp": _now_iso(-30),
+        },
+        {
+            "id": "child-1", "from_name": "bob",
+            "content": "in-thread reply",
+            "thread_root_id": "root-1",
+            "timestamp": _now_iso(-20),
+        },
+    ]
+    out = _render_to_str(
+        _chat.render_bubble_feed(
+            msgs, "general", "arav",
+            console_width=80,
+            thread_collapsed={"root-1": False},
+        ),
+    )
+    # Parent visible, child visible, indent connector present.
+    assert "kicking off thread" in out
+    assert "in-thread reply" in out
+    assert "└─" in out
+
+
+def test_collapsed_thread_shows_summary_line():
+    """Default (collapsed) thread renders a 1-line rollup with the
+    /expand <prefix> hint instead of the children themselves."""
+    from quorus_tui import chat as _chat
+    msgs = [
+        {
+            "id": "root-1", "from_name": "alice",
+            "content": "kicking off thread",
+            "timestamp": _now_iso(-30),
+        },
+        {
+            "id": "child-1", "from_name": "bob",
+            "content": "FIRST CHILD UNIQUE STRING",
+            "thread_root_id": "root-1",
+            "timestamp": _now_iso(-20),
+        },
+        {
+            "id": "child-2", "from_name": "carol",
+            "content": "SECOND CHILD UNIQUE STRING",
+            "thread_root_id": "root-1",
+            "timestamp": _now_iso(-10),
+        },
+    ]
+    # No thread_collapsed dict ⇒ default-collapsed for every root.
+    out = _render_to_str(
+        _chat.render_bubble_feed(
+            msgs, "general", "arav",
+            console_width=80,
+        ),
+    )
+    # Parent body still renders.
+    assert "kicking off thread" in out
+    # Children are HIDDEN behind the summary, not rendered as bubbles.
+    assert "FIRST CHILD UNIQUE STRING" not in out
+    assert "SECOND CHILD UNIQUE STRING" not in out
+    # Summary line shows reply count + /expand hint.
+    assert "2 replies" in out
+    assert "/expand" in out
+
+
+def test_flat_messages_no_thread_root_id_render_unchanged():
+    """Regression guard — the threading path is OFF when no message has
+    a thread_root_id (every existing call site stays flat)."""
+    from quorus_tui import chat as _chat
+    msgs = [
+        {"id": "m1", "from_name": "alice", "content": "hi",
+         "timestamp": _now_iso(-30)},
+        {"id": "m2", "from_name": "bob", "content": "hello",
+         "timestamp": _now_iso(-20)},
+    ]
+    out = _render_to_str(
+        _chat.render_bubble_feed(msgs, "general", "arav", console_width=80),
+    )
+    assert "hi" in out and "hello" in out
+    # No threading glyph in flat mode.
+    assert "└─" not in out
