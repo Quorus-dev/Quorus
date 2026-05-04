@@ -50,12 +50,19 @@ CAPABILITIES_GEMINI: frozenset[str] = frozenset({
 CAPABILITIES_CURSOR: frozenset[str] = frozenset({
     "refactor", "general",
 })
+# Wave-7: Opencode is multi-provider (75+ LLM providers via opencode.ai). It
+# has no fixed model bias, so we tag it ``general`` only — let bidding fall
+# back to mention-priority. Same for Cline, which is preview-only.
+CAPABILITIES_OPENCODE: frozenset[str] = frozenset({"general"})
+CAPABILITIES_CLINE: frozenset[str] = frozenset({"general"})
 
 _HARNESS_CAPABILITIES: dict[str, frozenset[str]] = {
     "claude": CAPABILITIES_CLAUDE,
     "codex": CAPABILITIES_CODEX,
     "gemini": CAPABILITIES_GEMINI,
     "cursor": CAPABILITIES_CURSOR,
+    "opencode": CAPABILITIES_OPENCODE,
+    "cline": CAPABILITIES_CLINE,
 }
 
 
@@ -295,12 +302,18 @@ def capabilities_for(participant: str, *, harness: str | None = None) -> frozens
         return CAPABILITIES_CURSOR
     if name.endswith("-claude") or "-claude-" in name:
         return CAPABILITIES_CLAUDE
+    if name.endswith("-opencode") or "-opencode-" in name:
+        return CAPABILITIES_OPENCODE
+    if name.endswith("-cline") or "-cline-" in name:
+        return CAPABILITIES_CLINE
     # Substring fallback before the claude default so a participant called
     # ``my-codex-machine`` still gets codex caps.
     for needle, caps in (
         ("codex", CAPABILITIES_CODEX),
         ("gemini", CAPABILITIES_GEMINI),
         ("cursor", CAPABILITIES_CURSOR),
+        ("opencode", CAPABILITIES_OPENCODE),
+        ("cline", CAPABILITIES_CLINE),
         ("claude", CAPABILITIES_CLAUDE),
     ):
         if needle in name:

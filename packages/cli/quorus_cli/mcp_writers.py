@@ -226,6 +226,19 @@ def register_cursor(env: McpEnv, *, force: bool = False) -> WriteResult:
 
 
 def register_windsurf(env: McpEnv, *, force: bool = False) -> WriteResult:
+    """Tier-B writer (MCP-only, manual-trigger).
+
+    Windsurf has no canonical headless CLI as of 2026-05 — Codeium's vendor
+    docs (https://docs.windsurf.com/command/windsurf-overview) describe only
+    IDE-embedded usage. Quorus registers the MCP server here so Windsurf can
+    SEND messages via ``quorus inbox`` / ``quorus say`` MCP tools while a
+    human is driving the IDE — but reflexd cannot wake Windsurf to REPLY
+    on @-mention. See docs/HARNESS_TIERS.md for the full disposition memo.
+
+    If Codeium ships an official headless ``windsurf --print``-style flag,
+    promote this to tier-A by adding ``windsurf`` to ``_HARNESS_SUFFIXES``,
+    a ``build_windsurf_argv`` in reflexd, and contract tests.
+    """
     return _register_json_mcpservers(
         "Windsurf", "windsurf",
         Path.home() / ".codeium" / "windsurf" / "mcp_config.json",
@@ -242,11 +255,19 @@ def register_gemini_cli(env: McpEnv, *, force: bool = False) -> WriteResult:
 
 
 def register_cline(env: McpEnv, *, force: bool = False) -> WriteResult:
-    # Cline stores its MCP block in VS Code's globalStorage, under a
-    # deeply-nested cline-extension path that also varies by VS Code
-    # flavor. Rather than probing 5 paths we leave Cline to the prose
-    # fallback — but expose a writer so the connect command can do a
-    # force-create when the user points us at a path explicitly.
+    """Tier-A writer (fully proactive after wave-7).
+
+    Cline ships a standalone CLI (``npm install -g cline``, then
+    ``cline "<task>"``) in preview as of 2026-05, OAuth-based via
+    ``cline auth`` (https://docs.cline.bot/getting-started/installing-cline).
+    Reflexd routes participants suffixed ``-cline`` through
+    :func:`reflexd.build_cline_argv`. Auth flows through whatever the user
+    set with ``cline auth`` — Quorus never sees provider keys.
+
+    The MCP block is written to ``~/.cline/mcp.json``. Cline's VS Code
+    extension also reads from VS Code globalStorage, but the standalone
+    CLI uses this canonical path so we register it for the headless flow.
+    """
     candidate = Path.home() / ".cline" / "mcp.json"
     return _register_json_mcpservers(
         "Cline", "cline", candidate, env, require_existing=not force,
@@ -295,10 +316,18 @@ def register_continue(env: McpEnv, *, force: bool = False) -> WriteResult:
 
 
 def register_opencode(env: McpEnv, *, force: bool = False) -> WriteResult:
-    """Opencode uses a different schema: ``mcp.<name> = {type, command[], enabled}``.
+    """Tier-A writer (fully proactive after wave-7).
 
-    Two standard paths — XDG first, then ``~/.opencode.json``. We
-    write to the first that exists, or create the XDG path on force.
+    Opencode ships a real headless CLI (``opencode run "<prompt>"``) per the
+    vendor docs (https://opencode.ai/docs/cli/). Auth is OAuth-friendly via
+    ``opencode auth login``, supporting 75+ providers — Quorus never sees
+    provider keys. Reflexd routes participants suffixed ``-opencode`` through
+    :func:`reflexd.build_opencode_argv`.
+
+    Schema differs from the standard ``mcpServers`` shape:
+    ``mcp.<name> = {type, command[], enabled}``. Two standard paths — XDG
+    first, then ``~/.opencode.json``. We write to the first that exists, or
+    create the XDG path on force.
     """
     candidates = [
         Path.home() / ".config" / "opencode" / "opencode.json",

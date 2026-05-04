@@ -25,6 +25,10 @@ import { AnimatedBeam, BorderBeam } from "../effects/AnimatedBeam";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
+// Wave-7: HarnessFlow keeps the 4-up grid for legibility but the band's
+// caption now references all 7 (6 tier-A + 1 tier-B). The four shown here
+// are the most visible vendor names; Opencode + Cline + Windsurf appear in
+// the install switcher (CrossHarnessBand) and the comparison band copy.
 const VENDORS = [
   { id: "claude", label: "Claude Code" },
   { id: "cursor", label: "Cursor" },

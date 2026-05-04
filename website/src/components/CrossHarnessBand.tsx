@@ -36,7 +36,7 @@ const NOISE_SVG =
     </svg>`,
   );
 
-type TabId = "claude" | "cursor" | "gemini" | "codex";
+type TabId = "claude" | "codex" | "gemini" | "cursor" | "opencode" | "cline";
 
 interface TabSpec {
   id: TabId;
@@ -113,6 +113,25 @@ const TABS: readonly TabSpec[] = [
     prompt: "$",
     command: "quorus codex-agent --room <room> --autonomous",
     note: "Codex doesn't expose per-tool hooks, so the codex-agent loop wraps each invocation. Nothing to install in settings.",
+  },
+  {
+    id: "opencode",
+    label: "Opencode",
+    filename: "terminal",
+    lang: "bash",
+    prompt: "$",
+    command: "quorus connect opencode --name <your-name>-opencode",
+    note: "Tier-A: reflexd wakes Opencode via `opencode run` on @-mention. Auth via opencode auth login (75+ providers).",
+  },
+  {
+    id: "cline",
+    label: "Cline",
+    filename: "terminal",
+    lang: "bash",
+    prompt: "$",
+    command:
+      "npm install -g cline && quorus connect cline --name <your-name>-cline",
+    note: "Tier-A: reflexd wakes Cline via the standalone `cline` CLI on @-mention. macOS/Linux only (preview).",
   },
 ] as const;
 

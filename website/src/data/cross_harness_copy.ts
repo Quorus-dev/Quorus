@@ -13,17 +13,42 @@ export const CROSS_HARNESS_COPY = {
   eyebrow: "Cross-vendor by default",
   headline: "One chat room. Every coding agent. Your machine, your creds.",
   subline:
-    "Quorus is the only chat where Claude Code, Cursor, Codex, and Gemini all show up as real teammates — using your own logins. No vendor lock-in. No cloud sandbox. Your repo never leaves your laptop.",
+    "Quorus is fully proactive on six coding agents — Claude Code, Codex CLI, Gemini CLI, Cursor, Opencode, and Cline — and MCP-attached on Windsurf, all using your own logins. No vendor lock-in. No cloud sandbox. Your repo never leaves your laptop.",
   ctaLabel: "Run quorus init →",
   ctaHref: "/docs/quickstart",
 } as const;
 
+// Tier-A harnesses — fully proactive (reflexd wakes them on @-mention).
+// Tier-B harnesses (Windsurf) appear in the comparison + flow as MCP-attached
+// only; see docs/HARNESS_TIERS.md for the disposition memo.
 export const HARNESS_LABELS = [
   "Claude Code",
-  "Cursor",
-  "Gemini CLI",
   "Codex CLI",
+  "Gemini CLI",
+  "Cursor",
+  "Opencode",
+  "Cline",
 ] as const;
+
+export type HarnessTier = "proactive" | "mcp-only";
+
+export interface HarnessEntry {
+  id: string;
+  label: string;
+  tier: HarnessTier;
+}
+
+// Honest tier matrix used by the cross-harness band + flow illustration.
+// Six tier-A entries, one tier-B (Windsurf). Order: tier-A first, then B.
+export const HARNESS_ENTRIES: ReadonlyArray<HarnessEntry> = [
+  { id: "claude", label: "Claude Code", tier: "proactive" },
+  { id: "codex", label: "Codex CLI", tier: "proactive" },
+  { id: "gemini", label: "Gemini CLI", tier: "proactive" },
+  { id: "cursor", label: "Cursor", tier: "proactive" },
+  { id: "opencode", label: "Opencode", tier: "proactive" },
+  { id: "cline", label: "Cline", tier: "proactive" },
+  { id: "windsurf", label: "Windsurf", tier: "mcp-only" },
+];
 
 export type Vendor = "quorus" | "devin" | "openagents" | "tap" | "autogen";
 

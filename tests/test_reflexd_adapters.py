@@ -77,13 +77,36 @@ def test_build_gemini_argv_pins_exact_shape() -> None:
 
 
 def test_build_cursor_argv_pins_exact_shape() -> None:
-    """Cursor CLI contract: ``cursor-agent --headless --prompt=<ctx>``.
+    """Cursor CLI contract: ``cursor-agent -p -- <ctx>``.
 
-    Same defensive ``--key=value`` shape as gemini. A future cursor-
-    agent build that breaks the equals form will fail this test.
+    Wave-7 update: switched from the legacy ``--headless --prompt=`` shape
+    to the documented ``-p`` flag (cursor.com/docs/cli/headless). ``--``
+    keeps a leading-dash payload from being re-parsed as a flag.
     """
     out = reflexd.build_cursor_argv("hello world")
-    assert out == ["cursor-agent", "--headless", "--prompt=hello world"]
+    assert out == ["cursor-agent", "-p", "--", "hello world"]
+
+
+def test_build_opencode_argv_pins_exact_shape() -> None:
+    """Opencode CLI contract: ``opencode run -- <ctx>``.
+
+    Wave-7 added Opencode to tier-A. ``opencode run`` is the documented
+    one-shot non-interactive entry point (opencode.ai/docs/cli/). ``--``
+    is the argv-injection guard.
+    """
+    out = reflexd.build_opencode_argv("hello world")
+    assert out == ["opencode", "run", "--", "hello world"]
+
+
+def test_build_cline_argv_pins_exact_shape() -> None:
+    """Cline CLI contract: ``cline -- <ctx>``.
+
+    Wave-7 added Cline to tier-A. The standalone ``cline`` CLI takes the
+    task as a positional arg (docs.cline.bot). ``--`` is the argv-injection
+    guard.
+    """
+    out = reflexd.build_cline_argv("hello world")
+    assert out == ["cline", "--", "hello world"]
 
 
 # ---------------------------------------------------------------------------
@@ -401,9 +424,9 @@ def test_gemini_adapter_passes_qod_constitution(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_cursor_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Cursor contract: ``cursor-agent --headless --prompt=<ctx>``.
+    """Cursor contract: ``cursor-agent -p -- <ctx>``.
 
-    Same defensive ``--key=value`` shape as gemini (CRIT-7).
+    Wave-7 swap to documented ``-p`` flag (cursor.com/docs/cli/headless).
     """
     seen_argv: list[str] = []
 
@@ -417,7 +440,7 @@ def test_cursor_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) 
     out = _run_adapter("cursor", context="hello-cursor")
     assert out == "hi cursor"
     assert seen_argv == reflexd.build_cursor_argv("hello-cursor")
-    assert seen_argv == ["cursor-agent", "--headless", "--prompt=hello-cursor"]
+    assert seen_argv == ["cursor-agent", "-p", "--", "hello-cursor"]
 
 
 def test_cursor_adapter_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -484,12 +507,9 @@ def test_cursor_adapter_passes_qod_constitution(monkeypatch: pytest.MonkeyPatch)
 
     prompt = _qod_prompt()
     asyncio.run(reflexd.HeadlessAdapter(timeout_s=2).run("cursor", context=prompt))
-    # argv = [cursor-agent, --headless, --prompt=<context>] — last element
-    # starts with the ``--prompt=`` prefix because we use the equals-form
-    # for argv-injection safety (CRIT-7).
-    assert seen_argv[-1].startswith(
-        "--prompt=# Quorus Operating Discipline (QOD)"
-    )
+    # argv = [cursor-agent, -p, --, <context>] — wave-7 switched to the
+    # documented ``-p`` flag, so the prompt is the trailing positional.
+    assert seen_argv[-1].startswith("# Quorus Operating Discipline (QOD)")
 
 
 def test_cursor_inbox_sanitises_participant_name(
@@ -556,8 +576,11 @@ def test_log_adapter_versions_records_one_entry_per_harness(
         return None  # All "not detected" — must still log a line per harness.
 
     versions = reflexd.log_adapter_versions(probe=fake_probe)
-    assert seen == ["claude", "codex", "gemini", "cursor"]
-    assert versions == {"claude": None, "codex": None, "gemini": None, "cursor": None}
+    assert seen == ["claude", "codex", "gemini", "cursor", "opencode", "cline"]
+    assert versions == {
+        "claude": None, "codex": None, "gemini": None,
+        "cursor": None, "opencode": None, "cline": None,
+    }
 
 
 def test_log_adapter_versions_warns_on_unknown_version(
@@ -582,14 +605,16 @@ def test_log_adapter_versions_warns_on_unknown_version(
     "harness, expected_argv",
     [
         # Argv shapes after CRIT-7 (argv-injection guard):
-        # - claude/codex use ``--`` to separate options from the positional
-        #   prompt
-        # - gemini/cursor use ``--prompt=<ctx>`` because their parsers
-        #   reject ``-- <ctx>`` after ``--prompt``
+        # - claude/codex/cursor/opencode/cline use ``--`` to separate options
+        #   from the positional prompt
+        # - gemini uses ``--prompt=<ctx>`` because its parser rejects
+        #   ``-- <ctx>`` after ``--prompt``
         ("claude", ["claude", "--print", "--", "ctx"]),
         ("codex", ["codex", "exec", "--json", "--", "ctx"]),
         ("gemini", ["gemini", "--prompt=ctx"]),
-        ("cursor", ["cursor-agent", "--headless", "--prompt=ctx"]),
+        ("cursor", ["cursor-agent", "-p", "--", "ctx"]),
+        ("opencode", ["opencode", "run", "--", "ctx"]),
+        ("cline", ["cline", "--", "ctx"]),
     ],
 )
 def test_adapter_dry_run_records_argv_without_spawning(
@@ -597,8 +622,8 @@ def test_adapter_dry_run_records_argv_without_spawning(
 ) -> None:
     """In dry-run, the adapter must record argv and never call create_subprocess_exec.
 
-    All four adapters now record a plain argv list — the old SDK-call shape
-    for claude went away with the SDK→CLI swap.
+    All six tier-A adapters record a plain argv list. Wave-7 added Opencode
+    + Cline; Windsurf is tier-B (MCP-only) and never reaches the adapter.
     """
     async def must_not_run(*_a: str, **_k: Any) -> Any:  # pragma: no cover
         raise AssertionError("dry-run must not spawn subprocesses")
@@ -611,3 +636,99 @@ def test_adapter_dry_run_records_argv_without_spawning(
     assert adapter.last_dry_run is not None
     assert adapter.last_dry_run["harness"] == harness
     assert adapter.last_dry_run["argv"] == expected_argv
+
+
+# ---------------------------------------------------------------------------
+# Wave-7: Opencode + Cline adapters (tier-A, fully proactive)
+# ---------------------------------------------------------------------------
+# Both shell out to a documented vendor headless CLI. Auth flows through
+# whatever the user already configured (opencode auth login, cline auth) —
+# reflexd never sees provider keys. See docs/HARNESS_TIERS.md.
+
+
+def test_opencode_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opencode contract: ``opencode run -- <ctx>``.
+
+    Pins the wave-7 wire format. If a future opencode release renames
+    ``run``, this test fails before production.
+    """
+    seen_argv: list[str] = []
+
+    async def fake_exec(*argv: str, **_k: Any) -> _FakeProc:
+        seen_argv.extend(argv)
+        return _FakeProc(stdout=b"hello-from-opencode\n")
+
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: "/fake/opencode")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    out = _run_adapter("opencode", context="hello-opencode")
+    assert out == "hello-from-opencode"
+    assert seen_argv == reflexd.build_opencode_argv("hello-opencode")
+    assert seen_argv == ["opencode", "run", "--", "hello-opencode"]
+
+
+def test_opencode_adapter_handles_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No opencode binary → graceful sentinel, never an exception."""
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: None)
+
+    async def must_not_run(*_a: str, **_k: Any) -> _FakeProc:  # pragma: no cover
+        raise AssertionError("subprocess should not run when binary is missing")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", must_not_run)
+    out = _run_adapter("opencode", context="ctx")
+    assert "opencode not installed" in out
+
+
+def test_cline_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cline contract: ``cline -- <ctx>``.
+
+    Pins the wave-7 wire format for the Cline standalone CLI.
+    """
+    seen_argv: list[str] = []
+
+    async def fake_exec(*argv: str, **_k: Any) -> _FakeProc:
+        seen_argv.extend(argv)
+        return _FakeProc(stdout=b"hello-from-cline\n")
+
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: "/fake/cline")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    out = _run_adapter("cline", context="hello-cline")
+    assert out == "hello-from-cline"
+    assert seen_argv == reflexd.build_cline_argv("hello-cline")
+    assert seen_argv == ["cline", "--", "hello-cline"]
+
+
+def test_cline_adapter_handles_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No cline binary → graceful sentinel."""
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: None)
+    out = _run_adapter("cline", context="ctx")
+    assert "cline not installed" in out
+
+
+def test_detect_harness_routes_opencode_and_cline_suffixes() -> None:
+    """Wave-7: ``arav-opencode`` → opencode, ``arav-cline`` → cline.
+
+    Without this routing, the daemon would default to claude and try to
+    invoke ``claude --print`` on behalf of the wrong identity.
+    """
+    assert reflexd.detect_harness("arav-opencode") == "opencode"
+    assert reflexd.detect_harness("arav-cline") == "cline"
+    # Existing four still route correctly.
+    assert reflexd.detect_harness("arav-claude") == "claude"
+    assert reflexd.detect_harness("arav-codex") == "codex"
+    assert reflexd.detect_harness("arav-gemini") == "gemini"
+    assert reflexd.detect_harness("arav-cursor") == "cursor"
+
+
+def test_is_agent_participant_accepts_opencode_and_cline() -> None:
+    """Wave-7: reflexd must accept opencode/cline participants at startup.
+
+    Without these suffixes, the daemon refuses to start under those
+    identities (CRIT-A guard) and never delivers a proactive reply.
+    """
+    assert reflexd.is_agent_participant("arav-opencode") is True
+    assert reflexd.is_agent_participant("arav-cline") is True
+    # Negative cases unchanged.
+    assert reflexd.is_agent_participant("arav") is False
+    assert reflexd.is_agent_participant("arav-windsurf") is False  # tier-B

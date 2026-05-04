@@ -297,10 +297,14 @@ def test_subprocess_argv_uses_equals_form_for_gemini() -> None:
     assert "-flag-style-input" in argv[-1]
 
 
-def test_subprocess_argv_uses_equals_form_for_cursor() -> None:
+def test_subprocess_argv_uses_dashdash_form_for_cursor() -> None:
+    """Wave-7: Cursor switched from ``--headless --prompt=`` to documented
+    ``-p -- <ctx>``. The ``--`` keeps a leading-dash payload positional.
+    """
     argv = reflexd.build_cursor_argv("-flag-style-input")
-    assert any(a.startswith("--prompt=") for a in argv)
-    assert "-flag-style-input" in argv[-1]
+    assert "-p" in argv
+    assert "--" in argv
+    assert argv.index("--") < argv.index("-flag-style-input")
 
 
 def test_detect_harness_routes_by_suffix() -> None:

@@ -284,6 +284,13 @@ _HARNESS_SUFFIXES = (
     ("-codex", "codex"),
     ("-gemini", "gemini"),
     ("-cursor", "cursor"),
+    # Wave-7: Opencode + Cline have real headless CLIs (verified vendor docs
+    # 2026-05). Adding suffixes here lets reflexd wake them on @-mention so
+    # they reach proactive parity with the original four. Windsurf is NOT
+    # in this list — it has no canonical headless CLI; see
+    # docs/HARNESS_TIERS.md for the disposition memo.
+    ("-opencode", "opencode"),
+    ("-cline", "cline"),
 )
 
 # ---------------------------------------------------------------------------
@@ -304,6 +311,8 @@ CLAUDE_BIN = "claude"
 CODEX_BIN = "codex"
 GEMINI_BIN = "gemini"
 CURSOR_BIN = "cursor-agent"
+OPENCODE_BIN = "opencode"
+CLINE_BIN = "cline"
 
 
 def build_claude_argv(context: str) -> list[str]:
@@ -357,15 +366,49 @@ def build_gemini_argv(context: str) -> list[str]:
 def build_cursor_argv(context: str) -> list[str]:
     """Pinned argv shape for cursor-agent.
 
-    Contract: ``cursor-agent --headless --prompt=<ctx>``.
+    Contract: ``cursor-agent -p -- <ctx>``.
 
-    Cursor-agent is not always installed locally so we cannot empirically
-    verify; we apply the same defensive ``--key=value`` shape as gemini so
-    a leading-dash payload never reaches the option parser. If a future
-    cursor-agent release breaks the equals form, the contract test will
-    catch it before production.
+    Per the official Cursor docs (https://cursor.com/docs/cli/headless), the
+    headless flag is ``-p`` / ``--print`` — same pattern as the Claude Code
+    CLI. The legacy reflexd shape used ``--headless --prompt=`` which was
+    never canonical (it predates Cursor publishing official docs); we keep
+    a single argv shape and pin it.
+
+    Argv-injection guard: ``--`` separates options from the positional
+    prompt so a leading-dash payload cannot be re-parsed as a flag. Auth
+    is whatever the user set via ``cursor-agent login`` (``CURSOR_API_KEY``
+    is read by the binary, not by reflexd).
     """
-    return [CURSOR_BIN, "--headless", f"--prompt={context}"]
+    return [CURSOR_BIN, "-p", "--", context]
+
+
+def build_opencode_argv(context: str) -> list[str]:
+    """Pinned argv shape for opencode (`opencode.ai/docs/cli/`).
+
+    Contract: ``opencode run -- <ctx>``.
+
+    ``opencode run`` is the documented one-shot / non-interactive entry
+    point. The prompt is positional, so ``--`` separates it from any
+    options the user might leak into the body. Auth is whatever
+    ``opencode auth login`` set up — reflexd never reads provider keys.
+    """
+    return [OPENCODE_BIN, "run", "--", context]
+
+
+def build_cline_argv(context: str) -> list[str]:
+    """Pinned argv shape for cline (`docs.cline.bot`).
+
+    Contract: ``cline -- <ctx>``.
+
+    The Cline standalone CLI takes the task as a positional argument
+    (``cline "Your task here"``). It's in preview as of 2026-05 and only
+    available on macOS/Linux. Auth is OAuth via ``cline auth`` — reflexd
+    never sees provider keys.
+
+    Argv-injection guard: same ``--`` pattern as the others. If a leading-
+    dash payload arrives in the chat body, it stays positional.
+    """
+    return [CLINE_BIN, "--", context]
 
 
 # Version-probe argv per binary (NOT prompt-bearing — safe to run on startup).
@@ -374,6 +417,8 @@ _VERSION_PROBE_ARGV: dict[str, list[str]] = {
     "codex": [CODEX_BIN, "--version"],
     "gemini": [GEMINI_BIN, "--version"],
     "cursor": [CURSOR_BIN, "--version"],
+    "opencode": [OPENCODE_BIN, "--version"],
+    "cline": [CLINE_BIN, "--version"],
 }
 
 # Pinned-known-good version ranges. Entries here say "we have observed this
@@ -387,6 +432,8 @@ KNOWN_GOOD_VERSIONS: dict[str, tuple[str, ...]] = {
     "codex": ("0.", "1.", "2.", "3."),
     "gemini": ("0.", "1.", "2.", "3."),
     "cursor": ("0.", "1.", "2.", "3."),
+    "opencode": ("0.", "1.", "2.", "3."),
+    "cline": ("0.", "1.", "2.", "3."),
 }
 
 
@@ -521,7 +568,7 @@ def log_adapter_versions(probe: Callable[[str], str | None] | None = None) -> di
     """
     probe = probe or probe_harness_version
     versions: dict[str, str | None] = {}
-    for harness in ("claude", "codex", "gemini", "cursor"):
+    for harness in ("claude", "codex", "gemini", "cursor", "opencode", "cline"):
         ver = probe(harness)
         versions[harness] = ver
         if ver is None:
@@ -545,7 +592,8 @@ def detect_harness(participant: str) -> str:
         if name.endswith(suffix) or f"{suffix}-" in name:
             return harness
     for needle, harness in (("claude", "claude"), ("codex", "codex"),
-                            ("gemini", "gemini"), ("cursor", "cursor")):
+                            ("gemini", "gemini"), ("cursor", "cursor"),
+                            ("opencode", "opencode"), ("cline", "cline")):
         if needle in name:
             return harness
     return "claude"
@@ -564,6 +612,8 @@ _AGENT_PARTICIPANT_SUFFIXES: tuple[str, ...] = (
     "-codex",
     "-gemini",
     "-cursor",
+    "-opencode",
+    "-cline",
 )
 
 
@@ -675,6 +725,16 @@ class HeadlessAdapter:
             )
         if harness == "cursor":
             return await self._run_cursor(context)
+        if harness == "opencode":
+            return await self._run_subprocess(
+                build_opencode_argv(context),
+                parser=lambda out: out.strip(),
+            )
+        if harness == "cline":
+            return await self._run_subprocess(
+                build_cline_argv(context),
+                parser=lambda out: out.strip(),
+            )
         raise ValueError(f"unknown harness {harness!r}")
 
     def _record_dry_run(self, harness: str, context: str) -> str:
@@ -692,6 +752,10 @@ class HeadlessAdapter:
             argv = build_gemini_argv(context)
         elif harness == "cursor":
             argv = build_cursor_argv(context)
+        elif harness == "opencode":
+            argv = build_opencode_argv(context)
+        elif harness == "cline":
+            argv = build_cline_argv(context)
         else:
             raise ValueError(f"unknown harness {harness!r}")
         self.last_dry_run = {"harness": harness, "argv": argv}

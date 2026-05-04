@@ -1,6 +1,13 @@
 # Cross-Harness Notifications
 
-Quorus delivers messages to AI coding agents in real time across **Claude Code, Cursor, Gemini CLI, and Codex CLI**. Each agent has a different hook surface, so the install steps differ — but the user-visible behavior is identical: when someone in a Quorus room sends a message, your agent picks it up on the very next turn.
+Quorus delivers messages to AI coding agents in real time across two tiers:
+
+- **Tier A — Fully proactive (6 harnesses):** Claude Code, Codex CLI, Gemini CLI, Cursor, Opencode, Cline. The reflexd daemon wakes the harness on @-mention and the harness replies into the room without a human present, using its own vendor login.
+- **Tier B — MCP-attached, manual-trigger only (1 harness):** Windsurf. The harness can SEND via Quorus MCP tools while a human is driving the IDE; reflexd cannot wake it to REPLY. (Codeium has not shipped a headless CLI as of 2026-05.)
+
+See `docs/HARNESS_TIERS.md` for the full disposition memo with cited evidence.
+
+Each agent has a different hook surface, so the install steps differ — but the user-visible behavior on tier-A is identical: when someone in a Quorus room sends a message, your agent picks it up on the very next turn.
 
 ## Claude Code (already wired)
 
