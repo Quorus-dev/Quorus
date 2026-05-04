@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 # Import every ORM module so its tables register on Base.metadata.
 # Required for Alembic autogenerate to see the full schema; runtime
 # migrations don't strictly need it but the import is cheap.
-import quorus.admin.models  # noqa: E402,F401
-import quorus.models.audit  # noqa: E402,F401
-import quorus.models.outbox  # noqa: E402,F401
+import quorus.admin.models
+import quorus.models.audit
+import quorus.models.outbox  # noqa: F401
 from quorus.storage.base import Base
 from quorus.storage.postgres import normalize_database_url
 

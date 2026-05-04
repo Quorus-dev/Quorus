@@ -427,7 +427,7 @@ def poll_inbox_loop(
                 for line in lines:
                     sys.stderr.write(line)
                 sys.stderr.flush()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if verbose:
                 sys.stderr.write(f"[quorus gemini-agent inbox] {exc}\n")
                 sys.stderr.flush()
@@ -458,7 +458,7 @@ def room_context_loop(
                 api_key=api_key,
                 relay_secret=relay_secret,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if verbose:
                 sys.stderr.write(f"[quorus gemini-agent context] {exc}\n")
                 sys.stderr.flush()
@@ -485,7 +485,7 @@ def heartbeat_loop(
                 api_key=api_key,
                 relay_secret=relay_secret,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if verbose:
                 sys.stderr.write(f"[quorus gemini-agent heartbeat] {exc}\n")
                 sys.stderr.flush()
@@ -652,7 +652,7 @@ def run_autonomous_loop(
                 api_key=api_key,
                 relay_secret=relay_secret,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if verbose:
                 sys.stderr.write(f"[quorus gemini-agent auto-sync] {exc}\n")
                 sys.stderr.flush()

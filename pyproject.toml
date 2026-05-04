@@ -22,6 +22,18 @@ classifiers = [
     "Topic :: Communications :: Chat",
     "Topic :: Software Development :: Libraries",
 ]
+# SECURITY: ``requirements.lock`` is the deploy contract.
+# ----------------------------------------------------------------------
+# The ``>=`` ranges below are *floors* for pip resolver convenience when
+# someone installs Quorus from PyPI as a library. They are NOT what
+# production runs against. The Dockerfile installs from
+# ``requirements.lock`` (generated via ``uv pip compile``) which pins
+# every transitive dependency to an exact version + hash. Always
+# regenerate the lock with ``uv pip compile pyproject.toml -o
+# requirements.lock`` after editing this list, then commit both files
+# in the same PR. Drift between the two is a security incident
+# (transitively-pulled CVE-fix bypass + non-reproducible builds).
+# ----------------------------------------------------------------------
 dependencies = [
     "fastapi>=0.110.0",
     "httpx>=0.27.0",
@@ -60,9 +72,13 @@ target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
-# Dashboard contains inline HTML/CSS/JS in Python strings
-per-file-ignores = {"quorus/dashboard.py" = ["E501"]}
-select = ["E", "F", "I", "W"]
+# Dashboard contains inline HTML/CSS/JS in Python strings.
+# tests/* may use ``assert`` freely (S101 is a production-code rule).
+per-file-ignores = {"quorus/dashboard.py" = ["E501"], "tests/*" = ["S101"]}
+# RUF100 keeps ``# noqa`` directives honest — flags any whose code isn't
+# actually triggered. Wave-8 turned this on after a 3361-count S101 sweep;
+# future audits can re-run ``ruff check --select=RUF100 --fix .``.
+select = ["E", "F", "I", "W", "RUF100"]
 
 [project.optional-dependencies]
 test = [

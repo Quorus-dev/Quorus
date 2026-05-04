@@ -17,7 +17,7 @@ from quorus_mcp import tools
 from quorus_mcp.sse import SSEListener, process_sse_event_data
 
 logging.basicConfig(
-    level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO")),  # noqa: E501
+    level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO")),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("mcp_tunnel.mcp")

@@ -1286,7 +1286,7 @@ def _reflexd_start(args) -> None:
             _ui.error(f"reflexd: cannot open log {log_path}: {exc}")
             raise SystemExit(1) from exc
         try:
-            proc = subprocess.Popen(  # noqa: S603 — args are program-controlled
+            proc = subprocess.Popen(
                 cmd,
                 env=env,
                 stdin=subprocess.DEVNULL,
@@ -1325,7 +1325,7 @@ def _reflexd_start(args) -> None:
 
     # Foreground: write a pidfile then exec into the script. We use Popen
     # rather than os.execvpe so the pidfile is cleaned up on Ctrl-C.
-    proc = subprocess.Popen(cmd, env=env, cwd=str(script.parent.parent))  # noqa: S603
+    proc = subprocess.Popen(cmd, env=env, cwd=str(script.parent.parent))
     pidfile.write_text(str(proc.pid), encoding="utf-8")
     try:
         os.chmod(pidfile, 0o600)
@@ -1498,7 +1498,7 @@ def _reflexd_doctor_probe_claude_cli() -> tuple[bool, str]:
     if shutil.which("claude") is None:
         return False, "claude CLI not on PATH — install from https://claude.ai/code"
     try:
-        ver_proc = subprocess.run(  # noqa: S603,S607 — argv pinned, no shell
+        ver_proc = subprocess.run(
             ["claude", "--version"],
             capture_output=True,
             text=True,
@@ -1515,7 +1515,7 @@ def _reflexd_doctor_probe_claude_cli() -> tuple[bool, str]:
     # off. If a future Claude Code release ever renames it, this row goes
     # red instead of the daemon failing silently per-wake.
     try:
-        help_proc = subprocess.run(  # noqa: S603,S607 — argv pinned, no shell
+        help_proc = subprocess.run(
             ["claude", "--help"],
             capture_output=True,
             text=True,
@@ -1540,7 +1540,7 @@ def _reflexd_doctor_probe_relay(relay_url: str) -> tuple[bool, str]:
             return False, f"{relay_url} → HTTP {resp.status_code}"
     except httpx.HTTPError as exc:
         return False, f"{relay_url} → {exc.__class__.__name__}: {exc}"
-    except Exception as exc:  # noqa: BLE001 — defensive
+    except Exception as exc:
         return False, f"{relay_url} → {exc.__class__.__name__}: {exc}"
 
 
@@ -1774,7 +1774,7 @@ def _manager_start(args) -> None:
             _ui.error(f"reflexd-manager: cannot open {_SUPERVISOR_LOG}: {exc}")
             raise SystemExit(1) from exc
         try:
-            proc = subprocess.Popen(  # noqa: S603 — args program-controlled
+            proc = subprocess.Popen(
                 cmd, env=env, stdin=subprocess.DEVNULL,
                 stdout=log_fp, stderr=log_fp,
                 start_new_session=True, close_fds=True,
@@ -4311,7 +4311,7 @@ def _init_autostart_supervisor(*, ui) -> int | None:
         ui.warn(f"Couldn't open supervisor log: {exc}")
         return None
     try:
-        proc = subprocess.Popen(  # noqa: S603 — args program-controlled
+        proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=log_fp,
@@ -7374,8 +7374,14 @@ async def _context(
                     _ui.error("No rooms found")
                 return
 
-        # Fetch state and history in parallel
-        state_resp, hist_resp = await asyncio.gather(
+        # Fetch state and history in parallel.
+        # L3 fix: return_exceptions=True so a transient 503/timeout on ONE
+        # endpoint doesn't collapse the whole swarm-board view. If BOTH
+        # halves fail with the same error, re-raise so the outer handler
+        # produces the same "Cannot connect" / "not found" UX as before.
+        # Otherwise we surface the partial failure via _ui.warn and render
+        # whatever did succeed.
+        results = await asyncio.gather(
             client.get(
                 f"{RELAY_URL}/rooms/{target_room}/state",
                 headers=_auth_headers(),
@@ -7385,12 +7391,47 @@ async def _context(
                 params={"limit": limit},
                 headers=_auth_headers(),
             ),
+            return_exceptions=True,
         )
-        state_resp.raise_for_status()
-        hist_resp.raise_for_status()
+        state_resp, hist_resp = results
 
-        state = state_resp.json()
-        history = hist_resp.json()
+        # Normalise httpx response 4xx/5xx into HTTPStatusError so we treat
+        # response-level failures the same as transport failures for the
+        # "both-halves-broken" check below.
+        def _coerce(resp):
+            if isinstance(resp, BaseException):
+                return resp
+            try:
+                resp.raise_for_status()
+                return resp
+            except httpx.HTTPStatusError as exc:
+                return exc
+
+        state_or_err = _coerce(state_resp)
+        hist_or_err = _coerce(hist_resp)
+
+        # If BOTH halves failed and one or both are httpx.* errors, re-raise
+        # to preserve the outer except's UX (Cannot connect / not found).
+        if isinstance(state_or_err, BaseException) and isinstance(
+            hist_or_err, BaseException
+        ):
+            for err in (state_or_err, hist_or_err):
+                if isinstance(err, (httpx.ConnectError, httpx.HTTPStatusError)):
+                    raise err
+            raise state_or_err  # pragma: no cover — fallback for non-httpx pair
+
+        state: dict = {}
+        history: list = []
+        if isinstance(state_or_err, BaseException):
+            if not quiet:
+                _ui.warn(f"state fetch failed: {state_or_err!r}")
+        else:
+            state = state_or_err.json()
+        if isinstance(hist_or_err, BaseException):
+            if not quiet:
+                _ui.warn(f"history fetch failed: {hist_or_err!r}")
+        else:
+            history = hist_or_err.json()
 
         # Filter history to high-signal message types only
         seen_content: set[str] = set()

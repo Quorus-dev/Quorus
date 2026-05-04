@@ -194,7 +194,7 @@ def poll_inbox_loop(
                         if verbose:
                             sys.stderr.write(line)
                             sys.stderr.flush()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if verbose:
                 sys.stderr.write(f"[quorus-loop] {exc}\n")
                 sys.stderr.flush()

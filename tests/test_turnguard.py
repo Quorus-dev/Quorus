@@ -234,6 +234,23 @@ def test_is_busy_clears_corrupt_json_with_past_ttl(tg, runtime_home: Path) -> No
     assert not path.exists()
 
 
+def test_is_busy_empty_file_is_not_busy(tg, runtime_home: Path) -> None:
+    """L1 fix: an empty busy-file (crashed mid-write) MUST NOT block forever.
+
+    Pre-fix the empty file fell through to the no-expires_at branch and
+    returned True — meaning a single half-written file would silence the
+    agent indefinitely. We now treat zero-byte / whitespace-only files
+    as "not busy".
+    """
+    rd = tg.runtime_dir()
+    path = rd / "arav-claude.busy"
+    path.write_text("", encoding="utf-8")
+    assert tg.is_busy("arav-claude") is False
+    # Whitespace-only also treated as empty.
+    path.write_text("   \n\t", encoding="utf-8")
+    assert tg.is_busy("arav-claude") is False
+
+
 # ---------------------------------------------------------------------------
 # CLI tests — drive ``quorus turnguard`` via main(["turnguard", ...])
 # ---------------------------------------------------------------------------

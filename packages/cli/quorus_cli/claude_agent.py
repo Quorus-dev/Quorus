@@ -484,7 +484,7 @@ def _fallback_post_message(room: str, content: str, verbose: bool = False) -> bo
         if verbose and result.returncode != 0:
             sys.stderr.write(f"[quorus claude-agent fallback-post] {result.stderr}\n")
         return result.returncode == 0
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if verbose:
             sys.stderr.write(f"[quorus claude-agent fallback-post] {exc}\n")
         return False
@@ -504,7 +504,7 @@ def _fallback_read_inbox(verbose: bool = False) -> list[str]:
         )
         if result.returncode == 0:
             return [line for line in result.stdout.splitlines() if line.strip()]
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if verbose:
             sys.stderr.write(f"[quorus claude-agent fallback-inbox] {exc}\n")
     return []
@@ -558,7 +558,7 @@ def poll_inbox_loop(
                 for line in lines:
                     sys.stderr.write(line)
                 sys.stderr.flush()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if verbose:
                 sys.stderr.write(f"[quorus claude-agent inbox] {exc}\n")
                 sys.stderr.flush()
@@ -593,7 +593,7 @@ def room_context_loop(
                 api_key=api_key,
                 relay_secret=relay_secret,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if verbose:
                 sys.stderr.write(f"[quorus claude-agent context] {exc}\n")
                 sys.stderr.flush()
@@ -621,7 +621,7 @@ def heartbeat_loop(
                 api_key=api_key,
                 relay_secret=relay_secret,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if verbose:
                 sys.stderr.write(f"[quorus claude-agent heartbeat] {exc}\n")
                 sys.stderr.flush()
@@ -846,7 +846,7 @@ def run_autonomous_loop(
                 api_key=api_key,
                 relay_secret=relay_secret,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if verbose:
                 sys.stderr.write(f"[quorus claude-agent auto-sync] {exc}\n")
                 sys.stderr.flush()

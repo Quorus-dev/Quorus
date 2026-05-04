@@ -326,10 +326,15 @@ async def send_agent_dm(
                 q.put_nowait(envelope)
             except asyncio.QueueFull:
                 # Slow consumer — drop oldest queued item to make room.
+                # L2 fix: narrow except to expected failure modes — QueueFull
+                # again (still full after one drop), QueueEmpty (race with
+                # another producer drained it first), or RuntimeError (queue
+                # closed mid-flight). Anything else (e.g. KeyboardInterrupt)
+                # must still propagate.
                 try:
                     _ = q.get_nowait()
                     q.put_nowait(envelope)
-                except Exception:
+                except (asyncio.QueueFull, asyncio.QueueEmpty, RuntimeError):
                     pass
 
     # H1 fix — audit trail for SOC2 + GDPR. Record sender/recipient

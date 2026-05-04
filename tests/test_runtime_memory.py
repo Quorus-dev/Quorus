@@ -482,3 +482,29 @@ async def test_memory_concurrent_purge_and_append_no_torn_writes(
     finally:
         busy_lock.release()
         await waiter_task
+
+
+# ---------------------------------------------------------------------------
+# L7 regression — sync wrappers must REFUSE to run inside a running loop
+# ---------------------------------------------------------------------------
+
+
+async def test_append_sync_inside_running_loop_raises(base_dir: Path):
+    """Calling append_sync from within a coroutine must raise a clear error.
+
+    Pre-fix this would surface as the generic asyncio "cannot be called
+    from a running event loop" RuntimeError. We now raise with a domain
+    message pointing the caller at the async API.
+    """
+    with pytest.raises(RuntimeError, match="async 'append'"):
+        mem.append_sync("alice", "ops", "hi", base_dir=base_dir)
+
+
+async def test_read_recent_sync_inside_running_loop_raises(base_dir: Path):
+    with pytest.raises(RuntimeError, match="async 'read_recent'"):
+        mem.read_recent_sync("alice", "ops", base_dir=base_dir)
+
+
+async def test_purge_sync_inside_running_loop_raises(base_dir: Path):
+    with pytest.raises(RuntimeError, match="async 'purge'"):
+        mem.purge_sync("alice", base_dir=base_dir)

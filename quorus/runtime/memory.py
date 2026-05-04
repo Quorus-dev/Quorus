@@ -330,6 +330,26 @@ async def cap_to_5kb(
 # patterns that don't want to spin an event loop. Production code should
 # stick with the async versions.
 
+
+def _assert_no_running_loop(name: str) -> None:
+    """L7 fix: raise a *clear* error when a sync wrapper is invoked from
+    inside a running event loop.
+
+    ``asyncio.run`` on Python 3.10+ raises a generic
+    ``RuntimeError: asyncio.run() cannot be called from a running event
+    loop`` which is easy to miss in a stack trace. We surface a
+    domain-specific message pointing the caller at the async API.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return  # No running loop — sync wrapper is safe.
+    raise RuntimeError(
+        f"{name} cannot be called from inside a running event loop. "
+        f"Use the async '{name.removesuffix('_sync')}' coroutine instead."
+    )
+
+
 def append_sync(
     participant: str,
     room: str,
@@ -340,6 +360,7 @@ def append_sync(
     base_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Sync version of :func:`append` for tests + non-async callers."""
+    _assert_no_running_loop("append_sync")
     return asyncio.run(
         append(
             participant, room, summary,
@@ -356,6 +377,7 @@ def read_recent_sync(
     base_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Sync version of :func:`read_recent`."""
+    _assert_no_running_loop("read_recent_sync")
     return asyncio.run(
         read_recent(participant, room, n, base_dir=base_dir)
     )
@@ -498,6 +520,7 @@ def purge_sync(
     base_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Sync convenience wrapper around :func:`purge` for the CLI path."""
+    _assert_no_running_loop("purge_sync")
     return asyncio.run(purge(participant, room, base_dir=base_dir))
 
 

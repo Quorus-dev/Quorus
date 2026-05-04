@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 BUSY_FILE_SUFFIX = ".busy"
 DEFAULT_TTL_SECONDS = 300  # 5 minutes — long enough for slow tool calls.
@@ -162,6 +165,10 @@ def is_busy(participant: str, dir_override: Path | None = None) -> bool:
     - File without parseable JSON / no ``expires_at`` (legacy / raw text) →
       treated as busy (True). The presence of the file is the signal; we
       don't second-guess a writer that didn't speak our wire format.
+    - **Empty** file (zero bytes / whitespace only) → NOT busy (False) +
+      debug log. An empty busy-file is almost always a half-written write
+      from a crashed harness — blocking on it forever would be the same
+      bug TTL was designed to prevent. We treat it as if no file existed.
     - No file → False.
     """
     path = busy_path(participant, dir_override=dir_override)
@@ -172,8 +179,15 @@ def is_busy(participant: str, dir_override: Path | None = None) -> bool:
     except OSError:
         # Can't read but it's there — treat as busy (fail safe: don't wake).
         return True
+    if not raw.strip():
+        # L1 fix: empty file = crashed-mid-write; don't permanently block.
+        logger.debug(
+            "turnguard: empty busy-file for %s — treating as not-busy",
+            participant,
+        )
+        return False
     try:
-        data = json.loads(raw) if raw.strip() else {}
+        data = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         data = None
     if not isinstance(data, dict):

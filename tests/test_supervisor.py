@@ -59,7 +59,7 @@ class FakePopenFactory:
         self.calls: list[dict] = []
         self.alive: set[int] = set()
 
-    def __call__(self, cmd, *, env=None, **kwargs):  # noqa: D401, ANN001
+    def __call__(self, cmd, *, env=None, **kwargs):
         pid = self._next_pid
         self._next_pid += 1
         self.alive.add(pid)
@@ -324,7 +324,7 @@ def test_real_popen_uses_start_new_session(
     real_popen = subprocess.Popen
 
     class _RecordingPopen(real_popen):  # type: ignore[misc]
-        def __init__(self, *args, **kwargs):  # noqa: ANN001
+        def __init__(self, *args, **kwargs):
             captured["kwargs"] = kwargs
             captured["args"] = args
             # Don't actually spawn — raise so start_all logs + skips the row.

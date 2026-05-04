@@ -441,9 +441,8 @@ class WorkQueueSvc:
             items = list(bucket.values())
         items.sort(key=lambda t: t.get("created_at", ""))
         if status:
-            wanted = (
-                {status} if isinstance(status, str) else {s for s in status}
-            )
+            # L8: ``{s for s in status}`` is just ``set(status)``.
+            wanted = {status} if isinstance(status, str) else set(status)
             wanted = {_normalise_status(s) for s in wanted}
             items = [t for t in items if t.get("status") in wanted]
         if actor:

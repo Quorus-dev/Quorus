@@ -49,7 +49,7 @@ except ImportError:
 # consistently with every ui.py-rendered command. Avoid constructing a raw
 # `Console()` elsewhere in this module — hardcoded hex drifts from the theme
 # as soon as ui.py palette changes.
-from quorus_cli import ui as _ui  # noqa: E402
+from quorus_cli import ui as _ui
 
 from quorus.config import ConfigManager, resolve_config_dir
 
@@ -2296,7 +2296,7 @@ def _slash_identity(arg, state, relay_url, secret, agent_name, console):
         console.print(
             f"  [dim]Restart the TUI to use @{new_identity} for sends[/]"
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         state.set_status_bar(f"could not persist: {e}")
     return True
 
@@ -2330,7 +2330,7 @@ def _post_social_verb(
             state.set_status_bar(f"/{verb} ✓")
         else:
             state.set_status_bar(f"/{verb}: {r.status_code} {r.text[:80]}")
-    except Exception as e:  # noqa: BLE001 — surface to status bar
+    except Exception as e:
         state.set_status_bar(f"/{verb}: {e}")
     return True
 
@@ -3697,7 +3697,7 @@ def _run_session(
         profile["chat_identity"] = chat_identity
         try:
             ConfigManager().save(profile)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             console.print(
                 f"  [yellow]Could not persist chat_identity: {e} — "
                 "will re-detect next session[/]"

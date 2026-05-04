@@ -6,7 +6,7 @@ The implementation has moved to the standalone ``quorus-sdk`` package
 """
 
 from quorus_sdk.http_agent import ReceiveResult
-from quorus_sdk.sdk import *  # noqa: F401,F403
+from quorus_sdk.sdk import *  # noqa: F403
 from quorus_sdk.sdk import Room
 
 __all__ = ["Room", "ReceiveResult"]

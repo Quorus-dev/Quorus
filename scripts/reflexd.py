@@ -455,7 +455,7 @@ def probe_harness_version(harness: str, *, timeout_s: float = 3.0) -> str | None
     if shutil.which(argv[0]) is None:
         return None
     try:
-        proc = subprocess.run(  # noqa: S603 — argv is hardcoded above
+        proc = subprocess.run(
             argv,
             capture_output=True,
             text=True,
@@ -788,7 +788,9 @@ class HeadlessAdapter:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self.timeout_s
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
+            # L4: Python 3.11+ aliases ``asyncio.TimeoutError`` to the
+            # builtin ``TimeoutError``; the asyncio prefix is deprecated.
             proc.kill()
             await proc.wait()
             logger.warning("harness %s timed out", argv[0])
@@ -1594,7 +1596,7 @@ class Reflexd:
                                 raise SystemExit(3)
                 except SystemExit:
                     raise
-                except Exception as exc:  # noqa: BLE001 — best-effort preflight
+                except Exception as exc:
                     logger.warning(
                         "preflight JWT-sub check skipped: %s", exc,
                     )
@@ -1640,7 +1642,9 @@ class Reflexd:
     async def _sleep_or_stop(self, seconds: float) -> None:
         try:
             await asyncio.wait_for(self._stop.wait(), timeout=seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
+            # L4: 3.11+ uses the builtin TimeoutError; asyncio.TimeoutError
+            # is a deprecated alias.
             return
 
     async def _dispatch_event(

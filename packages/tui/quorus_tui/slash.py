@@ -23,7 +23,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.text import Text
 
-from . import chat as _chat  # noqa: I001  — local relative import follows third-party
+from . import chat as _chat
 
 # ── Share flow (used by both `s` and `/share`) ───────────────────────────────
 

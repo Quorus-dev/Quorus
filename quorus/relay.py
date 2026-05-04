@@ -856,13 +856,13 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 
 from quorus.relay_routes import (  # noqa: E402, I001
-    MAX_MESSAGE_SIZE as MAX_MESSAGE_SIZE,  # noqa: F401
-    MAX_MESSAGES as MAX_MESSAGES,  # noqa: F401
-    RATE_LIMIT_MAX as RATE_LIMIT_MAX,  # noqa: F401
-    RATE_LIMIT_WINDOW as RATE_LIMIT_WINDOW,  # noqa: F401
+    MAX_MESSAGE_SIZE as MAX_MESSAGE_SIZE,
+    MAX_MESSAGES as MAX_MESSAGES,
+    RATE_LIMIT_MAX as RATE_LIMIT_MAX,
+    RATE_LIMIT_WINDOW as RATE_LIMIT_WINDOW,
     reset_state as _reset_state,  # noqa: F401
 )
-from quorus.routes.sse import stream_messages as stream_messages  # noqa: E402, F401
+from quorus.routes.sse import stream_messages as stream_messages  # noqa: E402
 
 if __name__ == "__main__":
     main()

@@ -199,7 +199,23 @@ class Supervisor:
             log_fp.close()
             return None
         finally:
-            log_fp.close()
+            # L5: closing log_fp here is correct. ``close_fds=True`` plus
+            # ``stdout=log_fp`` causes Popen to ``dup2`` the log file
+            # descriptor onto the child's stdout/stderr; the child holds
+            # the only inherited copy. Closing our parent-side fd here
+            # (a) prevents the child holding the dir busy on shutdown,
+            # (b) ensures EOF is observed when the child exits, and
+            # (c) the dup'd fd in the child stays open via the kernel's
+            # per-process fd table.
+            try:
+                log_fp.close()
+            except OSError as close_exc:
+                # Don't raise — the child has its dup'd fd; our parent fd
+                # going away is best-effort cleanup.
+                logger.debug(
+                    "failed to close parent-side log fp for %s: %s",
+                    participant, close_exc,
+                )
         return ChildRecord(
             participant=participant,
             pid=int(getattr(proc, "pid", 0)),

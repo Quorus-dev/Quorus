@@ -8,6 +8,7 @@ falls back to process-local ``asyncio.Event``.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import uuid
@@ -25,6 +26,25 @@ from quorus.services.analytics_svc import AnalyticsService
 from quorus.services.rate_limit_svc import RateLimitService
 from quorus.services.sse_svc import SSEService
 from quorus.services.webhook_svc import WebhookService
+
+
+def _redact_participant(name: str) -> str:
+    """S3 fix — return ``<first 3 chars>+<sha256[:6]>`` for log lines.
+
+    DM logs include sender/recipient identifiers. Plain names are PII-ish
+    enough that GDPR + SOC2 prefer them not be retained verbatim in
+    long-lived log stores. This redactor lets ops still correlate flows
+    across log lines (same name → same redacted form) without exposing
+    the cleartext identifier. Reversal needs both the prefix AND the
+    salted hash, neither of which is meaningful on its own.
+
+    Empty / None input returns the literal ``"<unknown>"`` so downstream
+    log-format strings never crash on missing values.
+    """
+    if not name:
+        return "<unknown>"
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:6]
+    return f"{name[:3]}+{digest}"
 
 
 @dataclass
@@ -228,7 +248,12 @@ class MessageService:
         await self._webhook.notify_dm(tenant_id, recipient, message)
         await self._analytics.track_send(tenant_id, sender)
 
-        logger.info("Message %s: %s -> %s", message["id"], sender, recipient)
+        logger.info(
+            "Message %s: %s -> %s",
+            message["id"],
+            _redact_participant(sender),
+            _redact_participant(recipient),
+        )
         return {"id": message["id"], "timestamp": timestamp}
 
     async def _send_chunked(
@@ -283,8 +308,8 @@ class MessageService:
         logger.info(
             "Message chunked into %d parts (%s -> %s, group %s)",
             chunk_total,
-            sender,
-            recipient,
+            _redact_participant(sender),
+            _redact_participant(recipient),
             chunk_group,
         )
         return {"id": messages[0]["id"], "timestamp": timestamp}
@@ -333,7 +358,7 @@ class MessageService:
         logger.info(
             "Fetched %d messages for %s (%d chunks held back)",
             len(ready),
-            recipient,
+            _redact_participant(recipient),
             len(held_back),
         )
         return FetchResult(

@@ -86,14 +86,19 @@ def _is_admin_cookie(request: Request) -> bool:
     return bool(token) and _verify_admin_cookie_token(token)
 
 
-def _is_admin_bearer(request: Request) -> bool:
-    """Allow the existing Bearer-admin path (RELAY_SECRET or JWT role=admin)."""
-    try:
-        import asyncio
+async def _is_admin_bearer(request: Request) -> bool:
+    """Allow the existing Bearer-admin path (RELAY_SECRET or JWT role=admin).
 
-        auth: AuthContext = asyncio.get_event_loop().run_until_complete(
-            verify_auth(request)
-        )
+    S2 fix (2026-05-03 wave-8): previously called
+    ``asyncio.get_event_loop().run_until_complete(verify_auth(...))``
+    inside an async route — that pattern is deprecated on Python 3.12+
+    (no-running-loop returns a closed loop) AND raises
+    ``RuntimeError: This event loop is already running`` when invoked
+    from inside an async handler (which is the only place it ever runs).
+    Now properly async; callers must ``await`` it.
+    """
+    try:
+        auth: AuthContext = await verify_auth(request)
         return auth.role == "admin" or auth.is_legacy
     except Exception:
         return False

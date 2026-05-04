@@ -273,7 +273,7 @@ def notify(
     sender: str = "",
     room: str = "",
     sound: bool = True,
-    focus_action: str | None = None,  # noqa: ARG001 — reserved for future
+    focus_action: str | None = None,
     state_dir: Path | None = None,
     now: float | None = None,
 ) -> bool:

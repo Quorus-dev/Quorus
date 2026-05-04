@@ -103,7 +103,7 @@ class AuditService:
                 text("SELECT pg_advisory_xact_lock(hashtext(:tenant_id))"),
                 {"tenant_id": tenant_id},
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("Audit chain advisory lock unavailable", error=str(exc))
 
     async def _latest_hash(self, session: Any, tenant_id: str) -> str | None:

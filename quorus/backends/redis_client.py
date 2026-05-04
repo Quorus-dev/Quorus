@@ -27,7 +27,7 @@ _HEALTH_CACHE_TTL = 30.0  # Cache health status for 30 seconds
 
 async def init_redis(url: str | None = None) -> Redis:
     """Create (or return the existing) async Redis connection."""
-    global _redis  # noqa: PLW0603
+    global _redis
     if _redis is not None:
         return _redis
     resolved_url = url or os.environ.get("REDIS_URL", _DEFAULT_URL)
@@ -51,7 +51,7 @@ async def init_redis(url: str | None = None) -> Redis:
 
 async def close_redis() -> None:
     """Gracefully close the Redis connection pool."""
-    global _redis  # noqa: PLW0603
+    global _redis
     if _redis is not None:
         await _redis.aclose()
         _redis = None
