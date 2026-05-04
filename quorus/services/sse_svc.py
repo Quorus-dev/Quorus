@@ -37,6 +37,9 @@ class SSEService:
         self._notification = notification
         # Process-local: (tenant_id, recipient) -> list of asyncio.Queue
         self._queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
+        # Track fire-and-forget publish tasks so CPython doesn't GC them
+        # mid-flight. add_done_callback discards on completion.
+        self._pending_publishes: set[asyncio.Task] = set()
 
     # -- Token management -----------------------------------------------------
 
@@ -84,11 +87,13 @@ class SSEService:
             }
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(
+                task = loop.create_task(
                     self._notification._redis.publish(
                         channel, json.dumps(envelope)
                     )
                 )
+                self._pending_publishes.add(task)
+                task.add_done_callback(self._pending_publishes.discard)
             except RuntimeError:
                 pass  # No event loop
 

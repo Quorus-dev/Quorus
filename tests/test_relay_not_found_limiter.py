@@ -197,13 +197,23 @@ def test_middleware_fails_open_on_record_redis_error(monkeypatch):
 @pytest.mark.parametrize(
     "header_value, expected",
     [
+        # Single-hop XFF: rightmost-1 == that one hop.
         ("203.0.113.1", "203.0.113.1"),
-        ("203.0.113.1, 198.51.100.99", "203.0.113.1"),
+        # Multi-hop: wave-5 fix takes the RIGHTMOST trusted hop, not the
+        # leftmost — leftmost is spoofable client-supplied data.
+        ("203.0.113.1, 198.51.100.99", "198.51.100.99"),
+        # Whitespace gets trimmed.
         ("  203.0.113.5  ", "203.0.113.5"),
     ],
 )
 def test_get_client_ip_handles_xff(header_value, expected):
-    """X-Forwarded-For parsing must trim whitespace and pick the first hop."""
+    """X-Forwarded-For parsing — wave-5 fix moves to rightmost-N pattern.
+
+    Leftmost-trust let any client spoof its IP by prepending an entry to
+    XFF. Rightmost-N walks back from the proxy hop our edge proxy
+    actually controls (default TRUSTED_PROXY_COUNT=1 = the very last
+    entry).
+    """
 
     class _StubRequest:
         def __init__(self, xff: str) -> None:

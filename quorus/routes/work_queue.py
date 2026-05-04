@@ -14,6 +14,7 @@ the Stream A pattern in ``quorus/routes/social.py``. Reset is wired into
 """
 from __future__ import annotations
 
+import uuid as _uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -219,6 +220,7 @@ async def post_work_queue(
 
     svc = _work_queue_svc(request)
 
+    task: dict | None = None
     try:
         if body.op == "add":
             if not body.summary:
@@ -233,9 +235,8 @@ async def post_work_queue(
                 task_id=body.task_id,
                 metadata=body.metadata,
             )
-            return {"ok": True, "task": task}
 
-        if body.op == "claim":
+        elif body.op == "claim":
             if not body.task_id:
                 raise HTTPException(
                     status_code=400, detail="task_id required for op=claim",
@@ -245,9 +246,8 @@ async def post_work_queue(
                 task_id=body.task_id, actor=actor,
                 eta_seconds=body.eta_seconds,
             )
-            return {"ok": True, "task": task}
 
-        if body.op == "update":
+        elif body.op == "update":
             if not body.task_id:
                 raise HTTPException(
                     status_code=400, detail="task_id required for op=update",
@@ -259,9 +259,8 @@ async def post_work_queue(
                 eta_seconds=body.eta_seconds,
                 metadata_patch=body.metadata,
             )
-            return {"ok": True, "task": task}
 
-        if body.op == "complete":
+        elif body.op == "complete":
             if not body.task_id:
                 raise HTTPException(
                     status_code=400, detail="task_id required for op=complete",
@@ -272,9 +271,8 @@ async def post_work_queue(
                 outcome=body.outcome or ("ok" if body.success else "failed"),
                 success=body.success,
             )
-            return {"ok": True, "task": task}
 
-        if body.op == "release":
+        elif body.op == "release":
             if not body.task_id:
                 raise HTTPException(
                     status_code=400, detail="task_id required for op=release",
@@ -284,7 +282,6 @@ async def post_work_queue(
                 task_id=body.task_id, actor=actor,
                 handoff_to=body.handoff_to,
             )
-            return {"ok": True, "task": task}
 
     except QuotaExceededError as e:
         # M13 — per-actor active-task quota exceeded. Mirrors the
@@ -298,12 +295,47 @@ async def post_work_queue(
     except WorkQueueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # Unreachable: ``WorkQueueRequest.op`` is a closed Literal of the five
-    # branches handled above, so Pydantic rejects unknown ops at the
-    # validation layer before we ever reach this point. Keeping the type
-    # checker honest with an explicit unreachable assertion rather than a
-    # dead ``raise HTTPException`` (L28).
-    raise AssertionError(f"unreachable: unknown op {body.op!r}")  # pragma: no cover
+    if task is None:
+        # Unreachable: ``WorkQueueRequest.op`` is a closed Literal of the
+        # branches handled above, so Pydantic rejects unknown ops at the
+        # validation layer before we ever reach this point.
+        raise AssertionError(f"unreachable: unknown op {body.op!r}")  # pragma: no cover
+
+    # Wave-5 Fix 3 — audit trail. SOC2 requires every state-mutating
+    # operation to land in the audit ledger. Best-effort: a missing
+    # audit_service (e.g. non-Postgres test rigs) must not break the
+    # write path. Only structural fields are recorded — task summaries
+    # and outcomes may contain free-form user text and stay out of the
+    # ledger to avoid leaking sensitive payloads.
+    audit_svc = getattr(request.app.state, "audit_service", None)
+    if audit_svc is not None:
+        try:
+            audit_details: dict[str, Any] = {
+                "op": body.op,
+                "room_id": rid,
+                "task_id": task.get("task_id") if isinstance(task, dict) else None,
+            }
+            if body.op == "claim" and body.eta_seconds is not None:
+                audit_details["eta_seconds"] = body.eta_seconds
+            elif body.op == "release" and body.handoff_to:
+                audit_details["handoff_to"] = body.handoff_to
+            elif body.op == "complete":
+                audit_details["success"] = body.success
+            await audit_svc.record(
+                tenant_id=tid,
+                message_id=_uuid.uuid4(),
+                event_type=f"work_queue:{body.op}",
+                actor=actor,
+                target=audit_details["task_id"] or rid,
+                room_id=rid,
+                room_name=room_data.get("name"),
+                details=audit_details,
+            )
+        except Exception:
+            # Audit ledger best-effort; never block the write.
+            pass
+
+    return {"ok": True, "task": task}
 
 
 __all__ = ["router"]

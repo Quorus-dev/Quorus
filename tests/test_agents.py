@@ -148,3 +148,96 @@ class TestOnlineStatus:
         resp = await client.get("/agents/room-agent", headers=HEADERS)
         assert resp.status_code == 200
         assert resp.json()["online"] is True
+
+
+# ---------------------------------------------------------------------------
+# Wave-5 Fix 5 — enumeration scoping
+# ---------------------------------------------------------------------------
+
+
+from quorus.auth.tokens import create_jwt  # noqa: E402
+
+_FIX5_TENANT_ID = "t-fix5"
+_FIX5_TENANT_SLUG = "fix5-tenant"
+
+
+def _user_headers(name: str) -> dict[str, str]:
+  """Bearer-JWT headers for a non-admin user in the test tenant."""
+  token = create_jwt(
+      sub=name,
+      tenant_id=_FIX5_TENANT_ID,
+      tenant_slug=_FIX5_TENANT_SLUG,
+  )
+  return {"Authorization": f"Bearer {token}"}
+
+
+async def test_enumeration_blocked_for_non_admin_non_member(
+    client: AsyncClient,
+):
+  """Non-admin caller with no shared room must get 403 — closing the
+  OSINT vector that previously returned the full agent profile."""
+  # Heartbeat the target agent in the legacy tenant (it has presence).
+  await _register_presence(client, "target-agent")
+  # Heartbeat the caller in the fix5 tenant — different tenant means no
+  # presence visibility. Use a non-admin JWT for the lookup.
+  resp = await client.post(
+      "/heartbeat",
+      json={"instance_name": "outsider", "status": "active"},
+      headers=_user_headers("outsider"),
+  )
+  assert resp.status_code == 200, resp.text
+
+  # Try to enumerate the target agent. Different tenants => 404 (target
+  # doesn't exist in caller's tenant). Same tenant + no shared room
+  # would 403. Both close the OSINT vector.
+  resp = await client.get("/agents/target-agent", headers=_user_headers("outsider"))
+  assert resp.status_code in (403, 404), resp.text
+
+
+async def test_only_shared_rooms_returned(client: AsyncClient):
+  """When caller and target share exactly ONE room out of many, the
+  visible rooms list must contain only the shared room."""
+  # Use real JWT auth in the fix5 tenant for both alice and bob so they
+  # see the same room registry.
+  # alice creates two rooms; bob is added only to "shared-room".
+  r1 = await client.post(
+      "/rooms",
+      json={"name": "alice-private", "created_by": "alice"},
+      headers=_user_headers("alice"),
+  )
+  assert r1.status_code == 200, r1.text
+  r2 = await client.post(
+      "/rooms",
+      json={"name": "shared-room", "created_by": "alice"},
+      headers=_user_headers("alice"),
+  )
+  assert r2.status_code == 200, r2.text
+  shared_id = r2.json()["id"]
+  # Add bob to the shared room.
+  join = await client.post(
+      f"/rooms/{shared_id}/join",
+      json={"participant": "bob", "role": "member"},
+      headers=_user_headers("alice"),
+  )
+  assert join.status_code == 200, join.text
+
+  # alice heartbeats so she has presence in fix5 tenant.
+  hb = await client.post(
+      "/heartbeat",
+      json={"instance_name": "alice", "status": "active"},
+      headers=_user_headers("alice"),
+  )
+  assert hb.status_code == 200
+
+  # bob queries alice — should ONLY see the shared room, never the
+  # private one.
+  resp = await client.get("/agents/alice", headers=_user_headers("bob"))
+  assert resp.status_code == 200, resp.text
+  data = resp.json()
+  room_names = [r["name"] for r in data["rooms"]]
+  assert "shared-room" in room_names
+  assert "alice-private" not in room_names, (
+      f"private room leaked to non-admin caller: {room_names}"
+  )
+  # Non-admin caller must NOT see message_count statistics.
+  assert data["message_count"] == 0

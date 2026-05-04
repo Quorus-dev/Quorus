@@ -514,3 +514,143 @@ async def test_work_queue_quota_route_returns_429(
     )
     assert resp.status_code == 429, resp.text
     assert "active tasks" in resp.text or "max" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Wave-5 Fix 3 — audit trail on every successful work-queue mutation
+# ---------------------------------------------------------------------------
+
+
+class _StubAudit:
+    def __init__(self):
+        self.captured: list[dict] = []
+
+    async def record(self, **kwargs):
+        self.captured.append(kwargs)
+
+
+async def test_audit_recorded_on_claim(
+    client: AsyncClient, room_id: str,
+):
+    """Wave-5 Fix 3 — claim ops must produce a work_queue:claim audit row."""
+    audit = _StubAudit()
+    app.state.audit_service = audit
+    try:
+        # add then claim
+        add = await client.post(
+            f"/v1/work_queue/{room_id}",
+            json={
+                "op": "add", "actor": "alice",
+                "summary": "audit-claim-task",
+                "task_id": "audit-claim",
+            },
+            headers=_user_headers("alice"),
+        )
+        assert add.status_code == 200
+        cl = await client.post(
+            f"/v1/work_queue/{room_id}",
+            json={
+                "op": "claim", "actor": "alice",
+                "task_id": "audit-claim", "eta_seconds": 60,
+            },
+            headers=_user_headers("alice"),
+        )
+        assert cl.status_code == 200, cl.text
+        # Two audit rows: one for add, one for claim.
+        events = [e["event_type"] for e in audit.captured]
+        assert "work_queue:add" in events
+        assert "work_queue:claim" in events
+        claim_row = next(e for e in audit.captured if e["event_type"] == "work_queue:claim")
+        assert claim_row["actor"] == "alice"
+        assert claim_row["details"]["task_id"] == "audit-claim"
+        assert claim_row["details"]["op"] == "claim"
+    finally:
+        app.state.audit_service = None
+
+
+async def test_audit_recorded_on_release(
+    client: AsyncClient, room_id: str,
+):
+    """Wave-5 Fix 3 — release ops must produce a work_queue:release audit row."""
+    audit = _StubAudit()
+    app.state.audit_service = audit
+    try:
+        await client.post(
+            f"/v1/work_queue/{room_id}",
+            json={
+                "op": "add", "actor": "alice",
+                "summary": "audit-release-task",
+                "task_id": "audit-release",
+            },
+            headers=_user_headers("alice"),
+        )
+        await client.post(
+            f"/v1/work_queue/{room_id}",
+            json={
+                "op": "claim", "actor": "alice",
+                "task_id": "audit-release",
+            },
+            headers=_user_headers("alice"),
+        )
+        rel = await client.post(
+            f"/v1/work_queue/{room_id}",
+            json={
+                "op": "release", "actor": "alice",
+                "task_id": "audit-release", "handoff_to": "bob",
+            },
+            headers=_user_headers("alice"),
+        )
+        assert rel.status_code == 200, rel.text
+        rel_row = next(
+            e for e in audit.captured if e["event_type"] == "work_queue:release"
+        )
+        assert rel_row["details"]["handoff_to"] == "bob"
+    finally:
+        app.state.audit_service = None
+
+
+async def test_audit_recorded_on_complete(
+    client: AsyncClient, room_id: str,
+):
+    """Wave-5 Fix 3 — complete ops must produce a work_queue:complete audit row."""
+    audit = _StubAudit()
+    app.state.audit_service = audit
+    try:
+        await client.post(
+            f"/v1/work_queue/{room_id}",
+            json={
+                "op": "add", "actor": "alice",
+                "summary": "audit-complete-task",
+                "task_id": "audit-complete",
+            },
+            headers=_user_headers("alice"),
+        )
+        await client.post(
+            f"/v1/work_queue/{room_id}",
+            json={
+                "op": "claim", "actor": "alice",
+                "task_id": "audit-complete",
+            },
+            headers=_user_headers("alice"),
+        )
+        comp = await client.post(
+            f"/v1/work_queue/{room_id}",
+            json={
+                "op": "complete", "actor": "alice",
+                "task_id": "audit-complete", "outcome": "shipped",
+                "success": True,
+            },
+            headers=_user_headers("alice"),
+        )
+        assert comp.status_code == 200, comp.text
+        comp_row = next(
+            e for e in audit.captured if e["event_type"] == "work_queue:complete"
+        )
+        assert comp_row["details"]["success"] is True
+        # outcome string contains free text and must NOT leak into details.
+        for k, v in comp_row["details"].items():
+            assert "shipped" not in str(v), (
+                f"complete outcome leaked into audit.details.{k}"
+            )
+    finally:
+        app.state.audit_service = None

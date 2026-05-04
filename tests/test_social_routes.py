@@ -625,6 +625,75 @@ async def test_social_audit_trail_recorded(
         app.state.audit_service = None
 
 
+async def test_audit_id_matches_sse_id(
+    client: AsyncClient, room_id: str,
+):
+    """Wave-5 Fix 2 — the SSE envelope ``id`` and the audit row
+    ``message_id`` MUST be the same UUID so SOC2 reviewers can
+    cross-reference broadcast events to ledger rows.
+    """
+    audit_captured: list[dict] = []
+    sse_captured: list[dict] = []
+
+    class _StubAudit:
+        async def record(self, **kwargs):
+            audit_captured.append(kwargs)
+
+    real_sse = app.state.sse_service
+    real_push = real_sse.push
+
+    def _capture_push(tenant_id, recipient, message):
+        sse_captured.append({"recipient": recipient, "message": message})
+        return real_push(tenant_id, recipient, message)
+
+    real_sse.push = _capture_push  # type: ignore[method-assign]
+    app.state.audit_service = _StubAudit()
+    try:
+        resp = await client.post(
+            "/v1/social/claim",
+            json={
+                "actor": "alice", "room_id": room_id,
+                "payload": {
+                    "task_id": "t-id-match", "eta_seconds": 60,
+                    "scope": "x",
+                },
+            },
+            headers=_user_headers("alice"),
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(audit_captured) == 1
+        # The social-verb broadcast SSE push uses ONE id for every recipient
+        # (proves the wave-5 fix). The history mirror also fans out a copy
+        # to each recipient with its own per-recipient ids. So the
+        # broadcast id is the *unique* social-typed id whose count == #members
+        # while each history mirror id is unique per recipient.
+        from collections import Counter
+
+        social_pushes = [
+            p for p in sse_captured
+            if p["message"].get("message_type") == "social"
+        ]
+        assert len(social_pushes) >= 1, "social SSE push must fire on success"
+        id_counts = Counter(p["message"]["id"] for p in social_pushes)
+        # The broadcast id is the most-repeated one (one per member); take
+        # the most common (ties broken arbitrarily — but with 3 members the
+        # broadcast id should clearly dominate per-recipient mirror ids).
+        broadcast_id, broadcast_count = id_counts.most_common(1)[0]
+        assert broadcast_count >= 2, (
+            f"broadcast id must repeat across members, got {dict(id_counts)}"
+        )
+        audit_message_id = str(audit_captured[0]["message_id"])
+        assert broadcast_id == audit_message_id, (
+            f"audit message_id {audit_message_id} must equal SSE broadcast "
+            f"id {broadcast_id}"
+        )
+        # The audit details should also expose the broadcast_id explicitly.
+        assert audit_captured[0]["details"]["broadcast_id"] == broadcast_id
+    finally:
+        real_sse.push = real_push  # type: ignore[method-assign]
+        app.state.audit_service = None
+
+
 async def test_legacy_bearer_rejected_on_social_endpoints(
     client: AsyncClient, room_id: str,
 ):

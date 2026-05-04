@@ -62,9 +62,21 @@ async def stream_messages(
 ):
     svc = request.app.state.sse_service
     valid, tid = await svc.verify_token(token, recipient)
-    # Allow RELAY_SECRET as fallback only when legacy auth is enabled
+    # Wave-5 Fix 6 — tighten the legacy bypass.
+    #
+    # Allow RELAY_SECRET as a fallback ONLY when:
+    #   * legacy auth is on (ALLOW_LEGACY_AUTH), AND
+    #   * the deployment is NOT in production mode (DATABASE_URL unset).
+    #
+    # Production deployments always have DATABASE_URL set, so the legacy
+    # bypass is short-circuited there regardless of any operator
+    # misconfiguration of ALLOW_LEGACY_AUTH. Without this gate, a compro-
+    # mised RELAY_SECRET let any caller subscribe to ANY recipient as
+    # tid="_legacy", crossing tenant boundaries.
+    in_production = bool(os.environ.get("DATABASE_URL", ""))
     legacy_ok = (
         ALLOW_LEGACY_AUTH
+        and not in_production
         and RELAY_SECRET
         and hmac_mod.compare_digest(token, RELAY_SECRET)
     )

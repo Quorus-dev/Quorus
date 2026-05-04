@@ -614,11 +614,16 @@ _not_found_lock = asyncio.Lock()
 
 
 def _get_client_ip(request: Request) -> str:
-    """Extract client IP from request, handling proxies."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """Extract client IP from request, handling proxies.
+
+    Wave-5 Fix 4 — uses ``quorus.config.get_real_ip`` which walks the
+    rightmost ``TRUSTED_PROXY_COUNT`` hops of X-Forwarded-For. The previous
+    leftmost-trust let any client spoof XFF and evade the 404 sweeper /
+    rate limits behind Fly's single edge proxy.
+    """
+    from quorus.config import get_real_ip
+
+    return get_real_ip(request)
 
 
 async def _is_blocked_memory(ip: str) -> tuple[bool, int]:

@@ -304,6 +304,18 @@ async def claim_winner(
     if window.claim is not None:
         return window.claim
 
+    # Wave-5 Fix 8 — only an actual bidder may claim. Without this gate
+    # any room member could call /v1/claim against a window they never
+    # bid on and walk away with the ``claim_token``, which is a real
+    # privilege-escalation vector for downstream tools that trust the
+    # token. Admin / legacy auth retain operator-level claim ability.
+    if not auth.is_legacy and auth.role != "admin":
+        if auth.sub is None or auth.sub not in window.bids:
+            raise HTTPException(
+                status_code=403,
+                detail="not a bidder for this window",
+            )
+
     winner = max(
         window.bids.values(),
         key=lambda item: (

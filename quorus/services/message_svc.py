@@ -93,6 +93,9 @@ class MessageService:
             asyncio.Event
         )
         self._events_max = int(os.environ.get("MESSAGE_EVENTS_MAX", "10000"))
+        # Track fire-and-forget publish tasks so CPython doesn't GC them
+        # mid-flight. add_done_callback discards on completion.
+        self._pending_publishes: set[asyncio.Task] = set()
 
     def _gc_events_if_needed(self) -> None:
         """Drop oldest keys if the events dict exceeds the cap."""
@@ -131,9 +134,11 @@ class MessageService:
             channel = NS.dm_channel(tenant_id, recipient)
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(
+                task = loop.create_task(
                     self._notification.publish(channel, {"wake": True})
                 )
+                self._pending_publishes.add(task)
+                task.add_done_callback(self._pending_publishes.discard)
             except RuntimeError:
                 pass
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -9,6 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from quorus.auth.middleware import AuthContext, verify_auth
+
+# Wave-5 Fix 7 — cap on the size of the ``arguments`` payload.
+# A compromised MCP agent could otherwise post arbitrarily large dicts to
+# DoS the audit ledger / Postgres write path. 4 KB easily fits any
+# legitimate tool invocation while bounding worst-case write cost.
+_MAX_MCP_ARGUMENTS_BYTES = 4096
 
 router = APIRouter(prefix="/v1/audit", tags=["audit"])
 _LEGACY_TENANT = "_legacy"
@@ -109,7 +116,31 @@ async def record_mcp_tool_call(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
-    """Record an MCP tool call before the local MCP server executes it."""
+    """Record an MCP tool call before the local MCP server executes it.
+
+    Wave-5 Fix 7 — the ``arguments`` payload is capped at 4 KB BEFORE any
+    DB write so a malicious / compromised agent cannot DoS the ledger by
+    flooding it with multi-MB tool arguments.
+    """
+    # Compute size on the validated dict, NOT the raw body, so we measure
+    # what actually gets persisted (not pretty-printing whitespace).
+    try:
+        arg_bytes = len(json.dumps(req.arguments, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        # Unserializable input is treated as oversized — pydantic should
+        # have caught most non-serializable values, but defense-in-depth.
+        raise HTTPException(
+            status_code=413,
+            detail="arguments payload is not JSON-serializable",
+        ) from None
+    if arg_bytes > _MAX_MCP_ARGUMENTS_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"arguments payload exceeds {_MAX_MCP_ARGUMENTS_BYTES // 1024}KB "
+                f"(got {arg_bytes} bytes)"
+            ),
+        )
     audit_svc = _audit_service(request)
     return await audit_svc.record_mcp_tool_call(
         tenant_id=_tid(auth),

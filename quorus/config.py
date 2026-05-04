@@ -24,6 +24,52 @@ CONFIG_FILENAME = "config.json"
 DEFAULT_CONFIG_DIR = Path.home() / ".quorus"
 LEGACY_CONFIG_DIR = Path.home() / "mcp-tunnel"
 
+
+def _trusted_proxy_count() -> int:
+    """Number of proxies in front of the relay we trust to set X-Forwarded-For.
+
+    Wave-5 Fix 4 — taking the LEFTMOST XFF entry trusts the client; taking
+    the rightmost-N is the safe pattern. The default of 1 matches Fly.io's
+    edge proxy. Operators behind multiple LBs (e.g. CloudFront → ALB → app)
+    must raise this so we walk past their controlled hops.
+    """
+    try:
+        n = int(os.environ.get("TRUSTED_PROXY_COUNT", "1"))
+    except ValueError:
+        n = 1
+    return max(1, n)
+
+
+def get_real_ip(request: Any, *, trusted_n: int | None = None) -> str:
+    """Extract caller IP from a Starlette/FastAPI request, walking only the
+    rightmost ``trusted_n`` X-Forwarded-For hops.
+
+    Why rightmost: each proxy appends the immediate sender to the list. A
+    spoofed XFF from the public client lands at the LEFT and is therefore
+    untrusted. By taking ``parts[-trusted_n]`` we land on the IP the
+    outermost trusted proxy actually saw.
+
+    Header lookup tries both casings so plain-dict test stubs (case
+    sensitive) and real Starlette headers (case insensitive) both work.
+    """
+    if trusted_n is None:
+        trusted_n = _trusted_proxy_count()
+    headers = getattr(request, "headers", None)
+    xff_raw = ""
+    if headers is not None:
+        xff_raw = (
+            headers.get("X-Forwarded-For")
+            or headers.get("x-forwarded-for")
+            or ""
+        )
+    parts = [p.strip() for p in xff_raw.split(",") if p.strip()]
+    if parts and len(parts) >= trusted_n:
+        return parts[-trusted_n]
+    client = getattr(request, "client", None)
+    if client and getattr(client, "host", None):
+        return client.host
+    return "unknown"
+
 _LEGACY_MURMUR_DIRNAME = ".murmur"
 _LEGACY_MCP_TUNNEL_DIRNAME = "mcp-tunnel"
 

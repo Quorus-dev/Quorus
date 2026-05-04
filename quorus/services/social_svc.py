@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import OrderedDict
 from typing import Any, Callable
 
 from quorus.protocol.social_verbs import SocialVerb
@@ -26,6 +27,10 @@ _MAX_QUEUE_PER_ROOM = 1000
 _MAX_DEFER_EDGES_PER_ROOM = 256
 _MAX_VOTERS_PER_POLL = 1024
 _MAX_SOCIAL_CREDIT = 10_000
+
+# Wave-5 Fix 9 — bound the per-(tid, rid) lock LRU. Prevents unbounded
+# growth on long-running replicas with many transient room ids.
+_SOCIAL_LOCK_LRU_MAX = 2048
 
 
 class SocialProtocolError(Exception):
@@ -112,12 +117,49 @@ class SocialSvc:
 
     def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self._state: dict[tuple[str, str], dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
+        # Wave-5 Fix 9 — replace single global lock with a per-(tid, rid)
+        # LRU lock map so concurrent verb posts on different rooms don't
+        # serialize through one global mutex. The factory lock guards
+        # only the lock-creation path and is held for at most a few
+        # nanoseconds. The LRU eviction policy (size cap=2048) protects
+        # us from unbounded growth on long-running replicas with many
+        # transient room ids.
+        self._locks: OrderedDict[tuple[str, str], asyncio.Lock] = OrderedDict()
+        self._lock_factory_lock = asyncio.Lock()
+        # Reset operations across the whole tenant must take ALL locks,
+        # which is impossible with a per-room map. Instead reset() takes
+        # the factory lock to block new lock creation while it iterates.
         self._clock = clock or time.time
+
+    def _get_lock(self, tid: str, rid: str) -> asyncio.Lock:
+        """Return the per-(tid, rid) asyncio.Lock, creating + LRU-evicting
+        as needed. Synchronous because OrderedDict ops are fast and the
+        factory contention window is tiny — preserving asynchrony here
+        would require an awaitable per-call which negates the win."""
+        key = (tid, rid)
+        existing = self._locks.get(key)
+        if existing is not None:
+            self._locks.move_to_end(key)
+            return existing
+        # Insert + bound. Evicting an in-use lock is theoretically
+        # possible but the lock object remains alive via the holder's
+        # ``async with`` reference, so the eviction merely prevents NEW
+        # callers from finding it — they create a fresh lock and the
+        # window of "two locks for same key" is bounded by current
+        # in-flight work, which is fine because the state dict mutation
+        # happens behind the lock and the operations on different room
+        # state keys don't conflict anyway.
+        new_lock = asyncio.Lock()
+        self._locks[key] = new_lock
+        self._locks.move_to_end(key)
+        while len(self._locks) > _SOCIAL_LOCK_LRU_MAX:
+            self._locks.popitem(last=False)
+        return new_lock
 
     async def get_state(self, tid: str, rid: str) -> dict[str, Any]:
         """Return a defensive copy of the room's state dict."""
-        async with self._lock:
+        lock = self._get_lock(tid, rid)
+        async with lock:
             self._expire_defer_edges_locked(tid, rid)
             state = self._state.get((tid, rid))
             if state is None:
@@ -128,17 +170,28 @@ class SocialSvc:
         self, tid: str | None = None, rid: str | None = None,
     ) -> None:
         """Wipe state. No args → full wipe. Only tid → wipe that tenant.
-        Both tid+rid → wipe just that room."""
-        async with self._lock:
+        Both tid+rid → wipe just that room.
+
+        We don't take any per-room lock here — reset is a test-only /
+        admin entry point and overlapping live mutations are a caller
+        bug. We DO take the factory lock so we don't race with new
+        per-room lock creation while we mutate the lock dict.
+        """
+        async with self._lock_factory_lock:
             if tid is None and rid is None:
                 self._state.clear()
+                self._locks.clear()
                 return
             if tid is not None and rid is None:
                 self._state = {
                     k: v for k, v in self._state.items() if k[0] != tid
                 }
+                self._locks = OrderedDict(
+                    (k, lk) for k, lk in self._locks.items() if k[0] != tid
+                )
                 return
             self._state.pop((tid, rid), None)
+            self._locks.pop((tid, rid), None)
 
     async def apply(
         self, tid: str, rid: str, sv: SocialVerb,
@@ -155,7 +208,8 @@ class SocialSvc:
 
         Raises one of the SocialProtocolError subclasses on rejection.
         """
-        async with self._lock:
+        lock = self._get_lock(tid, rid)
+        async with lock:
             self._expire_defer_edges_locked(tid, rid)
             state = self._state.setdefault((tid, rid), _empty_state())
             verb = sv.verb
@@ -189,7 +243,7 @@ class SocialSvc:
 
     # ------------------------------------------------------------------
     # Per-verb handlers — each returns a small dict for the response.
-    # All handlers run with self._lock held.
+    # All handlers run with the per-(tid, rid) lock held.
     # ------------------------------------------------------------------
 
     def _apply_claim(

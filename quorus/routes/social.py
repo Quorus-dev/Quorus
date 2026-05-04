@@ -272,13 +272,17 @@ async def post_social_verb(
 
     # SSE broadcast — all members get the typed envelope as a "social"
     # message so reflexd / TUI can detect and route it.
+    # Wave-5 Fix 2: mint ONE uuid for both the SSE envelope id and the
+    # audit row message_id so SOC2 reviewers can cross-reference them.
     sse_svc = request.app.state.sse_service
     room_name = room_data.get("name", rid)
     members = room_data.get("members", {}) or {}
     envelope = sv.to_envelope()
+    broadcast_id = _uuid.uuid4()
+    broadcast_id_str = str(broadcast_id)
     for recipient in members:
         sse_svc.push(tid, recipient, {
-            "id": str(_uuid.uuid4()),
+            "id": broadcast_id_str,
             "from_name": actor,
             "to": recipient,
             "room": room_name,
@@ -312,6 +316,7 @@ async def post_social_verb(
                 "verb": verb,
                 "room_id": rid,
                 "ref_message_id": sv.ref_message_id,
+                "broadcast_id": broadcast_id_str,
             }
             # Surface a tiny set of safe payload fields per verb so the
             # audit row has enough context for incident review without
@@ -334,7 +339,7 @@ async def post_social_verb(
                 audit_details["after"] = payload_dict.get("after")
             await audit_svc.record(
                 tenant_id=tid,
-                message_id=_uuid.uuid4(),
+                message_id=broadcast_id,
                 event_type=f"social:{verb}",
                 actor=actor,
                 target=rid,
