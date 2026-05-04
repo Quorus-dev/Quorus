@@ -61,6 +61,7 @@ _ERROR_TOKENS = (
     "no such file or directory",
     "authentication required",
     "please authenticate",
+    "not authenticated",
     "sign in",
     "401 unauthorized",
     "rate limited",
