@@ -161,3 +161,26 @@ def test_cursor_real():
     # first, then fall back to ``cursor`` as a minimum.
     binary = "cursor-agent" if shutil.which("cursor-agent") else "cursor"
     _run_or_skip([binary, "-p", PROMPT])
+
+
+@pytest.mark.real_harness
+def test_opencode_real():
+    """`opencode run -- "say hi briefly"` → non-empty reply within 60s.
+
+    The opencode CLI (https://opencode.ai/docs/cli/) uses ``run`` as the
+    one-shot entry point with the prompt as a positional argument. ``--``
+    separates options from the positional. Auth via ``opencode auth login``;
+    test skips with auth-error token if 0 credentials configured.
+    """
+    _run_or_skip(["opencode", "run", "--", PROMPT])
+
+
+@pytest.mark.real_harness
+def test_cline_real():
+    """`cline -- "say hi briefly"` → non-empty reply within 60s.
+
+    The cline standalone CLI (https://docs.cline.bot) takes the prompt as
+    a positional argument. Auth via ``cline auth``; test skips with
+    auth-error token if not authenticated.
+    """
+    _run_or_skip(["cline", "--", PROMPT])
