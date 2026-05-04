@@ -400,3 +400,64 @@ def test_agent_modules_import_turnguard(module_name: str) -> None:
     src = Path(mod.__file__).read_text(encoding="utf-8")
     assert "from quorus.runtime import turnguard" in src
     assert "_turnguard.busy(" in src
+
+
+# ---------------------------------------------------------------------------
+# M8 regression — busy() must be atomic, never leave a 0-byte file
+# ---------------------------------------------------------------------------
+
+
+def test_busy_file_atomic_under_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Busy-file writes must be atomic — never observable as 0 bytes.
+
+    Previously ``os.open(... O_TRUNC)`` truncated the destination file
+    BEFORE writing the JSON payload. If the process died mid-write the
+    file was left empty, and ``is_busy`` (which JSON-decodes) treated an
+    empty file as "no busy". This let a second tool call slip through
+    during a real busy window.
+
+    The fix writes to a tmpfile under the same directory and atomically
+    ``os.replace()``-s it into place. We assert that simulating a kill
+    BEFORE the atomic step leaves the destination untouched — never zero
+    bytes.
+    """
+    from quorus.runtime import turnguard
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    p = turnguard.busy_path("alice")
+    # Pre-existing valid busy-file with non-trivial content. If our
+    # atomic write is interrupted, this MUST remain intact (or be gone),
+    # never a zero-byte stub.
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps({"started_at": "X", "expires_at": "Y", "pid": 1, "tool": "t"}),
+        encoding="utf-8",
+    )
+    pre_size = p.stat().st_size
+    assert pre_size > 0
+
+    # Sabotage os.replace to simulate a kill-mid-write — the tmp file is
+    # already populated at this point, but the atomic step never runs.
+    real_replace = os.replace
+
+    def _kill_mid_replace(src: Any, dst: Any) -> None:
+        # Verify the src tmp file IS fully populated before "kill".
+        assert Path(src).stat().st_size > 0
+        raise SystemExit("simulated kill before atomic replace")
+
+    monkeypatch.setattr(os, "replace", _kill_mid_replace)
+    with pytest.raises(SystemExit):
+        turnguard.begin("alice", tool="dangerous", ttl=120)
+    monkeypatch.setattr(os, "replace", real_replace)
+
+    # The destination file must still be the ORIGINAL valid JSON.
+    assert p.exists()
+    assert p.stat().st_size == pre_size
+    parsed = json.loads(p.read_text(encoding="utf-8"))
+    assert parsed["tool"] == "t"  # unchanged
+
+    # And no leftover .busy_*.tmp files in the runtime dir.
+    leftovers = list(p.parent.glob(".busy_*.tmp"))
+    assert leftovers == []

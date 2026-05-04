@@ -81,6 +81,20 @@ def _social_svc(request: Request) -> SocialSvc:
     return svc
 
 
+def _room_members(room_data: dict[str, Any]) -> list[str]:
+    """Normalise ``room_data['members']`` to a list of participant names.
+
+    The RoomService can shape ``members`` as either a list (legacy) or a
+    dict keyed by participant name (current). Verb endpoints need a flat
+    list for policy + SSE fan-out; this helper consolidates the two
+    extraction sites that previously duplicated the isinstance check.
+    """
+    raw = room_data.get("members") or {}
+    if isinstance(raw, dict):
+        return list(raw.keys())
+    return list(raw)
+
+
 @router.post("/v1/social/{verb}")
 async def post_social_verb(
     verb: str,
@@ -183,11 +197,7 @@ async def post_social_verb(
     # or a list (RoomService can shape it either way under tests).
     policy_dir = getattr(request.app.state, "policy_dir", None)
     policy = load_policy_for_tenant(tid, policy_dir=policy_dir)
-    raw_members = room_data.get("members") or {}
-    if isinstance(raw_members, dict):
-        members = list(raw_members.keys())
-    else:
-        members = list(raw_members)
+    members = _room_members(room_data)
     ctx = PolicyContext(
         actor=actor,
         action=f"social:{verb}",
@@ -276,7 +286,7 @@ async def post_social_verb(
     # audit row message_id so SOC2 reviewers can cross-reference them.
     sse_svc = request.app.state.sse_service
     room_name = room_data.get("name", rid)
-    members = room_data.get("members", {}) or {}
+    members = _room_members(room_data)
     envelope = sv.to_envelope()
     broadcast_id = _uuid.uuid4()
     broadcast_id_str = str(broadcast_id)

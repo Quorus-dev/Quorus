@@ -311,3 +311,42 @@ class TestIdentityEnforcement:
 
         ctx = AuthContext(sub=None, is_legacy=True, role="admin")
         require_role(ctx, "admin")  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# S4 regression — JWT failure logs must use the real client IP, not the
+# proxy/CDN egress IP. ``_client_ip_for_log`` should walk XFF rightwards
+# bounded by TRUSTED_PROXY_COUNT.
+# ---------------------------------------------------------------------------
+
+
+class TestJwtRealIpLogging:
+    def test_jwt_failure_logs_real_ip_with_xff(self, monkeypatch):
+        """With TRUSTED_PROXY_COUNT=1 (default Fly setup), an XFF header
+        must be honoured — _client_ip_for_log returns the rightmost
+        trusted hop, NOT the TCP peer (request.client.host)."""
+        from quorus.auth.middleware import _client_ip_for_log
+
+        monkeypatch.setenv("TRUSTED_PROXY_COUNT", "1")
+
+        request = MagicMock()
+        # Real-world Fly proxy shape: XFF carries the *user* IP at the
+        # right; request.client.host is Fly's internal egress.
+        request.headers = {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}
+        request.client.host = "10.0.0.1"
+
+        ip = _client_ip_for_log(request)
+        # Rightmost trusted hop with N=1 — the immediate sender into our
+        # proxy, which is the user's IP after Fly forwards.
+        assert ip == "10.0.0.1"
+
+    def test_jwt_failure_logs_no_xff_falls_back_to_client_host(self):
+        """No XFF header — fall back to request.client.host."""
+        from quorus.auth.middleware import _client_ip_for_log
+
+        request = MagicMock()
+        request.headers = {}  # No XFF
+        request.client.host = "127.0.0.1"
+
+        ip = _client_ip_for_log(request)
+        assert ip == "127.0.0.1"

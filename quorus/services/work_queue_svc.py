@@ -40,10 +40,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
+
+logger = logging.getLogger(__name__)
 
 # Allowed task statuses. Kept as a frozenset so callers can do `in` checks
 # without paying for an instance allocation per call.
@@ -150,8 +153,8 @@ class WorkQueueSvc:
         self,
         *,
         redis_conn: Any | None = None,
-        clock_iso: callable | None = None,
-        clock_epoch: callable | None = None,
+        clock_iso: Callable[[], str] | None = None,
+        clock_epoch: Callable[[], float] | None = None,
     ) -> None:
         # In-memory mirror — always populated even when Redis is configured,
         # so reads are O(1) without an awaited round-trip.
@@ -576,8 +579,25 @@ class WorkQueueSvc:
                         "queued_after": str(payload.get("after") or ""),
                     },
                 )
-        except WorkQueueError:
-            # Best-effort mirroring; route should still 200 the verb.
+        except QuotaExceededError as exc:
+            # Quota is operationally meaningful — surface at WARN so
+            # operators see "social verb succeeded but mirror dropped"
+            # rather than silently losing the work-queue copy. The route
+            # itself still 200s the verb (best-effort mirror).
+            logger.warning(
+                "work_queue mirror dropped due to quota tid=%s rid=%s actor=%s verb=%s: %s",
+                tid, rid, actor, verb, exc,
+            )
+            return None
+        except WorkQueueError as exc:
+            # Other queue rejections (claim races, missing tasks) are
+            # benign in the social-verb mirror path — the social state
+            # is the source of truth. Log at DEBUG so we keep a trail
+            # without noise.
+            logger.debug(
+                "work_queue mirror dropped tid=%s rid=%s actor=%s verb=%s: %s",
+                tid, rid, actor, verb, exc,
+            )
             return None
         return None
 

@@ -435,3 +435,50 @@ async def test_memory_summary_truncation_at_utf8_boundary(base_dir: Path):
     line = decoded.splitlines()[0]
     parsed = json.loads(line)
     assert parsed["summary"] == entry["summary"]
+
+
+# ---------------------------------------------------------------------------
+# M3 regression — LRU lock-eviction race must NOT torn-write JSONL
+# ---------------------------------------------------------------------------
+
+
+async def test_memory_concurrent_purge_and_append_no_torn_writes(
+    base_dir: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """While coroutine A holds a path's lock and B is waiting on it, the
+    LRU must not evict that lock. Eviction would let coroutine C mint a
+    fresh lock for the same path, bypassing serialisation and producing
+    interleaved (torn) JSONL lines.
+    """
+    # Shrink the LRU cap so we can force eviction with one extra entry.
+    monkeypatch.setattr(mem, "_LOCKS_MAX", 1)
+    # Reset LRU state for an isolated test.
+    mem._LOCKS_LRU.clear()
+
+    # Pre-warm with a "busy" lock for path P1 — acquire it and hold.
+    p1 = mem.memory_path("alice", "busy", base_dir=base_dir)
+    busy_lock = mem._lock_for(p1)
+    await busy_lock.acquire()
+    try:
+        # Simulate a waiter on P1 by scheduling a task that tries to acquire
+        # the same lock — this puts an entry into ``_waiters``.
+        async def _waiter():
+            async with busy_lock:
+                pass
+        waiter_task = asyncio.create_task(_waiter())
+        # Yield once so the waiter is registered.
+        await asyncio.sleep(0)
+        assert busy_lock.locked()
+        # Now demand a lock for a DIFFERENT path — this triggers eviction.
+        p2 = mem.memory_path("alice", "other", base_dir=base_dir)
+        _other_lock = mem._lock_for(p2)
+        # The busy lock for P1 must STILL be tracked — eviction must skip
+        # it because it's locked + has waiters.
+        assert str(p1) in mem._LOCKS_LRU
+        # And requesting the same path again must return the SAME lock,
+        # not a fresh one.
+        same_lock = mem._lock_for(p1)
+        assert same_lock is busy_lock
+    finally:
+        busy_lock.release()
+        await waiter_task

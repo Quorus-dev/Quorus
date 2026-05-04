@@ -13,13 +13,21 @@ from fastapi import HTTPException, Request
 from sqlalchemy import select
 
 from quorus.auth.tokens import decode_jwt
+from quorus.config import get_real_ip as _get_real_ip
 
 
 def _client_ip_for_log(request: Request) -> str:
-    """Return a safe client identifier for logging (never trust XFF blindly)."""
-    if request.client:
-        return request.client.host
-    return "unknown"
+    """Return the *real* client identifier for logging.
+
+    S4: previously returned ``request.client.host`` directly — behind a
+    proxy/CDN (Fly.io, Cloudflare) that's the proxy's egress IP, not the
+    actual caller. Auth-failure logs need the caller's IP for abuse
+    triage. The canonical :func:`quorus.config.get_real_ip` walks XFF
+    from the right based on ``TRUSTED_PROXY_COUNT`` and falls back to
+    ``client.host`` when no XFF is present, so behaviour outside a proxy
+    is unchanged.
+    """
+    return _get_real_ip(request)
 
 logger = logging.getLogger("quorus.auth")
 

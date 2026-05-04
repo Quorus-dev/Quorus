@@ -78,24 +78,15 @@ def summarise_reply_for_memory(
     return " ".join(parts)
 
 
-def envelope_thread_root(envelope: dict[str, Any]) -> str | None:
-    """Return the thread_root_id of *envelope*, or None.
+def envelope_canonical_id(envelope: dict[str, Any]) -> str | None:
+    """Return the canonical room-history id of *envelope*, or None.
 
-    Resolution rules — same as the relay endpoint:
-      1. Explicit ``thread_root_id``.
-      2. Else fall back to the canonical room-message id (``message_id``
-         on SSE-fanned-out envelopes, ``id`` on direct envelopes).
-      3. Else None.
-
-    Reflexd uses this so its reply inherits the thread of the message that
-    triggered the wake — multi-turn debates stay grouped in the TUI.
-    Note: the SSE fan-out gives each recipient its own ``id`` while the
-    canonical id lives in ``message_id``; we prefer the canonical id
-    because the relay's reply_to validation looks it up in room_history.
+    M10: this is the single source of truth for the ``message_id`` then
+    ``id`` precedence rule. The SSE fan-out gives each recipient a
+    per-envelope ``id``, while the canonical room-history id (which the
+    relay's ``reply_to`` validation looks up) lives in ``message_id``.
+    Always prefer the canonical id.
     """
-    explicit = envelope.get("thread_root_id")
-    if explicit:
-        return str(explicit)
     canonical = envelope.get("message_id")
     if canonical:
         return str(canonical)
@@ -103,6 +94,24 @@ def envelope_thread_root(envelope: dict[str, Any]) -> str | None:
     if parent_id:
         return str(parent_id)
     return None
+
+
+def envelope_thread_root(envelope: dict[str, Any]) -> str | None:
+    """Return the thread_root_id of *envelope*, or None.
+
+    Resolution rules — same as the relay endpoint:
+      1. Explicit ``thread_root_id``.
+      2. Else fall back to the canonical room-message id via
+         :func:`envelope_canonical_id` (``message_id`` then ``id``).
+      3. Else None.
+
+    Reflexd uses this so its reply inherits the thread of the message that
+    triggered the wake — multi-turn debates stay grouped in the TUI.
+    """
+    explicit = envelope.get("thread_root_id")
+    if explicit:
+        return str(explicit)
+    return envelope_canonical_id(envelope)
 
 
 async def run_dm_loop(

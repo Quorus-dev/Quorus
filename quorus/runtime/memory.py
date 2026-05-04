@@ -111,9 +111,11 @@ def _lock_for(path: Path) -> asyncio.Lock:
 
     H9 fix: backed by an LRU dict capped at ``_LOCKS_MAX`` entries. Each
     access promotes the key to the right end; eviction drops the oldest.
-    Evicting a lock is safe because any caller currently holding it owns
-    the strong reference; new callers will mint a fresh lock — at worst
-    serialisation degrades to "no contention" for an evicted (rare) key.
+
+    M3 fix: never evict a lock that's currently in use (locked OR has
+    waiters). Without this guard, evicting a busy lock causes the next
+    caller for the same key to mint a *new* lock — bypassing serialisation
+    and allowing concurrent JSONL appends, which produces torn writes.
     """
     key = str(path)
     lock = _LOCKS_LRU.get(key)
@@ -121,7 +123,16 @@ def _lock_for(path: Path) -> asyncio.Lock:
         _LOCKS_LRU.move_to_end(key)
         return lock
     if len(_LOCKS_LRU) >= _LOCKS_MAX:
-        _LOCKS_LRU.popitem(last=False)
+        # Walk LRU oldest-first; pop the first lock that's idle (not held
+        # and no waiters). If every lock is in use, skip eviction this
+        # call — capacity grows transiently rather than break correctness.
+        for k in list(_LOCKS_LRU.keys()):
+            candidate = _LOCKS_LRU[k]
+            if not candidate.locked() and not getattr(
+                candidate, "_waiters", None
+            ):
+                del _LOCKS_LRU[k]
+                break
     lock = asyncio.Lock()
     _LOCKS_LRU[key] = lock
     return lock
@@ -313,11 +324,6 @@ async def cap_to_5kb(
             _atomic_replace, path, encoded.encode("utf-8")
         )
         return len(encoded.encode("utf-8"))
-
-
-def _now_ts() -> str:
-    """Tiny indirection so tests can monkeypatch the clock if needed."""
-    return datetime.now(timezone.utc).isoformat()
 
 
 # Sync convenience wrapper — the tests import it for write-and-readback

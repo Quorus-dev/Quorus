@@ -276,6 +276,7 @@ MEMORY_CONTEXT_LIMIT = reflexd_streamb.MEMORY_CONTEXT_LIMIT
 render_memory_context = reflexd_streamb.render_memory_context
 summarise_reply_for_memory = reflexd_streamb.summarise_reply_for_memory
 envelope_thread_root = reflexd_streamb.envelope_thread_root
+envelope_canonical_id = reflexd_streamb.envelope_canonical_id
 
 
 _HARNESS_SUFFIXES = (
@@ -802,13 +803,15 @@ class RelayClient:
         assert self._client is not None, "RelayClient must be used as a context manager"
         return self._client
 
-    async def _headers(self) -> dict[str, str]:
-        # Cache JWT for 4 min (relay token lifetime is 5min).
-        # In legacy-bearer mode (e.g. local demo against RELAY_SECRET-only
-        # relay) we skip the /v1/auth/token exchange because that endpoint
-        # requires a Postgres-backed account/key.
+    async def bearer_jwt(self) -> str:
+        """Return the current bearer token (minting/refreshing as needed).
+
+        Public counterpart to ``_headers()``. Callers that only need the
+        raw JWT (e.g. for sub-claim inspection) should use this method
+        rather than parsing the Authorization header out of ``_headers()``.
+        """
         if self.legacy_bearer:
-            return {"Authorization": f"Bearer {self.api_key}"}
+            return self.api_key
         now = time.time()
         if self._bearer is None or now >= self._bearer_expires_at:
             resp = await self.client.post(
@@ -817,7 +820,15 @@ class RelayClient:
             resp.raise_for_status()
             self._bearer = resp.json()["token"]
             self._bearer_expires_at = now + 4 * 60
-        return {"Authorization": f"Bearer {self._bearer}"}
+        return self._bearer or ""
+
+    async def _headers(self) -> dict[str, str]:
+        # Cache JWT for 4 min (relay token lifetime is 5min).
+        # In legacy-bearer mode (e.g. local demo against RELAY_SECRET-only
+        # relay) we skip the /v1/auth/token exchange because that endpoint
+        # requires a Postgres-backed account/key.
+        token = await self.bearer_jwt()
+        return {"Authorization": f"Bearer {token}"}
 
     async def mint_stream_token(self, recipient: str) -> str:
         headers = await self._headers()
@@ -1322,11 +1333,11 @@ class Reflexd:
 
         thread_root_id = envelope_thread_root(envelope)
         # SSE fan-out gives each recipient a per-envelope id while the
-        # canonical room-history id is in `message_id`. Prefer the
-        # canonical id so reply_to actually resolves on the relay side
-        # (otherwise the room_msg_svc returns 422 — the parent isn't
+        # canonical room-history id is in `message_id`. The shared helper
+        # resolves the right one so reply_to actually resolves on the relay
+        # side (otherwise the room_msg_svc returns 422 — the parent isn't
         # found because envelope.id is the recipient-scoped id).
-        parent_id = envelope.get("message_id") or envelope.get("id")
+        parent_id = envelope_canonical_id(envelope)
         try:
             posted = await relay.post_reply(
                 room=room, from_name=self.config.participant_name,
@@ -1358,6 +1369,20 @@ class Reflexd:
             )
         except Exception as exc:
             logger.debug("memory append failed (non-fatal): %s", exc)
+
+    def build_prompt(
+        self, envelope: dict[str, Any], history: list[dict[str, Any]],
+        *, triage: "TriageResult | None" = None,
+        memory_entries: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Public alias for :meth:`_build_prompt`.
+
+        Smoke-test and external callers should prefer this entry point so
+        the implementation can refactor freely without breaking them.
+        """
+        return self._build_prompt(
+            envelope, history, triage=triage, memory_entries=memory_entries,
+        )
 
     def _build_prompt(
         self, envelope: dict[str, Any], history: list[dict[str, Any]],
@@ -1480,8 +1505,7 @@ class Reflexd:
             # caused the original incident (2026-05-03 00:33 UTC).
             if not self.config.legacy_bearer:
                 try:
-                    headers = await relay._headers()
-                    bearer = headers.get("Authorization", "").removeprefix("Bearer ").strip()
+                    bearer = (await relay.bearer_jwt()).strip()
                     if bearer:
                         import base64 as _b64
                         import json as _json
@@ -1783,7 +1807,7 @@ async def _run_once(cfg: ReflexdConfig, room: str) -> int:
         "message_type": "chat",
     }
     daemon = Reflexd(cfg, adapter=adapter)
-    prompt = daemon._build_prompt(envelope, history=[])
+    prompt = daemon.build_prompt(envelope, history=[])
     reply = await adapter.run(harness, context=prompt)
     record = adapter.last_dry_run or {}
     print(json.dumps({

@@ -110,7 +110,14 @@ _LOGIN_FORM_HTML = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>quorus · admin</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- S1: pinned to a specific Tailwind Play CDN release + crossorigin so a
+       compromise of the latest-pointer can't silently swap the script under
+       us. SRI hash intentionally omitted: the play CDN serves slightly
+       different bytes per request (JIT compiler), so a sha384 pin would
+       break on every page load. The version pin + crossorigin reduces the
+       attack surface to "compromise the pinned version" which is much
+       narrower than "compromise latest". -->
+  <script src="https://cdn.tailwindcss.com/3.4.16" crossorigin="anonymous"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -318,7 +325,14 @@ _DASHBOARD_TEMPLATE = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>quorus · analytics</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- S1: pinned to a specific Tailwind Play CDN release + crossorigin so a
+       compromise of the latest-pointer can't silently swap the script under
+       us. SRI hash intentionally omitted: the play CDN serves slightly
+       different bytes per request (JIT compiler), so a sha384 pin would
+       break on every page load. The version pin + crossorigin reduces the
+       attack surface to "compromise the pinned version" which is much
+       narrower than "compromise latest". -->
+  <script src="https://cdn.tailwindcss.com/3.4.16" crossorigin="anonymous"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>

@@ -17,6 +17,7 @@ import contextlib
 import json
 import os
 import re
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -113,16 +114,26 @@ def begin(
         "expires_at": _iso(now + ttl),
         "pid": os.getpid(),
     }
-    # 0o600: never readable by other users on the host.
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # M8 fix: write tmp + atomic replace. The previous O_TRUNC path
+    # truncated the busy-file BEFORE writing the JSON; if the process
+    # was killed mid-write, the file was left empty and ``is_busy`` saw
+    # a zero-byte file as "no busy file" — turnguard would let a second
+    # tool call slip through during a real busy window.
+    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+    fd, tmp = tempfile.mkstemp(prefix=".busy_", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, sort_keys=True)
-    except BaseException:
         try:
+            os.write(fd, encoded)
+            os.fsync(fd)
+        finally:
             os.close(fd)
-        except OSError:
-            pass
+        # 0o600 set on the tmp file BEFORE rename — never observable as
+        # broader perms.
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
         raise
     return path
 

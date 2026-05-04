@@ -233,7 +233,7 @@ class SocialSvc:
                 }[verb]
                 result = handler(state, sv, payload)
             # H3 cap fairness/social_credit dict per tenant.
-            self._cap_room_state(state, tid)
+            self._cap_room_state(state)
             # Fairness counter — tiny nudge per verb. Caller-side noise.
             delta = _CREDIT_DELTA.get(verb, 0.0)
             if delta:
@@ -518,7 +518,7 @@ class SocialSvc:
             return False
         return len(voters) >= quorum_required
 
-    def _cap_room_state(self, state: dict[str, Any], tid: str) -> None:
+    def _cap_room_state(self, state: dict[str, Any]) -> None:
         """Apply H3 caps that don't fit cleanly inside a single verb path.
 
         * social_credit dict per room: cap to ``_MAX_SOCIAL_CREDIT`` actors,
