@@ -451,6 +451,11 @@ def _init_services(app_instance, redis_conn=None):
 async def lifespan(app):
     logger.info("Relay server starting up")
 
+    # Initialize Sentry first so any subsequent startup error is captured.
+    # No-op without SENTRY_DSN (keeps dev/test clean).
+    from quorus.observability.sentry import init_sentry
+    init_sentry()
+
     # Initialize Postgres if configured
     if DATABASE_URL:
         from quorus.storage.postgres import init_engine

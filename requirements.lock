@@ -27,6 +27,7 @@ certifi==2025.11.12
     # via
     #   httpcore
     #   httpx
+    #   sentry-sdk
 cffi==2.0.0
     # via cryptography
 click==8.3.1
@@ -42,7 +43,9 @@ docstring-parser==0.17.0
 email-validator==2.3.0
     # via quorus (pyproject.toml)
 fastapi==0.128.0
-    # via quorus (pyproject.toml)
+    # via
+    #   quorus (pyproject.toml)
+    #   sentry-sdk
 greenlet==3.3.1
     # via sqlalchemy
 h11==0.16.0
@@ -108,6 +111,8 @@ python-dotenv==1.2.1
     # via pydantic-settings
 python-multipart==0.0.22
     # via mcp
+readchar==4.2.2
+    # via quorus (pyproject.toml)
 redis==7.4.0
     # via quorus (pyproject.toml)
 referencing==0.37.0
@@ -120,6 +125,8 @@ rpds-py==0.30.0
     # via
     #   jsonschema
     #   referencing
+sentry-sdk==2.59.0
+    # via quorus (pyproject.toml)
 sniffio==1.3.1
     # via anthropic
 sqlalchemy==2.0.43
@@ -151,6 +158,8 @@ typing-inspection==0.4.2
     #   mcp
     #   pydantic
     #   pydantic-settings
+urllib3==2.6.3
+    # via sentry-sdk
 uvicorn==0.40.0
     # via
     #   quorus (pyproject.toml)
