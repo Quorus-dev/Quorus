@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/stall_demo_local.sh — pre-warm 4 cross-vendor agents for the stall.
+# scripts/stall_demo_local.sh - pre-warm 4 cross-vendor agents for the stall.
 #
 #   bash scripts/stall_demo_local.sh {start|status|stop|reset}
 #
