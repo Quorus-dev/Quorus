@@ -31,13 +31,13 @@ from quorus.auth.policy import (
 )
 from quorus.routes.room_auth import require_room_member
 from quorus.services.persistent_memory_svc import (
+    VISIBILITY_PRIVATE,
+    VISIBILITY_PUBLIC,
+    VISIBILITY_ROOM,
     EntryCapError,
     MemoryError_,
     PersistentMemorySvc,
     ValueTooLargeError,
-    VISIBILITY_PRIVATE,
-    VISIBILITY_PUBLIC,
-    VISIBILITY_ROOM,
 )
 
 router = APIRouter()

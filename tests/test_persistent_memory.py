@@ -11,9 +11,9 @@ from httpx import ASGITransport, AsyncClient
 from quorus.auth.tokens import create_jwt
 from quorus.relay import _reset_state, app
 from quorus.services.persistent_memory_svc import (
-    EntryCapError,
     MAX_ENTRIES,
     MAX_VALUE_BYTES,
+    EntryCapError,
     MemoryError_,
     PersistentMemorySvc,
     ValueTooLargeError,
