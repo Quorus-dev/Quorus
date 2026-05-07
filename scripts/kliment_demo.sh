@@ -223,24 +223,16 @@ finish_setup() { local b=$1 u=$2 rid=$3 target=$4 mode=$5
   verify_round_trip "$b" "$u" "$rid" "$target" \
     && { ok "real LLM reply received from $target"; verify=PASS; } \
     || warn "no reply from $target -- inspect /tmp/kliment-claude.log"
-
   printf '\n%s%sDEMO READY%s\n' "$CB" "$CG" "$C0"
-  printf '  mode:        %s\n' "$mode"
-  printf '  relay url:   %s\n' "$u"
-  printf '  room:        %s (id=%s)\n' "$ROOM_NAME" "$rid"
-  printf '  human:       @%s\n' "$PARENT_NAME"
-  printf '  agent:       @%s\n' "$target"
-  printf '  log:         /tmp/kliment-claude.log\n'
-  printf '  events:      %s\n' "$EVENTS_LOG"
-  printf '  verify:      %s\n\n' "$verify"
-  printf '  %sNEXT - on Aarya MacBook (paste exactly):%s\n' "$CB" "$C0"
+  printf '  mode:%s relay:%s room:%s id=%s human:@%s agent:@%s\n  log:/tmp/kliment-claude.log events:%s verify:%s\n\n' \
+    "$mode" "$u" "$ROOM_NAME" "$rid" "$PARENT_NAME" "$target" "$EVENTS_LOG" "$verify"
+  printf '  %sNEXT - on Aarya MacBook:%s\n' "$CB" "$C0"
   if [[ "$mode" == "remote" ]]; then
-    printf '    %sbash %s/scripts/stall_setup_aarya.sh%s\n' "$CC" "$REPO_ROOT" "$C0"
-    printf '  %sTUI for Arav:%s  %squorus chat %s%s\n\n' "$CB" "$C0" "$CC" "$ROOM_NAME" "$C0"
+    printf '    bash %s/scripts/stall_setup_aarya.sh\n' "$REPO_ROOT"
+    printf '  TUI for Arav:  quorus chat %s\n\n' "$ROOM_NAME"
   else
-    printf '    %sQUORUS_RELAY_URL=%s quorus chat %s%s\n' "$CC" "$u" "$ROOM_NAME" "$C0"
-    printf '    (LOCAL mode; Aarya cannot join from another laptop -- use --remote on demo night)\n'
-    printf '  %sTUI for Arav:%s  %sQUORUS_RELAY_URL=%s quorus chat %s%s\n\n' "$CB" "$C0" "$CC" "$u" "$ROOM_NAME" "$C0"
+    printf '    QUORUS_RELAY_URL=%s quorus chat %s   (LOCAL mode -- use --remote on demo night)\n' "$u" "$ROOM_NAME"
+    printf '  TUI for Arav:  QUORUS_RELAY_URL=%s quorus chat %s\n\n' "$u" "$ROOM_NAME"
   fi
 }
 
