@@ -53,8 +53,17 @@ import httpx
 # scripts/ is not a package; add the repo root so ``quorus`` imports work when
 # this file is run directly via ``python scripts/reflexd.py``.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+for _path in (
+    _REPO_ROOT,
+    _REPO_ROOT / "packages" / "sdk",
+    _REPO_ROOT / "packages" / "cli",
+    _REPO_ROOT / "packages" / "mcp",
+    _REPO_ROOT / "packages" / "tui",
+):
+    _path_str = str(_path)
+    if _path.exists() and _path_str not in sys.path:
+        sys.path.insert(0, _path_str)
+del _path, _path_str
 
 # Phase 2 triage v2 lives in a sibling module so reflexd.py stays under its
 # 1500-LoC cap. We import via a path-aware loader because ``scripts/`` is

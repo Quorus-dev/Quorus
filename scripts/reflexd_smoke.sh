@@ -98,7 +98,7 @@ check_harness() {
 check_harness "claude" "smoke-claude" "--print"
 check_harness "codex"  "smoke-codex"  "exec"
 check_harness "gemini" "smoke-gemini" "--prompt"
-check_harness "cursor" "smoke-cursor" "--headless"
+check_harness "cursor" "smoke-cursor" "-p"
 
 echo
 echo "reflexd smoke: $PASS passed, $FAIL failed"
