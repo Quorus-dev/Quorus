@@ -1,11 +1,8 @@
-import { motion } from "framer-motion";
 import BentoCard from "./bento/BentoCard";
 import BentoRooms from "./illustrations/bento/BentoRooms";
 import BentoState from "./illustrations/bento/BentoState";
 import BentoMcp from "./illustrations/bento/BentoMcp";
 import BentoContext from "./illustrations/bento/BentoContext";
-
-const EASE = [0.16, 1, 0.3, 1] as const;
 
 /**
  * BentoStitch — four interactive cards covering the Quorus primitives.
@@ -40,24 +37,16 @@ export default function BentoStitch() {
 
       <div className="relative mx-auto max-w-7xl px-6 py-24 lg:py-32">
         {/* Eyebrow */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.4 }}
-          transition={{ duration: 0.5, ease: EASE }}
+        <div
           className="eyebrow"
           style={{ color: "var(--color-accent-on-ink)" }}
         >
           The Quorus surface
-        </motion.div>
+        </div>
 
         {/* Heading — same copy as before, mirrored typography. */}
-        <motion.h2
+        <h2
           id="bento-heading"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.4 }}
-          transition={{ duration: 0.65, delay: 0.05, ease: EASE }}
           className="mt-3 max-w-3xl"
           style={{
             color: "var(--color-text-on-ink)",
@@ -68,19 +57,15 @@ export default function BentoStitch() {
           }}
         >
           Everything your swarm needs.
-        </motion.h2>
+        </h2>
 
-        <motion.p
-          initial={{ opacity: 0, y: 14 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.4 }}
-          transition={{ duration: 0.6, delay: 0.12, ease: EASE }}
+        <p
           className="mt-5 max-w-2xl text-[18px] leading-[1.55]"
           style={{ color: "var(--color-text-on-ink-secondary)" }}
         >
           Four primitives. One relay. Unlimited coordination — across Claude,
           Cursor, Codex, Gemini, and anything else you wire up.
-        </motion.p>
+        </p>
 
         {/* The grid. CSS-grid template-areas drives the 2x2 desktop layout;
             tablet falls to a uniform 2-col, mobile to 1-col. The arbitrary

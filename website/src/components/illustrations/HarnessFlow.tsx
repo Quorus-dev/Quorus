@@ -1,6 +1,6 @@
 import { useId } from "react";
 import type { JSX } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { useReducedMotion } from "framer-motion";
 import { AnimatedBeam, BorderBeam } from "../effects/AnimatedBeam";
 import {
   ClaudeMark,
@@ -30,8 +30,6 @@ import type { VendorMarkProps } from "../effects/VendorLogos";
  *
  * Wordmarks only — no logo image files. Pure SVG + text.
  */
-
-const EASE = [0.16, 1, 0.3, 1] as const;
 
 // Wave-7: HarnessFlow keeps the 4-up grid for legibility but the band's
 // caption now references all 7 (6 tier-A + 1 tier-B). The four shown here
@@ -308,13 +306,9 @@ export default function HarnessFlow(): JSX.Element {
       {/* Mobile diagram — stacked vendor pills, downward arrows, relay block */}
       <div className="md:hidden">
         <div className="flex flex-col items-center gap-3">
-          {VENDORS.map((v, i) => (
+          {VENDORS.map((v) => (
             <div key={v.id} className="flex w-full flex-col items-center">
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.4 }}
-                transition={{ duration: 0.5, ease: EASE, delay: i * 0.05 }}
+              <div
                 className="flex w-full max-w-xs items-center justify-between rounded-[10px] px-4 py-3"
                 style={{
                   backgroundColor: "var(--color-ink-2)",
@@ -348,7 +342,7 @@ export default function HarnessFlow(): JSX.Element {
                   />
                   COMPATIBLE
                 </span>
-              </motion.div>
+              </div>
               {/* Down arrow connector */}
               <svg
                 aria-hidden

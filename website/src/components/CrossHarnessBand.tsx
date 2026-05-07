@@ -1,5 +1,5 @@
 import { useId, useMemo, useState } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import HarnessFlow from "./illustrations/HarnessFlow";
 import CodeBlock from "./CodeBlock";
 import AsciinemaPlayer from "./AsciinemaPlayer";
@@ -23,8 +23,6 @@ import { CROSS_HARNESS_COPY, HARNESS_LABELS } from "../data/cross_harness_copy";
  * `src/data/cross_harness_copy.ts` so the test suite can assert verbatim
  * matches and so doc edits travel with code edits.
  */
-
-const EASE = [0.16, 1, 0.3, 1] as const;
 
 const NOISE_SVG =
   "data:image/svg+xml;utf8," +
@@ -145,7 +143,6 @@ function findTab(id: TabId): TabSpec {
 }
 
 export default function CrossHarnessBand(): JSX.Element {
-  const prefersReduced = useReducedMotion();
   const [active, setActive] = useState<TabId>("claude");
   const indicatorLayoutId = useId();
   const tab = useMemo(() => findTab(active), [active]);
@@ -180,11 +177,7 @@ export default function CrossHarnessBand(): JSX.Element {
       <div className="relative mx-auto max-w-7xl px-6 py-24 md:py-32">
         {/* Header */}
         <div className="mx-auto max-w-3xl text-center">
-          <motion.p
-            initial={prefersReduced ? false : { opacity: 0, y: 12 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, amount: 0.3 }}
-            transition={{ duration: 0.6, ease: EASE }}
+          <p
             className="text-[11px] uppercase"
             style={{
               color: "var(--color-accent-on-ink)",
@@ -193,13 +186,9 @@ export default function CrossHarnessBand(): JSX.Element {
             }}
           >
             {CROSS_HARNESS_COPY.eyebrow}
-          </motion.p>
-          <motion.h2
+          </p>
+          <h2
             id="cross-harness-heading"
-            initial={prefersReduced ? false : { opacity: 0, y: 12 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, amount: 0.3 }}
-            transition={{ duration: 0.6, ease: EASE, delay: 0.05 }}
             className="mt-4 text-balance"
             style={{
               color: "var(--color-text-on-ink)",
@@ -211,12 +200,8 @@ export default function CrossHarnessBand(): JSX.Element {
             }}
           >
             {CROSS_HARNESS_COPY.headline}
-          </motion.h2>
-          <motion.p
-            initial={prefersReduced ? false : { opacity: 0, y: 12 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, amount: 0.3 }}
-            transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
+          </h2>
+          <p
             className="mx-auto mt-5 max-w-2xl text-pretty"
             style={{
               color: "var(--color-text-on-ink-secondary)",
@@ -226,31 +211,19 @@ export default function CrossHarnessBand(): JSX.Element {
             }}
           >
             {CROSS_HARNESS_COPY.subline}
-          </motion.p>
+          </p>
         </div>
 
         {/* Flow diagram */}
-        <motion.div
-          initial={prefersReduced ? false : { opacity: 0, y: 24 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.2 }}
-          transition={{ duration: 0.7, ease: EASE, delay: 0.15 }}
-          className="mx-auto mt-16 w-full max-w-5xl"
-        >
+        <div className="mx-auto mt-16 w-full max-w-5xl">
           <HarnessFlow />
           <p className="sr-only" aria-label="Supported coding agents">
             Supported coding agents: {HARNESS_LABELS.join(", ")}.
           </p>
-        </motion.div>
+        </div>
 
         {/* Demo terminal — lazy-loaded asciinema */}
-        <motion.div
-          initial={prefersReduced ? false : { opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.15 }}
-          transition={{ duration: 0.7, ease: EASE, delay: 0.18 }}
-          className="mx-auto mt-12 w-full max-w-4xl"
-        >
+        <div className="mx-auto mt-12 w-full max-w-4xl">
           <AsciinemaPlayer
             castUrl="/casts/demo_reflex.cast"
             autoPlay
@@ -258,16 +231,10 @@ export default function CrossHarnessBand(): JSX.Element {
             idleTimeLimit={1.5}
             caption="quorus init — one command, four agents, zero cloud."
           />
-        </motion.div>
+        </div>
 
         {/* Tab switcher */}
-        <motion.div
-          initial={prefersReduced ? false : { opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.2 }}
-          transition={{ duration: 0.6, ease: EASE, delay: 0.2 }}
-          className="mx-auto mt-16 w-full max-w-3xl"
-        >
+        <div className="mx-auto mt-16 w-full max-w-3xl">
           <div
             role="tablist"
             aria-label="Install Quorus in your harness"
@@ -374,7 +341,7 @@ export default function CrossHarnessBand(): JSX.Element {
               {CROSS_HARNESS_COPY.ctaLabel}
             </a>
           </div>
-        </motion.div>
+        </div>
 
         {/* Marquee strip — every other harness Quorus works with. Folded in
             from the standalone LogoCloud band as part of the 4-section

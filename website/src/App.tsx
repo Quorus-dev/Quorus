@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { lazy, Suspense, useEffect } from "react";
 import NavV2 from "./components/NavV2";
 import ScrollProgress from "./components/ScrollProgress";
+import CursorFollower from "./components/effects/CursorFollower";
 import Home from "./pages/Home";
 
 // Code-split everything that isn't the LCP path. Console + Docs ship in their
@@ -46,6 +47,7 @@ export default function App() {
     <>
       <ScrollReset />
       <HomeOnlyScrollProgress />
+      <CursorFollower />
       <NavV2 />
       <a
         href="#main"

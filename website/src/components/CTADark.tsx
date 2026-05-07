@@ -208,11 +208,7 @@ export default function CTADark() {
       />
 
       <div className="relative mx-auto max-w-3xl px-6 py-24 text-center md:py-32">
-        <motion.p
-          initial={{ opacity: 0, y: 12 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.3 }}
-          transition={{ duration: 0.6, ease: EASE }}
+        <p
           className="text-[11px] uppercase"
           style={{
             color: COLORS.accentOnInk,
@@ -221,14 +217,10 @@ export default function CTADark() {
           }}
         >
           Get started
-        </motion.p>
+        </p>
 
-        <motion.h2
+        <h2
           id="cta-heading"
-          initial={{ opacity: 0, y: 12 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.3 }}
-          transition={{ duration: 0.6, ease: EASE, delay: 0.05 }}
           className="mt-4 text-balance"
           style={{
             color: COLORS.textPrimary,
@@ -240,25 +232,13 @@ export default function CTADark() {
           }}
         >
           Build the future of agentic workflows.
-        </motion.h2>
+        </h2>
 
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.3 }}
-          transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
-          className="mt-10"
-        >
+        <div className="mt-10">
           <CodeBlock />
-        </motion.div>
+        </div>
 
-        <motion.ul
-          initial={{ opacity: 0, y: 12 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.3 }}
-          transition={{ duration: 0.6, ease: EASE, delay: 0.15 }}
-          className="mt-8 flex flex-wrap items-center justify-center gap-x-7 gap-y-3"
-        >
+        <ul className="mt-8 flex flex-wrap items-center justify-center gap-x-7 gap-y-3">
           {SECONDARY_LINKS.map((link) => (
             <li key={link.label}>
               <a
@@ -282,7 +262,7 @@ export default function CTADark() {
               </a>
             </li>
           ))}
-        </motion.ul>
+        </ul>
       </div>
     </section>
   );

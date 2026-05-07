@@ -50,7 +50,6 @@ export default function BentoCard({
   wide = false,
   eyebrow,
   area,
-  index = 0,
 }: BentoCardProps) {
   const prefersReduced = useReducedMotion();
   const [hover, setHover] = useState(false);
@@ -79,14 +78,6 @@ export default function BentoCard({
     <motion.div
       style={surfaceStyle}
       className="group relative h-full overflow-hidden rounded-2xl border"
-      initial={{ opacity: 0, y: 16 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.2 }}
-      transition={{
-        duration: 0.55,
-        delay: 0.06 * index,
-        ease: EASE,
-      }}
       whileHover={prefersReduced ? undefined : { y: -4 }}
       onHoverStart={() => setHover(true)}
       onHoverEnd={() => setHover(false)}

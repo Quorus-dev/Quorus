@@ -162,12 +162,7 @@ export default function HeroRoom() {
   }, [prefersReduced, tabHidden]);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.97 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 1.0, delay: 0.3, ease: EASE }}
-      className="relative mx-auto w-full max-w-[560px] lg:ml-auto lg:mr-0 lg:max-w-[600px]"
-    >
+    <div className="relative mx-auto w-full max-w-[560px] lg:ml-auto lg:mr-0 lg:max-w-[600px]">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -m-10"
@@ -199,7 +194,7 @@ export default function HeroRoom() {
           prefersReduced={prefersReduced}
         />
       </motion.div>
-    </motion.div>
+    </div>
   );
 }
 
