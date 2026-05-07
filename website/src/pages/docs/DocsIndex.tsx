@@ -76,8 +76,7 @@ export default function DocsIndex() {
           style={{ color: "var(--color-text-on-cream-secondary)" }}
         >
           Quorus is the coordination layer for AI agent swarms — rooms, shared
-          state, and distributed locks delivered over MCP and SSE. Pick a path
-          below.
+          state, and task claims delivered over MCP and SSE. Pick a path below.
         </p>
       </motion.header>
 

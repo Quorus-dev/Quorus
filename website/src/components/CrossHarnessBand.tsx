@@ -375,7 +375,83 @@ export default function CrossHarnessBand(): JSX.Element {
             </a>
           </div>
         </motion.div>
+
+        {/* Marquee strip — every other harness Quorus works with. Folded in
+            from the standalone LogoCloud band as part of the 4-section
+            simplification. Monochrome marks, muted text, dark surface. */}
+        <CompatibleMarquee />
       </div>
     </section>
+  );
+}
+
+/* ─── Compatible marquee — bottom strip of CrossHarnessBand ───────────── */
+
+const COMPATIBLE_VENDORS: ReadonlyArray<{
+  vendor: VendorKey;
+  name: string;
+  tag: string;
+}> = [
+  { vendor: "claude", name: "Claude Code", tag: "MCP" },
+  { vendor: "cursor", name: "Cursor", tag: "IDE" },
+  { vendor: "codex", name: "Codex", tag: "CLI" },
+  { vendor: "gemini", name: "Gemini CLI", tag: "CLI" },
+  { vendor: "windsurf", name: "Windsurf", tag: "IDE" },
+  { vendor: "opencode", name: "Opencode", tag: "CLI" },
+  { vendor: "cline", name: "Cline", tag: "IDE" },
+  { vendor: "aider", name: "Aider", tag: "CLI" },
+  { vendor: "continue", name: "Continue", tag: "IDE" },
+  { vendor: "copilot", name: "GitHub Copilot", tag: "IDE" },
+  { vendor: "cody", name: "Cody", tag: "IDE" },
+  { vendor: "openinterpreter", name: "OpenInterpreter", tag: "RUN" },
+];
+
+function CompatibleMarquee() {
+  return (
+    <div className="mt-20 lg:mt-24">
+      <p
+        className="mb-6 text-center text-[11px] uppercase"
+        style={{
+          color: "var(--color-text-on-ink-muted)",
+          fontFamily: "var(--font-mono)",
+          letterSpacing: "0.22em",
+        }}
+      >
+        And every other harness you already run
+      </p>
+      <Marquee durationSeconds={50}>
+        {COMPATIBLE_VENDORS.map(({ vendor, name, tag }) => {
+          const Mark = VENDOR_MARK[vendor];
+          return (
+            <span
+              key={vendor}
+              className="mx-7 inline-flex items-center gap-2.5 whitespace-nowrap"
+              style={{ color: "var(--color-text-on-ink-secondary)" }}
+            >
+              <Mark size={18} monochrome />
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 14,
+                  letterSpacing: "-0.005em",
+                }}
+              >
+                {name}
+              </span>
+              <span
+                style={{
+                  color: "var(--color-text-on-ink-muted)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                  letterSpacing: "0.18em",
+                }}
+              >
+                {tag}
+              </span>
+            </span>
+          );
+        })}
+      </Marquee>
+    </div>
   );
 }
