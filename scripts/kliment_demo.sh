@@ -56,134 +56,84 @@ write_state() { printf '%s\n' "$1" > "$KLIMENT_STATE_FILE"; }
 state_get() { jq -r --arg k "$1" '.[$k] // empty' "$KLIMENT_STATE_FILE" 2>/dev/null; }
 write_pids(){ printf '%s\n' "$1" > "$PIDS_FILE"; }
 
-# Ensure the kliment-demo room exists; print its id.
-ensure_room() {
-  local b="$1" u="$2" rooms existing resp
-  rooms="$(api_call GET /rooms "$b" "" "$u")"
-  existing="$(echo "$rooms" | jq -r --arg n "$ROOM_NAME" '.[]? | select(.name==$n) | .id' 2>/dev/null | head -1)"
-  [[ -n "$existing" ]] && { printf '%s' "$existing"; return 0; }
-  resp="$(api_call POST /rooms "$b" \
-    "$(jq -nc --arg n "$ROOM_NAME" --arg c "$PARENT_NAME" '{name:$n,created_by:$c}')" "$u")"
-  echo "$resp" | jq -r '.id // empty' 2>/dev/null
+ensure_room() { local b=$1 u=$2 r e
+  r="$(api_call GET /rooms "$b" "" "$u")"
+  e="$(echo "$r" | jq -r --arg n "$ROOM_NAME" '.[]? | select(.name==$n) | .id' 2>/dev/null | head -1)"
+  [[ -n "$e" ]] && { printf %s "$e"; return 0; }
+  api_call POST /rooms "$b" "$(jq -nc --arg n "$ROOM_NAME" --arg c "$PARENT_NAME" '{name:$n,created_by:$c}')" "$u" \
+    | jq -r '.id // empty' 2>/dev/null
 }
-join_member() {
-  local b="$1" u="$2" rid="$3" who="$4"
-  api_call POST "/rooms/$rid/join" "$b" \
-    "$(jq -nc --arg p "$who" '{participant:$p,role:"member"}')" "$u" \
-    >/dev/null 2>&1 || true
-}
+join_member() { api_call POST "/rooms/$3/join" "$1" "$(jq -nc --arg p "$4" '{participant:$p,role:"member"}')" "$2" >/dev/null 2>&1 || true; }
 
-# --- Local relay -----------------------------------------------------------
-start_local_relay() {
-  local port secret pid
-  port="$(pick_free_port)"
-  secret="kliment-secret-$(date +%s)-$$"
-  printf '%s\n' "$port"   > "$RELAY_PORT_FILE"
-  printf '%s\n' "$secret" > "$RELAY_SECRET_FILE"
-  : > "$RELAY_LOG"
-  env PORT="$port" RELAY_SECRET="$secret" MESSAGES_FILE="$RELAY_MSGS_FILE" \
-      ALLOW_LEGACY_AUTH=1 QUORUS_KLIMENT_DEMO=1 LOG_LEVEL=INFO \
-      "$RELAY_BIN" >"$RELAY_LOG" 2>&1 &
-  pid=$!; disown "$pid" 2>/dev/null || true
-  printf '%s' "$pid"
+start_local_relay() { local p s pid
+  p="$(pick_free_port)"; s="kliment-secret-$(date +%s)-$$"
+  printf '%s\n' "$p" > "$RELAY_PORT_FILE"; printf '%s\n' "$s" > "$RELAY_SECRET_FILE"; : > "$RELAY_LOG"
+  env PORT="$p" RELAY_SECRET="$s" MESSAGES_FILE="$RELAY_MSGS_FILE" ALLOW_LEGACY_AUTH=1 \
+      QUORUS_KLIMENT_DEMO=1 LOG_LEVEL=INFO "$RELAY_BIN" >"$RELAY_LOG" 2>&1 &
+  pid=$!; disown "$pid" 2>/dev/null || true; printf %s "$pid"
 }
-wait_for_relay_health() {
-  local port="$1" pid="$2" deadline=$(( $(date +%s) + 15 ))
-  while [[ $(date +%s) -lt $deadline ]]; do
-    if ! is_alive "$pid"; then
-      fail "local relay died during startup"; tail -n 30 "$RELAY_LOG" >&2 || true; return 1
-    fi
-    curl -fsS -m 1 "http://127.0.0.1:$port/health" >/dev/null 2>&1 && return 0
+wait_for_relay_health() { local p=$1 pid=$2 dl=$(( $(date +%s) + 15 ))
+  while [[ $(date +%s) -lt $dl ]]; do
+    is_alive "$pid" || { fail "local relay died"; tail -n 30 "$RELAY_LOG" >&2; return 1; }
+    curl -fsS -m 1 "http://127.0.0.1:$p/health" >/dev/null 2>&1 && return 0
     sleep 0.2
   done
-  fail "local relay /health did not come up within 15s"; return 1
+  fail "local relay /health stuck"; return 1
 }
 
-# --- Remote helpers --------------------------------------------------------
 remote_load_profile() {
-  if [[ ! -f "$PROFILE_FILE" ]]; then
-    fail "profile not found: $PROFILE_FILE -- run 'quorus join <code>' first"
-    return 1
-  fi
-  local key inst url
-  key="$(jq -r '.api_key // empty' "$PROFILE_FILE")"
-  inst="$(jq -r '.instance_name // empty' "$PROFILE_FILE")"
-  url="$(jq -r --arg d "$REMOTE_RELAY_URL" '.relay_url // $d' "$PROFILE_FILE")"
-  if [[ -z "$key" ]]; then
-    fail "profile has no api_key -- run 'quorus join <code>' first"; return 1
-  fi
-  printf '%s\t%s\t%s' "$key" "${inst:-arav}" "${url:-$REMOTE_RELAY_URL}"
+  [[ -f "$PROFILE_FILE" ]] || { fail "no profile $PROFILE_FILE -- run 'quorus join <code>'"; return 1; }
+  local k i u
+  k="$(jq -r '.api_key // empty' "$PROFILE_FILE")"
+  i="$(jq -r '.instance_name // empty' "$PROFILE_FILE")"
+  u="$(jq -r --arg d "$REMOTE_RELAY_URL" '.relay_url // $d' "$PROFILE_FILE")"
+  [[ -n "$k" ]] || { fail "profile has no api_key"; return 1; }
+  printf '%s\t%s\t%s' "$k" "${i:-arav}" "${u:-$REMOTE_RELAY_URL}"
 }
-remote_health_check() {
-  local url="$1" code
-  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "$url/health" 2>/dev/null || echo "000")"
-  [[ "$code" == "200" ]] && return 0
-  fail "production relay /health returned $code -- prod degraded (Upstash quota?)"
-  warn "fall back to local mode: bash scripts/kliment_demo.sh setup --local"
-  return 1
+remote_health_check() { local u=$1 c
+  c="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "$u/health" 2>/dev/null || echo 000)"
+  [[ "$c" == "200" ]] && return 0
+  fail "prod /health=$c (Upstash quota?)"; warn "fallback: bash scripts/kliment_demo.sh setup --local"; return 1
 }
-remote_exchange_jwt() {
-  local pk="$1" url="$2" body resp
-  body="$(jq -nc --arg k "$pk" '{api_key:$k}')"
-  resp="$(curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' \
-    -d "$body" "$url/v1/auth/token" 2>/dev/null || echo "")"
-  echo "$resp" | jq -r '.token // empty' 2>/dev/null
-}
-# remote_mint_child PARENT_KEY URL SUFFIX -> "name\tkey" or empty.
-# WARNING: every call to /v1/auth/register-agent revokes the prior key for
-# this suffix (memory: quorus_shim_register_agent.md). Only call when we
-# really need a fresh key, otherwise reuse from KLIMENT_STATE_FILE.
-remote_mint_child() {
-  local pk="$1" url="$2" suffix="$3" code
-  code="$(curl -sS --max-time 15 -o /tmp/.kliment-mint.body -w '%{http_code}' \
+remote_exchange_jwt() { curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg k "$1" '{api_key:$k}')" "$2/v1/auth/token" 2>/dev/null | jq -r '.token // empty'; }
+# WARNING: register-agent revokes the prior key for this suffix
+# (memory: quorus_shim_register_agent.md). Only mint when reuse fails.
+remote_mint_child() { local pk=$1 u=$2 s=$3 c
+  c="$(curl -sS --max-time 15 -o /tmp/.kliment-mint.body -w '%{http_code}' \
     -X POST -H "Authorization: Bearer $pk" -H 'Content-Type: application/json' \
-    -d "$(jq -nc --arg s "$suffix" '{suffix:$s}')" \
-    "$url/v1/auth/register-agent" 2>/dev/null || echo "000")"
-  [[ "$code" != "200" ]] && return 1
-  jq -r '. as $d | "\($d.agent_name // "")\t\($d.api_key // "")"' \
-    /tmp/.kliment-mint.body 2>/dev/null
+    -d "$(jq -nc --arg s "$s" '{suffix:$s}')" "$u/v1/auth/register-agent" 2>/dev/null || echo 000)"
+  [[ "$c" == "200" ]] || return 1
+  jq -r '. as $d | "\($d.agent_name // "")\t\($d.api_key // "")"' /tmp/.kliment-mint.body 2>/dev/null
 }
 
-# --- spawn_daemon (claude only on this Mac) --------------------------------
-spawn_claude_daemon() {
-  local b="$1" u="$2" name="$3" logf rt pid
-  logf="/tmp/kliment-claude.log"; rt="/tmp/kliment-runtime-claude"
+spawn_claude_daemon() { local b=$1 u=$2 name=$3 logf=/tmp/kliment-claude.log rt=/tmp/kliment-runtime-claude pid
   : > "$logf"; mkdir -p "$rt"
   env RELAY_URL="$u" REFLEXD_RELAY_URL="$u" API_KEY="$b" REFLEXD_API_KEY="$b" \
       REFLEXD_PARTICIPANT="$name" REFLEXD_LEGACY_BEARER=1 \
       QUORUS_KLIMENT_DEMO=1 HOME="$HOME" QUORUS_RUNTIME_DIR="$rt" \
-      "$VENV_PY" "$REFLEXD_PY" start --debug \
-        --participant "$name" --relay-url "$u" >"$logf" 2>&1 &
-  pid=$!; disown "$pid" 2>/dev/null || true
-  printf '%s' "$pid"
+      "$VENV_PY" "$REFLEXD_PY" start --debug --participant "$name" --relay-url "$u" >"$logf" 2>&1 &
+  pid=$!; disown "$pid" 2>/dev/null || true; printf %s "$pid"
 }
 
-verify_round_trip() {
-  local b="$1" u="$2" rid="$3" target="$4"
-  local before prompt body resp mid deadline hist after
+verify_round_trip() { local b=$1 u=$2 rid=$3 target=$4 prompt body resp mid hist before after dl
+  local jq_filter='if (type=="array") then . else (.messages // .history // []) end
+        | map(select(.from_name==$a and (.message_type//"chat")!="wake_intent")) | length'
   before="$(api_call GET "/rooms/$rid/history?limit=50" "$b" "" "$u" \
-    | jq -r --arg a "$target" '
-        if (type=="array") then . else (.messages // .history // .items // []) end
-        | map(select(.from_name==$a and (.message_type//"chat")!="wake_intent")) | length' \
-    2>/dev/null || echo 0)"
+    | jq -r --arg a "$target" "$jq_filter" 2>/dev/null || echo 0)"
   before="${before:-0}"
   prompt="@${target} say hi briefly"
-  body="$(jq -nc --arg from "$PARENT_NAME" --arg c "$prompt" \
-    '{from_name:$from,content:$c,message_type:"chat"}')"
+  body="$(jq -nc --arg from "$PARENT_NAME" --arg c "$prompt" '{from_name:$from,content:$c,message_type:"chat"}')"
   resp="$(api_call POST "/rooms/$rid/messages" "$b" "$body" "$u")"
-  mid="$(echo "$resp" | jq -r '.id // .message_id // empty' 2>/dev/null)"
-  if [[ -z "$mid" ]]; then fail "verify message post failed: $resp"; return 1; fi
-  api_call POST /v1/triage "$b" \
-    "$(jq -nc --arg rid "$rid" --arg mid "$mid" --arg from "$PARENT_NAME" --arg c "$prompt" \
-       '{room_id:$rid,message_id:$mid,from_name:$from,content:$c,message_type:"chat"}')" \
+  mid="$(echo "$resp" | jq -r '.id // empty' 2>/dev/null)"
+  [[ -n "$mid" ]] || { fail "verify post failed: $resp"; return 1; }
+  api_call POST /v1/triage "$b" "$(jq -nc --arg rid "$rid" --arg mid "$mid" --arg from "$PARENT_NAME" \
+    --arg c "$prompt" '{room_id:$rid,message_id:$mid,from_name:$from,content:$c,message_type:"chat"}')" \
     "$u" >/dev/null 2>&1 || true
-  deadline=$(( $(date +%s) + 120 ))
-  while [[ $(date +%s) -lt $deadline ]]; do
+  dl=$(( $(date +%s) + 120 ))
+  while [[ $(date +%s) -lt $dl ]]; do
     hist="$(api_call GET "/rooms/$rid/history?limit=50" "$b" "" "$u")"
-    after="$(echo "$hist" | jq -r --arg a "$target" '
-        if (type=="array") then . else (.messages // .history // .items // []) end
-        | map(select(.from_name==$a and (.message_type//"chat")!="wake_intent")) | length' \
-      2>/dev/null || echo 0)"
+    after="$(echo "$hist" | jq -r --arg a "$target" "$jq_filter" 2>/dev/null || echo 0)"
     [[ "${after:-0}" -gt "$before" ]] && return 0
     sleep 2
   done
