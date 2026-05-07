@@ -76,10 +76,13 @@ export default function ShinyText({
     tone === "light"
       ? "var(--color-text-on-cream)"
       : "var(--color-text-on-ink)";
+  // Punched up for visibility on cream — the original 0.55 / 0.75 read as
+  // a faint sheen on large display headlines; 0.80 / 0.92 reads as an
+  // unmistakable glint without leaving the family.
   const glintColor =
     tone === "light"
-      ? "rgba(94, 179, 168, 0.55)" // teal-300 at 55%
-      : "rgba(94, 179, 168, 0.75)";
+      ? "rgba(94, 179, 168, 0.80)" // teal-300 at 80%
+      : "rgba(94, 179, 168, 0.92)";
 
   const style: CSSProperties = {
     backgroundImage: `linear-gradient(110deg, ${baseColor} 30%, ${glintColor} 50%, ${baseColor} 70%)`,

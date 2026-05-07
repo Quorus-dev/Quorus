@@ -3,6 +3,8 @@ import { motion, useReducedMotion } from "framer-motion";
 import HarnessFlow from "./illustrations/HarnessFlow";
 import CodeBlock from "./CodeBlock";
 import AsciinemaPlayer from "./AsciinemaPlayer";
+import Marquee from "./effects/Marquee";
+import { VENDOR_MARK, type VendorKey } from "./effects/VendorLogos.lookup";
 import { CROSS_HARNESS_COPY, HARNESS_LABELS } from "../data/cross_harness_copy";
 
 /**
