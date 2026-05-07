@@ -1,27 +1,9 @@
 #!/usr/bin/env bash
-# scripts/kliment_demo.sh - Kliment / PostHog x Rootly Demo Night orchestration.
-#
-# Beat-by-beat helper for the May 7 2026 demo (Plan v8 - the AGENT-NATIVE OS).
-# Reuses helpers from scripts/stall_demo_local.sh where possible.
-#
-# Subcommands:
-#   setup               - mint arav-claude on this Mac, create kliment-demo room
-#   post-tasks          - post the 6-task split-able list as @arav (human)
-#   kill-aarya          - SIGTERM the aarya-codex daemon (logs ts)
-#   resume-aarya        - restart aarya-codex daemon (logs ts, watches replay)
-#   propose-destructive - simulate destructive proposal + reject via verbs
-#   audit               - pretty-print recent audit + failure events
-#   cleanup             - kill all daemons + delete the room/state
-#
-# Modes (auto-detected, override with --remote / --local):
-#   REMOTE (default if profile present)  - prod relay https://quorus-relay.fly.dev
-#   LOCAL  (--local OR no prod profile)  - 127.0.0.1 quorus-relay (self-contained)
+# kliment_demo.sh - Kliment Demo Night, May 7 2026 (Plan v8: AGENT-NATIVE OS).
+# Subcommands: setup post-tasks kill-aarya resume-aarya propose-destructive audit cleanup.
+# Modes: --remote (prod relay) or --local (127.0.0.1). See docs/KLIMENT_DEMO_RUNCARD.md.
+set -u; set -o pipefail; set +m
 
-set -u
-set -o pipefail
-set +m
-
-# --- Config ----------------------------------------------------------------
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOM_NAME="${QUORUS_KLIMENT_ROOM:-kliment-demo}"
 PARENT_NAME="${QUORUS_KLIMENT_HUMAN:-arav}"
@@ -39,12 +21,10 @@ VENV_PY="$REPO_ROOT/.venv/bin/python3"
 RELAY_BIN="$REPO_ROOT/.venv/bin/quorus-relay"
 REFLEXD_PY="$REPO_ROOT/scripts/reflexd.py"
 
-# --- Output ----------------------------------------------------------------
 if [[ -t 1 && -z "${NO_COLOR-}" ]]; then
-  C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'
-  CR=$'\033[31m'; CG=$'\033[32m'; CY=$'\033[33m'; CC=$'\033[36m'
+  C0=$'\033[0m'; CB=$'\033[1m'; CR=$'\033[31m'; CG=$'\033[32m'; CY=$'\033[33m'; CC=$'\033[36m'
 else
-  C0=""; CB=""; CD=""; CR=""; CG=""; CY=""; CC=""
+  C0=""; CB=""; CR=""; CG=""; CY=""; CC=""
 fi
 say()  { printf "%s>%s %s\n" "$CC" "$C0" "$1"; }
 ok()   { printf "  %s+%s %s\n" "$CG" "$C0" "$1"; }
@@ -52,60 +32,28 @@ warn() { printf "  %s!%s %s\n" "$CY" "$C0" "$1" >&2; }
 fail() { printf "%sx%s %s%s%s\n" "$CR" "$C0" "$CB" "$1" "$C0" >&2; }
 log_event() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$EVENTS_LOG"; }
 
-# --- Prereqs ---------------------------------------------------------------
 for b in curl jq; do command -v "$b" >/dev/null 2>&1 || { fail "missing $b"; exit 2; }; done
-[[ -x "$VENV_PY"    ]] || { fail "missing $VENV_PY (run: python3 -m venv .venv && .venv/bin/pip install -e .)"; exit 2; }
-[[ -f "$REFLEXD_PY" ]] || { fail "missing $REFLEXD_PY"; exit 2; }
+[[ -x "$VENV_PY" && -f "$REFLEXD_PY" ]] || { fail "venv or reflexd missing -- run: python3 -m venv .venv && .venv/bin/pip install -e ."; exit 2; }
 
-# --- Mode handling ---------------------------------------------------------
 parse_mode_flag() {
-  for a in "$@"; do
-    case "$a" in
-      --remote) echo "remote"; return 0 ;;
-      --local)  echo "local";  return 0 ;;
-    esac
-  done
-  if [[ -f "$MODE_FILE" ]]; then cat "$MODE_FILE"; return 0; fi
-  if [[ -f "$PROFILE_FILE" ]] && jq -e '.api_key' "$PROFILE_FILE" >/dev/null 2>&1; then
-    echo "remote"
-  else
-    echo "local"
-  fi
+  for a in "$@"; do case "$a" in --remote) echo remote; return;; --local) echo local; return;; esac; done
+  [[ -f "$MODE_FILE" ]] && { cat "$MODE_FILE"; return; }
+  if [[ -f "$PROFILE_FILE" ]] && jq -e '.api_key' "$PROFILE_FILE" >/dev/null 2>&1; then echo remote; else echo local; fi
 }
 write_mode() { printf '%s\n' "$1" > "$MODE_FILE"; }
 
-# --- HTTP helpers ----------------------------------------------------------
-api_call() {
-  local m="$1" p="$2" b="$3" body="${4-}" u="$5"
-  if [[ -n "$body" ]]; then
-    curl -sS --max-time 15 -X "$m" -H "Authorization: Bearer $b" \
-      -H 'Content-Type: application/json' -d "$body" "$u$p"
-  else
-    curl -sS --max-time 15 -X "$m" -H "Authorization: Bearer $b" "$u$p"
-  fi
+api_call() { local m=$1 p=$2 b=$3 body=${4-} u=$5
+  if [[ -n "$body" ]]; then curl -sS --max-time 15 -X "$m" -H "Authorization: Bearer $b" -H 'Content-Type: application/json' -d "$body" "$u$p"
+  else curl -sS --max-time 15 -X "$m" -H "Authorization: Bearer $b" "$u$p"; fi
 }
-api_status() {
-  local m="$1" p="$2" b="$3" body="${4-}" u="$5"
-  if [[ -n "$body" ]]; then
-    curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -X "$m" \
-      -H "Authorization: Bearer $b" -H 'Content-Type: application/json' \
-      -d "$body" "$u$p"
-  else
-    curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -X "$m" \
-      -H "Authorization: Bearer $b" "$u$p"
-  fi
+api_status() { local m=$1 p=$2 b=$3 body=${4-} u=$5
+  if [[ -n "$body" ]]; then curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -X "$m" -H "Authorization: Bearer $b" -H 'Content-Type: application/json' -d "$body" "$u$p"
+  else curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -X "$m" -H "Authorization: Bearer $b" "$u$p"; fi
 }
-
 is_alive() { kill -0 "$1" 2>/dev/null; }
-pick_free_port() {
-  "$VENV_PY" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
-}
-
-# --- State helpers ---------------------------------------------------------
-load_state() { [[ -f "$KLIMENT_STATE_FILE" ]] && cat "$KLIMENT_STATE_FILE" || echo '{}'; }
+pick_free_port() { "$VENV_PY" -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
 write_state() { printf '%s\n' "$1" > "$KLIMENT_STATE_FILE"; }
 state_get() { jq -r --arg k "$1" '.[$k] // empty' "$KLIMENT_STATE_FILE" 2>/dev/null; }
-read_pids() { [[ -f "$PIDS_FILE" ]] && cat "$PIDS_FILE" || echo '{}'; }
 write_pids(){ printf '%s\n' "$1" > "$PIDS_FILE"; }
 
 # Ensure the kliment-demo room exists; print its id.
