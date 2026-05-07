@@ -197,10 +197,12 @@ class GeminiBeforeAgentRelayFailureTests(unittest.TestCase):
         return self._home / ".quorus" / "hook-debug.log"
 
     def test_handle_gemini_beforeagent_with_dead_relay(self) -> None:
-        # Patch _config to return a deterministic dead relay URL.
+        # Patch _resolve_auth to return a deterministic dead relay URL with
+        # legacy-style headers (this exercises the "auth resolved but relay
+        # is unreachable" failure mode).
         with patch(
-            "quorus_cli.hooks._config",
-            return_value=("http://localhost:1", "secret", "alice"),
+            "quorus_cli.hooks._resolve_auth",
+            return_value=("http://localhost:1", "alice", {"Authorization": "Bearer secret"}),
         ), patch("quorus_cli.hooks.httpx.get") as mock_get:
             mock_get.side_effect = httpx.ConnectError("dead")
 

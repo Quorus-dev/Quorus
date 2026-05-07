@@ -31,12 +31,12 @@ class TestGeminiHook(unittest.TestCase):
         if self.cursors_file.exists():
             self.cursors_file.unlink()
 
-    @patch("quorus_cli.hooks._config")
+    @patch("quorus_cli.hooks._resolve_auth")
     @patch("quorus_cli.hooks._fetch_unread")
     @patch("sys.stdout")
-    def test_handle_gemini_beforeagent_json_shape(self, mock_stdout, mock_fetch, mock_config):
+    def test_handle_gemini_beforeagent_json_shape(self, mock_stdout, mock_fetch, mock_resolve):
         # (a) handle_gemini_beforeagent JSON shape
-        mock_config.return_value = ("http://relay", "secret", self.agent)
+        mock_resolve.return_value = ("http://relay", self.agent, {"Authorization": "Bearer x"})
 
         # Test case 1: No messages
         mock_fetch.return_value = []

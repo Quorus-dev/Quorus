@@ -111,7 +111,8 @@ def _load_active_profile() -> dict[str, object]:
         pm = ProfileManager()
         pm.migrate_legacy_if_needed()
         return pm.current_profile() or {}
-    except Exception as exc:  # noqa: BLE001 — profile read must never crash a hook
+    except Exception as exc:
+        # Profile read must never crash a hook — log and return empty.
         _hook_debug_log("profile-load-fail", exc)
         return {}
 
@@ -169,7 +170,10 @@ def _resolve_auth() -> tuple[str, str, dict[str, str]]:
             return relay, instance, {"Authorization": f"Bearer {cached_token}"}
         try:
             token, ttl = _exchange_api_key_for_jwt(relay, api_key)
-        except Exception as exc:  # noqa: BLE001 — relay flake must not crash host
+        except Exception as exc:
+            # Relay flake or revoked key — never crash the host harness.
+            # Fail closed: empty headers means the GET will 401 and the
+            # hook no-ops cleanly, instead of silently downgrading auth.
             _hook_debug_log("jwt-exchange-fail", exc, extra=f"relay={relay}")
             return relay, instance, {}
         _JWT_CACHE["token"] = token
@@ -201,6 +205,22 @@ def _resolve_auth() -> tuple[str, str, dict[str, str]]:
 def _reset_jwt_cache_for_tests() -> None:
     """Clear the in-memory JWT cache. Test-only — never call from prod paths."""
     _JWT_CACHE.clear()
+
+
+def _config() -> tuple[str, str, str]:
+    """Legacy shim — preserved so older test fixtures still patch this name.
+
+    Production hook flow goes through ``_resolve_auth`` instead. This shim
+    intentionally never reads api_key (legacy callers couldn't either) and
+    returns the relay_secret as-is for the secondary string slot.
+    """
+    from quorus.config import load_config
+    cfg = load_config()
+    return (
+        cfg.get("relay_url", "http://localhost:8080").rstrip("/"),
+        cfg.get("relay_secret", ""),
+        cfg.get("instance_name", "default"),
+    )
 
 
 def _cursors_path(agent: str) -> Path:
