@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,34 @@ def _resolve_auth(env_name: str, file_value: str, *, label: str) -> str:
             label, env_name,
         )
     return (file_value or "").strip()
+
+
+# Production API keys are minted as ``mct_<hex>_<hex>`` (see
+# ``quorus.auth.tokens.generate_api_key``). We log an advisory if the
+# resolved key doesn't match — but we do NOT block, because tests and
+# self-hosted deployments use other formats.
+_API_KEY_RE = re.compile(r"^mct_[a-f0-9]+_[a-f0-9]+$")
+# Reject anything that would produce an *illegal* HTTP header value
+# (whitespace, CR/LF, or non-printable bytes). httpx would otherwise
+# raise ``Illegal header value`` on the relay request — that was the
+# original codex audit symptom (empty Bearer header).
+_HEADER_UNSAFE_RE = re.compile(r"[\s\x00-\x1f\x7f]")
+
+
+def _validate_header_safe(value: str, *, label: str) -> None:
+    """Fail closed if ``value`` contains chars that produce an illegal header.
+
+    Empty values are rejected by the caller's own check (see startup guard
+    below). This guard is for the harder-to-spot case: a non-empty token
+    that contains a CR/LF, embedded whitespace, or NUL — any of which would
+    make the relay return ``400 Illegal header value``.
+    """
+    if value and _HEADER_UNSAFE_RE.search(value):
+        raise SystemExit(
+            f"{label} contains whitespace or control characters that would "
+            "produce an illegal HTTP Authorization header. Re-run "
+            "`quorus login` or unset the offending env var."
+        )
 
 
 # Honor QUORUS_PROFILE env var: pick a specific profile without touching
