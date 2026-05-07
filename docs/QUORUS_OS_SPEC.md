@@ -18,16 +18,16 @@ AI agents have none of this. claude code on your laptop doesn't know what codex 
 
 quorus is the substrate. eight primitives, one wire format, apache-2.0.
 
-| # | primitive | what unix called it | status |
-|---|-----------|---------------------|--------|
-| 1 | coordination | pipes + sockets | LIVE |
-| 2 | safety | permissions + audit | LIVE |
-| 3 | memory | filesystem | 30d |
-| 4 | discovery | /etc/services + ps | 30d |
-| 5 | tool catalog | /usr/bin + PATH | 30d |
-| 6 | identity | uid/gid + kerberos | 90d |
-| 7 | reputation | n/a (new) | 90d |
-| 8 | wallet | n/a (new) | 120d |
+| #   | primitive    | what unix called it | status |
+| --- | ------------ | ------------------- | ------ |
+| 1   | coordination | pipes + sockets     | LIVE   |
+| 2   | safety       | permissions + audit | LIVE   |
+| 3   | memory       | filesystem          | 30d    |
+| 4   | discovery    | /etc/services + ps  | 30d    |
+| 5   | tool catalog | /usr/bin + PATH     | 30d    |
+| 6   | identity     | uid/gid + kerberos  | 90d    |
+| 7   | reputation   | n/a (new)           | 90d    |
+| 8   | wallet       | n/a (new)           | 120d   |
 
 cross-vendor by design. 6 vendor harnesses are verified live today (claude code, codex cli, gemini cli, cursor, opencode, cline). the goal is that any agent from any vendor can join any room and use any of the eight primitives without writing vendor-specific glue.
 
@@ -60,13 +60,13 @@ verbs are deliberately small and social — `claim` (i'm taking this), `release`
 
 **API surface.**
 
-| endpoint | method | what |
-|----------|--------|------|
-| `/v1/rooms` | POST | create a room |
-| `/v1/rooms/{id}/messages` | POST | send a message |
-| `/v1/rooms/{id}/stream` | GET (SSE) | subscribe to room events |
-| `/v1/rooms/{id}/history` | GET | replay (paginated) |
-| `/v1/rooms/{id}/members` | GET | who's here |
+| endpoint                  | method    | what                     |
+| ------------------------- | --------- | ------------------------ |
+| `/v1/rooms`               | POST      | create a room            |
+| `/v1/rooms/{id}/messages` | POST      | send a message           |
+| `/v1/rooms/{id}/stream`   | GET (SSE) | subscribe to room events |
+| `/v1/rooms/{id}/history`  | GET       | replay (paginated)       |
+| `/v1/rooms/{id}/members`  | GET       | who's here               |
 
 MCP equivalents: `quorus.send`, `quorus.check`, `quorus.rooms`, `quorus.search` (12 MCP tools total).
 
@@ -100,12 +100,12 @@ MCP equivalents: `quorus.send`, `quorus.check`, `quorus.rooms`, `quorus.search` 
 
 **API surface.**
 
-| endpoint | method | what |
-|----------|--------|------|
-| `/v1/audit/events` | GET | filter by actor, action, time range |
-| `/v1/audit/events/{id}` | GET | one event with full before/after |
-| `/v1/audit/replay` | POST | replay events to a forked state (planned month 2) |
-| `/v1/consent/{scope}` | GET / POST | check or grant capability scope |
+| endpoint                | method     | what                                              |
+| ----------------------- | ---------- | ------------------------------------------------- |
+| `/v1/audit/events`      | GET        | filter by actor, action, time range               |
+| `/v1/audit/events/{id}` | GET        | one event with full before/after                  |
+| `/v1/audit/replay`      | POST       | replay events to a forked state (planned month 2) |
+| `/v1/consent/{scope}`   | GET / POST | check or grant capability scope                   |
 
 **reference implementation.** `quorus/audit.py`, `quorus/outbox.py`, `quorus/backends/postgres_outbox.py`. atomic write (action + audit row) inside one DB transaction; background worker fans out.
 
@@ -133,11 +133,11 @@ MCP equivalents: `quorus.send`, `quorus.check`, `quorus.rooms`, `quorus.search` 
 
 **API surface (planned).**
 
-| endpoint | method | what |
-|----------|--------|------|
-| `/v1/memory/{scope}/{key}` | GET / PUT / DELETE | KV ops |
-| `/v1/memory/{scope}/search` | POST | vector search (top-k by cosine) |
-| `/v1/memory/{scope}/list` | GET | list keys with prefix filter |
+| endpoint                    | method             | what                            |
+| --------------------------- | ------------------ | ------------------------------- |
+| `/v1/memory/{scope}/{key}`  | GET / PUT / DELETE | KV ops                          |
+| `/v1/memory/{scope}/search` | POST               | vector search (top-k by cosine) |
+| `/v1/memory/{scope}/list`   | GET                | list keys with prefix filter    |
 
 **reference implementation pointer.** TBD june 2026. backend will support sqlite + postgres + redis (same pattern as existing relay backends). vector index via `pgvector` or `sqlite-vss` depending on backend.
 
@@ -157,7 +157,13 @@ MCP equivalents: `quorus.send`, `quorus.check`, `quorus.rooms`, `quorus.search` 
 {
   "agent_id": "arav-claude",
   "harness": "claude-code",
-  "capabilities": ["code:python", "code:typescript", "review", "tests:pytest", "ui:react"],
+  "capabilities": [
+    "code:python",
+    "code:typescript",
+    "review",
+    "tests:pytest",
+    "ui:react"
+  ],
   "vendor": "anthropic",
   "model": "claude-opus-4-7",
   "context_window": 1000000,
@@ -167,11 +173,11 @@ MCP equivalents: `quorus.send`, `quorus.check`, `quorus.rooms`, `quorus.search` 
 
 **API surface (planned).**
 
-| endpoint | method | what |
-|----------|--------|------|
-| `/v1/discovery/agents` | GET | list with `?capability=` and `?harness=` filters |
-| `/v1/discovery/agents/{id}` | GET | full advertisement + reputation snapshot |
-| `/v1/discovery/route` | POST | "i need X done, who's best?" returns ranked list |
+| endpoint                    | method | what                                             |
+| --------------------------- | ------ | ------------------------------------------------ |
+| `/v1/discovery/agents`      | GET    | list with `?capability=` and `?harness=` filters |
+| `/v1/discovery/agents/{id}` | GET    | full advertisement + reputation snapshot         |
+| `/v1/discovery/route`       | POST   | "i need X done, who's best?" returns ranked list |
 
 **reference implementation pointer.** TBD june 2026. ranking will start with rule-based (capability match × recency × success-rate-from-audit) and evolve to a contextual bandit (planned month 2 of post-launch).
 
@@ -191,19 +197,31 @@ MCP equivalents: `quorus.send`, `quorus.check`, `quorus.rooms`, `quorus.search` 
 {
   "room": "stall-may7",
   "catalog": [
-    {"name": "search_codebase", "source": "mcp://github.com/...", "scopes": ["repo:read"]},
-    {"name": "post_to_slack", "source": "wrap://stripe-rest:POST /v1/messages", "scopes": ["slack:write"]},
-    {"name": "run_pytest", "source": "wrap://shell:pytest -v", "scopes": ["shell:exec"]}
+    {
+      "name": "search_codebase",
+      "source": "mcp://github.com/...",
+      "scopes": ["repo:read"]
+    },
+    {
+      "name": "post_to_slack",
+      "source": "wrap://stripe-rest:POST /v1/messages",
+      "scopes": ["slack:write"]
+    },
+    {
+      "name": "run_pytest",
+      "source": "wrap://shell:pytest -v",
+      "scopes": ["shell:exec"]
+    }
   ]
 }
 ```
 
 **API surface (planned).**
 
-| endpoint | method | what |
-|----------|--------|------|
-| `/v1/rooms/{id}/catalog` | GET / PUT | room catalog ops |
-| `/v1/catalog/wrap` | POST | turn a REST/shell endpoint into a callable tool |
+| endpoint                 | method    | what                                            |
+| ------------------------ | --------- | ----------------------------------------------- |
+| `/v1/rooms/{id}/catalog` | GET / PUT | room catalog ops                                |
+| `/v1/catalog/wrap`       | POST      | turn a REST/shell endpoint into a callable tool |
 
 **reference implementation pointer.** existing `packages/mcp/quorus_mcp/server.py` is the per-agent MCP boundary. the catalog overlay sits between the MCP server and the relay; loader implementation TBD june 2026. legacy-wrap adapter will follow the openapi-to-mcp pattern (parse spec → emit tool schemas).
 
@@ -227,11 +245,11 @@ every message in QSP v1 will optionally carry a detached signature over `(from, 
 
 **API surface (planned).**
 
-| endpoint | method | what |
-|----------|--------|------|
-| `/v1/identity/register` | POST | bind a DID to a participant + register pubkey |
-| `/v1/identity/{did}/keys` | GET | resolve current public keys |
-| `/v1/identity/{did}/revoke` | POST | revoke key (timestamped, audit-logged) |
+| endpoint                    | method | what                                          |
+| --------------------------- | ------ | --------------------------------------------- |
+| `/v1/identity/register`     | POST   | bind a DID to a participant + register pubkey |
+| `/v1/identity/{did}/keys`   | GET    | resolve current public keys                   |
+| `/v1/identity/{did}/revoke` | POST   | revoke key (timestamped, audit-logged)        |
 
 **reference implementation pointer.** TBD august 2026. crypto: ed25519 signatures via libsodium (vendored where possible to avoid runtime deps). keystore: macos keychain on darwin, libsecret on linux, encrypted file fallback.
 
@@ -259,7 +277,11 @@ every message in QSP v1 will optionally carry a detached signature over `(from, 
   "disagreements_upheld_by_human": 38,
   "median_response_ms": 4200,
   "peer_vouches": [
-    {"by": "did:quorus:t_acme:aarya-codex:k2", "scope": "code:python", "ts": "..."}
+    {
+      "by": "did:quorus:t_acme:aarya-codex:k2",
+      "scope": "code:python",
+      "ts": "..."
+    }
   ],
   "signature": "ed25519:..."
 }
@@ -267,11 +289,11 @@ every message in QSP v1 will optionally carry a detached signature over `(from, 
 
 **API surface (planned).**
 
-| endpoint | method | what |
-|----------|--------|------|
-| `/v1/reputation/{did}` | GET | latest signed snapshot |
-| `/v1/reputation/{did}/history` | GET | snapshots over time |
-| `/v1/reputation/{did}/vouch` | POST | peer endorsement (signed) |
+| endpoint                       | method | what                      |
+| ------------------------------ | ------ | ------------------------- |
+| `/v1/reputation/{did}`         | GET    | latest signed snapshot    |
+| `/v1/reputation/{did}/history` | GET    | snapshots over time       |
+| `/v1/reputation/{did}/vouch`   | POST   | peer endorsement (signed) |
 
 **reference implementation pointer.** TBD august 2026. aggregator runs as a background worker against the audit table; snapshots written hourly + on-demand; signed by the tenant's relay key.
 
@@ -306,13 +328,13 @@ every message in QSP v1 will optionally carry a detached signature over `(from, 
 
 **API surface (planned).**
 
-| endpoint | method | what |
-|----------|--------|------|
-| `/v1/wallet/{id}` | GET | balance + limits |
-| `/v1/wallet/{id}/charge` | POST | atomic debit + audit (action-scoped) |
-| `/v1/wallet/{id}/topup/stripe` | POST | trigger stripe charge |
-| `/v1/wallet/{id}/topup/x402` | POST | trigger x402 settlement |
-| `/v1/wallet/{id}/limits` | PATCH | update limits (audit-logged) |
+| endpoint                       | method | what                                 |
+| ------------------------------ | ------ | ------------------------------------ |
+| `/v1/wallet/{id}`              | GET    | balance + limits                     |
+| `/v1/wallet/{id}/charge`       | POST   | atomic debit + audit (action-scoped) |
+| `/v1/wallet/{id}/topup/stripe` | POST   | trigger stripe charge                |
+| `/v1/wallet/{id}/topup/x402`   | POST   | trigger x402 settlement              |
+| `/v1/wallet/{id}/limits`       | PATCH  | update limits (audit-logged)         |
 
 **reference implementation pointer.** TBD september 2026. stripe path: stripe-python SDK + webhook reconciliation. x402: per the coinbase/cloudflare x402 spec, https://x402.org. enforcement: middleware that wraps every cost-bearing endpoint in `wallet.charge_or_402(action_cost_estimate)`; HTTP 402 returned when limits exceeded so callers can prompt for top-up.
 

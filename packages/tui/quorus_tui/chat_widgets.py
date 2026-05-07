@@ -247,20 +247,28 @@ def highlight_inline(content: str, *, body_style: str = "bright") -> Text:
 
 
 def time_divider(label: str, console_width: int) -> Text:
-    """Centered dim ``— Today, 2:42 PM —`` divider rule.
+    """Centered dim ``──  Today, 2:42 PM  ──`` divider rule.
+
+    Charm-tier polish — the U+2500 BOX DRAWINGS LIGHT HORIZONTAL glyph
+    (``─``) reads as a hairline on every modern terminal font; combined
+    with two-space gutters around the label and dim italic styling it
+    reads as a proper section break, not a "joined the room" tag.
 
     Returned as a Rich ``Text`` — Rich's ``Rule`` would force its own
     spacing and break the two-space left-margin convention.
     """
     if not label:
         return Text("")
-    side = max(4, (console_width - len(label) - 4) // 2)
+    # Reserve room for: 2-space indent + bar + 2-space gutter + label
+    # + 2-space gutter + bar. Side bars get whatever's left, equal split.
+    gutter = 2
+    side = max(4, (console_width - len(label) - 2 * gutter - 2) // 2)
     bar = "─" * side
     line = Text("  ")
     line.append(bar, style="dim")
-    line.append("  ")
+    line.append(" " * gutter)
     line.append(label, style="dim italic")
-    line.append("  ")
+    line.append(" " * gutter)
     line.append(bar, style="dim")
     return line
 
@@ -397,11 +405,18 @@ def verb_decoration(
 
 
 def reaction_row(reactions: dict[str, int], console_width: int) -> Text:
-    """Render a row of ``[heart 2] [thumbs-up 1]`` chip-pills.
+    """Render a row of ``[ heart · 2 ] [ thumbs-up ]`` chip-pills.
 
-    *reactions* maps a label → count. Label is the ASCII name (e.g.
-    ``"heart"``, ``"thumbs-up"``, ``"sparkle"``); we never embed Unicode
-    emoji on the rendered surface (project rule). Empty dict → blank Text.
+    Charm-style pills — single-cell padding inside the brackets, a
+    centered ``·`` separating label from count, and an *accent* count
+    on multi-reactions so the eye instantly catches "people reacted
+    twice" vs "one tap". Single-count chips drop the ``· N`` so the
+    pill stays tight (the bracket itself encodes "≥1").
+
+    *reactions* maps a label → count. Label is the ASCII name
+    (``"heart"``, ``"thumbs-up"``, ``"sparkle"``); we never embed
+    Unicode emoji on the rendered surface (project rule). Empty
+    dict → blank Text.
     """
     if not reactions:
         return Text("")
@@ -411,11 +426,12 @@ def reaction_row(reactions: dict[str, int], console_width: int) -> Text:
         if not first:
             line.append("  ")
         first = False
-        line.append("[", style="dim")
+        line.append("[ ", style="dim")
         line.append(label, style="muted")
         if count and count > 1:
-            line.append(f" {count}", style="bold accent")
-        line.append("]", style="dim")
+            line.append(" · ", style="dim")
+            line.append(str(count), style="bold accent")
+        line.append(" ]", style="dim")
     # Truncate at console_width if it overflows (rare but safe).
     if line.cell_len > console_width:
         return Text("")
@@ -458,17 +474,19 @@ def empty_room_card(room_name: str, console_width: int) -> list[Text]:
 
 
 def typing_indicator(typist: str | None) -> Text:
-    """``@x is typing…`` hint. Empty Text when no one's typing.
+    """``◐  @x is typing…`` hint. Empty Text when no one's typing.
 
-    The ellipsis pulses visually via dim-italic styling; we don't
-    re-render to animate (would thrash the Live region) — the human
-    eye reads italics + ellipsis as motion regardless.
+    Uses the same half-filled "soft pulse" glyph as :func:`presence_dot`
+    in its typing state — visual continuity so the eye reads the row
+    as the same kind of signal as the app-bar dot. The trailing
+    ellipsis renders dim italic which the human brain perceives as
+    motion without us actually re-drawing (would thrash Live).
     """
     if not typist:
         return Text("")
     line = Text(INDENT)
-    line.append("●  ", style=sender_color(typist))
-    line.append(f"@{typist}", style="muted")
+    line.append(f"{PRESENCE_GLYPH_TYPING}  ", style="accent")
+    line.append(f"@{typist}", style=f"bold {sender_color(typist)}")
     line.append(" is typing", style="dim italic")
     line.append("…", style="dim italic")
     return line
@@ -505,14 +523,40 @@ def bubble_corners(*, position: str, side: str = "left") -> tuple[str, str]:
 
 # ── Presence dot ─────────────────────────────────────────────────────────────
 
+# Three states, three glyphs — each a single cell-wide unicode block so
+# alignment with surrounding chrome stays exact at every font size:
+#   ●  filled circle    — active, someone posted within window
+#   ◐  half-filled      — typing right now (visually "in motion")
+#   ○  hollow circle    — idle / offline
+# The half-filled glyph is the conventional "pulse" cue across Charm,
+# tmux-resurrect, and most TUIs that show typing — it reads as motion
+# without needing actual animation (which would thrash the Live region).
+PRESENCE_GLYPH_ACTIVE = "●"
+PRESENCE_GLYPH_TYPING = "◐"
+PRESENCE_GLYPH_IDLE = "○"
 
-def presence_dot(messages: list[dict], *, now: datetime | None = None,
-                 active_window_s: int = 60) -> tuple[str, str]:
+
+def presence_dot(
+    messages: list[dict],
+    *,
+    now: datetime | None = None,
+    active_window_s: int = 60,
+    typing: str | None = None,
+) -> tuple[str, str]:
     """Return ``(glyph, style)`` for the room-presence indicator.
 
-    Active = anyone (other than system) posted within *active_window_s*
-    seconds. Active rooms get a green ●; idle rooms get a dim ○.
+    States:
+      * ``typing`` (caller-supplied) — half-filled circle in *accent*,
+        the "soft pulse" cue for active composition.
+      * Active = anyone (non-system) posted within *active_window_s*s →
+        filled circle in *success* (green).
+      * Otherwise → hollow circle in *dim*.
+
+    Caller drives the pulse — pass a non-empty ``typing`` string when
+    you have a typing notification (future ``typing_started`` SSE event).
     """
+    if typing:
+        return (PRESENCE_GLYPH_TYPING, "accent")
     now = now or datetime.now(timezone.utc)
     for msg in reversed(messages or []):
         if msg.get("message_type") == "system":
@@ -524,9 +568,25 @@ def presence_dot(messages: list[dict], *, now: datetime | None = None,
         if ts <= 0:
             continue
         if now.timestamp() - ts <= active_window_s:
-            return ("●", "success")
+            return (PRESENCE_GLYPH_ACTIVE, "success")
         break
-    return ("○", "dim")
+    return (PRESENCE_GLYPH_IDLE, "dim")
+
+
+# ── Daemon-status indicator ──────────────────────────────────────────────────
+
+
+def daemon_status_glyph(connected: bool) -> tuple[str, str]:
+    """Return ``(glyph, style)`` for the reflexd / relay daemon dot.
+
+    Mirrors :func:`presence_dot` so the eye reads "connection state"
+    consistently — filled green for live, hollow dim for down. Used by
+    :func:`render_app_bar` so a glance at the chrome tells you whether
+    your messages are going anywhere.
+    """
+    if connected:
+        return (PRESENCE_GLYPH_ACTIVE, "success")
+    return (PRESENCE_GLYPH_IDLE, "dim")
 
 
 # ── Sender-color collision audit ─────────────────────────────────────────────
@@ -738,8 +798,12 @@ def last_active_label(
 
 
 __all__ = [
+    "CURATED_SENDER_PALETTE",
     "INDENT",
     "MAX_FEED_WIDTH_PCT",
+    "PRESENCE_GLYPH_ACTIVE",
+    "PRESENCE_GLYPH_IDLE",
+    "PRESENCE_GLYPH_TYPING",
     "SENDER_PALETTE",
     "SHARE_CARD_MIN_W",
     "TIME_DIVIDER_GAP_S",
@@ -747,6 +811,7 @@ __all__ = [
     "bubble_width",
     "color_collision_rate",
     "copy_to_clipboard",
+    "daemon_status_glyph",
     "empty_room_card",
     "hhmm",
     "highlight_inline",
