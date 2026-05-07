@@ -1,19 +1,10 @@
-"""Outbox/durable-queue replay resilience smoke tests.
-
-LOAD-BEARING WALL of the Kliment May 7 2026 demo (Plan v8). Beat 2 claims
-that when an SSE subscriber disconnects mid-stream and reconnects, every
-message sent during the disconnect window is replayed in order via the
-per-recipient durable queue (the in-memory analogue of the Postgres outbox).
-
-Test 1 runs against the in-memory backend (no Postgres needed) and exercises
-the same fan-out -> per-recipient queue path the production outbox worker uses.
-Test 2 verifies the audit hash chain stays intact across the disconnect; it
-is skipped without ``DATABASE_URL`` because the in-memory relay constructs
-no AuditService (see ``quorus/relay.py::_init_services``).
-
-Vocabulary note: prompt named "CREATED/FANOUT_QUEUED/FANOUT_PUBLISHED/
-DELIVERED"; the actual ``AuditEvent`` enum uses ``MESSAGE_CREATED``,
-``MESSAGE_QUEUED``, ``FANOUT_STARTED``, ``FANOUT_COMPLETED``, ``DELIVERED``.
+"""Outbox/durable-queue replay resilience smoke tests -- LOAD-BEARING WALL
+of Kliment Demo Beat 2 (May 7 2026, Plan v8). Test 1 runs against the
+in-memory backend (no Postgres needed); test 2 verifies the audit hash
+chain across the disconnect and skips without DATABASE_URL because the
+in-memory relay constructs no AuditService (see relay.py::_init_services).
+The actual AuditEvent enum uses MESSAGE_CREATED / MESSAGE_QUEUED /
+FANOUT_STARTED / FANOUT_COMPLETED / DELIVERED (not the prompt's vocabulary).
 """
 from __future__ import annotations
 
