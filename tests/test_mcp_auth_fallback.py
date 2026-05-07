@@ -54,8 +54,41 @@ def test_mcp_uses_env_when_set(monkeypatch, tmp_path):
     assert srv.API_KEY == "mct_env_wins"
 
 
-def test_mcp_raises_clear_error_when_neither_source_has_key(monkeypatch, tmp_path):
+def test_mcp_raises_clear_error_when_neither_source_has_valid_key(monkeypatch, tmp_path):
     _seed(tmp_path, "")
     with pytest.raises(SystemExit) as exc:
         _reload(monkeypatch, tmp_path, {"QUORUS_API_KEY": ""})
     assert "non-empty" in str(exc.value).lower()
+
+
+def test_mcp_rejects_api_key_with_illegal_header_chars(monkeypatch, tmp_path):
+    """A token containing CR/LF must fail closed, not ship as a Bearer header."""
+    _seed(tmp_path, "mct_profile_value")
+    with pytest.raises(SystemExit) as exc:
+        _reload(monkeypatch, tmp_path, {"QUORUS_API_KEY": "mct_bad\nvalue"})
+    assert "illegal" in str(exc.value).lower()
+
+
+def test_mcp_warns_when_api_key_shape_is_unexpected(monkeypatch, tmp_path, caplog):
+    """Non-mct shaped keys are accepted (test fixtures use them) but logged."""
+    import logging
+
+    _seed(tmp_path, "")
+    with caplog.at_level(logging.WARNING, logger="mcp_tunnel.mcp"):
+        srv = _reload(monkeypatch, tmp_path, {"QUORUS_API_KEY": "not_mct_shape"})
+    assert srv.API_KEY == "not_mct_shape"
+    assert any("mct_<hex>_<hex>" in r.message for r in caplog.records)
+
+
+def test_mcp_accepts_production_shaped_api_key_silently(monkeypatch, tmp_path, caplog):
+    """Production-shaped key (mct_<hex>_<hex>) must NOT trigger the advisory."""
+    import logging
+
+    _seed(tmp_path, "")
+    with caplog.at_level(logging.WARNING, logger="mcp_tunnel.mcp"):
+        srv = _reload(
+            monkeypatch, tmp_path,
+            {"QUORUS_API_KEY": "mct_abc123def456_0123456789abcdef0123456789abcdef"},
+        )
+    assert srv.API_KEY.startswith("mct_")
+    assert not any("mct_<hex>_<hex>" in r.message for r in caplog.records)

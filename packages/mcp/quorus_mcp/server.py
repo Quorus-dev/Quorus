@@ -173,6 +173,19 @@ if not RELAY_SECRET and not API_KEY:
         "Empty/whitespace env vars are now treated as unset and fall back\n"
         "to the profile file."
     )
+# Defense in depth: even if we got a non-empty value, refuse to ship it as
+# a Bearer token if it contains characters that would make the HTTP header
+# illegal. This prevents a different shape of the same bug class.
+_validate_header_safe(API_KEY, label="API_KEY")
+_validate_header_safe(RELAY_SECRET, label="RELAY_SECRET")
+# Advisory: production keys are ``mct_<hex>_<hex>``. Non-matching values
+# (test fixtures, hand-typed keys) are accepted but logged once so a
+# misconfigured deployment is visible without grepping the relay logs.
+if API_KEY and not _API_KEY_RE.match(API_KEY):
+    logger.warning(
+        "API_KEY does not match the expected mct_<hex>_<hex> shape. "
+        "(No key value is logged.) The relay may reject this credential."
+    )
 logger.info(
     "Config loaded: relay_url=%s instance=%s sse_enabled=%s",
     RELAY_URL, INSTANCE_NAME, SSE_ENABLED,

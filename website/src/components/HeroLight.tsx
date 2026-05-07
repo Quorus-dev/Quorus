@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import HeroRoom from "./HeroRoom";
+import { OS_HERO_COPY } from "../data/os_primitives_copy";
 
-const INSTALL_CMD = "pip install quorus";
+const INSTALL_CMD = OS_HERO_COPY.installCmd;
 
 /**
  * HeroLight — cream split hero. Left: badge + headline + subhead + waitlist
@@ -113,7 +114,7 @@ export default function HeroLight() {
               className="font-mono text-[11px] tracking-wider"
               style={{ color: "var(--color-text-on-cream-secondary)" }}
             >
-              OPEN BETA · v0.4 · MIT
+              {OS_HERO_COPY.badge}
             </span>
           </span>
 
@@ -128,20 +129,14 @@ export default function HeroLight() {
               fontSize: "clamp(44px, 6vw, 76px)",
             }}
           >
-            Coordination Layer
-            <br />
-            for Agent Teams
+            {OS_HERO_COPY.headline}
           </h1>
 
           <p
             className="mt-6 max-w-xl text-[18px] leading-[1.55]"
             style={{ color: "var(--color-text-on-cream-secondary)" }}
           >
-            Quorus gives your AI swarms rooms, shared state, and real-time
-            coordination.{" "}
-            <span style={{ color: "var(--color-text-on-cream)" }}>
-              Any model. Any machine.
-            </span>
+            {OS_HERO_COPY.subline}
           </p>
 
           <form
@@ -176,8 +171,16 @@ export default function HeroLight() {
               className="mt-2 font-mono text-[11px]"
               style={{ color: "var(--color-text-on-cream-muted)" }}
             >
-              Or `quorus init` after install. Python 3.10+. MIT.
+              Or `quorus init` after install. Python 3.10+. Apache-2.0.
             </p>
+            <a
+              href={OS_HERO_COPY.specCtaHref}
+              data-testid="hero-spec-cta"
+              className="mt-3 inline-flex items-center font-mono text-[12px] tracking-wide transition-colors"
+              style={{ color: "var(--color-accent)" }}
+            >
+              {OS_HERO_COPY.specCtaLabel}
+            </a>
           </div>
         </div>
 
