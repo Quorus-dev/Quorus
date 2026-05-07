@@ -1,6 +1,14 @@
 import { useId } from "react";
+import type { JSX } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { AnimatedBeam, BorderBeam } from "../effects/AnimatedBeam";
+import {
+  ClaudeMark,
+  CursorMark,
+  GeminiMark,
+  CodexMark,
+} from "../effects/VendorLogos";
+import type { VendorMarkProps } from "../effects/VendorLogos";
 
 /**
  * HarnessFlow — animated 4-vendor → 1-relay flow diagram for the
@@ -29,21 +37,27 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 // caption now references all 7 (6 tier-A + 1 tier-B). The four shown here
 // are the most visible vendor names; Opencode + Cline + Windsurf appear in
 // the install switcher (CrossHarnessBand) and the comparison band copy.
-const VENDORS = [
-  { id: "claude", label: "Claude Code" },
-  { id: "cursor", label: "Cursor" },
-  { id: "gemini", label: "Gemini CLI" },
-  { id: "codex", label: "Codex CLI" },
-] as const;
+type VendorMark = (props: VendorMarkProps) => JSX.Element;
+
+const VENDORS: ReadonlyArray<{
+  id: string;
+  label: string;
+  Mark: VendorMark;
+}> = [
+  { id: "claude", label: "Claude Code", Mark: ClaudeMark },
+  { id: "cursor", label: "Cursor", Mark: CursorMark },
+  { id: "gemini", label: "Gemini CLI", Mark: GeminiMark },
+  { id: "codex", label: "Codex CLI", Mark: CodexMark },
+];
 
 // Diagram canvas in viewBox units. 1100x420 keeps the 4-up grid spaced
 // without crowding the relay node, and stays under 3:1 aspect.
 const VB_W = 1100;
 const VB_H = 420;
 
-// Vendor card geometry
+// Vendor card geometry — taller now to fit brand mark + wordmark + status pill
 const CARD_W = 200;
-const CARD_H = 92;
+const CARD_H = 108;
 const CARD_Y = 24;
 const CARD_GAP = (VB_W - VENDORS.length * CARD_W) / (VENDORS.length + 1);
 
@@ -94,6 +108,12 @@ function VendorCard({
   index: number;
 }): JSX.Element {
   const x = CARD_GAP + index * (CARD_W + CARD_GAP);
+  const { Mark } = vendor;
+  // Brand-mark badge sits in the top portion of the card, wordmark below.
+  // foreignObject is the cleanest way to render an HTML element (which lets
+  // the mark's gradient defs and currentColor cascade work normally) inside
+  // the SVG canvas without recomputing every path's offset.
+  const MARK_SIZE = 26;
   return (
     <g>
       <rect
@@ -106,15 +126,35 @@ function VendorCard({
         stroke="var(--color-border-dark-strong)"
         strokeWidth={1}
       />
-      {/* Wordmark */}
+      {/* Brand mark — centered horizontally, sits at the top of the card */}
+      <foreignObject
+        x={x + CARD_W / 2 - MARK_SIZE / 2}
+        y={CARD_Y + 12}
+        width={MARK_SIZE}
+        height={MARK_SIZE}
+      >
+        <div
+          style={{
+            width: MARK_SIZE,
+            height: MARK_SIZE,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--color-text-on-ink)",
+          }}
+        >
+          <Mark size={MARK_SIZE} />
+        </div>
+      </foreignObject>
+      {/* Wordmark — pushed below the mark */}
       <text
         x={x + CARD_W / 2}
-        y={CARD_Y + 38}
+        y={CARD_Y + 58}
         textAnchor="middle"
         fill="var(--color-text-on-ink)"
         fontFamily="var(--font-sans)"
         fontWeight={600}
-        fontSize={16}
+        fontSize={14.5}
         letterSpacing="-0.01em"
       >
         {vendor.label}
@@ -123,13 +163,13 @@ function VendorCard({
       <g>
         <circle
           cx={x + CARD_W / 2 - 44}
-          cy={CARD_Y + 64}
+          cy={CARD_Y + 78}
           r={3}
           fill="var(--color-accent-on-ink)"
         />
         <text
           x={x + CARD_W / 2 - 34}
-          y={CARD_Y + 68}
+          y={CARD_Y + 82}
           textAnchor="start"
           fill="var(--color-text-on-ink-muted)"
           fontFamily="var(--font-mono)"
@@ -282,13 +322,14 @@ export default function HarnessFlow(): JSX.Element {
                 }}
               >
                 <span
-                  className="text-[14px]"
+                  className="flex items-center gap-2.5 text-[14px]"
                   style={{
                     color: "var(--color-text-on-ink)",
                     fontFamily: "var(--font-sans)",
                     fontWeight: 600,
                   }}
                 >
+                  <v.Mark size={20} />
                   {v.label}
                 </span>
                 <span

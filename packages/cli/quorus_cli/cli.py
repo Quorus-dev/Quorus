@@ -4450,10 +4450,11 @@ def _init_run_wake_smoke(
             return False, 0.0, "no token returned"
         headers = {"Authorization": f"Bearer {jwt}"}
 
-        # Create + join the smoke room.
+        # Create the smoke room. CreateRoomRequest requires `created_by`
+        # — the relay enforces `created_by == auth.sub` from the JWT.
         room_resp = httpx.post(
             f"{relay_url}/rooms",
-            json={"name": room_name},
+            json={"name": room_name, "created_by": base_name},
             headers=headers,
             timeout=10,
             follow_redirects=True,
@@ -4464,25 +4465,27 @@ def _init_run_wake_smoke(
         if not room_id:
             return False, 0.0, "no room id returned"
 
-        # Add the target agent to the room (use the agent's own key so the
-        # add-member call is authoritative against the relay's tenant rules).
-        # Ignore the response — the relay returns 409 if already a member.
+        # Add the target agent to the room. JoinLeaveRequest expects a JSON
+        # body with `participant` (and optional `role`), not a query param.
+        # The human is the room creator, so the relay's creator-bypass
+        # allows adding non-self members.
         try:
             httpx.post(
                 f"{relay_url}/rooms/{room_id}/join",
                 headers=headers,
-                params={"member": target_agent},
+                json={"participant": target_agent, "role": "member"},
                 timeout=10,
                 follow_redirects=True,
             )
         except Exception:
             pass
 
-        # Send the @-mention.
+        # Send the @-mention. RoomMessageRequest requires `from_name` and
+        # `content` (not `text`). `from_name` must equal `auth.sub`.
         body = f"@{target_agent} smoke ping"
         send_resp = httpx.post(
             f"{relay_url}/rooms/{room_id}/messages",
-            json={"text": body},
+            json={"from_name": base_name, "content": body},
             headers=headers,
             timeout=10,
             follow_redirects=True,
@@ -4490,14 +4493,14 @@ def _init_run_wake_smoke(
         if send_resp.status_code not in (200, 201):
             return False, 0.0, f"send HTTP {send_resp.status_code}"
 
-        # Poll history for a reply from the agent.
+        # Poll the canonical history endpoint for a reply from the agent.
         deadline = _time.monotonic() + timeout_s
         sent_at = _time.monotonic()
         last_seen = 0
         while _time.monotonic() < deadline:
             try:
                 hist = httpx.get(
-                    f"{relay_url}/rooms/{room_id}/messages",
+                    f"{relay_url}/rooms/{room_id}/history",
                     headers=headers,
                     params={"limit": 50},
                     timeout=5,

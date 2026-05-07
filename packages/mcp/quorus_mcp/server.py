@@ -22,45 +22,74 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp_tunnel.mcp")
 
+def _clean_env(name: str) -> str | None:
+    """Read an env var, treating empty/whitespace-only values as UNSET.
+
+    Codex audit (2026-05-03): a stale ``QUORUS_API_KEY=`` (empty) or
+    ``QUORUS_API_KEY=" "`` (whitespace) caused this module to construct
+    ``Authorization: Bearer `` and the relay to reject with HTTP 400
+    "Illegal header value". Whitespace-only values are now treated as
+    not-set so the loader falls through to the profile JSON.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    return stripped or None
+
+
+def _resolve_auth(env_name: str, file_value: str, *, label: str) -> str:
+    """Resolve an auth field with empty-env fallback + one-time stderr note."""
+    env_val = _clean_env(env_name)
+    if env_val is not None:
+        return env_val
+    # If the env var was *present* but blank, emit one stderr warning so
+    # operators see why we fell back to the profile.
+    if env_name in os.environ:
+        logger.warning(
+            "%s env var %s was empty; falling back to profile/config file. "
+            "(No key value is logged.)",
+            label, env_name,
+        )
+    return (file_value or "").strip()
+
+
 # Honor QUORUS_PROFILE env var: pick a specific profile without touching
 # "current". Falls back to the current-profile pointer / legacy migration
 # path inside load_config().
-_profile_slug = os.environ.get("QUORUS_PROFILE")
+_profile_slug = _clean_env("QUORUS_PROFILE")
 if _profile_slug:
     # Load just the named profile's data, then let load_config() apply
     # env-var overrides on top (env still beats profile for direct
     # overrides like QUORUS_RELAY_URL).
     _profile_data = ConfigManager(profile=_profile_slug).load()
-    # load_config() reads from resolve_config_file() — temporarily point
-    # it at the profile file by setting QUORUS_CONFIG_DIR is too invasive,
-    # so instead we build the config dict by hand using the same priority
-    # rules load_config() uses (env > file > default).
     _config = {
         "config_file": str(ConfigManager(profile=_profile_slug).path),
         "relay_url": (
-            os.environ.get("RELAY_URL")
-            or _profile_data.get("relay_url", "http://localhost:8080")
+            _clean_env("RELAY_URL")
+            or (_profile_data.get("relay_url") or "http://localhost:8080")
         ),
         "relay_secret": (
-            os.environ.get("RELAY_SECRET")
-            or _profile_data.get("relay_secret", "")
+            _clean_env("RELAY_SECRET")
+            or (_profile_data.get("relay_secret") or "")
         ),
         "api_key": (
-            os.environ.get("API_KEY") or _profile_data.get("api_key", "")
+            _clean_env("API_KEY")
+            or (_profile_data.get("api_key") or "")
         ),
         "instance_name": (
-            os.environ.get("INSTANCE_NAME")
-            or _profile_data.get("instance_name", "default")
+            _clean_env("INSTANCE_NAME")
+            or (_profile_data.get("instance_name") or "default")
         ),
         "enable_background_polling": True,
         "push_notification_method": (
-            os.environ.get("PUSH_NOTIFICATION_METHOD")
+            _clean_env("PUSH_NOTIFICATION_METHOD")
             or _profile_data.get("push_notification_method")
             or "notifications/claude/channel"
         ),
         "push_notification_channel": (
-            os.environ.get("PUSH_NOTIFICATION_CHANNEL")
-            or _profile_data.get("push_notification_channel", "quorus")
+            _clean_env("PUSH_NOTIFICATION_CHANNEL")
+            or (_profile_data.get("push_notification_channel") or "quorus")
         ),
     }
 else:
@@ -70,10 +99,14 @@ CONFIG_FILE = Path(_config["config_file"])
 # (Claude Code, Codex, Cursor, …) gets its own QUORUS_INSTANCE_NAME via
 # env so the relay sees them as distinct participants even though they
 # share `~/.quorus/config.json`. Env beats config for all four fields.
-RELAY_URL = os.environ.get("QUORUS_RELAY_URL") or _config["relay_url"]
-RELAY_SECRET = os.environ.get("QUORUS_RELAY_SECRET") or _config["relay_secret"]
-API_KEY = os.environ.get("QUORUS_API_KEY") or _config["api_key"]
-INSTANCE_NAME = os.environ.get("QUORUS_INSTANCE_NAME") or _config["instance_name"]
+# IMPORTANT: empty/whitespace env values fall through to the file value,
+# preventing ``Bearer `` empty auth headers (codex audit fix).
+RELAY_URL = _clean_env("QUORUS_RELAY_URL") or _config["relay_url"]
+RELAY_SECRET = _resolve_auth(
+    "QUORUS_RELAY_SECRET", _config["relay_secret"], label="Relay secret",
+)
+API_KEY = _resolve_auth("QUORUS_API_KEY", _config["api_key"], label="API key")
+INSTANCE_NAME = _clean_env("QUORUS_INSTANCE_NAME") or _config["instance_name"]
 SSE_ENABLED = os.environ.get("SSE_ENABLED", "true").strip().lower() not in {
     "0", "false", "no", "off",
 }
@@ -99,10 +132,17 @@ def _validate_relay_url(value: str) -> str:
     return value
 
 _validate_relay_url(RELAY_URL)
+# Both fields are already stripped by _resolve_auth, so an empty string here
+# means the value was missing in BOTH the env var and the profile file. We
+# fail closed with a clear message instead of letting the relay receive a
+# malformed ``Authorization: Bearer `` header (codex audit fix).
 if not RELAY_SECRET and not API_KEY:
     raise SystemExit(
-        "Neither relay_secret nor api_key is set. "
-        "Set RELAY_SECRET or API_KEY env var or config file value."
+        "Neither relay_secret nor api_key resolved to a non-empty value.\n"
+        "  - Set QUORUS_API_KEY (or RELAY_SECRET) to a non-empty token, OR\n"
+        "  - Run `quorus login` to populate ~/.quorus/profiles/default.json.\n"
+        "Empty/whitespace env vars are now treated as unset and fall back\n"
+        "to the profile file."
     )
 logger.info(
     "Config loaded: relay_url=%s instance=%s sse_enabled=%s",
@@ -155,8 +195,20 @@ async def _exchange_api_key_for_jwt() -> str:
     return _cached_jwt
 
 async def _get_bearer_token() -> str:
+    """Return the Bearer token to send on a relay request.
+
+    Defensive guard: if both ``API_KEY`` and ``RELAY_SECRET`` are empty
+    (would normally be caught at startup) we raise rather than silently
+    emit ``Authorization: Bearer `` which the relay rejects as an
+    illegal header value.
+    """
     global _cached_jwt
     if not API_KEY:
+        if not RELAY_SECRET:
+            raise RuntimeError(
+                "Quorus MCP has no auth credential at request time "
+                "(API_KEY and RELAY_SECRET both empty)."
+            )
         return RELAY_SECRET
     async with _jwt_lock:
         return _cached_jwt or await _exchange_api_key_for_jwt()

@@ -1,6 +1,11 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties } from "react";
 import BlurFadeIn from "./effects/BlurFadeIn";
 import Marquee from "./effects/Marquee";
+import {
+  VENDOR_MARK,
+  type VendorKey,
+  type VendorMarkProps,
+} from "./effects/VendorLogos";
 
 /**
  * LogoCloud — provider wordmark band, magicui-style continuous marquee.
@@ -49,13 +54,15 @@ const TOKEN: Record<string, string> = {
 // glyph height.
 type WordmarkProps = {
   name: string;
-  /** Optional small typographic mark (a dot variant, a slash, an arrow). */
-  glyph?: ReactNode;
+  /** Vendor-keyed brand mark — rendered in monochrome to match wordmark color. */
+  vendor: VendorKey;
   /** Tiny tag rendered to the right in muted color. */
   tag?: string;
 };
 
-function Wordmark({ name, glyph, tag }: WordmarkProps) {
+function Wordmark({ name, vendor, tag }: WordmarkProps) {
+  const Mark = VENDOR_MARK[vendor];
+  const markProps: VendorMarkProps = { size: 18, monochrome: true };
   const style: CSSProperties = {
     color: TOKEN.textSecondary,
     fontFamily: "var(--font-mono)",
@@ -77,11 +84,9 @@ function Wordmark({ name, glyph, tag }: WordmarkProps) {
         (e.currentTarget.style.color = TOKEN.textSecondary as string)
       }
     >
-      {glyph ? (
-        <span aria-hidden="true" className="opacity-70">
-          {glyph}
-        </span>
-      ) : null}
+      <span aria-hidden="true" className="opacity-80">
+        <Mark {...markProps} />
+      </span>
       <span>{name}</span>
       {tag ? (
         <span
@@ -102,235 +107,29 @@ function Wordmark({ name, glyph, tag }: WordmarkProps) {
   );
 }
 
-// ── Inline glyph atoms ──────────────────────────────────────────────────
-// Each one is currentColor and 14px square so it sits on the mono baseline
-// without nudging neighboring wordmarks.
-
-const Dot = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    <circle cx="7" cy="7" r="2.5" fill="currentColor" />
-  </svg>
-);
-
-const Square = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    <rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor" />
-  </svg>
-);
-
-const Bracket = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path
-      d="M5 3 L3 7 L5 11"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      fill="none"
-    />
-    <path
-      d="M9 3 L11 7 L9 11"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      fill="none"
-    />
-  </svg>
-);
-
-const Slash = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path
-      d="M10 3 L4 11"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-    />
-  </svg>
-);
-
-const Triangle = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path d="M7 3 L11 11 L3 11 Z" fill="currentColor" />
-  </svg>
-);
-
-const Hexagon = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path
-      d="M7 2 L11.5 4.5 L11.5 9.5 L7 12 L2.5 9.5 L2.5 4.5 Z"
-      fill="currentColor"
-    />
-  </svg>
-);
-
-const Star = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path
-      d="M7 1.5 L8.6 5.4 L12.7 5.7 L9.6 8.3 L10.5 12.3 L7 10.2 L3.5 12.3 L4.4 8.3 L1.3 5.7 L5.4 5.4 Z"
-      fill="currentColor"
-    />
-  </svg>
-);
-
-const Diamond = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path d="M7 2 L12 7 L7 12 L2 7 Z" fill="currentColor" />
-  </svg>
-);
-
-const Chevron = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path
-      d="M3 5 L7 9 L11 5"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      fill="none"
-    />
-  </svg>
-);
-
-const Caret = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path
-      d="M4 4 L8 7 L4 10"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      fill="none"
-    />
-  </svg>
-);
-
-const Asterisk = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <g
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      transform="translate(7 7)"
-    >
-      <line x1="0" y1="-4" x2="0" y2="4" />
-      <line x1="-3.4" y1="-2" x2="3.4" y2="2" />
-      <line x1="-3.4" y1="2" x2="3.4" y2="-2" />
-    </g>
-  </svg>
-);
-
-const Octagon = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path
-      d="M5 2 L9 2 L12 5 L12 9 L9 12 L5 12 L2 9 L2 5 Z"
-      fill="currentColor"
-    />
-  </svg>
-);
-
 // ── Provider list ───────────────────────────────────────────────────────
+// Each provider points at a vendor mark in VendorLogos.tsx — single source
+// of truth for the brand artwork, rendered in monochrome here so the
+// marquee stays calm against the cream background and varied multi-color
+// marks don't compete for attention.
+//
 // Order chosen so the visual rhythm reads varied even before scroll: the
 // duo of MCP-native (Claude Code, Cline, Continue) is interleaved with CLI
 // (Codex, Gemini CLI, Aider, Opencode), IDE (Cursor, Windsurf, Copilot,
-// Cody), and the runtime (OpenInterpreter). That mix matches the Cross-
-// Harness band's narrative without forcing categorical labels.
+// Cody), and the runtime (OpenInterpreter).
 const PROVIDERS: WordmarkProps[] = [
-  { name: "Claude Code", glyph: Asterisk, tag: "MCP" },
-  { name: "Cursor", glyph: Caret, tag: "IDE" },
-  { name: "Codex", glyph: Bracket, tag: "CLI" },
-  { name: "Gemini CLI", glyph: Diamond, tag: "CLI" },
-  { name: "Windsurf", glyph: Triangle, tag: "IDE" },
-  { name: "Opencode", glyph: Square, tag: "CLI" },
-  { name: "Cline", glyph: Slash, tag: "MCP" },
-  { name: "Aider", glyph: Dot, tag: "CLI" },
-  { name: "Continue", glyph: Chevron, tag: "MCP" },
-  { name: "OpenInterpreter", glyph: Hexagon, tag: "RUN" },
-  { name: "GitHub Copilot", glyph: Star, tag: "IDE" },
-  { name: "Cody", glyph: Octagon, tag: "IDE" },
+  { name: "Claude Code", vendor: "claude", tag: "MCP" },
+  { name: "Cursor", vendor: "cursor", tag: "IDE" },
+  { name: "Codex", vendor: "codex", tag: "CLI" },
+  { name: "Gemini CLI", vendor: "gemini", tag: "CLI" },
+  { name: "Windsurf", vendor: "windsurf", tag: "IDE" },
+  { name: "Opencode", vendor: "opencode", tag: "CLI" },
+  { name: "Cline", vendor: "cline", tag: "MCP" },
+  { name: "Aider", vendor: "aider", tag: "CLI" },
+  { name: "Continue", vendor: "continue", tag: "MCP" },
+  { name: "OpenInterpreter", vendor: "openinterpreter", tag: "RUN" },
+  { name: "GitHub Copilot", vendor: "copilot", tag: "IDE" },
+  { name: "Cody", vendor: "cody", tag: "IDE" },
 ];
 
 export default function LogoCloud() {
@@ -361,7 +160,7 @@ export default function LogoCloud() {
                 <Wordmark
                   key={p.name}
                   name={p.name}
-                  glyph={p.glyph}
+                  vendor={p.vendor}
                   tag={p.tag}
                 />
               ))}
