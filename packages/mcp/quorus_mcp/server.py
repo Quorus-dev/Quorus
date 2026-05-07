@@ -174,6 +174,17 @@ async def _refresh_jwt_on_401() -> str | None:
 def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {_cached_jwt or RELAY_SECRET}"}
 
+async def _auth_headers_async() -> dict[str, str]:
+    """Return auth headers, lazily minting a JWT when API-key auth is active.
+
+    MCP tools can be exercised directly in tests or by hosts that invoke a
+    tool before the lifespan's initial JWT exchange completes. In that case
+    the old synchronous helper emitted ``Bearer `` from an empty cache. Keep
+    the sync helper for legacy call sites, but prefer this async helper for
+    real network requests.
+    """
+    return {"Authorization": f"Bearer {await _get_bearer_token()}"}
+
 def _relay_error_message(exc: Exception) -> str:
     if isinstance(exc, httpx.ConnectError):
         return f"Error: Cannot reach relay server at {RELAY_URL}"
@@ -236,7 +247,7 @@ async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None, str 
         resp = await _get_http_client().get(
             f"{RELAY_URL}/messages/{INSTANCE_NAME}",
             params={"wait": wait, "ack": "manual"},
-            headers=_auth_headers(), timeout=max(wait + 5, 10),
+            headers=await _auth_headers_async(), timeout=max(wait + 5, 10),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -248,7 +259,9 @@ async def _ack_messages(ack_token: str) -> None:
     with suppress(Exception):
         resp = await _get_http_client().post(
             f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
-            json={"ack_token": ack_token}, headers=_auth_headers(), timeout=10,
+            json={"ack_token": ack_token},
+            headers=await _auth_headers_async(),
+            timeout=10,
         )
         resp.raise_for_status()
 
@@ -258,7 +271,7 @@ async def _heartbeat_loop(stop_event: asyncio.Event, interval: int = 30) -> None
             resp = await _get_http_client().post(
                 f"{RELAY_URL}/heartbeat",
                 json={"instance_name": INSTANCE_NAME, "status": "active"},
-                headers=_auth_headers(), timeout=10,
+                headers=await _auth_headers_async(), timeout=10,
             )
             resp.raise_for_status()
         try:

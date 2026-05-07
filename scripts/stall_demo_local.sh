@@ -195,10 +195,21 @@ spawn_daemon() {
 }
 
 # ---------------------------------------------------------------------------
-# Verification — does ONE daemon reply within 30s?
+# Verification — does ONE daemon reply within 120s?
+# (claude --print first-call cold-start latency dominates this budget)
 # ---------------------------------------------------------------------------
 verify_round_trip() {
   local bearer="$1" url="$2" room_id="$3" target="$4"
+  # Capture the agent's reply count BEFORE we post so we wait for a NEW one,
+  # not one left over from a prior session.
+  local before_count
+  before_count="$(api_call GET "/rooms/$room_id/history?limit=50" "$bearer" "" "$url" \
+    | jq -r --arg agent "$target" '
+        if (type=="array") then . else (.messages // .history // .items // []) end
+        | map(select(.from_name==$agent and (.message_type//"chat")!="wake_intent"))
+        | length' 2>/dev/null || echo 0)"
+  before_count="${before_count:-0}"
+
   local prompt="@${target} say hi briefly"
   local body resp msg_id
   body="$(jq -nc --arg from "$PARENT_NAME" --arg c "$prompt" \
@@ -214,16 +225,18 @@ verify_round_trip() {
        --arg from "$PARENT_NAME" --arg c "$prompt" \
        '{room_id:$rid, message_id:$mid, from_name:$from, content:$c, message_type:"chat"}')" \
     "$url" >/dev/null 2>&1 || true
-  local deadline=$(( $(date +%s) + 30 ))
+  # Real claude --print first-call latency is 60-90s on a cold model. Bump
+  # the verify deadline so we don't false-fail and panic at the venue.
+  local deadline=$(( $(date +%s) + 120 ))
   while [[ $(date +%s) -lt $deadline ]]; do
-    local hist replies
-    hist="$(api_call GET "/rooms/$room_id/history?limit=30" "$bearer" "" "$url")"
-    replies="$(echo "$hist" | jq -r --arg agent "$target" '
-      if (type=="array") then . else (.messages // .history // .items // []) end
-      | map(select(.from_name==$agent and (.message_type//"chat")!="wake_intent"))
-      | length')"
-    if [[ "${replies:-0}" -gt 0 ]]; then return 0; fi
-    sleep 1
+    local hist after_count
+    hist="$(api_call GET "/rooms/$room_id/history?limit=50" "$bearer" "" "$url")"
+    after_count="$(echo "$hist" | jq -r --arg agent "$target" '
+        if (type=="array") then . else (.messages // .history // .items // []) end
+        | map(select(.from_name==$agent and (.message_type//"chat")!="wake_intent"))
+        | length' 2>/dev/null || echo 0)"
+    if [[ "${after_count:-0}" -gt "$before_count" ]]; then return 0; fi
+    sleep 2
   done
   return 1
 }
@@ -328,23 +341,32 @@ cmd_start() {
   done
   write_pids "$pids"
 
-  say "waiting up to 12s for SSE connect"
-  local deadline=$(( $(date +%s) + 12 ))
-  local any_connected=0
+  # Wait for ALL daemons to SSE-connect, not just one. Otherwise a slower
+  # daemon (claude takes ~1-2s longer to probe its harness versions) misses
+  # the verification message and the demo looks broken at the venue.
+  say "waiting up to 25s for ALL ${#active[@]} daemon(s) to SSE-connect"
+  local deadline=$(( $(date +%s) + 25 ))
+  local connected_count=0 prev=-1
   while [[ $(date +%s) -lt $deadline ]]; do
+    connected_count=0
     for s in "${active[@]}"; do
       if grep -q "sse connected" "$(agent_log "$s")" 2>/dev/null; then
-        any_connected=1; break
+        connected_count=$(( connected_count + 1 ))
       fi
     done
-    [[ $any_connected -eq 1 ]] && break
-    sleep 0.4
+    if [[ $connected_count -ne $prev ]]; then
+      prev=$connected_count
+    fi
+    [[ $connected_count -ge ${#active[@]} ]] && break
+    sleep 0.5
   done
-  if [[ $any_connected -ne 1 ]]; then
-    warn "no daemon reported SSE connect within 12s -- check logs"
+  if [[ $connected_count -lt ${#active[@]} ]]; then
+    warn "only $connected_count/${#active[@]} daemons connected -- continuing"
   else
-    ok "at least one daemon connected to SSE"
+    ok "all $connected_count daemons connected to SSE"
   fi
+  # One extra second for the relay to finish wiring up the queues.
+  sleep 1
 
   # Pick a verification target -- prefer claude (fastest start), else first active.
   local target=""
@@ -359,7 +381,7 @@ cmd_start() {
     ok "real LLM reply received from $target"
     verify_status="PASS"
   else
-    warn "no reply from $target within 30s -- inspect $(agent_log "${target##*-}")"
+    warn "no reply from $target within 120s -- inspect $(agent_log "${target##*-}")"
     warn "demo may still work for visitor @-mentions; check status"
   fi
 

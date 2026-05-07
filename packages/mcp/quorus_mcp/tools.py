@@ -47,7 +47,7 @@ async def _audit_tool_call(
         resp = await client.post(
             url,
             json=payload,
-            headers=s._auth_headers(),
+            headers=await s._auth_headers_async(),
             timeout=_AUDIT_TIMEOUT_SECONDS,
         )
     except httpx.RequestError:
@@ -59,7 +59,7 @@ async def _audit_tool_call(
             resp = await client.post(
                 url,
                 json=payload,
-                headers=s._auth_headers(),
+                headers=await s._auth_headers_async(),
                 timeout=_AUDIT_TIMEOUT_SECONDS,
             )
         except httpx.RequestError:
@@ -86,7 +86,7 @@ async def send_message(
         resp = await s._get_http_client().post(
             f"{s.RELAY_URL}/messages",
             json={"from_name": s.INSTANCE_NAME, "to": to, "content": content},
-            headers=s._auth_headers(),
+            headers=await s._auth_headers_async(),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -124,7 +124,7 @@ async def list_participants(context: "Context | None" = None) -> str:
     try:
         await _audit_tool_call("list_participants", {}, mutating=False)
         resp = await s._get_http_client().get(
-            f"{s.RELAY_URL}/participants", headers=s._auth_headers(),
+            f"{s.RELAY_URL}/participants", headers=await s._auth_headers_async(),
         )
         resp.raise_for_status()
         ps = resp.json()
@@ -161,7 +161,7 @@ async def send_room_message(
                 "content": content,
                 "message_type": message_type,
             },
-            headers=s._auth_headers(),
+            headers=await s._auth_headers_async(),
         )
         resp.raise_for_status()
         return f"Room message sent (id: {resp.json()['id']})"
@@ -181,7 +181,8 @@ async def join_room(room_id: str, context: "Context | None" = None) -> str:
         )
         resp = await s._get_http_client().post(
             f"{s.RELAY_URL}/rooms/{room_id}/join",
-            json={"participant": s.INSTANCE_NAME}, headers=s._auth_headers(),
+            json={"participant": s.INSTANCE_NAME},
+            headers=await s._auth_headers_async(),
         )
         resp.raise_for_status()
         return f"Joined room {room_id}"
@@ -195,7 +196,7 @@ async def list_rooms(context: "Context | None" = None) -> str:
     try:
         await _audit_tool_call("list_rooms", {}, mutating=False)
         resp = await s._get_http_client().get(
-            f"{s.RELAY_URL}/rooms", headers=s._auth_headers(),
+            f"{s.RELAY_URL}/rooms", headers=await s._auth_headers_async(),
         )
         resp.raise_for_status()
         rooms_list = resp.json()
@@ -241,7 +242,7 @@ async def search_room(
         params["message_type"] = message_type
     resp = await s._get_http_client().get(
         f"{s.RELAY_URL}/rooms/{room_id}/search",
-        params=params, headers=s._auth_headers(), timeout=10,
+        params=params, headers=await s._auth_headers_async(), timeout=10,
     )
     resp.raise_for_status()
     results = resp.json()
@@ -270,7 +271,7 @@ async def room_metrics(room_id: str) -> str:
         pass
     resp = await s._get_http_client().get(
         f"{s.RELAY_URL}/rooms/{room_id}/history",
-        params={"limit": 200}, headers=s._auth_headers(), timeout=10,
+        params={"limit": 200}, headers=await s._auth_headers_async(), timeout=10,
     )
     resp.raise_for_status()
     messages = resp.json()
@@ -327,11 +328,13 @@ async def claim_task(
         )
         url = f"{s.RELAY_URL}/rooms/{room_id}/lock"
         resp = await client.post(
-            url, json=payload, headers=s._auth_headers(), timeout=10,
+            url, json=payload, headers=await s._auth_headers_async(), timeout=10,
         )
         if resp.status_code == 401 and await s._refresh_jwt_on_401():
             resp = await client.post(
-                url, json=payload, headers=s._auth_headers(), timeout=10,
+                url, json=payload,
+                headers=await s._auth_headers_async(),
+                timeout=10,
             )
         resp.raise_for_status()
         data = resp.json()
@@ -361,12 +364,14 @@ async def release_task(room_id: str, file_path: str, lock_token: str) -> str:
             required=True,
         )
         resp = await client.request(
-            "DELETE", url, json=payload, headers=s._auth_headers(), timeout=10,
+            "DELETE", url, json=payload,
+            headers=await s._auth_headers_async(),
+            timeout=10,
         )
         if resp.status_code == 401 and await s._refresh_jwt_on_401():
             resp = await client.request(
                 "DELETE", url, json=payload,
-                headers=s._auth_headers(), timeout=10,
+                headers=await s._auth_headers_async(), timeout=10,
             )
         resp.raise_for_status()
         return f"RELEASED: {file_path}"
@@ -385,11 +390,11 @@ async def get_room_state(room_id: str) -> str:
         client = s._get_http_client()
         state_url = f"{s.RELAY_URL}/rooms/{room_id}/state"
         resp = await client.get(
-            state_url, headers=s._auth_headers(), timeout=10,
+            state_url, headers=await s._auth_headers_async(), timeout=10,
         )
         if resp.status_code == 401 and await s._refresh_jwt_on_401():
             resp = await client.get(
-                state_url, headers=s._auth_headers(), timeout=10,
+                state_url, headers=await s._auth_headers_async(), timeout=10,
             )
         resp.raise_for_status()
         data = resp.json()
@@ -457,13 +462,13 @@ async def social_verb(
         resp = await client.post(
             f"{s.RELAY_URL}/v1/social/{verb}",
             json=body,
-            headers=s._auth_headers(),
+            headers=await s._auth_headers_async(),
         )
         if resp.status_code == 401 and await s._refresh_jwt_on_401():
             resp = await client.post(
                 f"{s.RELAY_URL}/v1/social/{verb}",
                 json=body,
-                headers=s._auth_headers(),
+                headers=await s._auth_headers_async(),
             )
         resp.raise_for_status()
         return f"OK: {verb} accepted"
