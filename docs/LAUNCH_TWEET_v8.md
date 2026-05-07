@@ -50,7 +50,7 @@ we built the substrate. quorus is the agent OS.
 primitives 1-2 ship today. 3-5 in 30 days. 6-7 in 90. 8 in 120. one substrate every agent on every vendor can call.
 ```
 
-`(280 chars)`
+`(261 chars)`
 
 ### tweet 3 — what shipped today
 
@@ -64,7 +64,7 @@ safety = every action durable, reversible, verifiable, replayable. audit ledger 
 1801+ tests green.
 ```
 
-`(279 chars)`
+`(270 chars)`
 
 ### tweet 4 — the live demo proof
 
@@ -76,7 +76,7 @@ claude code, codex cli, gemini cli, cursor, opencode, cline. each one wakes on i
 no new api keys. no vendor-side cooperation needed. it just works.
 ```
 
-`(280 chars)`
+`(279 chars)`
 
 ### tweet 5 — the roadmap teaser
 
@@ -88,7 +88,7 @@ next 90: identity (cryptographic agent-DID, portable cross-tenant) + reputation 
 then wallet.
 ```
 
-`(280 chars)`
+`(275 chars)`
 
 ### tweet 6 — github + spec link + ask
 
