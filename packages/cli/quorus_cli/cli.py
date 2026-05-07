@@ -4418,8 +4418,15 @@ def _init_run_wake_smoke(
     base_name: str,
     ui,
     timeout_s: float = 10.0,
+    sender_name: str | None = None,
 ) -> tuple[bool, float, str]:
     """Send a `@<base>-claude smoke ping` from the human profile and wait.
+
+    ``base_name`` is the parent participant name and drives the target agent
+    (``{base_name}-claude``). ``sender_name`` is the JWT-bound identity that
+    must equal ``auth.sub`` server-side (i.e. the human profile's
+    ``instance_name``); it defaults to ``base_name`` for back-compat with
+    the no-suffix case where the parent IS the human.
 
     Returns ``(ok, elapsed_seconds, detail)``. ``ok`` is True only if a
     reply from the targeted agent was observed in-room within ``timeout_s``.
@@ -4433,6 +4440,7 @@ def _init_run_wake_smoke(
     if target_agent not in agent_api_keys:
         return False, 0.0, f"agent {target_agent} not registered"
 
+    sender = sender_name or base_name
     room_name = f"init-smoke-{int(_time.time())}"
 
     try:
@@ -4450,11 +4458,13 @@ def _init_run_wake_smoke(
             return False, 0.0, "no token returned"
         headers = {"Authorization": f"Bearer {jwt}"}
 
-        # Create the smoke room. CreateRoomRequest requires `created_by`
-        # — the relay enforces `created_by == auth.sub` from the JWT.
+        # Create the smoke room. CreateRoomRequest requires `created_by`,
+        # and the relay enforces `created_by == auth.sub` — i.e. the
+        # human's participant name (which may differ from the parent CLI
+        # name when init was invoked as `<human>-<platform>`).
         room_resp = httpx.post(
             f"{relay_url}/rooms",
-            json={"name": room_name, "created_by": base_name},
+            json={"name": room_name, "created_by": sender},
             headers=headers,
             timeout=10,
             follow_redirects=True,
@@ -4485,7 +4495,7 @@ def _init_run_wake_smoke(
         body = f"@{target_agent} smoke ping"
         send_resp = httpx.post(
             f"{relay_url}/rooms/{room_id}/messages",
-            json={"from_name": base_name, "content": body},
+            json={"from_name": sender, "content": body},
             headers=headers,
             timeout=10,
             follow_redirects=True,
@@ -4692,6 +4702,7 @@ def _cmd_init(args):
     interactive = bool(getattr(sys.stdin, "isatty", lambda: False)())
     human_slug = None
     human_key = ""
+    human_name = name
     if api_key:
         human_slug = _create_init_human_profile(
             name=name,
@@ -4704,6 +4715,12 @@ def _cmd_init(args):
         if human_slug:
             human_profile = pm.get(human_slug) or {}
             human_key = human_profile.get("api_key", "") or ""
+            # Capture the human's participant name (may differ from CLI arg
+            # `name` when invoked as `<human>-<platform>` — see
+            # `_create_init_human_profile` which strips the platform suffix
+            # before signup). Wake-smoke needs this so `created_by` /
+            # `from_name` match the JWT's `sub`, otherwise the relay 403s.
+            human_name = human_profile.get("instance_name", name) or name
             # Default the active profile to 'human' so the TUI renders the
             # owner as their human identity straight away. Requires a
             # 'default' profile to exist (which we wrote above) so the
@@ -4733,6 +4750,7 @@ def _cmd_init(args):
             human_api_key=human_key,
             agent_api_keys=minted_keys,
             base_name=name,
+            sender_name=human_name,
             ui=ui,
         )
 

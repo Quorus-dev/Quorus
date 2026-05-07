@@ -250,7 +250,10 @@ function sleep(ms: number) {
  * Reduced motion: bail out of the loop entirely; the static command stays.
  */
 function InstallCommand() {
-  const [displayed, setDisplayed] = useState(INSTALL_CMD);
+  // OS_HERO_COPY is `as const`, which narrows useState's inferred type to
+  // the string literal and blocks the typewriter loop's slice() writes.
+  // Widen the state type explicitly to plain `string`.
+  const [displayed, setDisplayed] = useState<string>(INSTALL_CMD);
   const [typing, setTyping] = useState(false);
   const [copied, setCopied] = useState(false);
   const prefersReduced = useReducedMotion();

@@ -14,8 +14,8 @@ class _Resp:
     def json(self) -> Any: return self._b
 
 
-def test_init_wake_smoke_uses_current_schemas(monkeypatch: pytest.MonkeyPatch) -> None:
-    base, agent = "arav", "arav-claude"
+def _capture(monkeypatch: pytest.MonkeyPatch, agent: str) -> tuple[list, list]:
+    """Patch httpx.{post,get} to record calls and return canned responses."""
     posts, gets = [], []
 
     def _post(url: str, **kw: Any) -> _Resp:
@@ -29,6 +29,12 @@ def test_init_wake_smoke_uses_current_schemas(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr("quorus.cli.httpx.post", _post)
     monkeypatch.setattr("quorus.cli.httpx.get", _get)
+    return posts, gets
+
+
+def test_init_wake_smoke_uses_current_schemas(monkeypatch: pytest.MonkeyPatch) -> None:
+    base, agent = "arav", "arav-claude"
+    posts, gets = _capture(monkeypatch, agent)
     ok, _, detail = _init_run_wake_smoke(
         relay_url="https://relay.test", human_api_key="k_h",
         agent_api_keys={agent: "k_a"}, base_name=base, ui=None, timeout_s=2.0,
@@ -53,3 +59,35 @@ def test_init_wake_smoke_uses_current_schemas(monkeypatch: pytest.MonkeyPatch) -
     hist = [g["url"].rsplit("?", 1)[0] for g in gets]
     assert "https://relay.test/rooms/r1/history" in hist
     assert "https://relay.test/rooms/r1/messages" not in hist
+
+
+def test_init_wake_smoke_split_identity_uses_sender_for_jwt_bound_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When parent CLI name has a platform suffix (`arav-codex`), the human
+    profile is registered under the stripped name (`arav`). `created_by` and
+    `from_name` MUST equal the human (JWT sub), while the `@`-target stays
+    bound to the parent name. Without this split, the relay 403s on every
+    wake-smoke run for users who init under a suffixed identity."""
+    parent, human, agent = "arav-codex", "arav", "arav-codex-claude"
+    posts, _ = _capture(monkeypatch, agent)
+    ok, _, _ = _init_run_wake_smoke(
+        relay_url="https://relay.test", human_api_key="k_h",
+        agent_api_keys={agent: "k_a"}, base_name=parent,
+        sender_name=human, ui=None, timeout_s=2.0,
+    )
+    assert ok
+
+    by = {p["url"].rsplit("?", 1)[0]: p for p in posts}
+    create = by["https://relay.test/rooms"]["json"]
+    CreateRoomRequest.model_validate(create)
+    assert create["created_by"] == human, "created_by must be JWT sub (human), not parent"
+
+    send = by["https://relay.test/rooms/r1/messages"]["json"]
+    RoomMessageRequest.model_validate(send)
+    assert send["from_name"] == human, "from_name must be JWT sub (human), not parent"
+    assert send["content"].startswith(f"@{agent}"), "@-target stays bound to parent"
+
+    join = by["https://relay.test/rooms/r1/join"]["json"]
+    JoinLeaveRequest.model_validate(join)
+    assert join["participant"] == agent

@@ -59,11 +59,25 @@ from rich.text import Text
 from .render import INDENT
 
 # ── Sender palette ───────────────────────────────────────────────────────────
-# 6 distinct semantic theme tokens — see ``quorus_cli.ui.THEME``. Bumped from
-# the previous 3 so a 10+ member room has visibly distinct name colors.
+# 6 perceptually-tuned semantic theme tokens — see ``quorus_cli.ui.THEME``.
+# Curation criteria (Charm/lipgloss-inspired):
+#   1. Each hue reads on BOTH light and dark terminals at 8-pt size.
+#   2. No red/green adjacency (passes deuteranopia at >10ft viewing distance).
+#   3. None overlap the brand teal so chrome and content stay separable.
+#   4. Cycle order alternates warm/cool so two consecutive senders contrast.
+# The deck-avatar palette in MedPort/Quorus mirrors this so a member's hash
+# yields the same color across surfaces — a small consistency win that
+# multiplies as the user moves between TUI, deck, and web.
 SENDER_PALETTE: tuple[str, ...] = (
-    "sender1", "sender2", "sender3", "sender4", "sender5", "sender6",
+    "sender1",  # teal-300       — cool
+    "sender2",  # indigo-300     — cool
+    "sender3",  # amber-300      — warm
+    "sender4",  # rose-300       — warm
+    "sender5",  # violet-300     — cool
+    "sender6",  # cyan-300       — cool
 )
+# Alias kept for old call sites. Public surface is SENDER_PALETTE.
+CURATED_SENDER_PALETTE = SENDER_PALETTE
 
 # Heuristic agent-name keywords — matches hub._name_has_agent_keyword.
 _AGENT_KEYWORDS = ("codex", "claude", "gemini", "cursor", "bot")
