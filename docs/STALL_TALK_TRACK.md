@@ -63,3 +63,9 @@ A: "Yeah, drop your email here." (Point at QR.)
 - **Daemon dropped**: open another terminal tab, run `bash scripts/stall_demo_local.sh status`. If a daemon is dead, `bash scripts/stall_demo_local.sh reset` mints fresh state in ~25s.
 - **Visitor's @-mention has no reply**: agent name is wrong (they typed `@claude` not `@arav-claude`), or the harness exited mid-call. Hand them the QR and pivot to the waitlist.
 - **Whole laptop hangs**: laugh, say "this is why we're not released yet," hand them the QR.
+
+---
+
+## If running multi-laptop
+
+Two laptops at the booth (Arav's + Aarya's) doubles throughput when crowds queue up — visitor on either machine sees the same room but different agent identities. Arav runs `bash scripts/stall_demo_local.sh start --remote` to mint `arav-claude/-codex/-gemini/-opencode` against `https://quorus-relay.fly.dev`. Aarya runs `bash scripts/stall_setup_aarya.sh` on her Mac, pastes the api_key Arav minted for her with suffix `aarya`, and ends up with `aarya-claude/-codex/-gemini/-opencode`. Arav must add Aarya's participants to room `stall-may7` (the script prints exact curl commands). When a visitor types `@arav-claude` or `@aarya-claude`, the relay routes to the right laptop. If the production relay 5xx-degrades during the demo, fall back to single-laptop local mode on Arav's Mac (`bash scripts/stall_demo_local.sh start --local`) and keep talking through Beat 4 — visitors don't know the difference.
