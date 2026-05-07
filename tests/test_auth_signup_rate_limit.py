@@ -74,3 +74,30 @@ def test_signup_window_is_sixty_seconds_not_an_hour():
     assert "window=3600" not in source, (
         "stale 5-per-hour signup limit was not removed"
     )
+
+
+class _FailingRateLimitBackend:
+    async def check_and_increment(self, *args, **kwargs):
+        raise RuntimeError("max requests limit exceeded")
+
+    async def is_rate_limited(self, *args, **kwargs):
+        raise RuntimeError("max requests limit exceeded")
+
+    async def record(self, *args, **kwargs):
+        raise RuntimeError("max requests limit exceeded")
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_service_fails_open_when_backend_check_errors():
+    service = RateLimitService(_FailingRateLimitBackend())
+
+    assert await service.check("tenant", "sender") is True
+    assert await service.check_with_limit("tenant", "sender", max_count=1) is True
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_service_fails_open_when_backend_read_or_record_errors():
+    service = RateLimitService(_FailingRateLimitBackend())
+
+    assert await service.is_rate_limited("tenant", "sender", max_count=1) is False
+    assert await service.record("tenant", "sender") is None

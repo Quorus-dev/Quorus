@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import structlog
+
 from quorus.backends.protocol import RateLimitBackend
+
+logger = structlog.get_logger("quorus.services.rate_limit")
 
 
 class RateLimitService:
@@ -20,9 +24,19 @@ class RateLimitService:
 
     async def check(self, tenant_id: str, sender: str) -> bool:
         """Return ``True`` if the request is allowed, ``False`` if rate-limited."""
-        return await self._backend.check_and_increment(
-            tenant_id, sender, self._window, self._max_count
-        )
+        try:
+            return await self._backend.check_and_increment(
+                tenant_id, sender, self._window, self._max_count
+            )
+        except Exception as exc:
+            logger.warning(
+                "rate_limit_backend_failed_open",
+                op="check",
+                tenant_id=tenant_id,
+                sender=sender,
+                error=str(exc),
+            )
+            return True
 
     async def check_with_limit(
         self,
@@ -37,9 +51,22 @@ class RateLimitService:
         than the default — e.g. signup uses 3600s (5 attempts per hour per IP),
         while message sends use the service's default short window.
         """
-        return await self._backend.check_and_increment(
-            tenant_id, sender, window if window is not None else self._window, max_count
-        )
+        effective_window = window if window is not None else self._window
+        try:
+            return await self._backend.check_and_increment(
+                tenant_id, sender, effective_window, max_count
+            )
+        except Exception as exc:
+            logger.warning(
+                "rate_limit_backend_failed_open",
+                op="check_with_limit",
+                tenant_id=tenant_id,
+                sender=sender,
+                window=effective_window,
+                max_count=max_count,
+                error=str(exc),
+            )
+            return True
 
     async def is_rate_limited(
         self,
@@ -49,9 +76,22 @@ class RateLimitService:
         window: int | None = None,
     ) -> bool:
         """Check if sender is rate limited (read-only, does not increment)."""
-        return await self._backend.is_rate_limited(
-            tenant_id, sender, window if window is not None else self._window, max_count
-        )
+        effective_window = window if window is not None else self._window
+        try:
+            return await self._backend.is_rate_limited(
+                tenant_id, sender, effective_window, max_count
+            )
+        except Exception as exc:
+            logger.warning(
+                "rate_limit_backend_failed_open",
+                op="is_rate_limited",
+                tenant_id=tenant_id,
+                sender=sender,
+                window=effective_window,
+                max_count=max_count,
+                error=str(exc),
+            )
+            return False
 
     async def record(
         self,
@@ -60,6 +100,17 @@ class RateLimitService:
         window: int | None = None,
     ) -> None:
         """Record an event without checking the limit."""
-        await self._backend.record(
-            tenant_id, sender, window if window is not None else self._window
-        )
+        effective_window = window if window is not None else self._window
+        try:
+            await self._backend.record(
+                tenant_id, sender, effective_window
+            )
+        except Exception as exc:
+            logger.warning(
+                "rate_limit_backend_failed_open",
+                op="record",
+                tenant_id=tenant_id,
+                sender=sender,
+                window=effective_window,
+                error=str(exc),
+            )
