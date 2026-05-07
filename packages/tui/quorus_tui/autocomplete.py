@@ -258,8 +258,12 @@ class AutocompletePopover:
             return [row]
 
         rows: list[Text] = []
-        # Header — small caption so the popover is identifiable.
+        # Header — small caption so the popover is identifiable. Leading
+        # ``╭`` matches the bubble corner glyph family — visual continuity
+        # with the chat-bubble surface so the popover reads as part of the
+        # same chrome system, not a foreign overlay.
         head = Text("  ")
+        head.append("╭ ", style="dim")
         if self.kind == "slash":
             head.append("/", style="kbd")
             head.append("  Slash command  ", style="dim")
@@ -281,6 +285,9 @@ class AutocompletePopover:
             idx = top + offset
             is_selected = idx == self.selected_idx
             row = Text("  ")
+            # Continuation glyph in the gutter mirrors the bubble side-bar.
+            # Dim by default; bright accent when selected.
+            row.append("│ ", style="accent" if is_selected else "dim")
             if is_selected:
                 # Highlighted row — accent bg + bold. Pad to width so the
                 # background fills the popover edge-to-edge.
@@ -290,7 +297,7 @@ class AutocompletePopover:
                     label.ljust(label_col), style="bold accent",
                 )
                 row.append_text(lbl_text)
-                desc_text = Text(_truncate(desc, width - label_col - 4))
+                desc_text = Text(_truncate(desc, width - label_col - 6))
                 desc_text.stylize("bold accent")
                 row.append_text(desc_text)
             else:
@@ -300,19 +307,22 @@ class AutocompletePopover:
                 sigil_style = "kbd" if label.startswith(("/", "@")) else "muted"
                 row.append(label[0], style=sigil_style)
                 row.append(label[1:].ljust(label_col - 1), style="bright")
-                row.append(_truncate(desc, width - label_col - 4), style="muted")
+                row.append(_truncate(desc, width - label_col - 6), style="muted")
             rows.append(row)
-        # Footer — only render when there's overflow so the "more" cue
-        # isn't noise on small lists.
+        # Footer — closing corner glyph + optional overflow cue. The
+        # ``╰`` matches the head's ``╭`` so the popover reads as a
+        # closed visual unit (not an open-ended list dangling above the
+        # composer).
+        tail = Text("  ")
+        tail.append("╰ ", style="dim")
         if len(self.items) > _MAX_VISIBLE:
             visible_end = top + len(slice_)
             more = len(self.items) - visible_end
-            tail = Text("  ")
             if more > 0:
                 tail.append(f"+{more} more", style="dim italic")
             else:
                 tail.append("end of list", style="dim italic")
-            rows.append(tail)
+        rows.append(tail)
         return rows
 
 

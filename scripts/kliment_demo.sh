@@ -405,8 +405,7 @@ finish_setup() {
 # --- post-tasks ------------------------------------------------------------
 cmd_post_tasks() {
   ensure_setup_loaded
-  local b="$1_auth_b" u="$1_url"; b="${AUTH_BEARER}"; u="${RELAY_URL}"
-  local rid="${ROOM_ID}"
+  local b="${AUTH_BEARER}" u="${RELAY_URL}" rid="${ROOM_ID}"
   local content
   content=$'Splitable task list (claim what you can):\n1. design /v1/health/dashboard schema\n2. write integration test for outbox replay\n3. update CONTEXT.md with the AGENT-NATIVE OS framing\n4. add Prometheus metric for fanout_published\n5. draft the cross-laptop demo runcard\n6. open PR with all of the above'
   local body resp mid

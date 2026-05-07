@@ -116,26 +116,32 @@ def render_work_queue_panel(
 
     n = len(active)
     if not expanded:
-        # Collapsed: a single dim line.
+        # Collapsed: a single dim line — Charm-style notification chip.
+        # The ``◑`` glyph reads as "in motion" and pairs with the
+        # presence-dot family used elsewhere in the chrome.
         line = Text(INDENT)
-        line.append("◑ ", style="muted")
+        line.append("◑ ", style="primary")
         line.append("Active work", style="bold primary")
         line.append("  —  ", style="dim")
         line.append(f"{n} {_pluralise(n, 'task')}", style="muted")
         line.append("   ", style="")
-        line.append("(Ctrl-W to expand)", style="dim italic")
+        line.append("(", style="dim")
+        line.append("Ctrl-W", style="kbd")
+        line.append(" to expand)", style="dim italic")
         return [line]
 
     # Expanded — table rows. Manually laid out via str.ljust so we never
     # depend on terminal Rich.Table widths.
     rows: list[Text] = []
     head = Text(INDENT)
-    head.append("◑ ", style="muted")
+    head.append("◑ ", style="primary")
     head.append("Active work", style="bold primary")
     head.append("  —  ", style="dim")
     head.append(f"{n} {_pluralise(n, 'task')}", style="muted")
     head.append("   ", style="")
-    head.append("(Ctrl-W to collapse)", style="dim italic")
+    head.append("(", style="dim")
+    head.append("Ctrl-W", style="kbd")
+    head.append(" to collapse)", style="dim italic")
     rows.append(head)
 
     # Column widths chosen to fit comfortably in 80-cell terminals; for

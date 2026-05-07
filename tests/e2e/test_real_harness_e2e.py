@@ -154,6 +154,23 @@ def _run_or_skip(args: list[str], *, env: dict | None = None) -> str:
     assert proc.stdout and proc.stdout.strip(), (
         f"{binary!r} returned empty stdout (returncode={proc.returncode})"
     )
+
+    # Latency assertions — single-trial, so call the slow one a "p99 proxy".
+    # Hard fail at HARD_LATENCY_BUDGET_S; print a warn at SOFT_LATENCY_BUDGET_S
+    # so the runcard table can show "p50/p95 by harness" once CI runs N trials.
+    print(f"\n[real_harness] {binary} latency = {elapsed:.2f}s", flush=True)
+    _record_latency(binary, elapsed)
+    assert elapsed < HARD_LATENCY_BUDGET_S, (
+        f"{binary!r} replied in {elapsed:.1f}s — exceeds hard p99 budget "
+        f"of {HARD_LATENCY_BUDGET_S}s. Investigate cold-start, model drift, "
+        "or upstream throttling."
+    )
+    if elapsed > SOFT_LATENCY_BUDGET_S:
+        print(
+            f"[real_harness] WARN {binary} {elapsed:.1f}s > soft budget "
+            f"{SOFT_LATENCY_BUDGET_S}s",
+            flush=True,
+        )
     return proc.stdout
 
 
