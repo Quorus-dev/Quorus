@@ -132,19 +132,16 @@ probe_oauth() {
 }
 
 spawn_daemon() {
-  local s="$1" b="$2" u="$3" name logf rt pid
-  name="${PARENT_NAME}-${s}"
-  logf="$(agent_log "$s")"
-  rt="/tmp/stall-runtime-${s}"
+  # spawn_daemon SUFFIX BEARER URL [NAME]
+  local s="$1" b="$2" u="$3" name="${4:-${PARENT_NAME}-$1}" logf rt pid
+  logf="$(agent_log "$s")"; rt="/tmp/stall-runtime-${s}"
   : > "$logf"; mkdir -p "$rt"
   env RELAY_URL="$u" REFLEXD_RELAY_URL="$u" API_KEY="$b" REFLEXD_API_KEY="$b" \
       REFLEXD_PARTICIPANT="$name" REFLEXD_LEGACY_BEARER=1 \
       QUORUS_STALL_DEMO=1 HOME="$HOME" QUORUS_RUNTIME_DIR="$rt" \
       "$VENV_PY" "$REFLEXD_PY" start --debug \
-        --participant "$name" --relay-url "$u" \
-        >"$logf" 2>&1 &
-  pid=$!
-  disown "$pid" 2>/dev/null || true
+        --participant "$name" --relay-url "$u" >"$logf" 2>&1 &
+  pid=$!; disown "$pid" 2>/dev/null || true
   printf '%s' "$pid"
 }
 
@@ -320,7 +317,7 @@ cmd_start_local() {
   relay_url="http://127.0.0.1:$port"
   ok "local relay healthy on :$port"
 
-  start_room_and_daemons "$secret" "$relay_url" "$relay_pid" "local"
+  start_room_and_daemons "$secret" "$relay_url" "$relay_pid"
 }
 
 cmd_start_remote() {
@@ -332,192 +329,127 @@ cmd_start_remote() {
   PARENT_NAME="${parent_inst:-$PARENT_NAME}"
   ok "parent: @$PARENT_NAME  relay: $relay_url"
 
-  say "checking production relay health"
   remote_health_check "$relay_url" || exit 1
-  ok "production relay healthy"
-
-  say "exchanging parent api_key for JWT"
   parent_jwt="$(remote_exchange_jwt "$parent_key" "$relay_url")"
-  if [[ -z "$parent_jwt" ]]; then
-    fail "/v1/auth/token rejected the parent api_key -- profile may be stale"
-    warn "re-run 'quorus join <code>' to refresh the api_key"
-    rm -f "$MODE_FILE"
-    exit 1
-  fi
+  [[ -z "$parent_jwt" ]] && {
+    fail "/v1/auth/token rejected api_key -- re-run 'quorus join <code>'"
+    rm -f "$MODE_FILE"; exit 1
+  }
   ok "JWT obtained (len=${#parent_jwt})"
 
   say "minting 4 child api_keys against PRODUCTION"
-  # bash 3.2 on macOS has no associative arrays; accumulate in a JSON object instead.
-  local active=() skipped=() s row2 agent_name agent_key fail_count=0
+  local active=() skipped=() s row2 agent_name agent_key fails=0
   local remote_json
   remote_json="$(jq -nc --arg url "$relay_url" --arg pk "$parent_key" --arg human "$PARENT_NAME" \
     '{relay_url:$url,parent_key:$pk,human:$human,agents:{}}')"
   for s in "${ALL_AGENTS[@]}"; do
-    if ! probe_oauth "$s"; then
-      skipped+=("$s"); continue
-    fi
+    probe_oauth "$s" || { skipped+=("$s"); continue; }
     row2="$(remote_mint_child "$parent_key" "$relay_url" "$s" || true)"
     if [[ -n "$row2" ]]; then
       IFS=$'\t' read -r agent_name agent_key <<<"$row2"
       if [[ -n "$agent_name" && -n "$agent_key" ]]; then
-        remote_json="$(echo "$remote_json" \
-          | jq --arg s "$s" --arg n "$agent_name" --arg k "$agent_key" \
-              '.agents[$s]={name:$n,api_key:$k}')"
-        active+=("$s")
-        ok "minted: @$agent_name"
-        continue
+        remote_json="$(echo "$remote_json" | jq --arg s "$s" --arg n "$agent_name" --arg k "$agent_key" \
+          '.agents[$s]={name:$n,api_key:$k}')"
+        active+=("$s"); ok "minted: @$agent_name"; continue
       fi
     fi
-    fail_count=$(( fail_count + 1 ))
-    warn "mint failed for suffix=$s (relay 5xx?)"
+    fails=$(( fails + 1 )); warn "mint failed for suffix=$s (relay 5xx?)"
   done
-
   if [[ ${#active[@]} -eq 0 ]]; then
-    fail "production relay is degraded (could not mint any child keys)"
-    warn "fall back to local mode for single-laptop demo:"
-    warn "  bash scripts/stall_demo_local.sh start --local"
-    rm -f "$MODE_FILE"
-    exit 1
+    fail "production relay is degraded (no mints succeeded)"
+    warn "fall back: bash scripts/stall_demo_local.sh start --local"
+    rm -f "$MODE_FILE"; exit 1
   fi
-  if [[ $fail_count -gt 0 ]]; then
-    warn "$fail_count/${#ALL_AGENTS[@]} mints failed -- continuing with ${#active[@]} agent(s)"
-  fi
+  [[ $fails -gt 0 ]] && warn "$fails/${#ALL_AGENTS[@]} mints failed -- continuing with ${#active[@]}"
   [[ ${#skipped[@]} -gt 0 ]] && warn "skipping (no binary): ${skipped[*]}"
-
-  # Persist the prod state for status/stop and aarya cross-reference.
   printf '%s\n' "$remote_json" > "$REMOTE_FILE"
 
-  # Verify JWT can list rooms (catches relay-side 5xx unrelated to mint).
-  say "verifying JWT against prod /rooms"
   local rooms_code
   rooms_code="$(api_status GET /rooms "$parent_jwt" "" "$relay_url")"
   if [[ "$rooms_code" != "200" ]]; then
-    fail "GET /rooms returned $rooms_code with JWT"
-    warn "production is in a degraded state -- recommend --local fallback"
-    rm -f "$MODE_FILE" "$REMOTE_FILE"
-    exit 1
+    fail "GET /rooms returned $rooms_code -- prod degraded; use --local"
+    rm -f "$MODE_FILE" "$REMOTE_FILE"; exit 1
   fi
   ok "JWT accepted by /rooms"
 
-  # Room create & message-post use JWT (per Fly v22 enforcement).
   start_room_and_daemons_remote "$parent_jwt" "$relay_url" "$remote_json"
 }
 
 # Local-mode wiring (preserves prior behavior)
 start_room_and_daemons() {
-  local secret="$1" relay_url="$2" relay_pid="$3" mode="$4"
+  local secret="$1" relay_url="$2" relay_pid="$3"
+  local active=() skipped=() s pids pid room_id
 
   say "creating demo room '$ROOM_NAME'"
-  local room_id
   room_id="$(ensure_room "$secret" "$relay_url")"
-  if [[ -z "$room_id" ]]; then
+  [[ -z "$room_id" ]] && {
     fail "could not create room"
     [[ -n "$relay_pid" ]] && kill "$relay_pid" 2>/dev/null
     exit 1
-  fi
+  }
   ok "room $ROOM_NAME id=$room_id"
-
-  say "joining $PARENT_NAME (human)"
   join_member "$secret" "$relay_url" "$room_id" "$PARENT_NAME"
   ok "joined: $PARENT_NAME"
 
-  local active=() skipped=() s
   for s in "${ALL_AGENTS[@]}"; do
     if probe_oauth "$s"; then active+=("$s"); else skipped+=("$s"); fi
   done
-  if [[ ${#active[@]} -eq 0 ]]; then
+  [[ ${#active[@]} -eq 0 ]] && {
     fail "no host CLIs found on PATH"
     [[ -n "$relay_pid" ]] && kill "$relay_pid" 2>/dev/null
     exit 1
-  fi
-  ok "active harnesses: ${active[*]}"
+  }
+  ok "active: ${active[*]}"
   [[ ${#skipped[@]} -gt 0 ]] && warn "skipping (no binary): ${skipped[*]}"
 
-  say "joining ${#active[@]} agent participant(s)"
-  for s in "${active[@]}"; do
-    join_member "$secret" "$relay_url" "$room_id" "${PARENT_NAME}-${s}"
-    ok "joined: ${PARENT_NAME}-${s}"
-  done
-
-  say "spawning reflexd daemons (REAL mode, no stub)"
-  local pids pid
+  say "joining ${#active[@]} agent(s) and spawning reflexd daemons"
   if [[ -n "$relay_pid" ]]; then
     pids="$(jq -nc --argjson p "$relay_pid" '{relay:$p}')"
   else
     pids="$(jq -nc '{}')"
   fi
   for s in "${active[@]}"; do
+    join_member "$secret" "$relay_url" "$room_id" "${PARENT_NAME}-${s}"
     pid="$(spawn_daemon "$s" "$secret" "$relay_url")"
     pids="$(echo "$pids" | jq --arg n "${PARENT_NAME}-${s}" --argjson p "$pid" '.[$n]=$p')"
     ok "${PARENT_NAME}-${s} pid=$pid log=$(agent_log "$s")"
   done
   write_pids "$pids"
-
   finish_start "$secret" "$relay_url" "$room_id" "${active[@]}"
 }
 
 # Remote-mode wiring: parent JWT for admin ops, per-child api_keys for daemons
 start_room_and_daemons_remote() {
   local parent_jwt="$1" relay_url="$2" remote_json="$3"
-  local active=() s
+  local active=() s agent_name agent_key pids pid room_id
 
   while IFS= read -r s; do
-    [[ -z "$s" ]] && continue; active+=("$s")
+    [[ -n "$s" ]] && active+=("$s")
   done < <(echo "$remote_json" | jq -r '.agents | keys[]')
 
   say "ensuring room '$ROOM_NAME' on production"
-  local room_id
   room_id="$(ensure_room "$parent_jwt" "$relay_url")"
   if [[ -z "$room_id" || "$room_id" == "null" ]]; then
-    fail "could not create/find room on production (POST /rooms may be 5xx)"
-    warn "fall back to local mode: bash scripts/stall_demo_local.sh start --local"
+    fail "could not create/find room on prod (POST /rooms 5xx?) -- use --local"
     rm -f "$MODE_FILE" "$REMOTE_FILE"; exit 1
   fi
   ok "room $ROOM_NAME id=$room_id"
 
-  say "joining $PARENT_NAME (human)"
   join_member "$parent_jwt" "$relay_url" "$room_id" "$PARENT_NAME"
   ok "joined: $PARENT_NAME"
 
-  say "joining ${#active[@]} agent participant(s)"
-  local agent_name
-  for s in "${active[@]}"; do
-    agent_name="$(echo "$remote_json" | jq -r --arg s "$s" '.agents[$s].name')"
-    # Use parent JWT to join children (tenant admin can add members)
-    join_member "$parent_jwt" "$relay_url" "$room_id" "$agent_name"
-    ok "joined: $agent_name"
-  done
-
-  say "spawning reflexd daemons (REAL mode against PRODUCTION)"
-  local pids pid
+  say "joining ${#active[@]} agent(s) and spawning reflexd daemons"
   pids="$(jq -nc '{}')"
   for s in "${active[@]}"; do
     agent_name="$(echo "$remote_json" | jq -r --arg s "$s" '.agents[$s].name')"
     agent_key="$(echo "$remote_json" | jq -r --arg s "$s" '.agents[$s].api_key')"
-    pid="$(spawn_daemon_remote "$s" "$agent_key" "$relay_url" "$agent_name")"
+    join_member "$parent_jwt" "$relay_url" "$room_id" "$agent_name"
+    pid="$(spawn_daemon "$s" "$agent_key" "$relay_url" "$agent_name")"
     pids="$(echo "$pids" | jq --arg n "$agent_name" --argjson p "$pid" '.[$n]=$p')"
     ok "$agent_name pid=$pid log=$(agent_log "$s")"
   done
   write_pids "$pids"
-
-  finish_start "$parent_key" "$relay_url" "$room_id" "${active[@]}"
-}
-
-# spawn_daemon_remote — like spawn_daemon, but uses a fully-qualified name
-spawn_daemon_remote() {
-  local s="$1" b="$2" u="$3" name="$4" logf rt pid
-  logf="$(agent_log "$s")"
-  rt="/tmp/stall-runtime-${s}"
-  : > "$logf"; mkdir -p "$rt"
-  env RELAY_URL="$u" REFLEXD_RELAY_URL="$u" API_KEY="$b" REFLEXD_API_KEY="$b" \
-      REFLEXD_PARTICIPANT="$name" REFLEXD_LEGACY_BEARER=1 \
-      QUORUS_STALL_DEMO=1 HOME="$HOME" QUORUS_RUNTIME_DIR="$rt" \
-      "$VENV_PY" "$REFLEXD_PY" start --debug \
-        --participant "$name" --relay-url "$u" \
-        >"$logf" 2>&1 &
-  pid=$!
-  disown "$pid" 2>/dev/null || true
-  printf '%s' "$pid"
+  finish_start "$parent_jwt" "$relay_url" "$room_id" "${active[@]}"
 }
 
 finish_start() {
