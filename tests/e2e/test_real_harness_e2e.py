@@ -44,14 +44,49 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
 PROMPT = "say hi briefly"
 TIMEOUT_SECONDS = 60
+
+# Latency budgets — single-trial, so we record the wall-clock and:
+#   * SOFT WARN at >30s (printed, not failed) — useful for the runcard.
+#   * HARD FAIL at >90s — anything that slow is broken even with cold-start.
+# These thresholds are deliberately permissive; tighten once the runcard has
+# multi-trial baselines from CI.
+SOFT_LATENCY_BUDGET_S = 30.0
+HARD_LATENCY_BUDGET_S = 90.0
+
+# Sidecar where each test writes its latency. `docs/CROSS_HARNESS_VERIFICATION.md`
+# can be regenerated from this. Disabled when the env var is unset so local
+# runs don't pollute the working tree.
+_LATENCY_SIDECAR = os.environ.get("QUORUS_HARNESS_LATENCY_FILE", "")
+
+
+def _record_latency(binary: str, elapsed: float) -> None:
+    """Best-effort write to the latency sidecar — never raise."""
+    if not _LATENCY_SIDECAR:
+        return
+    try:
+        path = Path(_LATENCY_SIDECAR)
+        existing: dict = {}
+        if path.exists():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8")) or {}
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+        existing[binary] = {"elapsed_s": round(elapsed, 2), "ts": time.time()}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(existing, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError:
+        pass
 
 # Tokens that, if present in stdout, indicate the harness rejected the call
 # rather than answering. Kept liberal so a transient SDK breaking change is

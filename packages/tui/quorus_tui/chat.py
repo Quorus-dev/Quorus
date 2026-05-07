@@ -125,26 +125,37 @@ def render_app_bar(
     last_active: str,
     console_width: int,
     messages: list[dict] | None = None,
+    daemon_connected: bool | None = None,
+    typing: str | None = None,
 ) -> Text:
-    """Pinned single-row in-room app-bar.
+    """Pinned single-row in-room app-bar — iMessage navigation bar styling.
 
-    Layout:
-        ``  <-back  ●  #room   · N members · last-active     ⋯ (s)hare (i)nfo …``
+    Layout (left → right, single row, two-col aligned):
 
-    The leading ``<-`` arrow hints that ``Esc`` returns to welcome. The
-    ●/○ presence dot uses the same hash as member avatars but flips to
-    bright green when anyone has posted within the last 60s — a quick
-    "active now" signal you can read at a glance.
+        ``  ‹  ●  #room  ·  N members  ·  active 2m ago    ◐ live  (s)hare …``
+
+    Charm-tier polish layered in:
+      * ``‹`` (U+2039) replaces ``<-`` — single-cell, reads as a true
+        back-arrow at any font size.
+      * Presence dot accepts a ``typing`` string and flips to the
+        half-filled "soft pulse" glyph the moment someone composes.
+      * Optional ``daemon_connected`` adds a tiny ``◐ live`` /
+        ``○ offline`` daemon indicator on the right edge — symmetric
+        with the room dot so the eye reads "two health signals" at
+        a glance instead of one buried in the status line.
+      * Action affordances render as parenthesised key + label
+        (``(s)hare``); separator between actions is a true two-space
+        gap, not a centered dot — tighter, less visual noise.
     """
     glyph, glyph_style = ("●", "muted")
-    if messages:
-        glyph, glyph_style = presence_dot(messages)
+    if messages or typing:
+        glyph, glyph_style = presence_dot(messages or [], typing=typing)
     # Avatar dot for the room itself uses the room-name's hashed color
     # — even when the presence ring is dim, the room "identity" reads.
     room_hue = sender_color(room_name)
 
     left = Text(INDENT)
-    left.append("<-", style="dim")
+    left.append("‹", style="dim")
     left.append("  ", style="dim")
     left.append(glyph, style=glyph_style)
     left.append("  ", style="dim")
@@ -158,15 +169,20 @@ def render_app_bar(
         left.append(last_active, style="muted")
 
     right = Text()
-    right.append("⋯  ", style="dim")
+    # Optional daemon/connection status — tight, leading the actions so
+    # health is the first thing the user sees on the right edge.
+    if daemon_connected is not None:
+        d_glyph, d_style = _w.daemon_status_glyph(daemon_connected)
+        right.append(d_glyph, style=d_style)
+        right.append(" ", style="")
+        right.append("live" if daemon_connected else "offline", style="muted")
+        right.append("    ", style="")
     for ch, label in (("s", "hare"), ("i", "nfo"), ("m", "embers"), ("l", "eave")):
         right.append("(", style="dim")
         right.append(ch, style="kbd")
         right.append(")", style="dim")
         right.append(label, style="muted")
         right.append("  ", style="")
-    # Trailing iMessage-style affordance.
-    right.append("tap (i) for info", style="dim italic")
     return two_col(left, right, total_width=max(40, console_width))
 
 
@@ -736,6 +752,12 @@ def _empty_card(console_width: int, title: str, cta: str) -> list[Text]:
 def render_composer_hint(typing: str | None = None) -> Text:
     """Single dim placeholder rendered just above the prompt.
 
+    Typography: a thin primary vertical bar (``│``) leads the line as a
+    visual "you're here" prompt indicator, mirroring the ``❯`` glyph the
+    actual prompt uses one row down. Inline ``@`` and ``/`` keys render
+    in *kbd* style (bold accent) so they read as keyboard hints, not
+    placeholder text.
+
     When *typing* is provided, a typing-indicator line shows *above* the
     placeholder — the caller passes a renderable group, so we return a
     :class:`Text` that includes both rows separated by a newline.
@@ -744,7 +766,8 @@ def render_composer_hint(typing: str | None = None) -> Text:
     line.append("│ ", style="primary")
     line.append("Type a message…  ", style="dim")
     line.append("@", style="kbd")
-    line.append(" mention  ", style="dim")
+    line.append(" mention", style="dim")
+    line.append("    ", style="")
     line.append("/", style="kbd")
     line.append(" command", style="dim")
     if not typing:
