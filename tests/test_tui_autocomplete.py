@@ -190,8 +190,12 @@ def test_render_no_footer_when_within_cap():
     pop = _make_mention(["arav", "ben", "carol"])
     pop.open_mention()
     rows = pop.render(console_width=80)
-    # 1 header + 3 items, no footer.
-    assert len(rows) == 4
+    # Polish-tier popover: head ``╭ …`` + 3 items + tail ``╰`` = 5 rows.
+    # Tail always renders so the popover reads as a closed unit even
+    # when there's no overflow text — Charm-style enclosed glyph pair.
+    assert len(rows) == 5
+    assert rows[0].plain.startswith("  ╭")
+    assert rows[-1].plain.startswith("  ╰")
 
 
 # ── Human / agent distinction ────────────────────────────────────────────────
@@ -285,10 +289,12 @@ def test_render_highlights_selected_row():
     # Header is rows[0]; items start at rows[1]. Selected row is /home
     # (index 1 in items → rows[2]).
     selected_row = rows[2]
-    # Plain text shows the leading "> " marker on the selected row.
-    assert selected_row.plain.startswith("  > ")
+    # Polish-tier rows lead with a continuation gutter ``│ `` (matching
+    # the bubble side-bar). Selected rows still carry the ``> `` marker.
+    assert "> " in selected_row.plain
+    assert selected_row.plain.lstrip().startswith("│")
     # Non-selected rows do not have the > marker.
-    assert not rows[1].plain.startswith("  > ")
+    assert "> " not in rows[1].plain
 
 
 # ── Render shows `(no matches)` when filter has zero hits ───────────────────

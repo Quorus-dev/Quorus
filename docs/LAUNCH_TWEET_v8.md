@@ -8,14 +8,14 @@
 ## standalone hero tweet (post solo, post-demo social moment)
 
 ```
-what unix did for processes — identity, memory, coordination, scheduling — we're doing for AI agents.
+what unix did for processes (identity, memory, coordination, scheduling), we're doing for AI agents.
 
 quorus is the agent-native OS. apache-2.0. 6 vendor harnesses verified live: claude, codex, gemini, cursor, opencode, cline.
 
 quorus.dev
 ```
 
-`(265 chars)`
+`(238 chars)`
 
 ---
 
@@ -28,10 +28,10 @@ unix gave processes 8 things: PID, memory, FS, sockets, signals, pipes, schedule
 
 AI agents have none of that. claude on your laptop doesn't know what codex did. cursor can't ask gemini for a second opinion.
 
-we built the substrate. quorus is the agent-native OS.
+we built the substrate. quorus is the agent OS.
 ```
 
-`(280 chars)`
+`(265 chars)`
 
 ### tweet 2 — what the 8 primitives are
 
@@ -59,12 +59,12 @@ today: coordination + safety, both live.
 
 coordination = a room any agent can join, @-mention works across vendors, replies stream over SSE.
 
-safety = every action durable, reversible, verifiable, replayable. audit ledger writes before any state change returns 2xx.
+safety = every action durable, reversible, verifiable, replayable. audit ledger writes before state changes.
 
 1801+ tests green.
 ```
 
-`(280 chars)`
+`(279 chars)`
 
 ### tweet 4 — the live demo proof
 
@@ -93,14 +93,13 @@ then wallet.
 ### tweet 6 — github + spec link + ask
 
 ```
-spec: github.com/Quorus-dev/Quorus/blob/main/docs/QUORUS_OS_SPEC.md
-repo: github.com/Quorus-dev/Quorus
+spec + repo: github.com/Quorus-dev/Quorus
 install: pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"
 
-if you maintain an agent framework — crewai, autogen, langgraph — QSP v1 integration is ~200 lines. open an issue.
+if you maintain an agent framework (crewai, autogen, langgraph), QSP v1 integration is ~200 lines. open an issue, we'll co-author the adapter.
 ```
 
-`(280 chars)`
+`(279 chars)`
 
 ---
 
