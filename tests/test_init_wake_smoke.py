@@ -6,32 +6,22 @@ from typing import Any
 import pytest
 
 from quorus.cli import _init_run_wake_smoke
-from quorus.routes.models import (
-    CreateRoomRequest,
-    JoinLeaveRequest,
-    RoomMessageRequest,
-)
+from quorus.routes.models import CreateRoomRequest, JoinLeaveRequest, RoomMessageRequest
 
 
 class _Resp:
-    def __init__(self, s: int, b: Any):
-        self.status_code, self._b = s, b
-
-    def json(self) -> Any:
-        return self._b
+    def __init__(self, s: int, b: Any): self.status_code, self._b = s, b
+    def json(self) -> Any: return self._b
 
 
 def test_init_wake_smoke_uses_current_schemas(monkeypatch: pytest.MonkeyPatch) -> None:
     base, agent = "arav", "arav-claude"
-    posts: list[dict[str, Any]] = []
-    gets: list[dict[str, Any]] = []
+    posts, gets = [], []
 
     def _post(url: str, **kw: Any) -> _Resp:
         posts.append({"url": url, **kw})
-        return _Resp(
-            200 if url.endswith(("/v1/auth/token", "/join")) else 201,
-            {"token": "jwt"} if url.endswith("/v1/auth/token") else {"id": "r1"},
-        )
+        body = {"token": "jwt"} if url.endswith("/v1/auth/token") else {"id": "r1"}
+        return _Resp(200 if url.endswith(("/v1/auth/token", "/join")) else 201, body)
 
     def _get(url: str, **kw: Any) -> _Resp:
         gets.append({"url": url, **kw})
@@ -39,7 +29,6 @@ def test_init_wake_smoke_uses_current_schemas(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr("quorus.cli.httpx.post", _post)
     monkeypatch.setattr("quorus.cli.httpx.get", _get)
-
     ok, _, detail = _init_run_wake_smoke(
         relay_url="https://relay.test", human_api_key="k_h",
         agent_api_keys={agent: "k_a"}, base_name=base, ui=None, timeout_s=2.0,

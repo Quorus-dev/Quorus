@@ -5,7 +5,7 @@ import {
   VENDOR_MARK,
   type VendorKey,
   type VendorMarkProps,
-} from "./effects/VendorLogos";
+} from "./effects/VendorLogos.lookup";
 
 /**
  * LogoCloud — provider wordmark band, magicui-style continuous marquee.

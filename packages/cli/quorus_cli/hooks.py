@@ -230,22 +230,37 @@ def _save_cursors(agent: str, cursors: dict[str, str]) -> None:
         _hook_debug_log("cursor-save-fail", exc, extra=str(p))
 
 
-def _fetch_unread(relay: str, secret: str, agent: str) -> list[dict]:
+def _fetch_unread(
+    relay: str,
+    headers_or_secret: dict[str, str] | str,
+    agent: str,
+) -> list[dict]:
     """Pull pending messages for *agent* from the relay's inbox endpoint.
 
     Mirrors `_cmd_inbox` in cli.py: peek first to avoid pulling when empty,
     then GET /messages/{agent} with `ack=manual` so the relay doesn't drop
     them off the queue (we want each harness to see them once each).
 
+    Accepts either a pre-built headers dict (preferred — what
+    ``_resolve_auth`` returns) or a legacy positional secret string for
+    backward compatibility with older test fixtures. Either way, never
+    log the bearer value.
+
     All exceptions are caught and logged to ``~/.quorus/hook-debug.log``;
     the function returns ``[]`` on failure. The host harness must never
     be blocked by relay flakiness, but the silent-failure mode that hid
     the cold-install-smoke regression must never recur.
     """
+    if isinstance(headers_or_secret, dict):
+        headers = headers_or_secret
+    elif headers_or_secret:
+        headers = {"Authorization": f"Bearer {headers_or_secret}"}
+    else:
+        headers = {}
     try:
         peek = httpx.get(
             f"{relay}/messages/{agent}/peek",
-            headers={"Authorization": f"Bearer {secret}"} if secret else {},
+            headers=headers,
             timeout=3,
             follow_redirects=True,
         )
@@ -261,7 +276,7 @@ def _fetch_unread(relay: str, secret: str, agent: str) -> list[dict]:
         full = httpx.get(
             f"{relay}/messages/{agent}",
             params={"ack": "manual"},
-            headers={"Authorization": f"Bearer {secret}"} if secret else {},
+            headers=headers,
             timeout=3,
             follow_redirects=True,
         )
@@ -326,8 +341,8 @@ def handle_cursor_session() -> int:
     messages so the agent picks up where the team left off.
     """
     try:
-        relay, secret, instance = _config()
-        msgs = _fetch_unread(relay, secret, instance)
+        relay, instance, headers = _resolve_auth()
+        msgs = _fetch_unread(relay, headers, instance)
         if not msgs:
             print(json.dumps({"additional_context": ""}))
             return 0
@@ -354,10 +369,10 @@ def handle_cursor_stop() -> int:
     next user message — the only way to push to Cursor mid-session.
     """
     try:
-        relay, secret, instance = _config()
+        relay, instance, headers = _resolve_auth()
         sentinel = Path.home() / ".quorus" / f"pending-{instance}.flag"
         has_pending = sentinel.exists()
-        msgs = _fetch_unread(relay, secret, instance) if has_pending else []
+        msgs = _fetch_unread(relay, headers, instance) if has_pending else []
         if not msgs:
             print(json.dumps({}))
             return 0
@@ -390,8 +405,8 @@ def handle_gemini_beforeagent() -> int:
     current turn. No tricks required.
     """
     try:
-        relay, secret, instance = _config()
-        msgs = _fetch_unread(relay, secret, instance)
+        relay, instance, headers = _resolve_auth()
+        msgs = _fetch_unread(relay, headers, instance)
         if not msgs:
             print(json.dumps({"hookSpecificOutput": {"additionalContext": ""}}))
             return 0

@@ -414,39 +414,10 @@ export function OpenInterpreterMark({
   );
 }
 
-// ── Lookup table for callers that prefer a string-keyed API ──────────────
-// Useful in LogoCloud where the provider list is data-driven.
-export type VendorKey =
-  | "claude"
-  | "cursor"
-  | "codex"
-  | "gemini"
-  | "windsurf"
-  | "copilot"
-  | "cline"
-  | "aider"
-  | "continue"
-  | "opencode"
-  | "cody"
-  | "openinterpreter";
-
-export const VENDOR_MARK: Record<
-  VendorKey,
-  (props: VendorMarkProps) => JSX.Element
-> = {
-  claude: ClaudeMark,
-  cursor: CursorMark,
-  codex: CodexMark,
-  gemini: GeminiMark,
-  windsurf: WindsurfMark,
-  copilot: CopilotMark,
-  cline: ClineMark,
-  aider: AiderMark,
-  continue: ContinueMark,
-  opencode: OpencodeMark,
-  cody: CodyMark,
-  openinterpreter: OpenInterpreterMark,
-};
+// Note: a vendor-keyed lookup table (VENDOR_MARK) lives in the sibling
+// file VendorLogos.lookup.ts. Keeping non-component exports out of this
+// file preserves Vite's react-refresh boundary, which requires a file to
+// only export components for HMR to work cleanly.
 
 // Allow callers to render with foreignObject (HTML in SVG) without losing
 // the inline-block alignment we set on the root. Re-exported as a type-only
