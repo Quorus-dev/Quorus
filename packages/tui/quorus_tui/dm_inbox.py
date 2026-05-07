@@ -89,7 +89,7 @@ def render_dm_inbox_panel(
     rows: list[Text] = []
 
     head = Text(INDENT)
-    head.append("✉ ", style="muted")
+    head.append("✉ ", style="primary")
     head.append("Agent DMs", style="bold primary")
     head.append("  —  ", style="dim")
     label = "message" if len(messages) == 1 else "messages"

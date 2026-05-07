@@ -69,13 +69,21 @@ fail() { printf "%sX%s %s%s%s\n" "$CR" "$C0" "$CB" "$1" "$C0" >&2; }
 hint() { printf "  %s..%s %s\n" "$CD" "$C0" "$1" >&2; }
 
 # ---------------------------------------------------------------------------
-# Preflight
+# Preflight (soft-fail in dry-run; hard-fail otherwise)
 # ---------------------------------------------------------------------------
 step "preflight"
 
-if ! command -v asciinema >/dev/null 2>&1; then
-  fail "asciinema not installed"
-  cat >&2 <<EOF
+PREFLIGHT_OK=1
+
+if command -v asciinema >/dev/null 2>&1; then
+  ok "asciinema $(asciinema --version 2>/dev/null | head -1)"
+else
+  PREFLIGHT_OK=0
+  if [[ "$DRY_RUN" == "1" ]]; then
+    warn "asciinema not installed (dry-run continues)"
+  else
+    fail "asciinema not installed"
+    cat >&2 <<EOF
 
   Install (macOS):
     brew install asciinema
@@ -86,33 +94,52 @@ if ! command -v asciinema >/dev/null 2>&1; then
   Then re-run:
     $0
 EOF
-  exit 2
+    exit 2
+  fi
 fi
-ok "asciinema $(asciinema --version 2>/dev/null | head -1)"
 
-if ! command -v curl >/dev/null 2>&1; then
-  fail "curl missing — required for relay health probe"
-  exit 2
+if command -v curl >/dev/null 2>&1; then
+  ok "curl present"
+else
+  PREFLIGHT_OK=0
+  if [[ "$DRY_RUN" == "1" ]]; then
+    warn "curl missing (dry-run continues)"
+  else
+    fail "curl missing — required for relay health probe"
+    exit 2
+  fi
 fi
-ok "curl present"
 
 # Production relay health probe — note: prod uses /health (not /v1/health)
 # per Fly deploy convention.
-if curl -fsS -m 5 "$RELAY_URL/health" >/dev/null 2>&1; then
+RELAY_HEALTHY=0
+if command -v curl >/dev/null 2>&1 && curl -fsS -m 5 "$RELAY_URL/health" >/dev/null 2>&1; then
+  RELAY_HEALTHY=1
   ok "relay healthy: $RELAY_URL/health"
 else
-  fail "relay $RELAY_URL/health is NOT 200"
-  hint "check: flyctl status -a quorus-relay"
-  hint "or override with: QUORUS_RELAY_URL=http://127.0.0.1:8080 $0"
-  exit 2
+  PREFLIGHT_OK=0
+  if [[ "$DRY_RUN" == "1" ]]; then
+    warn "relay $RELAY_URL/health unreachable (dry-run continues)"
+  else
+    fail "relay $RELAY_URL/health is NOT 200"
+    hint "check: flyctl status -a quorus-relay"
+    hint "or override with: QUORUS_RELAY_URL=http://127.0.0.1:8080 $0"
+    exit 2
+  fi
 fi
 
 # Output dir
 if [[ ! -d "$(dirname "$CAST_OUT")" ]]; then
-  mkdir -p "$(dirname "$CAST_OUT")" || {
-    fail "cannot create $(dirname "$CAST_OUT")"; exit 2; }
+  if [[ "$DRY_RUN" == "1" ]]; then
+    warn "cast output dir $(dirname "$CAST_OUT") does not exist yet (would be created on real run)"
+  else
+    mkdir -p "$(dirname "$CAST_OUT")" || {
+      fail "cannot create $(dirname "$CAST_OUT")"; exit 2; }
+    ok "cast output dir created: $(dirname "$CAST_OUT")"
+  fi
+else
+  ok "cast output dir ready: $(dirname "$CAST_OUT")"
 fi
-ok "cast output dir ready: $(dirname "$CAST_OUT")"
 
 # Detect demo-flow command (Lane 5 owns kliment_demo.sh; may not exist yet)
 USE_DEMO_FLOW=0
@@ -127,16 +154,19 @@ fi
 # Dry-run path
 # ---------------------------------------------------------------------------
 if [[ "$DRY_RUN" == "1" ]]; then
+  asciinema_status=$(command -v asciinema >/dev/null 2>&1 && echo "${CG}OK${C0}" || echo "${CR}MISSING${C0}")
+  curl_status=$(command -v curl >/dev/null 2>&1 && echo "${CG}OK${C0}" || echo "${CR}MISSING${C0}")
+  relay_status=$([[ $RELAY_HEALTHY == 1 ]] && echo "${CG}OK${C0}" || echo "${CR}UNREACHABLE${C0}")
+  demo_status=$([[ $USE_DEMO_FLOW == 1 ]] && echo "${CG}OK${C0}" || echo "${CY}fallback inline${C0}")
   cat <<EOF
 
 ${CB}DRY RUN${C0} — would execute:
 
-  Preflight:
-    - asciinema present .................... ${CG}OK${C0}
-    - curl present ......................... ${CG}OK${C0}
-    - $RELAY_URL/health = 200 .............. ${CG}OK${C0}
-    - kliment_demo.sh demo-flow available .. $([[ $USE_DEMO_FLOW == 1 ]] && echo "${CG}OK${C0}" || echo "${CY}fallback inline${C0}")
-    - $(dirname "$CAST_OUT") writable ...... ${CG}OK${C0}
+  Preflight (current state):
+    - asciinema present .................... $asciinema_status
+    - curl present ......................... $curl_status
+    - $RELAY_URL/health = 200 .............. $relay_status
+    - kliment_demo.sh demo-flow available .. $demo_status
 
   Recording:
     cmd: asciinema rec /tmp/kliment_demo.cast \\

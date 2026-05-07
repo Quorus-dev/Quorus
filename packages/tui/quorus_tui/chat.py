@@ -323,23 +323,38 @@ def _other_bubble(
 
 
 def _system_event(content: str, sender: str, console_width: int) -> Text:
-    """Centered, italic, dim — iMessage's "Arav joined" style."""
+    """Centered, italic, dim — iMessage's "Arav joined" style.
+
+    Wrapped in soft middle-dots (``·  text  ·``) so it reads as a quiet
+    aside rather than a fully styled message — matches Charm's room
+    notification convention.
+    """
     text = content if sender in content else f"{sender} {content}".strip()
-    pad = max(2, (console_width - len(text)) // 2)
+    decorated = f"·  {text}  ·"
+    pad = max(2, (console_width - len(decorated)) // 2)
     line = Text(" " * pad)
-    line.append(text, style="dim italic")
+    line.append(decorated, style="dim italic")
     return line
 
 
 def _unread_divider(console_width: int) -> Text:
-    """Centered dotted rule with a 'new' label — only when unread > 0."""
+    """Centered ``──  new  ──`` divider — iMessage "new messages" tag.
+
+    Replaces the previous dotted rule with a hairline that matches the
+    time-divider style for visual consistency. The bold ``new`` label
+    reads as the strongest signal in the row — exactly what an
+    unread-cutoff cue should be.
+    """
     label = "  new  "
-    side = max(8, (console_width - len(label) - 4) // 2)
-    bar = "·  " * (side // 3) or "·  "
+    gutter = 2
+    side = max(8, (console_width - len(label) - 2 * gutter - 2) // 2)
+    bar = "─" * side
     line = Text("  ")
-    line.append(bar.rstrip(), style="dim")
-    line.append(label, style="bold muted")
-    line.append(bar.rstrip(), style="dim")
+    line.append(bar, style="dim")
+    line.append(" " * gutter)
+    line.append(label.strip(), style="bold accent")
+    line.append(" " * gutter)
+    line.append(bar, style="dim")
     return line
 
 

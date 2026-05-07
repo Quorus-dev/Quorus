@@ -6,15 +6,18 @@ from quorus.routes.agent_dm import router as agent_dm_router
 from quorus.routes.agents import router as agents_router
 from quorus.routes.analytics import router as analytics_router
 from quorus.routes.audit import router as audit_router
+from quorus.routes.capabilities import router as capabilities_router
 from quorus.routes.health import router as health_router
 from quorus.routes.invites import router as invites_router
 from quorus.routes.messages import router as messages_router
+from quorus.routes.persistent_memory import router as persistent_memory_router
 from quorus.routes.presence import router as presence_router
 from quorus.routes.room_messages import router as room_messages_router
 from quorus.routes.room_state import router as room_state_router
 from quorus.routes.rooms import router as rooms_router
 from quorus.routes.social import router as social_router
 from quorus.routes.sse import router as sse_router
+from quorus.routes.tool_catalog import router as tool_catalog_router
 from quorus.routes.triage import router as triage_router
 from quorus.routes.usage import router as usage_router
 from quorus.routes.webhooks import router as webhooks_router
@@ -38,3 +41,6 @@ router.include_router(triage_router)
 router.include_router(social_router)
 router.include_router(work_queue_router)
 router.include_router(agent_dm_router)
+router.include_router(capabilities_router)
+router.include_router(tool_catalog_router)
+router.include_router(persistent_memory_router)

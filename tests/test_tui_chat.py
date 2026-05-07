@@ -423,7 +423,8 @@ def test_app_bar_idle_dot_when_no_recent_post():
     assert "○" in out or "active" not in out.lower()
 
 
-def test_app_bar_includes_tap_for_info_hint():
+def test_app_bar_includes_action_keys():
+    """Polish-tier app-bar exposes (s)hare/(i)nfo/(m)embers/(l)eave."""
     out = _render_to_str(
         [chat.render_app_bar(
             room_name="general", member_count=1,
@@ -431,7 +432,8 @@ def test_app_bar_includes_tap_for_info_hint():
         )],
         width=120,
     )
-    assert "tap (i) for info" in out
+    for ch in ("(s)", "(i)", "(m)", "(l)"):
+        assert ch in out
 
 
 # ── Polish-pass: empty-room state ────────────────────────────────────────────
@@ -453,7 +455,10 @@ def test_empty_room_card_renders_room_name_and_cta():
 def test_reaction_row_renders_chips():
     line = chat_widgets.reaction_row({"heart": 2, "thumbs-up": 1}, 80)
     out = _render_to_str([line], width=80)
-    assert "[heart" in out and "[thumbs-up" in out
+    # Charm-tier pills render as ``[ heart · 2 ] [ thumbs-up ]`` —
+    # padded brackets, centered ``·`` count separator.
+    assert "heart" in out and "thumbs-up" in out
+    assert "[ " in out and " ]" in out
     # Counts > 1 surface explicitly. Counts of 1 stay implicit.
     assert "2" in out
 
@@ -470,7 +475,9 @@ def test_reactions_thread_through_render_bubble_feed():
         msgs, "dev", "arav", console_width=80,
         reactions_by_index={0: {"heart": 3}},
     ))
-    assert "[heart" in out
+    # Padded-pill format: ``[ heart · 3 ]``.
+    assert "heart" in out and "3" in out
+    assert "[ " in out and " ]" in out
 
 
 # ── Polish-pass: typing indicator ────────────────────────────────────────────
@@ -670,11 +677,10 @@ def test_golden_app_bar_layout_at_120_cols():
         width=120,
     )
     # Spec-by-feature: room name, member count, all four key hints,
-    # the back arrow, and the right-side iMessage info hint all present.
-    assert "<-" in out
+    # and the U+2039 back arrow all present.
+    assert "‹" in out
     assert "#dev" in out
     assert "4 members" in out
     assert "active 2m ago" in out
     for ch in ("(s)", "(i)", "(m)", "(l)"):
         assert ch in out
-    assert "tap (i) for info" in out

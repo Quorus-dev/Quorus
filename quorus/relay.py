@@ -426,6 +426,16 @@ def _init_services(app_instance, redis_conn=None):
     app_instance.state.agent_dm_inbox = {}
     app_instance.state.agent_dm_queues = {}
 
+    # Plan v8 Phase 1 — agent-native OS primitives. All in-memory; Phase 2
+    # owns persistence. Re-created on _init_services() so reset_state()
+    # clears them between tests.
+    from quorus.services.capability_svc import CapabilitySvc
+    from quorus.services.persistent_memory_svc import PersistentMemorySvc
+    from quorus.services.tool_catalog_svc import ToolCatalogSvc
+    app_instance.state.capability_service = CapabilitySvc()
+    app_instance.state.tool_catalog_service = ToolCatalogSvc()
+    app_instance.state.persistent_memory_service = PersistentMemorySvc()
+
     # Create outbox worker if enabled (requires Postgres)
     if USE_OUTBOX and DATABASE_URL:
         from quorus.services.outbox_svc import OutboxWorker
