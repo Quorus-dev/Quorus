@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-05-03 (Reflex AI-native chat shipped, identity disambiguation, prod-deploy fixes)
+Last updated: 2026-05-11 (Phase 1 OS primitives now MCP-callable across all 6 harnesses)
 
 ---
 
@@ -112,6 +112,41 @@ Remaining medium-severity items tracked in code review output.
 ---
 
 ## Recent Changes
+
+### Phase 1 OS primitives → MCP tools (2026-05-11)
+
+The `feat(os-primitives): Phase 1` commit (850dbf9) shipped HTTP routes for
+capability discovery, tool catalog, and persistent memory — but no MCP
+wrappers, so the 6 vendor harnesses (Claude Code, Codex, Cursor, Gemini,
+Opencode, Cline) couldn't actually invoke them. Closed the gap: 10 new
+MCP tools registered in `packages/mcp/quorus_mcp/server.py`, implementations
+in a new `phase1_tools.py` module so server.py stays roughly within the
+500-line guideline. All 10 audit before mutating writes via the same
+`_audit_tool_call` sidecar pattern as `send_message` / `social_verb`, so
+the hash-chained audit ledger keeps complete coverage. +22 tests
+(`tests/test_mcp_phase1_tools.py`), 1924 total passing.
+
+The new tool surface:
+
+| MCP tool              | Wraps                                           |
+| --------------------- | ----------------------------------------------- |
+| `publish_capability`  | `POST /v1/capabilities/{INSTANCE_NAME}`         |
+| `lookup_capability`   | `GET  /v1/capabilities/{participant}`           |
+| `search_capabilities` | `GET  /v1/capabilities/search?has=...`          |
+| `register_tool`       | `POST /v1/rooms/{rid}/tools`                    |
+| `list_room_tools`     | `GET  /v1/rooms/{rid}/tools`                    |
+| `unregister_tool`     | `DELETE /v1/rooms/{rid}/tools/{name}`           |
+| `memory_set`          | `PUT  /v1/memory/{INSTANCE_NAME}/{rid}/{key}`   |
+| `memory_get`          | `GET  /v1/memory/{owner}/{rid}/{key}`           |
+| `memory_list`         | `GET  /v1/memory/{owner}/{rid}`                 |
+| `memory_delete`       | `DELETE /v1/memory/{INSTANCE_NAME}/{rid}/{key}` |
+
+This converts Plan v8 primitives 3-5 from "drafted route" to "agents can
+actually use them." Demo gate: an agent in a room can now run
+`publish_capability(capabilities=["python", "fastapi"])`, another agent
+can `search_capabilities(has="fastapi")`, and shared state survives a
+restart via `memory_set` / `memory_get`. No new wire format — same JWT
+auth, same audit ledger, same Cedar policy gates as the underlying routes.
 
 ### Reflex — AI-native cross-harness chat (2026-05-02 → 2026-05-03)
 

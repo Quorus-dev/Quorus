@@ -622,6 +622,104 @@ async def social_verb(
     return await tools.social_verb(verb, room_id, payload, ref_message_id, context)
 
 
+# ---------------------------------------------------------------------------
+# Plan v8 Phase 1 OS primitives — capability discovery, tool catalog, memory.
+# Implementations live in ``phase1_tools.py`` to keep this file readable.
+# ---------------------------------------------------------------------------
+
+from quorus_mcp import phase1_tools as _p1  # noqa: E402
+
+
+@mcp.tool()
+async def publish_capability(
+    description: str = "",
+    supported_languages: list[str] | None = None,
+    supported_frameworks: list[str] | None = None,
+    capabilities: list[str] | None = None,
+) -> str:
+    """Publish this agent's capability manifest so peers can find it."""
+    return await _p1.publish_capability(
+        description=description,
+        supported_languages=supported_languages,
+        supported_frameworks=supported_frameworks,
+        capabilities=capabilities,
+    )
+
+
+@mcp.tool()
+async def lookup_capability(participant: str) -> str:
+    """Fetch a participant's capability manifest in this tenant."""
+    return await _p1.lookup_capability(participant)
+
+
+@mcp.tool()
+async def search_capabilities(has: str = "") -> str:
+    """Find participants whose capabilities match every token in ``has``."""
+    return await _p1.search_capabilities(has)
+
+
+@mcp.tool()
+async def register_tool(
+    room_id: str,
+    name: str,
+    url: str,
+    access: str = "room",
+    description: str = "",
+) -> str:
+    """Register an MCP server in the room. Room admin only."""
+    return await _p1.register_tool(
+        room_id, name, url, access=access, description=description,
+    )
+
+
+@mcp.tool()
+async def list_room_tools(room_id: str) -> str:
+    """List MCP servers registered in the room. Members only."""
+    return await _p1.list_room_tools(room_id)
+
+
+@mcp.tool()
+async def unregister_tool(room_id: str, name: str) -> str:
+    """Remove an MCP server registration. Room admin only."""
+    return await _p1.unregister_tool(room_id, name)
+
+
+@mcp.tool()
+async def memory_set(
+    room_id: str,
+    key: str,
+    value: object,
+    visibility: str = "private",
+) -> str:
+    """Store a value in this agent's per-room persistent memory."""
+    return await _p1.memory_set(room_id, key, value, visibility=visibility)
+
+
+@mcp.tool()
+async def memory_get(
+    room_id: str,
+    key: str,
+    owner: str | None = None,
+) -> str:
+    """Read a memory entry. ``owner`` defaults to this agent."""
+    return await _p1.memory_get(room_id, key, owner=owner)
+
+
+@mcp.tool()
+async def memory_list(
+    room_id: str,
+    owner: str | None = None,
+) -> str:
+    """List readable memory entries for ``owner`` in ``room_id``."""
+    return await _p1.memory_list(room_id, owner=owner)
+
+
+@mcp.tool()
+async def memory_delete(room_id: str, key: str) -> str:
+    """Delete this agent's memory entry under ``key`` (GDPR)."""
+    return await _p1.memory_delete(room_id, key)
+
+
 def main_cli() -> None:
     """Console entry point for the ``quorus-mcp`` command (stdio transport)."""
     mcp.run(transport="stdio")
