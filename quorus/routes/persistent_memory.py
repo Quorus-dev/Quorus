@@ -16,9 +16,11 @@ Storage in :class:`quorus.services.persistent_memory_svc.PersistentMemorySvc`.
 """
 from __future__ import annotations
 
+import os
 import uuid as _uuid
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
@@ -41,6 +43,7 @@ from quorus.services.persistent_memory_svc import (
 )
 
 router = APIRouter()
+logger = structlog.get_logger("quorus.routes.persistent_memory")
 _LEGACY_TENANT = "_legacy"
 
 
@@ -162,21 +165,10 @@ async def set_memory(
             status_code=429, detail="memory write rate limit",
         )
 
-    svc = _memory_svc(request)
-    try:
-        entry = await svc.set(
-            tid, participant, rid, key, body.value,
-            visibility=body.visibility,
-        )
-    except ValueTooLargeError as e:
-        raise HTTPException(status_code=413, detail=str(e)) from e
-    except EntryCapError as e:
-        raise HTTPException(status_code=429, detail=str(e)) from e
-    except MemoryError_ as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    # Tag owner so downstream visibility checks know who wrote it.
-    entry["owner"] = participant
-
+    # 2026-05-16 audit fix: write the audit record BEFORE the mutation, and
+    # refuse the mutation in production if audit cannot be written. Recording
+    # intent is what the SOC2/HIPAA audit ledger guarantees; a silently-
+    # swallowed audit failure (the old try/except: pass) is a compliance gap.
     audit_svc = getattr(request.app.state, "audit_service", None)
     if audit_svc is not None:
         try:
@@ -192,11 +184,32 @@ async def set_memory(
                     "participant": participant,
                     "key": key,
                     "visibility": body.visibility,
-                    "size_bytes": entry.get("size_bytes"),
+                    "size_bytes": len(body.value or ""),
                 },
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            if os.environ.get("DATABASE_URL"):
+                raise HTTPException(
+                    status_code=503,
+                    detail="audit ledger unavailable; refusing mutation",
+                ) from exc
+            # Dev/test mode (no Postgres): log but continue.
+            logger.warning("audit record failed in dev mode", reason=str(exc))
+
+    svc = _memory_svc(request)
+    try:
+        entry = await svc.set(
+            tid, participant, rid, key, body.value,
+            visibility=body.visibility,
+        )
+    except ValueTooLargeError as e:
+        raise HTTPException(status_code=413, detail=str(e)) from e
+    except EntryCapError as e:
+        raise HTTPException(status_code=429, detail=str(e)) from e
+    except MemoryError_ as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    # Tag owner so downstream visibility checks know who wrote it.
+    entry["owner"] = participant
     return {"ok": True, "entry": entry}
 
 
@@ -278,13 +291,10 @@ async def delete_memory(
     members = _members_list(room_data)
     _policy_check(request, auth, "memory:delete", rid, members)
 
-    svc = _memory_svc(request)
-    removed = await svc.delete(tid, participant, rid, key)
-    if not removed:
-        raise HTTPException(
-            status_code=404, detail=f"no entry for key {key!r}",
-        )
-
+    # 2026-05-16 audit fix: record intent before the mutation. For deletes
+    # this is especially important — GDPR/HIPAA require that even the
+    # decision to delete leaves a tamper-evident trace, regardless of whether
+    # a key actually existed.
     audit_svc = getattr(request.app.state, "audit_service", None)
     if audit_svc is not None:
         try:
@@ -298,8 +308,21 @@ async def delete_memory(
                 room_name=room_data.get("name"),
                 details={"participant": participant, "key": key},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            if os.environ.get("DATABASE_URL"):
+                raise HTTPException(
+                    status_code=503,
+                    detail="audit ledger unavailable; refusing mutation",
+                ) from exc
+            logger.warning("audit record failed in dev mode", reason=str(exc))
+
+    svc = _memory_svc(request)
+    removed = await svc.delete(tid, participant, rid, key)
+    if not removed:
+        raise HTTPException(
+            status_code=404, detail=f"no entry for key {key!r}",
+        )
+
     return {"ok": True, "deleted": key}
 
 

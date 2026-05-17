@@ -25,11 +25,16 @@ def _tid(auth: AuthContext) -> str:
     return auth.tenant_id or _LEGACY_TENANT
 
 
+_SSE_COOKIE_NAME = "quorus_sse"
+
+
 @router.post("/stream/token")
 async def create_sse_token(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
+    from fastapi.responses import JSONResponse
+
     body = await request.json()
     recipient = body.get("recipient", "")
     if not recipient:
@@ -51,7 +56,24 @@ async def create_sse_token(
         )
     svc = request.app.state.sse_service
     token = await svc.create_token(_tid(auth), recipient, SSE_TOKEN_TTL)
-    return {"token": token, "expires_in": SSE_TOKEN_TTL}
+
+    # 2026-05-16 hardening: set the SSE token as an HttpOnly, Secure, SameSite
+    # cookie scoped to /stream so the browser auto-attaches it on the
+    # EventSource request. Eliminates the audit's `?token=` URL exposure
+    # (Fly access logs / Referer / browser history). The cookie path matches
+    # the SSE endpoint family; the cookie is scoped to a single recipient
+    # by virtue of token-recipient binding inside the SSE service.
+    resp = JSONResponse({"token": token, "expires_in": SSE_TOKEN_TTL})
+    resp.set_cookie(
+        key=_SSE_COOKIE_NAME,
+        value=token,
+        max_age=SSE_TOKEN_TTL,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/stream",
+    )
+    return resp
 
 
 @router.get("/stream/{recipient}")
@@ -61,6 +83,12 @@ async def stream_messages(
     token: str = "",
 ):
     svc = request.app.state.sse_service
+    # 2026-05-16 hardening: prefer the HttpOnly cookie minted by
+    # POST /stream/token. The query-string ``token`` is kept as a
+    # backward-compat fallback for CLI/SDK clients that don't run a cookie
+    # jar; new browser flows must use the cookie path (see dashboard.js).
+    if not token:
+        token = request.cookies.get(_SSE_COOKIE_NAME, "")
     valid, tid = await svc.verify_token(token, recipient)
     # Wave-5 Fix 6 — tighten the legacy bypass.
     #

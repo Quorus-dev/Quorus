@@ -344,20 +344,21 @@ header{
 const API=location.origin;
 const P=new URLSearchParams(location.search);
 
-// Security: read token from URL once, store in sessionStorage, then clear URL
-// This prevents token leakage via browser history, referrers, and logs
+// Security: read token from URL FRAGMENT (#token=...), never the query string.
+// Fragments are NOT sent to the server, so Fly access logs / CDN logs / referrers
+// can never capture the JWT. Legacy ?token= is accepted ONE release for backward
+// compat with old share URLs, but logs a warning.
 let TOKEN=sessionStorage.getItem('quorus_token')||'';
 let NAME=sessionStorage.getItem('quorus_name')||'web-user';
-if(P.has('token')){
-  TOKEN=P.get('token');
+const HP=new URLSearchParams(location.hash.startsWith('#')?location.hash.slice(1):'');
+let _tokSrc='';
+if(HP.has('token')){TOKEN=HP.get('token');_tokSrc='hash';if(HP.has('name'))NAME=HP.get('name');}
+else if(P.has('token')){TOKEN=P.get('token');_tokSrc='query';if(P.has('name'))NAME=P.get('name');console.warn('Quorus: ?token= in URL is deprecated and leaks via server logs. Use #token= instead.');}
+if(_tokSrc){
   sessionStorage.setItem('quorus_token',TOKEN);
-  if(P.has('name')){
-    NAME=P.get('name');
-    sessionStorage.setItem('quorus_name',NAME);
-  }
-  // Clear credentials from URL (replace history entry)
-  const cleanUrl=location.pathname;
-  history.replaceState(null,'',cleanUrl);
+  sessionStorage.setItem('quorus_name',NAME);
+  // Strip credentials from both query AND fragment, then replace history entry.
+  history.replaceState(null,'',location.pathname);
 }
 const H={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
 let currentRoom=null,sse=null;
@@ -540,9 +541,14 @@ function setConn(ok){
 }
 function scrollToBottom(){const el=document.getElementById('messages');requestAnimationFrame(()=>{el.scrollTop=el.scrollHeight})}
 async function connectSSE(){
-  if(sse)sse.close();let sseToken=TOKEN;
-  try{const r=await fetch(API+'/stream/token',{method:'POST',headers:H,body:JSON.stringify({recipient:NAME})});if(r.ok){const d=await r.json();sseToken=d.token;}}catch(e){}
-  sse=new EventSource(API+'/stream/'+NAME+'?token='+sseToken);
+  if(sse)sse.close();
+  // 2026-05-16 hardening: SSE token now arrives via an HttpOnly cookie set by
+  // POST /stream/token, so it never appears in the URL (Fly logs, browser
+  // history, Referer). EventSource forwards same-origin cookies when
+  // withCredentials=true. We still call /stream/token to mint a fresh
+  // short-lived token on every (re)connect; the response sets the cookie.
+  try{await fetch(API+'/stream/token',{method:'POST',headers:H,credentials:'include',body:JSON.stringify({recipient:NAME})});}catch(e){}
+  sse=new EventSource(API+'/stream/'+encodeURIComponent(NAME),{withCredentials:true});
   sse.onopen=()=>setConn(true);sse.onerror=()=>setConn(false);
   sse.addEventListener('message',e=>{
     try{
@@ -558,10 +564,10 @@ function formatMsg(msg){
   const ts=esc((msg.timestamp||'').substring(11,19));const type=msg.message_type||'chat';const mid=msg.id||'';
   const safeType=['claim','status','request','alert','sync'].includes(type)?type:'chat';
   let tag='';if(safeType!=='chat'){tag='<span class="tag tag-'+safeType+'">'+esc(type)+'</span>'}
-  const ra=msg.reply_to?' data-reply="'+msg.reply_to+'"':'';
-  const rr=msg.reply_to?'<span class="reply-ref" onclick="scrollToMsg(\''+msg.reply_to+'\')">&#8627;</span>':'';
-  const rb='<span class="reply-btn" onclick="setReply(\''+mid+'\',\''+esc(msg.from_name||'')+'\')">reply</span>';
-  return '<div class="msg" id="msg-'+mid+'"'+ra+'><span class="ts">'+ts+'</span><span class="sender">'+esc(msg.from_name||'?')+'</span>'+rr+tag+esc(msg.content||'')+rb+'</div>';
+  const ra=msg.reply_to?' data-reply="'+esc(msg.reply_to)+'"':'';
+  const rr=msg.reply_to?'<span class="reply-ref" data-scroll-to="'+esc(msg.reply_to)+'">&#8627;</span>':'';
+  const rb='<span class="reply-btn" data-reply-id="'+esc(mid)+'" data-reply-name="'+esc(msg.from_name||'')+'">reply</span>';
+  return '<div class="msg" id="msg-'+esc(mid)+'"'+ra+'><span class="ts">'+ts+'</span><span class="sender">'+esc(msg.from_name||'?')+'</span>'+rr+tag+esc(msg.content||'')+rb+'</div>';
 }
 function setReply(id,name){replyTo=id;const input=document.getElementById('msgInput');input.placeholder='Replying to '+name+'...';input.focus()}
 function scrollToMsg(id){const el=document.getElementById('msg-'+id);if(el){el.style.background='var(--accent-s)';el.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(()=>{el.style.background=''},1500)}}
@@ -573,6 +579,13 @@ async function sendMsg(){
   try{await fetch(API+'/rooms/'+currentRoom+'/messages',{method:'POST',headers:H,body:JSON.stringify(body)})}catch(e){}
 }
 document.getElementById('msgInput').addEventListener('keydown',e=>{if(e.key==='Enter')sendMsg()});
+// Event delegation for reply buttons + scroll-to-reply links. Replaces inline onclick handlers
+// that interpolated user-supplied IDs into a JS string context (XSS vector even with HTML escaping,
+// since attribute->JS decoding could unwrap escaped quotes).
+document.getElementById('messages').addEventListener('click',e=>{
+  const r=e.target.closest('[data-reply-id]');if(r){setReply(r.dataset.replyId,r.dataset.replyName||'');return}
+  const s=e.target.closest('[data-scroll-to]');if(s){scrollToMsg(s.dataset.scrollTo);return}
+});
 async function refreshPresence(){
   if(!currentRoom)return;
   try{const r=await fetch(API+'/rooms/'+currentRoom,{headers:H});const room=await r.json();const pr=await fetch(API+'/presence',{headers:H});const presence=await pr.json();const online=new Set(presence.filter(p=>p.online).map(p=>p.name));const mb=document.getElementById('members');mb.innerHTML='<span class="lbl">Members</span>'+room.members.map(m=>{const d=online.has(m)?'dot-online':'dot-offline';return '<span class="member"><span class="dot '+d+'"></span>'+esc(m)+'</span>'}).join('')}catch(e){}

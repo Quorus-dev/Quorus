@@ -15,8 +15,10 @@ Storage is ephemeral per
 """
 from __future__ import annotations
 
+import os
 import uuid as _uuid
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
@@ -35,6 +37,7 @@ from quorus.services.tool_catalog_svc import (
 )
 
 router = APIRouter()
+logger = structlog.get_logger("quorus.routes.tool_catalog")
 _LEGACY_TENANT = "_legacy"
 
 
@@ -155,21 +158,9 @@ async def register_tool(
             status_code=429, detail="tool registration rate limit",
         )
 
-    svc = _tool_catalog_svc(request)
-    try:
-        record = await svc.register(
-            tid, rid,
-            name=body.name,
-            url=str(body.url),
-            registered_by=auth.sub or "",
-            access=body.access,
-            description=body.description,
-        )
-    except DuplicateToolError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    except ToolCatalogError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
+    # 2026-05-16 audit fix: write audit before mutation. Refuse the mutation
+    # in production if the audit ledger is down — silent try/except: pass
+    # leaves a compliance gap.
     audit_svc = getattr(request.app.state, "audit_service", None)
     if audit_svc is not None:
         try:
@@ -186,8 +177,29 @@ async def register_tool(
                     "access": body.access,
                 },
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            if os.environ.get("DATABASE_URL"):
+                raise HTTPException(
+                    status_code=503,
+                    detail="audit ledger unavailable; refusing mutation",
+                ) from exc
+            logger.warning("audit record failed in dev mode", reason=str(exc))
+
+    svc = _tool_catalog_svc(request)
+    try:
+        record = await svc.register(
+            tid, rid,
+            name=body.name,
+            url=str(body.url),
+            registered_by=auth.sub or "",
+            access=body.access,
+            description=body.description,
+        )
+    except DuplicateToolError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ToolCatalogError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
     return {"ok": True, "tool": record}
 
 
@@ -227,13 +239,9 @@ async def remove_tool(
     members = _members_list(room_data)
     _policy_check(request, auth, "tools:remove", rid, members)
 
-    svc = _tool_catalog_svc(request)
-    removed = await svc.remove(tid, rid, name)
-    if not removed:
-        raise HTTPException(
-            status_code=404, detail=f"tool {name!r} not found",
-        )
-
+    # 2026-05-16 audit fix: record intent before mutation. Whether the tool
+    # actually existed is unknown until svc.remove runs, but the intent to
+    # remove must be auditable regardless.
     audit_svc = getattr(request.app.state, "audit_service", None)
     if audit_svc is not None:
         try:
@@ -247,8 +255,21 @@ async def remove_tool(
                 room_name=room_data.get("name"),
                 details={"tool_name": name},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            if os.environ.get("DATABASE_URL"):
+                raise HTTPException(
+                    status_code=503,
+                    detail="audit ledger unavailable; refusing mutation",
+                ) from exc
+            logger.warning("audit record failed in dev mode", reason=str(exc))
+
+    svc = _tool_catalog_svc(request)
+    removed = await svc.remove(tid, rid, name)
+    if not removed:
+        raise HTTPException(
+            status_code=404, detail=f"tool {name!r} not found",
+        )
+
     return {"ok": True, "removed": name}
 
 

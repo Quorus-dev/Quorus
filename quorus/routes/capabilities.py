@@ -19,8 +19,10 @@ Storage is ephemeral — see :class:`quorus.services.capability_svc.CapabilitySv
 """
 from __future__ import annotations
 
+import os
 import uuid as _uuid
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
@@ -34,6 +36,7 @@ from quorus.auth.policy import (
 from quorus.services.capability_svc import CapabilityError, CapabilitySvc
 
 router = APIRouter()
+logger = structlog.get_logger("quorus.routes.capabilities")
 _LEGACY_TENANT = "_legacy"
 
 # Cap manifest fields so a noisy agent can't blow memory.
@@ -144,14 +147,8 @@ async def publish_capability(
             status_code=429, detail="capability publish rate limit",
         )
 
-    svc = _capability_svc(request)
-    try:
-        manifest = await svc.publish(
-            _tid(auth), participant, body.model_dump(),
-        )
-    except CapabilityError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
+    # 2026-05-16 audit fix: record intent before mutation, refuse in production
+    # if audit unavailable.
     audit_svc = getattr(request.app.state, "audit_service", None)
     if audit_svc is not None:
         try:
@@ -162,13 +159,25 @@ async def publish_capability(
                 actor=auth.sub,
                 target=participant,
                 details={
-                    "capabilities_count": len(
-                        manifest.get("capabilities") or []
-                    ),
+                    "capabilities_count": len(body.capabilities or []),
                 },
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            if os.environ.get("DATABASE_URL"):
+                raise HTTPException(
+                    status_code=503,
+                    detail="audit ledger unavailable; refusing mutation",
+                ) from exc
+            logger.warning("audit record failed in dev mode", reason=str(exc))
+
+    svc = _capability_svc(request)
+    try:
+        manifest = await svc.publish(
+            _tid(auth), participant, body.model_dump(),
+        )
+    except CapabilityError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
     return {"ok": True, "manifest": manifest}
 
 

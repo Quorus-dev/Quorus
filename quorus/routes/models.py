@@ -2,9 +2,26 @@
 
 from __future__ import annotations
 
+import re
+import uuid as _uuid
+
 from pydantic import BaseModel, field_validator
 
 from quorus.routes.helpers import _validate_name
+
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _validate_uuid_ref(value: str | None) -> str | None:
+    if value is None or value == "":
+        return None
+    if not _UUID_RE.match(value):
+        raise ValueError("must be a UUID")
+    return str(_uuid.UUID(value))
 
 VALID_MESSAGE_TYPES = {
     "chat", "claim", "status", "request", "alert", "sync", "brief", "subtask", "decision",
@@ -71,6 +88,18 @@ class RoomMessageRequest(BaseModel):
             allowed = ", ".join(sorted(VALID_MESSAGE_TYPES))
             raise ValueError(f"message_type must be one of: {allowed}")
         return v
+
+    @field_validator("reply_to", "thread_root_id")
+    @classmethod
+    def check_uuid_refs(cls, v: str | None) -> str | None:
+        # ``reply_to`` and ``thread_root_id`` are rendered into HTML
+        # attribute values in the dashboard. Forcing UUID format here
+        # makes them uninjectable at the API boundary — see
+        # tests/test_xss_reply_to.py for the threat model.
+        # ``brief_id`` is intentionally NOT validated as a UUID: it is an
+        # opaque CLI-generated reference that is not rendered in any
+        # user-facing surface.
+        return _validate_uuid_ref(v)
 
 
 class JoinLeaveRequest(BaseModel):

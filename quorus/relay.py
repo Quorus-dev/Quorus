@@ -594,6 +594,15 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         response.headers["x-request-id"] = request_id
         response.headers["x-content-type-options"] = "nosniff"
         response.headers["x-frame-options"] = "DENY"
+        # HSTS: force HTTPS for 2 years on all subdomains. The relay
+        # terminates TLS at the Fly edge — clients should never re-issue
+        # over plain HTTP after their first successful HTTPS request.
+        response.headers["strict-transport-security"] = (
+            "max-age=63072000; includeSubDomains"
+        )
+        # Referrer-Policy: never leak the relay URL (which may contain
+        # tenant/room identifiers in the path) to third-party origins.
+        response.headers["referrer-policy"] = "no-referrer"
         if "text/html" in response.headers.get("content-type", ""):
             # Tight CSP: no 'unsafe-inline' on script-src. Inline scripts on
             # invite/dashboard pages use a per-request nonce (set below via
