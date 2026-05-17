@@ -164,9 +164,12 @@ async def verify_auth(request: Request) -> AuthContext:
             is_legacy=True,
         )
 
+    # 2026-05-16 audit (B5): use the canonical real-IP helper so logs
+    # capture the actual caller behind Fly's edge proxy, not the proxy's
+    # egress IP. Forensics on a credential-stuffing run depends on this.
     logger.warning(
         "Auth failure from %s",
-        request.client.host if request.client else "unknown",
+        _client_ip_for_log(request),
     )
     raise HTTPException(status_code=401, detail="Invalid or missing auth token")
 

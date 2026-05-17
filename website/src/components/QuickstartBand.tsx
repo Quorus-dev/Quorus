@@ -28,7 +28,11 @@ const TABS: Tab[] = [
   {
     id: "install",
     label: "Install",
-    command: "pip install quorus",
+    // 2026-05-16 audit (B7): PyPI serves stale 0.1.0 — `pip install quorus`
+    // gives the wrong package. Use the git-installed pipx form until PyPI
+    // republish lands.
+    command:
+      'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"',
     lang: "bash",
   },
   {

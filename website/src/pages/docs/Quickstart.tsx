@@ -72,7 +72,12 @@ export default function Quickstart() {
 
         <DocsH2>1. Install</DocsH2>
         <DocsP>One package ships the relay, the CLI, and the MCP server.</DocsP>
-        <CodeBlock command="pip install quorus" lang="bash" />
+        <CodeBlock
+          command={
+            'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"'
+          }
+          lang="bash"
+        />
 
         <DocsH2>2. Verify the install</DocsH2>
         <DocsP>

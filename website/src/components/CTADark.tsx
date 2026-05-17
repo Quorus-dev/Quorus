@@ -15,7 +15,11 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 const MONO = "'JetBrains Mono', ui-monospace, monospace";
 const SANS = "'Plus Jakarta Sans', system-ui, sans-serif";
 
-const INSTALL_CMD = "pip install quorus";
+// 2026-05-16 audit (B7): PyPI serves stale 0.1.0 — `pip install quorus`
+// gives the wrong package. Use the git-installed pipx form until PyPI
+// republish lands.
+const INSTALL_CMD =
+  'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"';
 
 const NOISE_SVG =
   "data:image/svg+xml;utf8," +

@@ -30,6 +30,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from quorus.auth.middleware import AuthContext, verify_auth
 from quorus.auth.tokens import _get_jwt_secret, decode_jwt  # noqa: F401
+from quorus.config import get_real_ip
 from quorus.routes.admin_metrics import compute_metrics
 
 router = APIRouter(prefix="/admin", tags=["admin-dashboard"])
@@ -177,7 +178,8 @@ async def admin_login_submit(
     request: Request,
     secret: str = Form(...),
 ):
-    client_ip = request.client.host if request.client else "unknown"
+    # 2026-05-16 audit (B5): canonical real-IP for rate-limit bucket.
+    client_ip = get_real_ip(request)
     rate_svc = request.app.state.rate_limit_service
     allowed = await rate_svc.check_with_limit(
         "global", f"admin-login:{client_ip}", RATE_LIMIT_MAX, window=RATE_LIMIT_WINDOW,

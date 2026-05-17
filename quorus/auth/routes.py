@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 
 from quorus.admin.models import ApiKey, Participant, Tenant
 from quorus.auth.tokens import create_jwt, extract_key_prefix, generate_api_key, verify_api_key
+from quorus.config import get_real_ip
 from quorus.routes.helpers import _coerce_bool
 from quorus.storage.postgres import get_db_session
 
@@ -155,8 +156,10 @@ async def signup(
     Rate limited to 5 signups per hour per IP.
     Returns the API key once — it cannot be retrieved again.
     """
-    # Rate limit by IP: 5 requests per 60 seconds
-    client_ip = request.client.host if request.client else "unknown"
+    # Rate limit by IP: 5 requests per 60 seconds.
+    # 2026-05-16 audit (B5): use canonical real-IP helper so the bucket
+    # keys on the actual caller, not Fly's proxy egress.
+    client_ip = get_real_ip(request)
     rate_limit_svc = request.app.state.rate_limit_service
     _SIGNUP_WINDOW = 60
     allowed = await rate_limit_svc.check_with_limit(
@@ -411,10 +414,8 @@ async def register_agent(
             None,
         )
         if rate_svc is not None:
-            client_ip = (
-                request.client.host
-                if getattr(request, "client", None) else "unknown"
-            )
+            # 2026-05-16 audit (B5): canonical real-IP helper.
+            client_ip = get_real_ip(request)
             allowed = await rate_svc.check_with_limit(
                 "global",
                 f"register-agent:{parent_participant.id}:{client_ip}",

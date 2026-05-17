@@ -49,19 +49,15 @@ const SITEMAP: { title: string; links: FooterLink[] }[] = [
   },
   {
     title: "Company",
-    links: [
-      { label: "About", href: "/#about" },
-      { label: "Blog", href: "/#blog" },
-      { label: "Contact", href: "mailto:hello@quorus.dev" },
-    ],
+    // 2026-05-16 audit (B10): About + Blog removed — they pointed to anchors
+    // that don't exist. Don't promise what isn't shipped.
+    links: [{ label: "Contact", href: "mailto:hello@quorus.dev" }],
   },
 ];
 
-const BOTTOM_LINKS: FooterLink[] = [
-  { label: "Status", href: "#" },
-  { label: "Security", href: "#" },
-  { label: "Privacy", href: "#" },
-];
+// 2026-05-16 audit (B10): Status / Security / Privacy were all href="#"
+// (dead). Removed until we have real pages to point to.
+const BOTTOM_LINKS: FooterLink[] = [];
 
 function FooterAnchor({ link }: { link: FooterLink }) {
   const className = "text-[13px] transition-colors duration-200";

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.config import get_real_ip
 from quorus.routes.models import InviteJoinRequest
 
 router = APIRouter()
@@ -152,9 +153,10 @@ async def invite_join(
     # Rate-limit by source IP. This endpoint is unauthenticated (a valid invite
     # token is enough to call it) — without a limiter, a stolen token could be
     # replayed to enumerate occupancy or DoS join slots up to MAX_ROOM_MEMBERS.
-    client_ip = request.headers.get("X-Real-IP") or (
-        request.client.host if request.client else "unknown"
-    )
+    # 2026-05-16 audit (B5): use canonical real-IP helper so the bucket
+    # keys on the actual caller behind Fly's edge, not the proxy. The old
+    # X-Real-IP-first fallback let any client spoof XFF and evade the limit.
+    client_ip = get_real_ip(request)
     rate_svc = request.app.state.rate_limit_service
     # Use tenant_id="public" since no auth yet; IP is the key.
     if not await rate_svc.check_with_limit("public", f"invite_join:{client_ip}", 10):

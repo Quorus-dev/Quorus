@@ -19,6 +19,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from quorus.auth.middleware import AuthContext, require_role, verify_auth
+from quorus.config import get_real_ip
 
 router = APIRouter(prefix="/v1/join", tags=["join-codes"])
 
@@ -119,7 +120,8 @@ async def mint_code(
         )
 
     # Rate-limit to stop a leaked admin key from spamming codes.
-    client_ip = request.client.host if request.client else "unknown"
+    # 2026-05-16 audit (B5): canonical real-IP for rate-limit bucket.
+    client_ip = get_real_ip(request)
     rate_svc = request.app.state.rate_limit_service
     allowed = await rate_svc.check_with_limit(
         "global", f"join-mint:{client_ip}", 20, window=60,
@@ -197,7 +199,8 @@ async def resolve_code(
     quotes, whitespace, lowercase). Bad input returns 400, missing 404,
     expired 410, so the client can pick the right user-facing error.
     """
-    client_ip = request.client.host if request.client else "unknown"
+    # 2026-05-16 audit (B5): canonical real-IP for rate-limit bucket.
+    client_ip = get_real_ip(request)
     rate_svc = request.app.state.rate_limit_service
     allowed = await rate_svc.check_with_limit(
         "global", f"join-resolve:{client_ip}", 100, window=60,
@@ -286,7 +289,8 @@ async def install_script(
     Same rate limit as resolve so a leaked code can't be used as a DDoS
     amplifier. The script itself is plain text with the code baked in.
     """
-    client_ip = request.client.host if request.client else "unknown"
+    # 2026-05-16 audit (B5): canonical real-IP for rate-limit bucket.
+    client_ip = get_real_ip(request)
     rate_svc = request.app.state.rate_limit_service
     allowed = await rate_svc.check_with_limit(
         "global", f"join-install:{client_ip}", 100, window=60,
