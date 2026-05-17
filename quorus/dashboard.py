@@ -14,6 +14,9 @@ DASHBOARD_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 2026-05-16 audit (B6): admin surface; never index. -->
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="googlebot" content="noindex, nofollow, noarchive">
 <title>Quorus</title>
 <style>
 :root{

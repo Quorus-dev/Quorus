@@ -55,6 +55,13 @@ async def send_message(
         raise HTTPException(status_code=413, detail="Message content exceeds maximum size")
 
     tid = _tid(auth)
+    # 2026-05-16 audit (B4): DM send is a write endpoint with no rate limit.
+    # Match the sibling room_messages.py cap (60/min/sender). Closes the
+    # cheap DoS surface a tenant-shared sender could use to flood the
+    # recipient inbox or burn the relay's Redis budget.
+    rate_limit_svc = request.app.state.rate_limit_service
+    if not await rate_limit_svc.check_with_limit(tid, f"dm:{sender}", 60):
+        raise HTTPException(status_code=429, detail="DM send rate limit")
     backends = request.app.state.backends
 
     # Calculate body fingerprint for idempotency verification
