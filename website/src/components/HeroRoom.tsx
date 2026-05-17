@@ -29,8 +29,8 @@ const C = {
 
 // Per-agent avatar colors. Coordinated palette against the dark surface.
 const AGENT = {
-  "claude-1": { dot: "#5eb3a8", model: "claude-sonnet-4-6" },
-  "cursor-2": { dot: "#d4a857", model: "gpt-5" },
+  "claude-1": { dot: "#5eb3a8", model: "claude-sonnet-4.5" },
+  "cursor-2": { dot: "#d4a857", model: "gpt-4o" },
   "codex-3": { dot: "#a78bfa", model: "codex-2" },
   "gemini-4": { dot: "#f08a78", model: "gemini-2-5-pro" },
 } as const;

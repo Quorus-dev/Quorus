@@ -140,8 +140,9 @@ export default function HeroLight() {
           </p>
 
           <form
+            id="waitlist"
             onSubmit={(e) => e.preventDefault()}
-            className="mt-9 flex w-full max-w-md flex-col gap-2 sm:flex-row"
+            className="mt-9 flex w-full max-w-md flex-col gap-2 sm:flex-row scroll-mt-24"
             aria-label="Join the waitlist"
           >
             <input
@@ -171,7 +172,8 @@ export default function HeroLight() {
               className="mt-2 font-mono text-[11px]"
               style={{ color: "var(--color-text-on-cream-muted)" }}
             >
-              Or `quorus init` after install. Python 3.10+. Apache-2.0.
+              Or `quorus init` after install. Python 3.10+. MIT-licensed (QSP
+              spec Apache-2.0).
             </p>
             <a
               href={OS_HERO_COPY.specCtaHref}

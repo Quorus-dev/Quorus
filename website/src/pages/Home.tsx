@@ -1,18 +1,20 @@
 import HeroLight from "../components/HeroLight";
 import OsPrimitivesTable from "../components/OsPrimitivesTable";
 import CrossHarnessBand from "../components/CrossHarnessBand";
+import ComparisonBand from "../components/ComparisonBand";
 import BentoStitch from "../components/BentoStitch";
 import CTADark from "../components/CTADark";
 import FooterV2 from "../components/FooterV2";
 
 /**
- * Quorus landing — 5-section composition.
+ * Quorus landing — 6-section composition.
  *
  *   1. Hero (cream)         — agent-native OS framing, install, spec CTA
  *   2. OS Primitives (ink)  — eight-row table; LIVE today + roadmap
  *   3. Cross-Harness (ink)  — deep dive on the LIVE Coordination primitive
- *   4. Bento (ink)          — four product surfaces (Rooms, State, MCP, Sync)
- *   5. CTA (ink)            — convert
+ *   4. Comparison (cream)   — Quorus vs Devin/OpenAgents/TAP/AutoGen capability matrix
+ *   5. Bento (ink)          — four product surfaces (Rooms, State, MCP, Sync)
+ *   6. CTA (ink)            — convert
  *      + Footer (cream)     — sitemap + tagline
  *
  * The OS Primitives band is the bridge between the Plan v8 hero positioning
@@ -27,6 +29,7 @@ export default function Home() {
       <HeroLight />
       <OsPrimitivesTable />
       <CrossHarnessBand />
+      <ComparisonBand />
       <BentoStitch />
       <CTADark />
       <FooterV2 />

@@ -19,9 +19,10 @@ import BentoContext from "./illustrations/bento/BentoContext";
 export default function BentoStitch() {
   return (
     <section
+      id="features"
       data-theme="dark"
       aria-labelledby="bento-heading"
-      className="relative w-full overflow-hidden"
+      className="relative w-full overflow-hidden scroll-mt-24"
       style={{ backgroundColor: "var(--color-ink)" }}
     >
       {/* Atmosphere — same family as ControlCenterDark / CTADark.

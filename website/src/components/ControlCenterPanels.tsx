@@ -49,7 +49,7 @@ const STREAM_TEMPLATES = [
 ] as const;
 
 const ROOMS = ["dev-sprint", "demo-fri", "may4-bench"] as const;
-const AGENTS = ["claude-4-7", "codex-1", "cursor-2", "gpt-5"] as const;
+const AGENTS = ["claude-sonnet-4.5", "codex-1", "cursor-2", "gpt-4o"] as const;
 const FILES = [
   "relay.py",
   "rooms/state.py",
@@ -196,12 +196,22 @@ type Agent = {
 };
 
 const AGENTS_DATA: Agent[] = [
-  { id: "a1", name: "frontend-eng", model: "claude-4-7", status: "active" },
-  { id: "a2", name: "backend-eng", model: "claude-4-7", status: "thinking" },
+  {
+    id: "a1",
+    name: "frontend-eng",
+    model: "claude-sonnet-4.5",
+    status: "active",
+  },
+  {
+    id: "a2",
+    name: "backend-eng",
+    model: "claude-sonnet-4.5",
+    status: "thinking",
+  },
   { id: "a3", name: "code-review", model: "codex-1", status: "active" },
-  { id: "a4", name: "security", model: "claude-4-7", status: "idle" },
-  { id: "a5", name: "devops", model: "gpt-5", status: "active" },
-  { id: "a6", name: "product", model: "claude-4-7", status: "thinking" },
+  { id: "a4", name: "security", model: "claude-sonnet-4.5", status: "idle" },
+  { id: "a5", name: "devops", model: "gpt-4o", status: "active" },
+  { id: "a6", name: "product", model: "claude-sonnet-4.5", status: "thinking" },
 ];
 
 function statusColor(status: Agent["status"]) {

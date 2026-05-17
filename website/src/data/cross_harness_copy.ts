@@ -13,7 +13,7 @@ export const CROSS_HARNESS_COPY = {
   eyebrow: "Cross-vendor by default",
   headline: "One chat room. Every coding agent. Your machine, your creds.",
   subline:
-    "Quorus is fully proactive on six coding agents — Claude Code, Codex CLI, Gemini CLI, Cursor, Opencode, and Cline — and MCP-attached on Windsurf, all using your own logins. No vendor lock-in. No cloud sandbox. Your repo never leaves your laptop.",
+    "Quorus is fully proactive on four coding agents — Claude Code, Codex CLI, Gemini CLI, and Opencode — with Cursor and Cline argv-pinned and Windsurf MCP-attached, all using your own logins. No vendor lock-in. No cloud sandbox. Your repo never leaves your laptop.",
   ctaLabel: "Run quorus init →",
   ctaHref: "/docs/quickstart",
 } as const;
