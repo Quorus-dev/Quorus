@@ -6,8 +6,13 @@ Thanks for your interest in contributing to Murmur!
 
 ```bash
 git clone https://github.com/Quorus-dev/Quorus.git
-cd murmur
-pip install -e ".[dev]"
+cd Quorus
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]" -e packages/sdk -e packages/cli -e packages/mcp -e packages/tui
+# macOS only: undo a hatchling-editable + Python 3.14 + macOS interaction
+# that hides .pth files via com.apple.provenance + UF_HIDDEN. Idempotent.
+bash scripts/fix_editable_pth.sh
+python -c "import quorus, quorus_sdk, quorus_cli, quorus_mcp, quorus_tui"  # must print nothing
 ```
 
 ## Running Tests
