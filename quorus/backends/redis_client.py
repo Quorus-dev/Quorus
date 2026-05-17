@@ -67,9 +67,19 @@ def get_redis() -> Redis:
 
 
 async def check_redis() -> bool:
-    """Return ``True`` if the Redis connection is healthy.
+    """Return ``True`` if the Redis connection is healthy AND accepting commands.
 
-    Caches the result for _HEALTH_CACHE_TTL seconds to reduce PING commands.
+    2026-05-16 incident: Upstash exempts ``PING`` from the per-month request
+    quota, so a plain ``PING``-based health check returned ``True`` even when
+    every real command (SET/GET/XADD/...) was failing with
+    ``max requests limit exceeded``. The live ``/health`` happily reported
+    ``redis: connected`` while ``POST /rooms`` 500'd on every call.
+
+    The fix is to use a real round-trip (``SET ... EX 5``) on a dedicated
+    health key. SET counts against the quota the same way every other write
+    does, so when the quota is exhausted this returns ``False`` and ``/health``
+    flips to 503. Cost: one Redis write per ``_HEALTH_CACHE_TTL`` window
+    (default 30s → ~2 writes/min → ~86k writes/month, well under any quota).
     """
     global _health_cache
     now = time.monotonic()
@@ -82,7 +92,10 @@ async def check_redis() -> bool:
         _health_cache = {"ok": False, "checked_at": now}
         return False
     try:
-        await _redis.ping()
+        # SET with short TTL exercises the same code path as real writes
+        # and counts against quota — catches Upstash-style request exhaustion
+        # that PING silently bypasses.
+        await _redis.set("__quorus_health__", "1", ex=5)
         _health_cache = {"ok": True, "checked_at": now}
         return True
     except Exception:
