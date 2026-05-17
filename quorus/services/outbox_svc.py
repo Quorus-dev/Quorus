@@ -140,13 +140,28 @@ class OutboxWorker:
             )
 
     async def _claim_entries(self, session: AsyncSession) -> list[MessageOutbox]:
-        """Atomically claim a batch of pending entries."""
+        """Atomically claim a batch of pending entries.
+
+        2026-05-16 retry-storm fix: also filter on ``next_attempt_at`` —
+        entries that just failed have ``next_attempt_at = now() + delay``
+        set and must not be re-claimed until that time arrives. NULL
+        ``next_attempt_at`` means "ready immediately" (the default for
+        freshly-inserted rows, preserving existing INSERT semantics).
+        """
+        from sqlalchemy import or_
+
         now = datetime.now(timezone.utc)
 
-        # Find entries that are pending OR due for retry
+        # Find entries that are pending AND due (next_attempt_at NULL or past)
         result = await session.execute(
             select(MessageOutbox)
             .where(MessageOutbox.status == OutboxStatus.PENDING.value)
+            .where(
+                or_(
+                    MessageOutbox.next_attempt_at.is_(None),
+                    MessageOutbox.next_attempt_at <= now,
+                )
+            )
             .order_by(MessageOutbox.created_at)
             .limit(BATCH_SIZE)
             .with_for_update(skip_locked=True)
@@ -373,7 +388,13 @@ class OutboxWorker:
                 error=error,
             )
         else:
-            # Reset to pending for retry
+            # 2026-05-16 retry-storm fix: persist next_attempt_at so the
+            # claim loop honours exponential backoff. Previously ``delay``
+            # was computed but never stored, causing a failing entry to be
+            # re-polled at every tick (default 1 Hz) and exhaust all
+            # MAX_RETRIES in seconds instead of seconds-to-minutes.
+            delay = RETRY_DELAYS[min(new_retry_count - 1, len(RETRY_DELAYS) - 1)]
+            next_attempt = datetime.now(timezone.utc) + timedelta(seconds=delay)
             await session.execute(
                 update(MessageOutbox)
                 .where(MessageOutbox.id == entry.id)
@@ -383,14 +404,15 @@ class OutboxWorker:
                     last_error=error,
                     claimed_at=None,
                     claimed_by=None,
+                    next_attempt_at=next_attempt,
                 )
             )
-            delay = RETRY_DELAYS[min(new_retry_count - 1, len(RETRY_DELAYS) - 1)]
             logger.warning(
                 "Outbox entry scheduled for retry",
                 entry_id=str(entry.id),
                 retry=new_retry_count,
                 delay=delay,
+                next_attempt_at=next_attempt.isoformat(),
                 error=error,
             )
 

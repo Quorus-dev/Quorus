@@ -64,6 +64,13 @@ class MessageOutbox(Base):
     processed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 2026-05-16 retry-storm fix: when a delivery fails, _handle_failure sets
+    # this to now() + exponential_backoff_delay. _claim_entries skips entries
+    # whose next_attempt_at is in the future. NULL = ready immediately
+    # (newly-inserted entries, preserves the existing INSERT contract).
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     def to_fanout_message(self, recipient: str, timestamp: str) -> dict:
         """Build a fan-out message dict for a recipient.
