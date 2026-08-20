@@ -107,11 +107,28 @@ Remaining medium-severity items tracked in code review output.
 
 ## In Progress
 
-(rebrand complete; launch polish in flight)
+**Wake Rebuild (2026-08-20):** research phase complete — see `docs/NOTIFICATION_MVP_RESEARCH.md`.
+Next: planning phase → product spec → rebuild. MVP scope: Claude Code + Codex + Gemini
+instant wake-on-mention with room→session memory, room→workspace binding, live-session
+injection (Claude inbox socket, v2.1.224+), approval relay, honest presence. Stub
+auto-fallback to be killed. Pre-rebuild Phase 0 fix list in the doc (test-order
+pollution, Redis-backed triage auction, iCloud repo relocation, audit stragglers).
 
 ---
 
 ## Recent Changes
+
+### Wake Rebuild research (2026-08-20)
+
+Full repo audit + 2 deep-research sweeps. Root causes of "notifications felt manual":
+(1) live-session delivery = UserPromptSubmit hook → waits for human keystroke;
+(2) reflexd wakes are amnesiac (`claude --print`, no --resume) with no cwd targeting;
+(3) silent stub fallback posts fake replies when vendor binary missing;
+(4) daemon doesn't survive reboot by default. Pipeline itself verified working
+(stub demo 340ms e2e). Full test suite: 1974 passed / 16 failed / 9 errors — all
+failures pass in isolation (test-order state pollution). Competitive landscape:
+cc-connect 15.1k stars is closest threat; Claude Channels documented gap = no
+cold-start wake; Slack Code launched 2026-08-20. Doc: `docs/NOTIFICATION_MVP_RESEARCH.md`.
 
 ### Phase 1 OS primitives → MCP tools (2026-05-11)
 
