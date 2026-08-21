@@ -298,8 +298,13 @@ ok "joined: $AGENT_NAME"
 # ---------------------------------------------------------------------------
 step "6/11  starting reflexd (participant=$AGENT_NAME)"
 STUB_FLAG=1
+# HOME isolation protects host configs in stub mode, but the REAL adapter
+# needs the user's actual HOME: `claude --print` reads its OAuth login from
+# ~/.claude, so a fake HOME yields "Not logged in · Please run /login".
+REFLEXD_HOME="$WORK_DIR"
 if [[ "$USE_REAL" == "1" ]]; then
   STUB_FLAG=0
+  REFLEXD_HOME="$HOME"
 fi
 
 env \
@@ -309,7 +314,7 @@ env \
   REFLEXD_LEGACY_BEARER=1 \
   REFLEXD_STUB_REPLY="$STUB_FLAG" \
   QUORUS_DEMO_REFLEX=1 \
-  HOME="$WORK_DIR" \
+  HOME="$REFLEXD_HOME" \
   "$VENV_PY" "$REFLEXD_PY" start --debug \
     --participant "$AGENT_NAME" \
     --relay-url "$RELAY_URL" \
