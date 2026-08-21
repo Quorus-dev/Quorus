@@ -1893,6 +1893,7 @@ class Reflexd:
                     await self._drain_inbox(relay)
 
                     url = relay.stream_url(self.config.participant_name, stream_token)
+                    connected_at = time.monotonic()
                     try:
                         async for event_name, data in iter_sse_events(relay.client, url):
                             if self._stop.is_set():
@@ -1901,6 +1902,12 @@ class Reflexd:
                         backoff = SSE_RECONNECT_S
                     except httpx.HTTPError as exc:
                         logger.warning("sse stream dropped: %s", exc)
+                        # D4: a connection that lived >60s and then died is a
+                        # network transition (laptop sleep/wake, wifi change),
+                        # not a struggling relay — reconnect fast instead of
+                        # continuing the exponential climb.
+                        if time.monotonic() - connected_at > 60:
+                            backoff = SSE_RECONNECT_S
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:  # pragma: no cover

@@ -4447,7 +4447,7 @@ def _init_maybe_install_launchd(
     Behaviour matrix:
       * ``no_launchd=True``               → never prompt, never install.
       * ``auto_yes=True``                 → install without prompting.
-      * stdin is a TTY (interactive)       → prompt y/N (default: N).
+      * stdin is a TTY (interactive)       → prompt Y/n (default: Y — D4).
       * non-interactive + neither flag set → skip silently (CI-safe).
 
     Returns ``True`` if the plist was installed.
@@ -4463,9 +4463,12 @@ def _init_maybe_install_launchd(
         if not interactive:
             return False
         try:
+            # D4 (WAKE_REBUILD_SPEC): default YES — a daemon that dies on
+            # reboot is the #1 "notifications stopped working" cause.
             confirmed = Confirm.ask(
-                "[yellow]Install launchd plist so agents auto-start on login?[/]",
-                default=False,
+                "[yellow]Install launchd plist so agents auto-start on login "
+                "(recommended)?[/]",
+                default=True,
             )
         except (EOFError, KeyboardInterrupt):
             return False
