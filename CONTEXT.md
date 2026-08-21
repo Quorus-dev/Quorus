@@ -118,6 +118,28 @@ pollution, Redis-backed triage auction, iCloud repo relocation, audit stragglers
 
 ## Recent Changes
 
+### Wake Rebuild Stream R slice 1 (2026-08-20, commits 17a4998 + 64c4fc9)
+
+- **R1**: reflexd drains the durable inbox (`GET /messages/{p}?ack=manual` →
+  dispatch → ack) on every (re)connect — mentions arriving while the daemon
+  was down / laptop asleep are handled, not lost. Loops until empty;
+  poison messages still ack (no queue wedge).
+- **R2**: reflexd sends 30s presence heartbeats; `GET /rooms/{id}` now
+  returns `member_presence` per member: `{presence: active|away, queued: N}`
+  (heartbeat timeout 90s; queued = peek + pending).
+- **Bug fix (auction)**: reflexd bid/claim now key on the canonical
+  `message_id`, not the per-recipient fan-out uuid — previously every
+  capable agent had a private auction window, so `@open` broadcasts made
+  every agent "win" and reply.
+- **Bug fix (ack no-op)**: `InMemoryMessageBackend.ack` only understood its
+  internal uuid token while the service issues JSON id-list tokens (the
+  Redis contract) — all token ACKs against in-memory relays were silent
+  no-ops, redelivering acked messages every visibility window. Fixed +
+  regression-tested.
+- Remaining Stream R: R3 (Redis-backed triage auction), R4 (persist
+  capabilities/tool-catalog/memory primitives). Then Stream D (workspace
+  binding, session resume, stub removal, lifecycle, guardrails).
+
 ### Wake Rebuild Phase 0 — Foundation complete (2026-08-20)
 
 Spec: `docs/WAKE_REBUILD_SPEC.md`. All Stream F items landed, full suite
