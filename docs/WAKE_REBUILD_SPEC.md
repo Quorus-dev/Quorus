@@ -169,6 +169,14 @@ Files: `scripts/reflexd.py`, `scripts/reflexd_triage.py`, `packages/cli/quorus_c
 - **D6. Ack protocol.** Every handled wake event (replied, refused, errored)
   is acked to R1's endpoint; unhandled events survive daemon crash and
   redeliver.
+- **D7. Wake-success detection.** (Found in real-adapter proof 2026-08-20.)
+  A woken Claude Code session is fully agentic: per QOD it posts its reply
+  itself via quorus tools (inheriting RELAY_URL/API_KEY from the spawn env),
+  and its stdout never "returns" — so reflexd's stdout-capture path hits the
+  120s kill and posts a spurious "[reflexd] harness timed out" AFTER the real
+  reply already landed. Before posting a timeout/error, reflexd must check
+  room history for a reply from its own participant threaded on the wake
+  message; if present, the wake succeeded — kill the process quietly and ack.
 
 Tests: contract tests per harness argv incl. resume forms
 (`tests/test_reflexd_adapters.py` extension); session-map round-trip +
