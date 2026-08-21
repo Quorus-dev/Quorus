@@ -192,10 +192,14 @@ SSE_RECONNECT_S = 2.0
 SSE_RECONNECT_MAX_S = 30.0
 BID_WINDOW_SECONDS = 2.0
 BID_TTL_SECONDS = 5
-# Env-tunable: real agentic Claude runs routinely take 2-5 min (observed
-# live 2026-08-20: a simple codeword task took 120s+). Chat-vs-mission
-# budgets arrive with D5; until then default generous.
+# D5 (WAKE_REBUILD_SPEC): two wake classes with different budgets.
+# Chat wakes (mention/question, no claimed task) are bounded tight; mission
+# wakes (the agent holds an active work-queue claim in the room) get a long
+# leash and an ESCALATION message instead of a bare failure sentinel —
+# never silently kill a working agent (the Arav rule, D5b).
 SUBPROCESS_TIMEOUT_S = int(os.environ.get("REFLEXD_SUBPROCESS_TIMEOUT_S", "300"))
+CHAT_MAX_TURNS = int(os.environ.get("REFLEXD_CHAT_MAX_TURNS", "15"))
+MISSION_TIMEOUT_S = int(os.environ.get("REFLEXD_MISSION_TIMEOUT_S", "3600"))
 HEARTBEAT_HISTORY_LIMIT = 10
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
 # so 30s gives three missed beats of slack. Env-tunable for tests.
@@ -414,7 +418,9 @@ OPENCODE_BIN = "opencode"
 CLINE_BIN = "cline"
 
 
-def build_claude_argv(context: str, *, resume: str | None = None) -> list[str]:
+def build_claude_argv(
+    context: str, *, resume: str | None = None, max_turns: int | None = None,
+) -> list[str]:
     """Pinned argv shape for Claude Code CLI.
 
     Contract: ``claude --print --output-format json [--resume <sid>] -- <ctx>``.
@@ -434,6 +440,8 @@ def build_claude_argv(context: str, *, resume: str | None = None) -> list[str]:
     parsed as the prompt, not as a CLI flag.
     """
     argv = [CLAUDE_BIN, "--print", "--output-format", "json"]
+    if max_turns:
+        argv += ["--max-turns", str(max_turns)]
     if resume:
         argv += ["--resume", resume]
     return argv + ["--", context]
@@ -830,6 +838,8 @@ class HeadlessAdapter:
         self, harness: str, *, context: str, cwd: Path | None = None,
         resume: str | None = None,
         on_session: Callable[[str], None] | None = None,
+        timeout_s: int | None = None,
+        max_turns: int | None = None,
     ) -> str:
         # Smoke / demo path: avoid spawning any real harness. ~10 LoC, off
         # the regular path. Triggered by an explicit env var OR by the
@@ -843,6 +853,7 @@ class HeadlessAdapter:
             return await self._run_claude(
                 context, cwd=cwd,
                 resume=resume, on_session=on_session,
+                timeout_s=timeout_s, max_turns=max_turns,
             )
         if harness == "codex":
             return await self._run_subprocess(
@@ -900,6 +911,7 @@ class HeadlessAdapter:
     async def _run_claude(
         self, context: str, *, cwd: Path | None,
         resume: str | None, on_session: Callable[[str], None] | None,
+        timeout_s: int | None = None, max_turns: int | None = None,
     ) -> str:
         """Claude wake with session continuity (D2).
 
@@ -917,7 +929,8 @@ class HeadlessAdapter:
             return text
 
         reply = await self._run_subprocess(
-            build_claude_argv(context, resume=resume), parser=parser, cwd=cwd,
+            build_claude_argv(context, resume=resume, max_turns=max_turns),
+            parser=parser, cwd=cwd, timeout_s=timeout_s,
         )
         if resume and reply == "[reflexd] harness errored":
             logger.warning(
@@ -925,7 +938,8 @@ class HeadlessAdapter:
             )
             captured["sid"] = None
             reply = await self._run_subprocess(
-                build_claude_argv(context), parser=parser, cwd=cwd,
+                build_claude_argv(context, max_turns=max_turns),
+                parser=parser, cwd=cwd, timeout_s=timeout_s,
             )
         if captured["sid"] and on_session is not None:
             on_session(captured["sid"])
@@ -937,6 +951,7 @@ class HeadlessAdapter:
         *,
         parser: Callable[[str], str],
         cwd: Path | None = None,
+        timeout_s: int | None = None,
     ) -> str:
         # Pre-flight: if the binary truly isn't on PATH, surface the same
         # sentinel string regardless of platform. ``shutil.which`` returning
@@ -959,7 +974,7 @@ class HeadlessAdapter:
             return f"[reflexd] {argv[0]} not installed on this host"
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=self.timeout_s
+                proc.communicate(), timeout=timeout_s or self.timeout_s
             )
         except TimeoutError:
             # L4: Python 3.11+ aliases ``asyncio.TimeoutError`` to the
@@ -1176,6 +1191,30 @@ class RelayClient:
             json={"instance_name": participant, "status": status, "room": room},
         )
         resp.raise_for_status()
+
+    async def mission_task_for(
+        self, *, room: str, participant: str,
+    ) -> dict[str, Any] | None:
+        """Return the first active work-queue task claimed by *participant*
+        in *room*, or None. Failures degrade to None (chat budgets)."""
+        headers = await self._headers()
+        try:
+            resp = await self.client.get(
+                f"/v1/work_queue/{room}",
+                headers=headers,
+                params={"actor": participant,
+                        "status": "pending,in_progress,blocked"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            logger.debug("work-queue lookup failed for %s: %s", room, exc)
+            return None
+        tasks = data.get("tasks") if isinstance(data, dict) else None
+        if isinstance(tasks, list) and tasks:
+            first = tasks[0]
+            return first if isinstance(first, dict) else None
+        return None
 
     async def post_reply(
         self, *, room: str, from_name: str,
@@ -1619,15 +1658,29 @@ class Reflexd:
         def _persist_session(sid: str, _room: str = room) -> None:
             remember_session(self.config.participant_name, _room, sid)
 
+        # D5: mission wakes (agent holds an active work-queue claim in this
+        # room) get the long leash and no turn cap; chat wakes stay tight.
+        _mission_lookup = getattr(relay, "mission_task_for", None)
+        mission = None
+        if _mission_lookup is not None:
+            mission = await _mission_lookup(
+                room=room, participant=self.config.participant_name,
+            )
+        wake_timeout = MISSION_TIMEOUT_S if mission else None
+        wake_max_turns = None if mission else CHAT_MAX_TURNS
+
         logger.info(
-            "waking harness=%s room=%s reason=%s memory_entries=%d workspace=%s session=%s",
+            "waking harness=%s room=%s reason=%s memory_entries=%d "
+            "workspace=%s session=%s mode=%s",
             harness, room, log_reason, len(memory_entries), ws or "-",
             (prior_session[:8] + "…") if prior_session else "new",
+            "mission" if mission else "chat",
         )
         try:
             reply = await self.adapter.run(
                 harness, context=prompt, cwd=ws,
                 resume=prior_session, on_session=_persist_session,
+                timeout_s=wake_timeout, max_turns=wake_max_turns,
             )
         except Exception as exc:
             logger.warning("harness %s raised: %s", harness, exc)
@@ -1648,6 +1701,19 @@ class Reflexd:
         _UNKNOWN_OUTCOME = ("[reflexd] harness timed out",
                             "[reflexd] harness errored",
                             "[reflexd] (no reply)")
+        # D5b: a mission agent that hit its (long) leash gets an escalation
+        # the humans can act on, never a bare sentinel.
+        if mission and reply == "[reflexd] harness timed out":
+            task_title = str(
+                mission.get("title") or mission.get("description")
+                or mission.get("task_id") or "its claimed task"
+            )[:80]
+            reply = (
+                f"⚠ still holding the claim on '{task_title}' but my last "
+                f"work session hit the {MISSION_TIMEOUT_S // 60}m limit. "
+                "Mention me to continue, send /interrupt to stop me, or "
+                "release the task."
+            )
         if reply in _UNKNOWN_OUTCOME:
             try:
                 recent = await relay.fetch_recent(room=room, limit=20)

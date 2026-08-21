@@ -108,7 +108,8 @@ class _StubAdapter:
         self._reply = reply
 
     async def run(self, harness: str, *, context: str, cwd=None,
-                  resume=None, on_session=None) -> str:
+                  resume=None, on_session=None,
+                  timeout_s=None, max_turns=None) -> str:
         self.calls.append((harness, context))
         return self._reply
 

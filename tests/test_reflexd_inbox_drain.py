@@ -250,7 +250,8 @@ def _wake_envelope() -> dict[str, Any]:
 
 
 def _run_wake(daemon, relay, monkeypatch, adapter_reply: str) -> None:
-    async def fake_run(harness, *, context, cwd=None, resume=None, on_session=None):
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
         return adapter_reply
     monkeypatch.setattr(daemon.adapter, "run", fake_run)
     asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
@@ -326,7 +327,8 @@ def test_unbound_room_gets_prompt_note(monkeypatch: pytest.MonkeyPatch) -> None:
     daemon = _make_daemon()
     captured: dict[str, Any] = {}
 
-    async def fake_run(harness, *, context, cwd=None, resume=None, on_session=None):
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
         captured["context"] = context
         captured["cwd"] = cwd
         return "ok"
@@ -372,7 +374,8 @@ def test_wake_resumes_and_persists_session(
     daemon = _make_daemon()
     seen: dict[str, Any] = {}
 
-    async def fake_run(harness, *, context, cwd=None, resume=None, on_session=None):
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
         seen["resume"] = resume
         if on_session:
             on_session("new-session-id")
@@ -392,7 +395,7 @@ def test_claude_resume_failure_retries_fresh(
     adapter = reflexd.HeadlessAdapter(timeout_s=2)
     calls: list[list[str]] = []
 
-    async def fake_sub(argv, *, parser, cwd=None):
+    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None):
         calls.append(argv)
         if "--resume" in argv:
             return "[reflexd] harness errored"
@@ -407,3 +410,70 @@ def test_claude_resume_failure_retries_fresh(
     assert out == "fresh reply"
     assert len(calls) == 2 and "--resume" in calls[0] and "--resume" not in calls[1]
     assert got == ["s-new"]
+
+
+def test_claude_argv_max_turns_placement() -> None:
+    """D5: chat wakes cap turns; flag sits before the -- separator."""
+    argv = reflexd.build_claude_argv("ctx", max_turns=15)
+    assert argv == ["claude", "--print", "--output-format", "json",
+                    "--max-turns", "15", "--", "ctx"]
+    assert reflexd.build_claude_argv("ctx") == [
+        "claude", "--print", "--output-format", "json", "--", "ctx"]
+
+
+def _budget_daemon_and_capture(monkeypatch, mission):
+    daemon = _make_daemon()
+    seen: dict[str, Any] = {}
+
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
+        seen.update({"timeout_s": timeout_s, "max_turns": max_turns})
+        return "ok"
+
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    relay = _D7Relay(history=[])
+
+    async def mission_task_for(*, room, participant):
+        return mission
+
+    relay.mission_task_for = mission_task_for  # type: ignore[attr-defined]
+    return daemon, relay, seen
+
+
+def test_chat_wake_gets_tight_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    daemon, relay, seen = _budget_daemon_and_capture(monkeypatch, mission=None)
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="t"))
+    assert seen == {"timeout_s": None, "max_turns": reflexd.CHAT_MAX_TURNS}
+
+
+def test_mission_wake_gets_long_leash(monkeypatch: pytest.MonkeyPatch) -> None:
+    daemon, relay, seen = _budget_daemon_and_capture(
+        monkeypatch, mission={"title": "ship the relay", "status": "in_progress"},
+    )
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="t"))
+    assert seen == {"timeout_s": reflexd.MISSION_TIMEOUT_S, "max_turns": None}
+
+
+def test_mission_timeout_posts_escalation_not_sentinel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D5b: never a bare sentinel for a working agent — humans get an
+    actionable escalation naming the task."""
+    daemon = _make_daemon()
+    relay = _D7Relay(history=[])
+
+    async def mission_task_for(*, room, participant):
+        return {"title": "ship the relay"}
+
+    relay.mission_task_for = mission_task_for  # type: ignore[attr-defined]
+
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
+        return "[reflexd] harness timed out"
+
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="t"))
+    assert len(relay.posted) == 1
+    body = relay.posted[0]["content"]
+    assert "ship the relay" in body and "/interrupt" in body
+    assert "[reflexd]" not in body
