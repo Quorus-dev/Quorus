@@ -71,6 +71,18 @@ def render(data: dict) -> None:
 
 
 def main():
+    # Answer --help/--version before touching config: a fresh install has
+    # no config yet, and "run quorus init" is not a useful reply to --help.
+    argv = sys.argv[1:]
+    if any(a in ("-h", "--help") for a in argv):
+        print(
+            "quorus-analytics — swarm activity summary for your relay\n\n"
+            "Usage:\n"
+            "  quorus-analytics          Render analytics for the active profile\n"
+            "  quorus-analytics --help   Show this message\n\n"
+            "Requires a configured profile: run `quorus init <name>` first."
+        )
+        return
     config = load_config()
     relay_url = config.get("relay_url", "http://localhost:8080")
     relay_secret = config.get("relay_secret", "")

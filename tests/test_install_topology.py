@@ -172,8 +172,9 @@ def test_every_console_script_target_is_importable():
     """
     import importlib
     import sys
-    import tomllib
     from pathlib import Path
+
+    import tomllib
 
     repo = Path(__file__).resolve().parents[1]
     for pkg in ("sdk", "cli", "mcp", "tui"):
@@ -199,3 +200,43 @@ def test_every_console_script_target_is_importable():
                 f"installed binary would ImportError at startup"
             )
     assert not failures, "broken console scripts:\n  " + "\n  ".join(failures)
+
+
+def test_relay_and_analytics_help_without_config(monkeypatch, capsys):
+    """A fresh install's first command is often ``--help``. The relay
+    enforces its config at import time and analytics needs a profile, so
+    both used to answer help with a configuration error (found via a real
+    pipx install, 2026-08-21). Help must work with nothing configured."""
+    import sys as _sys
+
+    from quorus import relay_cli
+
+    monkeypatch.setattr(_sys, "argv", ["quorus-relay", "--help"])
+    relay_cli.main()
+    out = capsys.readouterr().out
+    assert "quorus-relay" in out and "RELAY_SECRET" in out
+    assert "Error" not in out
+
+    monkeypatch.setattr(_sys, "argv", ["quorus-relay", "--version"])
+    relay_cli.main()
+    assert "quorus-relay" in capsys.readouterr().out
+
+    from quorus import analytics
+
+    monkeypatch.setattr(_sys, "argv", ["quorus-analytics", "--help"])
+    analytics.main()
+    out = capsys.readouterr().out
+    assert "quorus-analytics" in out and "Error" not in out
+
+
+def test_relay_cli_defers_import_until_a_real_start(monkeypatch):
+    """--help must not import quorus.relay: that import is what exits when
+    the environment is unconfigured."""
+    import sys as _sys
+
+    from quorus import relay_cli
+
+    monkeypatch.setattr(_sys, "argv", ["quorus-relay", "--help"])
+    monkeypatch.delitem(_sys.modules, "quorus.relay", raising=False)
+    relay_cli.main()
+    assert "quorus.relay" not in _sys.modules
