@@ -709,6 +709,13 @@ class HeadlessAdapter:
             body = "(no message)"
         if len(body) > 60:
             body = body[:60] + "…"
+        # Neutralize trigger tokens before echoing: a quoted "@open …" or
+        # "TODO @role: …" in this acknowledgment would be re-triaged as
+        # fresh work by every OTHER agent in the room (echo storm, observed
+        # live 2026-08-20). A visible space after "@" breaks both trigger
+        # regexes while staying human-readable.
+        body = re.sub(r"@(open\b)", r"@ \1", body, flags=re.IGNORECASE)
+        body = re.sub(r"\b(TODO\s*)@", r"\1@ ", body, flags=re.IGNORECASE)
         return f"(reflexd-stub) on it, working on '{body}'"
 
     async def run(self, harness: str, *, context: str) -> str:

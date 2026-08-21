@@ -200,3 +200,27 @@ def test_bid_falls_back_to_id_for_legacy_envelopes(
     }
     asyncio.run(daemon.handle_room_message(BidRelay(), envelope))
     assert bids == ["legacy-only-id"]
+
+
+def test_open_broadcast_only_matches_at_message_start() -> None:
+    """Echo-storm regression (live 2026-08-20): a reply QUOTING "@open …"
+    mid-text must not be triaged as a fresh broadcast."""
+    triage = reflexd.reflexd_triage
+    hit = triage.classify_message(
+        content="@open fix the failing tests in the tui module",
+        sender="arav", self_name=SELF, message_type="chat",
+    )
+    assert hit.action == "RESPOND" and hit.kind == "open_todo"
+    echo = triage.classify_message(
+        content="(reflexd-stub) on it, working on '@open fix the failing tests'",
+        sender="aarya-claude", self_name=SELF, message_type="chat",
+    )
+    assert echo.kind != "open_todo"
+
+
+def test_stub_reply_neutralizes_trigger_tokens() -> None:
+    ctx = "@arav: TODO @backend: audit the relay and also @open ship tests"
+    out = reflexd.HeadlessAdapter._stub_reply(ctx)
+    assert "@open" not in out.lower().replace("@ open", "")
+    assert "todo @backend" not in out.lower()
+    assert "@ open" in out.lower() or "@ backend" in out.lower()

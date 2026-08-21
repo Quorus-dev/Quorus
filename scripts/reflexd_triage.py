@@ -104,8 +104,14 @@ class TriageResult:
 # ---------------------------------------------------------------------------
 
 # ``@open <something>`` — broadcast TODO. The ``\b`` after ``open`` rejects
-# tokens like ``@opensesame`` from matching.
-_OPEN_RE = re.compile(r"@open\b\s*(.*)", re.IGNORECASE)
+# tokens like ``@opensesame``. Anchored to the start of the message (after
+# optional whitespace): broadcast verbs are commands, and commands live at
+# the start of a message. Without the anchor, an agent REPLY that merely
+# quotes the trigger ("on it, working on '@open fix …'") re-matches, the
+# other agent bids on the echo, and two agents ping-pong acknowledgments
+# until the reply-depth cap trips — observed live 2026-08-20 (two-daemon
+# auction proof: one @open produced three replies).
+_OPEN_RE = re.compile(r"^\s*@open\b\s*(.*)", re.IGNORECASE)
 
 # ``TODO @<role>: <description>`` — role-tagged work. Role must be a bare
 # word (alphanum + dash/underscore), otherwise we'd accept email addresses.
