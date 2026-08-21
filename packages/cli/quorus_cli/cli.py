@@ -2037,7 +2037,8 @@ def _cmd_hook(args):
     """
     action = args.action
 
-    if action in {"cursor-session", "cursor-stop", "gemini-beforeagent"}:
+    if action in {"cursor-session", "cursor-stop", "gemini-beforeagent",
+                  "claude-session-start", "claude-session-end", "claude-stop"}:
         from quorus_cli import hooks as _hooks
         return _hooks.dispatch(action)
 
@@ -8309,6 +8310,8 @@ def main():
             # Per-harness invocations — emit JSON for the calling agent's
             # hook contract. Driven from the agent's own settings/hooks file.
             "cursor-session", "cursor-stop", "gemini-beforeagent",
+            # Claude Code: L1 live-session registry + L2 Stop delivery.
+            "claude-session-start", "claude-session-end", "claude-stop",
         ],
         help="enable/disable/status (Claude Code) or per-harness hook entry",
     )

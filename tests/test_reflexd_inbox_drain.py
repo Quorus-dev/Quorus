@@ -477,3 +477,48 @@ def test_mission_timeout_posts_escalation_not_sentinel(
     body = relay.posted[0]["content"]
     assert "ship the relay" in body and "/interrupt" in body
     assert "[reflexd]" not in body
+
+
+def test_wake_defers_to_busy_live_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """L2: a live session mid-turn on the room's workspace owns the reply
+    (its Stop hook delivers) — reflexd must not spawn a rival agent."""
+    daemon = _make_daemon()
+    spawned: list[str] = []
+
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
+        spawned.append(harness)
+        return "should not happen"
+
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    monkeypatch.setattr(reflexd, "workspace_for", lambda room, **kw: tmp_path)
+    monkeypatch.setattr(reflexd, "live_session_for_workspace",
+                        lambda ws: {"pid": 123, "cwd": str(tmp_path)})
+    monkeypatch.setattr(reflexd, "is_busy", lambda p: True)
+    relay = _D7Relay(history=[])
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="t"))
+    assert spawned == [] and relay.posted == []
+
+
+def test_wake_proceeds_when_live_session_idle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """An idle live session may never fire Stop — headless wake still runs."""
+    daemon = _make_daemon()
+    spawned: list[str] = []
+
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
+        spawned.append(harness)
+        return "answered"
+
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    monkeypatch.setattr(reflexd, "workspace_for", lambda room, **kw: tmp_path)
+    monkeypatch.setattr(reflexd, "live_session_for_workspace",
+                        lambda ws: {"pid": 123, "cwd": str(tmp_path)})
+    monkeypatch.setattr(reflexd, "is_busy", lambda p: False)
+    relay = _D7Relay(history=[])
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="t"))
+    assert spawned == ["claude"] and len(relay.posted) == 1

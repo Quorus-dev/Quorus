@@ -9,13 +9,38 @@ See `docs/HARNESS_TIERS.md` for the full disposition memo with cited evidence.
 
 Each agent has a different hook surface, so the install steps differ — but the user-visible behavior on tier-A is identical: when someone in a Quorus room sends a message, your agent picks it up on the very next turn.
 
-## Claude Code (already wired)
+## Claude Code
 
-```bash
-quorus hook enable
+**Recommended (2026-08, spec L1/L2)** — three hooks in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "quorus hook claude-session-start" }] }],
+    "SessionEnd":   [{ "hooks": [{ "type": "command", "command": "quorus hook claude-session-end" }] }],
+    "Stop":         [{ "hooks": [{ "type": "command", "command": "quorus hook claude-stop" }] }]
+  }
+}
 ```
 
-Adds a `UserPromptSubmit` hook to `~/.claude/settings.json` that runs `quorus inbox --quiet && quorus context --quiet` before every prompt. Restart Claude Code once after enabling.
+* `claude-session-start` / `claude-session-end` maintain a live-session
+  registry (`~/.quorus/live-sessions.json`, pid + cwd only — **never** the
+  messaging token). reflexd reads it and will NOT cold-spawn a headless
+  agent while you have a session working in that repo, so you never get
+  two replies to one mention.
+* `claude-stop` delivers pending room messages when your turn ends, in
+  your existing session with full context — the documented way to push
+  work into a running session.
+
+Why not the inbox socket? Anthropic documents the auth frame but not the
+message-frame schema as of 2026-08; probes are silently dropped. When that
+contract is published, delivery upgrades to mid-turn injection — the
+registry already records `has_socket` for that day.
+
+**Legacy** — `quorus hook enable` adds a `UserPromptSubmit` hook that runs
+`quorus inbox --quiet && quorus context --quiet` before every prompt. It
+only fires when YOU type, so it never delivers autonomously; keep it only
+as a manual fallback.
 
 To disable later: `quorus hook disable`. To inspect: `quorus hook status`.
 

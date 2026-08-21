@@ -131,6 +131,22 @@ def workspace_for(room: str, *, bindings_path: Path | None = None) -> Path | Non
     return ws
 
 
+def live_session_for_workspace(ws: Path | None) -> dict[str, Any] | None:
+    """L1/L2: is a human's interactive Claude session already open on this
+    room's workspace? If so its Stop hook delivers the room's messages in
+    full context, so we must NOT cold-spawn a competing headless agent
+    (that would double-reply). Returns the registry entry or None."""
+    if ws is None:
+        return None
+    try:
+        from quorus_cli import live_sessions as _ls
+
+        return _ls.find_for_cwd(str(ws))
+    except Exception as exc:
+        logger.debug("live-session lookup failed: %s", exc)
+        return None
+
+
 # D2 (WAKE_REBUILD_SPEC): room → harness-session map, so every wake resumes
 # the same conversation and the agent keeps its memory across wakes, sleeps,
 # and daemon restarts. One file per participant, 0600.
@@ -1657,6 +1673,18 @@ class Reflexd:
 
         def _persist_session(sid: str, _room: str = room) -> None:
             remember_session(self.config.participant_name, _room, sid)
+
+        # L2: defer to a live interactive session on this workspace — its
+        # Stop hook delivers the room's messages with full context. Only
+        # when it's actually mid-turn (busy-file present); an idle session
+        # may never fire Stop, so those still get a headless wake.
+        live = live_session_for_workspace(ws)
+        if live is not None and is_busy(self.config.participant_name):
+            logger.info(
+                "deferring to live session pid=%s cwd=%s (Stop hook delivers)",
+                live.get("pid"), live.get("cwd"),
+            )
+            return
 
         # D5: mission wakes (agent holds an active work-queue claim in this
         # room) get the long leash and no turn cap; chat wakes stay tight.

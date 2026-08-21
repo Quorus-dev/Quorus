@@ -450,11 +450,111 @@ def handle_gemini_beforeagent() -> int:
         return 0
 
 
+
+def handle_claude_session_start() -> int:
+    """Claude Code SessionStart — register this session as live (L1).
+
+    Records pid/cwd (never the messaging token) so reflexd can tell "a human has
+    a session open on this repo" and defer to it instead of cold-spawning a
+    competing headless agent. Emits ``{}`` so the hook never alters the
+    session's context.
+    """
+    try:
+        from quorus_cli import live_sessions as _ls
+
+        instance = ""
+        try:
+            _relay, instance, _headers = _resolve_auth()
+        except Exception:
+            pass
+        _ls.register(
+            pid=os.getppid(),
+            cwd=os.getcwd(),
+            participant=instance,
+            has_socket=bool(os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")),
+        )
+    except Exception as exc:
+        _hook_debug_log("claude-session-start-exc", exc)
+    print(json.dumps({}))
+    return 0
+
+
+def handle_claude_session_end() -> int:
+    """Claude Code SessionEnd — drop this session from the live registry."""
+    try:
+        from quorus_cli import live_sessions as _ls
+
+        _ls.unregister(os.getppid())
+    except Exception as exc:
+        _hook_debug_log("claude-session-end-exc", exc)
+    print(json.dumps({}))
+    return 0
+
+
+def handle_claude_stop() -> int:
+    """Claude Code Stop hook — deliver pending Quorus messages (L2).
+
+    This is the documented way to push work into an ALREADY-RUNNING
+    session: when the turn ends and the room has unread mentions, block the
+    stop and hand the messages back as the reason, so the agent answers
+    them in the same session (full context, no cold start, no keystrokes).
+
+    Deliberately NOT the raw inbox socket: as of 2026-08 Anthropic
+    documents the auth frame but not the message-frame schema, and
+    empirical probes are silently dropped. Guessing at an unpublished wire
+    format would be a fake fix. reflexd covers the not-running case via
+    headless resume (D2).
+
+    ``stop_hook_active`` in the hook payload guards the loop: when Claude
+    is already continuing because of us, we stay silent.
+    """
+    try:
+        try:
+            payload = json.loads(sys.stdin.read() or "{}")
+        except (json.JSONDecodeError, ValueError):
+            payload = {}
+        if payload.get("stop_hook_active"):
+            print(json.dumps({}))
+            return 0
+
+        relay, instance, headers = _resolve_auth()
+        msgs = _fetch_unread(relay, headers, instance)
+        if not msgs:
+            print(json.dumps({}))
+            return 0
+        cursors = _load_cursors(instance)
+        fresh = _filter_unseen(msgs, cursors)
+        _save_cursors(instance, cursors)
+        if not fresh:
+            print(json.dumps({}))
+            return 0
+        print(json.dumps({
+            "decision": "block",
+            "reason": (
+                "New Quorus room messages arrived while you worked. Read them "
+                "and reply in the room with `quorus say <room> \"...\"` "
+                "(or the quorus MCP tools) before stopping:\n\n"
+                + _format_for_context(fresh)
+            ),
+        }))
+        return 0
+    except Exception as exc:
+        _hook_debug_log(
+            "claude-stop-exc", exc,
+            extra=traceback.format_exc(limit=2).replace("\n", " | "),
+        )
+        print(json.dumps({}))
+        return 0
+
+
 # Convenience dispatcher used by `_cmd_hook` in cli.py.
 HOOK_HANDLERS = {
     "cursor-session": handle_cursor_session,
     "cursor-stop": handle_cursor_stop,
     "gemini-beforeagent": handle_gemini_beforeagent,
+    "claude-session-start": handle_claude_session_start,
+    "claude-session-end": handle_claude_session_end,
+    "claude-stop": handle_claude_stop,
 }
 
 
