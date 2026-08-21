@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.routes import triage_redis as _tr
 from quorus.routes.room_auth import require_room_member
 
 router = APIRouter(prefix="/v1", tags=["triage"])
@@ -254,6 +255,25 @@ async def submit_bid(
 
     tid = _tid(auth)
     rid, _ = await require_room_member(request, auth, tid, body.room_id)
+
+    # R3: shared auction when Redis is configured — multi-worker /
+    # multi-replica deploys elect exactly one winner. Falls through to the
+    # process-local path otherwise (file-mode relays, unit tests).
+    r = _tr.redis_or_none()
+    if r is not None:
+        snap = await _tr.record_bid(
+            r, tid=tid, rid=rid, mid=body.message_id,
+            participant=body.participant, bid=body.bid,
+            reason=body.reason, ttl_seconds=body.ttl_seconds,
+        )
+        return BidResponse(
+            accepted=True,
+            leader=snap["leader"],
+            leader_bid=snap["leader_bid"],
+            window_expires_at=snap["window_expires_at"],
+            fairness_credit=snap["fairness_credit"],
+        )
+
     _cleanup_expired()
     key = _window_key(tid, rid, body.message_id)
     window = _bid_windows.get(key)
@@ -296,6 +316,11 @@ async def claim_winner(
 ):
     tid = _tid(auth)
     rid, room_data = await require_room_member(request, auth, tid, body.room_id)
+
+    r = _tr.redis_or_none()
+    if r is not None:
+        return await _claim_via_redis(r, request, auth, tid, rid, room_data, body)
+
     _cleanup_expired()
     key = _window_key(tid, rid, body.message_id)
     window = _bid_windows.get(key)
@@ -357,6 +382,49 @@ async def claim_winner(
             "message_id": body.message_id,
             "winner": winner.participant,
             "candidates": candidates,
+            "claim_token": claim.claim_token,
+        },
+    )
+    return claim
+
+
+async def _claim_via_redis(r, request, auth, tid, rid, room_data, body) -> ClaimResponse:
+    """R3 claim path — shared single-winner election through Redis."""
+    bids, _exp = await _tr._load_bids(r, tid, rid, body.message_id)
+    if not bids:
+        raise HTTPException(status_code=404, detail="No bids for message")
+    # Wave-5 Fix 8 parity: only an actual bidder (or operator) may claim.
+    if not auth.is_legacy and auth.role != "admin":
+        if auth.sub is None or auth.sub not in bids:
+            raise HTTPException(status_code=403, detail="not a bidder for this window")
+
+    def _payload(bids_now, winner, winner_bid, credits):
+        expires_at = _now() + timedelta(seconds=_DEFAULT_BID_TTL_SECONDS)
+        return {
+            "claimed": True,
+            "winner": winner,
+            "bid": winner_bid,
+            "claim_token": str(uuid.uuid4()),
+            "expires_at": expires_at.isoformat(),
+            "candidates": sorted(bids_now),
+            "fairness_credit": credits,
+        }
+
+    payload, bids = await _tr.try_claim(
+        r, tid=tid, rid=rid, mid=body.message_id,
+        claim_payload_factory=_payload,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No bids for message")
+    claim = ClaimResponse(**payload)
+    _broadcast_wake_intent(
+        request, tid, room_data.get("name", rid), claim.candidates,
+        {
+            "event": "claim",
+            "room_id": rid,
+            "message_id": body.message_id,
+            "winner": claim.winner,
+            "candidates": claim.candidates,
             "claim_token": claim.claim_token,
         },
     )
