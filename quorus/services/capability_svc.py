@@ -50,7 +50,7 @@ class CapabilitySvc:
         # { (tid, participant) -> manifest_dict }
         self._manifests: dict[tuple[str, str], dict[str, Any]] = {}
         # R4: tenants whose manifests were lazily hydrated from Redis.
-        self._hydrated: set[str] = set()
+        self._hydrated = _p1.HydrationClock()
         # Per-tenant lock so concurrent publishes serialise without
         # touching unrelated tenants. LRU-bounded to cap memory.
         self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
@@ -73,15 +73,15 @@ class CapabilitySvc:
     def _ns(tid: str) -> str:
         return f"p1cap:{tid}"
 
-    async def _hydrate_once(self, tid: str) -> None:
+    async def _hydrate_once(self, tid: str, *, force: bool = False) -> None:
         """R4: first touch of a tenant after start loads Redis-mirrored
         manifests. Caller must hold the tenant lock."""
-        if tid in self._hydrated:
+        if self._hydrated.fresh(tid, ttl=0.0 if force else None):
             return
         stored, ok = await _p1.hydrate(self._ns(tid))
         if not ok:
             return  # transient failure — retry on the next read
-        self._hydrated.add(tid)
+        self._hydrated.mark(tid)
         for participant, manifest in stored.items():
             self._manifests.setdefault((tid, participant), manifest)
 
@@ -157,7 +157,7 @@ class CapabilitySvc:
         mirror and serves empty) and the mirrored rows resurrect on the
         next restart.
         """
-        tenants = [tid] if tid else list(self._hydrated)
+        tenants = [tid] if tid else self._hydrated.keys()
         async with self._lock_factory_lock:
             if tid is None:
                 self._manifests.clear()
@@ -168,7 +168,7 @@ class CapabilitySvc:
                     k: v for k, v in self._manifests.items() if k[0] != tid
                 }
                 self._locks.pop(tid, None)
-                self._hydrated.discard(tid)
+                self._hydrated.invalidate(tid)
         for t in tenants:
             await _p1.mirror_drop(self._ns(t))
 

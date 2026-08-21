@@ -30,10 +30,16 @@ def reset_state():
     Re-initializes backends and services from scratch so every test
     starts with a clean slate.
     """
+    # Keep the Redis wiring across a reset: calling _init_services(app)
+    # bare replaced the Redis-backed services with in-memory ones for the
+    # rest of the process, so anything after a reset silently tested (and
+    # ran) the unshared path.
+    from quorus.backends.redis_client import get_redis_or_none
     from quorus.relay import _init_services, app
     from quorus.routes.analytics import reset_analytics
     from quorus.routes.room_messages import reset_thread_index
-    _init_services(app)
+
+    _init_services(app, redis_conn=get_redis_or_none())
     reset_analytics()
     reset_thread_index()
     app.state.__dict__.pop("_metrics_cache", None)

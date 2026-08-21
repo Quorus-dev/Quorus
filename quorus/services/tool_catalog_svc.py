@@ -59,7 +59,7 @@ class ToolCatalogSvc:
     """In-memory MCP server registry, scoped per (tenant, room)."""
 
     def __init__(self) -> None:
-        self._hydrated: set[tuple[str, str]] = set()
+        self._hydrated = _p1.HydrationClock()
         # { (tid, rid) -> { tool_name -> record } }
         self._tools: dict[
             tuple[str, str], dict[str, dict[str, Any]]
@@ -91,16 +91,16 @@ class ToolCatalogSvc:
     def _ns(tid: str, rid: str) -> str:
         return f"p1tools:{tid}:{rid}"
 
-    async def _hydrate_once(self, tid: str, rid: str) -> None:
+    async def _hydrate_once(self, tid: str, rid: str, *, force: bool = False) -> None:
         """R4: first touch of a room catalog after start loads the Redis
         mirror. Caller must hold the room lock."""
         key = (tid, rid)
-        if key in self._hydrated:
+        if self._hydrated.fresh(key, ttl=0.0 if force else None):
             return
         stored, ok = await _p1.hydrate(self._ns(tid, rid))
         if not ok:
             return  # transient failure — retry on the next read
-        self._hydrated.add(key)
+        self._hydrated.mark(key)
         if stored:
             bucket = self._tools.setdefault(key, {})
             for name, record in stored.items():
@@ -130,7 +130,11 @@ class ToolCatalogSvc:
             )
         lock = await self._get_lock(tid, rid)
         async with lock:
-            await self._hydrate_once(tid, rid)
+            # Uniqueness must be decided against the SHARED catalog, not a
+            # possibly-stale local cache: a replica that had not seen a
+            # peer's registration accepted the same name and its mirror
+            # write silently overwrote the peer's record.
+            await self._hydrate_once(tid, rid, force=True)
             bucket = self._bucket(tid, rid)
             if name in bucket:
                 raise DuplicateToolError(
@@ -187,9 +191,9 @@ class ToolCatalogSvc:
     ) -> None:
         # Mirror keys to drop, resolved before we mutate the hydrated set.
         if tid is None and rid is None:
-            doomed = list(self._hydrated)
+            doomed = self._hydrated.keys()
         elif rid is None:
-            doomed = [k for k in self._hydrated if k[0] == tid]
+            doomed = [k for k in self._hydrated.keys() if k[0] == tid]
         else:
             doomed = [(tid, rid)]
         async with self._lock_factory_lock:
@@ -204,11 +208,11 @@ class ToolCatalogSvc:
                 self._locks = OrderedDict(
                     (k, lk) for k, lk in self._locks.items() if k[0] != tid
                 )
-                self._hydrated = {k for k in self._hydrated if k[0] != tid}
+                self._hydrated.invalidate_where(lambda k: k[0] == tid)
             else:
                 self._tools.pop((tid, rid), None)
                 self._locks.pop((tid, rid), None)
-                self._hydrated.discard((tid, rid))
+                self._hydrated.invalidate((tid, rid))
         # Drop the mirror too — otherwise reset data returns on restart.
         for t, r in doomed:
             await _p1.mirror_drop(self._ns(t, r))

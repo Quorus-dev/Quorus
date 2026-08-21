@@ -354,3 +354,92 @@ async def test_transient_redis_error_does_not_pin_empty_state(monkeypatch):
     assert await svc.get("t", "arav-claude", "room", "plan") is None  # blip
     got = await svc.get("t", "arav-claude", "room", "plan")  # retried
     assert got is not None and got["value"] == {"step": 7}
+
+
+# ── multi-replica review regressions (2026-08-21) ───────────────────────────
+
+async def test_replicas_converge_within_the_staleness_window(monkeypatch):
+    """Hydrating once per process made the mirror a cache with no
+    invalidation: a replica that served one read before a peer's write
+    never saw that write again, so /capabilities returned 200 on one
+    machine and 404 on another indefinitely."""
+    from quorus.services import p1_persistence
+    from quorus.services.capability_svc import CapabilitySvc
+
+    r = fakeredis_aio.FakeRedis()
+    monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: r)
+    monkeypatch.setattr(p1_persistence, "HYDRATE_TTL_S", 0.05)
+
+    replica_a, replica_b = CapabilitySvc(), CapabilitySvc()
+    await replica_b.search("t", [])                 # B warms its cache first
+    await replica_a.publish("t", "arav-claude", {"capabilities": ["python"]})
+    assert await replica_a.get("t", "arav-claude") is not None
+    await asyncio.sleep(0.06)                       # staleness window passes
+    assert await replica_b.get("t", "arav-claude") is not None
+
+
+async def test_tool_name_uniqueness_holds_across_replicas(monkeypatch):
+    """Uniqueness was decided against a local cache, so a second replica
+    accepted a name a peer already held and its mirror write overwrote the
+    peer's record."""
+    from quorus.services import p1_persistence
+    from quorus.services.tool_catalog_svc import (
+        DuplicateToolError,
+        ToolCatalogSvc,
+    )
+
+    r = fakeredis_aio.FakeRedis()
+    monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: r)
+
+    a, b = ToolCatalogSvc(), ToolCatalogSvc()
+    await b.list("t", "room")                       # B warms its cache
+    await a.register("t", "room", name="run_pytest", url="first",
+                     registered_by="a-claude")
+    with pytest.raises(DuplicateToolError):
+        await b.register("t", "room", name="run_pytest", url="second",
+                         registered_by="b-claude")
+    stored = await r.hget("p1tools:t:room", "run_pytest")
+    assert b'"first"' in stored, "the original registration must survive"
+
+
+async def test_hydration_clock_is_bounded(monkeypatch):
+    """The old set grew one permanent entry per bucket, defeating the LRU
+    bound it sat directly beside."""
+    from quorus.services.p1_persistence import HydrationClock
+
+    clock = HydrationClock(max_entries=10)
+    for i in range(100):
+        clock.mark(("t", f"room{i}"))
+    assert len(clock.keys()) <= 10
+
+
+async def test_read_refreshes_the_mirror_ttl(monkeypatch):
+    """The 30-day TTL was refreshed only on write, so memory an agent reads
+    daily but never rewrites silently expired."""
+    from quorus.services import p1_persistence
+    from quorus.services.persistent_memory_svc import PersistentMemorySvc
+
+    r = fakeredis_aio.FakeRedis()
+    monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: r)
+    svc = PersistentMemorySvc()
+    await svc.set("t", "a-claude", "room", "plan", {"step": 1})
+    ns = "p1mem:t:a-claude:room"
+    await r.expire(ns, 60)                          # simulate an aged key
+    assert await r.ttl(ns) <= 60
+    reader = PersistentMemorySvc()                  # fresh process
+    assert await reader.get("t", "a-claude", "room", "plan") is not None
+    assert await r.ttl(ns) > 60, "a read must refresh the retention window"
+
+
+async def test_mirror_failures_are_counted(monkeypatch):
+    """Silent best-effort mirroring hides divergence — make it observable."""
+    from quorus.services import p1_persistence
+
+    class _Broken:
+        def pipeline(self):
+            raise RuntimeError("redis down")
+
+    monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: _Broken())
+    before = p1_persistence.MIRROR_FAILURES
+    await p1_persistence.mirror_set("ns", "field", {"a": 1})
+    assert p1_persistence.MIRROR_FAILURES == before + 1

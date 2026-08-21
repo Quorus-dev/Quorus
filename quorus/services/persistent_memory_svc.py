@@ -79,19 +79,19 @@ class PersistentMemorySvc:
             tuple[str, str, str], asyncio.Lock
         ] = OrderedDict()
         self._lock_factory_lock = asyncio.Lock()
-        self._hydrated: set[tuple[str, str, str]] = set()
+        self._hydrated = _p1.HydrationClock()
 
     @staticmethod
     def _ns(tid: str, participant: str, rid: str) -> str:
         return f"p1mem:{tid}:{participant}:{rid}"
 
     async def _hydrate_once(
-        self, tid: str, participant: str, rid: str,
+        self, tid: str, participant: str, rid: str, *, force: bool = False,
     ) -> None:
         """Lazy-load the bucket from Redis on first touch after start.
         Caller must hold the bucket lock."""
         key = (tid, participant, rid)
-        if key in self._hydrated:
+        if self._hydrated.fresh(key, ttl=0.0 if force else None):
             return
         stored, ok = await _p1.hydrate(self._ns(tid, participant, rid))
         if not ok:
@@ -99,7 +99,7 @@ class PersistentMemorySvc:
             # read retries. Marking first meant one blip pinned the bucket to
             # empty for the process lifetime while writes kept mirroring.
             return
-        self._hydrated.add(key)
+        self._hydrated.mark(key)
         if stored:
             bucket = self._entries.setdefault(key, {})
             for k, entry in stored.items():
@@ -234,7 +234,7 @@ class PersistentMemorySvc:
         """
         doomed = (
             list(self._hydrated) if tid is None
-            else [k for k in self._hydrated if k[0] == tid]
+            else [k for k in self._hydrated.keys() if k[0] == tid]
         )
         async with self._lock_factory_lock:
             if tid is None:
@@ -248,7 +248,7 @@ class PersistentMemorySvc:
                 self._locks = OrderedDict(
                     (k, lk) for k, lk in self._locks.items() if k[0] != tid
                 )
-                self._hydrated = {k for k in self._hydrated if k[0] != tid}
+                self._hydrated.invalidate_where(lambda k: k[0] == tid)
         for t, participant, rid in doomed:
             await _p1.mirror_drop(self._ns(t, participant, rid))
 
