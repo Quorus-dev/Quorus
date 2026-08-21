@@ -3806,7 +3806,12 @@ def _register_agent_identity(
         resp = httpx.post(
             f"{relay_url}/v1/auth/register-agent",
             json={"suffix": suffix},
-            headers={"Authorization": f"Bearer {parent_api_key}"},
+            headers={
+                "Authorization": f"Bearer {parent_api_key}",
+                # Local setup: the raw key is only returned when this header
+                # is present (same gate as signup, see auth/routes.py).
+                "X-Quorus-Setup-Local": "1",
+            },
             timeout=10,
             follow_redirects=True,
         )
@@ -3835,7 +3840,11 @@ def _register_agent_identity_full(
         resp = httpx.post(
             f"{relay_url}/v1/auth/register-agent",
             json={"suffix": suffix},
-            headers={"Authorization": f"Bearer {parent_api_key}"},
+            headers={
+                "Authorization": f"Bearer {parent_api_key}",
+                # Local setup: raw key only returned with this header (F1.3).
+                "X-Quorus-Setup-Local": "1",
+            },
             timeout=10,
             follow_redirects=True,
         )
@@ -4269,7 +4278,6 @@ def _create_init_human_profile(
         "relay_url": relay_url,
         "instance_name": human_name,
         "api_key": human_key,
-        "poll_mode": "sse",
         "push_notification_method": "notifications/claude/channel",
         "push_notification_channel": "quorus",
         "chat_identity": human_name,
@@ -4603,7 +4611,6 @@ def _cmd_init(args):
     config = {
         "relay_url": relay_url,
         "instance_name": name,
-        "poll_mode": "sse",
         "push_notification_method": "notifications/claude/channel",
         "push_notification_channel": "quorus",
     }
@@ -5002,7 +5009,6 @@ def _cmd_join(args):
         config = {
             "relay_url": relay_url,
             "instance_name": name,
-            "poll_mode": "sse",
             "push_notification_method": "notifications/claude/channel",
             "push_notification_channel": "quorus",
         }
@@ -5466,7 +5472,6 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     config = {
         "relay_url": relay_url,
         "instance_name": name,
-        "poll_mode": "sse",
         "push_notification_method": "notifications/claude/channel",
         "push_notification_channel": "quorus",
     }

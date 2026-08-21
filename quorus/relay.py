@@ -685,6 +685,19 @@ async def _record_not_found_memory(ip: str) -> bool:
     return False
 
 
+def reset_not_found_limiter() -> None:
+    """Clear the in-memory 404-sweeper state (counts and IP blocks). Test-only.
+
+    Every ASGI test client shares one client IP, so 404s issued anywhere in
+    the suite accumulate in this process-global state; once 30 land inside a
+    60-second window the shared IP is blocked and *every* subsequent request
+    returns 429 for ``NOT_FOUND_BLOCK_DURATION`` seconds. Tests reset this
+    via an autouse fixture in ``tests/conftest.py``.
+    """
+    _not_found_counts.clear()
+    _blocked_ips.clear()
+
+
 # Paths exempt from 404 rate limiting (infrastructure endpoints)
 _NOT_FOUND_EXEMPT_PATHS = frozenset({"/health", "/metrics", "/health/detailed"})
 

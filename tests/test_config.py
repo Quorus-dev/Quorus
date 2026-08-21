@@ -120,34 +120,57 @@ def test_load_config_corrupt_file_uses_defaults(tmp_path, monkeypatch):
     assert config["instance_name"] == "default"
 
 
-def test_poll_mode_defaults_to_sse(tmp_path, monkeypatch):
-    """With no background polling config, poll_mode should default to sse."""
+def test_poll_mode_key_removed(tmp_path, monkeypatch):
+    """The dead poll_mode key is gone; SSE push is implied unconditionally."""
     monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(tmp_path / "nonexistent"))
     monkeypatch.delenv("POLL_MODE", raising=False)
     monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
+    monkeypatch.delenv("PUSH_NOTIFICATION_METHOD", raising=False)
     monkeypatch.delenv("RELAY_URL", raising=False)
     monkeypatch.delenv("RELAY_SECRET", raising=False)
     monkeypatch.delenv("INSTANCE_NAME", raising=False)
 
     config = load_config()
-    assert config["poll_mode"] == "sse"
+    assert "poll_mode" not in config
+    assert config["push_notification_method"] == "notifications/claude/channel"
 
 
-def test_poll_mode_env_override(tmp_path, monkeypatch):
-    """POLL_MODE env var should override everything."""
+def test_legacy_poll_mode_in_config_file_ignored(tmp_path, monkeypatch):
+    """Legacy configs still containing poll_mode must load without error."""
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(json.dumps({
+        "relay_url": "https://file.example",
+        "poll_mode": "lazy",
+    }))
+    monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(config_dir))
+    monkeypatch.delenv("POLL_MODE", raising=False)
+    monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
+    monkeypatch.delenv("PUSH_NOTIFICATION_METHOD", raising=False)
+    monkeypatch.delenv("RELAY_URL", raising=False)
+    monkeypatch.delenv("RELAY_SECRET", raising=False)
+    monkeypatch.delenv("INSTANCE_NAME", raising=False)
+
+    config = load_config()
+    assert config["relay_url"] == "https://file.example"
+    assert "poll_mode" not in config
+
+
+def test_legacy_poll_mode_env_var_ignored(tmp_path, monkeypatch):
+    """A stale POLL_MODE env var is ignored, not validated or surfaced."""
     monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(tmp_path / "nonexistent"))
-    monkeypatch.setenv("POLL_MODE", "sse")
+    monkeypatch.setenv("POLL_MODE", "invalid-mode")
     monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
     monkeypatch.delenv("RELAY_URL", raising=False)
     monkeypatch.delenv("RELAY_SECRET", raising=False)
     monkeypatch.delenv("INSTANCE_NAME", raising=False)
 
     config = load_config()
-    assert config["poll_mode"] == "sse"
+    assert "poll_mode" not in config
 
 
-def test_poll_mode_backward_compat(tmp_path, monkeypatch):
-    """enable_background_polling=true should map to sse mode."""
+def test_enable_background_polling_still_loads(tmp_path, monkeypatch):
+    """enable_background_polling remains a readable (bool) config key."""
     config_dir = tmp_path / "cfg"
     config_dir.mkdir()
     (config_dir / "config.json").write_text(json.dumps({
@@ -161,17 +184,5 @@ def test_poll_mode_backward_compat(tmp_path, monkeypatch):
     monkeypatch.delenv("INSTANCE_NAME", raising=False)
 
     config = load_config()
-    assert config["poll_mode"] == "sse"
-
-
-def test_poll_mode_invalid_falls_back_to_sse(tmp_path, monkeypatch):
-    """Invalid POLL_MODE value should fall back to sse (the default)."""
-    monkeypatch.setenv("MCP_TUNNEL_CONFIG_DIR", str(tmp_path / "nonexistent"))
-    monkeypatch.setenv("POLL_MODE", "invalid-mode")
-    monkeypatch.delenv("ENABLE_BACKGROUND_POLLING", raising=False)
-    monkeypatch.delenv("RELAY_URL", raising=False)
-    monkeypatch.delenv("RELAY_SECRET", raising=False)
-    monkeypatch.delenv("INSTANCE_NAME", raising=False)
-
-    config = load_config()
-    assert config["poll_mode"] == "sse"
+    assert config["enable_background_polling"] is True
+    assert config["push_notification_method"] == "notifications/claude/channel"

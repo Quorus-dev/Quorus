@@ -48,8 +48,9 @@ class RateLimitService:
         """Like ``check`` but with a caller-specified max_count and optional window.
 
         Pass ``window`` (in seconds) when an endpoint needs a different cadence
-        than the default — e.g. signup uses 3600s (5 attempts per hour per IP),
-        while message sends use the service's default short window.
+        than the default — e.g. signup uses a 60s window (5 attempts per
+        60 seconds per IP), while message sends use the service's default
+        short window.
         """
         effective_window = window if window is not None else self._window
         try:

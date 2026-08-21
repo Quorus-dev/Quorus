@@ -1,21 +1,18 @@
 import asyncio
 import logging
 import os
-import re
-from contextlib import asynccontextmanager, suppress
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from mcp import types
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.message import SessionMessage
 
-from quorus.config import ConfigManager, load_config
 from quorus.operating_discipline import render_qod_for_mcp
-from quorus_mcp import tools
-from quorus_mcp.sse import SSEListener, process_sse_event_data
+from quorus_mcp import runtime, tools
+from quorus_mcp.sse import SSEListener
 
 logging.basicConfig(
     level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO")),
@@ -23,124 +20,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp_tunnel.mcp")
 
-def _clean_env(name: str) -> str | None:
-    """Read an env var, treating empty/whitespace-only values as UNSET.
+# Config resolution + startup guards live in ``runtime.py``. Calling the
+# loader here keeps ``importlib.reload(quorus_mcp.server)`` re-reading the
+# environment (auth-fallback tests rely on this). tools/phase1_tools/runtime
+# read these constants back through THIS module's namespace at call time,
+# so monkeypatching ``quorus.mcp_server.RELAY_URL`` etc. works unchanged.
+_settings = runtime.load_runtime_config()
+CONFIG_FILE = Path(_settings["config_file"])
+RELAY_URL = _settings["relay_url"]
+RELAY_SECRET = _settings["relay_secret"]
+API_KEY = _settings["api_key"]
+INSTANCE_NAME = _settings["instance_name"]
+SSE_ENABLED = _settings["sse_enabled"]
+PUSH_NOTIFICATION_METHOD = _settings["push_notification_method"]
+PUSH_NOTIFICATION_CHANNEL = _settings["push_notification_channel"]
 
-    Codex audit (2026-05-03): a stale ``QUORUS_API_KEY=`` (empty) or
-    ``QUORUS_API_KEY=" "`` (whitespace) caused this module to construct
-    ``Authorization: Bearer `` and the relay to reject with HTTP 400
-    "Illegal header value". Whitespace-only values are now treated as
-    not-set so the loader falls through to the profile JSON.
-    """
-    raw = os.environ.get(name)
-    if raw is None:
-        return None
-    stripped = raw.strip()
-    return stripped or None
-
-
-def _resolve_auth(env_name: str, file_value: str, *, label: str) -> str:
-    """Resolve an auth field with empty-env fallback + one-time stderr note."""
-    env_val = _clean_env(env_name)
-    if env_val is not None:
-        return env_val
-    # If the env var was *present* but blank, emit one stderr warning so
-    # operators see why we fell back to the profile.
-    if env_name in os.environ:
-        logger.warning(
-            "%s env var %s was empty; falling back to profile/config file. "
-            "(No key value is logged.)",
-            label, env_name,
-        )
-    return (file_value or "").strip()
-
-
-# Production API keys are minted as ``mct_<hex>_<hex>`` (see
-# ``quorus.auth.tokens.generate_api_key``). We log an advisory if the
-# resolved key doesn't match — but we do NOT block, because tests and
-# self-hosted deployments use other formats.
-_API_KEY_RE = re.compile(r"^mct_[a-f0-9]+_[a-f0-9]+$")
-# Reject anything that would produce an *illegal* HTTP header value
-# (whitespace, CR/LF, or non-printable bytes). httpx would otherwise
-# raise ``Illegal header value`` on the relay request — that was the
-# original codex audit symptom (empty Bearer header).
-_HEADER_UNSAFE_RE = re.compile(r"[\s\x00-\x1f\x7f]")
-
-
-def _validate_header_safe(value: str, *, label: str) -> None:
-    """Fail closed if ``value`` contains chars that produce an illegal header.
-
-    Empty values are rejected by the caller's own check (see startup guard
-    below). This guard is for the harder-to-spot case: a non-empty token
-    that contains a CR/LF, embedded whitespace, or NUL — any of which would
-    make the relay return ``400 Illegal header value``.
-    """
-    if value and _HEADER_UNSAFE_RE.search(value):
-        raise SystemExit(
-            f"{label} contains whitespace or control characters that would "
-            "produce an illegal HTTP Authorization header. Re-run "
-            "`quorus login` or unset the offending env var."
-        )
-
-
-# Honor QUORUS_PROFILE env var: pick a specific profile without touching
-# "current". Falls back to the current-profile pointer / legacy migration
-# path inside load_config().
-_profile_slug = _clean_env("QUORUS_PROFILE")
-if _profile_slug:
-    # Load just the named profile's data, then let load_config() apply
-    # env-var overrides on top (env still beats profile for direct
-    # overrides like QUORUS_RELAY_URL).
-    _profile_data = ConfigManager(profile=_profile_slug).load()
-    _config = {
-        "config_file": str(ConfigManager(profile=_profile_slug).path),
-        "relay_url": (
-            _clean_env("RELAY_URL")
-            or (_profile_data.get("relay_url") or "http://localhost:8080")
-        ),
-        "relay_secret": (
-            _clean_env("RELAY_SECRET")
-            or (_profile_data.get("relay_secret") or "")
-        ),
-        "api_key": (
-            _clean_env("API_KEY")
-            or (_profile_data.get("api_key") or "")
-        ),
-        "instance_name": (
-            _clean_env("INSTANCE_NAME")
-            or (_profile_data.get("instance_name") or "default")
-        ),
-        "enable_background_polling": True,
-        "push_notification_method": (
-            _clean_env("PUSH_NOTIFICATION_METHOD")
-            or _profile_data.get("push_notification_method")
-            or "notifications/claude/channel"
-        ),
-        "push_notification_channel": (
-            _clean_env("PUSH_NOTIFICATION_CHANNEL")
-            or (_profile_data.get("push_notification_channel") or "quorus")
-        ),
-    }
-else:
-    _config = load_config()
-CONFIG_FILE = Path(_config["config_file"])
-# Per-agent identity + connection overrides. Each client the CLI wires
-# (Claude Code, Codex, Cursor, …) gets its own QUORUS_INSTANCE_NAME via
-# env so the relay sees them as distinct participants even though they
-# share `~/.quorus/config.json`. Env beats config for all four fields.
-# IMPORTANT: empty/whitespace env values fall through to the file value,
-# preventing ``Bearer `` empty auth headers (codex audit fix).
-RELAY_URL = _clean_env("QUORUS_RELAY_URL") or _config["relay_url"]
-RELAY_SECRET = _resolve_auth(
-    "QUORUS_RELAY_SECRET", _config["relay_secret"], label="Relay secret",
-)
-API_KEY = _resolve_auth("QUORUS_API_KEY", _config["api_key"], label="API key")
-INSTANCE_NAME = _clean_env("QUORUS_INSTANCE_NAME") or _config["instance_name"]
-SSE_ENABLED = os.environ.get("SSE_ENABLED", "true").strip().lower() not in {
-    "0", "false", "no", "off",
-}
-PUSH_NOTIFICATION_METHOD = _config["push_notification_method"]
-PUSH_NOTIFICATION_CHANNEL = _config["push_notification_channel"]
+# Back-compat re-exports: these helpers moved to ``runtime.py`` (2026-08
+# split). Tests/callers still reach them via ``quorus.mcp_server.<name>``,
+# and the runtime loops resolve them through this namespace so patches apply.
+_clean_env = runtime._clean_env
+_resolve_auth = runtime._resolve_auth
+_validate_header_safe = runtime._validate_header_safe
+_validate_relay_url = runtime._validate_relay_url
+_fetch_relay_messages = runtime._fetch_relay_messages
+_ack_messages = runtime._ack_messages
+_heartbeat_loop = runtime._heartbeat_loop
+_process_sse_event = runtime._process_sse_event
+_get_sse_token = runtime._get_sse_token
+_sse_listener = runtime._sse_listener
+_polling_fallback = runtime._polling_fallback
+_mcp_lifespan = runtime._mcp_lifespan
 
 _cached_jwt: str | None = None
 _jwt_lock = asyncio.Lock()
@@ -154,42 +63,6 @@ _heartbeat_task: asyncio.Task | None = None
 # circuit-breaker state for diagnostics and to gate the polling fallback.
 _active_sse_listener: SSEListener | None = None
 
-def _validate_relay_url(value: str) -> str:
-    p = urlparse(value)
-    if not value or p.scheme not in {"http", "https"} or not p.hostname or p.username or p.password:
-        raise SystemExit(f"Invalid relay_url: {value!r}. Must be an http(s) URL with a hostname.")
-    return value
-
-_validate_relay_url(RELAY_URL)
-# Both fields are already stripped by _resolve_auth, so an empty string here
-# means the value was missing in BOTH the env var and the profile file. We
-# fail closed with a clear message instead of letting the relay receive a
-# malformed ``Authorization: Bearer `` header (codex audit fix).
-if not RELAY_SECRET and not API_KEY:
-    raise SystemExit(
-        "Neither relay_secret nor api_key resolved to a non-empty value.\n"
-        "  - Set QUORUS_API_KEY (or RELAY_SECRET) to a non-empty token, OR\n"
-        "  - Run `quorus login` to populate ~/.quorus/profiles/default.json.\n"
-        "Empty/whitespace env vars are now treated as unset and fall back\n"
-        "to the profile file."
-    )
-# Defense in depth: even if we got a non-empty value, refuse to ship it as
-# a Bearer token if it contains characters that would make the HTTP header
-# illegal. This prevents a different shape of the same bug class.
-_validate_header_safe(API_KEY, label="API_KEY")
-_validate_header_safe(RELAY_SECRET, label="RELAY_SECRET")
-# Advisory: production keys are ``mct_<hex>_<hex>``. Non-matching values
-# (test fixtures, hand-typed keys) are accepted but logged once so a
-# misconfigured deployment is visible without grepping the relay logs.
-if API_KEY and not _API_KEY_RE.match(API_KEY):
-    logger.warning(
-        "API_KEY does not match the expected mct_<hex>_<hex> shape. "
-        "(No key value is logged.) The relay may reject this credential."
-    )
-logger.info(
-    "Config loaded: relay_url=%s instance=%s sse_enabled=%s",
-    RELAY_URL, INSTANCE_NAME, SSE_ENABLED,
-)
 
 def _get_http_client() -> httpx.AsyncClient:
     global _http_client
@@ -197,13 +70,34 @@ def _get_http_client() -> httpx.AsyncClient:
         _http_client = httpx.AsyncClient()
     return _http_client
 
+
 def _reset_runtime_state() -> None:
+    """Reset module-level runtime state WITHOUT taking any locks.
+
+    TEST-ONLY helper: it is synchronous so fixtures can call it outside a
+    running event loop, which also means it cannot acquire
+    ``_active_session_lock``. Production teardown paths (the FastMCP
+    lifespan) must use :func:`reset_runtime_state_locked` instead so the
+    reset cannot interleave with a concurrent session read/write.
+    """
     global _active_session, _http_client, _heartbeat_task, _active_sse_listener
     _pending_messages.clear()
     _active_session = None
     _http_client = None
     _heartbeat_task = None
     _active_sse_listener = None
+
+
+async def reset_runtime_state_locked() -> None:
+    """Reset runtime state while holding ``_active_session_lock``.
+
+    Async, lock-held counterpart to the test-only
+    :func:`_reset_runtime_state`. Used by the lifespan teardown so a
+    concurrent ``_get_active_session`` / ``_set_active_session`` cannot
+    observe a half-reset module.
+    """
+    async with _active_session_lock:
+        _reset_runtime_state()
 
 
 def _sse_breaker_state() -> dict[str, Any]:
@@ -217,14 +111,17 @@ def _sse_breaker_state() -> dict[str, Any]:
         return {"tripped": False, "failures": 0, "last_error": None}
     return _active_sse_listener.breaker_state()
 
+
 async def _get_active_session():
     async with _active_session_lock:
         return _active_session
+
 
 async def _set_active_session(session) -> None:
     global _active_session
     async with _active_session_lock:
         _active_session = session
+
 
 async def _exchange_api_key_for_jwt() -> str:
     global _cached_jwt
@@ -235,6 +132,7 @@ async def _exchange_api_key_for_jwt() -> str:
     resp.raise_for_status()
     _cached_jwt = resp.json()["token"]
     return _cached_jwt
+
 
 async def _get_bearer_token() -> str:
     """Return the Bearer token to send on a relay request.
@@ -255,6 +153,7 @@ async def _get_bearer_token() -> str:
     async with _jwt_lock:
         return _cached_jwt or await _exchange_api_key_for_jwt()
 
+
 async def _refresh_jwt_on_401() -> str | None:
     global _cached_jwt
     if not API_KEY:
@@ -265,8 +164,10 @@ async def _refresh_jwt_on_401() -> str | None:
             return await _exchange_api_key_for_jwt()
         return None
 
+
 def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {_cached_jwt or RELAY_SECRET}"}
+
 
 async def _auth_headers_async() -> dict[str, str]:
     """Return auth headers, lazily minting a JWT when API-key auth is active.
@@ -279,6 +180,7 @@ async def _auth_headers_async() -> dict[str, str]:
     """
     return {"Authorization": f"Bearer {await _get_bearer_token()}"}
 
+
 def _relay_error_message(exc: Exception) -> str:
     if isinstance(exc, httpx.ConnectError):
         return f"Error: Cannot reach relay server at {RELAY_URL}"
@@ -288,11 +190,13 @@ def _relay_error_message(exc: Exception) -> str:
         return f"Error: Relay returned {exc.response.status_code}: {exc.response.text}"
     return f"Error: {exc}"
 
+
 def _format_message(msg: dict) -> str:
     return (
         f"[{msg.get('timestamp', '')}] "
         f"{msg.get('from_name', 'unknown')}: {msg.get('content', '')}"
     )
+
 
 async def _remember_session(context: Context | None) -> None:
     if context is None:
@@ -303,15 +207,18 @@ async def _remember_session(context: Context | None) -> None:
         return
     await _set_active_session(session)
 
+
 async def _append_pending_messages(messages: list[dict]) -> None:
     if messages:
         async with _pending_lock:
             _pending_messages.extend(messages)
 
+
 async def _drain_pending_messages() -> list[dict]:
     async with _pending_lock:
         msgs, _pending_messages[:] = list(_pending_messages), []
         return msgs
+
 
 async def _send_push_notification(session, msg: dict) -> None:
     if not PUSH_NOTIFICATION_METHOD:
@@ -321,6 +228,7 @@ async def _send_push_notification(session, msg: dict) -> None:
         params["channel"] = PUSH_NOTIFICATION_CHANNEL
     notif = types.JSONRPCNotification(jsonrpc="2.0", method=PUSH_NOTIFICATION_METHOD, params=params)
     await session.send_message(SessionMessage(message=types.JSONRPCMessage(notif)))
+
 
 async def _notify_active_session(messages: list[dict]) -> None:
     if not PUSH_NOTIFICATION_METHOD or not messages:
@@ -336,146 +244,6 @@ async def _notify_active_session(messages: list[dict]) -> None:
         if await _get_active_session() is session:
             await _set_active_session(None)
 
-async def _fetch_relay_messages(wait: int) -> tuple[list[dict], str | None, str | None]:
-    try:
-        resp = await _get_http_client().get(
-            f"{RELAY_URL}/messages/{INSTANCE_NAME}",
-            params={"wait": wait, "ack": "manual"},
-            headers=await _auth_headers_async(), timeout=max(wait + 5, 10),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("messages", []), data.get("ack_token"), None
-    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        return [], None, _relay_error_message(e)
-
-async def _ack_messages(ack_token: str) -> None:
-    with suppress(Exception):
-        resp = await _get_http_client().post(
-            f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
-            json={"ack_token": ack_token},
-            headers=await _auth_headers_async(),
-            timeout=10,
-        )
-        resp.raise_for_status()
-
-async def _heartbeat_loop(stop_event: asyncio.Event, interval: int = 30) -> None:
-    while not stop_event.is_set():
-        with suppress(Exception):
-            resp = await _get_http_client().post(
-                f"{RELAY_URL}/heartbeat",
-                json={"instance_name": INSTANCE_NAME, "status": "active"},
-                headers=await _auth_headers_async(), timeout=10,
-            )
-            resp.raise_for_status()
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=interval)
-            break
-        except asyncio.TimeoutError:
-            pass
-
-async def _process_sse_event(event_type: str, data: str) -> None:
-    if event_type == "message":
-        msg = process_sse_event_data(data)
-        if msg is not None:
-            await _append_pending_messages([msg])
-            await _notify_active_session([msg])
-
-async def _get_sse_token() -> str:
-    with suppress(Exception):
-        bearer = await _get_bearer_token()
-        resp = await _get_http_client().post(
-            f"{RELAY_URL}/stream/token",
-            json={"recipient": INSTANCE_NAME},
-            headers={"Authorization": f"Bearer {bearer}"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return resp.json()["token"]
-    return RELAY_SECRET
-
-async def _sse_listener(stop_event: asyncio.Event) -> None:
-    """Run the SSE listener and expose its instance for breaker diagnostics."""
-    global _active_sse_listener
-    listener = SSEListener(
-        relay_url=RELAY_URL, instance_name=INSTANCE_NAME,
-        get_http_client=_get_http_client, get_sse_token=_get_sse_token,
-        on_event=_process_sse_event,
-    )
-    _active_sse_listener = listener
-    try:
-        await listener.run(stop_event)
-    finally:
-        _active_sse_listener = None
-
-
-# Polling fallback: drains the relay's pull endpoint while the circuit
-# breaker is tripped. Sleeps cheaply otherwise. This is automatic; there
-# is no user-facing toggle (the dead poll-mode path was removed).
-_FALLBACK_POLL_INTERVAL = 5
-_FALLBACK_POLL_WAIT = 25
-
-
-async def _polling_fallback(stop_event: asyncio.Event) -> None:
-    """Poll the relay for messages while the SSE breaker is tripped."""
-    while not stop_event.is_set():
-        state = _sse_breaker_state()
-        if not state["tripped"]:
-            try:
-                await asyncio.wait_for(
-                    stop_event.wait(), timeout=_FALLBACK_POLL_INTERVAL,
-                )
-                return
-            except asyncio.TimeoutError:
-                continue
-        messages, ack_token, error = await _fetch_relay_messages(
-            wait=_FALLBACK_POLL_WAIT,
-        )
-        if error:
-            try:
-                await asyncio.wait_for(
-                    stop_event.wait(), timeout=_FALLBACK_POLL_INTERVAL,
-                )
-                return
-            except asyncio.TimeoutError:
-                continue
-        if messages:
-            await _append_pending_messages(messages)
-            await _notify_active_session(messages)
-        if ack_token:
-            await _ack_messages(ack_token)
-
-@asynccontextmanager
-async def _mcp_lifespan(server: FastMCP):
-    global _http_client, _heartbeat_task
-    _http_client = httpx.AsyncClient()
-    if API_KEY:
-        try:
-            await _exchange_api_key_for_jwt()
-        except Exception:
-            logger.warning(
-                "Initial JWT exchange failed — will retry on first request",
-                exc_info=True,
-            )
-    stop_event = asyncio.Event()
-    sse_task: asyncio.Task | None = None
-    poll_task: asyncio.Task | None = None
-    if SSE_ENABLED:
-        sse_task = asyncio.create_task(_sse_listener(stop_event))
-        poll_task = asyncio.create_task(_polling_fallback(stop_event))
-        logger.info("SSE push listener started (polling fallback armed)")
-    _heartbeat_task = asyncio.create_task(_heartbeat_loop(stop_event))
-    try:
-        yield {"stop_event": stop_event}
-    finally:
-        stop_event.set()
-        for task in filter(None, [sse_task, poll_task, _heartbeat_task]):
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
-        if _http_client is not None:
-            await _http_client.aclose()
-        _reset_runtime_state()
 
 # MCP `instructions` is the cross-harness on-ramp for the Quorus Operating
 # Discipline (QOD). Hosts that surface server instructions to their model
@@ -513,9 +281,10 @@ if SSE_ENABLED:
         return opts
     mcp._mcp_server.create_initialization_options = _patched_init
 
-# Tool implementations live in ``tools.py`` to keep this module under the
-# 500-line cap. The underscore-prefixed names below are kept as forwarders
-# so existing tests (``mcp_server._send_message`` etc.) keep working.
+# This module is a facade: tool implementations live in ``tools.py`` /
+# ``phase1_tools.py``; runtime plumbing lives in ``runtime.py`` — keeping
+# every file in this package within the 500-line cap. The forwarders below
+# keep existing tests (``mcp_server._send_message`` etc.) working.
 _send_message = tools.send_message
 _check_messages = tools.check_messages
 _list_participants = tools.list_participants

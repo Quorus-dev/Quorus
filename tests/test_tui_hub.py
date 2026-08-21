@@ -308,7 +308,7 @@ def test_save_instance_config(tmp_path, monkeypatch):
     assert cfg["relay_url"] == "http://relay:8080"
     assert cfg["instance_name"] == "mybot"
     assert cfg["relay_secret"] == "topsecret"
-    assert cfg["poll_mode"] == "sse"
+    assert "poll_mode" not in cfg
     # permissions should be 0600
     assert oct(cfg_file.stat().st_mode)[-3:] == "600"
 

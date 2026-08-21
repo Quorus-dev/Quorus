@@ -22,7 +22,6 @@ import pytest
 
 from quorus.routes.models import RoomMessageRequest
 
-
 GOOD_UUID = str(uuid.uuid4())
 
 

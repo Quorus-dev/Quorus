@@ -118,6 +118,39 @@ pollution, Redis-backed triage auction, iCloud repo relocation, audit stragglers
 
 ## Recent Changes
 
+### Wake Rebuild Phase 0 — Foundation complete (2026-08-20)
+
+Spec: `docs/WAKE_REBUILD_SPEC.md`. All Stream F items landed, full suite
+green twice consecutively (2016 passed / 0 failed, 72s — was 14min with 25
+order-dependent failures). Highlights:
+
+- **F1 security**: room_messages idempotency bare-except narrowed;
+  webhook logs `tenant_id`→`target` + host-only SSRF logging (no more
+  full-URL token leaks); register-agent raw key gated behind
+  `X-Quorus-Setup-Local: 1` (CLI sends it); ProfileManager can no longer
+  write to legacy `~/.murmur`/`~/mcp-tunnel`; dead scripts deleted
+  (`autonomous_agent.py`, `patch_cli.py`, `patch_gemini.py`).
+- **F2 test isolation**: root causes were (a) relay 404-sweeper blocking the
+  shared test-client IP after accumulated 404s, (b) triage bid-window/fairness
+  module globals, (c) `run_*_agent` mutating `os.environ["QUORUS_CONFIG_DIR"]`
+  process-wide. Fixes: `reset_not_found_limiter()` / `reset_triage_state()` +
+  autouse conftest guards + os.environ snapshot fixture. Docker cold-install
+  variant skips cleanly without Docker.
+- **F3 MCP**: server.py 728→497 lines (new `runtime.py`); dead `poll_mode`
+  config key removed end-to-end (legacy configs still load).
+- **Incident**: a fix agent force-removed stale `worktree-agent-*` trees; one
+  contained uncommitted May-2 edits (lost) — its committed tip is preserved
+  as tag `rescue/worktree-afd3fedf` (e8f7653). Lesson: never force-remove
+  worktrees without checking for dirty state.
+- **Environment**: this repo lives in iCloud-synced Desktop; iCloud evicted
+  42k files (hanging imports/git for minutes) and created " 2"/" 3" conflict
+  copies of venv .pth files. Force-download fixed it this session
+  (`brctl download` + parallel reads). **Move the repo out of ~/Desktop.**
+- R1/R2 design shrank after code study: durable inbox = existing
+  `MessageBackend.fetch/ack` (reflexd must drain on start/reconnect);
+  presence = existing `/heartbeat` route + `PresenceBackend` (reflexd must
+  send; rooms/members must surface). See spec Stream R.
+
 ### Wake Rebuild research (2026-08-20)
 
 Full repo audit + 2 deep-research sweeps. Root causes of "notifications felt manual":

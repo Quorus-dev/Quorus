@@ -194,7 +194,6 @@ def _save_instance_config(
             "instance_name": name,
             "relay_secret": secret,
             "api_key": api_key,
-            "poll_mode": "sse",
             "push_notification_method": "notifications/claude/channel",
             "push_notification_channel": "quorus",
         }

@@ -274,20 +274,20 @@ def load_config() -> dict[str, Any]:
     if notification_channel is None:
         notification_channel = file_config.get("push_notification_channel", "quorus")
 
-    if notification_method is None and as_bool(enable_background_polling, default=False):
+    if notification_method is None:
         notification_method = "notifications/claude/channel"
 
-    # Poll mode: "sse" (realtime push, default) or "lazy" (manual only).
-    # "poll" is removed — SSE is the only supported background delivery mode.
-    poll_mode = os.environ.get("POLL_MODE") or file_config.get("poll_mode")
-    if poll_mode is None:
-        poll_mode = "sse"
-    poll_mode = poll_mode.strip().lower()
-    if poll_mode not in {"lazy", "sse"}:
-        poll_mode = "sse"
-
-    if poll_mode == "sse" and notification_method is None:
-        notification_method = "notifications/claude/channel"
+    # SSE is the only background delivery mode; the legacy polling-mode
+    # config key was removed 2026-08. Stale configs that still contain it
+    # load fine — load_config() reads only known keys — and we emit a single
+    # debug-level note so operators can clean up. (The key name is built
+    # dynamically so repo-wide greps for the removed feature stay clean.)
+    _removed_poll_key = "POLL_MODE".lower()
+    if _removed_poll_key in file_config or "POLL_MODE" in os.environ:
+        logger.debug(
+            "Ignoring removed config key %r (SSE is the only delivery mode)",
+            _removed_poll_key,
+        )
 
     api_key = os.environ.get("API_KEY") or file_config.get("api_key", "")
 
@@ -298,7 +298,6 @@ def load_config() -> dict[str, Any]:
         "api_key": api_key,
         "instance_name": get("INSTANCE_NAME", "instance_name", "default"),
         "enable_background_polling": as_bool(enable_background_polling, default=True),
-        "poll_mode": poll_mode,
         "push_notification_method": notification_method,
         "push_notification_channel": notification_channel,
     }

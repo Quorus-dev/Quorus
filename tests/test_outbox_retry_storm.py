@@ -21,7 +21,6 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 OUTBOX_SVC = Path(__file__).parent.parent / "quorus" / "services" / "outbox_svc.py"
 OUTBOX_MODEL = Path(__file__).parent.parent / "quorus" / "models" / "outbox.py"
 MIGRATION = (

@@ -99,11 +99,19 @@ class RegisterAgentRequest(BaseModel):
 
 
 class RegisterAgentResponse(BaseModel):
-    """Returns the new agent identity's API key."""
+    """Returned once on agent registration.
+
+    The raw API key is only included when the request sets
+    ``X-Quorus-Setup-Local: 1`` — by default only metadata is returned so
+    keys are never exposed via response bodies or logs (same A4 pattern
+    as ``SignupResponse``).
+    """
     agent_name: str
-    api_key: str
     tenant_slug: str
     next_step: str
+    key_prefix: str = ""
+    key_id: str = ""
+    api_key: str | None = None
 
 
 async def _sync_agent_room_memberships(
@@ -153,7 +161,7 @@ async def signup(
 ):
     """Self-service signup: creates tenant + participant + API key.
 
-    Rate limited to 5 signups per hour per IP.
+    Rate limited to 5 signups per 60 seconds per IP.
     Returns the API key once — it cannot be retrieved again.
     """
     # Rate limit by IP: 5 requests per 60 seconds.
@@ -363,11 +371,16 @@ async def register_agent(
     req: RegisterAgentRequest,
     request: Request,
     authorization: str = Header(...),
+    x_quorus_setup_local: str | None = Header(
+        default=None, alias="X-Quorus-Setup-Local",
+    ),
 ):
     """Create a new agent identity under an existing account.
 
     Requires the parent account's API key in the Authorization header.
     Creates a new participant named `{parent_name}-{suffix}` with its own API key.
+    The raw key is only returned when ``X-Quorus-Setup-Local: 1`` is set;
+    otherwise only ``key_prefix``/``key_id`` metadata is returned.
     """
     # Extract API key from Bearer header
     if not authorization.startswith("Bearer "):
@@ -505,11 +518,17 @@ async def register_agent(
                     "Agent key regenerated: %s (tenant=%s, suffix=%s, rooms_synced=%s)",
                     agent_name, tenant.slug, req.suffix, synced_rooms,
                 )
+                is_local_setup = x_quorus_setup_local == "1"
                 return RegisterAgentResponse(
                     agent_name=agent_name,
-                    api_key=raw_key,
                     tenant_slug=tenant.slug,
+                    key_prefix=new_prefix,
+                    key_id=(
+                        str(new_api_key.id)
+                        if getattr(new_api_key, "id", None) else new_prefix
+                    ),
                     next_step="Exchange api_key via POST /v1/auth/token before using relay routes.",
+                    api_key=raw_key if is_local_setup else None,
                 )
 
         # Create the agent as a peer in the parent's tenant. Do not mint a
@@ -545,9 +564,15 @@ async def register_agent(
             agent_name, tenant.slug, req.suffix, parent_participant.name, synced_rooms,
         )
 
+        is_local_setup = x_quorus_setup_local == "1"
         return RegisterAgentResponse(
             agent_name=agent_name,
-            api_key=raw_key,
             tenant_slug=tenant.slug,
+            key_prefix=new_prefix,
+            key_id=(
+                str(agent_api_key.id)
+                if getattr(agent_api_key, "id", None) else new_prefix
+            ),
             next_step="Exchange api_key via POST /v1/auth/token before using relay routes.",
+            api_key=raw_key if is_local_setup else None,
         )

@@ -106,3 +106,61 @@ def test_legacy_warning_once_per_process(tmp_path, caplog):
         resolve_config_dir()
     msgs = [r for r in caplog.records if "deprecated" in r.message]
     assert len(msgs) == 1, "deprecation should warn once per process per path"
+
+
+# ---------------------------------------------------------------------------
+# F1.4 — ProfileManager must never write into legacy dirs
+# ---------------------------------------------------------------------------
+
+
+def test_profile_manager_refuses_write_into_legacy_murmur(tmp_path):
+    from quorus.profiles import ProfileManager
+
+    legacy = tmp_path / ".murmur"
+    legacy.mkdir()
+    mgr = ProfileManager(config_dir=legacy)
+    with pytest.raises(ValueError, match="legacy"):
+        mgr.save("default", {"relay_url": "http://x"})
+    assert not (legacy / "profiles").exists()
+
+
+def test_profile_manager_refuses_write_into_legacy_mcp_tunnel(tmp_path):
+    from quorus.profiles import ProfileManager
+
+    legacy = tmp_path / "mcp-tunnel"
+    legacy.mkdir()
+    mgr = ProfileManager(config_dir=legacy)
+    with pytest.raises(ValueError, match="legacy"):
+        mgr.save("default", {"relay_url": "http://x"})
+
+
+def test_profile_migration_writes_to_modern_dir_not_legacy(tmp_path):
+    """Regression (F1.4): ``migrate_legacy_if_needed`` must land the migrated
+    profile in the modern dir (~/.quorus) even when ``resolve_config_dir()``
+    returned a legacy path — and must never write into the legacy dir."""
+    from quorus.profiles import ProfileManager
+
+    _seed(
+        tmp_path / ".murmur",
+        {"relay_url": "http://r", "api_key": "k", "instance_name": "arav"},
+    )
+    # No modern dir yet → resolve_config_dir() returns the legacy path.
+    assert resolve_config_dir() == tmp_path / ".murmur"
+    pm = ProfileManager()
+    assert pm.config_dir == tmp_path / ".murmur"
+
+    slug = pm.migrate_legacy_if_needed()
+    assert slug == "default"
+
+    # The migrated profile landed in the MODERN dir.
+    modern_profile = tmp_path / ".quorus" / "profiles" / "default.json"
+    assert modern_profile.exists()
+    assert json.loads(modern_profile.read_text())["relay_url"] == "http://r"
+    # Modern pointer selects the migrated profile.
+    pointer = json.loads((tmp_path / ".quorus" / CONFIG_FILENAME).read_text())
+    assert pointer["current"] == "default"
+    assert "default" in pointer["profiles"]
+    # Nothing new was written into the legacy dir; original file untouched.
+    assert not (tmp_path / ".murmur" / "profiles").exists()
+    legacy_raw = json.loads((tmp_path / ".murmur" / CONFIG_FILENAME).read_text())
+    assert legacy_raw["api_key"] == "k"

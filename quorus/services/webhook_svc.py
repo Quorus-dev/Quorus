@@ -451,9 +451,10 @@ class WebhookService:
         async with self._semaphore:
             # Re-validate URL at delivery time (prevent DNS TOCTOU attacks)
             if not await self.validate_url_at_delivery(job.callback_url):
+                # Log host only — query strings can carry tokens.
                 logger.error(
-                    "SSRF blocked: webhook URL %s now resolves to private address",
-                    job.callback_url,
+                    "SSRF blocked: webhook host %s now resolves to private address",
+                    urlparse(job.callback_url).hostname or "<unparseable>",
                 )
                 self._stats["total_failed"] += 1
                 return  # Permanently fail — do not retry
@@ -486,7 +487,7 @@ class WebhookService:
                 job.attempt += 1
                 job.last_error = str(exc)
                 _parsed = urlparse(job.callback_url)
-                _url_host = _parsed.hostname or job.callback_url
+                _url_host = _parsed.hostname or "<unparseable>"
                 _status_code = getattr(getattr(exc, "response", None), "status_code", None)
 
                 if job.attempt < _MAX_RETRIES:
@@ -495,7 +496,7 @@ class WebhookService:
                     self._stats["total_retried"] += 1
                     logger.warning(
                         "Webhook delivery failed",
-                        tenant_id=job.target,
+                        target=job.target,
                         webhook_host=_url_host,
                         status_code=_status_code,
                         attempt=job.attempt,
@@ -518,7 +519,7 @@ class WebhookService:
                         self._dlq.append(job)
                     logger.warning(
                         "Webhook delivery permanently failed",
-                        tenant_id=job.target,
+                        target=job.target,
                         webhook_host=_url_host,
                         status_code=_status_code,
                         attempt=job.attempt,
@@ -536,9 +537,10 @@ class WebhookService:
 
             # Re-validate URL at delivery time (prevent DNS TOCTOU attacks)
             if not await self.validate_url_at_delivery(callback_url):
+                # Log host only — query strings can carry tokens.
                 logger.error(
-                    "SSRF blocked: webhook URL %s now resolves to private address",
-                    callback_url,
+                    "SSRF blocked: webhook host %s now resolves to private address",
+                    urlparse(callback_url).hostname or "<unparseable>",
                 )
                 self._stats["total_failed"] += 1
                 # ACK to remove from queue — this is a permanent failure
@@ -575,11 +577,11 @@ class WebhookService:
             except Exception as exc:
                 error_msg = str(exc)
                 _parsed = urlparse(callback_url)
-                _url_host = _parsed.hostname or callback_url
+                _url_host = _parsed.hostname or "<unparseable>"
                 _status_code = getattr(getattr(exc, "response", None), "status_code", None)
                 logger.warning(
                     "Webhook delivery failed",
-                    tenant_id=target,
+                    target=target,
                     webhook_host=_url_host,
                     status_code=_status_code,
                     attempt=attempt + 1,
@@ -595,7 +597,7 @@ class WebhookService:
                     self._stats["total_failed"] += 1
                     logger.warning(
                         "Webhook delivery permanently failed",
-                        tenant_id=target,
+                        target=target,
                         webhook_host=_url_host,
                         status_code=_status_code,
                         attempt=attempt + 1,

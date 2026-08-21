@@ -9,7 +9,6 @@ from pydantic import BaseModel, field_validator
 
 from quorus.routes.helpers import _validate_name
 
-
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,

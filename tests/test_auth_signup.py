@@ -519,10 +519,13 @@ async def test_register_agent_rotates_existing_keys_without_500(monkeypatch):
     monkeypatch.setattr(auth_routes, "get_db_session", lambda: fake_session)
 
     # Must NOT raise MultipleResultsFound or any other exception.
+    # F1.3: raw api_key is gated on X-Quorus-Setup-Local — opt in so the
+    # assertion below can verify the rotated key is returned.
     resp = await auth_routes.register_agent(
         RegisterAgentRequest(suffix="claude-1m"),
         request=SimpleNamespace(),
         authorization=f"Bearer {parent_raw_key}",
+        x_quorus_setup_local="1",
     )
 
     # Both old keys must now be revoked.

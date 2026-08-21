@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import os
 import re
-from unittest.mock import patch
 
 os.environ.setdefault("RELAY_SECRET", "test-secret")
 
@@ -28,7 +27,6 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from quorus.relay import _reset_state, app
-
 
 AUTH = {"Authorization": "Bearer test-secret"}
 

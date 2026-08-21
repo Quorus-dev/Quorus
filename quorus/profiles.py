@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from quorus import config as _config
 from quorus.config import CONFIG_FILENAME, resolve_config_dir
 
 PROFILES_SUBDIR = "profiles"
@@ -98,8 +99,9 @@ class ProfileManager:
 
     def save(self, slug: str, data: dict[str, Any]) -> None:
         _validate_slug(slug)
-        self.profiles_dir.mkdir(parents=True, exist_ok=True)
         path = self._profile_path(slug)
+        # _atomic_write_json creates parent dirs (after its legacy-dir
+        # guard) — no mkdir here, so a refused write leaves no side effects.
         _atomic_write_json(path, data)
         # Keep pointer's `profiles` list fresh.
         pointer = self._read_pointer()
@@ -151,8 +153,18 @@ class ProfileManager:
         # Pointer shape has "current" or "profiles" and no "relay_url" / "api_key".
         if "relay_url" in raw or "api_key" in raw or "instance_name" in raw:
             slug = "default"
-            self.save(slug, raw)
-            self.set_current(slug)
+            target = self
+            if _config._is_legacy_dir(self._config_dir):
+                # Never write the migrated profile back into a legacy dir
+                # (~/.murmur, ~/mcp-tunnel) — always land it in the modern
+                # config dir (~/.quorus), even when resolve_config_dir()
+                # returned the legacy path this manager was built from.
+                modern = getattr(_config, "DEFAULT_CONFIG_DIR", None) or (
+                    Path.home() / ".quorus"
+                )
+                target = ProfileManager(config_dir=Path(modern))
+            target.save(slug, raw)
+            target.set_current(slug)
             return slug
         return None
 
@@ -174,11 +186,19 @@ class ProfileManager:
         return raw
 
     def _write_pointer(self, data: dict[str, Any]) -> None:
-        self._config_dir.mkdir(parents=True, exist_ok=True)
         _atomic_write_json(self.pointer_path, data)
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    # Same guard as ConfigManager.save (config.py): never write into a
+    # legacy config dir (~/.murmur, ~/mcp-tunnel).
+    if _config._is_legacy_dir(path.parent) or _config._is_legacy_dir(
+        path.parent.parent
+    ):
+        raise ValueError(
+            f"Refusing to write profile to legacy path {path}. "
+            "Move your config to ~/.quorus/."
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

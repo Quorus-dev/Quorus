@@ -11,6 +11,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.backends.redis_backends import BackendError
 from quorus.routes.models import RoomMessageRequest
 from quorus.routes.room_auth import require_room_member
 
@@ -110,10 +111,18 @@ async def send_room_message(
             tid, room_id, sender, msg.content,
             message_type=msg.message_type, reply_to=msg.reply_to,
         )
-    except Exception:
-        # Release the pending key so retries aren't blocked by 409
+    except (HTTPException, BackendError):
+        # Release the pending key so retries aren't blocked by 409.
+        # Swallow cleanup failures so they don't mask the original error.
         if idempotency_cache_key:
-            await backends.idempotency.delete(tid, idempotency_cache_key)
+            try:
+                await backends.idempotency.delete(tid, idempotency_cache_key)
+            except Exception as cleanup_exc:
+                _logger.warning(
+                    "Failed to release idempotency key %s: %s",
+                    idempotency_cache_key,
+                    cleanup_exc,
+                )
         raise
 
     # Stream B threading — record the (root_id → message_id) link.

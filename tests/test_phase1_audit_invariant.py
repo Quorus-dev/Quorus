@@ -28,7 +28,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 SOURCES = [
     Path(__file__).parent.parent / "quorus" / "routes" / "persistent_memory.py",
     Path(__file__).parent.parent / "quorus" / "routes" / "tool_catalog.py",
