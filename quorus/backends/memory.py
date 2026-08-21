@@ -7,6 +7,7 @@ dicts.  Every mutable operation is protected by an ``asyncio.Lock``.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from collections import defaultdict
@@ -114,6 +115,24 @@ class InMemoryMessageBackend:
     async def ack(
         self, tenant_id: str, to_name: str, ack_token: str
     ) -> None:
+        # Contract (matches RedisMessageBackend.ack): the service-level
+        # ack_token is a JSON list of delivery ids — MessageService.fetch
+        # rebuilds it from ready messages and discards the backend-native
+        # token. The old implementation only understood its own internal
+        # uuid token, so every token-based ACK against the in-memory
+        # backend was a silent no-op and acked messages were redelivered
+        # forever after each visibility timeout.
+        ids: list[str] = []
+        try:
+            parsed = json.loads(ack_token)
+            if isinstance(parsed, list):
+                ids = [str(i) for i in parsed]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+        if ids:
+            await self.ack_ids(tenant_id, to_name, ids)
+            return
+        # Backward compat: a backend-native uuid token from fetch().
         async with self._lock:
             entry = self._pending.pop((tenant_id, to_name, ack_token), None)
             if entry:

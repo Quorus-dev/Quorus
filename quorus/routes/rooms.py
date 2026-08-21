@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,8 +18,11 @@ from quorus.routes.models import (
 )
 
 router = APIRouter()
+logger = logging.getLogger("quorus.routes.rooms")
 _LEGACY_TENANT = "_legacy"
 MAX_ROOM_MEMBERS = int(os.environ.get("MAX_ROOM_MEMBERS", "50"))
+# Same default as routes/presence.py — a member is "away" after 90s silence.
+_HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))
 
 
 def _tid(auth: AuthContext) -> str:
@@ -76,11 +80,37 @@ async def get_room(
             raise HTTPException(
                 status_code=403, detail="Must be a room member to view details",
             )
+    # R2 (WAKE_REBUILD_SPEC): per-member presence + queued depth so clients
+    # can render "● active" / "○ away — N queued" instead of a silent void
+    # when a mentioned agent's laptop is asleep. Presence is one backend
+    # call; queue depth is one pending() per member (rooms are small).
+    presence: dict[str, dict] = {}
+    try:
+        entries = await request.app.state.presence_service.list_all(
+            tid, _HEARTBEAT_TIMEOUT
+        )
+        online = {e.get("name"): bool(e.get("_online")) for e in entries}
+        msg_svc = request.app.state.message_service
+        for member in members:
+            # Undelivered = still queued (peek) + fetched-but-unacked
+            # (pending). Both are messages the member has not processed.
+            queued = await msg_svc.peek(tid, member) + await msg_svc.pending(
+                tid, member
+            )
+            presence[member] = {
+                "presence": "active" if online.get(member) else "away",
+                "queued": queued,
+            }
+    except Exception:
+        # Presence is decorative — never fail the room fetch over it.
+        logger.warning("room presence enrichment failed", exc_info=True)
+        presence = {}
     return {
         "id": rid,
         "name": data.get("name", ""),
         "members": sorted(members.keys()),
         "member_roles": members,
+        "member_presence": presence,
         "private": _coerce_bool(data.get("private")),
         "created_at": data.get("created_at", ""),
     }
