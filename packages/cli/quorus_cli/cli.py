@@ -931,6 +931,81 @@ def _resolve_turnguard_participant(explicit: str | None) -> str:
     return name
 
 
+def _cmd_room(args):
+    """Host-local room utilities. `quorus room bind <room> <path>` binds a
+    room to a workspace directory so reflexd wakes agents INSIDE the repo
+    they should work on (spec D1). Bindings are per-host by design — a
+    path only means something on this machine. Stored at
+    ~/.quorus/room-bindings.json (0600)."""
+    import json as _json
+
+    bindings_path = Path.home() / ".quorus" / "room-bindings.json"
+    action = getattr(args, "room_action", None)
+    if action is None:
+        _ui.error(
+            "room: missing subcommand.",
+            hint=(
+                "usage: [accent]quorus room bind <room> <path>[/] "
+                "| [accent]quorus room bindings[/]"
+            ),
+        )
+        raise SystemExit(5)
+
+    def _load() -> dict:
+        try:
+            data = _json.loads(bindings_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, _json.JSONDecodeError):
+            return {}
+
+    if action == "bindings":
+        data = _load()
+        if not data:
+            console.print("[dim]no room bindings on this host[/]")
+            return
+        for room, path in sorted(data.items()):
+            exists = Path(path).expanduser().is_dir()
+            mark = "[success]✓[/]" if exists else "[error]✗ missing[/]"
+            console.print(f"  {mark} [primary]{room}[/] → {path}")
+        return
+
+    if action == "unbind":
+        data = _load()
+        if args.room in data:
+            del data[args.room]
+            bindings_path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(bindings_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                _json.dump(data, f, indent=2)
+            console.print(f"[success]unbound[/] [primary]{args.room}[/]")
+        else:
+            console.print(f"[dim]no binding for {args.room}[/]")
+        return
+
+    if action == "bind":
+        ws = Path(args.path).expanduser().resolve()
+        if not ws.is_dir():
+            _ui.error(
+                f"not a directory: {ws}",
+                hint="bind must point at an existing repo/workspace directory",
+            )
+            raise SystemExit(2)
+        data = _load()
+        data[args.room] = str(ws)
+        bindings_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(bindings_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            _json.dump(data, f, indent=2)
+        console.print(
+            f"[success]bound[/] [primary]{args.room}[/] → {ws}\n"
+            f"[dim]agents woken for this room now run inside that directory[/]"
+        )
+        return
+
+    _ui.error(f"room: unknown subcommand {action!r}")
+    raise SystemExit(5)
+
+
 def _cmd_turnguard(args):
     """Mark the current agent busy/idle for the local Reflex daemon.
 
@@ -8842,6 +8917,25 @@ def main():
         help_text="Open the Quorus hub (interactive TUI)",
     ))
 
+    p_room = sub.add_parser("room", **_help_block(
+        synopsis="Host-local room utilities (workspace binding).",
+        description=(
+            "`quorus room bind <room> <path>` binds a room to a workspace "
+            "directory on THIS host: when reflexd wakes your agent for that "
+            "room, the harness runs inside that directory so it can do real "
+            "repo work. Bindings live at ~/.quorus/room-bindings.json."
+        ),
+        example="quorus room bind dev-sprint ~/dev/MyProject",
+        help_text="Bind a room to a workspace directory",
+    ))
+    room_sub = p_room.add_subparsers(dest="room_action")
+    p_room_bind = room_sub.add_parser("bind", help="Bind room → workspace dir")
+    p_room_bind.add_argument("room", help="Room name or id")
+    p_room_bind.add_argument("path", help="Workspace directory (repo root)")
+    p_room_unbind = room_sub.add_parser("unbind", help="Remove a binding")
+    p_room_unbind.add_argument("room", help="Room name or id")
+    room_sub.add_parser("bindings", help="List bindings on this host")
+
     p_turnguard = sub.add_parser("turnguard", **_help_block(
         synopsis="Mark the agent busy/idle for the local Reflex daemon.",
         description=(
@@ -9129,6 +9223,7 @@ def main():
         "context": _cmd_context,
         "decision": _cmd_decision,
         "begin": _cmd_begin,
+        "room": _cmd_room,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,

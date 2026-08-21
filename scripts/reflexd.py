@@ -102,6 +102,32 @@ CAPABILITIES_CURSOR = reflexd_triage.CAPABILITIES_CURSOR
 
 DEFAULT_RUNTIME_DIR = Path.home() / ".quorus" / "runtime"
 DEFAULT_LOG_PATH = Path.home() / ".quorus" / "reflexd.log"
+# D1 (WAKE_REBUILD_SPEC): room → workspace bindings. Host-local by design —
+# a filesystem path only means something on THIS machine, so bindings are
+# daemon-local, not shared room state. Written by `quorus room bind`.
+ROOM_BINDINGS_PATH = Path.home() / ".quorus" / "room-bindings.json"
+
+
+def workspace_for(room: str, *, bindings_path: Path | None = None) -> Path | None:
+    """Resolve the bound workspace directory for *room*, or None.
+
+    Accepts bindings keyed by room name or room id. Returns the path only
+    when it exists and is a directory — a stale binding must degrade to
+    the unbound behaviour, never crash a wake.
+    """
+    path = bindings_path or ROOM_BINDINGS_PATH
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    raw = data.get(room) if isinstance(data, dict) else None
+    if not raw or not isinstance(raw, str):
+        return None
+    ws = Path(raw).expanduser()
+    if not ws.is_dir():
+        logger.warning("room binding for %r points at missing dir %s", room, ws)
+        return None
+    return ws
 LOG_MAX_BYTES = 10 * 1024 * 1024  # 10MB rotation per spec
 LOG_BACKUP_COUNT = 3
 SSE_RECONNECT_S = 2.0
@@ -713,7 +739,9 @@ class HeadlessAdapter:
         body = re.sub(r"\b(TODO\s*)@", r"\1@ ", body, flags=re.IGNORECASE)
         return f"(reflexd-stub) on it, working on '{body}'"
 
-    async def run(self, harness: str, *, context: str) -> str:
+    async def run(
+        self, harness: str, *, context: str, cwd: Path | None = None,
+    ) -> str:
         # Smoke / demo path: avoid spawning any real harness. ~10 LoC, off
         # the regular path. Triggered by an explicit env var OR by the
         # module-level auto-fallback flag set when the claude binary is
@@ -726,16 +754,19 @@ class HeadlessAdapter:
             return await self._run_subprocess(
                 build_claude_argv(context),
                 parser=lambda out: out.strip(),
+                cwd=cwd,
             )
         if harness == "codex":
             return await self._run_subprocess(
                 build_codex_argv(context),
                 parser=_parse_codex_json,
+                cwd=cwd,
             )
         if harness == "gemini":
             return await self._run_subprocess(
                 build_gemini_argv(context),
                 parser=lambda out: out.strip(),
+                cwd=cwd,
             )
         if harness == "cursor":
             return await self._run_cursor(context)
@@ -743,11 +774,13 @@ class HeadlessAdapter:
             return await self._run_subprocess(
                 build_opencode_argv(context),
                 parser=lambda out: out.strip(),
+                cwd=cwd,
             )
         if harness == "cline":
             return await self._run_subprocess(
                 build_cline_argv(context),
                 parser=lambda out: out.strip(),
+                cwd=cwd,
             )
         raise ValueError(f"unknown harness {harness!r}")
 
@@ -781,6 +814,7 @@ class HeadlessAdapter:
         argv: list[str],
         *,
         parser: Callable[[str], str],
+        cwd: Path | None = None,
     ) -> str:
         # Pre-flight: if the binary truly isn't on PATH, surface the same
         # sentinel string regardless of platform. ``shutil.which`` returning
@@ -794,6 +828,9 @@ class HeadlessAdapter:
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # D1: run in the room's bound workspace so the agent can do
+                # real repo work; None = inherit the daemon's cwd (unbound).
+                cwd=str(cwd) if cwd else None,
             )
         except FileNotFoundError:
             logger.warning("harness binary missing: %s", argv[0])
@@ -1444,13 +1481,22 @@ class Reflexd:
             memory_entries=memory_entries,
         )
         harness = detect_harness(self.config.participant_name)
+        # D1: bound workspace → agent works in the real repo. Unbound →
+        # inherit daemon cwd and tell the model so it sets expectations.
+        ws = workspace_for(room)
+        if ws is None:
+            prompt += (
+                "\n\n[quorus] No workspace is bound to this room on this "
+                "host - answer questions freely, but for code tasks ask a "
+                "human to run: quorus room bind " + (room or "<room>") + " <repo-path>"
+            )
         log_reason = (triage.reason if triage else None) or reason or "?"
         logger.info(
-            "waking harness=%s room=%s reason=%s memory_entries=%d",
-            harness, room, log_reason, len(memory_entries),
+            "waking harness=%s room=%s reason=%s memory_entries=%d workspace=%s",
+            harness, room, log_reason, len(memory_entries), ws or "-",
         )
         try:
-            reply = await self.adapter.run(harness, context=prompt)
+            reply = await self.adapter.run(harness, context=prompt, cwd=ws)
         except Exception as exc:
             logger.warning("harness %s raised: %s", harness, exc)
             return

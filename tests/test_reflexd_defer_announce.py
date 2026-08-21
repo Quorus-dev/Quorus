@@ -107,7 +107,7 @@ class _StubAdapter:
         self.calls: list[tuple[str, str]] = []
         self._reply = reply
 
-    async def run(self, harness: str, *, context: str) -> str:
+    async def run(self, harness: str, *, context: str, cwd=None) -> str:
         self.calls.append((harness, context))
         return self._reply
 

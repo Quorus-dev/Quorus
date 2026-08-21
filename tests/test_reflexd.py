@@ -499,7 +499,7 @@ def test_smoke_e2e_at_mention_triggers_bid_and_post(
 
     # Adapter that returns a deterministic reply without spawning anything real.
     class StubAdapter:
-        async def run(self, harness: str, *, context: str) -> str:
+        async def run(self, harness: str, *, context: str, cwd=None) -> str:
             assert harness == "claude"
             assert "Wake Intent" in context
             return "ack: I see your @-mention"

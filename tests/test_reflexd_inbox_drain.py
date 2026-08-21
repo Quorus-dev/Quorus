@@ -250,7 +250,7 @@ def _wake_envelope() -> dict[str, Any]:
 
 
 def _run_wake(daemon, relay, monkeypatch, adapter_reply: str) -> None:
-    async def fake_run(harness, *, context):
+    async def fake_run(harness, *, context, cwd=None):
         return adapter_reply
     monkeypatch.setattr(daemon.adapter, "run", fake_run)
     asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
@@ -293,3 +293,47 @@ def test_d7_real_replies_never_suppressed(
     _run_wake(daemon, relay, monkeypatch, "the actual model answer")
     assert len(relay.posted) == 1
     assert relay.posted[0]["content"] == "the actual model answer"
+
+
+def test_workspace_for_resolution(tmp_path: Path) -> None:
+    """D1: binding resolves only to existing dirs; garbage degrades to None."""
+    bindings = tmp_path / "room-bindings.json"
+    ws = tmp_path / "repo"
+    ws.mkdir()
+    bindings.write_text(
+        '{"dev": "%s", "gone": "%s/nope", "junk": 42}' % (ws, tmp_path)
+    )
+    assert reflexd.workspace_for("dev", bindings_path=bindings) == ws
+    assert reflexd.workspace_for("gone", bindings_path=bindings) is None
+    assert reflexd.workspace_for("junk", bindings_path=bindings) is None
+    assert reflexd.workspace_for("absent", bindings_path=bindings) is None
+    assert reflexd.workspace_for("dev", bindings_path=tmp_path / "missing.json") is None
+    bindings.write_text("not json at all")
+    assert reflexd.workspace_for("dev", bindings_path=bindings) is None
+
+
+def test_subprocess_runs_in_bound_workspace(tmp_path: Path) -> None:
+    """D1: the harness subprocess actually executes inside the bound dir."""
+    adapter = reflexd.HeadlessAdapter(timeout_s=10)
+    out = asyncio.run(adapter._run_subprocess(
+        ["pwd"], parser=lambda o: o.strip(), cwd=tmp_path,
+    ))
+    assert Path(out).resolve() == tmp_path.resolve()
+
+
+def test_unbound_room_gets_prompt_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D1: with no binding, the wake prompt tells the model how to bind."""
+    daemon = _make_daemon()
+    captured: dict[str, Any] = {}
+
+    async def fake_run(harness, *, context, cwd=None):
+        captured["context"] = context
+        captured["cwd"] = cwd
+        return "ok"
+
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    monkeypatch.setattr(reflexd, "workspace_for", lambda room, **kw: None)
+    relay = _D7Relay(history=[])
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
+    assert "No workspace is bound" in captured["context"]
+    assert captured["cwd"] is None
