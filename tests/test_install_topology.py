@@ -158,3 +158,44 @@ def test_no_quorus_sdk_circular_via_root() -> None:
         "quorus/sdk.py is supposed to be a re-export of quorus_sdk.* — "
         "no `from quorus_sdk... import` statement found."
     )
+
+
+def test_every_console_script_target_is_importable():
+    """Regression (2026-08-21): a file-size split moved ``main_cli`` out of
+    ``quorus_mcp.server`` while ``pyproject.toml`` still pointed there. Every
+    test passed — tests import ``mcp`` directly and never touch the console
+    script — so the break only surfaced on a real ``pipx install`` from git,
+    where ``quorus-mcp`` died with ImportError at startup.
+
+    This walks the declared entry points and imports each target, so a
+    shipped binary can never silently lose its callable again.
+    """
+    import importlib
+    import sys
+    import tomllib
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    for pkg in ("sdk", "cli", "mcp", "tui"):
+        p = str(repo / "packages" / pkg)
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    data = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
+    scripts = data.get("project", {}).get("scripts", {})
+    assert scripts, "pyproject declares no console scripts"
+
+    failures = []
+    for name, target in scripts.items():
+        module_path, _, attr = target.partition(":")
+        try:
+            module = importlib.import_module(module_path)
+        except Exception as exc:  # pragma: no cover - failure detail
+            failures.append(f"{name}: cannot import {module_path} ({exc})")
+            continue
+        if not callable(getattr(module, attr, None)):
+            failures.append(
+                f"{name}: {module_path} has no callable {attr!r} — the "
+                f"installed binary would ImportError at startup"
+            )
+    assert not failures, "broken console scripts:\n  " + "\n  ".join(failures)

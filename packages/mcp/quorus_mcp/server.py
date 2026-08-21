@@ -401,3 +401,21 @@ async def social_verb(
 # ---------------------------------------------------------------------------
 
 from quorus_mcp import phase1_registry as _phase1_registry  # noqa: E402,F401
+
+
+def main_cli() -> None:
+    """Console entry point for the ``quorus-mcp`` command (stdio transport).
+
+    MUST live here: ``pyproject.toml`` pins the script to
+    ``quorus_mcp.server:main_cli``. It briefly moved into
+    ``phase1_registry`` during a file-size split, which broke the installed
+    binary while every test still passed — tests import ``mcp`` directly and
+    never exercise the console script. Caught only by a real
+    ``pipx install`` from git (2026-08-21). ``tests/test_install_topology``
+    now pins the import path.
+    """
+    mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main_cli()

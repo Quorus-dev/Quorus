@@ -122,10 +122,3 @@ async def memory_delete(room_id: str, key: str) -> str:
     return await _p1.memory_delete(room_id, key)
 
 
-def main_cli() -> None:
-    """Console entry point for the ``quorus-mcp`` command (stdio transport)."""
-    mcp.run(transport="stdio")
-
-if __name__ == "__main__":
-    main_cli()
-
