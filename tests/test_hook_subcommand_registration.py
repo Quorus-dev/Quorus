@@ -78,13 +78,20 @@ def test_cli_argparse_lists_all_six_actions() -> None:
         )
 
 
-def test_hook_handlers_module_dispatches_three_per_harness() -> None:
-    """quorus_cli.hooks.HOOK_HANDLERS must contain exactly the three
-    per-harness handlers; the enable/disable/status modes are handled
-    by cli._cmd_hook itself, not the hooks module.
+def test_hook_handlers_module_dispatches_per_harness_entries() -> None:
+    """quorus_cli.hooks.HOOK_HANDLERS must contain exactly the per-harness
+    handlers; the enable/disable/status modes are handled by cli._cmd_hook
+    itself, not the hooks module.
+
+    Grew in 2026-08 with the Claude Code L1/L2 set (WAKE_REBUILD_SPEC):
+    session-start/session-end maintain the live-session registry and stop
+    delivers pending room messages into a running session.
     """
     from quorus_cli.hooks import HOOK_HANDLERS
-    expected = {"cursor-session", "cursor-stop", "gemini-beforeagent"}
+    expected = {
+        "cursor-session", "cursor-stop", "gemini-beforeagent",
+        "claude-session-start", "claude-session-end", "claude-stop",
+    }
     assert set(HOOK_HANDLERS.keys()) == expected, (
         f"HOOK_HANDLERS keys drifted from {expected} to "
         f"{set(HOOK_HANDLERS.keys())}"
