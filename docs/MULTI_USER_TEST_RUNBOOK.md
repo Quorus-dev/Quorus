@@ -49,9 +49,38 @@ Record: reply latencies, any manual prompting needed (should be ZERO),
 any spurious "[reflexd] harness timed out" after a good reply (known issue
 D7, fix in flight).
 
-## Known limits going into this test (set expectations)
+## Recommended setup for the full experience (all landed 2026-08-21)
 
-- Woken agents **chat well but work amnesiac** — no repo binding / session
-  memory yet (Stream D lands next; after that they resume missions).
-- Permission-heavy tasks may stall silently (Stream L approval relay pending).
-- One relay instance only (auction state is process-local until R3).
+```bash
+# 1. Agents wake INSIDE your repo, with memory of the room's prior work
+quorus room bind test-day ~/dev/YourProject
+
+# 2. Live-session awareness + delivery into an open session — add to
+#    ~/.claude/settings.json (see docs/CROSS_HARNESS_NOTIFICATIONS.md)
+#    SessionStart: quorus hook claude-session-start
+#    SessionEnd:   quorus hook claude-session-end
+#    Stop:         quorus hook claude-stop
+
+# 3. Permission prompts relayed to chat instead of stalling
+export QUORUS_APPROVAL_ROOM=test-day
+# then run your agent's claude with:
+#   --permission-prompt-tool mcp__quorus__approve
+quorus approvals            # see what is waiting on you
+quorus approve <apr_id>     # or: quorus deny <apr_id>
+```
+
+Extra tests worth running once the above are wired:
+
+| # | Test | PASS looks like |
+|---|------|-----------------|
+| 7 | Bind a room, mention the agent with a repo question | Agent answers using files from THAT repo |
+| 8 | Mention twice in a row, referencing the first reply | Second reply shows it remembers (session resume) |
+| 9 | Ask for something needing a permission-gated tool | `quorus approvals` lists it; approving unblocks the agent |
+| 10 | Keep a Claude session open in the bound repo and mention the agent | No double reply — the open session answers |
+
+## Known limits going into this test
+
+- Only Claude Code gets live-session delivery + session memory; Codex and
+  Gemini wake headless (resume support exists, wiring is next).
+- One relay instance unless Redis is configured (R3 shares the auction).
+- Approvals surface in chat and CLI; a TUI panel is not built yet.

@@ -118,6 +118,63 @@ pollution, Redis-backed triage auction, iCloud repo relocation, audit stragglers
 
 ## Recent Changes
 
+### Wake Rebuild — Streams D, R, L complete (2026-08-20 night → 21 early)
+
+Branch renamed `feat/may4-sprint` → **`feat/wake-rebuild-aug26`**.
+Suite: **2069 passing**, ruff clean, stub demo 0.35s e2e.
+
+- **D1 workspace binding** — `quorus room bind <room> <repo>`; wakes run the
+  harness inside the bound directory (host-local, stale bindings degrade).
+- **D2 session continuity** — claude wakes use `--output-format json`,
+  capture `session_id`, persist a room→session map, resume by explicit
+  `--resume`. Proven live at the CLI layer (teach 7391 → resume → recall).
+- **D3 honest degradation** — stub replies only on explicit
+  `REFLEXD_STUB_REPLY=1`; a missing binary posts a real error to the room.
+- **D4 lifecycle** — init installs launchd by default; SSE connections that
+  lived >60s reconnect at the 2s floor (laptop sleep/wifi change).
+- **D5/D5b mission budgets** — chat wakes capped (15 turns); mission wakes
+  (agent holds a work-queue claim) get a 1h leash and an actionable
+  escalation naming the task instead of a bare sentinel. Never kill a
+  working agent.
+- **D7 wake-success detection** — suppress timeout/error sentinels when the
+  agent already posted its own threaded reply via quorus tools.
+- **R1/R2** — durable inbox drain on every (re)connect; presence heartbeats
+  + `member_presence` (active/away + queued depth) on `GET /rooms/{id}`.
+- **R3** — Redis-shared triage auction: bids in a shared hash, claim via
+  `SET NX`, credits applied once. 8-way concurrent race proves ONE winner
+  across replicas. In-memory path stays as the fallback.
+- **R4** — phase-1 primitives (memory, capabilities, tool catalog) get a
+  write-through Redis mirror + lazy hydrate, so they survive a relay
+  restart; the work queue's dormant `redis_conn` is finally wired.
+- **L1/L2** — SessionStart/SessionEnd hooks maintain a live-session
+  registry (pid+cwd only, **no messaging token at rest**); a Stop hook
+  delivers pending room messages into a running session; reflexd defers to
+  a live session that is mid-turn rather than spawning a rival agent.
+  Raw inbox-socket injection deliberately NOT used: Anthropic publishes the
+  auth frame but not the message-frame schema (probes are dropped silently).
+- **L3 approvals** — `/v1/approvals` + MCP `approve` tool (wire as Claude
+  Code's `--permission-prompt-tool`) + `quorus approvals|approve|deny`.
+  Fails closed on deny/expiry/missing-room/relay-error; agents cannot
+  decide their own requests; tool input previewed, never stored verbatim.
+
+**Bugs found and fixed while proving these:** auction keyed on the
+per-recipient fan-out id (every agent won `@open`); in-memory `ack` ignored
+the service's JSON id-list token so ACKs were silent no-ops and messages
+redelivered forever; `@open` echoes in agent replies re-triggered other
+agents (echo storm); unbounded `mcp>=1.2.0` resolved to 2.0.0 which removed
+`fastmcp`, breaking every fresh install.
+
+**Environment:** working copy is `~/dev/Quorus` (Python 3.13). The Desktop
+copy is retired — iCloud/Spotlight kept re-applying UF_HIDDEN to the venv
+`.pth` files via the SIP-undeletable `com.apple.provenance` xattr, which
+Python 3.14 silently skips. A one-hour watcher on `~/dev` never fired once.
+
+**Still open:** production relay `quorus-relay.fly.dev` is NXDOMAIN (needs
+`flyctl auth login` + redeploy); two-human runbook test
+(`docs/MULTI_USER_TEST_RUNBOOK.md`); TUI surface for pending approvals.
+
+
+
 ### Stream D core landed (2026-08-20 night, commits 257ee03 + 2573616 + 8e7118d + pending)
 
 - **D1 workspace binding**: `quorus room bind <room> <path>` (host-local,
