@@ -118,6 +118,30 @@ pollution, Redis-backed triage auction, iCloud repo relocation, audit stragglers
 
 ## Recent Changes
 
+### QA audit + repo relocation (2026-08-20 late, commits df498ad + 61ff9cf)
+
+- **Working copy is now `~/dev/Quorus`.** Desktop copy retired: iCloud/Spotlight
+  re-applies UF_HIDDEN to venv .pth files via the SIP-undeletable
+  `com.apple.provenance` xattr; Python 3.14 skips hidden .pth → imports die
+  minutes after every fix. `scripts/patch_entry_points.sh` (bakes sys.path
+  into console scripts) is the working mitigation — run it after every
+  reinstall; `tests/test_entry_point_bootstrap.py` enforces it.
+- **Fresh installs were broken**: unbounded `mcp>=1.2.0` resolved to mcp
+  2.0.0 (removed `mcp.server.fastmcp`). Capped `<2.0.0` in both pyprojects.
+- **Echo storm fixed**: live two-daemon proof showed one `@open` → three
+  replies (winner's ack quoted the trigger; the other agent triaged the echo).
+  `@open` now anchored to message start; stub de-fangs trigger tokens.
+- **Autonomous notification stack proven live, zero manual prompting**:
+  stub wake 0.345s; real `claude --print` wake round-trip (agent posted its
+  own reply via quorus tools — see spec D7); offline mention drained on
+  daemon start; two agents + one `@open` → exactly one winner replies.
+- **Production relay `quorus-relay.fly.dev` is NXDOMAIN** — Fly app gone;
+  needs redeploy before any external demo. Website www.quorus.dev is up.
+- Ghost session warning: an older Claude session was auto-committing
+  ("auto: sync") and ran a surprise uv editable install mid-audit.
+
+
+
 ### Wake Rebuild Stream R slice 1 (2026-08-20, commits 17a4998 + 64c4fc9)
 
 - **R1**: reflexd drains the durable inbox (`GET /messages/{p}?ack=manual` →
