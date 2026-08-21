@@ -110,6 +110,9 @@ BID_WINDOW_SECONDS = 2.0
 BID_TTL_SECONDS = 5
 SUBPROCESS_TIMEOUT_S = 120
 HEARTBEAT_HISTORY_LIMIT = 10
+# R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
+# so 30s gives three missed beats of slack. Env-tunable for tests.
+HEARTBEAT_INTERVAL_S = float(os.environ.get("REFLEXD_HEARTBEAT_S", "30"))
 MENTION_PREVIEW_CHARS = 80
 # Anti-loop guard: if we are about to reply to a message that itself was
 # spawned in response to one of OUR prior replies, and the chain is already
@@ -970,6 +973,49 @@ class RelayClient:
                     return v
         return []
 
+    async def fetch_inbox(
+        self, *, participant: str,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Drain the durable per-participant inbox (R1).
+
+        Returns ``(messages, ack_token)``. The relay's ``ack=manual`` mode
+        gives at-least-once semantics: anything we fail to ack is redelivered
+        after the visibility timeout, so a crash mid-drain loses nothing.
+        """
+        headers = await self._headers()
+        resp = await self.client.get(
+            f"/messages/{participant}",
+            headers=headers,
+            params={"wait": 0, "ack": "manual"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict):
+            msgs = data.get("messages")
+            return (msgs if isinstance(msgs, list) else []), data.get("ack_token")
+        return [], None
+
+    async def ack_inbox(self, *, participant: str, ack_token: str) -> None:
+        headers = await self._headers()
+        resp = await self.client.post(
+            f"/messages/{participant}/ack",
+            headers=headers,
+            json={"ack_token": ack_token},
+        )
+        resp.raise_for_status()
+
+    async def post_heartbeat(
+        self, *, participant: str, status: str = "active", room: str = "",
+    ) -> None:
+        """Presence heartbeat (R2) — lets the relay show active/away + queued."""
+        headers = await self._headers()
+        resp = await self.client.post(
+            "/heartbeat",
+            headers=headers,
+            json={"instance_name": participant, "status": status, "room": room},
+        )
+        resp.raise_for_status()
+
     async def post_reply(
         self, *, room: str, from_name: str,
         content: str, message_type: str = "chat",
@@ -1200,7 +1246,13 @@ class Reflexd:
         sender = envelope.get("from_name") or ""
         content = envelope.get("content") or ""
         room = envelope.get("room") or ""
-        message_id = envelope.get("id") or ""
+        # Bid/claim MUST key on the canonical room-message id. Fan-out gives
+        # every recipient its own envelope uuid in ``id``; bidding with that
+        # would give each agent a private auction window — every capable
+        # agent "wins" an @open broadcast and all of them reply. ``message_id``
+        # is the shared canonical id set by room_msg_svc; ``id`` is only the
+        # fallback for legacy envelopes that predate the field.
+        message_id = envelope.get("message_id") or envelope.get("id") or ""
         message_type = envelope.get("message_type") or "chat"
 
         triage = classify_message(
@@ -1614,6 +1666,9 @@ class Reflexd:
             # the room SSE stream. Failures in the DM loop never bring
             # down the main loop — both reconnect independently.
             dm_task = asyncio.create_task(self._dm_loop(relay))
+            # R2: presence heartbeat so the relay can render active/away and
+            # queue depth for this agent. Independent of the SSE loop.
+            hb_task = asyncio.create_task(self._heartbeat_loop(relay))
 
             try:
                 while not self._stop.is_set():
@@ -1624,6 +1679,12 @@ class Reflexd:
                         await self._sleep_or_stop(backoff)
                         backoff = min(backoff * 2, SSE_RECONNECT_MAX_S)
                         continue
+
+                    # R1: drain anything that arrived while we were down or
+                    # the laptop was asleep. SSE is transient; the durable
+                    # inbox is the source of truth for missed mentions. Runs
+                    # on every (re)connect, before going live on the stream.
+                    await self._drain_inbox(relay)
 
                     url = relay.stream_url(self.config.participant_name, stream_token)
                     try:
@@ -1642,11 +1703,69 @@ class Reflexd:
                     await self._sleep_or_stop(backoff)
                     backoff = min(backoff * 2, SSE_RECONNECT_MAX_S)
             finally:
-                dm_task.cancel()
+                for task in (dm_task, hb_task):
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+    async def _drain_inbox(self, relay: RelayClient) -> None:
+        """R1: fetch + dispatch + ack every message queued while offline.
+
+        Loops until the inbox is empty so a long sleep (hundreds of queued
+        messages) fully drains. Each batch is dispatched through the same
+        triage path as live SSE events, then acked — at-least-once: a crash
+        mid-batch redelivers after the visibility timeout rather than losing
+        the mention. Failures are logged and non-fatal (the SSE loop still
+        provides live delivery).
+        """
+        drained = 0
+        while not self._stop.is_set():
+            try:
+                messages, ack_token = await relay.fetch_inbox(
+                    participant=self.config.participant_name
+                )
+            except Exception as exc:
+                logger.warning("inbox drain fetch failed: %s", exc)
+                return
+            if not messages:
+                break
+            for msg in messages:
+                if self._stop.is_set():
+                    return
                 try:
-                    await dm_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+                    await self._dispatch_event(relay, "message", msg)
+                except Exception as exc:  # pragma: no cover
+                    logger.exception("inbox drain handler failed: %s", exc)
+            drained += len(messages)
+            if ack_token:
+                try:
+                    await relay.ack_inbox(
+                        participant=self.config.participant_name,
+                        ack_token=ack_token,
+                    )
+                except Exception as exc:
+                    logger.warning("inbox drain ack failed: %s", exc)
+                    return
+            else:  # no token → server acked or nothing to ack; avoid spinning
+                break
+        if drained:
+            logger.info("inbox drain: handled %d queued message(s)", drained)
+
+    async def _heartbeat_loop(
+        self, relay: RelayClient, interval: float = HEARTBEAT_INTERVAL_S,
+    ) -> None:
+        """R2: periodic presence heartbeat until stopped. Never raises."""
+        while not self._stop.is_set():
+            try:
+                await relay.post_heartbeat(
+                    participant=self.config.participant_name,
+                    status="active",
+                )
+            except Exception as exc:
+                logger.debug("heartbeat failed: %s", exc)
+            await self._sleep_or_stop(interval)
 
     async def _sleep_or_stop(self, seconds: float) -> None:
         try:
