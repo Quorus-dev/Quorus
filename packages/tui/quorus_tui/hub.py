@@ -55,6 +55,7 @@ from quorus.config import ConfigManager, resolve_config_dir
 
 from . import autocomplete as _autocomplete
 from . import welcome as _welcome
+from .approvals_panel import render_approvals_panel
 from .autocomplete import AutocompletePopover
 from .dm_inbox import render_dm_inbox_panel
 from .work_queue_panel import render_work_queue_panel
@@ -643,6 +644,56 @@ def _fetch_work_queue(relay: str, secret: str, room: str) -> list[dict]:
         return []
 
 
+def _fetch_pending_approvals(relay: str, secret: str, room: str) -> list[dict]:
+    """L3 — approvals blocking an agent in *room*.
+
+    Returns ``[]`` on any failure: an unreachable relay must never take the
+    hub down, and an empty panel is the honest rendering of "we don't know".
+    """
+    try:
+        r = httpx.get(
+            f"{relay}/v1/approvals",
+            headers=_auth_headers(secret),
+            params={"room": room} if room else None,
+            timeout=5,
+            follow_redirects=True,
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        pending = data.get("pending", []) if isinstance(data, dict) else []
+        return pending if isinstance(pending, list) else []
+    except Exception:
+        return []
+
+
+def _decide_approval(
+    relay: str, secret: str, approval_id: str, approve: bool,
+) -> tuple[bool, str]:
+    """Answer one approval. Returns ``(ok, message)`` for the status bar."""
+    try:
+        r = httpx.post(
+            f"{relay}/v1/approvals/{approval_id}/decision",
+            headers=_auth_headers(secret),
+            json={"approve": approve, "reason": ""},
+            timeout=8,
+            follow_redirects=True,
+        )
+    except Exception as exc:
+        return False, f"relay unreachable ({exc.__class__.__name__})"
+    if r.status_code == 404:
+        return False, f"unknown approval {approval_id}"
+    if r.status_code == 403:
+        return False, "an agent cannot decide its own approval"
+    if r.status_code != 200:
+        return False, f"relay said {r.status_code}"
+    try:
+        status = r.json().get("status", "?")
+    except Exception:
+        status = "?"
+    return True, f"{approval_id} → {status}"
+
+
 # Module-level "out parameter" used by _send_message to surface the relay's
 # rejection reason back to the caller without breaking the Optional[str]
 # (sent_id-or-None) return contract that other call sites rely on.
@@ -909,6 +960,8 @@ class HubState:
         # to closed; Ctrl-W and Ctrl-N flip the booleans. The work-queue
         # panel re-fetches on toggle (cached for 30s); the DM inbox is
         # populated by a dedicated SSE thread (see _dm_sse_loop).
+        self._pending_approvals: list[dict] = []
+        self._approvals_fetched_at: float = 0.0
         self._work_queue_panel_open: bool = False
         self._work_queue_tasks: list[dict] = []
         self._work_queue_room: str = ""
@@ -1148,6 +1201,21 @@ class HubState:
         (per-delivery UUID in fan-out payloads)."""
         return str(msg.get("message_id") or msg.get("id") or "")
 
+    def get_pending_approvals(self) -> list[dict]:
+        with self._lock:
+            return list(self._pending_approvals)
+
+    def set_pending_approvals(self, pending: list[dict]) -> None:
+        with self._lock:
+            self._pending_approvals = list(pending)
+            self._approvals_fetched_at = time.time()
+
+    def approvals_stale(self, ttl: float = 10.0) -> bool:
+        """L3: approvals are time-critical (the agent gives up), so the
+        panel refreshes far more eagerly than the work-queue's 30s."""
+        with self._lock:
+            return (time.time() - self._approvals_fetched_at) > ttl
+
     def set_messages(self, msgs: list[dict]) -> None:
         with self._lock:
             self.messages = msgs[-MAX_MSG:]
@@ -1273,6 +1341,13 @@ def _poll_loop(relay: str, secret: str, state: HubState, stop_event: threading.E
                     msgs = _fetch_history(relay, secret, room_name)
                     if msgs is not None:
                         state.set_messages(msgs)
+                    # L3: a blocked agent is burning its wake budget while
+                    # it waits, so approvals refresh on their own timer —
+                    # no keybind, no scrolling required to notice.
+                    if state.approvals_stale():
+                        state.set_pending_approvals(
+                            _fetch_pending_approvals(relay, secret, room_name)
+                        )
         except Exception:
             state.set_connected(False, "Relay unreachable")
 
@@ -2125,6 +2200,41 @@ def _slash_clear(arg, state, relay_url, secret, agent_name, console):
     return True
 
 
+def _slash_approve(arg, state, relay_url, secret, agent_name, console):
+    """``/approve <apr_id>`` — unblock an agent from the chat pane."""
+    del agent_name, console
+    return _slash_decide(arg, state, relay_url, secret, approve=True)
+
+
+def _slash_deny(arg, state, relay_url, secret, agent_name, console):
+    """``/deny <apr_id>`` — refuse a blocked tool call."""
+    del agent_name, console
+    return _slash_decide(arg, state, relay_url, secret, approve=False)
+
+
+def _slash_decide(arg, state, relay_url, secret, *, approve: bool):
+    approval_id = (arg or "").strip().split()[0] if (arg or "").strip() else ""
+    if not approval_id:
+        pending = state.get_pending_approvals()
+        if len(pending) == 1:
+            # Unambiguous: one blocked agent, so "/approve" alone means it.
+            approval_id = str(pending[0].get("id", ""))
+        else:
+            state.set_status_bar(
+                "usage: /approve <apr_id>" if not pending
+                else f"{len(pending)} pending — name one: /approve <apr_id>"
+            )
+            return True
+    ok, msg = _decide_approval(relay_url, secret, approval_id, approve)
+    state.set_status_bar(msg if ok else f"approval failed: {msg}")
+    if ok:
+        state.set_pending_approvals(
+            [r for r in state.get_pending_approvals()
+             if r.get("id") != approval_id]
+        )
+    return True
+
+
 def _slash_expand(arg, state, relay_url, secret, agent_name, console):
     """``/expand <root_id|all>`` — open a collapsed thread. Matches by the
     8-char prefix from the thread-summary hint."""
@@ -2491,6 +2601,8 @@ SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/status":     ("connection + relay info",              _slash_status),
     "/clear":      ("clear the chat pane",                  _slash_clear),
     "/expand":     ("/expand <root_id>|all — open a thread", _slash_expand),
+    "/approve":    ("/approve [apr_id] — unblock a waiting agent", _slash_approve),
+    "/deny":       ("/deny [apr_id] — refuse a blocked tool call", _slash_deny),
     "/quit":       ("close the hub",                        _slash_quit),
     # Quorus Social Protocol v1 — typed wire primitives over /v1/social/{verb}
     "/claim":      ("/claim <task_id> <eta_min> <scope>",   _slash_claim),
@@ -3120,6 +3232,15 @@ def _main_input_loop(
                             console_width=console_width,
                         ):
                             console.print(wq_row)
+                        console.print()
+                    # L3: a blocked agent cannot wait for a keybind, so
+                    # this panel is unconditional when anything is pending.
+                    for apr_row in render_approvals_panel(
+                        state.get_pending_approvals(),
+                        console_width=console_width,
+                    ):
+                        console.print(apr_row)
+                    if state.get_pending_approvals():
                         console.print()
                     if state.is_dm_inbox_open():
                         for dm_row in render_dm_inbox_panel(
