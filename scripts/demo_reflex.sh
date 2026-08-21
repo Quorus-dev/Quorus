@@ -397,8 +397,12 @@ api POST /v1/triage "$TRIAGE_BODY" >/dev/null \
 # ---------------------------------------------------------------------------
 # 9) Wait for reply to land in room history
 # ---------------------------------------------------------------------------
-step "9/11  waiting up to 15s for $AGENT_NAME to reply"
-REPLY_DEADLINE=$(( $(date +%s) + 15 ))
+# Stub replies land in <1s; a real `claude --print` cold start + model
+# latency is routinely 10-45s, so give the real path a longer window.
+REPLY_WAIT=15
+[[ "$USE_REAL" == "1" ]] && REPLY_WAIT=90
+step "9/11  waiting up to ${REPLY_WAIT}s for $AGENT_NAME to reply"
+REPLY_DEADLINE=$(( $(date +%s) + REPLY_WAIT ))
 REPLY_CONTENT=""
 REPLY_T1=0
 while [[ $(date +%s) -lt $REPLY_DEADLINE ]]; do
