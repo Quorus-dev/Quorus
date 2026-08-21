@@ -7850,6 +7850,7 @@ def _print_grouped_help():
             ("decision <room> <t>","Record an architectural decision"),
             ("resolve",            "AI-powered merge conflict resolution"),
             ("board",              "Live swarm task board"),
+            ("room bind <r> <dir>","Bind a room to a repo — agents wake there"),
         ]),
         ("AGENTS & SWARMS", [
             ("ps",                 "Show agent presence (online/offline)"),
@@ -7859,6 +7860,9 @@ def _print_grouped_help():
             ("hackathon",          "Two-room hackathon setup"),
             ("share <room>",       "Generate a portable join token"),
             ("quickjoin <token>",  "Join with zero config from token"),
+            ("reflexd status",     "Wake daemon — agents answer @-mentions"),
+            ("reflexd-manager",    "Supervisor: one wake daemon per agent"),
+            ("turnguard status",   "Busy-file guard (never interrupt mid-tool)"),
         ]),
         ("OPS & ADMIN", [
             ("relay",              "Start the relay server locally"),
