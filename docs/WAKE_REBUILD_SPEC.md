@@ -159,13 +159,29 @@ Files: `scripts/reflexd.py`, `scripts/reflexd_triage.py`, `packages/cli/quorus_c
   sleep→wake (dead-socket heartbeat + reconnect ≤5s after wake), re-attaches
   SSE, drains unacked inbox, acks as it handles. PID/liveness surfaced in
   `quorus doctor`.
-- **D5. Guardrails.** Per-wake: `--max-turns 15` (Claude; per-harness
-  equivalents/timeouts elsewhere), wall-clock kill timer (default 15 min,
-  config `REFLEXD_MAX_WALL_SECONDS`). Per-agent daily budget counter (tokens
-  where reported, else wake count): soft limit → post warning + prefer cheaper
-  model where the harness allows; hard limit → stop waking, post notice.
-  Concurrency: one active run per room per agent; further mentions queue.
-  Existing reply-depth-3 chain breaking stays.
+- **D5. Guardrails — mission-aware (refined 2026-08-20 per Arav).** Two wake
+  classes with different budgets:
+  - **Chat wake** (mention/question, no claimed task): `--max-turns 15`,
+    wall-clock kill 15 min. Cheap, bounded.
+  - **Mission wake** (agent holds a work-queue claim): NO arbitrary
+    wall-clock kill. The agent works until the task is completed/released,
+    or a human sends the QSP `interrupt` verb ("stop"). Liveness is
+    progress-based: TurnGuard busy-file activity, tool events, or room
+    posts within `REFLEXD_MISSION_SILENCE_S` (default 20 min) count as
+    alive; silence past that → post "agent quiet 20m on <task>" to the
+    room and escalate (never silently kill a working agent).
+  Per-agent daily budget stays as the backstop (soft → warn/downgrade,
+  hard → stop + notice). Concurrency: one active run per room per agent;
+  further mentions queue. Reply-depth-3 chain breaking stays.
+- **D5b. Mission lifecycle (the Arav rule).** An agent never "falls asleep"
+  mid-mission by design: (1) claim task → mission session opens (D2 map
+  binds room→session); (2) host sleep/crash/kill is a PAUSE, not an end —
+  the durable inbox (R1) + session resume (D2) mean the next wake continues
+  the same session with full memory; (3) mission ends ONLY on task
+  complete/release or explicit human `interrupt`; (4) a tag after mission
+  end wakes the same session — the agent remembers its past work and
+  continues. Acceptance: claim task → kill daemon mid-work → restart →
+  agent resumes the same session and finishes without any human prompt.
 - **D6. Ack protocol.** Every handled wake event (replied, refused, errored)
   is acked to R1's endpoint; unhandled events survive daemon crash and
   redeliver.
