@@ -36,13 +36,17 @@ def _now() -> datetime:
 
 
 def redis_or_none():
-    """Return the initialised Redis connection, or None (fallback path)."""
-    try:
-        from quorus.backends.redis_client import get_redis
+    """Return the initialised Redis connection, or None when Redis is not
+    configured at all.
 
-        return get_redis()
-    except Exception:
-        return None
+    Deliberately narrow: swallowing every exception here would silently
+    drop a configured deployment back to the process-local auction — the
+    exact double-winner bug this module exists to prevent — with no log
+    line to explain it.
+    """
+    from quorus.backends.redis_client import get_redis_or_none
+
+    return get_redis_or_none()
 
 
 def _bids_key(tid: str, rid: str, mid: str) -> str:
@@ -124,6 +128,13 @@ async def record_bid(
     bids, expires_at = await _load_bids(r, tid, rid, mid)
     now = _now()
     if expires_at is None or expires_at < now.isoformat():
+        # A lapsed window starts EMPTY — the in-memory path constructs a
+        # fresh _BidWindow here. Only resetting the deadline left the old
+        # bids in the hash (they live ttl+1h), so a bidder from an hour ago
+        # could be elected winner of an auction they never entered.
+        if bids:
+            await r.delete(key)
+            bids = {}
         expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
         await r.hset(key, _EXPIRES_FIELD, expires_at)
     await r.hset(key, participant, json.dumps({
@@ -150,13 +161,14 @@ async def try_claim(
     rid: str,
     mid: str,
     claim_payload_factory,
-) -> tuple[dict[str, Any] | None, dict[str, dict]]:
+) -> tuple[dict[str, Any] | None, dict[str, dict], bool]:
     """Race for the claim.
 
-    Returns ``(claim_dict, bids)``. When another replica (or an earlier
-    call) already claimed, the stored claim is returned — the caller treats
-    it exactly like the in-memory idempotent re-claim. When no bids exist,
-    returns ``(None, {})`` and the caller 404s.
+    Returns ``(claim_dict, bids, is_fresh)``. ``is_fresh`` is True only for
+    the replica whose ``SET NX`` won; everyone else gets the stored claim
+    with ``is_fresh=False`` so they can skip side effects (the in-memory
+    path returns early on a re-claim WITHOUT re-broadcasting a wake). When
+    no bids exist, returns ``(None, {}, False)`` and the caller 404s.
 
     ``claim_payload_factory(bids, winner, winner_bid, credits)`` builds the
     claim dict; it is invoked ONLY by the SET-NX winner, and only that
@@ -164,7 +176,7 @@ async def try_claim(
     """
     bids, _ = await _load_bids(r, tid, rid, mid)
     if not bids:
-        return None, {}
+        return None, {}, False
 
     lead = await _leader(r, tid, bids)
     assert lead is not None
@@ -179,20 +191,26 @@ async def try_claim(
     stored = await r.set(ckey, json.dumps(payload), nx=True, ex=_CLAIM_TTL_S)
     if not stored:
         raw = await r.get(ckey)
-        if raw is None:  # claim expired between SET NX and GET — rare; 404
-            return None, bids
+        if raw is None:  # claim expired between SET NX and GET — rare
+            return None, bids, False
         val = raw.decode() if isinstance(raw, bytes) else raw
         try:
-            return json.loads(val), bids
+            return json.loads(val), bids, False
         except (json.JSONDecodeError, TypeError):
-            return None, bids
+            return None, bids, False
 
     # We won the race: apply fairness credits exactly once.
     credit_hash = _credit_key(tid)
     for participant in candidates:
         delta = -1.0 if participant == winner else 0.25
-        await r.hincrbyfloat(credit_hash, participant, delta)
-        credits[participant] = await get_credit(r, tid, participant)
+        # HINCRBYFLOAT returns the post-increment value: authoritative for
+        # THIS claim. Re-reading with HGET both doubled the round-trips and
+        # raced a concurrent claim in another room for the same tenant.
+        updated = await r.hincrbyfloat(credit_hash, participant, delta)
+        try:
+            credits[participant] = float(updated)
+        except (TypeError, ValueError):
+            credits[participant] = await get_credit(r, tid, participant)
     payload["fairness_credit"] = credits
     await r.set(ckey, json.dumps(payload), ex=_CLAIM_TTL_S)
-    return payload, bids
+    return payload, bids, True

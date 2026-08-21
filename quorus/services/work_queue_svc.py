@@ -75,6 +75,10 @@ MAX_ACTIVE_PER_ACTOR = 50
 # representing live work owned by the actor.
 _ACTIVE_STATUSES: frozenset[str] = frozenset({"pending", "in_progress", "blocked"})
 
+# Mirror retention. Long enough to survive a deploy or a weekend outage,
+# short enough that abandoned rooms cannot accumulate without bound.
+_REDIS_TTL_S = 60 * 60 * 24 * 14
+
 
 class WorkQueueError(Exception):
     """Base for queue-mutation rejections."""
@@ -159,6 +163,7 @@ class WorkQueueSvc:
         # In-memory mirror — always populated even when Redis is configured,
         # so reads are O(1) without an awaited round-trip.
         self._tasks: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+        self._hydrated: set[tuple[str, str]] = set()
         # Per-(tid, rid) lock so concurrent claims serialize cleanly.
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._lock_factory_lock = asyncio.Lock()
@@ -203,14 +208,29 @@ class WorkQueueSvc:
     async def _redis_persist(
         self, tid: str, rid: str, task: dict[str, Any],
     ) -> None:
+        """Mirror one task. Terminal tasks are DROPPED, not written.
+
+        The mirror exists to restore in-flight work after a restart; a
+        done/failed/cancelled task has nothing to restore. Persisting them
+        (which `expire()` did for every timed-out task) grew the hash
+        without bound and made `_redis_drop` dead code.
+        """
         if self._redis is None:
             return
+        if task.get("status") not in _ACTIVE_STATUSES:
+            await self._redis_drop(tid, rid, task["task_id"])
+            return
         try:
+            key = self._redis_key(tid, rid)
             await self._redis.hset(
-                self._redis_key(tid, rid),
+                key,
                 task["task_id"],
                 json.dumps(task, separators=(",", ":")),
             )
+            # Bound the key: without a TTL an abandoned room's hash lives
+            # forever, and terminal tasks were re-persisted rather than
+            # dropped. Refreshed on every write, so active rooms never lapse.
+            await self._redis.expire(key, _REDIS_TTL_S)
         except Exception:
             # Redis is best-effort secondary; in-memory is source of truth.
             pass
@@ -222,6 +242,35 @@ class WorkQueueSvc:
             await self._redis.hdel(self._redis_key(tid, rid), task_id)
         except Exception:
             pass
+
+    async def _hydrate_once(self, tid: str, rid: str) -> None:
+        """Load the mirrored room queue on first touch after process start.
+
+        Without this the mirror was write-only: every mutation wrote to
+        Redis, nothing ever read back, and a restart still lost every
+        claim while the hash grew forever. Caller must hold the room lock.
+        """
+        key = (tid, rid)
+        if self._redis is None or key in self._hydrated:
+            return
+        try:
+            raw = await self._redis.hgetall(self._redis_key(tid, rid))
+        except Exception:
+            # Transient failure — stay unmarked so the next call retries.
+            return
+        self._hydrated.add(key)
+        if not raw:
+            return
+        bucket = self._tasks.setdefault(key, {})
+        for field, value in raw.items():
+            task_id = field.decode() if isinstance(field, bytes) else field
+            payload = value.decode() if isinstance(value, bytes) else value
+            try:
+                task = json.loads(payload)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(task, dict):
+                bucket.setdefault(task_id, task)
 
     # ── public API ───────────────────────────────────────────────────────
 
@@ -242,6 +291,7 @@ class WorkQueueSvc:
         task_id = task_id or f"task-{uuid.uuid4().hex[:8]}"
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             bucket = self._bucket(tid, rid)
             if task_id in bucket:
                 # Idempotent re-add: return the existing record. This lets
@@ -279,6 +329,7 @@ class WorkQueueSvc:
             raise WorkQueueError("actor required")
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             bucket = self._bucket(tid, rid)
             task = bucket.get(task_id)
             # M13 — count this actor's active workload BEFORE we mutate
@@ -347,6 +398,7 @@ class WorkQueueSvc:
         """
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             bucket = self._bucket(tid, rid)
             task = bucket.get(task_id)
             if task is None:
@@ -381,6 +433,7 @@ class WorkQueueSvc:
         """Mark a task done (success=True ⇒ ``done``; else ``failed``)."""
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             bucket = self._bucket(tid, rid)
             task = bucket.get(task_id)
             if task is None:
@@ -405,6 +458,7 @@ class WorkQueueSvc:
         without, marks the task ``cancelled``."""
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             bucket = self._bucket(tid, rid)
             task = bucket.get(task_id)
             if task is None:
@@ -437,6 +491,7 @@ class WorkQueueSvc:
         """Return tasks ordered by ``created_at`` ascending."""
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             bucket = self._bucket(tid, rid)
             items = list(bucket.values())
         items.sort(key=lambda t: t.get("created_at", ""))
@@ -454,6 +509,7 @@ class WorkQueueSvc:
     ) -> dict[str, Any] | None:
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             bucket = self._bucket(tid, rid)
             task = bucket.get(task_id)
             return dict(task) if task else None
@@ -473,6 +529,7 @@ class WorkQueueSvc:
         expired: list[str] = []
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             for task in self._bucket(tid, rid).values():
                 if task.get("status") != "in_progress":
                     continue

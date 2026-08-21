@@ -49,16 +49,22 @@ async def mirror_delete(ns_key: str, field: str) -> None:
         logger.warning("p1 mirror delete failed for %s: %s", ns_key, exc)
 
 
-async def hydrate(ns_key: str) -> dict[str, dict[str, Any]]:
-    """Load a mirrored bucket. Empty dict when Redis is absent/empty."""
+async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Load a mirrored bucket.
+
+    Returns ``(entries, ok)``. ``ok`` distinguishes "there is nothing to
+    load" (no Redis configured, or an empty hash — both fine, cache it)
+    from "we could not read" (transient error — the caller must NOT mark
+    the bucket hydrated, or one blip serves empty state forever).
+    """
     r = get_redis_or_none()
     if r is None:
-        return {}
+        return {}, True
     try:
         raw = await r.hgetall(ns_key)
     except Exception as exc:
         logger.warning("p1 hydrate failed for %s: %s", ns_key, exc)
-        return {}
+        return {}, False
     out: dict[str, dict[str, Any]] = {}
     for k, v in (raw or {}).items():
         key = k.decode() if isinstance(k, bytes) else k
@@ -69,4 +75,15 @@ async def hydrate(ns_key: str) -> dict[str, dict[str, Any]]:
             continue
         if isinstance(parsed, dict):
             out[key] = parsed
-    return out
+    return out, True
+
+
+async def mirror_drop(ns_key: str) -> None:
+    """Delete an entire mirrored bucket (used by service reset)."""
+    r = get_redis_or_none()
+    if r is None:
+        return
+    try:
+        await r.delete(ns_key)
+    except Exception as exc:
+        logger.warning("p1 mirror drop failed for %s: %s", ns_key, exc)

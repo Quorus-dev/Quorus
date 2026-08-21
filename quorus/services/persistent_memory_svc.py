@@ -93,8 +93,13 @@ class PersistentMemorySvc:
         key = (tid, participant, rid)
         if key in self._hydrated:
             return
+        stored, ok = await _p1.hydrate(self._ns(tid, participant, rid))
+        if not ok:
+            # Transient Redis failure: leave the bucket UNMARKED so the next
+            # read retries. Marking first meant one blip pinned the bucket to
+            # empty for the process lifetime while writes kept mirroring.
+            return
         self._hydrated.add(key)
-        stored = await _p1.hydrate(self._ns(tid, participant, rid))
         if stored:
             bucket = self._entries.setdefault(key, {})
             for k, entry in stored.items():
@@ -221,17 +226,31 @@ class PersistentMemorySvc:
             return removed is not None
 
     async def reset(self, tid: str | None = None) -> None:
+        """Wipe state, including hydration marks and the Redis mirror.
+
+        Leaving either behind broke reset twice over: the bucket stayed
+        marked hydrated (next read skips the mirror, serves empty) and the
+        mirrored entries came back on the next process start.
+        """
+        doomed = (
+            list(self._hydrated) if tid is None
+            else [k for k in self._hydrated if k[0] == tid]
+        )
         async with self._lock_factory_lock:
             if tid is None:
                 self._entries.clear()
                 self._locks.clear()
-                return
-            self._entries = {
-                k: v for k, v in self._entries.items() if k[0] != tid
-            }
-            self._locks = OrderedDict(
-                (k, lk) for k, lk in self._locks.items() if k[0] != tid
-            )
+                self._hydrated.clear()
+            else:
+                self._entries = {
+                    k: v for k, v in self._entries.items() if k[0] != tid
+                }
+                self._locks = OrderedDict(
+                    (k, lk) for k, lk in self._locks.items() if k[0] != tid
+                )
+                self._hydrated = {k for k in self._hydrated if k[0] != tid}
+        for t, participant, rid in doomed:
+            await _p1.mirror_drop(self._ns(t, participant, rid))
 
 
 __all__ = [

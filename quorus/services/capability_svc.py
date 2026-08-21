@@ -78,8 +78,10 @@ class CapabilitySvc:
         manifests. Caller must hold the tenant lock."""
         if tid in self._hydrated:
             return
+        stored, ok = await _p1.hydrate(self._ns(tid))
+        if not ok:
+            return  # transient failure — retry on the next read
         self._hydrated.add(tid)
-        stored = await _p1.hydrate(self._ns(tid))
         for participant, manifest in stored.items():
             self._manifests.setdefault((tid, participant), manifest)
 
@@ -148,16 +150,27 @@ class CapabilitySvc:
             return results
 
     async def reset(self, tid: str | None = None) -> None:
-        """Wipe state. No tid → full wipe; with tid → that tenant only."""
+        """Wipe state. No tid → full wipe; with tid → that tenant only.
+
+        Clears the hydration marks and the Redis mirror too: without that,
+        a reset bucket stays marked hydrated (so the next read skips the
+        mirror and serves empty) and the mirrored rows resurrect on the
+        next restart.
+        """
+        tenants = [tid] if tid else list(self._hydrated)
         async with self._lock_factory_lock:
             if tid is None:
                 self._manifests.clear()
                 self._locks.clear()
-                return
-            self._manifests = {
-                k: v for k, v in self._manifests.items() if k[0] != tid
-            }
-            self._locks.pop(tid, None)
+                self._hydrated.clear()
+            else:
+                self._manifests = {
+                    k: v for k, v in self._manifests.items() if k[0] != tid
+                }
+                self._locks.pop(tid, None)
+                self._hydrated.discard(tid)
+        for t in tenants:
+            await _p1.mirror_drop(self._ns(t))
 
 
 __all__ = ["CapabilitySvc", "CapabilityError"]

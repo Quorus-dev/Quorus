@@ -97,8 +97,10 @@ class ToolCatalogSvc:
         key = (tid, rid)
         if key in self._hydrated:
             return
+        stored, ok = await _p1.hydrate(self._ns(tid, rid))
+        if not ok:
+            return  # transient failure — retry on the next read
         self._hydrated.add(key)
-        stored = await _p1.hydrate(self._ns(tid, rid))
         if stored:
             bucket = self._tools.setdefault(key, {})
             for name, record in stored.items():
@@ -183,21 +185,33 @@ class ToolCatalogSvc:
     async def reset(
         self, tid: str | None = None, rid: str | None = None,
     ) -> None:
+        # Mirror keys to drop, resolved before we mutate the hydrated set.
+        if tid is None and rid is None:
+            doomed = list(self._hydrated)
+        elif rid is None:
+            doomed = [k for k in self._hydrated if k[0] == tid]
+        else:
+            doomed = [(tid, rid)]
         async with self._lock_factory_lock:
             if tid is None and rid is None:
                 self._tools.clear()
                 self._locks.clear()
-                return
-            if rid is None:
+                self._hydrated.clear()
+            elif rid is None:
                 self._tools = {
                     k: v for k, v in self._tools.items() if k[0] != tid
                 }
                 self._locks = OrderedDict(
                     (k, lk) for k, lk in self._locks.items() if k[0] != tid
                 )
-                return
-            self._tools.pop((tid, rid), None)
-            self._locks.pop((tid, rid), None)
+                self._hydrated = {k for k in self._hydrated if k[0] != tid}
+            else:
+                self._tools.pop((tid, rid), None)
+                self._locks.pop((tid, rid), None)
+                self._hydrated.discard((tid, rid))
+        # Drop the mirror too — otherwise reset data returns on restart.
+        for t, r in doomed:
+            await _p1.mirror_drop(self._ns(t, r))
 
 
 __all__ = [

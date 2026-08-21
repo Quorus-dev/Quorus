@@ -410,24 +410,34 @@ async def _claim_via_redis(r, request, auth, tid, rid, room_data, body) -> Claim
             "fairness_credit": credits,
         }
 
-    payload, bids = await _tr.try_claim(
+    payload, bids, is_fresh = await _tr.try_claim(
         r, tid=tid, rid=rid, mid=body.message_id,
         claim_payload_factory=_payload,
     )
     if payload is None:
-        raise HTTPException(status_code=404, detail="No bids for message")
+        # Bids exist (checked above) but the claim record vanished or was
+        # unreadable between SET NX and GET. That is transient contention,
+        # not "no bids" — say so, so a caller can retry instead of giving up.
+        raise HTTPException(
+            status_code=409, detail="claim contended — retry",
+        )
     claim = ClaimResponse(**payload)
-    _broadcast_wake_intent(
-        request, tid, room_data.get("name", rid), claim.candidates,
-        {
-            "event": "claim",
-            "room_id": rid,
-            "message_id": body.message_id,
-            "winner": claim.winner,
-            "candidates": claim.candidates,
-            "claim_token": claim.claim_token,
-        },
-    )
+    # Only the replica that actually WON the race broadcasts. The in-memory
+    # path returns early on a re-claim without re-broadcasting; without this
+    # guard every duplicate /v1/claim re-woke all candidates — the exact
+    # duplicate-wake class R3 exists to eliminate.
+    if is_fresh:
+        _broadcast_wake_intent(
+            request, tid, room_data.get("name", rid), claim.candidates,
+            {
+                "event": "claim",
+                "room_id": rid,
+                "message_id": body.message_id,
+                "winner": claim.winner,
+                "candidates": claim.candidates,
+                "claim_token": claim.claim_token,
+            },
+        )
     return claim
 
 
