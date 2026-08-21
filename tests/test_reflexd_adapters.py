@@ -43,7 +43,7 @@ SELF = "arav-claude"
 
 
 def test_build_claude_argv_pins_exact_shape() -> None:
-    """Claude CLI contract: ``claude --print -- <ctx>``.
+    """Claude CLI contract: ``claude --print --output-format json [--resume <sid>] -- <ctx>`` (D2).
 
     Headless mode in the Claude Code CLI. No ANTHROPIC_API_KEY needed —
     the binary uses its own OAuth/keychain credentials. The trailing
@@ -51,7 +51,11 @@ def test_build_claude_argv_pins_exact_shape() -> None:
     dash chat body is not re-interpreted as a flag (CRIT-7).
     """
     out = reflexd.build_claude_argv("hello world")
-    assert out == ["claude", "--print", "--", "hello world"]
+    assert out == ["claude", "--print", "--output-format", "json",
+                   "--", "hello world"]
+    resumed = reflexd.build_claude_argv("hello world", resume="sid-123")
+    assert resumed == ["claude", "--print", "--output-format", "json",
+                       "--resume", "sid-123", "--", "hello world"]
 
 
 def test_build_codex_argv_pins_exact_shape() -> None:
@@ -192,7 +196,8 @@ def test_claude_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) 
     out = _run_adapter("claude", context="hello-claude")
     assert out == "hello-from-claude-cli"
     assert seen_argv == reflexd.build_claude_argv("hello-claude")
-    assert seen_argv == ["claude", "--print", "--", "hello-claude"]
+    assert seen_argv == ["claude", "--print", "--output-format", "json",
+                         "--", "hello-claude"]
 
 
 def test_claude_adapter_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -609,7 +614,8 @@ def test_log_adapter_versions_warns_on_unknown_version(
         #   from the positional prompt
         # - gemini uses ``--prompt=<ctx>`` because its parser rejects
         #   ``-- <ctx>`` after ``--prompt``
-        ("claude", ["claude", "--print", "--", "ctx"]),
+        ("claude", ["claude", "--print", "--output-format", "json",
+                    "--", "ctx"]),
         ("codex", ["codex", "exec", "--json", "--", "ctx"]),
         ("gemini", ["gemini", "--prompt=ctx"]),
         ("cursor", ["cursor-agent", "-p", "--", "ctx"]),

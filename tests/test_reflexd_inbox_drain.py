@@ -250,7 +250,7 @@ def _wake_envelope() -> dict[str, Any]:
 
 
 def _run_wake(daemon, relay, monkeypatch, adapter_reply: str) -> None:
-    async def fake_run(harness, *, context, cwd=None):
+    async def fake_run(harness, *, context, cwd=None, resume=None, on_session=None):
         return adapter_reply
     monkeypatch.setattr(daemon.adapter, "run", fake_run)
     asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
@@ -326,7 +326,7 @@ def test_unbound_room_gets_prompt_note(monkeypatch: pytest.MonkeyPatch) -> None:
     daemon = _make_daemon()
     captured: dict[str, Any] = {}
 
-    async def fake_run(harness, *, context, cwd=None):
+    async def fake_run(harness, *, context, cwd=None, resume=None, on_session=None):
         captured["context"] = context
         captured["cwd"] = cwd
         return "ok"
@@ -337,3 +337,73 @@ def test_unbound_room_gets_prompt_note(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
     assert "No workspace is bound" in captured["context"]
     assert captured["cwd"] is None
+
+
+def test_session_map_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D2: remember → resolve → forget, file mode 0600."""
+    monkeypatch.setattr(reflexd, "_sessions_path",
+                        lambda p: tmp_path / f"sessions-{p}.json")
+    assert reflexd.session_for(SELF, "dev") is None
+    reflexd.remember_session(SELF, "dev", "sid-abc")
+    assert reflexd.session_for(SELF, "dev") == "sid-abc"
+    mode = (tmp_path / f"sessions-{SELF}.json").stat().st_mode & 0o777
+    assert mode == 0o600
+    reflexd.forget_session(SELF, "dev")
+    assert reflexd.session_for(SELF, "dev") is None
+
+
+def test_parse_claude_json_envelope_and_fallback() -> None:
+    text, sid = reflexd._parse_claude_json(
+        '{"result": "the answer", "session_id": "s-1", "total_cost_usd": 0.01}'
+    )
+    assert (text, sid) == ("the answer", "s-1")
+    text, sid = reflexd._parse_claude_json("plain old text output\n")
+    assert (text, sid) == ("plain old text output", None)
+
+
+def test_wake_resumes_and_persists_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D2 e2e at the wake layer: prior session is passed as resume; the
+    session id returned by the harness is persisted for the next wake."""
+    monkeypatch.setattr(reflexd, "_sessions_path",
+                        lambda p: tmp_path / f"sessions-{p}.json")
+    reflexd.remember_session(SELF, "r", "old-session")
+    daemon = _make_daemon()
+    seen: dict[str, Any] = {}
+
+    async def fake_run(harness, *, context, cwd=None, resume=None, on_session=None):
+        seen["resume"] = resume
+        if on_session:
+            on_session("new-session-id")
+        return "continued fine"
+
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    relay = _D7Relay(history=[])
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
+    assert seen["resume"] == "old-session"
+    assert reflexd.session_for(SELF, "r") == "new-session-id"
+
+
+def test_claude_resume_failure_retries_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D2: an expired resume id degrades to a fresh session, never a dead wake."""
+    adapter = reflexd.HeadlessAdapter(timeout_s=2)
+    calls: list[list[str]] = []
+
+    async def fake_sub(argv, *, parser, cwd=None):
+        calls.append(argv)
+        if "--resume" in argv:
+            return "[reflexd] harness errored"
+        return parser('{"result": "fresh reply", "session_id": "s-new"}')
+
+    monkeypatch.setattr(adapter, "_run_subprocess", fake_sub)
+    got: list[str] = []
+    out = asyncio.run(adapter.run(
+        "claude", context="hi", resume="dead-session",
+        on_session=got.append,
+    ))
+    assert out == "fresh reply"
+    assert len(calls) == 2 and "--resume" in calls[0] and "--resume" not in calls[1]
+    assert got == ["s-new"]

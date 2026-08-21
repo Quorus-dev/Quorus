@@ -421,7 +421,8 @@ def test_e2e_open_todo_via_smoke_relay(
     seen_contexts: list[str] = []
 
     class StubAdapter:
-        async def run(self, harness: str, *, context: str, cwd=None) -> str:
+        async def run(self, harness: str, *, context: str, cwd=None,
+                  resume=None, on_session=None) -> str:
             assert harness == "claude"
             seen_contexts.append(context)
             return "[ack-stub] picking up the open task"

@@ -45,6 +45,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -128,6 +129,63 @@ def workspace_for(room: str, *, bindings_path: Path | None = None) -> Path | Non
         logger.warning("room binding for %r points at missing dir %s", room, ws)
         return None
     return ws
+
+
+# D2 (WAKE_REBUILD_SPEC): room → harness-session map, so every wake resumes
+# the same conversation and the agent keeps its memory across wakes, sleeps,
+# and daemon restarts. One file per participant, 0600.
+
+def _sessions_path(participant: str) -> Path:
+    return Path.home() / ".quorus" / f"sessions-{participant}.json"
+
+
+def session_for(participant: str, room: str) -> str | None:
+    try:
+        data = json.loads(_sessions_path(participant).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    entry = data.get(room) if isinstance(data, dict) else None
+    if isinstance(entry, dict) and isinstance(entry.get("session_id"), str):
+        return entry["session_id"]
+    return None
+
+
+def remember_session(participant: str, room: str, session_id: str) -> None:
+    path = _sessions_path(participant)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    data[room] = {
+        "harness": "claude",
+        "session_id": session_id,
+        "last_used": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except OSError as exc:
+        logger.warning("could not persist session map: %s", exc)
+
+
+def forget_session(participant: str, room: str) -> None:
+    path = _sessions_path(participant)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if isinstance(data, dict) and room in data:
+        del data[room]
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except OSError:
+            pass
 LOG_MAX_BYTES = 10 * 1024 * 1024  # 10MB rotation per spec
 LOG_BACKUP_COUNT = 3
 SSE_RECONNECT_S = 2.0
@@ -353,22 +411,48 @@ OPENCODE_BIN = "opencode"
 CLINE_BIN = "cline"
 
 
-def build_claude_argv(context: str) -> list[str]:
+def build_claude_argv(context: str, *, resume: str | None = None) -> list[str]:
     """Pinned argv shape for Claude Code CLI.
 
-    Contract: ``claude --print -- <ctx>``.
+    Contract: ``claude --print --output-format json [--resume <sid>] -- <ctx>``.
 
     ``--print`` (alias ``-p``) is the headless / non-interactive mode in the
-    Claude Code CLI (verified on v2.1.126). It reads the prompt from argv,
-    streams the response, then exits. Auth is whatever ``claude /login`` set
-    up — we never read ``ANTHROPIC_API_KEY``.
+    Claude Code CLI (verified on v2.1.126). Auth is whatever ``claude /login``
+    set up — we never read ``ANTHROPIC_API_KEY``.
+
+    D2 (WAKE_REBUILD_SPEC): ``--output-format json`` so we can capture the
+    ``session_id`` from the result envelope and persist a room→session map;
+    ``--resume <sid>`` (explicit id — never ``--continue`` in automation)
+    makes the next wake for the same room CONTINUE the same conversation, so
+    the agent remembers its prior work instead of cold-starting amnesiac.
 
     Argv-injection guard: ``--`` separates options from positional args so
     a chat body that starts with a dash (e.g. ``"-config /etc/passwd"``) is
-    parsed as the prompt, not as a CLI flag. Verified via ``claude --print
-    --help`` (parses help) vs ``claude --print -- --help`` (treated as prompt).
+    parsed as the prompt, not as a CLI flag.
     """
-    return [CLAUDE_BIN, "--print", "--", context]
+    argv = [CLAUDE_BIN, "--print", "--output-format", "json"]
+    if resume:
+        argv += ["--resume", resume]
+    return argv + ["--", context]
+
+
+def _parse_claude_json(out: str) -> tuple[str, str | None]:
+    """Parse ``claude --print --output-format json`` output.
+
+    Returns ``(reply_text, session_id)``. Degrades to the raw text with no
+    session id when the output isn't the expected JSON envelope (older CLI,
+    plain-text mode, or a crash message).
+    """
+    try:
+        data = json.loads(out)
+    except (json.JSONDecodeError, TypeError):
+        return out.strip(), None
+    if isinstance(data, dict):
+        text = data.get("result")
+        sid = data.get("session_id")
+        if isinstance(text, str):
+            return text.strip(), sid if isinstance(sid, str) else None
+    return out.strip(), None
 
 
 def build_codex_argv(context: str) -> list[str]:
@@ -741,6 +825,8 @@ class HeadlessAdapter:
 
     async def run(
         self, harness: str, *, context: str, cwd: Path | None = None,
+        resume: str | None = None,
+        on_session: Callable[[str], None] | None = None,
     ) -> str:
         # Smoke / demo path: avoid spawning any real harness. ~10 LoC, off
         # the regular path. Triggered by an explicit env var OR by the
@@ -751,10 +837,9 @@ class HeadlessAdapter:
         if self.dry_run:
             return self._record_dry_run(harness, context)
         if harness == "claude":
-            return await self._run_subprocess(
-                build_claude_argv(context),
-                parser=lambda out: out.strip(),
-                cwd=cwd,
+            return await self._run_claude(
+                context, cwd=cwd,
+                resume=resume, on_session=on_session,
             )
         if harness == "codex":
             return await self._run_subprocess(
@@ -808,6 +893,40 @@ class HeadlessAdapter:
         self.last_dry_run = {"harness": harness, "argv": argv}
         logger.info("dry_run harness=%s argv=%s", harness, argv)
         return f"[reflexd:dry-run] would invoke {harness} adapter (see last_dry_run)"
+
+    async def _run_claude(
+        self, context: str, *, cwd: Path | None,
+        resume: str | None, on_session: Callable[[str], None] | None,
+    ) -> str:
+        """Claude wake with session continuity (D2).
+
+        Resumes the room's stored session when given; captures the (new or
+        continued) session id from the JSON envelope via ``on_session`` so
+        the caller can persist the room→session map. An expired/unknown
+        resume id makes the CLI exit non-zero — retry ONCE without resume
+        so continuity degrades to a fresh session instead of a dead wake.
+        """
+        captured: dict[str, str | None] = {"sid": None}
+
+        def parser(out: str) -> str:
+            text, sid = _parse_claude_json(out)
+            captured["sid"] = sid
+            return text
+
+        reply = await self._run_subprocess(
+            build_claude_argv(context, resume=resume), parser=parser, cwd=cwd,
+        )
+        if resume and reply == "[reflexd] harness errored":
+            logger.warning(
+                "claude resume failed for session %s — retrying fresh", resume,
+            )
+            captured["sid"] = None
+            reply = await self._run_subprocess(
+                build_claude_argv(context), parser=parser, cwd=cwd,
+            )
+        if captured["sid"] and on_session is not None:
+            on_session(captured["sid"])
+        return reply
 
     async def _run_subprocess(
         self,
@@ -1491,12 +1610,22 @@ class Reflexd:
                 "human to run: quorus room bind " + (room or "<room>") + " <repo-path>"
             )
         log_reason = (triage.reason if triage else None) or reason or "?"
+        # D2: resume the room's prior session so the agent keeps its memory.
+        prior_session = session_for(self.config.participant_name, room)
+
+        def _persist_session(sid: str, _room: str = room) -> None:
+            remember_session(self.config.participant_name, _room, sid)
+
         logger.info(
-            "waking harness=%s room=%s reason=%s memory_entries=%d workspace=%s",
+            "waking harness=%s room=%s reason=%s memory_entries=%d workspace=%s session=%s",
             harness, room, log_reason, len(memory_entries), ws or "-",
+            (prior_session[:8] + "…") if prior_session else "new",
         )
         try:
-            reply = await self.adapter.run(harness, context=prompt, cwd=ws)
+            reply = await self.adapter.run(
+                harness, context=prompt, cwd=ws,
+                resume=prior_session, on_session=_persist_session,
+            )
         except Exception as exc:
             logger.warning("harness %s raised: %s", harness, exc)
             return
