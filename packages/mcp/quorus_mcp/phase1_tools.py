@@ -20,6 +20,9 @@ forwarders in :mod:`quorus_mcp.server`.
 """
 from __future__ import annotations
 
+import asyncio
+import os
+import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -385,3 +388,92 @@ __all__ = [
     "memory_list",
     "memory_delete",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Human-in-the-loop approvals (WAKE_REBUILD L3)
+# ---------------------------------------------------------------------------
+
+APPROVAL_POLL_INTERVAL_S = 2.0
+
+
+async def request_approval(
+    room_id: str,
+    tool_name: str,
+    tool_input: Any = None,
+    *,
+    timeout_s: int = 300,
+) -> dict[str, Any]:
+    """Ask a human in ``room_id`` to allow ``tool_name``; block until decided.
+
+    Returns the settled approval record. On timeout the record comes back
+    with ``status="expired"`` — callers must treat that as a DENY (fail
+    closed), never as an implicit allow.
+    """
+    s = _srv()
+    resp = await _request_with_refresh(
+        "POST", f"{s.RELAY_URL}/v1/approvals",
+        json={
+            "room_id": room_id,
+            "agent": s.INSTANCE_NAME,
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "ttl_seconds": max(10, min(int(timeout_s), 3600)),
+        },
+    )
+    resp.raise_for_status()
+    rec = resp.json()
+    approval_id = rec.get("id", "")
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        await asyncio.sleep(APPROVAL_POLL_INTERVAL_S)
+        poll = await _request_with_refresh(
+            "GET", f"{s.RELAY_URL}/v1/approvals/{approval_id}",
+        )
+        if poll.status_code != 200:
+            continue
+        rec = poll.json()
+        if rec.get("status") != "pending":
+            return rec
+    rec["status"] = "expired"
+    return rec
+
+
+async def approve(
+    tool_name: str,
+    input: Any = None,
+    room_id: str = "",
+) -> dict[str, Any]:
+    """Claude Code ``--permission-prompt-tool`` entry point.
+
+    Relays the permission prompt into the Quorus room and returns the
+    harness's expected decision shape. Fails CLOSED: anything other than an
+    explicit human approval (deny, expiry, relay error) denies the call, so
+    a broken relay can never silently widen an agent's permissions.
+    """
+    room = room_id or os.environ.get("QUORUS_APPROVAL_ROOM", "")
+    if not room:
+        return {
+            "behavior": "deny",
+            "message": (
+                "No Quorus room bound for approvals; set QUORUS_APPROVAL_ROOM "
+                "so the request can reach a human."
+            ),
+        }
+    try:
+        rec = await request_approval(room, tool_name, input)
+    except Exception as exc:
+        return {
+            "behavior": "deny",
+            "message": f"approval relay unreachable ({exc.__class__.__name__})",
+        }
+    if rec.get("status") == "approved":
+        return {"behavior": "allow", "updatedInput": input}
+    if rec.get("status") == "denied":
+        who = rec.get("decided_by") or "a human"
+        why = rec.get("reason") or "no reason given"
+        return {"behavior": "deny", "message": f"denied by {who}: {why}"}
+    return {
+        "behavior": "deny",
+        "message": "approval timed out with no human decision",
+    }

@@ -7852,6 +7852,9 @@ def _print_grouped_help():
             ("resolve",            "AI-powered merge conflict resolution"),
             ("board",              "Live swarm task board"),
             ("room bind <r> <dir>","Bind a room to a repo — agents wake there"),
+            ("approvals",          "Tool approvals waiting on you"),
+            ("approve <id>",       "Allow an agent's blocked tool call"),
+            ("deny <id>",          "Refuse an agent's blocked tool call"),
         ]),
         ("AGENTS & SWARMS", [
             ("ps",                 "Show agent presence (online/offline)"),
@@ -8060,6 +8063,74 @@ def _cmd_login(args) -> None:
     """Alias: quorus login == quorus workspaces add."""
     from quorus.profiles import ProfileManager
     _workspaces_add(ProfileManager(), getattr(args, "name", None))
+
+
+
+# ---------------------------------------------------------------------------
+# quorus approvals / approve / deny  (WAKE_REBUILD L3)
+# ---------------------------------------------------------------------------
+
+async def _approvals_list(room: str | None) -> None:
+    client = _get_client()
+    params = {"room": room} if room else None
+    resp = await client.get(
+        f"{RELAY_URL}/v1/approvals", headers=_auth_headers(), params=params,
+    )
+    resp.raise_for_status()
+    pending = resp.json().get("pending", [])
+    if not pending:
+        console.print("[dim]no approvals waiting[/]")
+        return
+    console.print("[bold]Waiting on you:[/bold]\n")
+    for rec in pending:
+        console.print(
+            f"  [accent]{rec['id']}[/]  [primary]{rec['agent']}[/] wants "
+            f"[bold]{rec['tool_name']}[/] in {rec['room']}"
+        )
+        console.print(f"      [muted]{rec['input_preview']}[/]")
+    console.print(
+        "\n[dim]approve with[/] [accent]quorus approve <id>[/] "
+        "[dim]· deny with[/] [accent]quorus deny <id>[/]"
+    )
+
+
+async def _approval_decide(approval_id: str, approve: bool, reason: str) -> None:
+    client = _get_client()
+    resp = await client.post(
+        f"{RELAY_URL}/v1/approvals/{approval_id}/decision",
+        headers=_auth_headers(),
+        json={"approve": approve, "reason": reason or ""},
+    )
+    if resp.status_code == 404:
+        _ui.error(f"unknown approval {approval_id}",
+                  hint="list what's pending with [accent]quorus approvals[/]")
+        raise SystemExit(4)
+    if resp.status_code == 403:
+        _ui.error("an agent cannot decide its own approval",
+                  hint="decide from your human profile (quorus whoami)")
+        raise SystemExit(3)
+    resp.raise_for_status()
+    rec = resp.json()
+    verb = "approved" if rec["status"] == "approved" else rec["status"]
+    colour = "success" if rec["status"] == "approved" else "warning"
+    console.print(
+        f"[{colour}]{verb}[/] [accent]{rec['id']}[/] — "
+        f"{rec['agent']} · {rec['tool_name']}"
+    )
+
+
+def _cmd_approvals(args) -> None:
+    asyncio.run(_approvals_list(getattr(args, "room", None)))
+
+
+def _cmd_approve(args) -> None:
+    asyncio.run(_approval_decide(args.approval_id, True,
+                                 getattr(args, "reason", "")))
+
+
+def _cmd_deny(args) -> None:
+    asyncio.run(_approval_decide(args.approval_id, False,
+                                 getattr(args, "reason", "")))
 
 
 def _cmd_whoami(args) -> None:
@@ -8927,6 +8998,26 @@ def main():
         help_text="Open the Quorus hub (interactive TUI)",
     ))
 
+    p_approvals = sub.add_parser("approvals", **_help_block(
+        synopsis="List agent tool-approvals waiting on a human.",
+        description=(
+            "When a woken agent hits a permission gate it relays the prompt "
+            "into the room instead of stalling. This lists what is waiting; "
+            "answer with `quorus approve <id>` / `quorus deny <id>`."
+        ),
+        example="quorus approvals --room dev-sprint",
+        help_text="Tool approvals waiting on you",
+    ))
+    p_approvals.add_argument("--room", default=None, help="Filter by room")
+
+    p_approve = sub.add_parser("approve", help="Approve an agent tool call")
+    p_approve.add_argument("approval_id", help="Approval id (apr_...)")
+    p_approve.add_argument("--reason", default="", help="Optional note")
+
+    p_deny = sub.add_parser("deny", help="Deny an agent tool call")
+    p_deny.add_argument("approval_id", help="Approval id (apr_...)")
+    p_deny.add_argument("--reason", default="", help="Optional note")
+
     p_room = sub.add_parser("room", **_help_block(
         synopsis="Host-local room utilities (workspace binding).",
         description=(
@@ -9233,6 +9324,9 @@ def main():
         "context": _cmd_context,
         "decision": _cmd_decision,
         "begin": _cmd_begin,
+        "approvals": _cmd_approvals,
+        "approve": _cmd_approve,
+        "deny": _cmd_deny,
         "room": _cmd_room,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,

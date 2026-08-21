@@ -423,6 +423,11 @@ def _init_services(app_instance, redis_conn=None):
     # process. Wire it (None in file mode keeps the in-memory behaviour).
     app_instance.state.work_queue_service = WorkQueueSvc(redis_conn=redis_conn)
 
+    # L3: human-in-the-loop tool approvals. Fresh per reset_state() so
+    # tests never inherit another test's pending requests.
+    from quorus.services.approval_svc import ApprovalSvc
+    app_instance.state.approval_service = ApprovalSvc()
+
     # Stream B agent-DM inbox — distinct from human DMs. A bare dict; the
     # route initializes the per-recipient deque on first send. We attach
     # here so reset_state() wipes the slate without scattering init logic.

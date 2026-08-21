@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from quorus.routes.agent_dm import router as agent_dm_router
 from quorus.routes.agents import router as agents_router
 from quorus.routes.analytics import router as analytics_router
+from quorus.routes.approvals import router as approvals_router
 from quorus.routes.audit import router as audit_router
 from quorus.routes.capabilities import router as capabilities_router
 from quorus.routes.health import router as health_router
@@ -44,3 +45,4 @@ router.include_router(agent_dm_router)
 router.include_router(capabilities_router)
 router.include_router(tool_catalog_router)
 router.include_router(persistent_memory_router)
+router.include_router(approvals_router)
