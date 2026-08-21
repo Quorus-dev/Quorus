@@ -522,3 +522,64 @@ def test_wake_proceeds_when_live_session_idle(
     relay = _D7Relay(history=[])
     asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="t"))
     assert spawned == ["claude"] and len(relay.posted) == 1
+
+
+def test_codex_argv_has_trust_flag_and_resume() -> None:
+    """Verified live on codex v0.132.0: without --skip-git-repo-check codex
+    refuses with 'Not inside a trusted directory', and resume takes the
+    thread id positionally."""
+    argv = reflexd.build_codex_argv("ctx")
+    assert argv == ["codex", "exec", "--json", "--skip-git-repo-check",
+                    "--", "ctx"]
+    resumed = reflexd.build_codex_argv("ctx", resume="thread-1")
+    assert resumed == ["codex", "exec", "--json", "--skip-git-repo-check",
+                       "resume", "thread-1", "--", "ctx"]
+
+
+def test_codex_stream_parser_extracts_thread_id() -> None:
+    """Shape captured from a real `codex exec --json` run (2026-08-21)."""
+    stream = (
+        '{"type":"thread.started","thread_id":"01a02252-d817-7fd0-88dc"}\n'
+        '{"type":"turn.started"}\n'
+        '{"delta":"hello "}\n'
+        '{"delta":"world"}\n'
+    )
+    text, tid = reflexd._parse_codex_stream(stream)
+    assert text == "hello world"
+    assert tid == "01a02252-d817-7fd0-88dc"
+    # Back-compat wrapper still returns text only.
+    assert reflexd._parse_codex_json(stream) == "hello world"
+
+
+def test_codex_wake_resumes_and_persists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = reflexd.HeadlessAdapter(timeout_s=2)
+    seen: list[list[str]] = []
+
+    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None):
+        seen.append(argv)
+        return parser(
+            '{"type":"thread.started","thread_id":"t-new"}\n{"delta":"ok"}\n'
+        )
+
+    monkeypatch.setattr(adapter, "_run_subprocess", fake_sub)
+    got: list[str] = []
+    out = asyncio.run(adapter.run(
+        "codex", context="hi", resume="t-old", on_session=got.append,
+    ))
+    assert out == "ok"
+    assert "resume" in seen[0] and "t-old" in seen[0]
+    assert got == ["t-new"]
+
+
+def test_session_map_is_harness_scoped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A claude session id must never be handed to codex."""
+    monkeypatch.setattr(reflexd, "_sessions_path",
+                        lambda p: tmp_path / f"s-{p}.json")
+    reflexd.remember_session(SELF, "r", "claude-sid", "claude")
+    assert reflexd.session_for(SELF, "r", "claude") == "claude-sid"
+    assert reflexd.session_for(SELF, "r", "codex") is None
+    assert reflexd.session_for(SELF, "r") == "claude-sid"

@@ -46,8 +46,8 @@ Create/join one room (e.g. `quorus create test-day` / `quorus join test-day`).
 | 6 | Human stop | While an agent is mid-reply chatter, send `/interrupt` | Agent acknowledges stop. |
 
 Record: reply latencies, any manual prompting needed (should be ZERO),
-any spurious "[reflexd] harness timed out" after a good reply (known issue
-D7, fix in flight).
+any spurious "[reflexd] harness timed out" after a good reply (D7 should
+now suppress those — report it if one slips through).
 
 ## Recommended setup for the full experience (all landed 2026-08-21)
 

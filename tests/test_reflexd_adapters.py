@@ -59,14 +59,18 @@ def test_build_claude_argv_pins_exact_shape() -> None:
 
 
 def test_build_codex_argv_pins_exact_shape() -> None:
-    """Codex CLI contract: ``codex exec --json -- <ctx>``.
+    """Codex contract: ``codex exec --json --skip-git-repo-check -- <ctx>``.
+
+    The trust flag is mandatory — verified live on v0.132.0, codex refuses
+    with "Not inside a trusted directory" without it.
 
     The legacy ``codex exec --json --prompt <ctx>`` shape was broken
     (codex rejects ``--prompt``); the prompt is positional. ``--``
     keeps a leading-dash payload from being re-parsed as a flag.
     """
     out = reflexd.build_codex_argv("hello world")
-    assert out == ["codex", "exec", "--json", "--", "hello world"]
+    assert out == ["codex", "exec", "--json", "--skip-git-repo-check",
+                   "--", "hello world"]
 
 
 def test_build_gemini_argv_pins_exact_shape() -> None:
@@ -282,7 +286,8 @@ def test_codex_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) -
     out = _run_adapter("codex", context="my-prompt-text")
     assert "hi codex" in out
     assert seen_argv == reflexd.build_codex_argv("my-prompt-text")
-    assert seen_argv == ["codex", "exec", "--json", "--", "my-prompt-text"]
+    assert seen_argv == ["codex", "exec", "--json", "--skip-git-repo-check",
+                         "--", "my-prompt-text"]
 
 
 def test_codex_adapter_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -616,7 +621,8 @@ def test_log_adapter_versions_warns_on_unknown_version(
         #   ``-- <ctx>`` after ``--prompt``
         ("claude", ["claude", "--print", "--output-format", "json",
                     "--", "ctx"]),
-        ("codex", ["codex", "exec", "--json", "--", "ctx"]),
+        ("codex", ["codex", "exec", "--json", "--skip-git-repo-check",
+                   "--", "ctx"]),
         ("gemini", ["gemini", "--prompt=ctx"]),
         ("cursor", ["cursor-agent", "-p", "--", "ctx"]),
         ("opencode", ["opencode", "run", "--", "ctx"]),

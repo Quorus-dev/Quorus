@@ -155,18 +155,29 @@ def _sessions_path(participant: str) -> Path:
     return Path.home() / ".quorus" / f"sessions-{participant}.json"
 
 
-def session_for(participant: str, room: str) -> str | None:
+def session_for(participant: str, room: str, harness: str | None = None) -> str | None:
+    """Stored session id for this room, or None.
+
+    ``harness`` guards against handing a claude session id to codex (or the
+    reverse) after a participant is re-pointed at a different CLI — the ids
+    are not interchangeable and a wrong one wastes a whole wake on a resume
+    failure.
+    """
     try:
         data = json.loads(_sessions_path(participant).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     entry = data.get(room) if isinstance(data, dict) else None
-    if isinstance(entry, dict) and isinstance(entry.get("session_id"), str):
-        return entry["session_id"]
-    return None
+    if not isinstance(entry, dict) or not isinstance(entry.get("session_id"), str):
+        return None
+    if harness and entry.get("harness") and entry["harness"] != harness:
+        return None
+    return entry["session_id"]
 
 
-def remember_session(participant: str, room: str, session_id: str) -> None:
+def remember_session(
+    participant: str, room: str, session_id: str, harness: str = "claude",
+) -> None:
     path = _sessions_path(participant)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -175,7 +186,7 @@ def remember_session(participant: str, room: str, session_id: str) -> None:
     except (OSError, json.JSONDecodeError):
         data = {}
     data[room] = {
-        "harness": "claude",
+        "harness": harness,
         "session_id": session_id,
         "last_used": datetime.now(timezone.utc).isoformat(),
     }
@@ -482,10 +493,21 @@ def _parse_claude_json(out: str) -> tuple[str, str | None]:
     return out.strip(), None
 
 
-def build_codex_argv(context: str) -> list[str]:
+def build_codex_argv(
+    context: str, *, resume: str | None = None,
+) -> list[str]:
     """Pinned argv shape for codex CLI.
 
-    Contract: ``codex exec --json -- <ctx>``.
+    Contract: ``codex exec --json --skip-git-repo-check [resume <id>] -- <ctx>``.
+
+    ``--skip-git-repo-check`` is required: codex refuses to run with
+    "Not inside a trusted directory" when woken in a directory it has not
+    been trusted for (verified live on v0.132.0, 2026-08-21) — which is
+    every fresh workspace binding.
+
+    D2 parity: ``codex exec resume <SESSION_ID> <PROMPT>`` continues a prior
+    conversation. The id comes from the ``thread.started`` event's
+    ``thread_id`` field in the ``--json`` stream (verified live).
 
     ``codex exec`` takes the prompt as a positional [PROMPT] arg (verified on
     OpenAI Codex v0.128.0). The ``--prompt`` flag does NOT exist; the legacy
@@ -495,7 +517,10 @@ def build_codex_argv(context: str) -> list[str]:
     Argv-injection guard: ``--`` separates options from the positional
     prompt so a leading-dash chat body cannot be re-interpreted as a flag.
     """
-    return [CODEX_BIN, "exec", "--json", "--", context]
+    argv = [CODEX_BIN, "exec", "--json", "--skip-git-repo-check"]
+    if resume:
+        argv += ["resume", resume]
+    return argv + ["--", context]
 
 
 def build_gemini_argv(context: str) -> list[str]:
@@ -782,9 +807,14 @@ def is_agent_participant(participant: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _parse_codex_json(out: str) -> str:
-    """Codex --json emits NDJSON; return concatenated assistant deltas."""
+def _parse_codex_stream(out: str) -> tuple[str, str | None]:
+    """Parse codex ``--json`` NDJSON → ``(reply_text, thread_id)``.
+
+    The thread id arrives on the ``thread.started`` event and is what
+    ``codex exec resume`` accepts (both verified live on v0.132.0).
+    """
     chunks: list[str] = []
+    thread_id: str | None = None
     for line in out.splitlines():
         line = line.strip()
         if not line:
@@ -793,11 +823,20 @@ def _parse_codex_json(out: str) -> str:
             ev = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(ev, dict):
-            delta = ev.get("delta") or ev.get("content") or ev.get("text")
-            if isinstance(delta, str):
-                chunks.append(delta)
-    return "".join(chunks).strip()
+        if not isinstance(ev, dict):
+            continue
+        tid = ev.get("thread_id")
+        if isinstance(tid, str) and tid:
+            thread_id = tid
+        delta = ev.get("delta") or ev.get("content") or ev.get("text")
+        if isinstance(delta, str):
+            chunks.append(delta)
+    return "".join(chunks).strip(), thread_id
+
+
+def _parse_codex_json(out: str) -> str:
+    """Back-compat wrapper — reply text only."""
+    return _parse_codex_stream(out)[0]
 
 
 class HeadlessAdapter:
@@ -872,10 +911,9 @@ class HeadlessAdapter:
                 timeout_s=timeout_s, max_turns=max_turns,
             )
         if harness == "codex":
-            return await self._run_subprocess(
-                build_codex_argv(context),
-                parser=_parse_codex_json,
-                cwd=cwd,
+            return await self._run_codex(
+                context, cwd=cwd, resume=resume, on_session=on_session,
+                timeout_s=timeout_s,
             )
         if harness == "gemini":
             return await self._run_subprocess(
@@ -961,6 +999,36 @@ class HeadlessAdapter:
             on_session(captured["sid"])
         return reply
 
+    async def _run_codex(
+        self, context: str, *, cwd: Path | None,
+        resume: str | None, on_session: Callable[[str], None] | None,
+        timeout_s: int | None = None,
+    ) -> str:
+        """Codex wake with D2 session continuity (thread_id ↔ resume)."""
+        captured: dict[str, str | None] = {"tid": None}
+
+        def parser(out: str) -> str:
+            text, tid = _parse_codex_stream(out)
+            captured["tid"] = tid
+            return text
+
+        reply = await self._run_subprocess(
+            build_codex_argv(context, resume=resume), parser=parser,
+            cwd=cwd, timeout_s=timeout_s,
+        )
+        if resume and reply == "[reflexd] harness errored":
+            logger.warning(
+                "codex resume failed for thread %s — retrying fresh", resume,
+            )
+            captured["tid"] = None
+            reply = await self._run_subprocess(
+                build_codex_argv(context), parser=parser,
+                cwd=cwd, timeout_s=timeout_s,
+            )
+        if captured["tid"] and on_session is not None:
+            on_session(captured["tid"])
+        return reply
+
     async def _run_subprocess(
         self,
         argv: list[str],
@@ -979,6 +1047,10 @@ class HeadlessAdapter:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
+                # Codex reads stdin ("Reading additional input from
+                # stdin...") and a harness inheriting a live terminal can
+                # block forever waiting for EOF. Always hand it /dev/null.
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 # D1: run in the room's bound workspace so the agent can do
@@ -1669,10 +1741,14 @@ class Reflexd:
             )
         log_reason = (triage.reason if triage else None) or reason or "?"
         # D2: resume the room's prior session so the agent keeps its memory.
-        prior_session = session_for(self.config.participant_name, room)
+        prior_session = session_for(self.config.participant_name, room, harness)
 
-        def _persist_session(sid: str, _room: str = room) -> None:
-            remember_session(self.config.participant_name, _room, sid)
+        def _persist_session(
+            sid: str, _room: str = room, _harness: str = harness,
+        ) -> None:
+            remember_session(
+                self.config.participant_name, _room, sid, _harness,
+            )
 
         # L2: defer to a live interactive session on this workspace — its
         # Stop hook delivers the room's messages with full context. Only
