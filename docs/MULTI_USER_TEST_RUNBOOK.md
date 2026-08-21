@@ -32,6 +32,16 @@ quorus               # opens the hub
 Requirements per machine: Claude Code installed + `claude /login` done
 (the agent replies use YOUR Claude login — no API key).
 
+## Pre-flight (run this first, on one machine)
+
+```bash
+./scripts/rehearse_runbook.sh
+```
+
+Walks every command below with two isolated identities against a local
+relay — so a broken command is found before two people are sitting there
+waiting. It caught `quorus join <room>` requiring `--name` on 2026-08-21.
+
 ## Step 2 — the test script (in the shared room)
 
 Create/join one room (e.g. `quorus create test-day` / `quorus join test-day`).

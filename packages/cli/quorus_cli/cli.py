@@ -5052,6 +5052,11 @@ def _cmd_join(args):
         api_key = ""
         rewrite_config = True  # Token join always sets up fresh config
     else:
+        # A positional that survived the token/code branches is a plain room
+        # name — `quorus join dev-sprint`, exactly as the help and README
+        # advertise. Explicit --room still wins.
+        if token_raw and not getattr(args, "room", None):
+            args.room = token_raw
         # Fall back to existing config when flags are not provided
         arg_relay = getattr(args, "relay_url", None)
         arg_secret = getattr(args, "secret", None)
@@ -5074,7 +5079,17 @@ def _cmd_join(args):
         _ui.error("Relay URL is required", hint="pass --relay or run: quorus init")
         return
 
-    name = args.name
+    # --name is optional for an already-configured user: their identity is
+    # the one in config. Requiring it made the documented
+    # `quorus join <room>` fail with "the following arguments are required:
+    # --name" (found by the runbook rehearsal, 2026-08-21).
+    name = getattr(args, "name", None) or INSTANCE_NAME
+    if not name:
+        _ui.error(
+            "Participant name is required",
+            hint="run [accent]quorus init <your-name>[/] first, or pass --name",
+        )
+        return
     repo_dir = Path(__file__).resolve().parent.parent
     quorus_dir = Path(__file__).resolve().parent
     config_dir = _config_dir()
@@ -8073,10 +8088,16 @@ def _cmd_login(args) -> None:
 async def _approvals_list(room: str | None) -> None:
     client = _get_client()
     params = {"room": room} if room else None
-    resp = await client.get(
-        f"{RELAY_URL}/v1/approvals", headers=_auth_headers(), params=params,
-    )
-    resp.raise_for_status()
+    try:
+        resp = await client.get(
+            f"{RELAY_URL}/v1/approvals", headers=_auth_headers(), params=params,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        # Every other command prints a one-line error here; approvals used
+        # to dump a raw httpx traceback (runbook rehearsal, 2026-08-21).
+        _relay_unreachable()
+        raise SystemExit(2) from None
     pending = resp.json().get("pending", [])
     if not pending:
         console.print("[dim]no approvals waiting[/]")
@@ -8096,11 +8117,15 @@ async def _approvals_list(room: str | None) -> None:
 
 async def _approval_decide(approval_id: str, approve: bool, reason: str) -> None:
     client = _get_client()
-    resp = await client.post(
-        f"{RELAY_URL}/v1/approvals/{approval_id}/decision",
-        headers=_auth_headers(),
-        json={"approve": approve, "reason": reason or ""},
-    )
+    try:
+        resp = await client.post(
+            f"{RELAY_URL}/v1/approvals/{approval_id}/decision",
+            headers=_auth_headers(),
+            json={"approve": approve, "reason": reason or ""},
+        )
+    except httpx.HTTPError:
+        _relay_unreachable()
+        raise SystemExit(2) from None
     if resp.status_code == 404:
         _ui.error(f"unknown approval {approval_id}",
                   hint="list what's pending with [accent]quorus approvals[/]")
@@ -8825,7 +8850,10 @@ def main():
         example="quorus join HX4K-M7ZP --name bob",
         help_text="Join a room — short code, token, or explicit flags",
     ))
-    p_join.add_argument("--name", required=True, help="Your participant name")
+    p_join.add_argument(
+        "--name", default=None,
+        help="Your participant name (defaults to the configured identity)",
+    )
     p_join.add_argument(
         "token",
         nargs="?",

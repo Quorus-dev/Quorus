@@ -2596,3 +2596,34 @@ def test_quorus_memory_purge_cli_rejects_missing_participant():
     with pytest.raises(SystemExit) as excinfo:
         _cmd_memory(args)
     assert excinfo.value.code == 2
+
+
+def test_join_accepts_bare_room_name_without_flags():
+    """Regression (runbook rehearsal, 2026-08-21): the help and README both
+    document `quorus join <room>`, but the parser required --name, so an
+    already-configured user got "the following arguments are required:
+    --name" — the exact command two humans were told to run.
+
+    Asserted through the real CLI process because the parser is built
+    inline in ``main()``; usage strings show optional flags in brackets.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/tmp",
+        "PYTHONPATH": ":".join(
+            str(repo / "packages" / p) for p in ("sdk", "cli", "mcp", "tui")
+        ) + f":{repo}",
+    }
+    proc = subprocess.run(
+        [sys.executable, "-m", "quorus_cli.cli", "join", "--help"],
+        capture_output=True, text=True, env=env, timeout=60,
+    )
+    usage = proc.stdout
+    assert "[--name NAME]" in usage, (
+        "--name must be OPTIONAL (bracketed in usage); got:\n" + usage[:400]
+    )
