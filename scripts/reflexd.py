@@ -192,7 +192,10 @@ SSE_RECONNECT_S = 2.0
 SSE_RECONNECT_MAX_S = 30.0
 BID_WINDOW_SECONDS = 2.0
 BID_TTL_SECONDS = 5
-SUBPROCESS_TIMEOUT_S = 120
+# Env-tunable: real agentic Claude runs routinely take 2-5 min (observed
+# live 2026-08-20: a simple codeword task took 120s+). Chat-vs-mission
+# budgets arrive with D5; until then default generous.
+SUBPROCESS_TIMEOUT_S = int(os.environ.get("REFLEXD_SUBPROCESS_TIMEOUT_S", "300"))
 HEARTBEAT_HISTORY_LIMIT = 10
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
 # so 30s gives three missed beats of slack. Env-tunable for tests.

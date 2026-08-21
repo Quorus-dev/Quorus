@@ -118,6 +118,31 @@ pollution, Redis-backed triage auction, iCloud repo relocation, audit stragglers
 
 ## Recent Changes
 
+### Stream D core landed (2026-08-20 night, commits 257ee03 + 2573616 + 8e7118d + pending)
+
+- **D1 workspace binding**: `quorus room bind <room> <path>` (host-local,
+  ~/.quorus/room-bindings.json); wakes run the harness inside the bound repo.
+- **D2 session continuity**: claude wakes use `--output-format json`, capture
+  `session_id`, persist room→session map, resume by explicit `--resume` id.
+  PROVEN live against the real CLI: teach "7391" in session 7430aeda…,
+  resume same id → agent answers "7391". Expired ids retry fresh once.
+- **D3 honest degradation**: stub only on explicit REFLEXD_STUB_REPLY=1;
+  missing binary posts "not installed on this host" to the room.
+- **D7 wake-success detection**: timeout/errored sentinels suppressed when
+  the agent already posted its own threaded reply via quorus tools.
+- `SUBPROCESS_TIMEOUT_S` now env-tunable (REFLEXD_SUBPROCESS_TIMEOUT_S),
+  default 300s — real agentic wakes routinely take 2-5 min (measured).
+- **Test-design lesson**: full-pipeline "codeword" memory tests are
+  confounded — a woken Claude Code runs the user's full config and saved
+  the codeword into its persistent MEMORY system (and reflexd's room-memory
+  block also carries prior context). Prove session-resume at the CLI layer;
+  prove pipeline glue with unit tests.
+- Remaining: D4 (launchd by default + sleep/wake), D5 mission budgets,
+  Stream L (inbox-socket injection + approval relay), R3/R4 redis, Fly
+  relay redeploy (NXDOMAIN), CLI help listing gaps (room/reflexd/turnguard).
+
+
+
 ### QA audit + repo relocation (2026-08-20 late, commits df498ad + 61ff9cf)
 
 - **Working copy is now `~/dev/Quorus`.** Desktop copy retired: iCloud/Spotlight
