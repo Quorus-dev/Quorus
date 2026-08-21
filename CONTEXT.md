@@ -118,6 +118,34 @@ pollution, Redis-backed triage auction, iCloud repo relocation, audit stragglers
 
 ## Recent Changes
 
+### Public-install verification (2026-08-21)
+
+Ran the path a stranger actually takes — `pipx install "quorus @ git+…"` —
+instead of a local checkout. It found two shipping bugs no test could:
+
+- **`quorus-mcp` was broken on install.** The L3 file-size split moved
+  `main_cli` out of `quorus_mcp.server` while `pyproject.toml` still pinned
+  it there, so the binary died with ImportError at startup while the whole
+  suite stayed green (tests import `mcp` directly and never exercise a
+  console script). Fixed, plus a regression test that imports every declared
+  entry-point target — mutation-verified to fail when `main_cli` moves.
+- **`--help` required configuration.** `quorus.relay` enforces its env at
+  IMPORT time, so `quorus-relay --help` answered with a config error. A thin
+  `quorus.relay_cli` wrapper answers help/version before importing the relay
+  (the fail-fast guard is untouched for real starts); `quorus-analytics`
+  short-circuits the same way.
+
+All four binaries now verified from a real pipx install: `quorus`,
+`quorus-relay`, `quorus-analytics`, `quorus-mcp`.
+
+**LAUNCH BLOCKER — `main` is 199 commits behind.** The README's install
+command resolves to the default branch, which still carries the unbounded
+`mcp>=1.2.0` that resolves to 2.0.0 and breaks every fresh install. Nothing
+from this rebuild is on `main`. Merging `feat/wake-rebuild-aug26` → `main`
+is Arav's call and the last step before anyone can be told to install it.
+
+
+
 ### Wake Rebuild — Streams D, R, L complete (2026-08-20 night → 21 early)
 
 Branch renamed `feat/may4-sprint` → **`feat/wake-rebuild-aug26`**.
