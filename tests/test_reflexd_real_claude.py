@@ -203,40 +203,39 @@ def _reload_cli_for_doctor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> A
 # log_anthropic_api_key_status is preserved as a back-compat alias.
 
 
-def test_reflexd_logs_warning_when_claude_cli_missing(
+def test_reflexd_logs_error_when_claude_cli_missing(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """No claude CLI + no stub flag → WARNING logged, returns 'fallback-stub'."""
+    """D3: no claude CLI + no stub flag → ERROR logged, state 'missing',
+    and NO silent stub fallback (is_stub_mode stays False)."""
     _strip_claude_env(monkeypatch)
     _stub_claude_version_probe(monkeypatch, version=None)
-    caplog.set_level(logging.WARNING, logger="reflexd")
+    caplog.set_level(logging.ERROR, logger="reflexd")
     state = reflexd.log_claude_adapter_status()
-    assert state == "fallback-stub"
+    assert state == "missing"
     assert any(
         "claude CLI not found" in rec.message
         and "REFLEXD_STUB_REPLY" in rec.message
         for rec in caplog.records
-    ), f"Expected fallback warning in log; got {[r.message for r in caplog.records]}"
-    # Auto-fallback toggles the module-level flag so the adapter takes
-    # the stub path WITHOUT mutating os.environ — env mutations leak
-    # across pytest test files.
-    assert reflexd.is_stub_mode() is True
+    ), f"Expected honest-degradation error in log; got {[r.message for r in caplog.records]}"
+    assert reflexd.is_stub_mode() is False
     assert __import__("os").environ.get("REFLEXD_STUB_REPLY") is None
 
 
 def test_reflexd_falls_back_to_stub_when_no_claude_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Claude CLI missing + auto-fallback set → adapter.run returns the stub."""
+    """D3: claude CLI missing + no stub flag → HONEST error, never a stub."""
     _strip_claude_env(monkeypatch)
     _stub_claude_version_probe(monkeypatch, version=None)
-    reflexd.log_claude_adapter_status()  # triggers the auto-fallback
+    reflexd.log_claude_adapter_status()
+    monkeypatch.setattr(reflexd.shutil, "which", lambda _b: None)
     adapter = reflexd.HeadlessAdapter(timeout_s=2)
     out = asyncio.run(
         adapter.run("claude", context="@me what is the stack?")
     )
-    assert out.startswith("(reflexd-stub)"), out
-    # No exception, no subprocess spawn, just a stub reply.
+    assert "not installed on this host" in out, out
+    assert not out.startswith("(reflexd-stub)")
 
 
 def test_reflexd_uses_claude_cli_when_present(

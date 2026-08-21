@@ -490,26 +490,24 @@ def probe_harness_version(harness: str, *, timeout_s: float = 3.0) -> str | None
 # flag). The adapter's run() consults this OR the env var so the fallback
 # works whether the daemon was bootstrapped through cmd_start (which calls
 # the logger) or driven directly from a test (which sets env).
+# D3: the auto-fallback flag is gone (stub is explicit-env only). The
+# resetter stays as a no-op so older tests/callers don't break.
 _AUTO_FALLBACK_TO_STUB = False
 
 
 def reset_auto_fallback() -> None:
-    """Test seam: reset the module-level auto-fallback flag.
-
-    Production code never calls this; the daemon process is short-lived so
-    in-memory state never crosses runs. Tests need it because the flag is
-    set by ``log_claude_adapter_status`` and persists in the imported
-    module across tests in the same process.
-    """
-    global _AUTO_FALLBACK_TO_STUB
-    _AUTO_FALLBACK_TO_STUB = False
+    """Compat no-op — the stub auto-fallback was removed (spec D3)."""
 
 
 def is_stub_mode() -> bool:
-    """True iff the adapter should reply with the stub instead of the CLI."""
-    if os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes"):
-        return True
-    return _AUTO_FALLBACK_TO_STUB
+    """True iff the adapter should reply with the stub instead of the CLI.
+
+    D3 (WAKE_REBUILD_SPEC): stub replies happen ONLY on the explicit env
+    flag. A missing harness binary must produce an honest room error via
+    the subprocess preflight ("<bin> not installed on this host"), never a
+    fake "(reflexd-stub) on it…" acknowledgment that looks like progress.
+    """
+    return os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes")
 
 
 def log_claude_adapter_status(
@@ -527,17 +525,12 @@ def log_claude_adapter_status(
       real subprocess calls. Logs an INFO line with the detected version.
     * ``"stub"`` — ``REFLEXD_STUB_REPLY=1`` is set explicitly; we never
       attempt a real call. Logs an INFO line.
-    * ``"fallback-stub"`` — claude binary is missing AND the explicit stub
-      flag is not set. We auto-fall-back to stub mode so the daemon
-      doesn't refuse to start, but we log a WARNING so the operator sees
-      how to upgrade. The auto-fallback is implemented via
-      :data:`_AUTO_FALLBACK_TO_STUB` — a module-level flag that
-      :meth:`HeadlessAdapter.run` consults alongside ``REFLEXD_STUB_REPLY``.
-      We deliberately do NOT mutate ``os.environ`` because env mutations
-      leak across pytest test files and the adapter contract tests
-      assume a clean environment.
+    * ``"missing"`` — claude binary is missing AND the explicit stub flag
+      is not set. D3: the daemon still starts (other harnesses may be
+      fine) but logs at ERROR and every wake posts an honest
+      "not installed on this host" message to the room. There is NO
+      silent stub fallback any more.
     """
-    global _AUTO_FALLBACK_TO_STUB
     has_stub = os.environ.get("REFLEXD_STUB_REPLY") in ("1", "true", "yes")
     if has_stub:
         logger.info(
@@ -552,17 +545,19 @@ def log_claude_adapter_status(
             cli_ver,
         )
         return "real"
-    # claude binary missing. Auto-fall-back so we don't crash, but make
-    # the misconfig loud. This is the friendliest behaviour for hosts
-    # without Claude Code installed.
-    logger.warning(
+    # claude binary missing. D3: no silent stub fallback — wakes will post
+    # an honest "claude not installed on this host" error to the room via
+    # the subprocess preflight. Fake acknowledgments erode trust faster
+    # than visible errors (observed May 2026: stub replies read as the
+    # product being broken).
+    logger.error(
         "reflexd: claude CLI not found on PATH and REFLEXD_STUB_REPLY not set. "
-        "Reflexd will fall back to stub replies. To enable real Claude "
-        "replies: install Claude Code (https://claude.ai/code) and run "
-        "`claude /login`."
+        "Wakes for this harness will post an honest install error to the "
+        "room. To enable real Claude replies: install Claude Code "
+        "(https://claude.ai/code) and run `claude /login`; for demos set "
+        "REFLEXD_STUB_REPLY=1 explicitly."
     )
-    _AUTO_FALLBACK_TO_STUB = True
-    return "fallback-stub"
+    return "missing"
 
 
 # Backwards-compat alias. Older callers + tests reference the old name; keep
@@ -1464,6 +1459,32 @@ class Reflexd:
         if not reply:
             logger.info("harness produced empty reply, skipping post")
             return
+
+        # D7 (WAKE_REBUILD_SPEC): a woken Claude Code session is fully
+        # agentic — per QOD it often posts its reply ITSELF via quorus
+        # tools (inheriting RELAY_URL/API_KEY from our env) and its stdout
+        # never returns, so the subprocess path reports timeout/error even
+        # though the wake SUCCEEDED. Before posting an outcome-unknown
+        # failure sentinel, check whether our own reply already landed on
+        # this thread; if so, the wake worked — stay silent.
+        _UNKNOWN_OUTCOME = ("[reflexd] harness timed out",
+                            "[reflexd] harness errored",
+                            "[reflexd] (no reply)")
+        if reply in _UNKNOWN_OUTCOME:
+            try:
+                recent = await relay.fetch_recent(room=room, limit=20)
+                wake_id = envelope_canonical_id(envelope)
+                for m in recent:
+                    if (m.get("from_name") == self.config.participant_name
+                            and (m.get("reply_to") == wake_id
+                                 or m.get("thread_root_id") == wake_id)):
+                        logger.info(
+                            "wake succeeded via agent's own post (id=%s); "
+                            "suppressing %r", m.get("id"), reply,
+                        )
+                        return
+            except Exception as exc:
+                logger.debug("D7 self-reply check failed: %s", exc)
 
         thread_root_id = envelope_thread_root(envelope)
         # SSE fan-out gives each recipient a per-envelope id while the

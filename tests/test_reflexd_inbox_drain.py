@@ -224,3 +224,72 @@ def test_stub_reply_neutralizes_trigger_tokens() -> None:
     assert "@open" not in out.lower().replace("@ open", "")
     assert "todo @backend" not in out.lower()
     assert "@ open" in out.lower() or "@ backend" in out.lower()
+
+
+class _D7Relay:
+    """Relay double for wake-success suppression tests (spec D7)."""
+
+    def __init__(self, history: list[dict[str, Any]]) -> None:
+        self.history = history
+        self.posted: list[dict[str, Any]] = []
+
+    async def fetch_recent(self, *, room: str, limit: int = 10):
+        return self.history
+
+    async def post_reply(self, **kw):
+        self.posted.append(kw)
+        return {"id": "posted-1"}
+
+
+def _wake_envelope() -> dict[str, Any]:
+    return {
+        "id": "fanout-1", "message_id": "wake-msg-1", "room": "r",
+        "from_name": "arav", "content": f"@{SELF} do the thing",
+        "message_type": "chat",
+    }
+
+
+def _run_wake(daemon, relay, monkeypatch, adapter_reply: str) -> None:
+    async def fake_run(harness, *, context):
+        return adapter_reply
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
+
+
+def test_d7_timeout_suppressed_when_agent_already_replied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agent posted its own reply via quorus tools → don't post 'timed out'."""
+    daemon = _make_daemon()
+    relay = _D7Relay(history=[
+        {"id": "m9", "from_name": SELF, "reply_to": "wake-msg-1",
+         "content": "done, PR opened"},
+    ])
+    _run_wake(daemon, relay, monkeypatch, "[reflexd] harness timed out")
+    assert relay.posted == []
+
+
+def test_d7_timeout_still_posted_when_no_self_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    daemon = _make_daemon()
+    relay = _D7Relay(history=[
+        {"id": "m9", "from_name": "someone-else", "reply_to": "wake-msg-1",
+         "content": "unrelated"},
+    ])
+    _run_wake(daemon, relay, monkeypatch, "[reflexd] harness timed out")
+    assert len(relay.posted) == 1
+    assert relay.posted[0]["content"] == "[reflexd] harness timed out"
+
+
+def test_d7_real_replies_never_suppressed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    daemon = _make_daemon()
+    relay = _D7Relay(history=[
+        {"id": "m9", "from_name": SELF, "reply_to": "wake-msg-1",
+         "content": "earlier reply"},
+    ])
+    _run_wake(daemon, relay, monkeypatch, "the actual model answer")
+    assert len(relay.posted) == 1
+    assert relay.posted[0]["content"] == "the actual model answer"
