@@ -418,7 +418,10 @@ def _init_services(app_instance, redis_conn=None):
     # graph. Shared singleton across requests; re-created on reset_state()
     # so each test starts with a clean queue.
     from quorus.services.work_queue_svc import WorkQueueSvc
-    app_instance.state.work_queue_service = WorkQueueSvc()
+    # R4: the service has had optional Redis persistence since it shipped —
+    # but nothing ever passed the connection, so claims died with the
+    # process. Wire it (None in file mode keeps the in-memory behaviour).
+    app_instance.state.work_queue_service = WorkQueueSvc(redis_conn=redis_conn)
 
     # Stream B agent-DM inbox — distinct from human DMs. A bare dict; the
     # route initializes the per-recipient deque on first send. We attach

@@ -34,6 +34,8 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+from quorus.services import p1_persistence as _p1
+
 MAX_VALUE_BYTES = 16 * 1024
 MAX_ENTRIES = 1024
 MAX_KEY_LEN = 200
@@ -61,7 +63,12 @@ class EntryCapError(MemoryError_):
 
 
 class PersistentMemorySvc:
-    """In-memory persistent KV store, scoped per (tenant, participant, room)."""
+    """Persistent KV store, scoped per (tenant, participant, room).
+
+    In-memory dicts for speed; when Redis is configured every mutation is
+    write-through mirrored and buckets lazily hydrate after a restart
+    (WAKE_REBUILD R4) — so "persistent" finally survives the process.
+    """
 
     def __init__(self) -> None:
         # { (tid, participant, rid) -> { key -> entry } }
@@ -72,6 +79,26 @@ class PersistentMemorySvc:
             tuple[str, str, str], asyncio.Lock
         ] = OrderedDict()
         self._lock_factory_lock = asyncio.Lock()
+        self._hydrated: set[tuple[str, str, str]] = set()
+
+    @staticmethod
+    def _ns(tid: str, participant: str, rid: str) -> str:
+        return f"p1mem:{tid}:{participant}:{rid}"
+
+    async def _hydrate_once(
+        self, tid: str, participant: str, rid: str,
+    ) -> None:
+        """Lazy-load the bucket from Redis on first touch after start.
+        Caller must hold the bucket lock."""
+        key = (tid, participant, rid)
+        if key in self._hydrated:
+            return
+        self._hydrated.add(key)
+        stored = await _p1.hydrate(self._ns(tid, participant, rid))
+        if stored:
+            bucket = self._entries.setdefault(key, {})
+            for k, entry in stored.items():
+                bucket.setdefault(k, entry)
 
     async def _get_lock(
         self, tid: str, participant: str, rid: str,
@@ -127,6 +154,7 @@ class PersistentMemorySvc:
             )
         lock = await self._get_lock(tid, participant, rid)
         async with lock:
+            await self._hydrate_once(tid, participant, rid)
             bucket = self._bucket(tid, participant, rid)
             if key not in bucket and len(bucket) >= MAX_ENTRIES:
                 raise EntryCapError(
@@ -141,6 +169,7 @@ class PersistentMemorySvc:
                 "size_bytes": size,
             }
             bucket[key] = entry
+            await _p1.mirror_set(self._ns(tid, participant, rid), key, entry)
             return dict(entry)
 
     async def get(
@@ -152,6 +181,7 @@ class PersistentMemorySvc:
     ) -> dict[str, Any] | None:
         lock = await self._get_lock(tid, participant, rid)
         async with lock:
+            await self._hydrate_once(tid, participant, rid)
             entry = self._bucket(tid, participant, rid).get(key)
             return dict(entry) if entry else None
 
@@ -165,6 +195,7 @@ class PersistentMemorySvc:
     ) -> list[dict[str, Any]]:
         lock = await self._get_lock(tid, participant, rid)
         async with lock:
+            await self._hydrate_once(tid, participant, rid)
             entries = [
                 dict(e) for e in self._bucket(tid, participant, rid).values()
             ]
@@ -183,7 +214,10 @@ class PersistentMemorySvc:
     ) -> bool:
         lock = await self._get_lock(tid, participant, rid)
         async with lock:
+            await self._hydrate_once(tid, participant, rid)
             removed = self._bucket(tid, participant, rid).pop(key, None)
+            if removed is not None:
+                await _p1.mirror_delete(self._ns(tid, participant, rid), key)
             return removed is not None
 
     async def reset(self, tid: str | None = None) -> None:

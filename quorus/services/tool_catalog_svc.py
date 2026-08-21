@@ -35,6 +35,8 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+from quorus.services import p1_persistence as _p1
+
 # Bounds — protect against runaway registration. 256 distinct MCP
 # servers per room is well past Phase 1 needs (typical: 5–20).
 _MAX_TOOLS_PER_ROOM = 256
@@ -57,6 +59,7 @@ class ToolCatalogSvc:
     """In-memory MCP server registry, scoped per (tenant, room)."""
 
     def __init__(self) -> None:
+        self._hydrated: set[tuple[str, str]] = set()
         # { (tid, rid) -> { tool_name -> record } }
         self._tools: dict[
             tuple[str, str], dict[str, dict[str, Any]]
@@ -84,6 +87,23 @@ class ToolCatalogSvc:
     ) -> dict[str, dict[str, Any]]:
         return self._tools.setdefault((tid, rid), {})
 
+    @staticmethod
+    def _ns(tid: str, rid: str) -> str:
+        return f"p1tools:{tid}:{rid}"
+
+    async def _hydrate_once(self, tid: str, rid: str) -> None:
+        """R4: first touch of a room catalog after start loads the Redis
+        mirror. Caller must hold the room lock."""
+        key = (tid, rid)
+        if key in self._hydrated:
+            return
+        self._hydrated.add(key)
+        stored = await _p1.hydrate(self._ns(tid, rid))
+        if stored:
+            bucket = self._tools.setdefault(key, {})
+            for name, record in stored.items():
+                bucket.setdefault(name, record)
+
     async def register(
         self,
         tid: str,
@@ -108,6 +128,7 @@ class ToolCatalogSvc:
             )
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             bucket = self._bucket(tid, rid)
             if name in bucket:
                 raise DuplicateToolError(
@@ -126,6 +147,7 @@ class ToolCatalogSvc:
                 "registered_at": time.time(),
             }
             bucket[name] = record
+            await _p1.mirror_set(self._ns(tid, rid), name, record)
             return dict(record)
 
     async def list(
@@ -133,6 +155,7 @@ class ToolCatalogSvc:
     ) -> list[dict[str, Any]]:
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             items = [dict(r) for r in self._bucket(tid, rid).values()]
         items.sort(key=lambda r: r.get("name", ""))
         return items
@@ -142,6 +165,7 @@ class ToolCatalogSvc:
     ) -> dict[str, Any] | None:
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             r = self._bucket(tid, rid).get(name)
             return dict(r) if r else None
 
@@ -150,7 +174,10 @@ class ToolCatalogSvc:
     ) -> bool:
         lock = await self._get_lock(tid, rid)
         async with lock:
+            await self._hydrate_once(tid, rid)
             removed = self._bucket(tid, rid).pop(name, None)
+            if removed is not None:
+                await _p1.mirror_delete(self._ns(tid, rid), name)
             return removed is not None
 
     async def reset(

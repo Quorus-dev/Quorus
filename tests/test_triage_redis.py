@@ -144,3 +144,40 @@ async def test_fairness_credit_shapes_next_auction(fake_redis):
     p2, _ = await tr.try_claim(fake_redis, tid="t", rid="room", mid="m2",
                                claim_payload_factory=factory)
     assert p1["winner"] != p2["winner"], "credits must rotate equal bidders"
+
+
+async def test_phase1_primitives_survive_service_restart(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """R4: memory/capabilities/tool-catalog hydrate from Redis after a
+    process restart (simulated by constructing fresh service instances
+    against the same fakeredis)."""
+    from quorus.services import p1_persistence
+    from quorus.services.capability_svc import CapabilitySvc
+    from quorus.services.persistent_memory_svc import PersistentMemorySvc
+    from quorus.services.tool_catalog_svc import ToolCatalogSvc
+
+    r = fakeredis_aio.FakeRedis()
+    monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: r)
+
+    mem1, cap1, tools1 = PersistentMemorySvc(), CapabilitySvc(), ToolCatalogSvc()
+    await mem1.set("t", "arav-claude", "room", "plan", {"step": 1})
+    await cap1.publish("t", "arav-claude", {"capabilities": ["python"]})
+    await tools1.register(
+        "t", "room", name="run_pytest", url="wrap://shell:pytest",
+        registered_by="arav-claude",
+    )
+
+    # "Restart": brand-new instances, empty in-memory state.
+    mem2, cap2, tools2 = PersistentMemorySvc(), CapabilitySvc(), ToolCatalogSvc()
+    got = await mem2.get("t", "arav-claude", "room", "plan")
+    assert got is not None and got["value"] == {"step": 1}
+    manifest = await cap2.get("t", "arav-claude")
+    assert manifest is not None and manifest["capabilities"] == ["python"]
+    tools = await tools2.list("t", "room")
+    assert [t["name"] for t in tools] == ["run_pytest"]
+
+    # Deletes propagate too — a third restart must not resurrect them.
+    assert await mem2.delete("t", "arav-claude", "room", "plan") is True
+    mem3 = PersistentMemorySvc()
+    assert await mem3.get("t", "arav-claude", "room", "plan") is None

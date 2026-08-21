@@ -57,6 +57,13 @@ async def close_redis() -> None:
         _redis = None
 
 
+def get_redis_or_none() -> Redis | None:
+    """Return the initialised Redis connection, or None when the relay is
+    running without Redis (file mode, unit tests). The graceful sibling of
+    :func:`get_redis` for optional-persistence call sites."""
+    return _redis
+
+
 def get_redis() -> Redis:
     """Return the current Redis connection or raise if not initialised."""
     if _redis is None:

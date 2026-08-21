@@ -52,7 +52,9 @@ def _work_queue_svc(request: Request) -> WorkQueueSvc:
     """
     svc = getattr(request.app.state, "work_queue_service", None)
     if svc is None:
-        svc = WorkQueueSvc()
+        from quorus.backends.redis_client import get_redis_or_none
+
+        svc = WorkQueueSvc(redis_conn=get_redis_or_none())
         request.app.state.work_queue_service = svc
     return svc
 

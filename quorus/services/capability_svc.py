@@ -31,6 +31,8 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+from quorus.services import p1_persistence as _p1
+
 # Bounds — keep memory honest on long-running replicas. A tenant with
 # >5_000 distinct agents publishing manifests is well past Phase 1 scale.
 _MAX_MANIFESTS_PER_TENANT = 5_000
@@ -47,6 +49,8 @@ class CapabilitySvc:
     def __init__(self) -> None:
         # { (tid, participant) -> manifest_dict }
         self._manifests: dict[tuple[str, str], dict[str, Any]] = {}
+        # R4: tenants whose manifests were lazily hydrated from Redis.
+        self._hydrated: set[str] = set()
         # Per-tenant lock so concurrent publishes serialise without
         # touching unrelated tenants. LRU-bounded to cap memory.
         self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
@@ -64,6 +68,21 @@ class CapabilitySvc:
                 self._locks.popitem(last=False)
             return new_lock
 
+
+    @staticmethod
+    def _ns(tid: str) -> str:
+        return f"p1cap:{tid}"
+
+    async def _hydrate_once(self, tid: str) -> None:
+        """R4: first touch of a tenant after start loads Redis-mirrored
+        manifests. Caller must hold the tenant lock."""
+        if tid in self._hydrated:
+            return
+        self._hydrated.add(tid)
+        stored = await _p1.hydrate(self._ns(tid))
+        for participant, manifest in stored.items():
+            self._manifests.setdefault((tid, participant), manifest)
+
     async def publish(
         self,
         tid: str,
@@ -77,6 +96,7 @@ class CapabilitySvc:
             raise CapabilityError("manifest must be a dict")
         lock = await self._get_lock(tid)
         async with lock:
+            await self._hydrate_once(tid)
             tenant_count = sum(
                 1 for (t, _p) in self._manifests if t == tid
             )
@@ -90,6 +110,7 @@ class CapabilitySvc:
             stored["participant"] = participant
             stored["updated_at"] = time.time()
             self._manifests[(tid, participant)] = stored
+            await _p1.mirror_set(self._ns(tid), participant, stored)
             return dict(stored)
 
     async def get(
@@ -97,6 +118,7 @@ class CapabilitySvc:
     ) -> dict[str, Any] | None:
         lock = await self._get_lock(tid)
         async with lock:
+            await self._hydrate_once(tid)
             m = self._manifests.get((tid, participant))
             return dict(m) if m else None
 
@@ -109,6 +131,7 @@ class CapabilitySvc:
         wanted = [t.lower().strip() for t in (has or []) if t.strip()]
         lock = await self._get_lock(tid)
         async with lock:
+            await self._hydrate_once(tid)
             results: list[dict[str, Any]] = []
             for (t, _p), manifest in self._manifests.items():
                 if t != tid:
