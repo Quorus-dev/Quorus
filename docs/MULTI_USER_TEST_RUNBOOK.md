@@ -80,7 +80,11 @@ Extra tests worth running once the above are wired:
 
 ## Known limits going into this test
 
-- Only Claude Code gets live-session delivery + session memory; Codex and
-  Gemini wake headless (resume support exists, wiring is next).
+- Claude Code and Codex both have session memory (resume by explicit id);
+  only Claude Code gets live-session delivery via the Stop hook.
+- **Gemini is blocked vendor-side** (2026-08-21): Google moved individual
+  Code Assist accounts to Antigravity, so `gemini` returns
+  `IneligibleTierError`. A gemini agent will post an actionable message in
+  the room rather than failing silently. Test with claude/codex agents.
 - One relay instance unless Redis is configured (R3 shares the auction).
 - Approvals surface in chat and CLI; a TUI panel is not built yet.

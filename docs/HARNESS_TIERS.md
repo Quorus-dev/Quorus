@@ -20,8 +20,14 @@ Quorus delivers messages across coding agents in two ways:
    `claude /login`. Reflexd argv pinned in `build_claude_argv`.
 2. **Codex CLI** — `codex exec --json -- <ctx>` (verified v0.128.0). OAuth via
    `codex login`. Reflexd argv pinned in `build_codex_argv`.
-3. **Gemini CLI** — `gemini --prompt=<ctx>`. Vendor login. Reflexd argv pinned
-   in `build_gemini_argv`.
+3. **Gemini CLI** — `gemini --prompt=<ctx>`. Reflexd argv pinned in
+   `build_gemini_argv`. **BLOCKED for individual accounts as of 2026-08-21:**
+   a live run returns `IneligibleTierError: This client is no longer
+   supported for Gemini Code Assist for individuals … migrate to the
+   Antigravity suite`. The adapter is intact and will work again on an
+   eligible account; until then reflexd posts an actionable room message
+   (see `diagnose_harness_failure`) instead of a silent failure.
+   _Verified live 2026-08-21 on gemini-cli v0.40.1._
 4. **Cursor** — `cursor-agent -p <ctx>` (`cursor.com/docs/cli/headless`).
    Auth via `CURSOR_API_KEY` env, set up by `cursor-agent login`. Reflexd
    argv pinned in `build_cursor_argv`. _Wave-7 update_: switched from

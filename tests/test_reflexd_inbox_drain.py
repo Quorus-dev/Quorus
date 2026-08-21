@@ -625,3 +625,58 @@ def test_stub_reply_neutralizes_every_mention() -> None:
     out = reflexd.HeadlessAdapter._stub_reply(ctx)
     for token in ("@arav-claude", "@aarya-codex", "@open"):
         assert token not in out, f"{token} survived in {out!r}"
+
+
+def test_diagnose_known_harness_failures() -> None:
+    """Real stderr captured from the vendors, 2026-08-21."""
+    gemini_err = (
+        "Error authenticating: IneligibleTierError: This client is no longer "
+        "supported for Gemini Code Assist for individuals."
+    )
+    msg = reflexd.diagnose_harness_failure("gemini", gemini_err)
+    assert msg and "Antigravity" in msg and msg.startswith("⚠ gemini:")
+
+    codex_err = "Not inside a trusted directory and --skip-git-repo-check was not specified."
+    assert "trusted directory" in (reflexd.diagnose_harness_failure("codex", codex_err) or "")
+
+    assert "claude /login" in (
+        reflexd.diagnose_harness_failure("claude", "Not logged in · Please run /login") or ""
+    )
+    # Unknown failures stay generic — never invent a cause.
+    assert reflexd.diagnose_harness_failure("claude", "segfault at 0x0") is None
+    assert reflexd.diagnose_harness_failure("claude", "") is None
+
+
+def test_diagnosed_failure_reaches_the_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vendor auth failure must be posted, not swallowed as a sentinel."""
+    daemon = _make_daemon()
+    relay = _D7Relay(history=[])
+
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
+        return "⚠ gemini: no longer supported on this account tier"
+
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="t"))
+    assert len(relay.posted) == 1
+    assert "gemini" in relay.posted[0]["content"]
+
+
+def test_vendor_failure_does_not_trigger_resume_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retrying an auth failure just burns another wake — only the generic
+    sentinel (which an expired session id produces) retries fresh."""
+    adapter = reflexd.HeadlessAdapter(timeout_s=2)
+    calls: list[list[str]] = []
+
+    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None):
+        calls.append(argv)
+        return "⚠ claude: not logged in — run `claude /login` on this host."
+
+    monkeypatch.setattr(adapter, "_run_subprocess", fake_sub)
+    out = asyncio.run(adapter.run("claude", context="hi", resume="sid-1"))
+    assert "not logged in" in out
+    assert len(calls) == 1, "must not retry a vendor auth failure"

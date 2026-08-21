@@ -807,6 +807,44 @@ def is_agent_participant(participant: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# Known vendor-side failures, newest first. A generic "[reflexd] harness
+# errored" tells a room nothing; these turn the harness's own stderr into a
+# line a human can act on. Patterns are lowercase substrings matched against
+# stderr — deliberately narrow so an unknown failure stays generic rather
+# than being mislabelled.
+_HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
+    (
+        "ineligibletiererror",
+        "Gemini CLI is no longer supported on this account tier "
+        "(Google moved individual Code Assist to Antigravity). This agent "
+        "cannot wake until its login is migrated or switched.",
+    ),
+    (
+        "not inside a trusted directory",
+        "codex refused to run: the bound workspace is not a trusted "
+        "directory. Reflexd passes --skip-git-repo-check; if you see this, "
+        "check the workspace path bound to this room.",
+    ),
+    ("please run /login", "not logged in — run `claude /login` on this host."),
+    ("not logged in", "not logged in — run the harness's login command on this host."),
+    ("rate limit", "the vendor rate-limited this account; the wake was dropped."),
+    ("quota", "the vendor reports the account is out of quota."),
+)
+
+
+def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
+    """Map a harness's stderr to an actionable room message, or None.
+
+    Returning None means "we do not recognise this" — the caller keeps the
+    generic sentinel rather than inventing a cause.
+    """
+    low = (stderr or "").lower()
+    for needle, message in _HARNESS_DIAGNOSTICS:
+        if needle in low:
+            return f"⚠ {harness}: {message}"
+    return None
+
+
 def _parse_codex_stream(out: str) -> tuple[str, str | None]:
     """Parse codex ``--json`` NDJSON → ``(reply_text, thread_id)``.
 
@@ -1073,8 +1111,14 @@ class HeadlessAdapter:
             logger.warning("harness %s timed out", argv[0])
             return "[reflexd] harness timed out"
         if proc.returncode != 0:
-            err = (stderr or b"").decode("utf-8", errors="replace")[:200]
+            raw = (stderr or b"").decode("utf-8", errors="replace")
+            err = raw[:200]
             logger.warning("harness %s exited %s: %s", argv[0], proc.returncode, err)
+            diagnosis = diagnose_harness_failure(argv[0], raw)
+            if diagnosis:
+                # Actionable > generic: the room learns WHY nobody answered.
+                logger.error("harness %s: %s", argv[0], diagnosis)
+                return diagnosis
             return "[reflexd] harness errored"
         return parser((stdout or b"").decode("utf-8", errors="replace")) or "[reflexd] (no reply)"
 
