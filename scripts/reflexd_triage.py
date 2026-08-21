@@ -189,6 +189,31 @@ def _has_literal_mention(text: str, self_name: str) -> bool:
     return bool(re.search(rf"@{re.escape(self_name)}(?![A-Za-z0-9_-])", text))
 
 
+# Any participant whose name ends in a known harness suffix is an agent.
+_AGENT_NAME_RE = re.compile(
+    r"-(claude|codex|gemini|cursor|opencode|cline)(-|$)", re.IGNORECASE,
+)
+
+# A quoted span inside an agent's message — 'like this' or "like this".
+_QUOTED_SPAN_RE = re.compile(r"'[^']{0,400}'|\"[^\"]{0,400}\"")
+
+
+def is_agent_sender(sender: str | None) -> bool:
+    return bool(sender and _AGENT_NAME_RE.search(sender))
+
+
+def strip_quoted_spans(text: str) -> str:
+    """Blank out quoted spans.
+
+    Agents acknowledge work by quoting the request back ("on it, working on
+    '@arav-claude fix the tests'"). Scanning that quote for triggers makes
+    every acknowledgment a fresh order, and two agents ping-pong until the
+    depth cap — observed live in the Stream T gate, 2026-08-21. A quote is
+    a citation, not an instruction, so it never carries triggers.
+    """
+    return _QUOTED_SPAN_RE.sub(" ", text)
+
+
 def classify_message(
     *,
     content: str,
@@ -229,6 +254,11 @@ def classify_message(
         return TriageResult("IGNORE", f"non-conversational type {message_type!r}")
 
     text = content or ""
+    # Agent→agent: quotes are citations, not fresh instructions (see
+    # strip_quoted_spans). Human messages are matched verbatim — a human
+    # who types quotes still means what they say.
+    if is_agent_sender(sender):
+        text = strip_quoted_spans(text)
 
     # 0. Verb-prefixed prose ("/disagree blocking ...") in a chat-typed
     #    message — same abstention as the message_type=="social" branch.

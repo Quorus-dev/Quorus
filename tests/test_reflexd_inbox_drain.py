@@ -583,3 +583,45 @@ def test_session_map_is_harness_scoped(
     assert reflexd.session_for(SELF, "r", "claude") == "claude-sid"
     assert reflexd.session_for(SELF, "r", "codex") is None
     assert reflexd.session_for(SELF, "r") == "claude-sid"
+
+
+def test_agent_quotes_are_not_fresh_triggers() -> None:
+    """Chatter-storm regression (Stream T gate, 2026-08-21): an agent's
+    acknowledgment that QUOTES the request must not re-trigger the agent
+    it names — a citation is not an instruction."""
+    triage = reflexd.reflexd_triage
+    echo = f"(reflexd-stub) on it, working on '@{SELF} round 1 status?'"
+    # From another agent: quoted mention is inert.
+    from_agent = triage.classify_message(
+        content=echo, sender="aarya-claude", self_name=SELF,
+        message_type="chat",
+    )
+    assert from_agent.action == "IGNORE", from_agent
+    # From a human, the same text is a real request.
+    from_human = triage.classify_message(
+        content=echo, sender="arav", self_name=SELF, message_type="chat",
+    )
+    assert from_human.action == "RESPOND"
+    # An agent mentioning me OUTSIDE quotes is still real delegation.
+    delegation = triage.classify_message(
+        content=f"@{SELF} can you take the tui half?",
+        sender="aarya-codex", self_name=SELF, message_type="chat",
+    )
+    assert delegation.action == "RESPOND" and delegation.kind == "mention"
+
+
+def test_is_agent_sender_detects_harness_suffixes() -> None:
+    triage = reflexd.reflexd_triage
+    for name in ("arav-claude", "aarya-codex", "x-gemini", "y-cursor",
+                 "z-opencode", "w-cline", "arav-claude-2"):
+        assert triage.is_agent_sender(name), name
+    for name in ("arav", "aarya", "", None, "claudia"):
+        assert not triage.is_agent_sender(name), name
+
+
+def test_stub_reply_neutralizes_every_mention() -> None:
+    """The stub must never re-wake anyone it quotes."""
+    ctx = "@arav: @arav-claude and @aarya-codex please look, @open too"
+    out = reflexd.HeadlessAdapter._stub_reply(ctx)
+    for token in ("@arav-claude", "@aarya-codex", "@open"):
+        assert token not in out, f"{token} survived in {out!r}"

@@ -885,8 +885,9 @@ class HeadlessAdapter:
         # fresh work by every OTHER agent in the room (echo storm, observed
         # live 2026-08-20). A visible space after "@" breaks both trigger
         # regexes while staying human-readable.
-        body = re.sub(r"@(open\b)", r"@ \1", body, flags=re.IGNORECASE)
-        body = re.sub(r"\b(TODO\s*)@", r"\1@ ", body, flags=re.IGNORECASE)
+        # Neutralize EVERY @token: the gate caught a stub echoing
+        # "@arav-claude …" and re-waking that agent (2026-08-21).
+        body = re.sub(r"@(?=[A-Za-z])", "@ ", body)
         return f"(reflexd-stub) on it, working on '{body}'"
 
     async def run(
