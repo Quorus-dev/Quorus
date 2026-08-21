@@ -680,3 +680,195 @@ def test_vendor_failure_does_not_trigger_resume_retry(
     out = asyncio.run(adapter.run("claude", context="hi", resume="sid-1"))
     assert "not logged in" in out
     assert len(calls) == 1, "must not retry a vendor auth failure"
+
+
+# ── adversarial-review regressions (2026-08-21) ─────────────────────────────
+
+def test_contractions_do_not_swallow_mentions() -> None:
+    """The quote guard treated any two apostrophes as a citation, so
+    "we shouldn't ship yet @arav-claude - it's broken" was blanked to
+    "we shouldn s broken" and the agent never woke — no reply, no reason."""
+    triage = reflexd.reflexd_triage
+    for text in (
+        f"we shouldn't ship yet @{SELF} - it's broken",
+        f"I don't think @{SELF}'s patch is right, can't repro",
+    ):
+        got = triage.classify_message(
+            content=text, sender="aarya-codex", self_name=SELF,
+            message_type="chat",
+        )
+        assert got.action == "RESPOND", f"{text!r} → {got}"
+    # A genuine quoted echo is still suppressed.
+    echo = triage.classify_message(
+        content=f"(reflexd-stub) on it, working on '@{SELF} fix the tests'",
+        sender="aarya-codex", self_name=SELF, message_type="chat",
+    )
+    assert echo.action == "IGNORE"
+
+
+def test_mission_escalation_is_suppressed_when_agent_already_replied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D5b built the escalation BEFORE the D7 check, so it never matched
+    the sentinel list — a mission wake whose agent had already posted
+    'done, PR opened' still got a contradictory 'it stalled' line."""
+    daemon = _make_daemon()
+    relay = _D7Relay(history=[
+        {"id": "m9", "from_name": SELF, "reply_to": "wake-msg-1",
+         "content": "done, PR opened"},
+    ])
+
+    async def mission_task_for(*, room, participant):
+        return {"summary": "ship the relay"}
+
+    relay.mission_task_for = mission_task_for  # type: ignore[attr-defined]
+
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
+        return "[reflexd] harness timed out"
+
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="t"))
+    assert relay.posted == [], f"posted a false escalation: {relay.posted}"
+
+
+def test_mission_escalation_still_fires_when_nothing_was_posted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    daemon = _make_daemon()
+    relay = _D7Relay(history=[])
+
+    async def mission_task_for(*, room, participant):
+        return {"summary": "ship the relay"}
+
+    relay.mission_task_for = mission_task_for  # type: ignore[attr-defined]
+
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
+        return "[reflexd] harness timed out"
+
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="t"))
+    assert len(relay.posted) == 1
+    body = relay.posted[0]["content"]
+    assert "ship the relay" in body and "/interrupt" in body
+
+
+def test_messages_are_never_handled_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The relay dual-writes every message (durable inbox + SSE) and the SSE
+    copy is never acked, so a reconnect drain replayed everything already
+    answered live and the agent re-replied to hour-old mentions."""
+    daemon = _make_daemon()
+    handled: list[str] = []
+
+    async def fake_handle(relay, envelope):
+        handled.append(envelope.get("message_id") or envelope.get("id"))
+        return True
+
+    monkeypatch.setattr(daemon, "handle_room_message", fake_handle)
+    env = {"message_id": "m1", "id": "fanout-a", "room": "r",
+           "content": "hi", "message_type": "chat"}
+    asyncio.run(daemon._dispatch_event(None, "message", env))
+    # Same canonical message, different per-recipient envelope id (the
+    # shape the durable inbox returns after a reconnect).
+    asyncio.run(daemon._dispatch_event(
+        None, "message", dict(env, id="fanout-b")))
+    assert handled == ["m1"], handled
+
+
+def test_busy_queue_is_replayed_not_lost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The busy queue was append-only — nothing ever read it, so a mention
+    that arrived mid-tool-call was acked and dropped."""
+    daemon = _make_daemon()
+    replayed: list[str] = []
+
+    async def fake_handle(relay, envelope):
+        replayed.append(envelope["message_id"])
+        return True
+
+    monkeypatch.setattr(daemon, "handle_room_message", fake_handle)
+    daemon._queue.append({"message_id": "parked-1", "room": "r"})
+    daemon._queue.append({"message_id": "parked-2", "room": "r"})
+
+    # Still busy → nothing replays.
+    monkeypatch.setattr(reflexd, "is_busy", lambda *a, **k: True)
+    asyncio.run(daemon._drain_busy_queue(None))
+    assert replayed == [] and len(daemon._queue) == 2
+
+    # Busy clears → both replay, FIFO, and the queue empties.
+    monkeypatch.setattr(reflexd, "is_busy", lambda *a, **k: False)
+    asyncio.run(daemon._drain_busy_queue(None))
+    assert replayed == ["parked-1", "parked-2"]
+    assert daemon._queue == []
+
+
+def test_run_actually_wires_drain_and_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P0 gap (test audit, 2026-08-21): every R1/R2 test called
+    ``_drain_inbox`` / ``_heartbeat_loop`` directly, so BOTH call sites in
+    ``run()`` could be deleted and the full suite stayed green — the two
+    headline Stream R features could ship dead. This drives ``run()``.
+    """
+    daemon = _make_daemon()
+    events: list[str] = []
+
+    class _FakeRelay:
+        client = object()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def bearer_jwt(self):
+            return ""
+
+        async def mint_stream_token(self, participant):
+            return "tok"
+
+        def stream_url(self, participant, token):
+            return "http://relay.test/stream"
+
+        async def post_heartbeat(self, **kw):
+            events.append("heartbeat")
+            daemon._stop.set()
+
+        async def fetch_inbox(self, *, participant):
+            events.append("drain")
+            return [], None
+
+        async def ack_inbox(self, **kw):  # pragma: no cover
+            return None
+
+    monkeypatch.setattr(reflexd, "RelayClient", lambda **kw: _FakeRelay())
+    monkeypatch.setattr(reflexd, "HEARTBEAT_INTERVAL_S", 0.01)
+
+    async def fake_dm_loop(relay):
+        return None
+
+    monkeypatch.setattr(daemon, "_dm_loop", fake_dm_loop)
+
+    async def fake_sse(client, url):
+        events.append("sse")
+        # Yield to the loop so the heartbeat task gets a turn before we
+        # stop — otherwise run()'s teardown cancels it before it ever ran,
+        # which would be a test artifact, not a product behaviour.
+        await asyncio.sleep(0.05)
+        daemon._stop.set()
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    monkeypatch.setattr(reflexd, "iter_sse_events", fake_sse)
+    asyncio.run(asyncio.wait_for(daemon.run(), timeout=10))
+
+    assert "drain" in events, "run() must drain the durable inbox"
+    assert "heartbeat" in events, "run() must send presence heartbeats"
+    # The drain has to happen BEFORE we go live, or a reconnect answers
+    # the backlog only after new traffic arrives.
+    assert events.index("drain") < events.index("sse")

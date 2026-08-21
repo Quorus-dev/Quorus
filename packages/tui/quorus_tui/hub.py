@@ -667,6 +667,15 @@ def _fetch_pending_approvals(relay: str, secret: str, room: str) -> list[dict]:
         return []
 
 
+def _instance_name_for_approvals() -> str:
+    """Human identity for approval decisions (falls back to the profile)."""
+    try:
+        cfg = ConfigManager().load() or {}
+        return str(cfg.get("chat_identity") or cfg.get("instance_name") or "")
+    except Exception:
+        return ""
+
+
 def _decide_approval(
     relay: str, secret: str, approval_id: str, approve: bool,
 ) -> tuple[bool, str]:
@@ -675,7 +684,13 @@ def _decide_approval(
         r = httpx.post(
             f"{relay}/v1/approvals/{approval_id}/decision",
             headers=_auth_headers(secret),
-            json={"approve": approve, "reason": ""},
+            json={
+                "approve": approve,
+                "reason": "",
+                # The relay refuses anonymous decisions (a shared secret is
+                # not an identity); send who we are.
+                "decided_by": _instance_name_for_approvals(),
+            },
             timeout=8,
             follow_redirects=True,
         )

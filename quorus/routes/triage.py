@@ -115,6 +115,17 @@ class _BidWindow:
 # move-to-end on access and O(1) popitem(last=False) on eviction. The
 # _BID_WINDOW_TTL_S floor is a belt-and-braces timeout in case some window
 # gets stuck.
+# A bid at or above this is an explicit @-mention (reflexd scores mentions
+# 1.0). Those are ADDRESSED, and sort above every credit-adjusted bid:
+# after two wins an agent's credit went negative enough that a teammate's
+# 0.3 question-bid beat the 1.0 mention and answered mail addressed to
+# someone else (caught by the Stream T gate, 2026-08-21).
+MENTION_BID = 1.0
+
+# How long a closed window remains claimable. Long enough for every bidder
+# to poll after the window shuts, short enough to stay bounded.
+CLAIM_GRACE_S = 60
+
 _bid_windows: "OrderedDict[tuple[str, str, str], _BidWindow]" = OrderedDict()
 _fairness_credit: dict[tuple[str, str], float] = {}
 
@@ -130,9 +141,13 @@ def _cleanup_expired() -> None:
     """
     now = _now()
     ttl_floor = now - timedelta(seconds=_BID_WINDOW_TTL_S)
+    # A window stays claimable for CLAIM_GRACE_S after it closes: bidding
+    # ends, then the winner is awarded. Dropping it the instant it expired
+    # made the "wait for the window" rule unsatisfiable — every claim 404'd.
+    claim_cutoff = now - timedelta(seconds=CLAIM_GRACE_S)
     expired: list[tuple[str, str, str]] = []
     for key, window in _bid_windows.items():
-        if window.expires_at < now and window.claim is None:
+        if window.expires_at < claim_cutoff and window.claim is None:
             expired.append(key)
         elif window.inserted_at < ttl_floor:
             # Hard TTL — even claimed windows get evicted eventually so
@@ -295,6 +310,7 @@ async def submit_bid(
     leader = max(
         window.bids.values(),
         key=lambda item: (
+            item.bid >= MENTION_BID,
             item.bid + _fairness_credit.get((tid, item.participant), 0.0),
             item.created_at,
         ),
@@ -326,6 +342,7 @@ async def claim_winner(
     window = _bid_windows.get(key)
     if window is None or not window.bids:
         raise HTTPException(status_code=404, detail="No bids for message")
+
     if window.claim is not None:
         return window.claim
 
@@ -341,9 +358,20 @@ async def claim_winner(
                 detail="not a bidder for this window",
             )
 
+    # Authorization first, then availability: hold the award until bidding
+    # closes. Without this the first caller to POST /claim won regardless
+    # of its bid — the mentioned agent lost to a teammate that reached the
+    # relay a few ms earlier (Stream T gate, 2026-08-21). Callers retry.
+    if window.claim is None and window.expires_at > _now():
+        raise HTTPException(
+            status_code=425,
+            detail="bid window still open — retry after it closes",
+        )
+
     winner = max(
         window.bids.values(),
         key=lambda item: (
+            item.bid >= MENTION_BID,
             item.bid + _fairness_credit.get((tid, item.participant), 0.0),
             item.created_at,
         ),
@@ -397,6 +425,13 @@ async def _claim_via_redis(r, request, auth, tid, rid, room_data, body) -> Claim
     if not auth.is_legacy and auth.role != "admin":
         if auth.sub is None or auth.sub not in bids:
             raise HTTPException(status_code=403, detail="not a bidder for this window")
+    if _exp and _exp > _now().isoformat() and not await _tr.claim_exists(
+        r, tid=tid, rid=rid, mid=body.message_id,
+    ):
+        raise HTTPException(
+            status_code=425,
+            detail="bid window still open — retry after it closes",
+        )
 
     def _payload(bids_now, winner, winner_bid, credits):
         expires_at = _now() + timedelta(seconds=_DEFAULT_BID_TTL_SECONDS)

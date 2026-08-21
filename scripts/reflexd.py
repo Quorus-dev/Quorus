@@ -217,14 +217,22 @@ LOG_MAX_BYTES = 10 * 1024 * 1024  # 10MB rotation per spec
 LOG_BACKUP_COUNT = 3
 SSE_RECONNECT_S = 2.0
 SSE_RECONNECT_MAX_S = 30.0
-BID_WINDOW_SECONDS = 2.0
-BID_TTL_SECONDS = 5
+# How long the relay keeps bidding open, and how long we wait for the
+# award. The relay now holds the claim until the window CLOSES (an auction
+# that awards on first-arrival is not an auction), so the TTL must be
+# comfortably shorter than the poll deadline — otherwise every claim gets
+# 425 until we give up and nobody answers at all.
+BID_TTL_SECONDS = 1
+BID_WINDOW_SECONDS = max(3.0, BID_TTL_SECONDS + 2.0)
 # D5 (WAKE_REBUILD_SPEC): two wake classes with different budgets.
 # Chat wakes (mention/question, no claimed task) are bounded tight; mission
 # wakes (the agent holds an active work-queue claim in the room) get a long
 # leash and an ESCALATION message instead of a bare failure sentinel —
 # never silently kill a working agent (the Arav rule, D5b).
 SUBPROCESS_TIMEOUT_S = int(os.environ.get("REFLEXD_SUBPROCESS_TIMEOUT_S", "300"))
+# Bounded memory of handled message ids — enough to cover a reconnect
+# backlog without growing forever.
+_HANDLED_ID_CAP = 2000
 CHAT_MAX_TURNS = int(os.environ.get("REFLEXD_CHAT_MAX_TURNS", "15"))
 MISSION_TIMEOUT_S = int(os.environ.get("REFLEXD_MISSION_TIMEOUT_S", "3600"))
 HEARTBEAT_HISTORY_LIMIT = 10
@@ -1554,6 +1562,9 @@ class Reflexd:
         # Bounded in-memory queue for messages that arrive while a busy-file
         # is set. Drained on stop, not replayed across restarts (PR-C1 scope).
         self._queue: list[dict[str, Any]] = []
+        # Ids already handled on EITHER delivery path (SSE or inbox drain).
+        self._handled_ids: set[str] = set()
+        self._handled_order: list[str] = []
 
     def stop(self) -> None:
         self._stop.set()
@@ -1692,6 +1703,11 @@ class Reflexd:
                 claim = await relay.claim(room_id=room, message_id=message_id)
             except httpx.HTTPStatusError as exc:
                 code = exc.response.status_code if exc.response else 0
+                if code == 425:
+                    # Bid window still open — exactly what we want to wait
+                    # for, so poll again rather than treating it as an error.
+                    await asyncio.sleep(0.1)
+                    continue
                 if code in (401, 403, 422):
                     logger.error(
                         "claim aborted (unrecoverable %d): "
@@ -1850,19 +1866,6 @@ class Reflexd:
         _UNKNOWN_OUTCOME = ("[reflexd] harness timed out",
                             "[reflexd] harness errored",
                             "[reflexd] (no reply)")
-        # D5b: a mission agent that hit its (long) leash gets an escalation
-        # the humans can act on, never a bare sentinel.
-        if mission and reply == "[reflexd] harness timed out":
-            task_title = str(
-                mission.get("title") or mission.get("description")
-                or mission.get("task_id") or "its claimed task"
-            )[:80]
-            reply = (
-                f"⚠ still holding the claim on '{task_title}' but my last "
-                f"work session hit the {MISSION_TIMEOUT_S // 60}m limit. "
-                "Mention me to continue, send /interrupt to stop me, or "
-                "release the task."
-            )
         if reply in _UNKNOWN_OUTCOME:
             try:
                 recent = await relay.fetch_recent(room=room, limit=20)
@@ -1878,6 +1881,25 @@ class Reflexd:
                         return
             except Exception as exc:
                 logger.debug("D7 self-reply check failed: %s", exc)
+
+        # D5b: a mission agent that hit its (long) leash gets an escalation
+        # humans can act on, never a bare sentinel. This runs AFTER the D7
+        # check on purpose: building it earlier meant the escalation never
+        # matched _UNKNOWN_OUTCOME, so a mission wake that had already
+        # posted its own reply still got a contradictory "it stalled" line.
+        if mission and reply == "[reflexd] harness timed out":
+            task_title = str(
+                mission.get("title") or mission.get("description")
+                or mission.get("summary") or mission.get("task_id")
+                or "its claimed task"
+            )[:80]
+            limit_min = max(1, (wake_timeout or SUBPROCESS_TIMEOUT_S) // 60)
+            reply = (
+                f"⚠ still holding the claim on '{task_title}' but my last "
+                f"work session hit the {limit_min}m limit. "
+                "Mention me to continue, send /interrupt to stop me, or "
+                "release the task."
+            )
 
         thread_root_id = envelope_thread_root(envelope)
         # SSE fan-out gives each recipient a per-envelope id while the
@@ -2106,6 +2128,7 @@ class Reflexd:
                     # inbox is the source of truth for missed mentions. Runs
                     # on every (re)connect, before going live on the stream.
                     await self._drain_inbox(relay)
+                    await self._drain_busy_queue(relay)
 
                     url = relay.stream_url(self.config.participant_name, stream_token)
                     connected_at = time.monotonic()
@@ -2137,6 +2160,29 @@ class Reflexd:
                         await task
                     except (asyncio.CancelledError, Exception):
                         pass
+
+    async def _drain_busy_queue(self, relay: RelayClient) -> None:
+        """Replay wakes deferred while the agent was mid-tool-call.
+
+        The queue was append-only: TurnGuard parked envelopes here and
+        NOTHING ever read them back, so a mention arriving during a
+        Bash/Edit call was acked to the relay and dropped — the user even
+        got a desktop notification for a message that would never be
+        answered. Drains FIFO once the busy-file clears.
+        """
+        if not self._queue or is_busy(
+            self.config.participant_name, self.config.runtime_dir,
+        ):
+            return
+        parked, self._queue = self._queue, []
+        logger.info("busy cleared — replaying %d deferred wake(s)", len(parked))
+        for envelope in parked:
+            if self._stop.is_set():
+                return
+            try:
+                await self.handle_room_message(relay, envelope)
+            except Exception as exc:  # pragma: no cover
+                logger.exception("deferred wake failed: %s", exc)
 
     async def _drain_inbox(self, relay: RelayClient) -> None:
         """R1: fetch + dispatch + ack every message queued while offline.
@@ -2208,6 +2254,23 @@ class Reflexd:
     ) -> None:
         if not isinstance(data, dict):
             return
+        # Dedupe across the two delivery paths. The relay dual-writes every
+        # room message (durable per-recipient queue + SSE push) and the SSE
+        # copy is never acked, so after a reconnect the drain returned
+        # everything already answered live and the agent re-replied to
+        # hour-old mentions. One id set covers both paths.
+        canonical = (
+            (data.get("message_id") or data.get("id") or "")
+            if event_name == "message" else ""
+        )
+        if canonical:
+            if canonical in self._handled_ids:
+                logger.debug("already handled %s — skipping", canonical)
+                return
+            self._handled_ids.add(canonical)
+            self._handled_order.append(canonical)
+            while len(self._handled_order) > _HANDLED_ID_CAP:
+                self._handled_ids.discard(self._handled_order.pop(0))
         if event_name == "connected":
             logger.info("sse connected")
             return

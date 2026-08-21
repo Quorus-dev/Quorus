@@ -8121,7 +8121,13 @@ async def _approval_decide(approval_id: str, approve: bool, reason: str) -> None
         resp = await client.post(
             f"{RELAY_URL}/v1/approvals/{approval_id}/decision",
             headers=_auth_headers(),
-            json={"approve": approve, "reason": reason or ""},
+            # Name ourselves: the relay refuses anonymous decisions, and with
+        # legacy (shared-secret) auth the request carries no identity.
+        json={
+            "approve": approve,
+            "reason": reason or "",
+            "decided_by": INSTANCE_NAME or "",
+        },
         )
     except httpx.HTTPError:
         _relay_unreachable()

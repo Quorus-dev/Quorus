@@ -89,22 +89,37 @@ def unregister(pid: int) -> None:
         _save(_prune(data))
 
 
-def find_for_cwd(cwd: str) -> dict[str, Any] | None:
-    """Return a live session whose cwd matches (exact, then parent-of)."""
+def find_for_cwd(cwd: str, participant: str | None = None) -> dict[str, Any] | None:
+    """Return a live session working INSIDE ``cwd``, or None.
+
+    Containment is one-directional on purpose. Accepting the other
+    direction (``ecwd in target.parents``) meant a session registered at
+    ``~`` — or ``/`` — matched every bound workspace beneath it, so one
+    Claude window open in your home directory made reflexd defer every
+    wake in every room and the product went silent with no error anywhere.
+    A session in a common ancestor is not working on your repo.
+
+    ``participant`` further narrows to that agent's own sessions when the
+    registry knows who they belong to.
+    """
     data = _prune(_load())
-    target = Path(cwd).resolve()
-    # Exact cwd match wins; else a session running inside the workspace tree.
-    exact = [e for e in data.values() if Path(e["cwd"]).resolve() == target]
-    if exact:
-        return exact[0]
+    try:
+        target = Path(cwd).resolve()
+    except (OSError, ValueError):
+        return None
+    best: dict[str, Any] | None = None
     for e in data.values():
+        if participant and e.get("participant") and e["participant"] != participant:
+            continue
         try:
             ecwd = Path(e["cwd"]).resolve()
         except (OSError, ValueError):
             continue
-        if ecwd == target or target in ecwd.parents or ecwd in target.parents:
-            return e
-    return None
+        if ecwd == target:
+            return e  # exact match always wins
+        if target in ecwd.parents:
+            best = best or e  # session inside the workspace tree
+    return best
 
 
 def list_live() -> list[dict[str, Any]]:

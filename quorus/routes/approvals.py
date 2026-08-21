@@ -18,7 +18,11 @@ from pydantic import BaseModel, Field
 
 from quorus.auth.middleware import AuthContext, verify_auth
 from quorus.routes.room_auth import require_room_member
-from quorus.services.approval_svc import ApprovalError, ApprovalSvc
+from quorus.services.approval_svc import (
+    ApprovalError,
+    ApprovalSvc,
+    is_agent_name,
+)
 
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
@@ -47,6 +51,10 @@ class CreateApprovalRequest(BaseModel):
 class DecisionRequest(BaseModel):
     approve: bool
     reason: str = Field(default="", max_length=500)
+    # Legacy/admin auth carries no participant identity (``sub`` is None),
+    # so an operator using the shared secret must name themselves. Ignored
+    # when a real participant identity is present.
+    decided_by: str = Field(default="", max_length=100)
 
 
 def _notify_room(
@@ -89,7 +97,8 @@ async def create_approval(
     svc = _svc(request)
     try:
         rec = await svc.create(
-            tid, room=room_data.get("name", rid), agent=body.agent,
+            tid, room=room_data.get("name", rid), room_id=rid,
+            agent=body.agent,
             tool_name=body.tool_name, tool_input=body.tool_input,
             ttl_seconds=body.ttl_seconds,
         )
@@ -109,7 +118,9 @@ async def create_approval(
             await room_svc.send(
                 tid, rid, body.agent,
                 (
-                    f"🔐 approval needed: `{body.tool_name}` — "
+                    # rec["tool_name"] is the SANITIZED value; body's is
+                    # raw and let an agent forge extra lines in this notice.
+                    f"🔐 approval needed: `{rec['tool_name']}` — "
                     f"{rec['input_preview']}\n"
                     f"approve with `quorus approve {rec['id']}` "
                     f"or deny with `quorus deny {rec['id']}`"
@@ -129,7 +140,37 @@ async def get_approval(
     rec = await _svc(request).get(_tid(auth), approval_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="Unknown approval request")
+    # The requesting agent always sees its own record (it polls this to
+    # learn the decision); everyone else must be in the room.
+    if auth.sub and auth.sub != rec["agent"]:
+        if not await _visible(request, auth, [rec]):
+            raise HTTPException(
+                status_code=404, detail="Unknown approval request",
+            )
     return rec
+
+
+async def _visible(request: Request, auth: AuthContext, records: list[dict]) -> list[dict]:
+    """Drop records for rooms the caller is not in.
+
+    Approval previews carry command lines and file contents; tenant-only
+    scoping let any participant (every agent included) enumerate every
+    room's pending requests — and harvest the ids needed to decide them.
+    Operator/admin credentials still see everything by design.
+    """
+    if auth.is_legacy or auth.role == "admin" or not auth.sub:
+        return records
+    visible: list[dict] = []
+    for rec in records:
+        try:
+            members = await request.app.state.backends.rooms.get_members(
+                _tid(auth), rec.get("room_id") or rec["room"],
+            )
+        except Exception:
+            continue
+        if auth.sub in (members or {}):
+            visible.append(rec)
+    return visible
 
 
 @router.get("/v1/approvals")
@@ -138,7 +179,8 @@ async def list_approvals(
     auth: AuthContext = Depends(verify_auth),
     room: str | None = None,
 ):
-    return {"pending": await _svc(request).list_pending(_tid(auth), room=room)}
+    pending = await _svc(request).list_pending(_tid(auth), room=room)
+    return {"pending": await _visible(request, auth, pending)}
 
 
 @router.post("/v1/approvals/{approval_id}/decision")
@@ -148,20 +190,50 @@ async def decide_approval(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
 ):
-    """Human-side: allow or deny. The requesting agent may not self-approve."""
+    """Human-side: allow or deny.
+
+    A gate an agent can open is not a gate, so deciding requires an
+    identity that (a) is named, (b) is not an agent, (c) is not the
+    requesting agent, and (d) belongs to the room. Previously the endpoint
+    checked only ``auth.sub == rec["agent"]`` — and skipped even that under
+    legacy auth, which is exactly the credential the MCP server falls back
+    to. Any second agent in the tenant could approve the first one's Bash
+    call, from a room it had never joined.
+    """
     tid = _tid(auth)
     svc = _svc(request)
     rec = await svc.get(tid, approval_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="Unknown approval request")
-    if not auth.is_legacy and auth.sub == rec["agent"]:
+
+    # (a) Who is deciding? Legacy auth has no participant identity, so the
+    # caller must name themselves; a bare shared secret decides nothing.
+    decider = (auth.sub or body.decided_by or "").strip()
+    if not decider:
         raise HTTPException(
-            status_code=403, detail="An agent cannot decide its own approval",
+            status_code=403,
+            detail=(
+                "Approvals need a named decider. Use a participant API key, "
+                "or pass decided_by with an operator identity."
+            ),
+        )
+    # (b) + (c) Agents never decide — least of all their own request.
+    if decider == rec["agent"] or is_agent_name(decider):
+        raise HTTPException(
+            status_code=403, detail="An agent cannot decide an approval",
+        )
+    # (d) …and only someone in the room can speak for it.
+    members = await request.app.state.backends.rooms.get_members(
+        tid, rec.get("room_id") or rec["room"],
+    )
+    if decider not in (members or {}):
+        raise HTTPException(
+            status_code=403, detail="Only a room member can decide this",
         )
     try:
         decided = await svc.decide(
             tid, approval_id, approve=body.approve,
-            decided_by=auth.sub or "operator", reason=body.reason,
+            decided_by=decider, reason=body.reason,
         )
     except ApprovalError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

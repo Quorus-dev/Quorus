@@ -47,15 +47,39 @@ def test_dead_pids_are_pruned(registry_in_tmp, monkeypatch):
     assert [e["cwd"] for e in live] == ["/repo/live"]
 
 
-def test_find_for_cwd_matches_exact_and_subtree(registry_in_tmp, tmp_path):
+def test_find_for_cwd_matches_exact_and_sessions_inside_it(
+    registry_in_tmp, tmp_path,
+):
+    """Containment is one-directional on purpose.
+
+    A session working INSIDE a bound workspace counts; a session sitting in
+    an ANCESTOR does not. Accepting the ancestor direction meant one Claude
+    window open in ``~`` matched every workspace beneath it, so reflexd
+    deferred every wake in every room and the product went silent with no
+    error anywhere (adversarial review, 2026-08-21).
+    """
     repo = tmp_path / "repo"
     (repo / "pkg").mkdir(parents=True)
-    ls.register(pid=os.getpid(), cwd=str(repo))
-    assert ls.find_for_cwd(str(repo)) is not None
+    ls.register(pid=os.getpid(), cwd=str(repo / "pkg"))
+    # Exact match, and a session deeper inside the workspace.
     assert ls.find_for_cwd(str(repo / "pkg")) is not None
+    assert ls.find_for_cwd(str(repo)) is not None
     other = tmp_path / "elsewhere"
     other.mkdir()
     assert ls.find_for_cwd(str(other)) is None
+
+
+def test_ancestor_session_does_not_claim_sibling_workspaces(
+    registry_in_tmp, tmp_path,
+):
+    """The silencing bug: a session in a common ancestor must not match."""
+    home = tmp_path / "home"
+    (home / "projA").mkdir(parents=True)
+    (home / "projB").mkdir()
+    ls.register(pid=os.getpid(), cwd=str(home))
+    assert ls.find_for_cwd(str(home / "projA")) is None
+    assert ls.find_for_cwd(str(home / "projB")) is None
+    assert ls.find_for_cwd(str(home)) is not None  # exact still matches
 
 
 def test_unregister_removes_entry(registry_in_tmp):

@@ -97,13 +97,15 @@ wait_for() { # wait_for SECONDS COMMAND...
   return 1
 }
 
-replies_from_agents() { # count agent replies in room history
+replies_from_agents() { # count stub replies; optional $1 = sender filter
   api GET "/rooms/$RID/history?limit=50" | "$VENV_PY" -c '
 import sys, json
+want = sys.argv[1] if len(sys.argv) > 1 else ""
 msgs = json.load(sys.stdin)
 print(sum(1 for m in msgs
           if m.get("from_name","").endswith("-claude")
-          and "reflexd-stub" in (m.get("content") or "")))'
+          and (not want or m.get("from_name") == want)
+          and "reflexd-stub" in (m.get("content") or "")))' "${1:-}"
 }
 
 printf "${C_B}Quorus wake-rebuild acceptance gate${C_0} ${C_D}(port %s · %s rounds · stub harness)${C_0}\n" "$PORT" "$ROUNDS"
@@ -117,10 +119,14 @@ wait_for 20 curl -fsS -m 1 "$URL/health" || { bad "relay healthy" "never came up
 ok "relay healthy"
 
 RID="$(api POST /rooms '{"name":"wake-gate","created_by":"arav"}' | jqp 'print(d["id"])')"
-for who in "$AGENT_A" "$AGENT_B"; do
-  api POST "/rooms/$RID/join" "{\"participant\":\"$who\"}" >/dev/null
+joined=0
+for who in "$AGENT_A" "$AGENT_B" arav; do
+  api POST "/rooms/$RID/join" "{\"participant\":\"$who\"}" >/dev/null 2>&1 \
+    && joined=$((joined+1))
 done
-ok "room + two agents joined"
+# Was an unconditional ok() that could not fail even if every join errored.
+[[ $joined -eq 3 ]] && ok "room + two agents + human joined" \
+  || bad "room join" "only $joined of 3 joined"
 
 # D1: bind the room to a workspace on this host.
 mkdir -p "$WORK/.quorus"
@@ -139,22 +145,29 @@ ok "both daemons subscribed"
 for round in $(seq 1 "$ROUNDS"); do
   step "round $round/$ROUNDS"
 
-  before="$(replies_from_agents)"
+  before="$(replies_from_agents "$AGENT_A")"
+  other_before="$(replies_from_agents "$AGENT_B")"
   api POST "/rooms/$RID/messages" \
       "{\"from_name\":\"arav\",\"content\":\"@$AGENT_A round $round status?\"}" >/dev/null
   deadline=$(( $(date +%s) + 20 )); got=$before
   while [[ $(date +%s) -lt $deadline ]]; do
-    got="$(replies_from_agents)"
+    got="$(replies_from_agents "$AGENT_A")"
     [[ "$got" -gt "$before" ]] && break
     sleep 0.25
   done
-  if [[ "$got" -eq $((before + 1)) ]]; then
-    ok "mention → exactly one autonomous reply"
+  sleep 3   # settle: a duplicate reply must have time to show up
+  got="$(replies_from_agents "$AGENT_A")"
+  other_after="$(replies_from_agents "$AGENT_B")"
+  if [[ "$got" -eq $((before + 1)) && "$other_after" -eq "$other_before" ]]; then
+    ok "mention → exactly one reply, from the agent addressed"
   else
-    bad "mention → one reply" "expected $((before+1)), got $got"
+    bad "mention → one reply from $AGENT_A" \
+        "$AGENT_A $before -> $got, $AGENT_B $other_before -> $other_after"
   fi
 
-  before="$got"
+  # Broadcast: ANY single agent may answer, so count the total here (the
+  # mention check above is the one that pins the sender).
+  before="$(replies_from_agents)"
   api POST "/rooms/$RID/messages" \
       "{\"from_name\":\"arav\",\"content\":\"@open round $round: fix the failing tests\"}" >/dev/null
   deadline=$(( $(date +%s) + 20 )); got=$before
@@ -174,10 +187,18 @@ done
 
 # ── honesty + presence ──────────────────────────────────────────────────────
 step "honesty + presence"
-if api GET "/rooms/$RID/history?limit=50" | grep -q "not installed on this host"; then
-  bad "no honest-error leakage" "an install error surfaced in a stub run"
+hist="$(api GET "/rooms/$RID/history?limit=50" 2>/dev/null || true)"
+if [[ -z "$hist" ]]; then
+  # An empty body used to take the happy branch: curl fails silently and
+  # grep -q on nothing exits 1. A check that goes green when the relay is
+  # dead is worse than no check.
+  bad "transcript readable" "history fetch returned nothing"
+elif grep -q "\[reflexd\]" <<<"$hist"; then
+  bad "no error sentinels in transcript" "a [reflexd] sentinel reached the room"
+elif ! grep -q "reflexd-stub" <<<"$hist"; then
+  bad "agents actually replied" "no stub replies present in history"
 else
-  ok "no fake/error replies mixed into the transcript"
+  ok "transcript holds real replies and no error sentinels"
 fi
 
 presence="$(api GET "/rooms/$RID" | "$VENV_PY" -c '
@@ -227,9 +248,17 @@ if api GET "/rooms/$RID/history?limit=50" | grep -q "approval needed"; then
 else
   bad "approval chat line" "not found in history"
 fi
-st="$(api POST "/v1/approvals/$APR/decision" '{"approve":true,"reason":"gate"}' | jqp 'print(d["status"])')"
+# A second request, denied — the header claims "denies stick" and nothing
+# tested it.
+APR2="$(api POST /v1/approvals \
+  "{\"room_id\":\"$RID\",\"agent\":\"$AGENT_A\",\"tool_name\":\"Edit\",\"tool_input\":\"rm -rf /\"}" \
+  | jqp 'print(d["id"])')"
+dn="$(api POST "/v1/approvals/$APR2/decision" '{"approve":false,"decided_by":"arav"}' | jqp 'print(d["status"])')"
+[[ "$dn" == "denied" ]] && ok "deny is recorded" || bad "deny" "status=$dn"
+
+st="$(api POST "/v1/approvals/$APR/decision" '{"approve":true,"reason":"gate","decided_by":"arav"}' | jqp 'print(d["status"])')"
 [[ "$st" == "approved" ]] && ok "approve unblocks" || bad "approve" "status=$st"
-st2="$(api POST "/v1/approvals/$APR/decision" '{"approve":false}' | jqp 'print(d["status"])')"
+st2="$(api POST "/v1/approvals/$APR/decision" '{"approve":false,"decided_by":"arav"}' | jqp 'print(d["status"])')"
 [[ "$st2" == "approved" ]] && ok "settled decisions are idempotent" || bad "idempotent decision" "flipped to $st2"
 
 # ── workspace binding (D1) ──────────────────────────────────────────────────

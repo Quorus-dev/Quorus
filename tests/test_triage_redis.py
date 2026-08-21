@@ -74,7 +74,7 @@ async def test_concurrent_claims_elect_exactly_one_winner(fake_redis):
 
     def factory(bids, winner, winner_bid, credits):
         import uuid
-        return {"claimed": True, "winner": winner, "bid": winner_bid,
+        return {"claimed": True, "winner": winner, "bid": winner_bid, "ttl_seconds": 1,
                 "claim_token": str(uuid.uuid4()), "expires_at": "x",
                 "candidates": sorted(bids), "fairness_credit": credits}
 
@@ -102,11 +102,13 @@ async def test_route_level_bid_claim_via_redis(client, fake_redis):
     for who, bid in (("a-claude", 0.9), ("b-claude", 0.7)):
         resp = await client.post("/v1/bid", json={
             "room_id": rid, "message_id": mid, "participant": who,
-            "bid": bid, "reason": "t",
+            "bid": bid, "reason": "t", "ttl_seconds": 1,
         }, headers=HEADERS)
         assert resp.status_code == 200, resp.text
     assert resp.json()["leader"] == "a-claude"
 
+    # Claims are held until the bid window closes — wait it out.
+    await asyncio.sleep(1.05)
     c1 = await client.post("/v1/claim", json={"room_id": rid, "message_id": mid},
                            headers=HEADERS)
     c2 = await client.post("/v1/claim", json={"room_id": rid, "message_id": mid},
@@ -121,6 +123,8 @@ async def test_route_level_bid_claim_via_redis(client, fake_redis):
 
 async def test_claim_without_bids_404s_via_redis(client, fake_redis):
     rid = await _room_with(client, ["arav"])
+    # Claims are held until the bid window closes — wait it out.
+    await asyncio.sleep(1.05)
     resp = await client.post("/v1/claim", json={
         "room_id": rid, "message_id": "no-bids",
     }, headers=HEADERS)
@@ -137,7 +141,7 @@ async def test_fairness_credit_shapes_next_auction(fake_redis):
             )
 
     def factory(bids, winner, winner_bid, credits):
-        return {"claimed": True, "winner": winner, "bid": winner_bid,
+        return {"claimed": True, "winner": winner, "bid": winner_bid, "ttl_seconds": 1,
                 "claim_token": "tok-" + winner, "expires_at": "x",
                 "candidates": sorted(bids), "fairness_credit": credits}
 
@@ -219,7 +223,7 @@ async def test_only_the_race_winner_reports_fresh(fake_redis):
     )
 
     def factory(bids, winner, winner_bid, credits):
-        return {"claimed": True, "winner": winner, "bid": winner_bid,
+        return {"claimed": True, "winner": winner, "bid": winner_bid, "ttl_seconds": 1,
                 "claim_token": "tok", "expires_at": "x",
                 "candidates": sorted(bids), "fairness_credit": credits}
 
@@ -240,7 +244,7 @@ async def test_credits_come_from_the_increment_itself(fake_redis):
                             ttl_seconds=30)
 
     def factory(bids, winner, winner_bid, credits):
-        return {"claimed": True, "winner": winner, "bid": winner_bid,
+        return {"claimed": True, "winner": winner, "bid": winner_bid, "ttl_seconds": 1,
                 "claim_token": "tok", "expires_at": "x",
                 "candidates": sorted(bids), "fairness_credit": credits}
 

@@ -105,7 +105,7 @@ async def test_bid_and_claim_select_highest_bid_idempotently(client: AsyncClient
             "room_id": room_id,
             "message_id": "msg-2",
             "participant": "bob",
-            "bid": 0.3,
+            "bid": 0.3, "ttl_seconds": 1,
         },
         headers=HEADERS,
     )
@@ -115,7 +115,7 @@ async def test_bid_and_claim_select_highest_bid_idempotently(client: AsyncClient
             "room_id": room_id,
             "message_id": "msg-2",
             "participant": "carol",
-            "bid": 0.9,
+            "bid": 0.9, "ttl_seconds": 1,
         },
         headers=HEADERS,
     )
@@ -124,6 +124,8 @@ async def test_bid_and_claim_select_highest_bid_idempotently(client: AsyncClient
     assert carol_bid.status_code == 200
     assert carol_bid.json()["leader"] == "carol"
 
+    # Claims are held until the bid window closes — wait it out.
+    await asyncio.sleep(1.05)
     claim = await client.post(
         "/v1/claim",
         json={"room_id": room_id, "message_id": "msg-2"},
@@ -154,12 +156,14 @@ async def test_claim_broadcasts_wake_intent_to_bidders(client: AsyncClient):
                     "room_id": room_id,
                     "message_id": "msg-3",
                     "participant": participant,
-                    "bid": bid,
+                    "bid": bid, "ttl_seconds": 1,
                 },
                 headers=HEADERS,
             )
             assert resp.status_code == 200
 
+        # Claims are held until the bid window closes — wait it out.
+        await asyncio.sleep(1.05)
         claim = await client.post(
             "/v1/claim",
             json={"room_id": room_id, "message_id": "msg-3"},
@@ -180,6 +184,8 @@ async def test_claim_broadcasts_wake_intent_to_bidders(client: AsyncClient):
 async def test_claim_without_bids_returns_404(client: AsyncClient):
     room_id = await _setup_room(client)
 
+    # Claims are held until the bid window closes — wait it out.
+    await asyncio.sleep(1.05)
     resp = await client.post(
         "/v1/claim",
         json={"room_id": room_id, "message_id": "missing"},
@@ -230,13 +236,15 @@ async def test_non_bidder_cannot_claim_403(client: AsyncClient):
                 "room_id": room_id,
                 "message_id": "msg-fix8",
                 "participant": participant,
-                "bid": amount,
+                "bid": amount, "ttl_seconds": 1,
             },
             headers=_hdr(participant),
         )
         assert b.status_code == 200, b.text
 
     # dave tries to claim a window he never bid on. Must 403.
+    # Claims are held until the bid window closes — wait it out.
+    await asyncio.sleep(1.05)
     rogue = await client.post(
         "/v1/claim",
         json={"room_id": room_id, "message_id": "msg-fix8"},
@@ -246,6 +254,8 @@ async def test_non_bidder_cannot_claim_403(client: AsyncClient):
     assert "bidder" in rogue.text or "not a bidder" in rogue.text
 
     # bob (a real bidder) can still claim it.
+    # Claims are held until the bid window closes — wait it out.
+    await asyncio.sleep(1.05)
     legit = await client.post(
         "/v1/claim",
         json={"room_id": room_id, "message_id": "msg-fix8"},
@@ -278,7 +288,7 @@ async def test_mention_bid_claim_flow_has_one_winner(client: AsyncClient):
                 "room_id": room_id,
                 "message_id": "msg-e2e",
                 "participant": "bob",
-                "bid": 0.7,
+                "bid": 0.7, "ttl_seconds": 1,
             },
             headers=HEADERS,
         ),
@@ -288,13 +298,16 @@ async def test_mention_bid_claim_flow_has_one_winner(client: AsyncClient):
                 "room_id": room_id,
                 "message_id": "msg-e2e",
                 "participant": "carol",
-                "bid": 0.9,
+                "bid": 0.9, "ttl_seconds": 1,
             },
             headers=HEADERS,
         ),
     )
     assert [resp.status_code for resp in bids] == [200, 200]
 
+    # Claims are held (425) until the bid window closes — that is what makes
+    # this an auction rather than a race to POST first.
+    await asyncio.sleep(1.05)
     claims = await asyncio.gather(
         client.post(
             "/v1/claim",

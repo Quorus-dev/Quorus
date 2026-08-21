@@ -194,24 +194,42 @@ _AGENT_NAME_RE = re.compile(
     r"-(claude|codex|gemini|cursor|opencode|cline)(-|$)", re.IGNORECASE,
 )
 
-# A quoted span inside an agent's message — 'like this' or "like this".
-_QUOTED_SPAN_RE = re.compile(r"'[^']{0,400}'|\"[^\"]{0,400}\"")
+# A quoted span inside an agent's message. Apostrophes are NOT quotes:
+# treating them as such blanked the text between any two contractions
+# ("we shouldn't ship yet @arav-codex - it's broken" → "we shouldn s
+# broken"), silently swallowing the mention so the agent never woke and
+# the room got neither a reply nor a reason. Only balanced double quotes
+# and backticks — the shapes agents actually quote requests with — count,
+# and only when the span looks like a citation (opened after whitespace
+# or the start of the line).
+_QUOTED_SPAN_RE = re.compile(
+    r"(?:(?<=\s)|^)(\"[^\"\n]{0,400}\"|`[^`\n]{0,400}`|'[^'\n]{0,400}')",
+    re.MULTILINE,
+)
 
 
 def is_agent_sender(sender: str | None) -> bool:
     return bool(sender and _AGENT_NAME_RE.search(sender))
 
 
-def strip_quoted_spans(text: str) -> str:
-    """Blank out quoted spans.
+def strip_quoted_spans(text: str, *, keep: str | None = None) -> str:
+    """Blank out quoted CITATIONS while preserving deliberate mentions.
 
     Agents acknowledge work by quoting the request back ("on it, working on
     '@arav-claude fix the tests'"). Scanning that quote for triggers makes
     every acknowledgment a fresh order, and two agents ping-pong until the
     depth cap — observed live in the Stream T gate, 2026-08-21. A quote is
-    a citation, not an instruction, so it never carries triggers.
+    a citation, not an instruction.
+
+    But a citation must never swallow a REAL request. The opening quote
+    must follow whitespace or start the line, which is what separates a
+    citation ("working on '@arav-claude fix tests'") from an apostrophe in
+    prose ("we shouldn't ship @arav-codex"). ``keep`` is accepted for call
+    compatibility but deliberately unused: honouring it would let a quoted
+    echo of your own name wake you again — the storm this exists to stop.
     """
-    return _QUOTED_SPAN_RE.sub(" ", text)
+    del keep
+    return _QUOTED_SPAN_RE.sub(lambda m: " ", text)
 
 
 def classify_message(
@@ -258,7 +276,7 @@ def classify_message(
     # strip_quoted_spans). Human messages are matched verbatim — a human
     # who types quotes still means what they say.
     if is_agent_sender(sender):
-        text = strip_quoted_spans(text)
+        text = strip_quoted_spans(text, keep=self_name)
 
     # 0. Verb-prefixed prose ("/disagree blocking ...") in a chat-typed
     #    message — same abstention as the message_type=="social" branch.

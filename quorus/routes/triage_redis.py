@@ -28,6 +28,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 _CLAIM_TTL_S = 3600
+# Bids at/above this are explicit @-mentions — see routes/triage.py.
+MENTION_BID = 1.0
 _EXPIRES_FIELD = "__expires_at"
 
 
@@ -92,9 +94,14 @@ async def _load_bids(r: Any, tid: str, rid: str, mid: str) -> tuple[dict[str, di
 async def _leader(
     r: Any, tid: str, bids: dict[str, dict]
 ) -> tuple[str, float] | None:
-    """Highest (bid + fairness credit), created_at as tiebreak — same rule
-    as the in-memory auction."""
-    best: tuple[float, str, str] | None = None  # (score, created_at, name)
+    """Addressed mail first, then (bid + fairness credit), created_at as
+    tiebreak — same rule as the in-memory auction.
+
+    A bid at ``MENTION_BID`` or above is an explicit @-mention and outranks
+    every credit-adjusted bid: fairness rotates UNADDRESSED work, it must
+    never hand your mention to a teammate.
+    """
+    best: tuple[bool, float, str, str] | None = None
     best_bid = 0.0
     for name, item in bids.items():
         try:
@@ -103,13 +110,13 @@ async def _leader(
             continue
         score = bid + await get_credit(r, tid, name)
         created = str(item.get("created_at", ""))
-        cand = (score, created, name)
+        cand = (bid >= MENTION_BID, score, created, name)
         if best is None or cand > best:
             best = cand
             best_bid = bid
     if best is None:
         return None
-    return best[2], best_bid
+    return best[3], best_bid
 
 
 async def record_bid(
@@ -214,3 +221,11 @@ async def try_claim(
     payload["fairness_credit"] = credits
     await r.set(ckey, json.dumps(payload), ex=_CLAIM_TTL_S)
     return payload, bids, True
+
+
+async def claim_exists(r: Any, *, tid: str, rid: str, mid: str) -> bool:
+    """True once a claim has been written for this message."""
+    try:
+        return bool(await r.exists(_claim_key(tid, rid, mid)))
+    except Exception:
+        return False
