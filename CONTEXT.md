@@ -137,6 +137,26 @@ Next:
 
 ## Recent Changes
 
+### Full review: code review + consumer CLI sweep (2026-10-09 evening)
+
+Two parallel reviews (code review of today's diff; a new-user sweep of every
+command against an isolated relay). Fixed: publish into whichever branch the
+human checked out (integration branch now recorded); staged conflict markers
+could reach main; resolution wakes ignored room mode; restart mid-merge
+stranded branches; git hook timeouts swallowed replies; drain blocked the
+reader; MCP `-m` let a repo shadow our packages (now `python -I -m`);
+`quorus relay` was broken for every install; `quorus init` auto-started a
+manager that duplicated `agent add`; first-run wizard defaulted to a dead
+public relay AND saved no secret on the local path (now: Enter = local relay
+started for you, restarted on next `quorus` if down); tracebacks → readable
+errors (missing room, wrong secret, relay down); chat Ctrl+C/Ctrl+D hang;
+join claimed success on failure; hub [j] rejected invite codes; doctor
+false failures. Known, not fixed: legacy shared-secret relays can't enforce
+owner-only approvals against a malicious local agent (needs account mode);
+kick is advisory in legacy mode; several commands still exit 0 on
+not-found; DMs to unknown names are accepted; bindings don't follow
+`rename`; no public/hosted relay exists.
+
 ### Scenario gate + CI green (2026-10-09)
 
 `scripts/scenarios.py`: 20 real-user scenarios against an isolated relay

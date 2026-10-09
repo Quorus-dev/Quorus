@@ -8243,11 +8243,13 @@ def _cmd_whoami(args) -> None:
     override = getattr(args, "workspace", None) or os.environ.get("QUORUS_PROFILE")
     slug = override or pm.current()
     if slug is None:
-        _ui.console.print(
-            "  [dim]no current workspace — run "
-            "[bold]quorus workspaces use <slug>[/][/]"
-        )
-        return
+        if pm.list():
+            _ui.console.print("  [dim]no current workspace — run "
+                              "[bold]quorus workspaces use <slug>[/][/]")
+        else:
+            _ui.console.print("  [dim]not set up yet — run [bold]quorus[/] (guided) or "
+                              "[bold]quorus init <your-name> --secret <secret>[/][/]")
+        raise SystemExit(1)
     data = pm.get(slug) or {}
     if not data:
         _ui.console.print(f"  [red]profile {slug!r} missing or corrupt[/]")
