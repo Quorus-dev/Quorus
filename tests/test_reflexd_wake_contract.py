@@ -616,3 +616,27 @@ def test_finish_merge_refuses_leftover_markers(tmp_path: Path) -> None:
     assert wake.finish_merge(b, "b-codex") is False  # markers still there
     assert wake.merge_in_progress(b)
     wake.abort_merge(b)
+
+
+def test_periodic_drain_refetches_while_idle_and_skips_while_busy(tmp_path: Path) -> None:
+    d = _daemon(tmp_path)
+    calls: list[str] = []
+
+    async def fake_drain(relay: Any) -> None:
+        calls.append("busy" if d._wake_lock.locked() else "idle")
+
+    d._drain_inbox = fake_drain  # type: ignore[method-assign]
+
+    async def go() -> None:
+        task = asyncio.create_task(d._periodic_drain(None, interval=0.01))
+        await asyncio.sleep(0.05)
+        async with d._wake_lock:
+            n = len(calls)
+            await asyncio.sleep(0.05)
+            assert len(calls) == n  # never drains mid-wake
+        await asyncio.sleep(0.05)
+        d.stop()
+        await asyncio.wait_for(task, 1)
+
+    asyncio.run(go())
+    assert calls and set(calls) == {"idle"}

@@ -244,6 +244,7 @@ HEARTBEAT_HISTORY_LIMIT = 10
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
 # so 30s gives three missed beats of slack. Env-tunable for tests.
 HEARTBEAT_INTERVAL_S = float(os.environ.get("REFLEXD_HEARTBEAT_S", "30"))
+DRAIN_INTERVAL_S = float(os.environ.get("REFLEXD_DRAIN_INTERVAL_S", "120"))
 MENTION_PREVIEW_CHARS = 80
 # Anti-loop guard: if we are about to reply to a message that itself was
 # spawned in response to one of OUR prior replies, and the chain is already
@@ -2330,6 +2331,7 @@ class Reflexd:
             # R2: presence heartbeat so the relay can render active/away and
             # queue depth for this agent. Independent of the SSE loop.
             hb_task = asyncio.create_task(self._heartbeat_loop(relay))
+            drain_task = asyncio.create_task(self._periodic_drain(relay))
 
             try:
                 while not self._stop.is_set():
@@ -2374,7 +2376,7 @@ class Reflexd:
                     await self._sleep_or_stop(backoff)
                     backoff = min(backoff * 2, SSE_RECONNECT_MAX_S)
             finally:
-                for task in (dm_task, hb_task, *self._bg_tasks):
+                for task in (dm_task, hb_task, drain_task, *self._bg_tasks):
                     task.cancel()
                     try:
                         await task
@@ -2545,6 +2547,25 @@ class Reflexd:
                 break
         if drained:
             logger.info("inbox drain: handled %d queued message(s)", drained)
+
+    async def _periodic_drain(
+        self, relay: RelayClient, interval: float = DRAIN_INTERVAL_S,
+    ) -> None:
+        """Re-drain the durable inbox while idle.
+
+        A drain makes fetched messages invisible until acked; if the daemon
+        restarts mid-drain they come back only after the visibility window —
+        and the old code drained only on (re)connect, so they were never
+        fetched again (two overnight tasks lost, 2026-10-08). Handled ids
+        dedupe everything already answered."""
+        while not self._stop.is_set():
+            await self._sleep_or_stop(interval)
+            if self._stop.is_set() or self._wake_lock.locked():
+                continue
+            try:
+                await self._drain_inbox(relay)
+            except Exception as exc:  # never kill the daemon over a drain
+                logger.debug("periodic drain failed: %s", exc)
 
     async def _heartbeat_loop(
         self, relay: RelayClient, interval: float = HEARTBEAT_INTERVAL_S,
