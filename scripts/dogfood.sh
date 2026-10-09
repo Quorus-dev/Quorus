@@ -129,7 +129,10 @@ try:
     d = json.loads(p.read_text() or "{}")
 except (OSError, ValueError):
     d = {}
-d[sys.argv[1]] = sys.argv[2]
+prev = d.get(sys.argv[1])
+# keep a mode chosen with `quorus room bind --mode` when re-running up
+d[sys.argv[1]] = ({"path": sys.argv[2], "mode": prev["mode"]}
+                  if isinstance(prev, dict) and prev.get("mode") else sys.argv[2])
 fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, "w") as f:
     json.dump(d, f, indent=2)
