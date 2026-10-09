@@ -100,9 +100,9 @@ def test_wake_flags_bind_identity_without_leaking_secret(tmp_path: Path) -> None
 def test_codex_sandbox_is_owner_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(wake, "CODEX_SANDBOX", "workspace-write")
     flags = wake.codex_wake_flags(None)
-    assert flags[:2] == ["-s", "workspace-write"]
+    assert flags[:2] == ["-c", 'sandbox_mode="workspace-write"']
     monkeypatch.setattr(wake, "CODEX_SANDBOX", "danger-full-access")
-    assert "-s" not in wake.codex_wake_flags(None)  # never full access
+    assert not any("sandbox_mode" in f for f in wake.codex_wake_flags(None))
 
 
 def test_wake_flags_do_not_widen_permissions_by_default() -> None:
@@ -113,9 +113,10 @@ def test_wake_flags_do_not_widen_permissions_by_default() -> None:
         assert forbidden not in flags
 
 
-def test_codex_extra_flags_precede_resume_subcommand() -> None:
+def test_codex_flags_follow_resume_subcommand() -> None:
+    # `codex exec resume` only applies options given to the subcommand.
     argv = reflexd.build_codex_argv("hi", resume="tid", extra=["-c", "x=1"])
-    assert argv.index("-c") < argv.index("resume") < argv.index("--")
+    assert argv.index("resume") < argv.index("-c") < argv.index("tid") < argv.index("--")
 
 
 def _daemon(tmp_path: Path, name: str = "qt-claude") -> Any:
@@ -552,28 +553,33 @@ def test_sync_puts_clean_branch_on_latest_main(tmp_path: Path) -> None:
     assert "UNCOMMITTED" in wake.worktree_instructions(a, dirty=wake.worktree_dirty(a))
 
 
-def test_uncommitted_work_gets_one_commit_nudge_then_publishes(tmp_path: Path) -> None:
-    import subprocess as sp
+def test_daemon_commits_finished_but_uncommitted_work(tmp_path: Path) -> None:
+    # Codex's sandbox blocks git: its finished work sat uncommitted forever.
     repo = _git_repo(tmp_path / "proj")
     wt = wake.agent_worktree(repo, "b-codex")
-    (wt.path / "feature.txt").write_text("done")  # agent forgot to commit
+    (wt.path / "feature.txt").write_text("done")
 
-    class Committer:
-        prompts: list[str] = []
+    class NeverCalled:
+        async def run(self, *a: Any, **k: Any) -> str:
+            raise AssertionError("no extra wake needed")
 
-        async def run(self, harness: str, *, context: str, cwd: Path, **kw: Any) -> str:
-            self.prompts.append(context)
-            g = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
-            sp.run([*g, "add", "feature.txt"], cwd=cwd, check=True)
-            sp.run([*g, "commit", "-q", "-m", "feature"], cwd=cwd, check=True)
-            return "abc123 feature"
-
-    adapter = Committer()
-    status = _resolve(tmp_path, wt, adapter)
-    assert "uncommitted" in adapter.prompts[0]
+    d = _daemon(tmp_path / "rt", "b-codex")
+    d.adapter = NeverCalled()
+    status = asyncio.run(d._publish_with_resolution(
+        wt, harness="codex", resume=None, on_session=lambda _s: None, timeout_s=None,
+        max_turns=None, writable_root=None,
+        summary="✅ Added `feature.txt` with the done marker; tests green"))
     assert "published 1 commit" in status
     assert (repo / "feature.txt").read_text() == "done"
+    import subprocess as sp
+    log = sp.run(["git", "log", "-1", "--format=%an|%s", "main"], cwd=repo,
+                 capture_output=True, text=True).stdout.strip()
+    assert log == "b-codex|Added feature.txt with the done marker; tests green"
 
+
+def test_commit_message_from_reply() -> None:
+    assert wake.commit_message_from("✅ **Shipped** `x`", "a") == "Shipped x"
+    assert wake.commit_message_from("", "a-codex") == "work by a-codex"
 
 def test_cancelled_job_is_not_marked_handled(tmp_path: Path) -> None:
     d = _daemon(tmp_path)
@@ -667,8 +673,9 @@ def test_room_modes_map_to_harness_flags(tmp_path: Path) -> None:
     assert "acceptEdits" in auto and not any("bypass" in f or "dangerous" in f for f in auto)
     assert wake.claude_wake_flags(None, "default") == []
 
-    assert wake.codex_wake_flags(None, None, "manual")[:2] == ["-s", "read-only"]
-    assert wake.codex_wake_flags(None, None, "autonomous")[:2] == ["-s", "workspace-write"]
+    assert wake.codex_wake_flags(None, None, "manual")[:2] == ["-c", 'sandbox_mode="read-only"']
+    assert wake.codex_wake_flags(None, None, "autonomous")[:2] == [
+        "-c", 'sandbox_mode="workspace-write"']
 
 
 @pytest.mark.parametrize("msg,action", [

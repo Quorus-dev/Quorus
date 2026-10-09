@@ -556,12 +556,13 @@ def build_codex_argv(
     Argv-injection guard: ``--`` separates options from the positional
     prompt so a leading-dash chat body cannot be re-interpreted as a flag.
     """
-    argv = [CODEX_BIN, "exec", "--json", "--skip-git-repo-check"]
-    if extra:  # exec options must precede the ``resume`` subcommand
-        argv += extra
     if resume:
-        argv += ["resume", resume]
-    return argv + ["--", context]
+        # Options go AFTER `resume`: they belong to the subcommand. Placed
+        # before it, the resumed session kept its stored sandbox/config.
+        return [CODEX_BIN, "exec", "resume", "--json", "--skip-git-repo-check",
+                *(extra or []), resume, "--", context]
+    return [CODEX_BIN, "exec", "--json", "--skip-git-repo-check", *(extra or []),
+            "--", context]
 
 
 def build_gemini_argv(context: str) -> list[str]:
@@ -2065,7 +2066,7 @@ class Reflexd:
             published = await self._publish_with_resolution(
                 worktree, harness=harness, resume=prior_session,
                 on_session=_persist_session, timeout_s=wake_timeout,
-                max_turns=wake_max_turns, writable_root=ws,
+                max_turns=wake_max_turns, writable_root=ws, summary=reply,
             )
             if published:
                 logger.info("%s", published)
@@ -2416,6 +2417,7 @@ class Reflexd:
         self, wt: Any, *, harness: str, resume: str | None,
         on_session: Callable[[str], None], timeout_s: int | None,
         max_turns: int | None, writable_root: Path | None,
+        summary: str | None = None,
     ) -> str | None:
         """Publish the agent's branch; on a conflict, wake the SAME agent (same
         session) to resolve the merge left in its worktree, then retry once.
@@ -2427,23 +2429,17 @@ class Reflexd:
                 return f"{reflexd_wake.STATUS_PREFIX} publish check failed: {exc}"
 
         status = await publish()
-        if await asyncio.to_thread(reflexd_wake.worktree_dirty, wt) and \
-                not (status or "").startswith(reflexd_wake.CONFLICT_MARK):
-            # Left work uncommitted (a blocked git op, or it just forgot):
-            # nudge the same agent once to commit, then publish again.
-            logger.info("%s left uncommitted changes — nudging to commit",
-                        self.config.participant_name)
-            extra_kw0: dict[str, Any] = (
-                {"writable_roots": [writable_root]} if writable_root else {})
-            try:
-                await self.adapter.run(
-                    harness, context=reflexd_wake.COMMIT_PROMPT.format(path=wt.path),
-                    cwd=wt.path, resume=resume, on_session=on_session,
-                    timeout_s=timeout_s, max_turns=max_turns, **extra_kw0,
-                )
-            except Exception as exc:  # never lose the branch over a failed wake
-                logger.warning("commit-nudge wake failed: %s", exc)
-            status = await publish()
+        if not (status or "").startswith(reflexd_wake.CONFLICT_MARK) and \
+                await asyncio.to_thread(reflexd_wake.worktree_dirty, wt):
+            # Finished work left uncommitted (Codex's sandbox blocks git, or
+            # the agent forgot): the daemon commits it as the agent, then
+            # publishes. Cheaper and more reliable than waking it again.
+            message = reflexd_wake.commit_message_from(summary or "", self.config.participant_name)
+            if await asyncio.to_thread(reflexd_wake.commit_all, wt,
+                                       self.config.participant_name, message):
+                logger.info("committed %s's uncommitted work: %s",
+                            self.config.participant_name, message)
+                status = await publish()
         if not (status or "").startswith(reflexd_wake.CONFLICT_MARK):
             return status
         logger.info("%s — waking %s to resolve", status, self.config.participant_name)

@@ -316,7 +316,9 @@ def s9() -> str:
     def both() -> bool:
         text = (repo / "calc.py").read_text()
         return "subtract" in text and "divide" in text
-    assert wait(both, 900), f"main has: {(repo / 'calc.py').read_text()[:300]}"
+    assert wait(both, 900), "main has: " + ", ".join(
+        line.split("(")[0][4:] for line in (repo / "calc.py").read_text().splitlines()
+        if line.startswith("def "))
     assert tests_pass(repo), "tests fail on main after parallel work"
     return f"both functions on main (+{commits(repo) - c0} commits), tests green"
 
@@ -366,8 +368,7 @@ def s11() -> str:
 
 def _pending(room: str) -> list[dict[str, Any]]:
     data = api(f"/v1/approvals?room={room}")
-    items = data.get("approvals", data) if isinstance(data, dict) else data
-    return [a for a in items or [] if a.get("status") == "pending"]
+    return [a for a in (data or {}).get("pending", []) if a.get("status", "pending") == "pending"]
 
 
 def _worktree_file(repo: Path, agent: str, name: str) -> bool:
@@ -434,10 +435,14 @@ def _harness_running() -> bool:
 @scenario("S15", "relay restart: rooms and history survive, agents reconnect")
 def s15() -> str:
     n0 = len(history(ROOM))
-    for pid in sh("pgrep", "-f", str(VB / "quorus-relay")).stdout.split():
-        if f"PORT={PORT}" in sh("ps", "eww", "-p", pid).stdout:
-            sh("kill", pid)
-    time.sleep(3)
+    old = [pid for pid in sh("pgrep", "-f", str(VB / "quorus-relay")).stdout.split()
+           if f"PORT={PORT}" in sh("ps", "eww", "-p", pid).stdout]
+    for pid in old:
+        sh("kill", pid)
+    # launchd/systemd wait for the old process to exit before restarting it;
+    # do the same, or the new relay loads the file before the final save.
+    assert wait(lambda: not any(sh("kill", "-0", p).returncode == 0 for p in old), 30, 0.5), \
+        "old relay did not exit within 30s of SIGTERM"
     relay_log = (W / "relay2.log").open("w")
     subprocess.Popen([str(VB / "quorus-relay")], stdout=relay_log, stderr=relay_log, env={
         **os.environ, "PORT": str(PORT), "HOST": "127.0.0.1", "RELAY_SECRET": SECRET,

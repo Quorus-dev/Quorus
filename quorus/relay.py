@@ -499,7 +499,9 @@ async def lifespan(app):
 
         async def _periodic_save():
             while True:
-                await asyncio.sleep(30)  # Save every 30 seconds
+                # 5s (was 30): a crash or SIGKILL lost up to half a minute of
+                # chat. Saving is a small JSON dump; PERSIST_INTERVAL_S tunes it.
+                await asyncio.sleep(float(os.environ.get("PERSIST_INTERVAL_S", "5")))
                 try:
                     await _persist_state()
                 except Exception:

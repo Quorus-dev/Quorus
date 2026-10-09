@@ -133,7 +133,10 @@ def codex_wake_flags(
     sandbox = {"manual": "read-only", "autonomous": "workspace-write"}.get(
         mode, CODEX_SANDBOX)
     if sandbox in _CODEX_SANDBOXES:  # danger-full-access deliberately unsupported
-        flags += ["-s", sandbox]
+        # As config, not `-s`: `codex exec resume` has no -s flag, so every
+        # RESUMED wake silently fell back to read-only and agents couldn't
+        # commit (scenario gate S9, 2026-10-09). -c works for both forms.
+        flags += ["-c", f"sandbox_mode={_toml_str(sandbox)}"]
         if sandbox == "workspace-write" and writable_roots:
             # A worktree's git objects live in the main repo's .git, and
             # publishing fast-forwards the main checkout: both sit outside the
@@ -370,24 +373,19 @@ def worktree_instructions(wt: Worktree, *, dirty: bool = False) -> str:
     return (
         f"You work in your own git worktree `{wt.path}` on branch `{wt.branch}`, "
         f"already synced with `{wt.main}`. The shared repo `{wt.repo}` has "
-        f"`{wt.main}` checked out: never edit files there.{note} Commit your work "
-        "on your branch when tests pass and leave nothing uncommitted. Do NOT run "
-        "git rebase, merge, reset or push: Quorus rebases your branch onto "
-        f"`{wt.main}` and publishes it when you finish, and wakes you if there is "
-        "a conflict. Reviewers: inspect a commit with `git show <hash>` (all "
-        "worktrees share one object store)."
+        f"`{wt.main}` checked out: never edit files there.{note} Get the tests "
+        "green, then commit on your branch if git lets you; if your sandbox "
+        "blocks git, just leave the changes - Quorus commits them for you "
+        "(using the first line of your final message as the commit subject). "
+        "Do NOT run git rebase, merge, reset or push: Quorus rebases your branch "
+        f"onto `{wt.main}` and publishes it when you finish, and wakes you if "
+        "there is a conflict. Reviewers: inspect a commit with `git show "
+        "<hash>` (all worktrees share one object store)."
     )
 
 
 STATUS_PREFIX = "(quorus)"  # not "[quorus]": the TUI renders [..] as Rich markup
 CONFLICT_MARK = f"{STATUS_PREFIX} conflict:"
-
-COMMIT_PROMPT = (
-    "You finished your last task but left uncommitted changes in your worktree "
-    "`{path}`. Look at `git status` and `git diff`: commit the work that "
-    "belongs to the task (tests green), discard stray files. Do not rebase or "
-    "merge. Final message: the commit hash and one line on what it contains."
-)
 
 RESOLVE_PROMPT = (
     "Quorus tried to publish your branch but `{main}` moved and your changes "
@@ -423,6 +421,34 @@ def finish_merge(wt: Worktree, participant: str) -> bool:
     done = _git("-c", f"user.name={participant}", "-c",
                 f"user.email={participant}@agents.quorus.local",
                 "commit", "--no-edit", "--quiet", cwd=wt.path)
+    return done.returncode == 0
+
+
+def commit_message_from(reply: str, participant: str) -> str:
+    """A commit subject from the agent's own final reply."""
+    import re as _re
+
+    for line in (reply or "").splitlines():
+        line = _re.sub(r"[`*_#>]|^\s*[-✅☑️✔️]+\s*", "", line).strip()
+        if len(line) >= 8 and not line.startswith(STATUS_PREFIX):
+            return line[:72]
+    return f"work by {participant}"
+
+
+def commit_all(wt: Worktree, participant: str, message: str) -> bool:
+    """Commit the agent's uncommitted work on its branch, as the agent.
+
+    Codex's sandbox protects every .git dir (worktree index.lock included),
+    so a Codex agent often CANNOT commit; its finished work sat uncommitted
+    and never published (scenario gate S9, 2026-10-09). The daemon is not
+    sandboxed: it commits for the agent. Honors .gitignore."""
+    if not worktree_dirty(wt) or merge_in_progress(wt):
+        return False
+    if _git("add", "-A", cwd=wt.path).returncode != 0:
+        return False
+    done = _git("-c", f"user.name={participant}", "-c",
+                f"user.email={participant}@agents.quorus.local",
+                "commit", "--quiet", "-m", message, cwd=wt.path)
     return done.returncode == 0
 
 

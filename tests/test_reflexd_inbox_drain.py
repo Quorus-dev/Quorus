@@ -532,8 +532,10 @@ def test_codex_argv_has_trust_flag_and_resume() -> None:
     assert argv == ["codex", "exec", "--json", "--skip-git-repo-check",
                     "--", "ctx"]
     resumed = reflexd.build_codex_argv("ctx", resume="thread-1")
-    assert resumed == ["codex", "exec", "--json", "--skip-git-repo-check",
-                       "resume", "thread-1", "--", "ctx"]
+    # options belong to the `resume` subcommand (it has no -s; before it,
+    # the resumed session ignored them — 2026-10-09)
+    assert resumed == ["codex", "exec", "resume", "--json", "--skip-git-repo-check",
+                       "thread-1", "--", "ctx"]
 
 
 def test_codex_stream_parser_extracts_thread_id() -> None:
