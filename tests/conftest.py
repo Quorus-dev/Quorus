@@ -65,6 +65,11 @@ def _reset_process_global_state() -> None:
     triage = sys.modules.get("quorus.routes.triage")
     if triage is not None:
         triage.reset_triage_state()
+    # The approve bridge stops a session after its first denial; one MCP
+    # process is one agent session in production, but tests share a process.
+    p1 = sys.modules.get("quorus_mcp.phase1_tools")
+    if p1 is not None and hasattr(p1, "_STOPPED"):
+        p1._STOPPED = None
 
 
 @pytest.fixture(autouse=True)
