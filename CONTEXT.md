@@ -137,6 +137,16 @@ Next:
 
 ## Recent Changes
 
+### `quorus agent add` — real-user onboarding (2026-10-09)
+
+Re-enacting a new user showed only scripts/dogfood.sh could give an agent a
+wake daemon; `quorus add-agent` built a legacy polling workspace. Now:
+`quorus create <room>` → `quorus agent add claude|codex|gemini --room <room>
+[--repo PATH --mode default|manual|autonomous]` → `quorus say <room> ...`.
+One launchd daemon per agent (reuses an existing one, incl. dogfood's);
+account relays mint + cache a per-agent key; `agent remove` stops it and
+leaves its rooms. `quorus` symlinked into ~/.local/bin on Arav's Mac.
+
 ### Permission modes + owner approvals; overnight result (2026-10-09)
 
 - `quorus room bind <room> <repo> --mode default|manual|autonomous`
