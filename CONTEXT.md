@@ -137,6 +137,19 @@ Next:
 
 ## Recent Changes
 
+### Permission modes + owner approvals; overnight result (2026-10-09)
+
+- `quorus room bind <room> <repo> --mode default|manual|autonomous`
+  (claude manual = approvals routed to owner via mcp__quorus__approve;
+  autonomous = acceptEdits + Bash/Edit/Write allowed; codex manual =
+  read-only, autonomous = workspace-write). Proven live in autonomous.
+- Approvals in shared rooms: only the agent's owner (`<owner>-<harness>`)
+  decides when that owner is a member; ownerless agents fall back to any
+  human member. One person can run many rooms/projects/teams.
+- Overnight #overnight result: 14/14 tasks shipped (mdsite static site
+  generator), 20+ commits, 219 tests, example blog builds with index, tag
+  pages and RSS. Zero human edits.
+
 ### Overnight-run hardening (2026-10-08 night)
 
 Backlog runs on `~/dev/quorus-playground` (#night: 7 features + reviews in
