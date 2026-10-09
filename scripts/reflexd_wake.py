@@ -291,9 +291,29 @@ class Worktree:
     main: str       # branch checked out in the main checkout
 
 
+_FALLBACK_IDENTITY = {
+    "GIT_AUTHOR_NAME": "Quorus", "GIT_AUTHOR_EMAIL": "agents@quorus.local",
+    "GIT_COMMITTER_NAME": "Quorus", "GIT_COMMITTER_EMAIL": "agents@quorus.local",
+}
+
+
+def _has_identity(cwd: Path) -> bool:
+    got = subprocess.run(["git", "config", "--get", "user.email"], cwd=str(cwd),
+                         capture_output=True, text=True, timeout=10, check=False)
+    return bool(got.stdout.strip())
+
+
 def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    # The daemon's rebases and merge commits need a committer identity. A
+    # machine with none configured (CI runners, fresh servers) made every
+    # publish fail silently. Fall back to "Quorus" only when git has no
+    # identity — a configured user's name is always kept.
+    env = None
+    if args and args[0] in ("rebase", "merge", "commit") and not _has_identity(cwd):
+        env = {**os.environ, **{k: v for k, v in _FALLBACK_IDENTITY.items()
+                                if k not in os.environ}}
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
-                          text=True, timeout=30, check=False)
+                          text=True, timeout=30, check=False, env=env)
 
 
 def agent_worktree(repo: Path, participant: str) -> Worktree | None:

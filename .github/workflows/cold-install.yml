@@ -84,7 +84,10 @@ jobs:
         run: |
           echo "PIP_NO_CACHE_DIR=1" >> "$GITHUB_ENV"
           echo "PIP_DISABLE_PIP_VERSION_CHECK=1" >> "$GITHUB_ENV"
-          echo "PIPX_DEFAULT_PYTHON=$(which python)" >> "$GITHUB_ENV"
+          # sys.executable, not `which python`: on Windows, Git-bash's which
+          # returns an MSYS path (/c/hostedtoolcache/...) that pipx can't use,
+          # which failed every Windows cell since the workflow was added.
+          echo "PIPX_DEFAULT_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
 
       - name: Install pipx
         shell: bash

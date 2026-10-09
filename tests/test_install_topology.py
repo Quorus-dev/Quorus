@@ -44,10 +44,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.mark.parametrize("pkg", REQUIRED_PACKAGES)
-def test_package_imports(pkg: str) -> None:
+def test_package_imports(pkg: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every package in the monorepo must import without exception."""
     # Drop any cached module to force re-resolution against the live sys.path.
-    sys.modules.pop(pkg, None)
+    # monkeypatch (not sys.modules.pop) so the original module comes back after
+    # the test: a permanently replaced package object lost its submodule
+    # attributes and broke every later patch("pkg.sub.x") on Python 3.10.
+    monkeypatch.delitem(sys.modules, pkg, raising=False)
     mod = importlib.import_module(pkg)
     assert mod is not None
     # Sanity: every package exposes __file__, so we know it loaded from disk
@@ -55,7 +58,7 @@ def test_package_imports(pkg: str) -> None:
     assert getattr(mod, "__file__", None), f"{pkg} has no __file__"
 
 
-def test_quorus_reexports_room() -> None:
+def test_quorus_reexports_room(monkeypatch: pytest.MonkeyPatch) -> None:
     """`from quorus import Room` is a public, documented import path.
 
     The root `quorus` package is a re-export shim over `quorus_sdk`, so this
@@ -64,7 +67,7 @@ def test_quorus_reexports_room() -> None:
     which itself imports from `quorus_sdk.http_agent`. If the sdk subpackage
     isn't on sys.path, this fails.
     """
-    sys.modules.pop("quorus", None)
+    monkeypatch.delitem(sys.modules, "quorus", raising=False)
     import quorus
 
     assert hasattr(quorus, "Room"), "quorus.Room missing — sdk shim broken"
@@ -174,7 +177,10 @@ def test_every_console_script_target_is_importable():
     import sys
     from pathlib import Path
 
-    import tomllib
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:  # 3.10: stdlib tomllib is 3.11+
+        import tomli as tomllib  # type: ignore[no-redef]
 
     repo = Path(__file__).resolve().parents[1]
     for pkg in ("sdk", "cli", "mcp", "tui"):

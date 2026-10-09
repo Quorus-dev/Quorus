@@ -669,3 +669,63 @@ def test_room_modes_map_to_harness_flags(tmp_path: Path) -> None:
 
     assert wake.codex_wake_flags(None, None, "manual")[:2] == ["-s", "read-only"]
     assert wake.codex_wake_flags(None, None, "autonomous")[:2] == ["-s", "workspace-write"]
+
+
+@pytest.mark.parametrize("msg,action", [
+    ("hello guys", "RESPOND"),                                    # live 2026-10-09
+    ("please respond with hello if you guys are receiving this message", "RESPOND"),
+    ("ok", "IGNORE"), ("thanks!", "IGNORE"), ("👍", "IGNORE"),     # acknowledgements
+    ("fix the login bug in auth.py", "RESPOND"),                  # instruction
+    ("can someone run the tests", "RESPOND"),
+    ("just a status update", "IGNORE"),                           # statement
+    ("i'm heading out for lunch", "IGNORE"),
+    ("@aarya can you check the deploy", "IGNORE"),                # another human
+    ("@arav-codex run the tests", "IGNORE"),                      # another agent
+])
+def test_human_talking_to_the_room_gets_an_answer(msg: str, action: str) -> None:
+    res = reflexd.classify_message(content=msg, sender="arav", self_name="arav-claude")
+    assert res.action == action, res.reason
+
+
+def test_agent_chatter_still_needs_a_mention() -> None:
+    res = reflexd.classify_message(content="hello guys", sender="arav-codex",
+                                   self_name="arav-claude")
+    assert res.action == "IGNORE"
+
+
+def test_publish_rebases_on_a_machine_with_no_git_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CI runners and fresh servers have no user.email: the daemon's rebase
+    # (needs a committer) failed and nothing ever published.
+    import subprocess as sp
+    g = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    repo = _git_repo(tmp_path / "proj")
+    wt = wake.agent_worktree(repo, "a-claude")
+    (wt.path / "f.txt").write_text("x")
+    sp.run([*g, "add", "f.txt"], cwd=wt.path, check=True)
+    sp.run([*g, "commit", "-q", "-m", "agent work"], cwd=wt.path, check=True)
+    sp.run([*g, "commit", "-q", "--allow-empty", "-m", "main moved"], cwd=repo, check=True)
+    for k, v in {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+                 "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.useConfigOnly",
+                 "GIT_CONFIG_VALUE_0": "true"}.items():
+        monkeypatch.setenv(k, v)
+    for k in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME",
+              "GIT_COMMITTER_EMAIL", "EMAIL"):
+        monkeypatch.delenv(k, raising=False)
+    assert "published 1 commit" in wake.publish_worktree(wt)
+
+
+def test_manual_mode_tells_the_approve_tool_which_room(tmp_path: Path, monkeypatch) -> None:
+    d = _daemon(tmp_path, "qa-claude")
+    seen: dict[str, Any] = {}
+
+    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None, env=None):
+        seen["argv"] = argv
+        return parser('{"result": "ok", "session_id": "s"}')
+
+    monkeypatch.setattr(d.adapter, "_run_subprocess", fake_sub)
+    asyncio.run(d.adapter.run("claude", context="x", mode="manual", approval_room="r9"))
+    cfg = json.loads(d.adapter.mcp_config_path.read_text())
+    assert cfg["mcpServers"]["quorus"]["env"]["QUORUS_APPROVAL_ROOM"] == "r9"
+    assert "mcp__quorus__approve" in seen["argv"]

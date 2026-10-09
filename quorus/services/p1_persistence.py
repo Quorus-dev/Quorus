@@ -18,9 +18,11 @@ exactly as before.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
+import sys
 import time
 from typing import Any
 
@@ -47,6 +49,32 @@ HYDRATE_TTL_S = float(os.getenv("QUORUS_P1_HYDRATE_TTL", "5"))
 MIRROR_FAILURES = 0
 
 
+
+if sys.version_info >= (3, 11):
+    _timeout = asyncio.timeout
+else:  # Python 3.10: asyncio.timeout doesn't exist. Every mirror op raised
+    # AttributeError there, so nothing ever persisted (found 2026-10-09).
+    @contextlib.asynccontextmanager
+    async def _timeout(delay: float):  # type: ignore[no-redef]
+        task = asyncio.current_task()
+        fired = False
+
+        def _fire() -> None:
+            nonlocal fired
+            fired = True
+            if task is not None:
+                task.cancel()
+
+        handle = asyncio.get_running_loop().call_later(delay, _fire)
+        try:
+            yield
+        except asyncio.CancelledError as exc:
+            if fired:
+                raise TimeoutError(f"operation exceeded {delay}s") from exc
+            raise
+        finally:
+            handle.cancel()
+
 def _note_failure(op: str, ns_key: str, exc: BaseException) -> None:
     global MIRROR_FAILURES
     MIRROR_FAILURES += 1
@@ -61,7 +89,7 @@ async def mirror_set(ns_key: str, field: str, entry: dict[str, Any]) -> None:
     if r is None:
         return
     try:
-        async with asyncio.timeout(_OP_TIMEOUT_S):
+        async with _timeout(_OP_TIMEOUT_S):
             pipe = r.pipeline()
             pipe.hset(ns_key, field, json.dumps(entry))
             pipe.expire(ns_key, _TTL_S)
@@ -75,7 +103,7 @@ async def mirror_delete(ns_key: str, field: str) -> None:
     if r is None:
         return
     try:
-        async with asyncio.timeout(_OP_TIMEOUT_S):
+        async with _timeout(_OP_TIMEOUT_S):
             await r.hdel(ns_key, field)
     except Exception as exc:
         _note_failure("delete", ns_key, exc)
@@ -93,7 +121,7 @@ async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
     if r is None:
         return {}, True
     try:
-        async with asyncio.timeout(_OP_TIMEOUT_S):
+        async with _timeout(_OP_TIMEOUT_S):
             raw = await r.hgetall(ns_key)
             # Touch the TTL on read: refreshing only on write silently
             # expired memory that an agent reads daily but never rewrites.
@@ -121,7 +149,7 @@ async def mirror_drop(ns_key: str) -> None:
     if r is None:
         return
     try:
-        async with asyncio.timeout(_OP_TIMEOUT_S):
+        async with _timeout(_OP_TIMEOUT_S):
             await r.delete(ns_key)
     except Exception as exc:
         _note_failure("drop", ns_key, exc)

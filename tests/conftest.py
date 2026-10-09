@@ -11,6 +11,32 @@ os.environ.setdefault("JWT_SECRET", "test-jwt-secret-that-is-at-least-32-bytes-l
 os.environ.setdefault("BOOTSTRAP_SECRET", "test-bootstrap-secret")
 
 
+def _preimport_patch_targets() -> None:
+    """Python 3.10's ``unittest.mock`` resolves ``patch("pkg.sub.attr")`` with
+    plain getattr and does NOT import a submodule that isn't loaded yet (3.11+
+    does), so on 3.10 such patches died with "module 'quorus' has no attribute
+    'sdk'" depending on test order. Import every module named in a patch
+    target once, up front. Failures are ignored: the test reports them."""
+    import importlib
+    import pathlib
+
+    pattern = re.compile(r"""patch(?:\.object)?\(\s*["']((?:quorus|quorus_[a-z]+)[\w.]*)["']""")
+    targets: set[str] = set()
+    for f in pathlib.Path(__file__).parent.glob("**/*.py"):
+        targets.update(pattern.findall(f.read_text(encoding="utf-8", errors="replace")))
+    for target in sorted(targets):
+        parts = target.split(".")
+        for i in range(len(parts), 0, -1):
+            try:
+                importlib.import_module(".".join(parts[:i]))
+                break
+            except Exception:
+                continue
+
+
+_preimport_patch_targets()
+
+
 def _reset_process_global_state() -> None:
     """Clear module-global state that survives ``reset_state()``.
 

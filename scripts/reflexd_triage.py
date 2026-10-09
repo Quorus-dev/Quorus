@@ -208,6 +208,30 @@ _QUOTED_SPAN_RE = re.compile(
 )
 
 
+_ANY_MENTION_RE = re.compile(r"(?<![\w@-])@[A-Za-z][\w-]*")
+_ACK_RE = re.compile(
+    r"^\s*(ok(ay)?|k|thanks?|thank you|thx|ty|cool|nice|great|got it|lol|"
+    r"sounds good|perfect|yep|yes|no|nope|sure|done|👍|🙏|✅)[\s.!]*$",
+    re.IGNORECASE,
+)
+
+
+_HUMAN_ASK_RE = re.compile(
+    r"^\s*(hi|hello|hey|yo|morning|good (morning|afternoon|evening)|gm)\b"
+    r"|\b(please|pls|can you|could you|would you|will you|can someone|can anyone|"
+    r"anyone|someone|everyone|you guys|y'all|team|agents|let me know|tell me|"
+    r"help me|i need|we need)\b",
+    re.IGNORECASE,
+)
+_IMPERATIVE_RE = re.compile(
+    r"^\s*(add|build|fix|make|write|create|update|change|check|run|test|review|"
+    r"refactor|implement|remove|delete|deploy|investigate|look|find|explain|"
+    r"summari[sz]e|show|list|give|set up|setup|install|debug|rename|move|draft|"
+    r"plan|research|compare|ship|merge|document|clean)\b",
+    re.IGNORECASE,
+)
+
+
 def is_agent_sender(sender: str | None) -> bool:
     return bool(sender and _AGENT_NAME_RE.search(sender))
 
@@ -356,6 +380,22 @@ def classify_message(
     #    @-mention a teammate to hand off.
     if text.rstrip().endswith("?") and not is_agent_sender(sender):
         return TriageResult("RESPOND", "question mark", kind="question")
+
+    # 6. A HUMAN talking to the room ("hello guys", "please reply if you get
+    #    this") is talking to the agents. Ignoring it because it had no @,
+    #    no @open and no "?" made the product look dead (live 2026-10-09).
+    #    One agent answers — the auction picks who. Skip messages aimed at
+    #    someone else, and bare acknowledgements.
+    if not is_agent_sender(sender):
+        if _ANY_MENTION_RE.search(text):
+            return TriageResult("IGNORE", "addressed to someone else")
+        if _ACK_RE.match(text):
+            return TriageResult("IGNORE", "acknowledgement")
+        # Greetings, requests, the group, or an instruction ("fix the login
+        # bug") get an answer; a plain statement ("just a status update")
+        # is someone thinking out loud and stays quiet.
+        if _HUMAN_ASK_RE.search(text) or _IMPERATIVE_RE.match(text):
+            return TriageResult("RESPOND", "human to room", kind="question")
 
     return TriageResult("IGNORE", "no signal")
 

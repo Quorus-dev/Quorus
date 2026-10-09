@@ -1003,6 +1003,7 @@ class HeadlessAdapter:
         max_turns: int | None = None,
         writable_roots: list[Path] | None = None,
         mode: str = "default",
+        approval_room: str | None = None,
     ) -> str:
         # Smoke / demo path: avoid spawning any real harness. ~10 LoC, off
         # the regular path. Triggered by an explicit env var OR by the
@@ -1017,6 +1018,7 @@ class HeadlessAdapter:
                 context, cwd=cwd,
                 resume=resume, on_session=on_session,
                 timeout_s=timeout_s, max_turns=max_turns, mode=mode,
+                approval_room=approval_room,
             )
         if harness == "codex":
             return await self._run_codex(
@@ -1074,7 +1076,7 @@ class HeadlessAdapter:
         self, context: str, *, cwd: Path | None,
         resume: str | None, on_session: Callable[[str], None] | None,
         timeout_s: int | None = None, max_turns: int | None = None,
-        mode: str = "default",
+        mode: str = "default", approval_room: str | None = None,
     ) -> str:
         """Claude wake with session continuity (D2).
 
@@ -1093,9 +1095,13 @@ class HeadlessAdapter:
 
         cfg = None
         if self.wake_spec is not None and self.mcp_config_path is not None:
+            spec = self.wake_spec
+            if approval_room:
+                spec = {**spec, "env": {**spec["env"],
+                                        "QUORUS_APPROVAL_ROOM": approval_room}}
             try:
                 cfg = reflexd_wake.write_claude_mcp_config(
-                    self.wake_spec, self.mcp_config_path,
+                    spec, self.mcp_config_path,
                 )
             except OSError as exc:
                 logger.warning("could not write wake MCP config: %s", exc)
@@ -1194,7 +1200,7 @@ class HeadlessAdapter:
             if proc.returncode is None:
                 proc.kill()
             raise
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):  # distinct classes on 3.10
             # L4: Python 3.11+ aliases ``asyncio.TimeoutError`` to the
             # builtin ``TimeoutError``; the asyncio prefix is deprecated.
             proc.kill()
@@ -2040,6 +2046,10 @@ class Reflexd:
             room_mode = mode_for(room)
             if room_mode != "default":
                 extra_kw["mode"] = room_mode
+            if room_mode == "manual":
+                # The approve tool must know where to ask: without this every
+                # permission prompt was denied "No Quorus room bound".
+                extra_kw["approval_room"] = room
             reply = await self.adapter.run(
                 harness, context=prompt,
                 cwd=worktree.path if worktree is not None else ws,
@@ -2605,7 +2615,7 @@ class Reflexd:
     async def _sleep_or_stop(self, seconds: float) -> None:
         try:
             await asyncio.wait_for(self._stop.wait(), timeout=seconds)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):  # distinct classes on 3.10
             # L4: 3.11+ uses the builtin TimeoutError; asyncio.TimeoutError
             # is a deprecated alias.
             return
