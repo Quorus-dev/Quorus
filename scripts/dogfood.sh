@@ -47,7 +47,8 @@ secret() {
 }
 
 api() { # api METHOD PATH [json]
-  curl -fsS -X "$1" -H "Authorization: Bearer $(secret)" \
+  # header via stdin (-H @-), so the secret never appears in `ps`
+  printf 'Authorization: Bearer %s\n' "$(secret)" | curl -fsS -X "$1" -H @- \
     -H 'Content-Type: application/json' ${3:+-d "$3"} "$URL$2"
 }
 
@@ -197,7 +198,7 @@ cmd_connect() {
     claude mcp remove quorus -s user >/dev/null 2>&1 || true
     claude mcp add-json quorus -s user "$(python3 -c '
 import json, sys
-print(json.dumps({"type": "stdio", "command": sys.argv[1], "args": ["-m", "quorus_mcp.server"],
+print(json.dumps({"type": "stdio", "command": sys.argv[1], "args": ["-I", "-m", "quorus_mcp.server"],
   "env": {"QUORUS_RELAY_URL": sys.argv[2], "QUORUS_INSTANCE_NAME": sys.argv[3],
           "QUORUS_RELAY_SECRET": sys.argv[4], "QUORUS_API_KEY": ""}}))' \
       "$VENV_BIN/python3" "$URL" "$cl" "$s")" >/dev/null
@@ -212,7 +213,7 @@ text = p.read_text()
 # drop any existing [mcp_servers.quorus] / [mcp_servers.quorus.env] tables
 text = re.sub(r"(?ms)^\[mcp_servers\.quorus(\.env)?\]\n.*?(?=^\[|\Z)", "", text)
 q = json.dumps
-block = (f"[mcp_servers.quorus]\ncommand = {q(sys.argv[1])}\nargs = [\"-m\", \"quorus_mcp.server\"]\n\n"
+block = (f"[mcp_servers.quorus]\ncommand = {q(sys.argv[1])}\nargs = [\"-I\", \"-m\", \"quorus_mcp.server\"]\n\n"
          f"[mcp_servers.quorus.env]\nQUORUS_RELAY_URL = {q(sys.argv[2])}\n"
          f"QUORUS_INSTANCE_NAME = {q(sys.argv[3])}\nQUORUS_RELAY_SECRET = {q(sys.argv[4])}\n"
          # blank on purpose: a shell-exported QUORUS_API_KEY (e.g. from a

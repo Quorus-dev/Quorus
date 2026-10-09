@@ -190,7 +190,8 @@ def test_init_creates_human_profile(
 
 
 def test_init_starts_reflexd_manager(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When --no-autostart is absent, init must Popen the supervisor."""
+    """Only the explicit --autostart starts the legacy supervisor (its daemons
+    duplicated `quorus agent add`, so it is no longer the default)."""
     from quorus.cli import _cmd_init
 
     _stub_register_agent_identity(monkeypatch, [])
@@ -214,7 +215,9 @@ def test_init_starts_reflexd_manager(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("quorus.cli._read_supervisor_pid", lambda: 12345)
     monkeypatch.setattr("quorus.cli._pid_is_alive", lambda pid: True)
 
-    _cmd_init(_make_init_args(no_autostart=False))
+    args = _make_init_args(no_autostart=False)
+    args.autostart = True
+    _cmd_init(args)
 
     cmd = captured["args"]
     assert cmd is not None, "Popen must be called for the supervisor"
@@ -273,8 +276,10 @@ def test_init_skips_smoke_with_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     _cmd_init(_make_init_args(no_smoke=True))
 
 
-def test_init_macos_prompts_for_launchd(monkeypatch: pytest.MonkeyPatch) -> None:
-    """On macOS + interactive TTY (no flags), init must prompt for launchd install."""
+def test_init_macos_never_prompts_for_manager_launchd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Changed 2026-10-09: the manager's launchd plist starts <you>-claude/...
+    daemons that duplicate `quorus agent add` (double replies), so init no
+    longer offers it; only an explicit --auto-launchd installs it."""
     from quorus.cli import _cmd_init
 
     _stub_register_agent_identity(monkeypatch, [])
@@ -295,7 +300,7 @@ def test_init_macos_prompts_for_launchd(monkeypatch: pytest.MonkeyPatch) -> None
         _make_init_args(no_launchd=False, auto_launchd=False, no_autostart=True)
     )
 
-    assert asked["call_count"] == 1, "Confirm.ask must fire exactly once on darwin TTY"
+    assert asked["call_count"] == 0, "init must not offer the manager launchd plist"
 
 
 def test_init_auto_launchd_flag_skips_prompt(monkeypatch: pytest.MonkeyPatch) -> None:

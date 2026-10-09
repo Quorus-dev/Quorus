@@ -118,15 +118,19 @@ def _join(cfg: dict[str, Any], room: str, name: str, bearer: str) -> None:
     resp.raise_for_status()
 
 
-def _bind(room: str, repo: Path, mode: str) -> None:
+def _bind(room: str, repo: Path, mode: str | None) -> str:
     path = Path.home() / ".quorus" / "room-bindings.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
+    prev = data.get(room)
+    if mode is None:  # keep the room's existing mode
+        mode = prev.get("mode", "default") if isinstance(prev, dict) else "default"
     data[room] = str(repo) if mode == "default" else {"path": str(repo), "mode": mode}
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_private(path, json.dumps(data, indent=2))
+    return mode
 
 
 def _harness_path() -> str:
@@ -217,8 +221,8 @@ def _add(args: Any, console: Any) -> None:
     _join(cfg, args.room, name, _bearer(cfg, cred, legacy))
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
-        _bind(args.room, repo, args.mode)
-        console.print(f"[success]✓[/] #{args.room} works in {repo} [dim]({args.mode})[/]")
+        mode = _bind(args.room, repo, args.mode)
+        console.print(f"[success]✓[/] #{args.room} works in {repo} [dim]({mode})[/]")
     existing = _running_daemon_for(name)
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "

@@ -71,7 +71,7 @@ def test_drain_inbox_dispatches_and_acks(monkeypatch: pytest.MonkeyPatch) -> Non
     daemon = _make_daemon()
     seen: list[dict[str, Any]] = []
 
-    async def fake_dispatch(relay, event_name, data):
+    async def fake_dispatch(relay, event_name, data, background=False):
         assert event_name == "message"
         seen.append(data)
 

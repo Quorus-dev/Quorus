@@ -993,7 +993,11 @@ def _cmd_room(args):
             )
             raise SystemExit(2)
         data = _load()
-        mode = getattr(args, "mode", None) or "default"
+        prev = data.get(args.room)
+        # No --mode given: keep the room's existing mode (re-binding a manual
+        # room silently dropped it to default — review 2026-10-09).
+        mode = getattr(args, "mode", None) or (
+            prev.get("mode", "default") if isinstance(prev, dict) else "default")
         data[args.room] = str(ws) if mode == "default" else {"path": str(ws), "mode": mode}
         bindings_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(bindings_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -4746,7 +4750,7 @@ def _cmd_init(args):
     # <you>-claude/-codex/-gemini/-cursor daemons that DUPLICATED the ones
     # `agent add` starts — every message answered twice (review 2026-10-09).
     # The manager stays available behind --autostart.
-    no_autostart = not bool(getattr(args, "autostart", False))
+    no_autostart = getattr(args, "autostart", False) is not True
     no_smoke = bool(getattr(args, "no_smoke", False))
     no_launchd = bool(getattr(args, "no_launchd", False))
     auto_launchd = bool(getattr(args, "auto_launchd", False))
@@ -9086,7 +9090,7 @@ def main():
     p_room_bind.add_argument("room", help="Room name or id")
     p_room_bind.add_argument("path", help="Workspace directory (repo root)")
     p_room_bind.add_argument(
-        "--mode", choices=["default", "manual", "autonomous"], default="default",
+        "--mode", choices=["default", "manual", "autonomous"], default=None,
         help=("default: your own CLI permission settings; manual: agents ask "
               "their owner before risky actions; autonomous: agents edit and "
               "run commands in the repo without asking"),
@@ -9112,7 +9116,7 @@ def main():
     p_agent_add.add_argument("--room", required=True, help="Room to join")
     p_agent_add.add_argument("--repo", help="Repo the room works in (binds the room)")
     p_agent_add.add_argument(
-        "--mode", choices=["default", "manual", "autonomous"], default="default",
+        "--mode", choices=["default", "manual", "autonomous"], default=None,
         help="Permissions in this room's repo (with --repo)",
     )
     agent_sub.add_parser("list", help="Agents running on this machine")

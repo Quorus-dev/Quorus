@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -50,6 +51,11 @@ MAX_AGENT_CHAIN = int(os.environ.get("REFLEXD_MAX_AGENT_CHAIN", "12"))
 MAX_ROOM_AGENT_RUN = int(os.environ.get("REFLEXD_MAX_ROOM_AGENT_RUN", "40"))
 
 
+# `-I` (isolated): no cwd on sys.path, so the user's repo can't shadow our
+# packages, and no quoting for hosts that re-split args (Claude Code did).
+MCP_ARGS = ["-I", "-m", "quorus_mcp.server"]
+
+
 def quorus_mcp_spec(
     *, relay_url: str, api_key: str, participant: str, legacy: bool,
     config_dir: Path | None = None,
@@ -68,9 +74,12 @@ def quorus_mcp_spec(
     env["QUORUS_RELAY_SECRET" if legacy else "QUORUS_API_KEY"] = api_key
     if config_dir is not None:
         env["QUORUS_CONFIG_DIR"] = str(config_dir)
+    # Not `-m`: that puts the agent's cwd (the user's repo) first on sys.path,
+    # so a repo with its own quorus/ or mcp/ package would shadow ours and
+    # break the tools, approvals included (review 2026-10-09).
     return {
         "command": sys.executable,
-        "args": ["-m", "quorus_mcp.server"],
+        "args": list(MCP_ARGS),
         "env": env,
     }
 
@@ -320,8 +329,11 @@ def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     if args and args[0] in ("rebase", "merge", "commit") and not _has_identity(cwd):
         env = {**os.environ, **{k: v for k, v in _FALLBACK_IDENTITY.items()
                                 if k not in os.environ}}
+    # commit/rebase/merge run the repo's hooks (pre-commit test suites take
+    # minutes): 30s killed them mid-operation. Plumbing stays fast.
+    slow = bool(args) and args[0] in ("rebase", "merge", "commit", "worktree")
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
-                          text=True, timeout=30, check=False, env=env)
+                          text=True, timeout=900 if slow else 60, check=False, env=env)
 
 
 def agent_worktree(repo: Path, participant: str) -> Worktree | None:
@@ -333,10 +345,20 @@ def agent_worktree(repo: Path, participant: str) -> Worktree | None:
     top = _git("rev-parse", "--show-toplevel", cwd=repo)
     if top.returncode != 0 or Path(top.stdout.strip()).resolve() != repo.resolve():
         return None
-    head = _git("symbolic-ref", "--short", "HEAD", cwd=repo)
-    if head.returncode != 0:
-        return None  # detached main checkout: no branch to integrate into
-    main = head.stdout.strip()
+    # The branch agents publish into is recorded ONCE per agent+repo. Reading
+    # the checkout's current branch every wake meant a human `git checkout
+    # feature` made the daemon rebase the agent onto feature and publish
+    # main's work into it (review 2026-10-09).
+    key = f"quorus.{participant}.integration"
+    recorded = _git("config", "--get", key, cwd=repo).stdout.strip()
+    if recorded:
+        main = recorded
+    else:
+        head = _git("symbolic-ref", "--short", "HEAD", cwd=repo)
+        if head.returncode != 0:
+            return None  # detached main checkout: no branch to integrate into
+        main = head.stdout.strip()
+        _git("config", key, main, cwd=repo)
     branch = f"quorus/{participant}"
     path = repo.parent / ".quorus-worktrees" / repo.name / participant
     if (path / ".git").exists():
@@ -363,7 +385,7 @@ def sync_worktree(wt: Worktree) -> None:
     starts from everyone's latest work. Agents can't rebase in Codex's
     sandbox (seen live), so the daemon does it; conflicts are left for the
     post-wake publish, which wakes the agent to resolve them."""
-    if worktree_dirty(wt):
+    if worktree_dirty(wt) or merge_in_progress(wt):
         return
     if _git("merge-base", "--is-ancestor", wt.main, wt.branch, cwd=wt.repo).returncode == 0:
         return
@@ -423,10 +445,31 @@ def finish_merge(wt: Worktree, participant: str) -> bool:
             return False  # not actually resolved
     if unmerged and _git("add", "--", *unmerged, cwd=wt.path).returncode != 0:
         return False
+    if _staged_conflict_markers(wt):
+        return False  # something staged still has markers: not resolved
     done = _git("-c", f"user.name={participant}", "-c",
                 f"user.email={participant}@agents.quorus.local",
                 "commit", "--no-edit", "--quiet", cwd=wt.path)
     return done.returncode == 0
+
+
+_MARKER_RE = re.compile(r"^(<{7} |={7}$|>{7} )", re.MULTILINE)
+
+
+def _staged_conflict_markers(wt: Worktree) -> list[str]:
+    """Staged files that still contain conflict markers. A file the agent
+    `git add`ed mid-resolution is no longer 'unmerged', so checking only
+    --diff-filter=U let markers reach main (review 2026-10-09)."""
+    names = _git("diff", "--cached", "--name-only", cwd=wt.path).stdout.split()
+    bad = []
+    for rel in names:
+        try:
+            text = (wt.path / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue  # deleted file
+        if _MARKER_RE.search(text):
+            bad.append(rel)
+    return bad
 
 
 def commit_message_from(reply: str, participant: str) -> str:
@@ -451,6 +494,9 @@ def commit_all(wt: Worktree, participant: str, message: str) -> bool:
         return False
     if _git("add", "-A", cwd=wt.path).returncode != 0:
         return False
+    if _staged_conflict_markers(wt):
+        _git("reset", "-q", cwd=wt.path)
+        return False
     done = _git("-c", f"user.name={participant}", "-c",
                 f"user.email={participant}@agents.quorus.local",
                 "commit", "--quiet", "-m", message, cwd=wt.path)
@@ -461,43 +507,54 @@ def merge_in_progress(wt: Worktree) -> bool:
     return _git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt.path).returncode == 0
 
 
-def publish_worktree(wt: Worktree) -> str | None:
+def publish_worktree(wt: Worktree, participant: str = "quorus") -> str | None:
     """Rebase the agent's branch onto main if needed, then fast-forward main.
 
-    Done by the daemon, not the agent: Codex's sandbox blocks both the main
-    checkout's .git (merge failed on ORIG_HEAD.lock) and the worktree's
-    rebase state dir (seen live 2026-10-08), and a deterministic publish
-    beats trusting every model to run it. Returns a one-line room status, or
-    None when there is nothing to publish.
+    Done by the daemon, not the agent: Codex's sandbox blocks the main
+    checkout's .git and the worktree's rebase state, and a deterministic
+    publish beats trusting every model to run it. Returns a one-line room
+    status, or None when there is nothing to publish.
     """
+    # The human switched the main checkout to another branch: leave both
+    # alone until they're back (never publish into their feature branch).
+    current = _git("symbolic-ref", "--short", "HEAD", cwd=wt.repo).stdout.strip()
+    if current != wt.main:
+        return None
+    # A merge left mid-resolution (daemon restarted during a resolution
+    # wake) used to strand the branch forever: finish it if the agent
+    # resolved it, otherwise abort and let the next attempt redo it.
+    if merge_in_progress(wt) and not finish_merge(wt, participant):
+        abort_merge(wt)
     ahead = _git("rev-list", "--count", f"{wt.main}..{wt.branch}", cwd=wt.repo)
     if ahead.returncode != 0 or ahead.stdout.strip() in ("", "0"):
         return None
     n = int(ahead.stdout.strip())
-    if _git("merge-base", "--is-ancestor", wt.main, wt.branch, cwd=wt.repo).returncode != 0:
-        if _git("status", "--porcelain", "--untracked-files=no", cwd=wt.path).stdout.strip():
-            return (f"{STATUS_PREFIX} {wt.branch} has uncommitted changes and is behind "
-                    f"{wt.main}; not publishing yet")
-        rebased = _git("rebase", "--quiet", wt.main, cwd=wt.path)
-        if rebased.returncode != 0:
-            _git("rebase", "--abort", cwd=wt.path)
-            # Leave a real merge with conflict markers in the agent's own
-            # worktree; the daemon wakes the agent to resolve it (see
-            # CONFLICT_MARK). Agents' sandboxes can edit + commit, not rebase.
-            merged_main = _git("merge", "--no-edit", wt.main, cwd=wt.path)
-            if merged_main.returncode != 0:
-                return (f"{CONFLICT_MARK} {wt.branch} conflicts with {wt.main}; "
-                        "merge left in progress for the agent to resolve")
-    dirty = _git("status", "--porcelain", "--untracked-files=no", cwd=wt.repo)
-    if dirty.stdout.strip():
-        return (f"{STATUS_PREFIX} not publishing {wt.branch}: the main checkout "
-                f"{wt.repo} has uncommitted changes")
-    if _git("symbolic-ref", "--short", "HEAD", cwd=wt.repo).stdout.strip() != wt.main:
-        return None  # someone switched the main checkout's branch; leave it be
-    merged = _git("merge", "--ff-only", "--quiet", wt.branch, cwd=wt.repo)
-    if merged.returncode != 0:
-        return f"{STATUS_PREFIX} publishing {wt.branch} failed: {merged.stderr.strip()[:160]}"
-    return f"{STATUS_PREFIX} published {n} commit(s) from {wt.branch} to {wt.main}"
+    for attempt in range(2):  # one retry: another agent may publish first
+        if _git("merge-base", "--is-ancestor", wt.main, wt.branch,
+                cwd=wt.repo).returncode != 0:
+            if worktree_dirty(wt):
+                return (f"{STATUS_PREFIX} {wt.branch} has uncommitted changes and is "
+                        f"behind {wt.main}; not publishing yet")
+            rebased = _git("rebase", "--quiet", wt.main, cwd=wt.path)
+            if rebased.returncode != 0:
+                _git("rebase", "--abort", cwd=wt.path)
+                # Leave a real merge with conflict markers in the agent's own
+                # worktree; the daemon wakes the agent to resolve it.
+                merged_main = _git("merge", "--no-edit", wt.main, cwd=wt.path)
+                if merged_main.returncode != 0:
+                    return (f"{CONFLICT_MARK} {wt.branch} conflicts with {wt.main}; "
+                            "merge left in progress for the agent to resolve")
+        dirty = _git("status", "--porcelain", "--untracked-files=no", cwd=wt.repo)
+        if dirty.stdout.strip():
+            return (f"{STATUS_PREFIX} not publishing {wt.branch}: the main checkout "
+                    f"{wt.repo} has uncommitted changes")
+        merged = _git("merge", "--ff-only", "--quiet", wt.branch, cwd=wt.repo)
+        if merged.returncode == 0:
+            return f"{STATUS_PREFIX} published {n} commit(s) from {wt.branch} to {wt.main}"
+        if attempt:
+            return (f"{STATUS_PREFIX} publishing {wt.branch} failed: "
+                    f"{merged.stderr.strip()[:160]}")
+    return None
 
 
 def existing_worktree(repo: Path, participant: str) -> Worktree | None:

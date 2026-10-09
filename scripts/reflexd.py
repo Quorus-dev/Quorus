@@ -2063,11 +2063,20 @@ class Reflexd:
 
         reply = (reply or "").strip()
         if worktree is not None:
-            published = await self._publish_with_resolution(
-                worktree, harness=harness, resume=prior_session,
-                on_session=_persist_session, timeout_s=wake_timeout,
-                max_turns=wake_max_turns, writable_root=ws, summary=reply,
-            )
+            try:
+                published = await self._publish_with_resolution(
+                    worktree, harness=harness, resume=prior_session,
+                    on_session=_persist_session, timeout_s=wake_timeout,
+                    max_turns=wake_max_turns, writable_root=ws, summary=reply,
+                    mode=room_mode, approval_room=room if room_mode == "manual" else None,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # never lose the agent's reply over git
+                logger.exception("publish step failed: %s", exc)
+                published = (f"{reflexd_wake.STATUS_PREFIX} couldn't publish this "
+                             f"work automatically ({exc.__class__.__name__}); it is "
+                             f"kept on {worktree.branch}")
             if published:
                 logger.info("%s", published)
                 reply = f"{reply}\n{published}" if reply else published
@@ -2418,14 +2427,16 @@ class Reflexd:
         self, wt: Any, *, harness: str, resume: str | None,
         on_session: Callable[[str], None], timeout_s: int | None,
         max_turns: int | None, writable_root: Path | None,
-        summary: str | None = None,
+        summary: str | None = None, mode: str = "default",
+        approval_room: str | None = None,
     ) -> str | None:
         """Publish the agent's branch; on a conflict, wake the SAME agent (same
         session) to resolve the merge left in its worktree, then retry once.
         Overnight, nobody is there to resolve it by hand."""
         async def publish() -> str | None:
             try:
-                return await asyncio.to_thread(reflexd_wake.publish_worktree, wt)
+                return await asyncio.to_thread(
+                    reflexd_wake.publish_worktree, wt, self.config.participant_name)
             except (OSError, subprocess.SubprocessError) as exc:
                 return f"{reflexd_wake.STATUS_PREFIX} publish check failed: {exc}"
 
@@ -2448,6 +2459,13 @@ class Reflexd:
             main=wt.main, branch=wt.branch, path=wt.path,
         )
         extra_kw: dict[str, Any] = {"writable_roots": [writable_root]} if writable_root else {}
+        # The resolution wake must keep the room's permission mode: without it
+        # a manual room's agent resolved conflicts with no approvals, and an
+        # autonomous Codex ran read-only and could never resolve (review).
+        if mode != "default":
+            extra_kw["mode"] = mode
+        if approval_room:
+            extra_kw["approval_room"] = approval_room
         try:
             note = await self.adapter.run(
                 harness, context=prompt, cwd=wt.path, resume=resume,
@@ -2491,8 +2509,9 @@ class Reflexd:
                 wt = await asyncio.to_thread(
                     reflexd_wake.existing_worktree, repo, self.config.participant_name,
                 )
-                status = await asyncio.to_thread(reflexd_wake.publish_worktree, wt) \
-                    if wt is not None else None
+                status = await asyncio.to_thread(
+                    reflexd_wake.publish_worktree, wt, self.config.participant_name,
+                ) if wt is not None else None
                 if wt is not None and (status or "").startswith(reflexd_wake.CONFLICT_MARK):
                     # No agent is awake to resolve it here: never leave a
                     # half-done merge behind. The next wake retries properly.
@@ -2558,7 +2577,10 @@ class Reflexd:
                 if self._stop.is_set():
                     return
                 try:
-                    await self._dispatch_event(relay, "message", msg)
+                    # background: a drained job used to run inline, keeping the
+                    # SSE reader deaf for a whole wake after every reconnect.
+                    # In-flight jobs keep the batch unacked (see below).
+                    await self._dispatch_event(relay, "message", msg, background=True)
                 except Exception as exc:  # pragma: no cover
                     logger.exception("inbox drain handler failed: %s", exc)
             drained += len(messages)

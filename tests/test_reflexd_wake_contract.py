@@ -766,5 +766,64 @@ def test_drain_never_acks_a_job_still_in_flight(tmp_path: Path) -> None:
         return False
 
     d2.handle_room_message = handled  # type: ignore[method-assign]
-    asyncio.run(d2._drain_inbox(relay))
+
+    async def two_passes() -> None:
+        # pass 1 dispatches in the background (the reader is never blocked)
+        # and leaves the batch unacked while the job runs ...
+        await d2._drain_inbox(relay)
+        await asyncio.gather(*d2._bg_tasks)
+        assert acks == []
+        # ... the next drain sees it handled and acks it.
+        relay.batches = [([{"message_id": "done-1", "content": "ok"}], "tok-2")]
+        await d2._drain_inbox(relay)
+
+    asyncio.run(two_passes())
     assert acks == ["tok-2"]  # finished work is still acked
+
+
+# ── 2026-10-09 code-review regressions ─────────────────────────────────────
+
+def test_human_switching_branch_never_gets_main_published_into_it(tmp_path: Path) -> None:
+    import subprocess as sp
+    g = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    repo = _git_repo(tmp_path / "proj")
+    wt = wake.agent_worktree(repo, "a-claude")  # records main as the target
+    sp.run([*g, "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
+    (wt.path / "f.txt").write_text("agent work")
+    sp.run([*g, "add", "f.txt"], cwd=wt.path, check=True)
+    sp.run([*g, "commit", "-q", "-m", "agent"], cwd=wt.path, check=True)
+    wt2 = wake.agent_worktree(repo, "a-claude")
+    assert wt2.main == "main"                      # not the human's branch
+    assert wake.publish_worktree(wt2) is None       # waits until they're back
+    feature_log = sp.run(["git", "log", "--format=%s", "feature"], cwd=repo,
+                         capture_output=True, text=True).stdout.split()
+    assert "agent" not in feature_log
+
+
+def test_staged_conflict_markers_are_never_committed(tmp_path: Path) -> None:
+    import subprocess as sp
+    _a, b, repo = _conflicting_pair(tmp_path)
+    assert wake.publish_worktree(b).startswith(wake.CONFLICT_MARK)
+    sp.run(["git", "add", "-A"], cwd=b.path, check=True)  # staged WITH markers
+    assert wake.finish_merge(b, "b-codex") is False
+    wake.abort_merge(b)
+    (b.path / "x.txt").write_text("<<<<<<< HEAD\na\n=======\nb\n>>>>>>> main\n")
+    assert wake.commit_all(b, "b-codex", "msg") is False
+    assert "<<<<<<<" not in (repo / "same.txt").read_text()
+
+
+def test_merge_stranded_by_a_restart_is_recovered(tmp_path: Path) -> None:
+    _a, b, repo = _conflicting_pair(tmp_path)
+    assert wake.publish_worktree(b).startswith(wake.CONFLICT_MARK)
+    # daemon dies here; on the next publish the half-done merge is resolved
+    # (agent fixed the file) or aborted — never left stuck forever
+    (b.path / "same.txt").write_text("from a\nfrom b\n")
+    status = wake.publish_worktree(b, "b-codex")
+    assert status and "published" in status
+    assert not wake.merge_in_progress(b)
+
+
+def test_mcp_server_launch_ignores_the_repo_cwd() -> None:
+    spec = wake.quorus_mcp_spec(relay_url="u", api_key="k", participant="a-claude",
+                                legacy=True)
+    assert spec["args"] == ["-I", "-m", "quorus_mcp.server"]  # isolated: no cwd on path
