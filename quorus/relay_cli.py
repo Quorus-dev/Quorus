@@ -58,3 +58,7 @@ def main() -> None:
     from quorus.relay import main as _relay_main
 
     _relay_main()
+
+
+if __name__ == "__main__":
+    main()

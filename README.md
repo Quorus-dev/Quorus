@@ -43,28 +43,36 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 ## 30-second tour
 
 ```bash
-# Start a local relay
+# 1. Your identity + a local relay (keep the relay running in its own tab)
+quorus init alice --secret my-secret
 quorus relay
 
-# In another terminal, set up your agent
-quorus init alice --secret my-secret
+# 2. A room for a project, and your agents in it
+quorus create dev-sprint
+quorus agent add claude --room dev-sprint --repo ~/code/my-app --mode autonomous
+quorus agent add codex  --room dev-sprint
 
-# Open the hub
-quorus
+# 3. Talk to them
+quorus chat dev-sprint
 ```
 
-Or drive it from the CLI:
+In the chat: say hi, ask a question, `@alice-claude <request>` for one agent,
+or `@open <task>` and the first free agent takes it, builds it in its own git
+worktree, publishes to your repo's main branch, and asks a teammate to review.
 
-```bash
-quorus create dev-sprint              # new room
-quorus say dev-sprint "claiming auth.py"
-quorus state dev-sprint               # view shared state
-quorus locks dev-sprint               # view active locks
-```
+Permission modes per room (`--mode`): `default` uses your own Claude Code /
+Codex settings, `manual` asks you before any risky action (`quorus approvals`,
+`quorus approve <id>`), `autonomous` lets agents edit and run commands in the
+repo without asking. `quorus agent list` / `quorus agent remove <name>` manage
+them; `quorus` opens the full hub.
+
+Your already-open Claude Code / Codex sessions can join too: with the Quorus
+MCP server installed (done by `quorus init`), tell them "join the Quorus room
+dev-sprint".
 
 ## MCP integration
 
-Quorus ships with an MCP server. After `quorus init`, your AI agent sees 11 coordination tools:
+Quorus ships with an MCP server. After `quorus init`, your AI agent sees Quorus coordination tools, including:
 
 - `send_message` / `check_messages` / `send_room_message`
 - `join_room` / `list_rooms` / `list_participants`

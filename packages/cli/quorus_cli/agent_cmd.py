@@ -62,11 +62,20 @@ def _launchd_labels() -> list[str]:
 
 
 def _running_daemon_for(name: str) -> str | None:
-    """Label of an already-loaded wake daemon for *name* (ours or dogfood's)."""
+    """An already-running wake daemon for *name*: a launchd job (ours or
+    dogfood's) OR any reflexd process for it (e.g. started by the legacy
+    reflexd-manager or `quorus reflexd start`). Two daemons for one agent
+    answer every message twice."""
     for label in _launchd_labels():
         if label.endswith(f".{name}") and ("agent." in label or "reflexd." in label):
             return label
-    return None
+    try:
+        out = subprocess.run(["pgrep", "-f", f"reflexd.py start.*--participant {name}( |$)"],
+                             capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    pids = out.stdout.split()
+    return f"pid {pids[0]}" if pids else None
 
 
 def _credentials(cfg: dict[str, Any], name: str, harness: str) -> tuple[str, bool]:

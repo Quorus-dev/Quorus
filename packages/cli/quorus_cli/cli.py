@@ -4741,7 +4741,12 @@ def _cmd_init(args):
         )
 
     # ── Productized init steps (mint, profile, daemon, smoke) ──────────────
-    no_autostart = bool(getattr(args, "no_autostart", False))
+    # Agents are added explicitly with `quorus agent add` (one launchd daemon
+    # per agent). Auto-starting the legacy reflexd-manager here spawned
+    # <you>-claude/-codex/-gemini/-cursor daemons that DUPLICATED the ones
+    # `agent add` starts — every message answered twice (review 2026-10-09).
+    # The manager stays available behind --autostart.
+    no_autostart = not bool(getattr(args, "autostart", False))
     no_smoke = bool(getattr(args, "no_smoke", False))
     no_launchd = bool(getattr(args, "no_launchd", False))
     auto_launchd = bool(getattr(args, "auto_launchd", False))
@@ -4830,7 +4835,9 @@ def _cmd_init(args):
     # 8. Optionally install launchd (macOS only, opt-in/out via flags + TTY).
     launchd_installed = _init_maybe_install_launchd(
         auto_yes=auto_launchd,
-        no_launchd=no_launchd,
+        # Only on explicit --auto-launchd: the manager plist would start the
+        # same duplicate daemons at every login.
+        no_launchd=no_launchd or not auto_launchd,
         ui=ui,
     )
 
@@ -4872,12 +4879,11 @@ def _cmd_init(args):
         checklist.append(
             f"[green]✓[/] reflexd-manager: running [dim](pid {supervisor_pid})[/]"
         )
-    elif no_autostart:
+    elif no_autostart and getattr(args, "no_autostart", False):
         checklist.append("[yellow]·[/] reflexd-manager: [dim]skipped (--no-autostart)[/]")
     if launchd_installed:
         checklist.append("[green]✓[/] launchd: installed (auto-start on login)")
-    elif sys.platform == "darwin" and not no_launchd:
-        checklist.append("[yellow]·[/] launchd: [dim]not installed (run install-launchd later)[/]")
+
     if smoke_result is not None:
         ok, elapsed, detail = smoke_result
         if ok:
@@ -4899,20 +4905,11 @@ def _cmd_init(args):
 
     ui.console.print()
     ui.console.print(
-        "[muted]Next:[/] open the TUI with [accent]quorus[/]. "
-        f"Type [accent]@{name}-claude what's up?[/] to see it work."
+        "[muted]Next:[/] make a room and add your agents:\n"
+        "  [accent]quorus create myroom[/]\n"
+        "  [accent]quorus agent add claude --room myroom --repo <path-to-repo>[/]\n"
+        "  [accent]quorus chat myroom[/]   then say hi, or [accent]@open <task>[/]"
     )
-
-    if no_autostart:
-        ui.console.print(
-            "  [muted]→ start the daemon manually:[/] "
-            "[accent]quorus reflexd-manager start[/]"
-        )
-    if sys.platform == "darwin" and not launchd_installed and not no_launchd:
-        ui.console.print(
-            "  [muted]→ to auto-start on login (macOS):[/] "
-            "[accent]quorus reflexd-manager install-launchd[/]"
-        )
 
 
 def _cmd_invite_link(args):
@@ -6830,47 +6827,32 @@ def _cmd_doctor(args):
 
 
 def _cmd_relay(args):
-    """Start the relay server."""
-    repo_dir = Path(__file__).resolve().parent.parent
-    port = args.port
-    config_path = Path.home() / ".quorus" / "config.json"
+    """Start a local relay (shared-secret mode) for this machine.
 
-    # Read secret from config if it exists
-    secret = ""
-    if config_path.exists():
-        try:
-            cfg = json.loads(config_path.read_text())
-            secret = cfg.get("relay_secret", "")
-        except (json.JSONDecodeError, ValueError):
-            pass
+    Rewritten 2026-10-09 — the old version (a) read the secret from the
+    config POINTER file, so it failed for every profile-based install, (b)
+    ran `uv run` inside the source checkout, so it broke on pip/pipx installs,
+    (c) bound 0.0.0.0 and (d) wrote its state into the current directory.
+    """
+    from quorus.config import resolve_config_dir
 
+    secret = os.environ.get("RELAY_SECRET") or load_config().get("relay_secret", "")
     if not secret:
-        secret = os.environ.get("RELAY_SECRET", "")
-    if not secret:
-        _ui.error("No relay_secret configured", hint="run: quorus init")
-        console.print("Run: quorus init <name> --secret <your-secret>")
-        sys.exit(1)
-
-    console.print(f"[bold]Starting Quorus relay on port {port}[/bold]")
-    console.print("  Press Ctrl+C to stop")
-    console.print("")
-
-    env = os.environ.copy()
-    env["RELAY_SECRET"] = secret
-    env["PORT"] = str(port)
-
-    try:
-        subprocess.run(
-            [
-                "uv", "run", "--directory", str(repo_dir),
-                "python", "-m", "uvicorn", "quorus.relay:app",
-                "--host", "0.0.0.0", "--port", str(port),
-            ],
-            env=env,
+        _ui.error(
+            "No relay secret configured",
+            hint="run: quorus init <your-name> --secret <a-secret> (then quorus relay)",
         )
+        sys.exit(1)
+    host = getattr(args, "host", None) or "127.0.0.1"
+    state = os.environ.get("MESSAGES_FILE") or str(resolve_config_dir() / "relay-state.json")
+    env = {**os.environ, "RELAY_SECRET": secret, "PORT": str(args.port), "HOST": host,
+           "ALLOW_LEGACY_AUTH": "1", "MESSAGES_FILE": state}
+    console.print(f"[bold]Starting Quorus relay on http://{host}:{args.port}[/bold]")
+    console.print(f"  [dim]state: {state} · Ctrl+C to stop[/]\n")
+    try:
+        subprocess.run([sys.executable, "-m", "quorus.relay_cli"], env=env, check=False)
     except KeyboardInterrupt:
-        console.print("\n[dim]Relay stopped.[/dim]")
-
+        console.print("\n[dim]relay stopped[/]")
 
 def _cmd_version(args):
     from quorus import __version__
@@ -8316,7 +8298,12 @@ def main():
     p_init.add_argument(
         "--no-autostart",
         action="store_true",
-        help="Skip auto-starting `quorus reflexd-manager start` after init",
+        help="(default now) don't start the legacy reflexd-manager",
+    )
+    p_init.add_argument(
+        "--autostart",
+        action="store_true",
+        help="Also start the legacy reflexd-manager (prefer `quorus agent add`)",
     )
     p_init.add_argument(
         "--no-smoke",
@@ -8345,6 +8332,9 @@ def main():
         help_text="Start the relay server locally",
     ))
     p_relay.add_argument("--port", type=int, default=8080, help="Port")
+    p_relay.add_argument("--host", default="127.0.0.1",
+                         help="Bind address (default: this machine only; "
+                              "0.0.0.0 to share on your LAN)")
 
     sub.add_parser("rooms", **_help_block(
         synopsis="List all rooms visible to your account.",
