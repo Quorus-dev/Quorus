@@ -230,13 +230,14 @@ def test_bid_score_recency_decays() -> None:
     )
     assert role_decayed == pytest.approx(0.5, rel=1e-6)
 
-    # Saturates at 0 — never goes negative (BidRequest.ge=0).
+    # Saturates at a small floor — never 0, which would mean "not for me" and
+    # drop the job (2026-10-08), and never negative (BidRequest.ge=0).
     saturated, _ = reflexd.compute_bid_v2(
         kind="question", role=None, description="",
         capabilities=reflexd.CAPABILITIES_CLAUDE,
         recency_seconds=100.0,
     )
-    assert saturated == 0.0
+    assert saturated == pytest.approx(0.05)
 
 
 # ---------------------------------------------------------------------------

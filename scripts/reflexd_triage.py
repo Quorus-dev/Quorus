@@ -471,6 +471,7 @@ def matches_capability(
 # the next open task. Mirror compute_bid() in reflexd.py.
 _RECENCY_PENALTY_PER_SEC = 0.1
 _RECENCY_PENALTY_CAP = 5.0  # seconds — beyond this we stop subtracting
+_MIN_BID = 0.05  # floor for any non-zero base score
 
 
 def compute_bid_v2(
@@ -506,7 +507,11 @@ def compute_bid_v2(
     if base == 0.0:
         return 0.0, label
     penalty = _RECENCY_PENALTY_PER_SEC * max(0.0, min(recency_seconds, _RECENCY_PENALTY_CAP))
-    return max(0.0, min(1.0, base - penalty)), label
+    # The penalty RANKS bidders; it must never zero a bid. A 0 means "not for
+    # me" and the job is recorded as done — an agent re-evaluating a queued
+    # job right after finishing another dropped it that way (two overnight
+    # tasks lost, 2026-10-08).
+    return max(_MIN_BID, min(1.0, base - penalty)), label
 
 
 def _base_bid(

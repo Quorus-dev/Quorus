@@ -640,3 +640,10 @@ def test_periodic_drain_refetches_while_idle_and_skips_while_busy(tmp_path: Path
 
     asyncio.run(go())
     assert calls and set(calls) == {"idle"}
+
+
+def test_recency_penalty_never_zeroes_open_work() -> None:
+    bid, _ = reflexd.compute_bid_v2(kind="open_todo", role=None, description="add docs",
+                                    capabilities=reflexd.CAPABILITIES_CODEX,
+                                    recency_seconds=5.0)  # just finished a job
+    assert bid > 0.0
