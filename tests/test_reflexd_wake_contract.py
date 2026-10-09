@@ -669,6 +669,7 @@ def test_room_modes_map_to_harness_flags(tmp_path: Path) -> None:
 
     manual = " ".join(wake.claude_wake_flags(None, "manual"))
     assert "--permission-prompt-tool mcp__quorus__approve" in manual  # asks owner
+    assert "--permission-mode default" in manual  # beats an owner's "auto" default
     auto = wake.claude_wake_flags(None, "autonomous")
     assert "acceptEdits" in auto and not any("bypass" in f or "dangerous" in f for f in auto)
     assert wake.claude_wake_flags(None, "default") == []

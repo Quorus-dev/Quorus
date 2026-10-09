@@ -99,7 +99,12 @@ def claude_mode_flags(mode: str) -> list[str]:
     autonomous: edits and shell commands run without asking, inside the
     room's repo worktree; Claude Code's own always-ask actions still apply."""
     if mode == "manual":
-        return ["--permission-prompt-tool", "mcp__quorus__approve",
+        # --permission-mode default too: an owner whose Claude Code defaults
+        # to "auto" had every prompt approved by Claude's own classifier, so
+        # nothing ever reached them (scenario gate S11, 2026-10-09). Their
+        # explicit allow-list still applies; everything else asks the owner.
+        return ["--permission-mode", "default",
+                "--permission-prompt-tool", "mcp__quorus__approve",
                 "--allowedTools", "mcp__quorus"]
     if mode == "autonomous":
         return ["--permission-mode", "acceptEdits",
