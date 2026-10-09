@@ -158,6 +158,12 @@ tested:
   are handoffs; dedupe keeps handoff + publish lines; status prefix
   `(quorus)` (TUI ate `[quorus]` as Rich markup); startup sweep publishes
   stranded branches once per repo; tests isolated from real bindings.
+- Later the same night: agents resolve + stage conflicts and the daemon
+  completes the merge (Codex can't finish merges in its sandbox — proven
+  live, codex's 5 stuck commits published); idle periodic inbox re-drain
+  (restart mid-drain hid jobs); bids floored at 0.05 (a 0 bid silently
+  dropped re-evaluated queued jobs). Open: an idle agent sometimes loses an
+  @open to a busy one (relay fairness/tie-break?) — investigate.
 
 ### Live channel push + codex write access + merge (2026-10-08)
 
