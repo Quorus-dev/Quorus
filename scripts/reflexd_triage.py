@@ -282,6 +282,11 @@ def classify_message(
     #    message — same abstention as the message_type=="social" branch.
     verb_match = detect_social_verb(text)
     if verb_match is not None:
+        # "/queue @me review X" / "/defer @me ..." hands work to me: QOD tells
+        # agents to use these verbs for handoffs, so abstaining here stalled
+        # the loop. Other verbs (vote, disagree, ...) stay with the relay.
+        if verb_match[0] in ("queue", "defer") and _has_literal_mention(text, self_name):
+            return TriageResult("RESPOND", f"social_handoff:{verb_match[0]}", kind="mention")
         return TriageResult(
             "IGNORE",
             f"social_verb:{verb_match[0]}",

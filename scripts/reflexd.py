@@ -900,6 +900,22 @@ def _ts_after(ts: Any, start: datetime) -> bool:
     return t >= start
 
 
+_MENTION_RE = re.compile(r"(?<![\w-])@([A-Za-z][\w-]*)")
+
+
+def _undelivered_lines(reply: str, posted: list[str]) -> list[str]:
+    """Lines of *reply* the room hasn't seen that matter for the loop: ones
+    @-mentioning someone the agent's own posts never mentioned, and the
+    daemon's ``[quorus]`` status lines."""
+    seen = {m for text in posted for m in _MENTION_RE.findall(text)}
+    out = []
+    for line in reply.splitlines():
+        new_mentions = set(_MENTION_RE.findall(line)) - seen - {"open"}
+        if line.startswith(reflexd_wake.STATUS_PREFIX) or new_mentions:
+            out.append(line.strip())
+    return out
+
+
 def _same_result(posted: str, reply: str) -> bool:
     """Did the agent already post *reply* (or its ✅ result) itself?"""
     a = " ".join(posted.split())[:60]
@@ -971,6 +987,7 @@ class HeadlessAdapter:
         on_session: Callable[[str], None] | None = None,
         timeout_s: int | None = None,
         max_turns: int | None = None,
+        writable_roots: list[Path] | None = None,
     ) -> str:
         # Smoke / demo path: avoid spawning any real harness. ~10 LoC, off
         # the regular path. Triggered by an explicit env var OR by the
@@ -989,7 +1006,7 @@ class HeadlessAdapter:
         if harness == "codex":
             return await self._run_codex(
                 context, cwd=cwd, resume=resume, on_session=on_session,
-                timeout_s=timeout_s,
+                timeout_s=timeout_s, writable_roots=writable_roots,
             )
         if harness == "gemini":
             return await self._run_subprocess(
@@ -1089,6 +1106,7 @@ class HeadlessAdapter:
         self, context: str, *, cwd: Path | None,
         resume: str | None, on_session: Callable[[str], None] | None,
         timeout_s: int | None = None,
+        writable_roots: list[Path] | None = None,
     ) -> str:
         """Codex wake with D2 session continuity (thread_id ↔ resume)."""
         captured: dict[str, str | None] = {"tid": None}
@@ -1098,7 +1116,7 @@ class HeadlessAdapter:
             captured["tid"] = tid
             return text
 
-        extra = reflexd_wake.codex_wake_flags(self.wake_spec)
+        extra = reflexd_wake.codex_wake_flags(self.wake_spec, writable_roots)
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         reply = await self._run_subprocess(
             build_codex_argv(context, resume=resume, extra=extra), parser=parser,
@@ -1650,6 +1668,7 @@ class Reflexd:
         self._handled_path = config.runtime_dir / f"handled-{config.participant_name}.json"
         self._handled_order: list[str] = self._load_handled()
         self._handled_ids: set[str] = set(self._handled_order)
+        self._inflight: set[str] = set()
         # One harness run at a time per agent. Held for the whole wake; new
         # work waits on it FIFO instead of blocking the SSE reader (the old
         # serial loop went deaf for the full length of every wake).
@@ -1737,18 +1756,22 @@ class Reflexd:
             return False
 
         # Agent↔agent loop guard. ``_reply_depth`` metadata is never set on the
-        # wire, so the depth check above can't see agent chains; count the
-        # room's trailing run of agent-only messages instead.
+        # wire, so walk the reply_to chain instead: a review→fix→review loop
+        # is one conversation; independent overnight tasks never add up.
         if is_agent_participant(sender):
             try:
-                recent = await relay.fetch_recent(room=room, limit=reflexd_wake.MAX_AGENT_CHAIN)
+                recent = await relay.fetch_recent(room=room, limit=100)
             except Exception:
                 recent = []
-            chain = reflexd_wake.trailing_agent_chain(recent, is_agent_participant)
-            if chain >= reflexd_wake.MAX_AGENT_CHAIN:
+            depth = reflexd_wake.reply_chain_agent_depth(
+                envelope, recent, is_agent_participant,
+            )
+            run = reflexd_wake.trailing_agent_chain(recent, is_agent_participant)
+            if (depth >= reflexd_wake.MAX_AGENT_CHAIN
+                    or run >= reflexd_wake.MAX_ROOM_AGENT_RUN):
                 logger.info(
-                    "agent-only chain of %d in room=%s — not waking until a "
-                    "human speaks (id=%s)", chain, room, message_id,
+                    "agent loop guard: chain=%d room_run=%d in room=%s — not "
+                    "waking until a human speaks (id=%s)", depth, run, room, message_id,
                 )
                 return False
 
@@ -1792,13 +1815,19 @@ class Reflexd:
         caps = capabilities_for(
             self.config.participant_name, harness=detect_harness(self.config.participant_name),
         )
-        recency = max(0.0, time.time() - self._last_wake_at) if self._last_wake_at else 0.0
+        # Anti-monopoly penalty must SHRINK as the last win recedes. The old
+        # call passed "seconds since last wake" (capped at 5), so any agent
+        # idle for 5s+ paid the maximum 0.5 forever and bid 0 on all open
+        # work — after its first job no agent ever took an @open again (seen
+        # live 2026-10-08). Pass how RECENT the last win is instead.
+        since = time.time() - self._last_wake_at if self._last_wake_at else None
+        recent = max(0.0, 5.0 - since) if since is not None else 0.0
         bid, bid_reason = compute_bid_v2(
             kind=triage.kind,
             role=triage.role,
             description=triage.description,
             capabilities=caps,
-            recency_seconds=min(recency, 5.0),
+            recency_seconds=recent,
         )
         if bid <= 0.0:
             logger.info(
@@ -1925,13 +1954,21 @@ class Reflexd:
         # D1: bound workspace → agent works in the real repo. Unbound →
         # inherit daemon cwd and the wake instructions say so.
         ws = workspace_for(room)
+        worktree = None
+        if ws is not None and reflexd_wake.WORKTREES_ENABLED:
+            try:
+                worktree = await asyncio.to_thread(
+                    reflexd_wake.agent_worktree, ws, self.config.participant_name,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.warning("worktree setup failed, using %s: %s", ws, exc)
         _members = getattr(relay, "fetch_members", None)
         teammates = await _members(room=room) if _members is not None else []
         prompt = self._build_prompt(
             envelope, history, triage=triage,
             memory_entries=memory_entries,
             teammates=[t for t in teammates if is_agent_participant(t)],
-            has_workspace=ws is not None,
+            has_workspace=ws is not None, worktree=worktree,
         )
         log_reason = (triage.reason if triage else None) or reason or "?"
         # D2: resume the room's prior session so the agent keeps its memory.
@@ -1976,16 +2013,31 @@ class Reflexd:
             "mission" if mission else "chat",
         )
         try:
+            # Only pass worktree extras when used: adapters written against
+            # the older run() signature keep working.
+            extra_kw: dict[str, Any] = (
+                {"writable_roots": [ws]} if worktree is not None else {}
+            )
             reply = await self.adapter.run(
-                harness, context=prompt, cwd=ws,
+                harness, context=prompt,
+                cwd=worktree.path if worktree is not None else ws,
                 resume=prior_session, on_session=_persist_session,
-                timeout_s=wake_timeout, max_turns=wake_max_turns,
+                timeout_s=wake_timeout, max_turns=wake_max_turns, **extra_kw,
             )
         except Exception as exc:
             logger.warning("harness %s raised: %s", harness, exc)
             return
 
         reply = (reply or "").strip()
+        if worktree is not None:
+            published = await self._publish_with_resolution(
+                worktree, harness=harness, resume=prior_session,
+                on_session=_persist_session, timeout_s=wake_timeout,
+                max_turns=wake_max_turns, writable_root=ws,
+            )
+            if published:
+                logger.info("%s", published)
+                reply = f"{reply}\n{published}" if reply else published
         if not reply:
             logger.info("harness produced empty reply, skipping post")
             return
@@ -2032,8 +2084,17 @@ class Reflexd:
         except Exception:
             mine = []
         if any(_same_result(m.get("content") or "", reply) for m in mine):
-            logger.info("agent already posted its result room=%s — not reposting", room)
-            return
+            # The agent posted its own ✅, but its final reply may carry what
+            # that post lacked: the @-mention handing off to a reviewer, and
+            # the daemon's publish line. Dropping those stalled the loop
+            # (live 2026-10-08: review never requested). Post just those.
+            leftover = _undelivered_lines(reply, [m.get("content") or "" for m in mine])
+            if not leftover:
+                logger.info("agent already posted its result room=%s — not reposting", room)
+                return
+            logger.info("agent posted its result; posting %d undelivered line(s)",
+                        len(leftover))
+            reply = "\n".join(leftover)
 
         # D5b: a mission agent that hit its (long) leash gets an escalation
         # humans can act on, never a bare sentinel. This runs AFTER the D7
@@ -2115,6 +2176,7 @@ class Reflexd:
         memory_entries: list[dict[str, Any]] | None = None,
         teammates: list[str] | None = None,
         has_workspace: bool = True,
+        worktree: Any = None,
     ) -> str:
         """Compose QOD + recent memory + history + WakeIntent.
 
@@ -2149,7 +2211,7 @@ class Reflexd:
         intent_blurb = reflexd_wake.wake_instructions(
             participant=self.config.participant_name, room=wake_room,
             sender=wake_sender, kind=kind, teammates=list(teammates or []),
-            has_workspace=has_workspace,
+            has_workspace=has_workspace, worktree=worktree,
         )
 
         memory_block = render_memory_context(memory_entries or [])
@@ -2255,6 +2317,10 @@ class Reflexd:
                         "preflight JWT-sub check skipped: %s", exc,
                     )
 
+            # Publish work stranded by a crash/restart or a sandbox that
+            # couldn't rebase: rebase + fast-forward each bound repo's branch.
+            await self._publish_sweep(relay)
+
             # Stream B: subscribe to the agent-DM stream in parallel with
             # the room SSE stream. Failures in the DM loop never bring
             # down the main loop — both reconnect independently.
@@ -2312,6 +2378,76 @@ class Reflexd:
                         await task
                     except (asyncio.CancelledError, Exception):
                         pass
+
+    async def _publish_with_resolution(
+        self, wt: Any, *, harness: str, resume: str | None,
+        on_session: Callable[[str], None], timeout_s: int | None,
+        max_turns: int | None, writable_root: Path | None,
+    ) -> str | None:
+        """Publish the agent's branch; on a conflict, wake the SAME agent (same
+        session) to resolve the merge left in its worktree, then retry once.
+        Overnight, nobody is there to resolve it by hand."""
+        async def publish() -> str | None:
+            try:
+                return await asyncio.to_thread(reflexd_wake.publish_worktree, wt)
+            except (OSError, subprocess.SubprocessError) as exc:
+                return f"{reflexd_wake.STATUS_PREFIX} publish check failed: {exc}"
+
+        status = await publish()
+        if not (status or "").startswith(reflexd_wake.CONFLICT_MARK):
+            return status
+        logger.info("%s — waking %s to resolve", status, self.config.participant_name)
+        prompt = reflexd_wake.RESOLVE_PROMPT.format(
+            main=wt.main, branch=wt.branch, path=wt.path,
+        )
+        extra_kw: dict[str, Any] = {"writable_roots": [writable_root]} if writable_root else {}
+        try:
+            note = await self.adapter.run(
+                harness, context=prompt, cwd=wt.path, resume=resume,
+                on_session=on_session, timeout_s=timeout_s, max_turns=max_turns,
+                **extra_kw,
+            )
+        except Exception as exc:  # never lose the branch over a failed wake
+            logger.warning("conflict-resolution wake failed: %s", exc)
+            note = ""
+        unresolved = await asyncio.to_thread(reflexd_wake.merge_in_progress, wt)
+        status = None if unresolved else await publish()
+        if unresolved or (status or "").startswith(reflexd_wake.CONFLICT_MARK):
+            await asyncio.to_thread(reflexd_wake.abort_merge, wt)
+            return (f"{reflexd_wake.STATUS_PREFIX} {wt.branch} still conflicts with "
+                    f"{wt.main} after one resolution attempt; commits kept on the "
+                    "branch for a human")
+        resolved = (note or "").strip().splitlines()[:1]
+        return "\n".join([*(f"{reflexd_wake.STATUS_PREFIX} resolved: {line}" for line in
+                             resolved), status or ""]).strip() or None
+
+    async def _publish_sweep(self, relay: RelayClient) -> None:
+        try:
+            bindings = json.loads(ROOM_BINDINGS_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if not isinstance(bindings, dict) or not reflexd_wake.WORKTREES_ENABLED:
+            return
+        for room, raw in bindings.items():
+            if not isinstance(raw, str) or not Path(raw).expanduser().is_dir():
+                continue
+            try:
+                wt = await asyncio.to_thread(
+                    reflexd_wake.existing_worktree, Path(raw).expanduser(),
+                    self.config.participant_name,
+                )
+                status = await asyncio.to_thread(reflexd_wake.publish_worktree, wt) \
+                    if wt is not None else None
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.warning("publish sweep failed for %s: %s", room, exc)
+                continue
+            if status:
+                logger.info("publish sweep room=%s: %s", room, status)
+                try:
+                    await relay.post_reply(room=room, from_name=self.config.participant_name,
+                                           content=status)
+                except httpx.HTTPError as exc:
+                    logger.warning("publish sweep post failed: %s", exc)
 
     async def _drain_busy_queue(self, relay: RelayClient) -> None:
         """Replay wakes deferred while the agent was mid-tool-call.
@@ -2417,19 +2553,20 @@ class Reflexd:
             if event_name == "message" else ""
         )
         if canonical:
-            if canonical in self._handled_ids:
+            if canonical in self._handled_ids or canonical in self._inflight:
                 logger.debug("already handled %s — skipping", canonical)
                 return
-            self._handled_ids.add(canonical)
-            self._handled_order.append(canonical)
-            while len(self._handled_order) > _HANDLED_ID_CAP:
-                self._handled_ids.discard(self._handled_order.pop(0))
-            self._save_handled()
+            # In flight now (dedupes SSE vs inbox drain); persisted as handled
+            # only once handling finishes, so a crash or restart mid-queue
+            # redelivers the job instead of silently dropping it.
+            self._inflight.add(canonical)
         if event_name == "connected":
             logger.info("sse connected")
             return
         if event_name != "message":
             return
+        if data.get("message_type") not in (None, "chat", "request", "question"):
+            self._mark_handled(canonical)
         message_type = data.get("message_type") or "chat"
         if message_type == "wake_intent":
             # Server triage already broadcast; we still drive our own bid/claim.
@@ -2450,6 +2587,20 @@ class Reflexd:
             await self.handle_room_message(relay, data)
         except Exception as exc:  # pragma: no cover
             logger.exception("handler failed: %s", exc)
+        finally:
+            self._mark_handled(data.get("message_id") or data.get("id") or "")
+
+    def _mark_handled(self, canonical: str) -> None:
+        if not canonical:
+            return
+        self._inflight.discard(canonical)
+        if canonical in self._handled_ids:
+            return
+        self._handled_ids.add(canonical)
+        self._handled_order.append(canonical)
+        while len(self._handled_order) > _HANDLED_ID_CAP:
+            self._handled_ids.discard(self._handled_order.pop(0))
+        self._save_handled()
 
 
 # ---------------------------------------------------------------------------

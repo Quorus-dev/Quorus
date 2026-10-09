@@ -278,3 +278,236 @@ def test_agent_plan_line_naming_reviewer_does_not_wake_them() -> None:
     res = reflexd.classify_message(content="plan: @arav-codex do x", sender="arav",
                                    self_name="arav-codex")
     assert res.action == "RESPOND"
+
+
+def _git_repo(path: Path) -> Path:
+    import subprocess as sp
+    path.mkdir(parents=True)
+    for cmd in (["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "init"]):
+        sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *cmd], cwd=path, check=True)
+    return path
+
+
+def test_agent_worktree_created_once_and_never_reset(tmp_path: Path) -> None:
+    import subprocess as sp
+    repo = _git_repo(tmp_path / "proj")
+    wt = wake.agent_worktree(repo, "a-claude")
+    assert wt is not None and wt.branch == "quorus/a-claude" and wt.main == "main"
+    assert wt.path == tmp_path / ".quorus-worktrees" / "proj" / "a-claude"
+    # unpublished work on the agent branch must survive a lost worktree dir
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q",
+            "--allow-empty", "-m", "wip"], cwd=wt.path, check=True)
+    tip = sp.run(["git", "rev-parse", "HEAD"], cwd=wt.path, capture_output=True,
+                 text=True).stdout.strip()
+    sp.run(["rm", "-rf", str(wt.path)], check=True)
+    again = wake.agent_worktree(repo, "a-claude")
+    assert again is not None
+    tip2 = sp.run(["git", "rev-parse", "HEAD"], cwd=again.path, capture_output=True,
+                  text=True).stdout.strip()
+    assert tip2 == tip
+    assert wake.agent_worktree(repo, "a-claude") == again  # idempotent
+
+
+def test_agent_worktree_skips_non_repos(tmp_path: Path) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert wake.agent_worktree(plain, "a-claude") is None
+    repo = _git_repo(tmp_path / "proj")
+    sub = repo / "sub"
+    sub.mkdir()
+    assert wake.agent_worktree(sub, "a-claude") is None  # only the repo top
+
+
+def test_worktree_prompt_and_codex_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _git_repo(tmp_path / "proj")
+    wt = wake.agent_worktree(repo, "a-codex")
+    text = wake.wake_instructions(participant="a-codex", room="r", sender="h",
+                                  kind="open_todo", teammates=[], has_workspace=True,
+                                  worktree=wt)
+    assert str(wt.path) in text and "quorus/a-codex" in text
+    assert "fast-forwards `main` to your branch automatically" in text
+    monkeypatch.setattr(wake, "CODEX_SANDBOX", "workspace-write")
+    flags = wake.codex_wake_flags(None, [repo])
+    assert any("writable_roots" in f and str(repo) in f for f in flags)
+    monkeypatch.setattr(wake, "CODEX_SANDBOX", "")
+    assert not any("writable_roots" in f for f in wake.codex_wake_flags(None, [repo]))
+
+
+def test_publish_fast_forwards_only_when_safe(tmp_path: Path) -> None:
+    import subprocess as sp
+    g = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    repo = _git_repo(tmp_path / "proj")
+    wt = wake.agent_worktree(repo, "a-claude")
+    assert wake.publish_worktree(wt) is None  # nothing ahead
+    (wt.path / "f.txt").write_text("x")
+    sp.run([*g, "add", "f.txt"], cwd=wt.path, check=True)
+    sp.run([*g, "commit", "-q", "-m", "f"], cwd=wt.path, check=True)
+    (repo / "dirty.txt").write_text("d")
+    sp.run([*g, "add", "dirty.txt"], cwd=repo, check=True)  # staged change in main
+    assert "uncommitted" in wake.publish_worktree(wt)
+    sp.run([*g, "reset", "-q"], cwd=repo, check=True)
+    (repo / "dirty.txt").unlink()
+    assert "published 1 commit" in wake.publish_worktree(wt)
+    assert (repo / "f.txt").read_text() == "x"
+    # main moves on: a stale agent branch must not publish
+    other = wake.agent_worktree(repo, "b-codex")
+    sp.run([*g, "rebase", "-q", "main"], cwd=other.path, check=True)
+    sp.run([*g, "commit", "-q", "--allow-empty", "-m", "b"], cwd=other.path, check=True)
+    assert "published" in wake.publish_worktree(other)
+    sp.run([*g, "commit", "-q", "--allow-empty", "-m", "a2"], cwd=wt.path, check=True)
+    # behind main: the daemon rebases (agents' sandboxes can't) and publishes
+    assert "published 1 commit" in wake.publish_worktree(wt)
+    log = sp.run(["git", "log", "--format=%s", "main"], cwd=repo, capture_output=True,
+                 text=True).stdout.split()
+    assert log[:3] == ["a2", "b", "f"]
+
+
+def _conflicting_pair(tmp_path: Path) -> tuple[Any, Any, Path]:
+    import subprocess as sp
+    g = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    repo = _git_repo(tmp_path / "proj")
+    a = wake.agent_worktree(repo, "a-claude")
+    b = wake.agent_worktree(repo, "b-codex")
+    for wt, body in ((a, "from a"), (b, "from b")):
+        (wt.path / "same.txt").write_text(body)
+        sp.run([*g, "add", "same.txt"], cwd=wt.path, check=True)
+        sp.run([*g, "commit", "-q", "-m", body], cwd=wt.path, check=True)
+    assert "published" in wake.publish_worktree(a)
+    return a, b, repo
+
+
+class _ResolvingAdapter:
+    def __init__(self, resolve: bool) -> None:
+        self.resolve, self.prompts = resolve, []
+
+    async def run(self, harness: str, *, context: str, cwd: Path, **kw: Any) -> str:
+        import subprocess as sp
+        self.prompts.append(context)
+        if self.resolve:
+            (cwd / "same.txt").write_text("from a\nfrom b\n")
+            g = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+            sp.run([*g, "add", "same.txt"], cwd=cwd, check=True)
+            sp.run([*g, "commit", "-q", "--no-edit"], cwd=cwd, check=True)
+            return "kept both lines in same.txt; tests green"
+        return "could not resolve"
+
+
+def _resolve(tmp_path: Path, b: Any, adapter: _ResolvingAdapter) -> str | None:
+    d = _daemon(tmp_path / "rt", "b-codex")
+    d.adapter = adapter
+    return asyncio.run(d._publish_with_resolution(
+        b, harness="codex", resume=None, on_session=lambda _s: None,
+        timeout_s=None, max_turns=None, writable_root=None))
+
+
+def test_conflict_wakes_agent_to_resolve_then_publishes(tmp_path: Path) -> None:
+    _a, b, repo = _conflicting_pair(tmp_path)
+    adapter = _ResolvingAdapter(resolve=True)
+    status = _resolve(tmp_path, b, adapter)
+    assert "conflict" in adapter.prompts[0] and str(b.path) in adapter.prompts[0]
+    assert "resolved: kept both lines" in status and "published" in status
+    assert (repo / "same.txt").read_text() == "from a\nfrom b\n"
+
+
+def test_unresolved_conflict_aborts_and_keeps_commits(tmp_path: Path) -> None:
+    import subprocess as sp
+    _a, b, repo = _conflicting_pair(tmp_path)
+    status = _resolve(tmp_path, b, _ResolvingAdapter(resolve=False))
+    assert "still conflicts" in status
+    state = sp.run(["git", "status"], cwd=b.path, capture_output=True, text=True).stdout
+    assert "merging" not in state.lower()  # merge aborted cleanly
+    assert (b.path / "same.txt").read_text() == "from b"  # agent's work kept
+    assert (repo / "same.txt").read_text() == "from a"   # main untouched
+
+
+def test_reply_chain_depth_counts_one_conversation() -> None:
+    hist = [
+        {"id": "h1", "from_name": "arav"},
+        {"id": "a1", "from_name": "x-claude", "reply_to": "h1"},
+        {"id": "b1", "from_name": "x-codex", "reply_to": "a1"},
+        {"id": "h2", "from_name": "arav"},                       # unrelated task
+        {"id": "a2", "from_name": "x-claude", "reply_to": "h2"},
+    ]
+    is_agent = reflexd.is_agent_participant
+    env = {"from_name": "x-claude", "reply_to": "b1"}  # fix after review
+    assert wake.reply_chain_agent_depth(env, hist, is_agent) == 3
+    env2 = {"from_name": "x-codex", "reply_to": "a2"}  # other task: own chain
+    assert wake.reply_chain_agent_depth(env2, hist, is_agent) == 2
+    loop = [{"id": "c", "from_name": "x-claude", "reply_to": "c"}]
+    assert wake.reply_chain_agent_depth({"from_name": "x-codex", "reply_to": "c"},
+                                        loop, is_agent) == 2  # cycle-safe
+
+
+def test_dedupe_keeps_handoff_and_publish_lines() -> None:
+    reply = ("✅ ee39ddf add edit command, 65 tests pass\n"
+             "@x-codex please review ee39ddf\n"
+             "(quorus) published 1 commit(s) from quorus/x-claude to main")
+    posted = ["✅ ee39ddf add edit command, 65 tests pass"]
+    assert reflexd._undelivered_lines(reply, posted) == [
+        "@x-codex please review ee39ddf",
+        "(quorus) published 1 commit(s) from quorus/x-claude to main",
+    ]
+    assert reflexd._undelivered_lines(reply, posted + [reply]) == [
+        "(quorus) published 1 commit(s) from quorus/x-claude to main",
+    ]
+    assert reflexd._undelivered_lines("✅ done", ["✅ done"]) == []
+
+
+def _bid_for(tmp_path: Path, last_wake_ago: float | None) -> float:
+    import time as _t
+    d = _daemon(tmp_path, "x-codex")
+    if last_wake_ago is not None:
+        d._last_wake_at = _t.time() - last_wake_ago
+    bids: list[float] = []
+
+    class Relay:
+        async def submit_bid(self, **kw: Any) -> None:
+            bids.append(kw["bid"])
+
+        async def claim(self, **kw: Any) -> dict[str, Any]:
+            return {"claimed": True, "winner": "someone-else"}
+
+        async def post_social_defer(self, **kw: Any) -> None:
+            return None
+
+    env = {"from_name": "arav", "room": "r", "message_id": "m",
+           "content": "@open add a csv export", "message_type": "chat"}
+    asyncio.run(d.handle_room_message(Relay(), env))
+    return bids[0] if bids else 0.0
+
+
+def test_idle_agent_still_bids_on_open_work_long_after_a_job(tmp_path: Path) -> None:
+    # Live bug: the penalty grew with idle time, so after its first job an
+    # agent bid 0 on every @open forever.
+    assert _bid_for(tmp_path, None) >= 0.3
+    assert _bid_for(tmp_path, 3600) >= 0.3
+    assert _bid_for(tmp_path, 0.5) < _bid_for(tmp_path, 3600)  # just won: pays
+
+
+def test_job_not_persisted_as_handled_until_it_finishes(tmp_path: Path) -> None:
+    # A hard kill mid-job must leave the job redeliverable: the id may only
+    # hit disk after handling completes.
+    d = _daemon(tmp_path)
+    path = tmp_path / "handled-qt-claude.json"
+    during: list[bool] = []
+
+    async def handler(relay: Any, data: dict[str, Any]) -> bool:
+        on_disk = json.loads(path.read_text()) if path.exists() else []
+        during.append("job-1" in on_disk)
+        return True
+
+    d.handle_room_message = handler  # type: ignore[method-assign]
+    asyncio.run(d._dispatch_event(None, "message", {"message_id": "job-1", "content": "x"}))
+    assert during == [False]
+    assert "job-1" in json.loads(path.read_text())
+
+
+def test_queue_or_defer_verb_naming_me_is_a_handoff() -> None:
+    msg = "/queue @x-claude please review bc3dd4d"
+    res = reflexd.classify_message(content=msg, sender="x-codex", self_name="x-claude")
+    assert res.action == "RESPOND" and res.kind == "mention"
+    other = reflexd.classify_message(content="/vote approve bc3dd4d @x-claude",
+                                     sender="x-codex", self_name="x-claude")
+    assert other.action == "IGNORE"
+    not_me = reflexd.classify_message(content=msg, sender="x-codex", self_name="y-gemini")
+    assert not_me.action == "IGNORE"

@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,9 +36,18 @@ from typing import Any
 CODEX_SANDBOX = os.environ.get("REFLEXD_CODEX_SANDBOX", "").strip()
 _CODEX_SANDBOXES = {"read-only", "workspace-write"}
 
+# Each agent works in its OWN git worktree of the bound repo (branch
+# quorus/<agent>) and fast-forwards the repo's main branch when done. Two
+# agents sharing one checkout committed each other's half-finished edits.
+WORKTREES_ENABLED = os.environ.get("REFLEXD_WORKTREES", "1") not in ("0", "false", "no")
+
 # Stop agent↔agent ping-pong: once this many consecutive room messages are
 # all from agents (no human in between), agents stop waking on each other.
-MAX_AGENT_CHAIN = int(os.environ.get("REFLEXD_MAX_AGENT_CHAIN", "8"))
+# Counted along the reply chain of ONE conversation (review → fix → review…),
+# so an overnight backlog of independent tasks never trips it; the room-wide
+# trailing run is a looser backstop for tool-posted messages without reply_to.
+MAX_AGENT_CHAIN = int(os.environ.get("REFLEXD_MAX_AGENT_CHAIN", "12"))
+MAX_ROOM_AGENT_RUN = int(os.environ.get("REFLEXD_MAX_ROOM_AGENT_RUN", "40"))
 
 
 def quorus_mcp_spec(
@@ -87,7 +98,9 @@ def _toml_str(value: str) -> str:
     return json.dumps(value)
 
 
-def codex_wake_flags(spec: dict[str, Any] | None) -> list[str]:
+def codex_wake_flags(
+    spec: dict[str, Any] | None, writable_roots: list[Path] | None = None,
+) -> list[str]:
     """Extra ``codex exec`` flags: the Quorus MCP server via ``-c`` overrides.
 
     ``-c`` overrides beat ``~/.codex/config.toml``, so a stale user entry for
@@ -96,6 +109,12 @@ def codex_wake_flags(spec: dict[str, Any] | None) -> list[str]:
     flags: list[str] = []
     if CODEX_SANDBOX in _CODEX_SANDBOXES:  # danger-full-access deliberately unsupported
         flags += ["-s", CODEX_SANDBOX]
+        if CODEX_SANDBOX == "workspace-write" and writable_roots:
+            # A worktree's git objects live in the main repo's .git, and
+            # publishing fast-forwards the main checkout: both sit outside the
+            # worktree cwd. Scope stays the bound repo, nothing wider.
+            flags += ["-c", "sandbox_workspace_write.writable_roots=["
+                      + ",".join(_toml_str(str(r)) for r in writable_roots) + "]"]
     if spec is None:
         return flags
     flags += [
@@ -209,6 +228,25 @@ def parse_codex_stream(out: str) -> tuple[str, str | None]:
     return "".join(legacy).strip(), thread_id
 
 
+def reply_chain_agent_depth(
+    envelope: dict[str, Any], history: list[dict[str, Any]], is_agent: Any,
+) -> int:
+    """Agent-authored messages in *envelope*'s reply chain, up to the nearest
+    human message. The envelope itself counts when an agent sent it."""
+    by_id = {m.get("id"): m for m in history if m.get("id")}
+    depth = 1 if is_agent(envelope.get("from_name") or "") else 0
+    cur = envelope.get("reply_to")
+    seen: set[str] = set()
+    while cur and cur in by_id and cur not in seen:
+        seen.add(cur)
+        parent = by_id[cur]
+        if not is_agent(parent.get("from_name") or ""):
+            break
+        depth += 1
+        cur = parent.get("reply_to")
+    return depth
+
+
 def trailing_agent_chain(history: list[dict[str, Any]], is_agent: Any) -> int:
     """How many messages at the end of *history* came from agents in a row."""
     n = 0
@@ -220,9 +258,129 @@ def trailing_agent_chain(history: list[dict[str, Any]], is_agent: Any) -> int:
     return n
 
 
+@dataclass(frozen=True)
+class Worktree:
+    path: Path      # where the agent works
+    repo: Path      # the bound repo (main checkout)
+    branch: str     # quorus/<participant>
+    main: str       # branch checked out in the main checkout
+
+
+def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
+                          text=True, timeout=30, check=False)
+
+
+def agent_worktree(repo: Path, participant: str) -> Worktree | None:
+    """Return (creating if needed) *participant*'s worktree of *repo*.
+
+    None when *repo* is not the top of a git repo, or git fails — callers
+    then fall back to running in the bound directory itself.
+    """
+    top = _git("rev-parse", "--show-toplevel", cwd=repo)
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != repo.resolve():
+        return None
+    head = _git("symbolic-ref", "--short", "HEAD", cwd=repo)
+    if head.returncode != 0:
+        return None  # detached main checkout: no branch to integrate into
+    main = head.stdout.strip()
+    branch = f"quorus/{participant}"
+    path = repo.parent / ".quorus-worktrees" / repo.name / participant
+    if (path / ".git").exists():
+        return Worktree(path, repo, branch, main)
+    _git("worktree", "prune", cwd=repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    has_branch = _git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}",
+                      cwd=repo).returncode == 0
+    # Never reset an existing agent branch: it may hold unpublished work.
+    add = (["worktree", "add", str(path), branch] if has_branch
+           else ["worktree", "add", "-b", branch, str(path), main])
+    if _git(*add, cwd=repo).returncode != 0:
+        return None
+    return Worktree(path, repo, branch, main)
+
+
+def worktree_instructions(wt: Worktree) -> str:
+    return (
+        f"You work in your own git worktree `{wt.path}` on branch `{wt.branch}`. "
+        f"The shared repo `{wt.repo}` has `{wt.main}` checked out: never edit files "
+        f"there. Before starting, commit or stash, then `git rebase {wt.main}`. "
+        f"When the work is done: commit, `git rebase {wt.main}`, and re-run the "
+        f"tests. Quorus fast-forwards `{wt.main}` to your branch automatically "
+        "when you finish, so leave it rebased and green. Reviewers: inspect a "
+        "commit with `git show <hash>` (all worktrees share one object store)."
+    )
+
+
+STATUS_PREFIX = "(quorus)"  # not "[quorus]": the TUI renders [..] as Rich markup
+CONFLICT_MARK = f"{STATUS_PREFIX} conflict:"
+
+RESOLVE_PROMPT = (
+    "Quorus tried to publish your branch but `{main}` moved and your changes "
+    "conflict with it. A merge of `{main}` into `{branch}` is in progress in "
+    "your worktree `{path}`. Resolve every conflict keeping BOTH sides' "
+    "behaviour, run the full test suite until it is green, then `git add` the "
+    "files and `git commit --no-edit`. Do not rebase or reset. Final message: "
+    "one line on what conflicted and the test result."
+)
+
+
+def abort_merge(wt: Worktree) -> None:
+    _git("merge", "--abort", cwd=wt.path)
+
+
+def merge_in_progress(wt: Worktree) -> bool:
+    return _git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt.path).returncode == 0
+
+
+def publish_worktree(wt: Worktree) -> str | None:
+    """Rebase the agent's branch onto main if needed, then fast-forward main.
+
+    Done by the daemon, not the agent: Codex's sandbox blocks both the main
+    checkout's .git (merge failed on ORIG_HEAD.lock) and the worktree's
+    rebase state dir (seen live 2026-10-08), and a deterministic publish
+    beats trusting every model to run it. Returns a one-line room status, or
+    None when there is nothing to publish.
+    """
+    ahead = _git("rev-list", "--count", f"{wt.main}..{wt.branch}", cwd=wt.repo)
+    if ahead.returncode != 0 or ahead.stdout.strip() in ("", "0"):
+        return None
+    n = int(ahead.stdout.strip())
+    if _git("merge-base", "--is-ancestor", wt.main, wt.branch, cwd=wt.repo).returncode != 0:
+        if _git("status", "--porcelain", "--untracked-files=no", cwd=wt.path).stdout.strip():
+            return (f"{STATUS_PREFIX} {wt.branch} has uncommitted changes and is behind "
+                    f"{wt.main}; not publishing yet")
+        rebased = _git("rebase", "--quiet", wt.main, cwd=wt.path)
+        if rebased.returncode != 0:
+            _git("rebase", "--abort", cwd=wt.path)
+            # Leave a real merge with conflict markers in the agent's own
+            # worktree; the daemon wakes the agent to resolve it (see
+            # CONFLICT_MARK). Agents' sandboxes can edit + commit, not rebase.
+            merged_main = _git("merge", "--no-edit", wt.main, cwd=wt.path)
+            if merged_main.returncode != 0:
+                return (f"{CONFLICT_MARK} {wt.branch} conflicts with {wt.main}; "
+                        "merge left in progress for the agent to resolve")
+    dirty = _git("status", "--porcelain", "--untracked-files=no", cwd=wt.repo)
+    if dirty.stdout.strip():
+        return (f"{STATUS_PREFIX} not publishing {wt.branch}: the main checkout "
+                f"{wt.repo} has uncommitted changes")
+    if _git("symbolic-ref", "--short", "HEAD", cwd=wt.repo).stdout.strip() != wt.main:
+        return None  # someone switched the main checkout's branch; leave it be
+    merged = _git("merge", "--ff-only", "--quiet", wt.branch, cwd=wt.repo)
+    if merged.returncode != 0:
+        return f"{STATUS_PREFIX} publishing {wt.branch} failed: {merged.stderr.strip()[:160]}"
+    return f"{STATUS_PREFIX} published {n} commit(s) from {wt.branch} to {wt.main}"
+
+
+def existing_worktree(repo: Path, participant: str) -> Worktree | None:
+    """Like :func:`agent_worktree` but never creates one (startup sweep)."""
+    path = repo.parent / ".quorus-worktrees" / repo.name / participant
+    return agent_worktree(repo, participant) if (path / ".git").exists() else None
+
+
 def wake_instructions(
     *, participant: str, room: str, sender: str, kind: str,
-    teammates: list[str], has_workspace: bool,
+    teammates: list[str], has_workspace: bool, worktree: Worktree | None = None,
 ) -> str:
     """The Wake Intent block — tells the agent it may (and should) do work."""
     others = ", ".join(f"@{t}" for t in teammates if t != participant) or "(none)"
@@ -233,7 +391,8 @@ def wake_instructions(
         opener = f"`{sender}` @-mentioned you in room `{room}`."
     else:
         opener = f"`{sender}` asked something in room `{room}` and you won the pick."
-    ws = ("You are running inside the room's bound workspace: make real changes, "
+    ws = (worktree_instructions(worktree) if worktree is not None else
+          "You are running inside the room's bound workspace: make real changes, "
           "run the tests, and commit when the work is done."
           if has_workspace else
           "No workspace is bound to this room on this host: answer and plan, but "

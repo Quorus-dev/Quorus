@@ -65,12 +65,18 @@ def _isolate_reflexd_runtime(request, tmp_path):
     candidates = {id(m): m for m in (_sys.modules.get("reflexd"),
                                      getattr(request.module, "reflexd", None))
                   if m is not None and hasattr(m, "DEFAULT_RUNTIME_DIR")}
-    saved = {k: m.DEFAULT_RUNTIME_DIR for k, m in candidates.items()}
-    for m in candidates.values():
-        m.DEFAULT_RUNTIME_DIR = runtime
+    # ROOM_BINDINGS_PATH too: the daemon's startup publish sweep reads it,
+    # and with the real file a test daemon named arav-claude would rebase and
+    # publish the live agent's real worktree (caught 2026-10-08).
+    attrs = {"DEFAULT_RUNTIME_DIR": runtime,
+             "ROOM_BINDINGS_PATH": tmp_path / "room-bindings.json"}
+    saved = {(k, a): getattr(m, a) for k, m in candidates.items() for a in attrs
+             if hasattr(m, a)}
+    for (k, a) in saved:
+        setattr(candidates[k], a, attrs[a])
     yield
-    for k, m in candidates.items():
-        m.DEFAULT_RUNTIME_DIR = saved[k]
+    for (k, a), value in saved.items():
+        setattr(candidates[k], a, value)
 
 
 @pytest.fixture(autouse=True)
