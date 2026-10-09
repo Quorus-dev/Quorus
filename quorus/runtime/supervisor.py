@@ -97,13 +97,22 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _reflexd_script_path() -> Path:
-    """Locate ``scripts/reflexd.py`` from this checkout."""
+    """Locate the reflexd daemon script.
+
+    Installed wheels carry it at ``quorus/_reflexd/reflexd.py`` (hatch
+    force-include); a source checkout has it at ``scripts/reflexd.py``.
+    Before 2026-10-08 only the checkout path existed, so every pip/pipx
+    install failed ``quorus reflexd start`` with FileNotFoundError.
+    """
+    bundled = Path(__file__).resolve().parents[1] / "_reflexd" / "reflexd.py"
+    if bundled.exists():
+        return bundled
     here = Path(__file__).resolve()
     for parent in here.parents:
         candidate = parent / "scripts" / "reflexd.py"
         if candidate.exists():
             return candidate
-    raise FileNotFoundError("scripts/reflexd.py not found")
+    raise FileNotFoundError("reflexd.py not found (bundled or scripts/)")
 
 
 class Supervisor:

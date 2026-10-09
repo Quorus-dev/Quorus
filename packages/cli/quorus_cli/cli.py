@@ -1185,18 +1185,10 @@ def _pid_is_reflexd(pid: int) -> bool:
 
 
 def _reflexd_script_path() -> Path:
-    """Return absolute path to scripts/reflexd.py inside this checkout."""
-    # cli.py lives at packages/cli/quorus_cli/cli.py; repo root is 4 parents up.
-    here = Path(__file__).resolve()
-    candidate = here.parents[3] / "scripts" / "reflexd.py"
-    if candidate.exists():
-        return candidate
-    # Fallback: scan upward for a 'scripts/reflexd.py' marker.
-    for parent in here.parents:
-        guess = parent / "scripts" / "reflexd.py"
-        if guess.exists():
-            return guess
-    raise FileNotFoundError("reflexd.py not found relative to quorus_cli.cli")
+    """Return the reflexd daemon script (bundled in wheels, or checkout)."""
+    from quorus.runtime.supervisor import _reflexd_script_path as _find
+
+    return _find()
 
 
 def _cmd_memory(args) -> None:

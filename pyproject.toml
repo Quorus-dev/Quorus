@@ -105,6 +105,15 @@ markers = [
 [tool.hatch.build.targets.wheel]
 packages = ["quorus", "packages/sdk/quorus_sdk", "packages/tui/quorus_tui", "packages/mcp/quorus_mcp", "packages/cli/quorus_cli"]
 
+# The wake daemon lives in scripts/ (loaded by path, not imported as a
+# package). Ship it inside the wheel so `quorus reflexd start` works from a
+# pip/pipx install — it never did before 2026-10-08.
+[tool.hatch.build.targets.wheel.force-include]
+"scripts/reflexd.py" = "quorus/_reflexd/reflexd.py"
+"scripts/reflexd_triage.py" = "quorus/_reflexd/reflexd_triage.py"
+"scripts/reflexd_streamb.py" = "quorus/_reflexd/reflexd_streamb.py"
+"scripts/reflexd_wake.py" = "quorus/_reflexd/reflexd_wake.py"
+
 [tool.hatch.build.targets.sdist]
 exclude = [
     "/.quorus",
