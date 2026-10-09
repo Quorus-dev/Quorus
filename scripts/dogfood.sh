@@ -6,6 +6,7 @@
 #   scripts/dogfood.sh status                  health, agents, room presence
 #   scripts/dogfood.sh down                    stop everything (state kept)
 #   scripts/dogfood.sh logs [agent]            tail an agent's daemon log
+#   scripts/dogfood.sh report [room]           what the agents shipped
 #   scripts/dogfood.sh connect [room]          point YOUR Claude Code + Codex
 #                                              MCP config at this relay
 #   scripts/dogfood.sh claude [args]           open Claude Code with room
@@ -221,6 +222,28 @@ PY2
   echo "  Restart your open Claude Code / Codex sessions to pick this up."
 }
 
+cmd_report() { # report [room] — what the agents did, for the morning check
+  local room="${1:-build}"
+  api GET "/rooms/$room/history?limit=500" | python3 -c '
+import json, sys, collections
+msgs = json.load(sys.stdin)
+by = collections.Counter(m["from_name"] for m in msgs)
+pub = [m for m in msgs if "published" in (m.get("content") or "")
+       and "commit(s) from quorus/" in (m.get("content") or "")]
+blocked = [m for m in msgs if any(k in (m.get("content") or "") for k in
+           ("needs a manual merge", "not publishing", "[reflexd]", "publishing quorus/"))]
+print("messages by sender:", dict(by))
+print("publishes to main:", len(pub))
+print("blocked/error lines:", len(blocked))
+if msgs:
+    print("first:", msgs[0]["timestamp"][:19], " last:", msgs[-1]["timestamp"][:19])'
+  local repo; repo="$(python3 -c 'import json,sys,pathlib;print(json.loads((pathlib.Path.home()/".quorus/room-bindings.json").read_text()).get(sys.argv[1],""))' "$room")"
+  if [[ -n "$repo" ]]; then
+    echo "repo $repo:"; git -C "$repo" log --oneline -15 | sed 's/^/  /'
+    (cd "$repo" && python3 -m pytest -q 2>&1 | tail -1 | sed 's/^/  tests: /')
+  fi
+}
+
 cmd_down() {
   for f in "$LA/$PREFIX".*.plist; do
     [[ -e "$f" ]] || continue
@@ -261,6 +284,7 @@ case "${1:-}" in
     shift; exec claude --dangerously-load-development-channels server:quorus "$@" ;;
   down) cmd_down ;;
   status) cmd_status ;;
+  report) shift; cmd_report "$@" ;;
   logs) tail -n 60 -f "$DIR/${2:-${AGENTS%% *}}.log" ;;
   *) sed -n 2,19p "$0"; exit 1 ;;
 esac
