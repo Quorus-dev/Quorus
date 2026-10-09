@@ -2428,16 +2428,26 @@ class Reflexd:
             return
         if not isinstance(bindings, dict) or not reflexd_wake.WORKTREES_ENABLED:
             return
+        seen: set[Path] = set()
         for room, raw in bindings.items():
             if not isinstance(raw, str) or not Path(raw).expanduser().is_dir():
                 continue
+            repo = Path(raw).expanduser().resolve()
+            if repo in seen:  # several rooms can share one repo: sweep it once
+                continue
+            seen.add(repo)
             try:
                 wt = await asyncio.to_thread(
-                    reflexd_wake.existing_worktree, Path(raw).expanduser(),
-                    self.config.participant_name,
+                    reflexd_wake.existing_worktree, repo, self.config.participant_name,
                 )
                 status = await asyncio.to_thread(reflexd_wake.publish_worktree, wt) \
                     if wt is not None else None
+                if wt is not None and (status or "").startswith(reflexd_wake.CONFLICT_MARK):
+                    # No agent is awake to resolve it here: never leave a
+                    # half-done merge behind. The next wake retries properly.
+                    await asyncio.to_thread(reflexd_wake.abort_merge, wt)
+                    status = (f"{reflexd_wake.STATUS_PREFIX} {wt.branch} conflicts "
+                              f"with {wt.main}; will resolve on this agent's next wake")
             except (OSError, subprocess.SubprocessError) as exc:
                 logger.warning("publish sweep failed for %s: %s", room, exc)
                 continue

@@ -511,3 +511,25 @@ def test_queue_or_defer_verb_naming_me_is_a_handoff() -> None:
     assert other.action == "IGNORE"
     not_me = reflexd.classify_message(content=msg, sender="x-codex", self_name="y-gemini")
     assert not_me.action == "IGNORE"
+
+
+def test_startup_sweep_never_leaves_a_merge_in_progress(tmp_path: Path) -> None:
+    import subprocess as sp
+    _a, b, repo = _conflicting_pair(tmp_path)
+    bindings = tmp_path / "room-bindings.json"
+    bindings.write_text(json.dumps({"r1": str(repo), "r2": str(repo)}))
+    d = _daemon(tmp_path / "rt", "b-codex")
+    posts: list[str] = []
+
+    class Relay:
+        async def post_reply(self, **kw: Any) -> None:
+            posts.append(kw["content"])
+
+    reflexd.ROOM_BINDINGS_PATH, saved = bindings, reflexd.ROOM_BINDINGS_PATH
+    try:
+        asyncio.run(d._publish_sweep(Relay()))
+    finally:
+        reflexd.ROOM_BINDINGS_PATH = saved
+    assert len(posts) == 1 and "next wake" in posts[0]  # one repo, swept once
+    state = sp.run(["git", "status"], cwd=b.path, capture_output=True, text=True).stdout
+    assert "merging" not in state.lower()
