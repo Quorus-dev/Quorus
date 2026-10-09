@@ -144,7 +144,10 @@ with REAL claude/codex (setup, greetings/acks/questions/mentions, other-human
 silence, @open build+publish+review, parallel same-file tasks, two projects,
 manual-mode approve/deny + owner-only, unbound room, daemon down, restart
 mid-job, relay restart, second human, ping-pong guard, burst, CLI errors,
-agent remove). All 20 pass (run 2: 19/20 + S11 rerun after fix). Bugs it
+agent remove). FINAL: 20/20 in one clean run on dac8433 (5 full runs total).
+Later fixes from the gate: drain acked in-flight jobs (lost on restart);
+a denied agent kept retrying (now stops after first deny/timeout); manual
+approvals wait 120s not 300 (one agent = one job across rooms). Bugs it
 found: codex `exec resume` has no `-s` (resumed wakes were read-only) and
 Codex's sandbox blocks all .git writes → daemon now commits agents' work;
 manual mode lost to owners' Claude "auto" default; humans' messages without
