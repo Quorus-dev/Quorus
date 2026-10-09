@@ -348,14 +348,37 @@ RESOLVE_PROMPT = (
     "Quorus tried to publish your branch but `{main}` moved and your changes "
     "conflict with it. A merge of `{main}` into `{branch}` is in progress in "
     "your worktree `{path}`. Resolve every conflict keeping BOTH sides' "
-    "behaviour, run the full test suite until it is green, then `git add` the "
-    "files and `git commit --no-edit`. Do not rebase or reset. Final message: "
+    "behaviour (no `<<<<<<<` markers left), run the full test suite until it "
+    "is green, then `git add` the resolved files. Quorus completes the merge "
+    "commit for you. Do not rebase, reset or abort the merge. Final message: "
     "one line on what conflicted and the test result."
 )
 
 
 def abort_merge(wt: Worktree) -> None:
     _git("merge", "--abort", cwd=wt.path)
+
+
+def finish_merge(wt: Worktree, participant: str) -> bool:
+    """Complete a merge the agent resolved but could not commit (Codex's
+    sandbox blocks finishing a merge in the worktree's git dir). Stages
+    conflicted files only when no conflict markers remain; True if done."""
+    if not merge_in_progress(wt):
+        return False
+    unmerged = _git("diff", "--name-only", "--diff-filter=U", cwd=wt.path).stdout.split()
+    for rel in unmerged:
+        try:
+            text = (wt.path / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        if "<<<<<<<" in text or ">>>>>>>" in text:
+            return False  # not actually resolved
+    if unmerged and _git("add", "--", *unmerged, cwd=wt.path).returncode != 0:
+        return False
+    done = _git("-c", f"user.name={participant}", "-c",
+                f"user.email={participant}@agents.quorus.local",
+                "commit", "--no-edit", "--quiet", cwd=wt.path)
+    return done.returncode == 0
 
 
 def merge_in_progress(wt: Worktree) -> bool:

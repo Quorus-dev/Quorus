@@ -2429,6 +2429,8 @@ class Reflexd:
         except Exception as exc:  # never lose the branch over a failed wake
             logger.warning("conflict-resolution wake failed: %s", exc)
             note = ""
+        await asyncio.to_thread(
+            reflexd_wake.finish_merge, wt, self.config.participant_name)
         unresolved = await asyncio.to_thread(reflexd_wake.merge_in_progress, wt)
         status = None if unresolved else await publish()
         if unresolved or (status or "").startswith(reflexd_wake.CONFLICT_MARK):

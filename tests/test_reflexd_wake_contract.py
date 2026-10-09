@@ -593,3 +593,26 @@ def test_cancelled_job_is_not_marked_handled(tmp_path: Path) -> None:
     asyncio.run(go())
     restarted = _daemon(tmp_path)
     assert "q-1" not in restarted._handled_ids  # will be redelivered
+
+
+def test_daemon_completes_merge_the_agent_resolved_but_could_not_commit(
+    tmp_path: Path,
+) -> None:
+    _a, b, repo = _conflicting_pair(tmp_path)
+
+    class EditOnly:  # Codex-like: may edit files, cannot touch git metadata
+        async def run(self, harness: str, *, context: str, cwd: Path, **kw: Any) -> str:
+            (cwd / "same.txt").write_text("from a\nfrom b\n")
+            return "resolved same.txt, tests green"
+
+    status = _resolve(tmp_path, b, EditOnly())
+    assert "published" in status
+    assert (repo / "same.txt").read_text() == "from a\nfrom b\n"
+
+
+def test_finish_merge_refuses_leftover_markers(tmp_path: Path) -> None:
+    _a, b, _repo = _conflicting_pair(tmp_path)
+    assert wake.publish_worktree(b).startswith(wake.CONFLICT_MARK)
+    assert wake.finish_merge(b, "b-codex") is False  # markers still there
+    assert wake.merge_in_progress(b)
+    wake.abort_merge(b)
