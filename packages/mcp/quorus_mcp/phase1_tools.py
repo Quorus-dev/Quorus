@@ -491,7 +491,12 @@ async def approve(
             ),
         }
     try:
-        rec = await request_approval(room, tool_name, input)
+        # 120s default (was 300): an unanswered prompt holds the agent, and an
+        # agent works one job at a time across all its rooms.
+        rec = await request_approval(
+            room, tool_name, input,
+            timeout_s=int(os.environ.get("QUORUS_APPROVAL_TIMEOUT_S", "120")),
+        )
     except Exception as exc:
         return {
             "behavior": "deny",

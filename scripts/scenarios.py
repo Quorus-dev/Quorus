@@ -344,7 +344,7 @@ def s11() -> str:
     t0 = ts()
     say(ROOM3, "@qa-claude run the shell command `touch approved.txt` in the repo, "
                "then tell me it is done")
-    pending = wait(lambda: _pending(ROOM3), 300)
+    pending = wait(lambda: _pending(ROOM3, "approved.txt"), 300)
     assert pending, "no approval request reached the room"
     # another human may not decide it
     q("bob", "join", ROOM3, check=False)
@@ -356,19 +356,24 @@ def s11() -> str:
                 (repo / "approved.txt").exists(), 300), "approved command never ran"
     # deny path
     say(ROOM3, "@qa-claude run the shell command `touch denied.txt` in the repo")
-    pending = wait(lambda: _pending(ROOM3), 300)
+    pending = wait(lambda: _pending(ROOM3, "denied.txt"), 300)
     assert pending, "second approval request missing"
     q("qa", "deny", pending[0]["id"])
     reply = wait(lambda: [m for m in agent_msgs_since(ROOM3, t0, ("qa-claude",))
                           if "denied" in m["content"].lower() or "deny" in m["content"].lower()
                           or "not" in m["content"].lower()], 300)
     assert not _worktree_file(repo, "qa-claude", "denied.txt"), "denied command ran anyway"
+    for extra in _pending(ROOM3):  # answer stragglers so the agent isn't held
+        q("qa", "deny", extra["id"], check=False)
     return f"approve ran it; bob could not decide; deny blocked it ({bool(reply)})"
 
 
-def _pending(room: str) -> list[dict[str, Any]]:
+def _pending(room: str, about: str = "") -> list[dict[str, Any]]:
+    """Pending approvals in *room*, optionally only those whose request
+    mentions *about* (agents may ask for extra, unrelated permissions)."""
     data = api(f"/v1/approvals?room={room}")
-    return [a for a in (data or {}).get("pending", []) if a.get("status", "pending") == "pending"]
+    return [a for a in (data or {}).get("pending", [])
+            if a.get("status", "pending") == "pending" and about in json.dumps(a)]
 
 
 def _worktree_file(repo: Path, agent: str, name: str) -> bool:
