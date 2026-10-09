@@ -2245,6 +2245,7 @@ class Reflexd:
             participant=self.config.participant_name, room=wake_room,
             sender=wake_sender, kind=kind, teammates=list(teammates or []),
             has_workspace=has_workspace, worktree=worktree,
+            manual=mode_for(wake_room) == "manual",
         )
 
         memory_block = render_memory_context(memory_entries or [])

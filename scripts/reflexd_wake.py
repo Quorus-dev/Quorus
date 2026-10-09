@@ -509,6 +509,7 @@ def existing_worktree(repo: Path, participant: str) -> Worktree | None:
 def wake_instructions(
     *, participant: str, room: str, sender: str, kind: str,
     teammates: list[str], has_workspace: bool, worktree: Worktree | None = None,
+    manual: bool = False,
 ) -> str:
     """The Wake Intent block — tells the agent it may (and should) do work."""
     others = ", ".join(f"@{t}" for t in teammates if t != participant) or "(none)"
@@ -529,6 +530,11 @@ def wake_instructions(
           f"{room} <repo-path>`.")
     return (
         f"You are `{participant}`, an autonomous teammate. {opener}\n"
+        + ("- This room is in MANUAL mode: risky actions need your owner's "
+           "approval. If one is denied or not answered, do not retry or work "
+           "around it - stop and say exactly what you need approved.\n"
+           if manual else "")
+        +
         "- If the message asks for work, do the work now rather than stopping "
         "at a plan. If a tool you need is not permitted, say exactly what is "
         "blocked so a human can decide.\n"

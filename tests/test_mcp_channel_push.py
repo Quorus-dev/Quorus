@@ -78,3 +78,24 @@ def test_capability_value_is_empty_object() -> None:
         pytest.skip("channel capability only advertised with SSE enabled")
     opts = server.mcp._mcp_server.create_initialization_options()
     assert opts.capabilities.experimental["claude/channel"] == {}
+
+
+async def test_after_a_denial_every_later_prompt_is_denied_at_once(monkeypatch) -> None:
+    # A denied agent kept trying workarounds, each parked minutes on a new
+    # approval, stalling every other room it serves (scenario gate S11/S12).
+    from quorus_mcp import phase1_tools as p1
+
+    monkeypatch.setattr(p1, "_STOPPED", None)
+    monkeypatch.setenv("QUORUS_APPROVAL_ROOM", "r")
+    calls: list[str] = []
+
+    async def fake_request(room, tool_name, inp, **kw):
+        calls.append(tool_name)
+        return {"status": "denied", "decided_by": "arav", "reason": "no"}
+
+    monkeypatch.setattr(p1, "request_approval", fake_request)
+    first = await p1.approve("Bash", {"command": "touch x"})
+    second = await p1.approve("Bash", {"command": "python -c 'open(\"x\",\"w\")'"})
+    assert first["behavior"] == second["behavior"] == "deny"
+    assert calls == ["Bash"]  # the workaround never reached the human again
+    assert "stop" in second["message"].lower()

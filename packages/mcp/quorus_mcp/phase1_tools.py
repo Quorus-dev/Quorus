@@ -453,6 +453,15 @@ async def request_approval(
     return rec
 
 
+# Once a human has said no (or nobody answered) in this agent session, every
+# later permission prompt is denied at once. Without this a denied agent kept
+# trying workarounds, each parking for up to 5 minutes on a new approval, and
+# stalled every other room it serves (scenario gate S11/S12, 2026-10-09).
+# One MCP server process == one woken agent session, so module state is the
+# right scope.
+_STOPPED: str | None = None
+
+
 async def approve(
     tool_name: str,
     input: Any = None,
@@ -465,6 +474,13 @@ async def approve(
     explicit human approval (deny, expiry, relay error) denies the call, so
     a broken relay can never silently widen an agent's permissions.
     """
+    global _STOPPED
+    if _STOPPED:
+        return {
+            "behavior": "deny",
+            "message": (f"{_STOPPED} Do not retry or work around it: stop now and "
+                        "report exactly what was blocked."),
+        }
     room = room_id or os.environ.get("QUORUS_APPROVAL_ROOM", "")
     if not room:
         return {
@@ -511,8 +527,12 @@ async def approve(
     if rec.get("status") == "denied":
         who = rec.get("decided_by") or "a human"
         why = rec.get("reason") or "no reason given"
-        return {"behavior": "deny", "message": f"denied by {who}: {why}"}
+        _STOPPED = f"Your owner denied an earlier request ({tool_name})."
+        return {"behavior": "deny",
+                "message": f"denied by {who}: {why}. Stop and report what was blocked."}
+    _STOPPED = "An earlier request got no answer from your owner."
     return {
         "behavior": "deny",
-        "message": "approval timed out with no human decision",
+        "message": ("approval timed out with no human decision. Stop and report "
+                    "what you need approved."),
     }
