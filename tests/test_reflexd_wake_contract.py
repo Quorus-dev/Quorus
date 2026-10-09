@@ -325,7 +325,7 @@ def test_worktree_prompt_and_codex_roots(tmp_path: Path, monkeypatch: pytest.Mon
                                   kind="open_todo", teammates=[], has_workspace=True,
                                   worktree=wt)
     assert str(wt.path) in text and "quorus/a-codex" in text
-    assert "fast-forwards `main` to your branch automatically" in text
+    assert "Do NOT run git rebase" in text  # codex's sandbox can't; daemon does it
     monkeypatch.setattr(wake, "CODEX_SANDBOX", "workspace-write")
     flags = wake.codex_wake_flags(None, [repo])
     assert any("writable_roots" in f and str(repo) in f for f in flags)
@@ -533,3 +533,43 @@ def test_startup_sweep_never_leaves_a_merge_in_progress(tmp_path: Path) -> None:
     assert len(posts) == 1 and "next wake" in posts[0]  # one repo, swept once
     state = sp.run(["git", "status"], cwd=b.path, capture_output=True, text=True).stdout
     assert "merging" not in state.lower()
+
+
+def test_sync_puts_clean_branch_on_latest_main(tmp_path: Path) -> None:
+    import subprocess as sp
+    g = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    repo = _git_repo(tmp_path / "proj")
+    a = wake.agent_worktree(repo, "a-claude")
+    sp.run([*g, "commit", "-q", "--allow-empty", "-m", "on main"], cwd=repo, check=True)
+    wake.sync_worktree(a)
+    head = sp.run(["git", "log", "-1", "--format=%s"], cwd=a.path, capture_output=True,
+                  text=True).stdout.strip()
+    assert head == "on main"
+    (a.path / "wip.txt").write_text("x")  # dirty: leave it alone
+    sp.run([*g, "commit", "-q", "--allow-empty", "-m", "main again"], cwd=repo, check=True)
+    wake.sync_worktree(a)
+    assert (a.path / "wip.txt").exists()
+    assert "UNCOMMITTED" in wake.worktree_instructions(a, dirty=wake.worktree_dirty(a))
+
+
+def test_uncommitted_work_gets_one_commit_nudge_then_publishes(tmp_path: Path) -> None:
+    import subprocess as sp
+    repo = _git_repo(tmp_path / "proj")
+    wt = wake.agent_worktree(repo, "b-codex")
+    (wt.path / "feature.txt").write_text("done")  # agent forgot to commit
+
+    class Committer:
+        prompts: list[str] = []
+
+        async def run(self, harness: str, *, context: str, cwd: Path, **kw: Any) -> str:
+            self.prompts.append(context)
+            g = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+            sp.run([*g, "add", "feature.txt"], cwd=cwd, check=True)
+            sp.run([*g, "commit", "-q", "-m", "feature"], cwd=cwd, check=True)
+            return "abc123 feature"
+
+    adapter = Committer()
+    status = _resolve(tmp_path, wt, adapter)
+    assert "uncommitted" in adapter.prompts[0]
+    assert "published 1 commit" in status
+    assert (repo / "feature.txt").read_text() == "done"

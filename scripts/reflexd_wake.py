@@ -300,20 +300,49 @@ def agent_worktree(repo: Path, participant: str) -> Worktree | None:
     return Worktree(path, repo, branch, main)
 
 
-def worktree_instructions(wt: Worktree) -> str:
+def worktree_dirty(wt: Worktree) -> bool:
+    return bool(_git("status", "--porcelain", "--untracked-files=no", cwd=wt.path).stdout.strip()
+                or _git("ls-files", "--others", "--exclude-standard", cwd=wt.path).stdout.strip())
+
+
+def sync_worktree(wt: Worktree) -> None:
+    """Before a wake: put a clean agent branch on top of main so the agent
+    starts from everyone's latest work. Agents can't rebase in Codex's
+    sandbox (seen live), so the daemon does it; conflicts are left for the
+    post-wake publish, which wakes the agent to resolve them."""
+    if worktree_dirty(wt):
+        return
+    if _git("merge-base", "--is-ancestor", wt.main, wt.branch, cwd=wt.repo).returncode == 0:
+        return
+    if _git("rebase", "--quiet", wt.main, cwd=wt.path).returncode != 0:
+        _git("rebase", "--abort", cwd=wt.path)
+
+
+def worktree_instructions(wt: Worktree, *, dirty: bool = False) -> str:
+    note = (" Your worktree has UNCOMMITTED changes from an earlier session: look "
+            "at `git status`/`git diff`, finish or discard them, and commit before "
+            "anything else." if dirty else "")
     return (
-        f"You work in your own git worktree `{wt.path}` on branch `{wt.branch}`. "
-        f"The shared repo `{wt.repo}` has `{wt.main}` checked out: never edit files "
-        f"there. Before starting, commit or stash, then `git rebase {wt.main}`. "
-        f"When the work is done: commit, `git rebase {wt.main}`, and re-run the "
-        f"tests. Quorus fast-forwards `{wt.main}` to your branch automatically "
-        "when you finish, so leave it rebased and green. Reviewers: inspect a "
-        "commit with `git show <hash>` (all worktrees share one object store)."
+        f"You work in your own git worktree `{wt.path}` on branch `{wt.branch}`, "
+        f"already synced with `{wt.main}`. The shared repo `{wt.repo}` has "
+        f"`{wt.main}` checked out: never edit files there.{note} Commit your work "
+        "on your branch when tests pass and leave nothing uncommitted. Do NOT run "
+        "git rebase, merge, reset or push: Quorus rebases your branch onto "
+        f"`{wt.main}` and publishes it when you finish, and wakes you if there is "
+        "a conflict. Reviewers: inspect a commit with `git show <hash>` (all "
+        "worktrees share one object store)."
     )
 
 
 STATUS_PREFIX = "(quorus)"  # not "[quorus]": the TUI renders [..] as Rich markup
 CONFLICT_MARK = f"{STATUS_PREFIX} conflict:"
+
+COMMIT_PROMPT = (
+    "You finished your last task but left uncommitted changes in your worktree "
+    "`{path}`. Look at `git status` and `git diff`: commit the work that "
+    "belongs to the task (tests green), discard stray files. Do not rebase or "
+    "merge. Final message: the commit hash and one line on what it contains."
+)
 
 RESOLVE_PROMPT = (
     "Quorus tried to publish your branch but `{main}` moved and your changes "
@@ -391,7 +420,8 @@ def wake_instructions(
         opener = f"`{sender}` @-mentioned you in room `{room}`."
     else:
         opener = f"`{sender}` asked something in room `{room}` and you won the pick."
-    ws = (worktree_instructions(worktree) if worktree is not None else
+    ws = (worktree_instructions(worktree, dirty=worktree_dirty(worktree))
+          if worktree is not None else
           "You are running inside the room's bound workspace: make real changes, "
           "run the tests, and commit when the work is done."
           if has_workspace else

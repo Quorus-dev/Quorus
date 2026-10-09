@@ -1960,6 +1960,8 @@ class Reflexd:
                 worktree = await asyncio.to_thread(
                     reflexd_wake.agent_worktree, ws, self.config.participant_name,
                 )
+                if worktree is not None:
+                    await asyncio.to_thread(reflexd_wake.sync_worktree, worktree)
             except (OSError, subprocess.SubprocessError) as exc:
                 logger.warning("worktree setup failed, using %s: %s", ws, exc)
         _members = getattr(relay, "fetch_members", None)
@@ -2394,6 +2396,23 @@ class Reflexd:
                 return f"{reflexd_wake.STATUS_PREFIX} publish check failed: {exc}"
 
         status = await publish()
+        if await asyncio.to_thread(reflexd_wake.worktree_dirty, wt) and \
+                not (status or "").startswith(reflexd_wake.CONFLICT_MARK):
+            # Left work uncommitted (a blocked git op, or it just forgot):
+            # nudge the same agent once to commit, then publish again.
+            logger.info("%s left uncommitted changes — nudging to commit",
+                        self.config.participant_name)
+            extra_kw0: dict[str, Any] = (
+                {"writable_roots": [writable_root]} if writable_root else {})
+            try:
+                await self.adapter.run(
+                    harness, context=reflexd_wake.COMMIT_PROMPT.format(path=wt.path),
+                    cwd=wt.path, resume=resume, on_session=on_session,
+                    timeout_s=timeout_s, max_turns=max_turns, **extra_kw0,
+                )
+            except Exception as exc:  # never lose the branch over a failed wake
+                logger.warning("commit-nudge wake failed: %s", exc)
+            status = await publish()
         if not (status or "").startswith(reflexd_wake.CONFLICT_MARK):
             return status
         logger.info("%s — waking %s to resolve", status, self.config.participant_name)
