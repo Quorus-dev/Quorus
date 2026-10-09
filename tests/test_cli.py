@@ -275,7 +275,8 @@ def test_cli_doctor_mcp_registration_not_found(capsys, tmp_path):
 
     captured = capsys.readouterr()
     assert "MCP server registered" in captured.out
-    assert "✗" in captured.out
+    # optional since 2026-10-09: no AI app connected is a warning, not a failure
+    assert "(optional)" in captured.out
 
 
 # ── export command tests ────────────────────────────────────────────────

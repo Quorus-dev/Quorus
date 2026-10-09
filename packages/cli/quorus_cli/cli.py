@@ -269,7 +269,7 @@ async def _say(room_name: str, message: str) -> dict:
         rooms = rooms_resp.json()
         room = next((r for r in rooms if r["name"] == room_name), None)
         if not room:
-            raise ValueError(f"Room '{room_name}' not found")
+            raise _RoomNotFound(f"Room '{room_name}' not found")
         resp = await client.post(
             f"{RELAY_URL}/rooms/{room['id']}/messages",
             json={"from_name": INSTANCE_NAME, "content": message},
@@ -444,15 +444,32 @@ async def _chat(room_name: str) -> None:
     rooms = await _list_rooms()
     room = next((r for r in rooms if r["name"] == room_name), None)
     if not room:
-        _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
-        return
+        raise _RoomNotFound(f"Room '{room_name}' not found")
 
     room_id = room["id"]
     console.print(f"[bold green]Quorus Chat — {room_name}[/bold green]")
     console.print(f"[dim]Members: {', '.join(room['members'])}[/dim]")
     console.print(f"[dim]You are: {INSTANCE_NAME}[/dim]")
-    console.print("[dim]Type a message and press Enter to send. Ctrl+C to quit.[/dim]")
+    console.print("[dim]Type a message and press Enter to send. Ctrl+C, Ctrl+D or "
+                  "/quit to leave.[/dim]")
     console.print("─" * 60)
+    # Recent context, so you don't open onto a blank room.
+    try:
+        _c = _get_client()
+        try:
+            _r = await _c.get(f"{RELAY_URL}/rooms/{room_id}/history",
+                              params={"limit": 15}, headers=_auth_headers())
+            hist = _r.json() if _r.status_code == 200 else []
+        finally:
+            await _c.aclose()
+    except Exception:  # history is a convenience; never block opening the chat
+        hist = []
+    from rich.markup import escape as _esc
+
+    for m in hist if isinstance(hist, list) else []:
+        ts = (m.get("timestamp") or "")[11:16]
+        console.print(f"[dim]{ts}[/dim] [bold]{_esc(m.get('from_name', '?'))}[/bold] "
+                      f"{_esc(m.get('content') or '')}")
 
     stop_event = asyncio.Event()
     chat_console = Console()
@@ -507,24 +524,45 @@ async def _chat(room_name: str) -> None:
             await client.aclose()
 
     async def _input_loop():
-        """Read user input in a thread, send messages async."""
-        loop = asyncio.get_event_loop()
-        while not stop_event.is_set():
+        """Read stdin on a DAEMON thread. The default executor's thread
+        blocked in readline() kept `quorus chat` alive after Ctrl+C, and EOF
+        (Ctrl+D) looked like an empty line, so it spun forever."""
+        import threading
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        def _reader() -> None:
             try:
-                text = await loop.run_in_executor(None, sys.stdin.readline)
-                text = text.strip()
-                if not text:
-                    continue
-                await _send_message(text)
-            except (EOFError, KeyboardInterrupt):
-                stop_event.set()
+                for line in iter(sys.stdin.readline, ""):
+                    loop.call_soon_threadsafe(queue.put_nowait, line)
+                loop.call_soon_threadsafe(queue.put_nowait, None)  # EOF
+            except RuntimeError:
+                pass  # loop already closed: we're exiting
+
+        threading.Thread(target=_reader, daemon=True).start()
+        while not stop_event.is_set():
+            line = await queue.get()
+            if line is None:
                 break
+            text = line.strip()
+            if not text:
+                continue
+            if text in ("/quit", "/exit"):
+                break
+            if text == "/help":
+                console.print("[dim]Type to talk. @<agent> asks one agent; @open <task> "
+                              "lets the first free agent take it. /quit leaves.[/dim]")
+                continue
+            await _send_message(text)
+        stop_event.set()
 
     stream_task = asyncio.create_task(_stream_messages())
     input_task = asyncio.create_task(_input_loop())
 
     try:
-        await asyncio.gather(stream_task, input_task)
+        # Leave when either side ends (Ctrl+D, /quit, or the stream closing).
+        await asyncio.wait({stream_task, input_task}, return_when=asyncio.FIRST_COMPLETED)
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
@@ -3202,7 +3240,7 @@ async def _kick(room_name: str, participant: str) -> None:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
-        _ui.error(str({detail}))
+        _ui.error(str(detail))
     finally:
         await client.aclose()
 
@@ -3228,7 +3266,7 @@ async def _destroy(room_name: str) -> None:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
-        _ui.error(str({detail}))
+        _ui.error(str(detail))
     finally:
         await client.aclose()
 
@@ -3253,7 +3291,7 @@ async def _rename(room_name: str, new_name: str) -> None:
         _relay_unreachable()
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
-        _ui.error(str({detail}))
+        _ui.error(str(detail))
     finally:
         await client.aclose()
 
@@ -4728,21 +4766,29 @@ def _cmd_init(args):
         ui=ui,
     )
 
-    # 4. Verify relay is reachable (best-effort, non-blocking)
+    # 4. Verify the relay is reachable AND accepts these credentials. A wrong
+    # secret used to get a green ✓ here and a 401 traceback on the next
+    # command (review 2026-10-09).
+    relay_status = "unknown"
     try:
         resp = httpx.get(f"{relay_url}/health", timeout=3.0, follow_redirects=True)
-        if resp.status_code == 200:
-            console.print(f"[green]Relay reachable at {relay_url}[/green]")
-        else:
-            console.print(
-                f"[yellow]Warning: relay returned HTTP {resp.status_code} — "
-                "is it running?[/yellow]"
-            )
+        relay_status = "up" if resp.status_code == 200 else "bad"
+        if relay_status == "up" and secret and not api_key:
+            auth = httpx.get(f"{relay_url}/rooms", timeout=5.0, follow_redirects=True,
+                             headers={"Authorization": f"Bearer {secret}"})
+            if auth.status_code in (401, 403):
+                relay_status = "rejected"
     except Exception:
-        console.print(
-            f"[yellow]Warning: could not reach relay at {relay_url}. "
-            "Start it with: quorus relay[/yellow]"
-        )
+        relay_status = "down"
+    if relay_status == "rejected":
+        _ui.error(f"The relay at {relay_url} rejected that secret",
+                  hint="use the secret the relay was started with "
+                       "(`quorus relay` uses the one from `quorus init`)")
+    elif relay_status == "down":
+        console.print(f"[yellow]Warning: relay not running at {relay_url} yet — start it "
+                      "with: quorus relay[/yellow]")
+    elif relay_status == "bad":
+        console.print(f"[yellow]Warning: {relay_url} answered but isn't healthy[/yellow]")
 
     # ── Productized init steps (mint, profile, daemon, smoke) ──────────────
     # Agents are added explicitly with `quorus agent add` (one launchd daemon
@@ -4866,7 +4912,10 @@ def _cmd_init(args):
 
     # Compact production-style checklist.
     checklist: list[str] = []
-    checklist.append(f"[green]✓[/] relay: [primary]{relay_url}[/]")
+    mark = {"up": "[green]✓[/]", "rejected": "[red]✗[/]"}.get(relay_status, "[yellow]·[/]")
+    note = {"rejected": " [red](secret rejected)[/]", "down": " [dim](not running yet)[/]",
+            "bad": " [dim](unhealthy)[/]"}.get(relay_status, "")
+    checklist.append(f"{mark} relay: [primary]{relay_url}[/]{note}")
     checklist.append(f"[green]✓[/] config: [dim]{config_path}[/]")
     if minted_keys:
         names = ", ".join(sorted(minted_keys))
@@ -4914,6 +4963,8 @@ def _cmd_init(args):
         "  [accent]quorus agent add claude --room myroom --repo <path-to-repo>[/]\n"
         "  [accent]quorus chat myroom[/]   then say hi, or [accent]@open <task>[/]"
     )
+    if relay_status == "rejected":
+        raise SystemExit(3)
 
 
 def _cmd_invite_link(args):
@@ -5190,7 +5241,7 @@ def _cmd_join(args):
                         "quorus join <ABCD-EFGH> --name <name>"
                     ),
                 )
-                return
+                return False
             resp = await client.post(
                 f"{relay_url}/rooms/{target['id']}/join",
                 json={"participant": name},
@@ -5201,15 +5252,20 @@ def _cmd_join(args):
                     "Cannot self-join without an invite token",
                     hint="ask for an invite code: quorus share <room>",
                 )
-                return
+                return False
             resp.raise_for_status()
             console.print(f"[green]Joined room '{room}' as '{name}'[/green]")
+            return True
         except httpx.ConnectError:
-            _ui.error_with_retry("Cannot connect to relay", relay_url={relay_url})
+            _ui.error_with_retry("Cannot connect to relay", relay_url=relay_url)
+            return False
         finally:
             await client.aclose()
 
-    asyncio.run(_do_join())
+    # Only report success when the join actually happened: it used to print
+    # "Joined room" + "Start chatting" right after "Cannot connect to relay".
+    if not asyncio.run(_do_join()):
+        raise SystemExit(2)
 
     console.print("")
     if rewrite_config:
@@ -5385,7 +5441,16 @@ def _cmd_share(args):
 
     ui.console.print("  [muted]Share one of these with your teammate:[/]")
     ui.console.print()
-    join_cmd = f"quorus join {code} --name <their-name>"
+    # The code is looked up on THIS relay: say which one, or a teammate's
+    # `quorus join` tried the (dead) default public relay instead.
+    relay_flag = f" --relay {RELAY_URL}"
+    join_cmd = f"quorus join {code} --name <their-name>{relay_flag}"
+    if any(h in RELAY_URL for h in ("127.0.0.1", "localhost", "0.0.0.0")):
+        ui.console.print(
+            "  [warning]![/] [muted]your relay runs on this machine only — a teammate "
+            "on another computer needs a relay they can reach (a shared server, or "
+            "`quorus relay --host 0.0.0.0` on your network).[/]\n"
+        )
     install_cmd = f"curl -sSL {install_url} | sh"
     ui.console.print(f"    [accent]{join_cmd}[/]")
     ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
@@ -5395,7 +5460,7 @@ def _cmd_share(args):
     if want_copy:
         # Copy the join command minus the literal <their-name> placeholder
         # so when the teammate pastes it, they can just type their name.
-        prefix = f"quorus join {code} --name "
+        prefix = f"quorus join {code}{relay_flag} --name "
         if _copy_to_clipboard(prefix):
             ui.console.print(
                 f"  [success]✓[/] [muted]copied `{prefix}` to clipboard.[/]"
@@ -5735,7 +5800,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                         agent_keys, invite_token,
                     )
             except httpx.ConnectError:
-                _ui.error_with_retry("Cannot connect to relay", relay_url={relay_url})
+                _ui.error_with_retry("Cannot connect to relay", relay_url=relay_url)
 
     asyncio.run(_do_join())
 
@@ -5757,10 +5822,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         "Open the hub:           [accent]quorus[/]",
         f"Send a message:         [accent]quorus say {room} 'hello'[/]",
         "See who's here:         [accent]quorus ps[/]",
-        (
-            "Wire in an AI agent:    [accent]quorus connect <platform>"
-            f" --room {room} --name <agent>[/]"
-        ),
+        f"Add your AI agents:     [accent]quorus agent add claude --room {room}[/]",
     ])
 
 
@@ -6674,15 +6736,23 @@ def _cmd_doctor(args):
         fix="Check RELAY_SECRET or API_KEY matches the relay configuration",
     )
 
-    # 7. MCP config
+    # 7. MCP config — optional: Quorus works without any AI app connected
+    # (agents come from `quorus agent add`). It used to be a required check
+    # that only looked at Claude Code, so a Codex-only user failed it right
+    # after a successful init and was told to run init again (review).
     mcp_json = Path.cwd() / ".mcp.json"
     home_claude = Path.home() / ".claude.json"
-    mcp_found = mcp_json.exists() or home_claude.exists()
+    codex_cfg = Path.home() / ".codex" / "config.toml"
+    codex_has_quorus = codex_cfg.exists() and "mcp_servers.quorus" in codex_cfg.read_text(
+        encoding="utf-8", errors="replace")
+    mcp_found = mcp_json.exists() or home_claude.exists() or codex_has_quorus
     check(
         "MCP config found",
         mcp_found,
-        detail=str(mcp_json) if mcp_json.exists() else str(home_claude),
-        fix="Run: quorus init <name> --secret <secret>",
+        detail=(str(mcp_json) if mcp_json.exists() else
+                str(home_claude) if home_claude.exists() else str(codex_cfg)),
+        fix="Install Claude Code or Codex, then: quorus connect claude|codex <room> <name>",
+        optional=True,
     )
 
     # 7b. MCP server registered (quorus/claude-tunnel in mcpServers)
@@ -6707,11 +6777,14 @@ def _cmd_doctor(args):
                     break
         except Exception:
             pass
+    if codex_has_quorus and not mcp_registered:
+        mcp_registered, mcp_server_name = True, "quorus (Codex)"
     check(
         "MCP server registered",
         mcp_registered,
         detail=f"Server: {mcp_server_name}" if mcp_server_name else "",
-        fix="Run: quorus init <name> --secret <secret>",
+        fix="quorus connect claude|codex <room> <name>",
+        optional=True,
     )
 
     # 8. Rooms exist
@@ -6730,9 +6803,10 @@ def _cmd_doctor(args):
                 len(room_list) > 0,
                 detail=f"{len(room_list)} room(s)",
                 fix="Create one: quorus create <room-name>",
+                optional=True,  # a brand-new user has none yet; not a failure
             )
         except Exception:
-            check("Rooms exist", False)
+            check("Rooms exist", False, optional=True)
 
     # 9. Room membership (is agent in any rooms?)
     if auth_ok and room_list:
@@ -6744,6 +6818,7 @@ def _cmd_doctor(args):
             if my_rooms
             else "Not a member of any room",
             fix="Join one: quorus join <room-name>",
+            optional=True,  # setup isn't broken just because you haven't joined yet
         )
 
     # 10. Relay version
@@ -6820,14 +6895,12 @@ def _cmd_doctor(args):
         f"[muted]({pct}%)[/]{optional_line}"
     )
     if checks_passed == checks_total:
-        ui.success("You're all set — try: quorus begin")
+        ui.success("You're all set — try: quorus  (or: quorus agent add claude --room <room>)")
     else:
         ui.warn("Fix the required issues above to get started")
 
-    # Show web console link
-    ui.console.print(
-        "\n  [muted]Tip: Monitor your swarm at [/][accent][link=https://quorus.dev]quorus.dev[/link][/]"
-    )
+    if checks_passed != checks_total:
+        raise SystemExit(1)  # scripts/CI can tell setup is broken
 
 
 def _cmd_relay(args):
@@ -9424,7 +9497,52 @@ def main():
         "login": _cmd_login,
         "whoami": _cmd_whoami,
     }
-    commands[args.command](args)
+    try:
+        commands[args.command](args)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Cancelled.[/]")
+        raise SystemExit(130) from None
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        _ui.error(
+            f"Can't reach the relay at {RELAY_URL}",
+            hint="start it with `quorus relay` (keep it running), or check your relay URL",
+        )
+        raise SystemExit(2) from exc
+    except httpx.HTTPStatusError as exc:
+        raise SystemExit(_explain_http_error(exc)) from exc
+    except _RoomNotFound as exc:
+        _ui.error(str(exc), hint="see your rooms with `quorus rooms` (names are case-sensitive)")
+        raise SystemExit(4) from exc
+
+
+class _RoomNotFound(ValueError):
+    """A room name that doesn't exist on the relay (typo, wrong case)."""
+
+
+def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
+    """One readable line for any relay error a command didn't handle itself.
+    Before this, a wrong secret or missing room dumped a Python traceback."""
+    code = exc.response.status_code
+    try:
+        detail = exc.response.json().get("detail")
+    except ValueError:
+        detail = None
+    if isinstance(detail, list) and detail and isinstance(detail[0], dict):
+        detail = detail[0].get("msg")  # pydantic validation errors
+    detail = str(detail or exc.response.reason_phrase or "").strip()
+    if code in (401, 403):
+        _ui.error("The relay rejected your credentials" + (f": {detail}" if detail else ""),
+                  hint="check your secret/API key — re-run `quorus init <name> --secret <secret>`")
+        return 3
+    if code == 404:
+        _ui.error(detail or "Not found", hint="`quorus rooms` lists what exists")
+        return 4
+    if code in (400, 409, 413, 422):
+        _ui.error(detail or f"The relay refused the request (HTTP {code})")
+        return 5
+    _ui.error(f"The relay returned an error (HTTP {code})" + (f": {detail}" if detail else ""),
+              hint="try again; if it persists, check the relay log")
+    return 1
 
 
 if __name__ == "__main__":

@@ -405,111 +405,88 @@ def _first_launch_setup(console: Console) -> dict:
     api_key = ""
     relay_ok = False
 
-    # Happy path: auto-detect local relay.
-    console.print()
-    console.print("  [dim]Looking for a relay...[/] ", end="")
-    if _try_connect(DEFAULT_RELAY):
-        console.print(f"[success]✓[/] [muted]local relay at {DEFAULT_RELAY}[/]")
-        relay_ok = True
-    else:
-        console.print("[muted]no local relay found[/]")
-        console.print()
-        console.print(
-            "  [muted]Paste a[/] [accent]quorus://[/] [muted]or[/] "
-            "[accent]ABCD-EFGH[/] [muted]invite code, or press Enter to "
-            "sign up on[/] [primary]quorus-relay.fly.dev[/][muted].[/]"
-        )
-        raw = Prompt.ask("\n  Invite or Enter", default="").strip()
+    # There is no public relay: Enter runs Quorus on this computer (a local
+    # relay we start for you); an invite joins a teammate's relay. The old
+    # flow defaulted to a dead public relay and, on the local path, saved
+    # NO secret — every request after setup was unauthorized (review
+    # 2026-10-09).
+    from quorus.runtime.local_relay import ensure_local_relay, new_secret
 
-        decoded = _decode_invite_token(raw) if raw else None
-        if raw and decoded:
-            relay_url = decoded["relay_url"]
-            secret = decoded["secret"]
-            api_key = decoded["api_key"]
-            console.print(f"\n  [dim]Connecting to {relay_url}...[/] ", end="")
-            if _try_connect(relay_url):
+    console.print()
+    console.print(
+        "  [muted]Press Enter to run Quorus on this computer, or paste a "
+        "teammate's invite ([/][accent]quorus://…[/][muted] link or [/]"
+        "[accent]ABCD-EFGH[/][muted] code) to join their relay.[/]"
+    )
+    raw = Prompt.ask("\n  Invite or Enter", default="").strip()
+
+    decoded = _decode_invite_token(raw) if raw else None
+    if raw and decoded:
+        relay_url = decoded["relay_url"]
+        secret = decoded["secret"]
+        api_key = decoded["api_key"]
+        console.print(f"\n  [dim]Connecting to {relay_url}...[/] ", end="")
+        if _try_connect(relay_url):
+            console.print("[success]✓[/]")
+            relay_ok = True
+            if decoded.get("room"):
+                console.print(
+                    f"  [muted]You'll land in [room]#{decoded['room']}[/] "
+                    "automatically.[/]"
+                )
+        else:
+            console.print("[warning]not reachable[/] [dim]— is your teammate's relay up?[/]")
+    elif raw:
+        from quorus.services.join_code_svc import normalize_code
+
+        canonical = normalize_code(raw)
+        if canonical is None:
+            console.print(
+                "\n  [error]Couldn't recognize that input.[/] "
+                "[dim]Expected a quorus:// link or a code like ABCD-EFGH.[/]"
+            )
+        else:
+            # A short code lives on the teammate's relay: we need its address.
+            relay_url = Prompt.ask(
+                "  Their relay address (shown next to the code, e.g. "
+                "http://192.168.1.20:8080)").strip().rstrip("/") or relay_url
+            console.print(f"  [dim]Resolving [accent]{raw}[/] on {relay_url}...[/] ", end="")
+            try:
+                resp = httpx.get(f"{relay_url}/v1/join/resolve/{canonical}",
+                                 timeout=10, follow_redirects=True)
+            except Exception:
+                resp = None
+            if resp is not None and resp.status_code == 200:
+                payload = (resp.json() or {}).get("payload") or {}
+                relay_url = (payload.get("r") or relay_url).rstrip("/")
+                secret = payload.get("s", "") or ""
+                api_key = payload.get("k", "") or ""
                 console.print("[success]✓[/]")
                 relay_ok = True
-                if decoded.get("room"):
+                if payload.get("n"):
                     console.print(
-                        f"  [muted]You'll land in [room]#{decoded['room']}[/] "
+                        f"  [muted]You'll land in [room]#{payload['n']}[/] "
                         "automatically.[/]"
                     )
             else:
-                console.print("[warning]not reachable[/]")
-        elif raw:
-            # Try short code — server-side resolve covers the cases where
-            # the input isn't a quorus:// URI. This closes the loop for
-            # teammates whose share output gave them a code.
-            from quorus.services.join_code_svc import normalize_code
+                console.print("[error]code not found, expired, or relay unreachable[/]")
+    else:
+        secret = new_secret()
+        console.print("\n  [dim]Setting up Quorus on this computer...[/] ", end="")
+        relay_ok, note = ensure_local_relay(DEFAULT_RELAY, secret)
+        console.print("[success]✓[/]" if relay_ok else "[error]✗[/]")
+        if note:
+            console.print(f"  [dim]{note}[/]")
 
-            canonical = normalize_code(raw)
-            if canonical is None:
-                console.print(
-                    "\n  [error]Couldn't recognize that input.[/] "
-                    "[dim]Expected a quorus:// token or a code like "
-                    "ABCD-EFGH.[/]"
-                )
-            else:
-                console.print(
-                    f"\n  [dim]Resolving [accent]{raw}[/] against "
-                    f"[primary]{PUBLIC_RELAY}[/]...[/] ", end="",
-                )
-                try:
-                    resp = httpx.get(
-                        f"{PUBLIC_RELAY}/v1/join/resolve/{canonical}",
-                        timeout=10,
-                        follow_redirects=True,
-                    )
-                except Exception:
-                    resp = None
-                if resp is not None and resp.status_code == 200:
-                    payload = (resp.json() or {}).get("payload") or {}
-                    relay_url = (payload.get("r") or "").rstrip("/")
-                    secret = payload.get("s", "") or ""
-                    api_key = payload.get("k", "") or ""
-                    console.print("[success]✓[/]")
-                    relay_ok = bool(relay_url)
-                    if payload.get("n"):
-                        console.print(
-                            f"  [muted]You'll land in [room]#{payload['n']}[/] "
-                            "automatically.[/]"
-                        )
-                else:
-                    console.print("[error]code not found or expired[/]")
-        else:
-            # Empty input → signup against the public relay.
-            relay_url = PUBLIC_RELAY
-            console.print(f"\n  [dim]Signing you up on {relay_url}...[/]")
-            if not _try_connect(relay_url):
-                console.print(
-                    "  [error]Couldn't reach the relay.[/] "
-                    "[dim]Check your internet and rerun `quorus`.[/]"
-                )
-            else:
-                default_workspace = re.sub(r"[^a-z0-9\-]", "-", name.lower())[:32]
-                if not default_workspace or default_workspace[0] == "-":
-                    default_workspace = f"ws-{default_workspace}".strip("-")
-                api_key, workspace = _run_signup(
-                    console, relay_url, name, default_workspace,
-                )
-                if api_key:
-                    relay_ok = True
-                    console.print(
-                        f"  [muted]Workspace [bold]{workspace}[/] — "
-                        "config saved to ~/.quorus/config.json[/]"
-                    )
-
-    # If still not connected, guide without pretending we succeeded.
-    if not relay_ok and relay_url == DEFAULT_RELAY:
-        console.print()
+    if not relay_ok:
         console.print(
-            "  [dim]Start a local relay in another terminal:[/] "
-            "[accent]quorus relay[/]"
+            "\n  [dim]Not connected yet. Fix the above and rerun [bold]quorus[/], or set "
+            "up explicitly: [accent]quorus init <name> --secret <secret>[/] then "
+            "[accent]quorus relay[/].[/]"
         )
-        console.print(
-            "  [dim]Then rerun [bold]quorus[/] — config already saved.[/]"
-        )
+        # Don't save a half-working config: the next `quorus` re-offers this
+        # wizard instead of opening a hub that can't reach anything.
+        return {}
 
     # Save config — even partial configs so the next run starts warm.
     _save_instance_config(name, relay_url, secret=secret, api_key=api_key)
@@ -3410,20 +3387,30 @@ def _main_input_loop(
                 continue
 
             if cmd_lower == "j":
-                # Join by invite — paste a quorus_join_ token.
+                # Join by invite: an ABCD-EFGH code (what `quorus share`
+                # prints), a quorus:// link, or a legacy quorus_join_ token.
+                # It used to reject codes and never actually joined anything.
                 console.print()
-                token = Prompt.ask("  Paste invite token").strip()
+                token = Prompt.ask("  Paste invite (ABCD-EFGH code or quorus:// link)").strip()
                 if not token:
-                    state.set_status_bar("Cancelled — no token entered.")
-                elif not token.startswith("quorus_join_"):
-                    state.set_status_bar(
-                        "Not a join token — expected 'quorus_join_…' prefix."
-                    )
+                    state.set_status_bar("Cancelled — no invite entered.")
                 else:
-                    state.set_status_bar(
-                        "Token noted — run: quorus join "
-                        + token[:24] + "…  to switch workspaces."
-                    )
+                    import subprocess as _sp
+                    import sys as _sys
+
+                    argv = [_sys.executable, "-m", "quorus_cli.cli", "join", token,
+                            "--name", agent_name]
+                    if not token.startswith(("quorus://", "quorus_join_", "murm_join_")):
+                        argv += ["--relay", relay_url]  # short codes live on this relay
+                    try:
+                        res = _sp.run(argv, capture_output=True, text=True, timeout=60)
+                        lines = [ln.strip() for ln in (res.stdout + res.stderr).splitlines()
+                                 if ln.strip()]
+                        msg = next((ln for ln in lines if "Joined" in ln or "✗" in ln),
+                                   lines[-1] if lines else "done")
+                    except (OSError, _sp.SubprocessError) as exc:
+                        msg = f"join failed: {exc}"
+                    state.set_status_bar(msg[:120])
                 last_render = 0
                 continue
 
@@ -3934,12 +3921,22 @@ def run_hub() -> None:
             profile = pm.current_profile()
             if profile is None:
                 # Fresh install — fall through to wizard, save as default.
-                profile = _first_launch_setup(console)
+                try:
+                    profile = _first_launch_setup(console)
+                except (KeyboardInterrupt, EOFError):
+                    return
                 if not profile:
                     return
                 pm.save("default", profile)
                 pm.set_current("default")
 
+            relay = (profile.get("relay_url") or "").rstrip("/")
+            if relay and profile.get("relay_secret") and not _try_connect(relay, timeout=2):
+                from quorus.runtime.local_relay import ensure_local_relay, is_local
+
+                if is_local(relay):
+                    ok, note = ensure_local_relay(relay, profile["relay_secret"])
+                    console.print(f"  [dim]{note}[/]" if note else "", end="\n" if note else "")
             result = _run_session(profile)
             if result == "quit":
                 return

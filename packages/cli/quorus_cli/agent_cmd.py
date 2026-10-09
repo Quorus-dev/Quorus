@@ -237,9 +237,15 @@ def _add(args: Any, console: Any) -> None:
 
 
 def _list(console: Any) -> None:
-    labels = [lb for lb in _launchd_labels() if "agent." in lb or "reflexd." in lb]
+    """Your agents only: <you>-<tool>. Listing every quorus launchd job showed
+    other identities' agents too (review 2026-10-09)."""
+    me = (load_config().get("instance_name") or "").strip()
+    labels = [lb for lb in _launchd_labels()
+              if ("agent." in lb or "reflexd." in lb)
+              and lb.rsplit(".", 1)[-1].startswith(f"{me}-")]
     if not labels:
-        console.print("[dim]no agents running on this machine[/]")
+        console.print(f"[dim]no agents for @{me} running on this machine — add one: "
+                      "quorus agent add claude --room <room>[/]")
         return
     for lb in sorted(labels):
         console.print(f"  [success]●[/] @{lb.rsplit('.', 1)[-1]}  [dim]{lb}[/]")
@@ -248,6 +254,7 @@ def _list(console: Any) -> None:
 def _remove(args: Any, console: Any) -> None:
     label = LABEL_PREFIX + args.name
     plist = _LA / f"{label}.plist"
+    was_running = plist.exists() or (_agents_dir() / f"{args.name}.pid").exists()
     subprocess.run(["launchctl", "bootout", f"gui/{_uid()}/{label}"],
                    capture_output=True, check=False, timeout=15)
     plist.unlink(missing_ok=True)
@@ -259,8 +266,13 @@ def _remove(args: Any, console: Any) -> None:
             pass
         pidf.unlink(missing_ok=True)
     left = _leave_all_rooms(args.name)
+    if not was_running and not left:
+        console.print(f"[error]✗[/] no agent @{args.name} here — see [accent]quorus agent "
+                      "list[/]")
+        raise SystemExit(4)
+    what = "stopped" if was_running else "was not running;"
     where = f" and left {', '.join('#' + r for r in left)}" if left else ""
-    console.print(f"[success]✓[/] stopped @{args.name} on this machine{where}")
+    console.print(f"[success]✓[/] {what} @{args.name} on this machine{where}")
 
 
 def _leave_all_rooms(name: str) -> list[str]:
