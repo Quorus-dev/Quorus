@@ -11,9 +11,12 @@ two module names alias to the same object.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import Context
@@ -25,6 +28,9 @@ def _srv():
     """Import the server module lazily to avoid a circular import."""
     from quorus_mcp import server as _server_module
     return _server_module
+
+
+_AUDIT_UNAVAILABLE_WARNED = False
 
 
 async def _audit_tool_call(
@@ -66,7 +72,18 @@ async def _audit_tool_call(
             if required:
                 raise
             return
-    if resp.status_code in {404, 501} and not required:
+    if resp.status_code == 501:
+        # The relay states it has NO audit ledger (file / in-memory mode — the
+        # README's own quickstart relay). Fail-closed protects against a
+        # ledger that exists but errors; refusing every room write on a relay
+        # that never had one only broke all mutating MCP tools there (live
+        # run 2026-10-08). Outages, timeouts and unknown errors still block.
+        global _AUDIT_UNAVAILABLE_WARNED
+        if not _AUDIT_UNAVAILABLE_WARNED:
+            logger.warning("relay has no audit ledger (501); tool calls are not receipted")
+            _AUDIT_UNAVAILABLE_WARNED = True
+        return
+    if resp.status_code == 404 and not required:
         return
     resp.raise_for_status()
 

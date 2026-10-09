@@ -656,3 +656,25 @@ async def test_get_room_state_relay_error():
     with patch("quorus.mcp_server._get_http_client", return_value=mock_client):
         result = await mcp_server.get_room_state("dev")
     assert "error" in result.lower() or "cannot" in result.lower()
+
+
+@pytest.mark.parametrize("status,blocks", [(501, False), (503, True), (404, True), (500, True)])
+async def test_required_audit_only_skips_when_relay_has_no_ledger(status, blocks):
+    """Mutating tools proceed on an explicit 501 (relay has no ledger — the
+    file-mode quickstart relay) but still fail closed on outages/unknowns."""
+    importlib.reload(mcp_server.tools)
+    mock_client = AsyncMock()
+    resp = httpx.Response(status, request=httpx.Request("POST", "http://relay/v1/audit/x"))
+    mock_client.post = AsyncMock(return_value=resp)
+    with (
+        patch("quorus.mcp_server._get_http_client", return_value=mock_client),
+        patch("quorus_mcp.server._get_http_client", return_value=mock_client),
+    ):
+        call = mcp_server.tools._audit_tool_call(
+            "send_room_message", {"room_id": "r"}, mutating=True, required=True,
+        )
+        if blocks:
+            with pytest.raises(httpx.HTTPStatusError):
+                await call
+        else:
+            await call

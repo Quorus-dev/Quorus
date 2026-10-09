@@ -11,6 +11,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.message import SessionMessage
 
 from quorus.operating_discipline import render_qod_for_mcp
+from quorus_mcp import channel as _channel
 from quorus_mcp import runtime, tools
 from quorus_mcp.sse import SSEListener
 
@@ -223,9 +224,14 @@ async def _drain_pending_messages() -> list[dict]:
 async def _send_push_notification(session, msg: dict) -> None:
     if not PUSH_NOTIFICATION_METHOD:
         return
-    params: dict[str, str] = {"message": _format_message(msg)}
-    if PUSH_NOTIFICATION_CHANNEL:
-        params["channel"] = PUSH_NOTIFICATION_CHANNEL
+    if PUSH_NOTIFICATION_METHOD == _channel.CHANNEL_METHOD:
+        # Claude Code channel contract: {content, meta}. The old
+        # {message, channel} shape was silently dropped by Claude Code.
+        params: dict = _channel.channel_params(msg)
+    else:
+        params = {"message": _format_message(msg)}
+        if PUSH_NOTIFICATION_CHANNEL:
+            params["channel"] = PUSH_NOTIFICATION_CHANNEL
     notif = types.JSONRPCNotification(jsonrpc="2.0", method=PUSH_NOTIFICATION_METHOD, params=params)
     await session.send_message(SessionMessage(message=types.JSONRPCMessage(notif)))
 
@@ -233,6 +239,10 @@ async def _send_push_notification(session, msg: dict) -> None:
 async def _notify_active_session(messages: list[dict]) -> None:
     if not PUSH_NOTIFICATION_METHOD or not messages:
         return
+    if PUSH_NOTIFICATION_METHOD == _channel.CHANNEL_METHOD:
+        messages = [m for m in messages if _channel.should_push(m, INSTANCE_NAME)]
+        if not messages:
+            return
     session = await _get_active_session()
     if session is None:
         return
@@ -257,7 +267,7 @@ _QOD_TAIL = (
     "CLI: quorus inbox | quorus say <room> <msg> | quorus dm <name> <msg> | "
     "quorus heartbeat"
 )
-QUORUS_INSTRUCTIONS = f"{_QOD}\n\n---\n\n{_QOD_TAIL}"
+QUORUS_INSTRUCTIONS = f"{_QOD}\n\n---\n\n{_QOD_TAIL}\n\n{_channel.CHANNEL_INSTRUCTIONS}"
 
 mcp = FastMCP("quorus", instructions=QUORUS_INSTRUCTIONS, lifespan=_mcp_lifespan)
 
@@ -277,7 +287,8 @@ if SSE_ENABLED:
         opts = _orig_init(**kw)
         if opts.capabilities.experimental is None:
             opts.capabilities.experimental = {}
-        opts.capabilities.experimental["claude/channel"] = {"channel": PUSH_NOTIFICATION_CHANNEL}
+        # Spec: the value is always {} — presence registers the listener.
+        opts.capabilities.experimental["claude/channel"] = {}
         return opts
     mcp._mcp_server.create_initialization_options = _patched_init
 
@@ -418,4 +429,12 @@ def main_cli() -> None:
 
 
 if __name__ == "__main__":
-    main_cli()
+    # ``python -m quorus_mcp.server`` runs this file as ``__main__`` — a
+    # SECOND module object. runtime.py resolves state through the package
+    # module (``quorus_mcp.server``), so the live session was recorded in one
+    # copy and looked up in the other: every channel push silently found "no
+    # session" (and phase-1 tools registered on the other copy's ``mcp``).
+    # Delegate so exactly one module owns the server. Found 2026-10-08.
+    from quorus_mcp.server import main_cli as _package_main_cli
+
+    _package_main_cli()
