@@ -882,13 +882,20 @@ def main() -> None:
     import uvicorn
 
     port = int(os.environ.get("PORT", "8080"))
+    # HOST=127.0.0.1 keeps a laptop relay off the LAN (a shared-secret relay
+    # on 0.0.0.0 is reachable from any café Wi-Fi peer). Containers keep the
+    # 0.0.0.0 default so the platform's port mapping still works.
+    host = os.environ.get("HOST", "0.0.0.0")
     # Print a human-friendly banner BEFORE uvicorn starts so operators see the
     # bound address even if uvicorn's own log line scrolls off quickly.
     print(
-        f"[quorus-relay] listening on http://0.0.0.0:{port}  (health: /health, docs: /docs)",
+        f"[quorus-relay] listening on http://{host}:{port}  (health: /health, docs: /docs)",
         flush=True,
     )
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # SSE clients (wake daemons, MCP servers) never close on their own, so a
+    # graceful shutdown with no cap waited forever and a launchd/systemd
+    # restart of the relay hung (found 2026-10-08). Cap it.
+    uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=5)
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ Common options (environment variables):
   REDIS_URL                    Enables shared rate limits, presence, and the
                                cross-replica speaker auction
   MESSAGES_FILE                File-mode message store (no Postgres needed)
+  HOST                         Bind address (default 0.0.0.0; 127.0.0.1 = local only)
   ALLOW_LEGACY_AUTH=1          Accept the legacy bearer secret
   LOG_LEVEL                    INFO (default), WARNING, DEBUG
 

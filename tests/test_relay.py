@@ -637,15 +637,23 @@ def test_main_runs_uvicorn(monkeypatch):
 
     calls = []
 
-    def fake_run(app_arg, host: str, port: int):
-        calls.append((app_arg, host, port))
+    def fake_run(app_arg, host: str, port: int, **kw):
+        calls.append((app_arg, host, port, kw))
 
     monkeypatch.setenv("PORT", "9090")
+    monkeypatch.delenv("HOST", raising=False)
     monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(run=fake_run))
 
     main()
 
-    assert calls == [(app, "0.0.0.0", 9090)]
+    # Graceful shutdown is capped: SSE clients never close on their own, so
+    # an uncapped shutdown hung launchd/systemd restarts forever.
+    assert calls == [(app, "0.0.0.0", 9090, {"timeout_graceful_shutdown": 5})]
+
+    calls.clear()
+    monkeypatch.setenv("HOST", "127.0.0.1")
+    main()
+    assert calls[0][1] == "127.0.0.1"  # laptop relay stays off the LAN
 
 
 async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict):
