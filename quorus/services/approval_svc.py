@@ -119,6 +119,18 @@ def is_agent_name(name: str | None) -> bool:
     return bool(name and AGENT_NAME_RE.search(name))
 
 
+_OWNER_RE = re.compile(r"^(.+?)-(claude|codex|gemini|cursor|opencode|cline)(-.*)?$",
+                       re.IGNORECASE)
+
+
+def agent_owner(name: str | None) -> str | None:
+    """The human an agent belongs to, by the naming convention every Quorus
+    agent uses: ``<owner>-<harness>[-suffix]`` (arav-claude, arav-codex-desktop
+    → arav). None when the name carries no owner."""
+    m = _OWNER_RE.match(name or "")
+    return m.group(1) if m else None
+
+
 class ApprovalSvc:
     """In-memory approval registry, scoped per tenant."""
 

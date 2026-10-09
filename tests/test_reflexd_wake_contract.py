@@ -647,3 +647,25 @@ def test_recency_penalty_never_zeroes_open_work() -> None:
                                     capabilities=reflexd.CAPABILITIES_CODEX,
                                     recency_seconds=5.0)  # just finished a job
     assert bid > 0.0
+
+
+def test_room_modes_map_to_harness_flags(tmp_path: Path) -> None:
+    b = tmp_path / "b.json"
+    b.write_text(json.dumps({"auto": {"path": str(tmp_path), "mode": "autonomous"},
+                             "safe": {"path": str(tmp_path), "mode": "manual"},
+                             "plain": str(tmp_path),
+                             "bogus": {"path": str(tmp_path), "mode": "yolo"}}))
+    assert reflexd.mode_for("auto", bindings_path=b) == "autonomous"
+    assert reflexd.mode_for("safe", bindings_path=b) == "manual"
+    assert reflexd.mode_for("plain", bindings_path=b) == "default"
+    assert reflexd.mode_for("bogus", bindings_path=b) == "default"
+    assert reflexd.workspace_for("auto", bindings_path=b) == tmp_path  # dict form
+
+    manual = " ".join(wake.claude_wake_flags(None, "manual"))
+    assert "--permission-prompt-tool mcp__quorus__approve" in manual  # asks owner
+    auto = wake.claude_wake_flags(None, "autonomous")
+    assert "acceptEdits" in auto and not any("bypass" in f or "dangerous" in f for f in auto)
+    assert wake.claude_wake_flags(None, "default") == []
+
+    assert wake.codex_wake_flags(None, None, "manual")[:2] == ["-s", "read-only"]
+    assert wake.codex_wake_flags(None, None, "autonomous")[:2] == ["-s", "workspace-write"]

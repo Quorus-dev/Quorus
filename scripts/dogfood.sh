@@ -237,7 +237,7 @@ print("publishes to main:", len(pub))
 print("blocked/error lines:", len(blocked))
 if msgs:
     print("first:", msgs[0]["timestamp"][:19], " last:", msgs[-1]["timestamp"][:19])'
-  local repo; repo="$(python3 -c 'import json,sys,pathlib;print(json.loads((pathlib.Path.home()/".quorus/room-bindings.json").read_text()).get(sys.argv[1],""))' "$room")"
+  local repo; repo="$(python3 -c 'import json,sys,pathlib;e=json.loads((pathlib.Path.home()/".quorus/room-bindings.json").read_text()).get(sys.argv[1],"");print(e.get("path","") if isinstance(e,dict) else e)' "$room")"
   if [[ -n "$repo" ]]; then
     echo "repo $repo:"; git -C "$repo" log --oneline -15 | sed 's/^/  /'
     (cd "$repo" && python3 -m pytest -q 2>&1 | tail -1 | sed 's/^/  tests: /')

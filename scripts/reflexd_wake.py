@@ -88,9 +88,29 @@ def write_claude_mcp_config(spec: dict[str, Any], path: Path) -> Path:
     return path
 
 
-def claude_wake_flags(config_path: Path | None) -> list[str]:
-    """Extra ``claude --print`` flags: the Quorus MCP server for this identity."""
-    return ["--mcp-config", str(config_path)] if config_path else []
+# Per-room permission modes, chosen by the owner at `quorus room bind
+# --mode` time. "default" = the owner's own Claude Code / Codex settings.
+MODES = ("default", "manual", "autonomous")
+
+
+def claude_mode_flags(mode: str) -> list[str]:
+    """manual: every tool needing permission is routed to the agent's OWNER
+    via Quorus approvals (approve in the room or `quorus approve`).
+    autonomous: edits and shell commands run without asking, inside the
+    room's repo worktree; Claude Code's own always-ask actions still apply."""
+    if mode == "manual":
+        return ["--permission-prompt-tool", "mcp__quorus__approve",
+                "--allowedTools", "mcp__quorus"]
+    if mode == "autonomous":
+        return ["--permission-mode", "acceptEdits",
+                "--allowedTools", "Bash Edit Write MultiEdit mcp__quorus"]
+    return []
+
+
+def claude_wake_flags(config_path: Path | None, mode: str = "default") -> list[str]:
+    """Extra ``claude --print`` flags: Quorus MCP server + permission mode."""
+    flags = ["--mcp-config", str(config_path)] if config_path else []
+    return flags + claude_mode_flags(mode)
 
 
 def _toml_str(value: str) -> str:
@@ -100,6 +120,7 @@ def _toml_str(value: str) -> str:
 
 def codex_wake_flags(
     spec: dict[str, Any] | None, writable_roots: list[Path] | None = None,
+    mode: str = "default",
 ) -> list[str]:
     """Extra ``codex exec`` flags: the Quorus MCP server via ``-c`` overrides.
 
@@ -107,9 +128,13 @@ def codex_wake_flags(
     ``mcp_servers.quorus`` (dead venv, dead relay) cannot shadow ours.
     """
     flags: list[str] = []
-    if CODEX_SANDBOX in _CODEX_SANDBOXES:  # danger-full-access deliberately unsupported
-        flags += ["-s", CODEX_SANDBOX]
-        if CODEX_SANDBOX == "workspace-write" and writable_roots:
+    # Room mode wins over the daemon-wide default. Codex exec cannot ask a
+    # human mid-run, so "manual" means read-only (it reviews and proposes).
+    sandbox = {"manual": "read-only", "autonomous": "workspace-write"}.get(
+        mode, CODEX_SANDBOX)
+    if sandbox in _CODEX_SANDBOXES:  # danger-full-access deliberately unsupported
+        flags += ["-s", sandbox]
+        if sandbox == "workspace-write" and writable_roots:
             # A worktree's git objects live in the main repo's .git, and
             # publishing fast-forwards the main checkout: both sit outside the
             # worktree cwd. Scope stays the bound repo, nothing wider.

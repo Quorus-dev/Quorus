@@ -125,6 +125,8 @@ def workspace_for(room: str, *, bindings_path: Path | None = None) -> Path | Non
     except (OSError, json.JSONDecodeError):
         return None
     raw = data.get(room) if isinstance(data, dict) else None
+    if isinstance(raw, dict):  # {"path": ..., "mode": ...} (room bind --mode)
+        raw = raw.get("path")
     if not raw or not isinstance(raw, str):
         return None
     ws = Path(raw).expanduser()
@@ -132,6 +134,17 @@ def workspace_for(room: str, *, bindings_path: Path | None = None) -> Path | Non
         logger.warning("room binding for %r points at missing dir %s", room, ws)
         return None
     return ws
+
+
+def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
+    """Permission mode the owner chose for *room* (default | manual | autonomous)."""
+    try:
+        data = json.loads((bindings_path or ROOM_BINDINGS_PATH).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "default"
+    raw = data.get(room) if isinstance(data, dict) else None
+    mode = raw.get("mode") if isinstance(raw, dict) else None
+    return mode if mode in reflexd_wake.MODES else "default"
 
 
 def live_session_for_workspace(ws: Path | None) -> dict[str, Any] | None:
@@ -989,6 +1002,7 @@ class HeadlessAdapter:
         timeout_s: int | None = None,
         max_turns: int | None = None,
         writable_roots: list[Path] | None = None,
+        mode: str = "default",
     ) -> str:
         # Smoke / demo path: avoid spawning any real harness. ~10 LoC, off
         # the regular path. Triggered by an explicit env var OR by the
@@ -1002,12 +1016,12 @@ class HeadlessAdapter:
             return await self._run_claude(
                 context, cwd=cwd,
                 resume=resume, on_session=on_session,
-                timeout_s=timeout_s, max_turns=max_turns,
+                timeout_s=timeout_s, max_turns=max_turns, mode=mode,
             )
         if harness == "codex":
             return await self._run_codex(
                 context, cwd=cwd, resume=resume, on_session=on_session,
-                timeout_s=timeout_s, writable_roots=writable_roots,
+                timeout_s=timeout_s, writable_roots=writable_roots, mode=mode,
             )
         if harness == "gemini":
             return await self._run_subprocess(
@@ -1060,6 +1074,7 @@ class HeadlessAdapter:
         self, context: str, *, cwd: Path | None,
         resume: str | None, on_session: Callable[[str], None] | None,
         timeout_s: int | None = None, max_turns: int | None = None,
+        mode: str = "default",
     ) -> str:
         """Claude wake with session continuity (D2).
 
@@ -1084,7 +1099,7 @@ class HeadlessAdapter:
                 )
             except OSError as exc:
                 logger.warning("could not write wake MCP config: %s", exc)
-        extra = reflexd_wake.claude_wake_flags(cfg)
+        extra = reflexd_wake.claude_wake_flags(cfg, mode)
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         reply = await self._run_subprocess(
             build_claude_argv(context, resume=resume, max_turns=max_turns, extra=extra),
@@ -1108,6 +1123,7 @@ class HeadlessAdapter:
         resume: str | None, on_session: Callable[[str], None] | None,
         timeout_s: int | None = None,
         writable_roots: list[Path] | None = None,
+        mode: str = "default",
     ) -> str:
         """Codex wake with D2 session continuity (thread_id ↔ resume)."""
         captured: dict[str, str | None] = {"tid": None}
@@ -1117,7 +1133,7 @@ class HeadlessAdapter:
             captured["tid"] = tid
             return text
 
-        extra = reflexd_wake.codex_wake_flags(self.wake_spec, writable_roots)
+        extra = reflexd_wake.codex_wake_flags(self.wake_spec, writable_roots, mode)
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         reply = await self._run_subprocess(
             build_codex_argv(context, resume=resume, extra=extra), parser=parser,
@@ -2021,6 +2037,9 @@ class Reflexd:
             extra_kw: dict[str, Any] = (
                 {"writable_roots": [ws]} if worktree is not None else {}
             )
+            room_mode = mode_for(room)
+            if room_mode != "default":
+                extra_kw["mode"] = room_mode
             reply = await self.adapter.run(
                 harness, context=prompt,
                 cwd=worktree.path if worktree is not None else ws,
@@ -2453,6 +2472,8 @@ class Reflexd:
             return
         seen: set[Path] = set()
         for room, raw in bindings.items():
+            if isinstance(raw, dict):
+                raw = raw.get("path")
             if not isinstance(raw, str) or not Path(raw).expanduser().is_dir():
                 continue
             repo = Path(raw).expanduser().resolve()

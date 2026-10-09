@@ -963,10 +963,12 @@ def _cmd_room(args):
         if not data:
             console.print("[dim]no room bindings on this host[/]")
             return
-        for room, path in sorted(data.items()):
+        for room, entry in sorted(data.items()):
+            path = entry.get("path", "") if isinstance(entry, dict) else entry
+            mode = entry.get("mode", "default") if isinstance(entry, dict) else "default"
             exists = Path(path).expanduser().is_dir()
             mark = "[success]✓[/]" if exists else "[error]✗ missing[/]"
-            console.print(f"  {mark} [primary]{room}[/] → {path}")
+            console.print(f"  {mark} [primary]{room}[/] → {path}  [dim]({mode})[/]")
         return
 
     if action == "unbind":
@@ -991,14 +993,20 @@ def _cmd_room(args):
             )
             raise SystemExit(2)
         data = _load()
-        data[args.room] = str(ws)
+        mode = getattr(args, "mode", None) or "default"
+        data[args.room] = str(ws) if mode == "default" else {"path": str(ws), "mode": mode}
         bindings_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(bindings_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             _json.dump(data, f, indent=2)
+        how = {
+            "default": "with your own Claude Code / Codex permission settings",
+            "manual": "and ask YOU (their owner) before any risky action",
+            "autonomous": "and edit + run commands in the repo without asking",
+        }[mode]
         console.print(
-            f"[success]bound[/] [primary]{args.room}[/] → {ws}\n"
-            f"[dim]agents woken for this room now run inside that directory[/]"
+            f"[success]bound[/] [primary]{args.room}[/] → {ws} [dim]({mode})[/]\n"
+            f"[dim]agents woken for this room run inside that directory {how}[/]"
         )
         return
 
@@ -9059,6 +9067,12 @@ def main():
     p_room_bind = room_sub.add_parser("bind", help="Bind room → workspace dir")
     p_room_bind.add_argument("room", help="Room name or id")
     p_room_bind.add_argument("path", help="Workspace directory (repo root)")
+    p_room_bind.add_argument(
+        "--mode", choices=["default", "manual", "autonomous"], default="default",
+        help=("default: your own CLI permission settings; manual: agents ask "
+              "their owner before risky actions; autonomous: agents edit and "
+              "run commands in the repo without asking"),
+    )
     p_room_unbind = room_sub.add_parser("unbind", help="Remove a binding")
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")

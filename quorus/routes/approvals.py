@@ -21,6 +21,7 @@ from quorus.routes.room_auth import require_room_member
 from quorus.services.approval_svc import (
     ApprovalError,
     ApprovalSvc,
+    agent_owner,
     is_agent_name,
 )
 
@@ -229,6 +230,15 @@ async def decide_approval(
     if decider not in (members or {}):
         raise HTTPException(
             status_code=403, detail="Only a room member can decide this",
+        )
+    # (e) Agents belong to people. When the agent's owner is in the room,
+    # only that owner speaks for it: in a room shared across teams, someone
+    # else's human must not approve my agent's Bash call.
+    owner = agent_owner(rec["agent"])
+    if owner and owner in (members or {}) and decider != owner:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only {owner}, who owns {rec['agent']}, can decide this",
         )
     try:
         decided = await svc.decide(

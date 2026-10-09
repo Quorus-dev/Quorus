@@ -433,3 +433,46 @@ async def test_expired_approval_cannot_be_approved_late(client):
     assert settled["status"] == "expired", (
         "an expired request must not flip to approved"
     )
+
+
+# ── owner-only decisions (2026-10-09) ───────────────────────────────────────
+# Rooms now span teams: another team's human must not approve my agent.
+
+async def test_only_the_agents_owner_decides_in_a_shared_room(client):
+    rid = await _room(client)
+    await client.post(f"/rooms/{rid}/join", json={"participant": "aarya"},
+                      headers=HEADERS)
+    rec = await _create(client, rid)  # agent arav-claude → owner arav
+    other = await client.post(
+        f"/v1/approvals/{rec['id']}/decision",
+        json={"approve": True, "decided_by": "aarya"}, headers=HEADERS,
+    )
+    assert other.status_code == 403 and "arav" in other.json()["detail"]
+    owner = await client.post(
+        f"/v1/approvals/{rec['id']}/decision",
+        json={"approve": True, "decided_by": "arav"}, headers=HEADERS,
+    )
+    assert owner.status_code == 200
+
+
+async def test_ownerless_agent_falls_back_to_any_human_member(client):
+    resp = await client.post(
+        "/rooms", json={"name": "apr2", "created_by": "aarya"}, headers=HEADERS)
+    rid = resp.json()["id"]
+    for who in ("bot-claude", "aarya"):  # owner "bot" is not in the room
+        await client.post(f"/rooms/{rid}/join", json={"participant": who},
+                          headers=HEADERS)
+    rec = await _create(client, rid, agent="bot-claude")
+    ok = await client.post(
+        f"/v1/approvals/{rec['id']}/decision",
+        json={"approve": True, "decided_by": "aarya"}, headers=HEADERS,
+    )
+    assert ok.status_code == 200
+
+
+def test_agent_owner_naming():
+    from quorus.services.approval_svc import agent_owner
+    assert agent_owner("arav-claude") == "arav"
+    assert agent_owner("arav-codex-desktop") == "arav"
+    assert agent_owner("team-a-gemini") == "team-a"
+    assert agent_owner("arav") is None
