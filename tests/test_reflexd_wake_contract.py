@@ -737,3 +737,34 @@ def test_manual_mode_tells_the_approve_tool_which_room(tmp_path: Path, monkeypat
     cfg = json.loads(d.adapter.mcp_config_path.read_text())
     assert cfg["mcpServers"]["quorus"]["env"]["QUORUS_APPROVAL_ROOM"] == "r9"
     assert "mcp__quorus__approve" in seen["argv"]
+
+
+def test_drain_never_acks_a_job_still_in_flight(tmp_path: Path) -> None:
+    # A queued (in-flight) job acked by a drain was lost on the next restart.
+    d = _daemon(tmp_path)
+    d._inflight.add("job-q")
+    acks: list[str] = []
+
+    class Relay:
+        def __init__(self) -> None:
+            self.batches = [([{"message_id": "job-q", "content": "x"}], "tok-1")]
+
+        async def fetch_inbox(self, **kw: Any):
+            return self.batches.pop(0) if self.batches else ([], None)
+
+        async def ack_inbox(self, **kw: Any) -> None:
+            acks.append(kw["ack_token"])
+
+    asyncio.run(d._drain_inbox(Relay()))
+    assert acks == []  # stays on the relay; redelivered after a restart
+
+    d2 = _daemon(tmp_path / "b")
+    relay = Relay()
+    relay.batches = [([{"message_id": "done-1", "content": "ok"}], "tok-2")]
+
+    async def handled(r: Any, data: dict[str, Any]) -> bool:
+        return False
+
+    d2.handle_room_message = handled  # type: ignore[method-assign]
+    asyncio.run(d2._drain_inbox(relay))
+    assert acks == ["tok-2"]  # finished work is still acked

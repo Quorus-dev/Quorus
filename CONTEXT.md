@@ -137,6 +137,22 @@ Next:
 
 ## Recent Changes
 
+### Scenario gate + CI green (2026-10-09)
+
+`scripts/scenarios.py`: 20 real-user scenarios against an isolated relay
+with REAL claude/codex (setup, greetings/acks/questions/mentions, other-human
+silence, @open build+publish+review, parallel same-file tasks, two projects,
+manual-mode approve/deny + owner-only, unbound room, daemon down, restart
+mid-job, relay restart, second human, ping-pong guard, burst, CLI errors,
+agent remove). All 20 pass (run 2: 19/20 + S11 rerun after fix). Bugs it
+found: codex `exec resume` has no `-s` (resumed wakes were read-only) and
+Codex's sandbox blocks all .git writes → daemon now commits agents' work;
+manual mode lost to owners' Claude "auto" default; humans' messages without
+@/?/@open were ignored. CI (3.10–3.13, Postgres, Redis, Windows/mac/linux
+cold install) green for the first time: py3.10 TimeoutError/asyncio.timeout
+bugs, git identity on runners, unconfigured `import quorus_mcp`, Windows
+cp1252 crash, sys.modules pollution in tests.
+
 ### `quorus agent add` — real-user onboarding (2026-10-09)
 
 Re-enacting a new user showed only scripts/dogfood.sh could give an agent a

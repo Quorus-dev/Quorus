@@ -2561,6 +2561,19 @@ class Reflexd:
                 except Exception as exc:  # pragma: no cover
                     logger.exception("inbox drain handler failed: %s", exc)
             drained += len(messages)
+            # Never ack a job that is still queued/running from the live
+            # stream: the ack deletes the relay's copy, so a restart then
+            # lost it forever (scenario gate S12, 2026-10-09). Leave the
+            # batch unacked; it reappears after the visibility window and
+            # the handled-id dedupe skips whatever finished meanwhile.
+            pending = [
+                c for c in ((m.get("message_id") or m.get("id") or "") for m in messages)
+                if c and c in self._inflight
+            ]
+            if pending:
+                logger.debug("inbox drain: %d job(s) still in flight — not acking",
+                             len(pending))
+                break
             if ack_token:
                 try:
                     await relay.ack_inbox(
