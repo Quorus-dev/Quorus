@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-08-23 (post-review hardening of approvals/auction/persistence; branch `feat/wake-rebuild-aug26`)
+Last updated: 2026-10-08 (wake loop + live channel push proven with REAL claude + codex; merged to main)
 
 ---
 
@@ -107,23 +107,88 @@ Remaining medium-severity items tracked in code review output.
 
 ## In Progress
 
-**Wake Rebuild — ship phase (2026-08-23).** Build is complete (spec:
-`docs/WAKE_REBUILD_SPEC.md`, all streams landed) and has survived three
-review passes. What is left is operational, not code:
+**Dogfood phase (2026-10-08).** The autonomous loop now works with real
+agents on one laptop: human posts `@open <task>` → an idle agent claims it,
+posts a plan, does the work in the bound repo, commits, @-mentions a teammate
+for review → reviewer wakes, reviews, hands findings back → fixer wakes and
+fixes → reviewer approves. Proven live 3× in `~/dev/quorus-playground`
+(todo CLI: build → 2 review findings fixed → approve; `clear`; `count`).
 
-1. **Merge `feat/wake-rebuild-aug26` → `main`** (Arav's call). `main` is
-   ~200 commits behind and still carries the unbounded `mcp>=1.2.0` pin, so
-   the README install command breaks every fresh install until this lands.
-2. **Redeploy the public relay** — `quorus-relay.fly.dev` is NXDOMAIN
-   (`flyctl auth login` + `flyctl deploy`; `fly.toml` ready).
-3. **Two-human runbook test** with Aarya (`docs/MULTI_USER_TEST_RUNBOOK.md`;
-   single-machine rehearsal `scripts/rehearse_runbook.sh` is green, 20 checks).
-4. Post-MVP (Stream L4, flagged): Claude Channels transport, Codex
-   `app-server` threads under the daemon.
+Live setup: `scripts/dogfood.sh up <repo> [room]` (launchd relay on
+127.0.0.1:8787 + one wake daemon per agent + `dogfood` hub profile);
+`scripts/dogfood.sh connect` points the human's interactive Claude Code /
+Codex MCP at it as `*-desktop` identities. State in `~/.quorus/dogfood/`.
 
----
+Live push into an OPEN Claude window works: `scripts/dogfood.sh claude`
+(= `claude --dangerously-load-development-channels server:quorus`). Room
+messages that @-mention your desktop identity (or DM it) arrive as
+`<channel>` events and start a turn with no keystrokes — proven live: mention
+→ "PONG — todo.py" posted back in 12s. Codex woken agents run with
+`-s workspace-write` (Arav opted in 2026-10-08; proven: codex built
+`version`, committed, Claude reviewed + approved).
+
+Next:
+1. PyPI publish (wheel bundles reflexd; verify `pipx install quorus` cold).
+2. Channels are a research preview: custom servers need the dev flag and a
+   one-time confirm per launch; interactive Codex has no push API.
+3. Codex's own `quorus say` from inside its sandbox failed to reach the relay
+   once (final reply still lands via the daemon) — investigate.
+4. reflexd.py is ~2.7k lines (500-line rule) — split into a package.
 
 ## Recent Changes
+
+### Live channel push + codex write access + merge (2026-10-08)
+
+- **Channel push never worked**: server sent `{message, channel}` params and
+  a `{"channel": ...}` capability; Claude Code requires `{content, meta}` and
+  `{}` and drops anything else silently. New `quorus_mcp/channel.py`
+  (default: push only DMs + @-mentions of this identity; QUORUS_CHANNEL_PUSH
+  = mentions|all|off).
+- **`python -m quorus_mcp.server` double-import**: `__main__` copy held the
+  live session while runtime looked in the package copy → every push found
+  "no session". `__main__` now delegates to the package module.
+- Codex sandbox knob `REFLEXD_CODEX_SANDBOX` (owner opt-in; no full access).
+- Relay graceful shutdown capped at 5s (SSE clients kept restarts hanging);
+  dogfood reload waits for launchd bootout.
+
+### Real-agent wake loop + dogfood setup (2026-10-08)
+
+Ran the wake pipeline with real claude 2.1.295 + codex 0.160.1 for the first
+time end to end (all prior proofs used the stub). Every bug below was seen
+live, fixed, and pinned by a test (`tests/test_reflexd_wake_contract.py`,
+`tests/test_reflexd_sigterm.py`, `tests/test_mcp.py`). Suite: 2151 passed.
+
+- **Codex replies always dropped**: parser read top-level keys; real shape
+  is `item.completed`/`agent_message`. Every codex wake posted "(no reply)".
+- **Woken agents had no working Quorus tools**: now each wake gets an MCP
+  server bound to the daemon's relay + identity (`--mcp-config` file for
+  claude, `-c` overrides for codex; secret via file/env, never argv) and a
+  private `QUORUS_CONFIG_DIR`. Daemon env (`API_KEY` = legacy secret) used to
+  leak in → every agent post 401'd.
+- **Prompt forbade work** ("reply 1-3 lines, run no tools") → new wake
+  instructions: do the work, name teammates for handoffs, final stdout is the
+  result (daemon dedupes if the agent already posted it).
+- **Daemon went deaf during a wake** (serial SSE loop): handlers now run as
+  tasks; one wake at a time via a lock; busy agents bid low on open work so
+  idle teammates win; mentions queue behind the current job.
+- **Triage**: capability tags rank, never exclude (codex couldn't take
+  "pytest" tasks); agent `?` no longer wakes everyone; leading `@open` beats a
+  reviewer mention later in the message; agent `plan:`/status lines never
+  wake; agent-only chains stop at 8 (`_reply_depth` was never set on the wire).
+- **Restarts replayed answered messages** → handled ids persisted per agent.
+- **SIGTERM ignored** (idle SSE never yielded) → run task cancelled, child
+  harness killed; relay no longer hangs on shutdown.
+- **reflexd not in the wheel** → force-included at `quorus/_reflexd/`.
+- **MCP mutating tools dead on non-Postgres relays** (required audit vs 501):
+  explicit 501 "no ledger" now proceeds with a warning; outages still block.
+- Relay `HOST` env (dogfood binds 127.0.0.1). Tests no longer write into the
+  real `~/.quorus/runtime` (autouse isolation; they were overwriting a live
+  agent's credentials).
+- Root cause of "notifications never worked" on Arav's laptop, besides the
+  code: Claude Code + Codex MCP configs pointed at the broken Desktop venv and
+  the dead Fly relay, and `~/.zshrc` exports a stale `QUORUS_API_KEY` that
+  overrides relay secrets (dogfood `connect` pins it blank in MCP env).
+
 
 ### Review-hardening pass (2026-08-21, commits 6c18bd2 → 64a540d)
 
