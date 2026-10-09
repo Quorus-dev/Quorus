@@ -8199,7 +8199,22 @@ def _cmd_whoami(args) -> None:
     _ui.console.print(f"  [dim]relay:[/]     {data.get('relay_url', '?')}")
 
 
+def _force_utf8_output() -> None:
+    """Windows consoles default to cp1252, which can't encode the banner's
+    block glyphs or ✓/→: `quorus version` crashed with UnicodeEncodeError on
+    every fresh Windows install (CI cold-install, 2026-10-09). Switch both
+    streams to UTF-8 and never crash on an unencodable glyph."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        if enc and enc != "utf8" and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def main():
+    _force_utf8_output()
     # Fix common paste / autocorrect mangles in argv before argparse
     # sees them. Smart quotes around tokens, em-dash instead of `--`,
     # etc. — all of which appeared while real users were trying to

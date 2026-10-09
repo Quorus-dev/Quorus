@@ -27,10 +27,15 @@ def _preimport_patch_targets() -> None:
     for target in sorted(targets):
         parts = target.split(".")
         for i in range(len(parts), 0, -1):
+            name = ".".join(parts[:i])
             try:
-                importlib.import_module(".".join(parts[:i]))
+                importlib.import_module(name)
                 break
-            except Exception:
+            except BaseException:  # noqa: B036 — includes the relay's import-time SystemExit
+                # e.g. quorus.relay exits when DATABASE_URL is set without
+                # REDIS_URL (Postgres CI job): leave it for the test to import
+                # with its own env, and never cache a half-imported module.
+                sys.modules.pop(name, None)
                 continue
 
 
