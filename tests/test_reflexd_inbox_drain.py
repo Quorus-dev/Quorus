@@ -395,7 +395,7 @@ def test_claude_resume_failure_retries_fresh(
     adapter = reflexd.HeadlessAdapter(timeout_s=2)
     calls: list[list[str]] = []
 
-    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None):
+    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None, env=None):
         calls.append(argv)
         if "--resume" in argv:
             return "[reflexd] harness errored"
@@ -557,7 +557,7 @@ def test_codex_wake_resumes_and_persists(
     adapter = reflexd.HeadlessAdapter(timeout_s=2)
     seen: list[list[str]] = []
 
-    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None):
+    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None, env=None):
         seen.append(argv)
         return parser(
             '{"type":"thread.started","thread_id":"t-new"}\n{"delta":"ok"}\n'
@@ -672,7 +672,7 @@ def test_vendor_failure_does_not_trigger_resume_retry(
     adapter = reflexd.HeadlessAdapter(timeout_s=2)
     calls: list[list[str]] = []
 
-    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None):
+    async def fake_sub(argv, *, parser, cwd=None, timeout_s=None, env=None):
         calls.append(argv)
         return "⚠ claude: not logged in — run `claude /login` on this host."
 

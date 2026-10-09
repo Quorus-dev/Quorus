@@ -180,8 +180,8 @@ def test_bid_score_question_general_is_three_tenths() -> None:
     assert reason == "general_question"
 
 
-def test_bid_score_no_capability_match_is_zero() -> None:
-    """No capability overlap on any non-mention kind → bid 0.0 (skip)."""
+def test_bid_score_no_capability_match() -> None:
+    """Role tags still gate; open work never excludes an agent, only ranks it."""
     # role_request to a role this harness doesn't have
     bid_role, _ = reflexd.compute_bid_v2(
         kind="role_request", role="docs",
@@ -201,7 +201,9 @@ def test_bid_score_no_capability_match_is_zero() -> None:
         capabilities=reflexd.CAPABILITIES_CURSOR,
         recency_seconds=0.0,
     )
-    assert bid_open == 0.0
+    # Regression (live run 2026-10-08): keyword gating left open work
+    # ownerless when the only matching agent was busy.
+    assert bid_open == pytest.approx(0.3)
 
 
 def test_bid_score_recency_decays() -> None:
@@ -464,13 +466,13 @@ def test_e2e_open_todo_via_smoke_relay(
     assert "QOD rule 3" in ctx
 
 
-def test_e2e_open_todo_no_capability_match_skips_bid(
+def test_e2e_open_todo_no_capability_match_bids_low(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Negative path: gemini sees a backend @open and does NOT bid.
+    """Gemini sees a backend @open: it bids, but below a matching agent.
 
-    Proves the capability filter actually fires — without this guard,
-    the daemon would still POST a 0.0 bid and pollute the auction.
+    Capability tags rank bidders instead of excluding them, so open work
+    always finds an owner even when the best-matched agent is busy.
     """
     envelope = {
         "id": "msg-open-2",
@@ -503,10 +505,11 @@ def test_e2e_open_todo_no_capability_match_skips_bid(
                 follow_redirects=True,
             )
             handled = await daemon.handle_room_message(relay, envelope)
-            assert handled is False  # no bid POSTed
+            assert handled is True  # bid POSTed
 
     asyncio.run(go())
-    assert fake.bid_calls == []
+    assert len(fake.bid_calls) == 1
+    assert fake.bid_calls[0]["bid"] == pytest.approx(0.3)
     assert fake.posts == []
 
 
@@ -564,9 +567,10 @@ def test_at_open_routes_to_claude_for_react_work() -> None:
     }
     # Claude has both react and tests → strict winner.
     assert bids["claude"] == pytest.approx(0.5)
-    # Codex / cursor / gemini have neither react nor tests — bid 0.0.
-    assert bids["codex"] == 0.0
-    assert bids["gemini"] == 0.0
-    assert bids["cursor"] == 0.0
+    # Codex / cursor / gemini have neither react nor tests — they still bid
+    # (open work must never go ownerless) but strictly lower.
+    assert bids["codex"] == pytest.approx(0.3)
+    assert bids["gemini"] == pytest.approx(0.3)
+    assert bids["cursor"] == pytest.approx(0.3)
     # Sanity: claude is the unique max.
     assert max(bids, key=bids.get) == "claude"

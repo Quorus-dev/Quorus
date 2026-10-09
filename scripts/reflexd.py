@@ -54,17 +54,20 @@ import httpx
 # scripts/ is not a package; add the repo root so ``quorus`` imports work when
 # this file is run directly via ``python scripts/reflexd.py``.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-for _path in (
-    _REPO_ROOT,
-    _REPO_ROOT / "packages" / "sdk",
-    _REPO_ROOT / "packages" / "cli",
-    _REPO_ROOT / "packages" / "mcp",
-    _REPO_ROOT / "packages" / "tui",
-):
-    _path_str = str(_path)
-    if _path.exists() and _path_str not in sys.path:
-        sys.path.insert(0, _path_str)
-del _path, _path_str
+# Only a source checkout needs these sys.path entries. Inside an installed
+# wheel (quorus/_reflexd/) the parent is site-packages/quorus, and putting
+# THAT on sys.path would let quorus's submodules shadow top-level imports.
+_IN_CHECKOUT = (_REPO_ROOT / "pyproject.toml").exists()
+if _IN_CHECKOUT:
+    for _path in (
+        _REPO_ROOT,
+        _REPO_ROOT / "packages" / "sdk",
+        _REPO_ROOT / "packages" / "cli",
+        _REPO_ROOT / "packages" / "mcp",
+        _REPO_ROOT / "packages" / "tui",
+    ):
+        if _path.exists() and str(_path) not in sys.path:
+            sys.path.insert(0, str(_path))
 
 # Phase 2 triage v2 lives in a sibling module so reflexd.py stays under its
 # 1500-LoC cap. We import via a path-aware loader because ``scripts/`` is
@@ -229,11 +232,13 @@ BID_WINDOW_SECONDS = max(3.0, BID_TTL_SECONDS + 2.0)
 # wakes (the agent holds an active work-queue claim in the room) get a long
 # leash and an ESCALATION message instead of a bare failure sentinel —
 # never silently kill a working agent (the Arav rule, D5b).
-SUBPROCESS_TIMEOUT_S = int(os.environ.get("REFLEXD_SUBPROCESS_TIMEOUT_S", "300"))
+# Real coding wakes (read, edit, run tests, commit) took 2-6 min live; 300s
+# killed them mid-task. 30 min default, still env-tunable.
+SUBPROCESS_TIMEOUT_S = int(os.environ.get("REFLEXD_SUBPROCESS_TIMEOUT_S", "1800"))
 # Bounded memory of handled message ids — enough to cover a reconnect
 # backlog without growing forever.
 _HANDLED_ID_CAP = 2000
-CHAT_MAX_TURNS = int(os.environ.get("REFLEXD_CHAT_MAX_TURNS", "15"))
+CHAT_MAX_TURNS = int(os.environ.get("REFLEXD_CHAT_MAX_TURNS", "60"))
 MISSION_TIMEOUT_S = int(os.environ.get("REFLEXD_MISSION_TIMEOUT_S", "3600"))
 HEARTBEAT_HISTORY_LIMIT = 10
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
@@ -416,6 +421,15 @@ summarise_reply_for_memory = reflexd_streamb.summarise_reply_for_memory
 envelope_thread_root = reflexd_streamb.envelope_thread_root
 envelope_canonical_id = reflexd_streamb.envelope_canonical_id
 
+# Wake contract (tools for the woken agent, codex parser, prompt) — sibling
+# module, same loader pattern. See reflexd_wake.py for the proven gaps.
+_WAKE_PATH = Path(__file__).resolve().parent / "reflexd_wake.py"
+_wake_spec = _ilu.spec_from_file_location("reflexd_wake", _WAKE_PATH)
+assert _wake_spec is not None and _wake_spec.loader is not None
+reflexd_wake = _ilu.module_from_spec(_wake_spec)
+sys.modules.setdefault("reflexd_wake", reflexd_wake)
+_wake_spec.loader.exec_module(reflexd_wake)
+
 
 _HARNESS_SUFFIXES = (
     ("-claude", "claude"),
@@ -455,6 +469,7 @@ CLINE_BIN = "cline"
 
 def build_claude_argv(
     context: str, *, resume: str | None = None, max_turns: int | None = None,
+    extra: list[str] | None = None,
 ) -> list[str]:
     """Pinned argv shape for Claude Code CLI.
 
@@ -479,6 +494,8 @@ def build_claude_argv(
         argv += ["--max-turns", str(max_turns)]
     if resume:
         argv += ["--resume", resume]
+    if extra:
+        argv += extra
     return argv + ["--", context]
 
 
@@ -502,7 +519,7 @@ def _parse_claude_json(out: str) -> tuple[str, str | None]:
 
 
 def build_codex_argv(
-    context: str, *, resume: str | None = None,
+    context: str, *, resume: str | None = None, extra: list[str] | None = None,
 ) -> list[str]:
     """Pinned argv shape for codex CLI.
 
@@ -526,6 +543,8 @@ def build_codex_argv(
     prompt so a leading-dash chat body cannot be re-interpreted as a flag.
     """
     argv = [CODEX_BIN, "exec", "--json", "--skip-git-repo-check"]
+    if extra:  # exec options must precede the ``resume`` subcommand
+        argv += extra
     if resume:
         argv += ["resume", resume]
     return argv + ["--", context]
@@ -856,33 +875,38 @@ def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
 def _parse_codex_stream(out: str) -> tuple[str, str | None]:
     """Parse codex ``--json`` NDJSON → ``(reply_text, thread_id)``.
 
-    The thread id arrives on the ``thread.started`` event and is what
-    ``codex exec resume`` accepts (both verified live on v0.132.0).
+    Delegates to :func:`reflexd_wake.parse_codex_stream`, which reads the
+    real ``item.completed``/``agent_message`` shape (the old top-level-key
+    parse dropped every codex reply).
     """
-    chunks: list[str] = []
-    thread_id: str | None = None
-    for line in out.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(ev, dict):
-            continue
-        tid = ev.get("thread_id")
-        if isinstance(tid, str) and tid:
-            thread_id = tid
-        delta = ev.get("delta") or ev.get("content") or ev.get("text")
-        if isinstance(delta, str):
-            chunks.append(delta)
-    return "".join(chunks).strip(), thread_id
+    return reflexd_wake.parse_codex_stream(out)
 
 
 def _parse_codex_json(out: str) -> str:
     """Back-compat wrapper — reply text only."""
     return _parse_codex_stream(out)[0]
+
+
+def _ts_after(ts: Any, start: datetime) -> bool:
+    """True iff ISO timestamp *ts* is at/after *start* (unparseable → False)."""
+    if not isinstance(ts, str):
+        return False
+    try:
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t >= start
+
+
+def _same_result(posted: str, reply: str) -> bool:
+    """Did the agent already post *reply* (or its ✅ result) itself?"""
+    a = " ".join(posted.split())[:60]
+    b = " ".join(reply.split())[:60]
+    if a and a == b:
+        return True
+    return reply.lstrip().startswith("✅") and posted.lstrip().startswith("✅")
 
 
 class HeadlessAdapter:
@@ -900,6 +924,11 @@ class HeadlessAdapter:
     ) -> None:
         self.timeout_s = timeout_s
         self.dry_run = dry_run
+        # Set by Reflexd: MCP server entry binding the woken agent to this
+        # daemon's relay + identity, and where to write claude's config file.
+        self.wake_spec: dict[str, Any] | None = None
+        self.mcp_config_path: Path | None = None
+        self.agent_config_dir: Path | None = None
         # Records the argv (or sdk-call signature) that WOULD have been spawned
         # in dry-run mode. Kept on the instance for tests + smoke scripts.
         self.last_dry_run: dict[str, Any] | None = None
@@ -1029,9 +1058,19 @@ class HeadlessAdapter:
             captured["sid"] = sid
             return text
 
+        cfg = None
+        if self.wake_spec is not None and self.mcp_config_path is not None:
+            try:
+                cfg = reflexd_wake.write_claude_mcp_config(
+                    self.wake_spec, self.mcp_config_path,
+                )
+            except OSError as exc:
+                logger.warning("could not write wake MCP config: %s", exc)
+        extra = reflexd_wake.claude_wake_flags(cfg)
+        env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         reply = await self._run_subprocess(
-            build_claude_argv(context, resume=resume, max_turns=max_turns),
-            parser=parser, cwd=cwd, timeout_s=timeout_s,
+            build_claude_argv(context, resume=resume, max_turns=max_turns, extra=extra),
+            parser=parser, cwd=cwd, timeout_s=timeout_s, env=env,
         )
         if resume and reply == "[reflexd] harness errored":
             logger.warning(
@@ -1039,8 +1078,8 @@ class HeadlessAdapter:
             )
             captured["sid"] = None
             reply = await self._run_subprocess(
-                build_claude_argv(context, max_turns=max_turns),
-                parser=parser, cwd=cwd, timeout_s=timeout_s,
+                build_claude_argv(context, max_turns=max_turns, extra=extra),
+                parser=parser, cwd=cwd, timeout_s=timeout_s, env=env,
             )
         if captured["sid"] and on_session is not None:
             on_session(captured["sid"])
@@ -1059,9 +1098,11 @@ class HeadlessAdapter:
             captured["tid"] = tid
             return text
 
+        extra = reflexd_wake.codex_wake_flags(self.wake_spec)
+        env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         reply = await self._run_subprocess(
-            build_codex_argv(context, resume=resume), parser=parser,
-            cwd=cwd, timeout_s=timeout_s,
+            build_codex_argv(context, resume=resume, extra=extra), parser=parser,
+            cwd=cwd, timeout_s=timeout_s, env=env,
         )
         if resume and reply == "[reflexd] harness errored":
             logger.warning(
@@ -1069,8 +1110,8 @@ class HeadlessAdapter:
             )
             captured["tid"] = None
             reply = await self._run_subprocess(
-                build_codex_argv(context), parser=parser,
-                cwd=cwd, timeout_s=timeout_s,
+                build_codex_argv(context, extra=extra), parser=parser,
+                cwd=cwd, timeout_s=timeout_s, env=env,
             )
         if captured["tid"] and on_session is not None:
             on_session(captured["tid"])
@@ -1083,6 +1124,7 @@ class HeadlessAdapter:
         parser: Callable[[str], str],
         cwd: Path | None = None,
         timeout_s: int | None = None,
+        env: dict[str, str] | None = None,
     ) -> str:
         # Pre-flight: if the binary truly isn't on PATH, surface the same
         # sentinel string regardless of platform. ``shutil.which`` returning
@@ -1103,6 +1145,7 @@ class HeadlessAdapter:
                 # D1: run in the room's bound workspace so the agent can do
                 # real repo work; None = inherit the daemon's cwd (unbound).
                 cwd=str(cwd) if cwd else None,
+                env=env,
             )
         except FileNotFoundError:
             logger.warning("harness binary missing: %s", argv[0])
@@ -1111,6 +1154,11 @@ class HeadlessAdapter:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout_s or self.timeout_s
             )
+        except asyncio.CancelledError:
+            # Daemon stopping: never orphan a running agent.
+            if proc.returncode is None:
+                proc.kill()
+            raise
         except TimeoutError:
             # L4: Python 3.11+ aliases ``asyncio.TimeoutError`` to the
             # builtin ``TimeoutError``; the asyncio prefix is deprecated.
@@ -1332,6 +1380,17 @@ class RelayClient:
             json={"instance_name": participant, "status": status, "room": room},
         )
         resp.raise_for_status()
+
+    async def fetch_members(self, *, room: str) -> list[str]:
+        """Room member names, or [] on any failure (prompt context only)."""
+        try:
+            resp = await self.client.get(f"/rooms/{room}", headers=await self._headers())
+            resp.raise_for_status()
+            members = resp.json().get("members")
+        except Exception as exc:
+            logger.debug("member lookup failed for %s: %s", room, exc)
+            return []
+        return [m for m in members if isinstance(m, str)] if isinstance(members, list) else []
 
     async def mission_task_for(
         self, *, room: str, participant: str,
@@ -1557,17 +1616,67 @@ class Reflexd:
             raise SystemExit(2)
         self.config = config
         self.adapter = adapter or HeadlessAdapter()
+        if getattr(self.adapter, "wake_spec", None) is None and hasattr(
+            self.adapter, "wake_spec",
+        ):
+            agent_dir = config.runtime_dir / "agents" / config.participant_name
+            try:
+                reflexd_wake.write_agent_config_dir(
+                    agent_dir, relay_url=config.relay_url, api_key=config.api_key,
+                    participant=config.participant_name, legacy=config.legacy_bearer,
+                )
+                self.adapter.agent_config_dir = agent_dir
+            except OSError as exc:
+                logger.warning("could not write agent config dir: %s", exc)
+                agent_dir = None
+            self.adapter.wake_spec = reflexd_wake.quorus_mcp_spec(
+                relay_url=config.relay_url, api_key=config.api_key,
+                participant=config.participant_name, legacy=config.legacy_bearer,
+                config_dir=agent_dir,
+            )
+            self.adapter.mcp_config_path = (
+                config.runtime_dir / f"wake-mcp-{config.participant_name}.json"
+            )
         self._stop = asyncio.Event()
         self._last_wake_at: float = 0.0
         # Bounded in-memory queue for messages that arrive while a busy-file
         # is set. Drained on stop, not replayed across restarts (PR-C1 scope).
         self._queue: list[dict[str, Any]] = []
         # Ids already handled on EITHER delivery path (SSE or inbox drain).
-        self._handled_ids: set[str] = set()
-        self._handled_order: list[str] = []
+        # Persisted so a restart doesn't re-answer: SSE-delivered messages
+        # stay in the durable inbox, and the reconnect drain used to replay
+        # every one of them after each restart (live run 2026-10-08: a
+        # launchd restart re-ran an already-claimed build task).
+        self._handled_path = config.runtime_dir / f"handled-{config.participant_name}.json"
+        self._handled_order: list[str] = self._load_handled()
+        self._handled_ids: set[str] = set(self._handled_order)
+        # One harness run at a time per agent. Held for the whole wake; new
+        # work waits on it FIFO instead of blocking the SSE reader (the old
+        # serial loop went deaf for the full length of every wake).
+        self._wake_lock = asyncio.Lock()
+        self._bg_tasks: set[asyncio.Task[Any]] = set()
 
     def stop(self) -> None:
         self._stop.set()
+
+    def _load_handled(self) -> list[str]:
+        try:
+            data = json.loads(self._handled_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        ids = [i for i in data if isinstance(i, str)] if isinstance(data, list) else []
+        return ids[-_HANDLED_ID_CAP:]
+
+    def _save_handled(self) -> None:
+        try:
+            self._handled_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._handled_path.with_suffix(".tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._handled_order, f)
+            os.replace(tmp, self._handled_path)
+        except OSError as exc:
+            logger.debug("could not persist handled ids: %s", exc)
 
     # ── handlers ──────────────────────────────────────────────────────────
 
@@ -1627,6 +1736,22 @@ class Reflexd:
             )
             return False
 
+        # Agent↔agent loop guard. ``_reply_depth`` metadata is never set on the
+        # wire, so the depth check above can't see agent chains; count the
+        # room's trailing run of agent-only messages instead.
+        if is_agent_participant(sender):
+            try:
+                recent = await relay.fetch_recent(room=room, limit=reflexd_wake.MAX_AGENT_CHAIN)
+            except Exception:
+                recent = []
+            chain = reflexd_wake.trailing_agent_chain(recent, is_agent_participant)
+            if chain >= reflexd_wake.MAX_AGENT_CHAIN:
+                logger.info(
+                    "agent-only chain of %d in room=%s — not waking until a "
+                    "human speaks (id=%s)", chain, room, message_id,
+                )
+                return False
+
         # OS-level notification: fire BEFORE bid/claim so the user gets a
         # real macOS banner (or notify-send / fallback log) even if this
         # daemon loses the auction. Per-(sender, room) rate-limit in the
@@ -1681,6 +1806,12 @@ class Reflexd:
                 room, message_id, triage.kind, bid_reason,
             )
             return False
+        if self._wake_lock.locked() and triage.kind != "mention":
+            # Busy on another job: still bid (so the work never goes
+            # ownerless when everyone is busy) but low, so an idle teammate
+            # wins. If we win anyway, the job runs after the current one.
+            bid = max(0.05, bid - 0.3)
+            bid_reason = f"{bid_reason}+busy"
 
         try:
             await relay.submit_bid(
@@ -1755,8 +1886,12 @@ class Reflexd:
                     logger.debug("defer-announce failed (non-fatal): %s", exc)
             return True
 
-        await self._wake_and_reply(relay, envelope, triage=triage)
-        self._last_wake_at = time.time()
+        if self._wake_lock.locked():
+            logger.info("won room=%s id=%s while busy — queued behind current job",
+                        room, message_id)
+        async with self._wake_lock:
+            await self._wake_and_reply(relay, envelope, triage=triage)
+            self._last_wake_at = time.time()
         return True
 
     async def _wake_and_reply(
@@ -1786,20 +1921,18 @@ class Reflexd:
         except Exception as exc:
             logger.debug("memory read failed: %s", exc)
 
+        harness = detect_harness(self.config.participant_name)
+        # D1: bound workspace → agent works in the real repo. Unbound →
+        # inherit daemon cwd and the wake instructions say so.
+        ws = workspace_for(room)
+        _members = getattr(relay, "fetch_members", None)
+        teammates = await _members(room=room) if _members is not None else []
         prompt = self._build_prompt(
             envelope, history, triage=triage,
             memory_entries=memory_entries,
+            teammates=[t for t in teammates if is_agent_participant(t)],
+            has_workspace=ws is not None,
         )
-        harness = detect_harness(self.config.participant_name)
-        # D1: bound workspace → agent works in the real repo. Unbound →
-        # inherit daemon cwd and tell the model so it sets expectations.
-        ws = workspace_for(room)
-        if ws is None:
-            prompt += (
-                "\n\n[quorus] No workspace is bound to this room on this "
-                "host - answer questions freely, but for code tasks ask a "
-                "human to run: quorus room bind " + (room or "<room>") + " <repo-path>"
-            )
         log_reason = (triage.reason if triage else None) or reason or "?"
         # D2: resume the room's prior session so the agent keeps its memory.
         prior_session = session_for(self.config.participant_name, room, harness)
@@ -1834,6 +1967,7 @@ class Reflexd:
         wake_timeout = MISSION_TIMEOUT_S if mission else None
         wake_max_turns = None if mission else CHAT_MAX_TURNS
 
+        wake_started = datetime.now(timezone.utc)
         logger.info(
             "waking harness=%s room=%s reason=%s memory_entries=%d "
             "workspace=%s session=%s mode=%s",
@@ -1881,6 +2015,25 @@ class Reflexd:
                         return
             except Exception as exc:
                 logger.debug("D7 self-reply check failed: %s", exc)
+
+        if reply == "[reflexd] (no reply)":
+            # Never post a junk sentinel into a human's room.
+            logger.warning("harness %s produced no reply text room=%s", harness, room)
+            return
+
+        # Don't double-post: if the agent already posted this result itself
+        # (QOD tells it to post ✅), the room has it.
+        try:
+            mine = [
+                m for m in await relay.fetch_recent(room=room, limit=10)
+                if m.get("from_name") == self.config.participant_name
+                and _ts_after(m.get("timestamp"), wake_started)
+            ]
+        except Exception:
+            mine = []
+        if any(_same_result(m.get("content") or "", reply) for m in mine):
+            logger.info("agent already posted its result room=%s — not reposting", room)
+            return
 
         # D5b: a mission agent that hit its (long) leash gets an escalation
         # humans can act on, never a bare sentinel. This runs AFTER the D7
@@ -1944,6 +2097,7 @@ class Reflexd:
         self, envelope: dict[str, Any], history: list[dict[str, Any]],
         *, triage: "TriageResult | None" = None,
         memory_entries: list[dict[str, Any]] | None = None,
+        **kw: Any,
     ) -> str:
         """Public alias for :meth:`_build_prompt`.
 
@@ -1952,12 +2106,15 @@ class Reflexd:
         """
         return self._build_prompt(
             envelope, history, triage=triage, memory_entries=memory_entries,
+            **kw,
         )
 
     def _build_prompt(
         self, envelope: dict[str, Any], history: list[dict[str, Any]],
         *, triage: "TriageResult | None" = None,
         memory_entries: list[dict[str, Any]] | None = None,
+        teammates: list[str] | None = None,
+        has_workspace: bool = True,
     ) -> str:
         """Compose QOD + recent memory + history + WakeIntent.
 
@@ -1980,27 +2137,20 @@ class Reflexd:
         wake_room = envelope.get("room") or "?"
         wake_depth = envelope_reply_depth(envelope)
 
-        # Phase-2: open_todo kinds get a self-assignment preamble that
-        # tells the harness it just *picked up* this work.
+        # The old blurb told a mentioned agent to "reply in 1-3 lines and not
+        # run tools" — a mention asking for a fix could never be done (seen
+        # live 2026-10-08). The wake instructions let the agent work, name
+        # its teammates for handoffs, and keep the final reply short.
         preamble = ""
-        intent_blurb = (
-            f"You are `{self.config.participant_name}`. You were @-mentioned in "
-            f"room `{wake_room}` by `{wake_sender}`. Reply concisely (1-3 lines) "
-            f"and do not run any tools that require user approval."
-        )
-        if triage is not None and triage.kind == "open_todo":
+        kind = triage.kind if triage is not None else "mention"
+        if kind in ("open_todo", "role_request"):
             preamble = self_assign_preamble(description=triage.description) + "\n"
-            intent_blurb = (
-                f"You are `{self.config.participant_name}`. You picked up an open "
-                f"task in room `{wake_room}` posted by `{wake_sender}`. Follow the "
-                f"self-assign preamble above and start with a 1-line plan."
-            )
-        elif triage is not None and triage.kind == "role_request":
-            intent_blurb = (
-                f"You are `{self.config.participant_name}`. You picked up a "
-                f"role-tagged task (role={triage.role!r}) in room `{wake_room}` "
-                f"posted by `{wake_sender}`. Reply concisely with a 1-line plan."
-            )
+            kind = "open_todo"
+        intent_blurb = reflexd_wake.wake_instructions(
+            participant=self.config.participant_name, room=wake_room,
+            sender=wake_sender, kind=kind, teammates=list(teammates or []),
+            has_workspace=has_workspace,
+        )
 
         memory_block = render_memory_context(memory_entries or [])
 
@@ -2136,7 +2286,9 @@ class Reflexd:
                         async for event_name, data in iter_sse_events(relay.client, url):
                             if self._stop.is_set():
                                 return
-                            await self._dispatch_event(relay, event_name, data)
+                            await self._dispatch_event(
+                                relay, event_name, data, background=True,
+                            )
                         backoff = SSE_RECONNECT_S
                     except httpx.HTTPError as exc:
                         logger.warning("sse stream dropped: %s", exc)
@@ -2154,7 +2306,7 @@ class Reflexd:
                     await self._sleep_or_stop(backoff)
                     backoff = min(backoff * 2, SSE_RECONNECT_MAX_S)
             finally:
-                for task in (dm_task, hb_task):
+                for task in (dm_task, hb_task, *self._bg_tasks):
                     task.cancel()
                     try:
                         await task
@@ -2251,6 +2403,7 @@ class Reflexd:
 
     async def _dispatch_event(
         self, relay: RelayClient, event_name: str, data: dict[str, Any] | None,
+        *, background: bool = False,
     ) -> None:
         if not isinstance(data, dict):
             return
@@ -2271,6 +2424,7 @@ class Reflexd:
             self._handled_order.append(canonical)
             while len(self._handled_order) > _HANDLED_ID_CAP:
                 self._handled_ids.discard(self._handled_order.pop(0))
+            self._save_handled()
         if event_name == "connected":
             logger.info("sse connected")
             return
@@ -2283,10 +2437,19 @@ class Reflexd:
                          data.get("room"), data.get("from_name"))
             return
         if message_type in {"chat", "request", "question"}:
-            try:
-                await self.handle_room_message(relay, data)
-            except Exception as exc:  # pragma: no cover
-                logger.exception("handler failed: %s", exc)
+            if background:
+                # Live SSE: never block the reader on a bid window or a wake.
+                task = asyncio.create_task(self._handle_safely(relay, data))
+                self._bg_tasks.add(task)
+                task.add_done_callback(self._bg_tasks.discard)
+                return
+            await self._handle_safely(relay, data)
+
+    async def _handle_safely(self, relay: RelayClient, data: dict[str, Any]) -> None:
+        try:
+            await self.handle_room_message(relay, data)
+        except Exception as exc:  # pragma: no cover
+            logger.exception("handler failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -2426,10 +2589,17 @@ async def cmd_start(args: argparse.Namespace) -> int:
     daemon = Reflexd(cfg, adapter=HeadlessAdapter(dry_run=cfg.dry_run))
 
     loop = asyncio.get_running_loop()
+    main = asyncio.current_task()
 
     def _stop(*_a: Any) -> None:
+        # Setting the stop event alone never worked: an idle SSE read only
+        # yields on real events (keepalive comments are skipped), so SIGTERM
+        # was ignored until the next message — and the relay, waiting for
+        # this open stream, hung on shutdown too. Cancel the run outright.
         logger.info("signal received, stopping")
         daemon.stop()
+        if main is not None:
+            main.cancel()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -2439,6 +2609,8 @@ async def cmd_start(args: argparse.Namespace) -> int:
 
     try:
         await daemon.run()
+    except asyncio.CancelledError:
+        logger.info("reflexd stopped")
     finally:
         try:
             pidfile.unlink()

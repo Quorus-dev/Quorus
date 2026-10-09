@@ -45,6 +45,35 @@ def _clean_process_global_state():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_reflexd_runtime(request, tmp_path):
+    """Keep reflexd's on-disk state out of the real ``~/.quorus/runtime``.
+
+    Test daemons default to ``DEFAULT_RUNTIME_DIR`` and their participant is
+    usually ``arav-claude`` — the same name as a real local agent. Since the
+    daemon persists handled ids and writes the agent's private config dir,
+    tests were overwriting a live agent's credentials with fixtures and
+    leaking handled ids between runs (found 2026-10-08).
+    """
+    import sys as _sys
+
+    runtime = tmp_path / "reflexd-runtime"
+    # Each test file loads its OWN copy of scripts/reflexd.py by path, so
+    # patch the copy the test module holds as well as sys.modules["reflexd"].
+    # Manual save/restore, NOT the monkeypatch fixture: requesting it here
+    # would make the shared monkeypatch outlive per-module autouse fixtures,
+    # so their teardown would still see the test's own patches.
+    candidates = {id(m): m for m in (_sys.modules.get("reflexd"),
+                                     getattr(request.module, "reflexd", None))
+                  if m is not None and hasattr(m, "DEFAULT_RUNTIME_DIR")}
+    saved = {k: m.DEFAULT_RUNTIME_DIR for k, m in candidates.items()}
+    for m in candidates.values():
+        m.DEFAULT_RUNTIME_DIR = runtime
+    yield
+    for k, m in candidates.items():
+        m.DEFAULT_RUNTIME_DIR = saved[k]
+
+
+@pytest.fixture(autouse=True)
 def _os_environ_snapshot():
     """Restore ``os.environ`` after every test.
 

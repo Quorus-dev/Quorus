@@ -289,6 +289,26 @@ def classify_message(
             verb=verb_match[0],
         )
 
+    # 0a. An agent's status line ("plan: ...", "✅ ...", "progress: ...") is
+    #     a report, not a request — even when it names who reviews next.
+    #     Live 2026-10-08: "plan: ... then @arav-codex review" woke codex
+    #     just to post an acknowledgement before any commit existed.
+    if is_agent_sender(sender) and re.match(
+        r"\s*(plan|progress|status|heartbeat)\s*:", text, re.IGNORECASE,
+    ):
+        return TriageResult("IGNORE", "agent status line")
+
+    # 0b. A message that STARTS with ``@open`` is open work even when it
+    #     names an agent later ("...then ask @arav-codex to review"). Live
+    #     2026-10-08: the review mention made codex bid 1.0 as a direct
+    #     mention and grab the whole build task instead of the reviewer slot.
+    open_first = _OPEN_RE.match(text)
+    if open_first:
+        return TriageResult(
+            "RESPOND", "open_todo", kind="open_todo",
+            description=open_first.group(1).strip(),
+        )
+
     # 1. Literal @-mention wins outright — preserve Phase 1 wire reason.
     if _has_literal_mention(text, self_name):
         return TriageResult("RESPOND", "literal @mention", kind="mention")
@@ -325,8 +345,11 @@ def classify_message(
     if _WHO_CAN_RE.search(text):
         return TriageResult("RESPOND", "who_can_question", kind="question")
 
-    # 5. Generic trailing question mark. Lower confidence than ``who can``.
-    if text.rstrip().endswith("?"):
+    # 5. Generic trailing question mark — HUMANS only. An agent's reply that
+    #    ends in "?" ("can someone post this for me?") woke every other agent
+    #    in a live run (2026-10-08) and produced junk replies. Agents must
+    #    @-mention a teammate to hand off.
+    if text.rstrip().endswith("?") and not is_agent_sender(sender):
         return TriageResult("RESPOND", "question mark", kind="question")
 
     return TriageResult("IGNORE", "no signal")
@@ -498,7 +521,10 @@ def _base_bid(
     if kind == "open_todo":
         if matches_capability(description=description, capabilities=capabilities):
             return 0.5, "open_capability_match"
-        return 0.0, "open_no_capability"
+        # Capability tags only RANK bidders; they never exclude one. Keyword
+        # gating left "fix the failing pytest" unclaimable by codex (no
+        # "tests" tag) — if claude was busy, open work sat ownerless.
+        return 0.3, "open_any_agent"
     if kind == "question":
         if "general" in capabilities:
             return 0.3, "general_question"
