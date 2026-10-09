@@ -573,3 +573,23 @@ def test_uncommitted_work_gets_one_commit_nudge_then_publishes(tmp_path: Path) -
     assert "uncommitted" in adapter.prompts[0]
     assert "published 1 commit" in status
     assert (repo / "feature.txt").read_text() == "done"
+
+
+def test_cancelled_job_is_not_marked_handled(tmp_path: Path) -> None:
+    d = _daemon(tmp_path)
+
+    async def go() -> None:
+        async def handler(relay: Any, data: dict[str, Any]) -> bool:
+            await asyncio.sleep(3600)  # queued behind another job
+            return True
+        d.handle_room_message = handler  # type: ignore[method-assign]
+        await d._dispatch_event(None, "message", {"message_id": "q-1", "content": "x"},
+                                background=True)
+        await asyncio.sleep(0)
+        for task in list(d._bg_tasks):  # daemon stopping
+            task.cancel()
+        await asyncio.gather(*d._bg_tasks, return_exceptions=True)
+
+    asyncio.run(go())
+    restarted = _daemon(tmp_path)
+    assert "q-1" not in restarted._handled_ids  # will be redelivered

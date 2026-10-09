@@ -2612,12 +2612,19 @@ class Reflexd:
             await self._handle_safely(relay, data)
 
     async def _handle_safely(self, relay: RelayClient, data: dict[str, Any]) -> None:
+        canonical = data.get("message_id") or data.get("id") or ""
         try:
             await self.handle_room_message(relay, data)
+        except asyncio.CancelledError:
+            # Stopping (SIGTERM / launchd restart) while this job was queued or
+            # running: do NOT mark it handled, so the inbox redelivers it. A
+            # ``finally`` here persisted every queued job as done on restart
+            # (lost a whole overnight queue, 2026-10-08).
+            self._inflight.discard(canonical)
+            raise
         except Exception as exc:  # pragma: no cover
             logger.exception("handler failed: %s", exc)
-        finally:
-            self._mark_handled(data.get("message_id") or data.get("id") or "")
+        self._mark_handled(canonical)
 
     def _mark_handled(self, canonical: str) -> None:
         if not canonical:
