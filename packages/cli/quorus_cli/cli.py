@@ -1014,6 +1014,12 @@ def _cmd_room(args):
     raise SystemExit(5)
 
 
+def _cmd_agent(args):
+    from quorus_cli.agent_cmd import cmd_agent
+
+    cmd_agent(args, console)
+
+
 def _cmd_turnguard(args):
     """Mark the current agent busy/idle for the local Reflex daemon.
 
@@ -6110,7 +6116,12 @@ def _cmd_register_agents(args):
 
 
 def _cmd_add_agent(args):
-    """Interactive wizard to create and launch an agent."""
+    """Interactive wizard to create and launch an agent (legacy workspace flow).
+
+    New flow: ``quorus agent add <claude|codex> --room <room>`` gives the agent
+    a wake daemon so it answers tasks on its own."""
+    console.print("[dim]Tip: `quorus agent add claude --room <room>` adds an agent "
+                  "that wakes and works on its own.[/]")
     console.print("\n[bold green]Quorus Add Agent Wizard[/bold green]\n")
 
     # 1. Agent name
@@ -7872,6 +7883,8 @@ def _print_grouped_help():
             ("deny <id>",          "Refuse an agent's blocked tool call"),
         ]),
         ("AGENTS & SWARMS", [
+            ("agent add <tool>",   "Add your Claude/Codex/Gemini to a room"),
+            ("agent list",         "Your agents running on this machine"),
             ("ps",                 "Show agent presence (online/offline)"),
             ("spawn <name>",       "Create agent workspace + launch Claude Code"),
             ("add-agent",          "Interactive wizard to add an agent"),
@@ -9077,6 +9090,30 @@ def main():
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")
 
+    p_agent = sub.add_parser("agent", **_help_block(
+        synopsis="Add your AI agents (Claude, Codex, Gemini) to a room.",
+        description=(
+            "Your agent joins the room as <you>-<tool> and gets an always-on "
+            "wake daemon on this machine: when a task or @-mention arrives it "
+            "runs your logged-in CLI in the room's repo, posts back, and asks "
+            "a teammate to review."
+        ),
+        example="quorus agent add claude --room build --repo ~/dev/app --mode autonomous",
+        help_text="Add / list / remove your agents",
+    ))
+    agent_sub = p_agent.add_subparsers(dest="agent_action")
+    p_agent_add = agent_sub.add_parser("add", help="Add an agent to a room")
+    p_agent_add.add_argument("tool", choices=["claude", "codex", "gemini"])
+    p_agent_add.add_argument("--room", required=True, help="Room to join")
+    p_agent_add.add_argument("--repo", help="Repo the room works in (binds the room)")
+    p_agent_add.add_argument(
+        "--mode", choices=["default", "manual", "autonomous"], default="default",
+        help="Permissions in this room's repo (with --repo)",
+    )
+    agent_sub.add_parser("list", help="Agents running on this machine")
+    p_agent_rm = agent_sub.add_parser("remove", help="Stop an agent on this machine")
+    p_agent_rm.add_argument("name", help="Agent name, e.g. arav-claude")
+
     p_turnguard = sub.add_parser("turnguard", **_help_block(
         synopsis="Mark the agent busy/idle for the local Reflex daemon.",
         description=(
@@ -9368,6 +9405,7 @@ def main():
         "approve": _cmd_approve,
         "deny": _cmd_deny,
         "room": _cmd_room,
+        "agent": _cmd_agent,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,
