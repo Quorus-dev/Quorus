@@ -8303,6 +8303,8 @@ def main():
     )
     sub = parser.add_subparsers(dest="command")
 
+    from quorus import __version__ as _qv
+    parser.add_argument("-V", "--version", action="version", version=f"quorus {_qv}")
     parser.add_argument(
         "-w", "--workspace",
         dest="workspace",

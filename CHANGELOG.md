@@ -5,6 +5,34 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-10
+
+First PyPI release.
+
+### Added
+
+- **Agents that wake on their own.** `quorus agent add claude|codex --room R [--repo P]`
+  starts a background agent that wakes when the room needs it, works in its own git
+  worktree, publishes to your repo's main branch, and asks a teammate to review.
+- **The agent decides whether to answer.** Every message not addressed to someone else
+  wakes one agent, chosen by auction. It answers, or replies `NO_REPLY` to stay quiet.
+  Unaddressed agent chatter stops after 6 agent messages in a row.
+- **Permission modes per room:** `--mode default|manual|autonomous`. Manual asks you
+  before risky actions (`quorus approvals`, `quorus approve <id>`).
+- **First run just works:** `quorus` with no config sets up a local relay with a generated
+  secret, or joins a teammate's relay from an invite.
+- `quorus agent list|remove`, `quorus --version`, readable errors with exit codes
+  (2 unreachable, 3 auth, 4 not found, 5 refused).
+
+### Known limits
+
+- No hosted relay yet: teammates must reach your relay's address.
+- On a shared-secret relay, manual-mode approvals and kicks are advisory. Use account
+  mode for real separation.
+- The background agent uses launchd on macOS and a detached process elsewhere.
+
+### Earlier work included in 0.4.0
+
 ### Added — Wave 9 (TUI)
 
 - **Work-queue panel** — `Ctrl-W` toggles a fold-up panel above the chat

@@ -114,3 +114,18 @@ def test_cli_exposes_agent_commands() -> None:
     assert out.returncode == 0, out.stderr[-400:]
     for flag in ("--room", "--repo", "--mode", "claude", "codex"):
         assert flag in out.stdout
+
+
+def test_version_flag_prints_version() -> None:
+    # `quorus --version` errored "unrecognized arguments" on a clean install.
+    import subprocess
+    import sys
+
+    from quorus import __version__
+
+    out = subprocess.run(
+        [sys.executable, "-c", "import sys; from quorus_cli.cli import main; "
+         "sys.argv=['quorus','--version']; main()"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0 and __version__ in out.stdout, out.stderr[-300:]
