@@ -53,7 +53,9 @@ def test_agent_question_mark_does_not_wake_others() -> None:
         content="couldn't reach the room. Can someone post this for me?",
         sender="qt-claude", self_name="qt-codex",
     )
-    assert res.action == "IGNORE"
+    # Since 2026-10-10 one agent wakes and decides (it may NO_REPLY);
+    # the unaddressed-run cap stops chatter.
+    assert res.action == "RESPOND" and res.reason == "agent to room"
     human = reflexd.classify_message(
         content="can anyone check the build?", sender="arav", self_name="qt-codex",
     )
@@ -707,10 +709,16 @@ def test_room_wake_lets_the_agent_stay_silent() -> None:
     assert not wake.is_no_reply("It's 10pm.") and not wake.is_no_reply("")
 
 
-def test_agent_chatter_still_needs_a_mention() -> None:
+def test_agent_chatter_wakes_one_agent_to_decide() -> None:
     res = reflexd.classify_message(content="hello guys", sender="arav-codex",
                                    self_name="arav-claude")
-    assert res.action == "IGNORE"
+    assert res.action == "RESPOND" and res.reason == "agent to room"
+    text = wake.wake_instructions(participant="arav-claude", room="r", sender="arav-codex",
+                                  kind="agent_room", teammates=[], has_workspace=False)
+    assert "Never reply just to agree" in text and "NO_REPLY" in text
+    other = reflexd.classify_message(content="@arav-gemini review abc123",
+                                     sender="arav-codex", self_name="arav-claude")
+    assert other.action == "IGNORE"
 
 
 def test_publish_rebases_on_a_machine_with_no_git_identity(
@@ -839,3 +847,35 @@ def test_mcp_server_launch_ignores_the_repo_cwd() -> None:
     spec = wake.quorus_mcp_spec(relay_url="u", api_key="k", participant="a-claude",
                                 legacy=True)
     assert spec["args"] == ["-I", "-m", "quorus_mcp.server"]  # isolated: no cwd on path
+
+
+@pytest.mark.parametrize("content,expect_bid", [
+    ("looks good to me, nice work", False),       # unaddressed: capped after a run
+    ("@qt-claude please review abc123", True),    # a mention still gets through
+])
+def test_unaddressed_agent_chatter_is_capped(tmp_path: Path, content: str,
+                                             expect_bid: bool) -> None:
+    d = _daemon(tmp_path)
+    bids: list[float] = []
+    run = wake.MAX_UNADDRESSED_AGENT_RUN
+    hist = [{"from_name": "arav", "content": "go"}] + [
+        {"id": f"a{i}", "from_name": "qt-codex" if i % 2 else "qt-claude", "content": "x"}
+        for i in range(run)]
+
+    class Relay:
+        async def fetch_recent(self, **kw: Any) -> list[dict[str, Any]]:
+            return hist
+
+        async def submit_bid(self, **kw: Any) -> None:
+            bids.append(kw["bid"])
+
+        async def claim(self, **kw: Any) -> dict[str, Any]:
+            return {"claimed": False, "winner": "someone-else"}
+
+        async def post_social_defer(self, **kw: Any) -> None:
+            return None
+
+    env = {"from_name": "qt-codex", "room": "r", "message_id": "m9",
+           "content": content, "message_type": "chat"}
+    asyncio.run(d.handle_room_message(Relay(), env))
+    assert bool(bids) is expect_bid

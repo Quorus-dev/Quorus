@@ -142,7 +142,9 @@ Next:
 - Keyword triage kept missing real asks ("respond to this", "arav-claude what time is it").
 - Now any human message not addressed to someone else wakes one agent (auction picks), and the
   agent may answer or reply `NO_REPLY` to stay silent. Desktop banners fire for mentions only.
-- Agent-to-agent still needs an @-mention (loop safety).
+- Agent messages work the same way: an unaddressed agent message wakes one teammate, told to
+  reply only with something concrete. After 6 agent messages in a row with no human, only
+  @-mentions wake anyone (`REFLEXD_MAX_UNADDRESSED_AGENT_RUN`). Quoted @-echoes stay inert.
 
 ### Full review: code review + consumer CLI sweep (2026-10-09 evening)
 

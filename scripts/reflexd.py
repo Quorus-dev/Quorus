@@ -1791,8 +1791,10 @@ class Reflexd:
                 envelope, recent, is_agent_participant,
             )
             run = reflexd_wake.trailing_agent_chain(recent, is_agent_participant)
+            unaddressed = triage.reason == "agent to room"
             if (depth >= reflexd_wake.MAX_AGENT_CHAIN
-                    or run >= reflexd_wake.MAX_ROOM_AGENT_RUN):
+                    or run >= reflexd_wake.MAX_ROOM_AGENT_RUN
+                    or (unaddressed and run >= reflexd_wake.MAX_UNADDRESSED_AGENT_RUN)):
                 logger.info(
                     "agent loop guard: chain=%d room_run=%d in room=%s — not "
                     "waking until a human speaks (id=%s)", depth, run, room, message_id,
@@ -2248,8 +2250,9 @@ class Reflexd:
         # its teammates for handoffs, and keep the final reply short.
         preamble = ""
         kind = triage.kind if triage is not None else "mention"
-        if triage is not None and triage.reason == "human to room":
-            kind = "room"  # agent may decide to stay silent
+        if triage is not None and triage.reason in ("human to room", "agent to room"):
+            # Unaddressed: the agent decides whether to answer (or NO_REPLY).
+            kind = "room" if triage.reason == "human to room" else "agent_room"
         if kind in ("open_todo", "role_request"):
             preamble = self_assign_preamble(description=triage.description) + "\n"
             kind = "open_todo"

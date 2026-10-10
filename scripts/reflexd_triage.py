@@ -379,14 +379,18 @@ def classify_message(
     #    lists kept missing real requests ("respond to this", "arav-claude
     #    what time is it" — live 2026-10-10). Only routing is decided here:
     #    a message addressed to someone else is left to them.
-    if not is_agent_sender(sender):
-        named = _addressed_by_bare_name(text)
-        if self_name.lower() in named:
-            return TriageResult("RESPOND", "named without @", kind="mention")
-        if named or _ANY_MENTION_RE.search(text):
-            return TriageResult("IGNORE", "addressed to someone else")
-        if text.strip():
-            return TriageResult("RESPOND", "human to room", kind="question")
+    #    Agents' unaddressed messages work the same way: one teammate wakes
+    #    and reasons about whether it can add something (a review, a fix, a
+    #    missing fact). The daemon's loop guards cap how long that can run.
+    named = _addressed_by_bare_name(text) if not is_agent_sender(sender) else set()
+    if self_name.lower() in named:
+        return TriageResult("RESPOND", "named without @", kind="mention")
+    # Raw content: a quoted "@x ..." in an agent's ack still means it's addressed.
+    if named or _ANY_MENTION_RE.search(content or ""):
+        return TriageResult("IGNORE", "addressed to someone else")
+    if text.strip():
+        reason = "agent to room" if is_agent_sender(sender) else "human to room"
+        return TriageResult("RESPOND", reason, kind="question")
 
     return TriageResult("IGNORE", "no signal")
 

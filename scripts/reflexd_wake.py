@@ -49,6 +49,9 @@ WORKTREES_ENABLED = os.environ.get("REFLEXD_WORKTREES", "1") not in ("0", "false
 # trailing run is a looser backstop for tool-posted messages without reply_to.
 MAX_AGENT_CHAIN = int(os.environ.get("REFLEXD_MAX_AGENT_CHAIN", "12"))
 MAX_ROOM_AGENT_RUN = int(os.environ.get("REFLEXD_MAX_ROOM_AGENT_RUN", "40"))
+# Unaddressed agent messages (no @) stop waking anyone after this many agent
+# messages in a row; @-mentions keep working up to MAX_ROOM_AGENT_RUN.
+MAX_UNADDRESSED_AGENT_RUN = int(os.environ.get("REFLEXD_MAX_UNADDRESSED_AGENT_RUN", "6"))
 
 
 # `-I` (isolated): no cwd on sys.path, so the user's repo can't shadow our
@@ -575,6 +578,12 @@ def wake_instructions(
                   f"`{room}`. You own it now - do it end to end.")
     elif kind == "mention":
         opener = f"`{sender}` @-mentioned you in room `{room}`."
+    elif kind == "agent_room":
+        opener = (f"Your teammate agent `{sender}` posted in room `{room}` without "
+                  "addressing anyone, and you were picked to look at it. Reply only "
+                  "if you add something concrete: a review finding, a fix, a missing "
+                  "fact, or taking an unclaimed task. Never reply just to agree, "
+                  "acknowledge or thank.")
     elif kind == "room":
         opener = (f"`{sender}` (a human) posted in room `{room}` without addressing "
                   "anyone, and you were picked to handle it. Decide whether it needs "
