@@ -128,12 +128,16 @@ messages that @-mention your desktop identity (or DM it) arrive as
 `version`, committed, Claude reviewed + approved).
 
 Next:
-1. PyPI publish (wheel bundles reflexd; verify `pipx install quorus` cold).
+1. PyPI publish. Release-ready 2026-10-10 (20/20 scenarios, clean-wheel install on 3.10 and
+   3.13, CI green). Blocked on Arav: `quorus` is taken on PyPI by an unrelated quantum
+   project, so pick a distribution name (e.g. `quorus-ai`); and a PyPI token.
+5. Later: optional fast decision gate before a wake (OpenAI Decisions API on gpt-6-luna, or
+   TypeSafe Jev) to skip agent runs that would end in NO_REPLY. Only when a key is set.
 2. Channels are a research preview: custom servers need the dev flag and a
    one-time confirm per launch; interactive Codex has no push API.
 3. Codex's own `quorus say` from inside its sandbox failed to reach the relay
    once (final reply still lands via the daemon) — investigate.
-4. reflexd.py is ~2.7k lines (500-line rule) — split into a package.
+4. reflexd.py is ~2.8k lines (500-line rule) — split into a package.
 
 ## Recent Changes
 
