@@ -689,6 +689,15 @@ def test_room_modes_map_to_harness_flags(tmp_path: Path) -> None:
     ("i'm heading out for lunch", "IGNORE"),
     ("@aarya can you check the deploy", "IGNORE"),                # another human
     ("@arav-codex run the tests", "IGNORE"),                      # another agent
+    ("respond to this message if you ar receiving this", "RESPOND"),  # live 2026-10-10
+    ("arav-claude what is the time right now", "RESPOND"),        # bare name, no "?"
+    ("arav-claude, run the tests", "RESPOND"),
+    ("arav-codex what is the time right now", "IGNORE"),          # other agent by name
+    ("what is the time right now", "RESPOND"),                    # question without "?"
+    ("how do i deploy this", "RESPOND"),
+    ("reply if you can see this", "RESPOND"),
+    ("note: chat-ui-check-1791545216", "IGNORE"),
+    ("the build passed on my machine", "IGNORE"),                 # statement
 ])
 def test_human_talking_to_the_room_gets_an_answer(msg: str, action: str) -> None:
     res = reflexd.classify_message(content=msg, sender="arav", self_name="arav-claude")

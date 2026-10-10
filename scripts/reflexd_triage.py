@@ -227,9 +227,33 @@ _IMPERATIVE_RE = re.compile(
     r"^\s*(add|build|fix|make|write|create|update|change|check|run|test|review|"
     r"refactor|implement|remove|delete|deploy|investigate|look|find|explain|"
     r"summari[sz]e|show|list|give|set up|setup|install|debug|rename|move|draft|"
-    r"plan|research|compare|ship|merge|document|clean)\b",
+    r"plan|research|compare|ship|merge|document|clean|respond|reply|answer|"
+    r"tell|say|confirm|ack|acknowledge|ping|send|post|help|try|start|stop|"
+    r"continue|keep|do|go|open|read|analy[sz]e|edit|wait|ask|describe|"
+    r"translate|generate|tidy|bump|upgrade)\b",
     re.IGNORECASE,
 )
+# A question typed without "?" ("what is the time right now") is still a
+# question. Live 2026-10-10: the missing "?" left the room in silence.
+_QUESTION_OPENER_RE = re.compile(
+    r"^\s*(what|what's|whats|when|where|who|whom|whose|why|how|which|"
+    r"is|are|was|were|am|do|does|did|can|could|will|would|should|shall|"
+    r"may|might|have|has|had|any|anyone|anybody|got)\b"
+    r"|\bif you(?:'re| are| get| got| can| see)\b",
+    re.IGNORECASE,
+)
+# A bare agent name used as an address ("arav-claude what time is it").
+_BARE_AGENT_RE = re.compile(
+    r"(?<![\w@-])([A-Za-z][\w-]*-(?:claude|codex|gemini|cursor|opencode|cline))"
+    r"(?![\w-])",
+    re.IGNORECASE,
+)
+
+
+def _addressed_by_bare_name(text: str) -> set[str]:
+    """Agent names written without "@" at the start of a human's message."""
+    head = re.match(r"\s*((?:[A-Za-z][\w-]*[\s,:]*){1,3})", text)
+    return {m.lower() for m in _BARE_AGENT_RE.findall(head.group(1))} if head else set()
 
 
 def is_agent_sender(sender: str | None) -> bool:
@@ -387,6 +411,11 @@ def classify_message(
     #    One agent answers — the auction picks who. Skip messages aimed at
     #    someone else, and bare acknowledgements.
     if not is_agent_sender(sender):
+        named = _addressed_by_bare_name(text)
+        if self_name.lower() in named:
+            return TriageResult("RESPOND", "named without @", kind="mention")
+        if named:
+            return TriageResult("IGNORE", "addressed to someone else")
         if _ANY_MENTION_RE.search(text):
             return TriageResult("IGNORE", "addressed to someone else")
         if _ACK_RE.match(text):
@@ -394,7 +423,8 @@ def classify_message(
         # Greetings, requests, the group, or an instruction ("fix the login
         # bug") get an answer; a plain statement ("just a status update")
         # is someone thinking out loud and stays quiet.
-        if _HUMAN_ASK_RE.search(text) or _IMPERATIVE_RE.match(text):
+        if (_HUMAN_ASK_RE.search(text) or _IMPERATIVE_RE.match(text)
+                or _QUESTION_OPENER_RE.search(text)):
             return TriageResult("RESPOND", "human to room", kind="question")
 
     return TriageResult("IGNORE", "no signal")

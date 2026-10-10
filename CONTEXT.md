@@ -137,6 +137,13 @@ Next:
 
 ## Recent Changes
 
+### Triage answers plain human questions (2026-10-09 night)
+
+- Live miss in #demo: "arav-claude what is the time right now" and "respond to this message if
+  you ar receiving this" got no reply. Triage needed "@", "?" or a short verb list.
+- Now a human's message also wakes one agent when it opens like a question, uses more command
+  verbs, or starts with an agent's bare name. A bare name of another agent still stays quiet.
+
 ### Full review: code review + consumer CLI sweep (2026-10-09 evening)
 
 Two parallel reviews (code review of today's diff; a new-user sweep of every
