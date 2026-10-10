@@ -209,39 +209,8 @@ _QUOTED_SPAN_RE = re.compile(
 
 
 _ANY_MENTION_RE = re.compile(r"(?<![\w@-])@[A-Za-z][\w-]*")
-_ACK_RE = re.compile(
-    r"^\s*(ok(ay)?|k|thanks?|thank you|thx|ty|cool|nice|great|got it|lol|"
-    r"sounds good|perfect|yep|yes|no|nope|sure|done|👍|🙏|✅)[\s.!]*$",
-    re.IGNORECASE,
-)
 
 
-_HUMAN_ASK_RE = re.compile(
-    r"^\s*(hi|hello|hey|yo|morning|good (morning|afternoon|evening)|gm)\b"
-    r"|\b(please|pls|can you|could you|would you|will you|can someone|can anyone|"
-    r"anyone|someone|everyone|you guys|y'all|team|agents|let me know|tell me|"
-    r"help me|i need|we need)\b",
-    re.IGNORECASE,
-)
-_IMPERATIVE_RE = re.compile(
-    r"^\s*(add|build|fix|make|write|create|update|change|check|run|test|review|"
-    r"refactor|implement|remove|delete|deploy|investigate|look|find|explain|"
-    r"summari[sz]e|show|list|give|set up|setup|install|debug|rename|move|draft|"
-    r"plan|research|compare|ship|merge|document|clean|respond|reply|answer|"
-    r"tell|say|confirm|ack|acknowledge|ping|send|post|help|try|start|stop|"
-    r"continue|keep|do|go|open|read|analy[sz]e|edit|wait|ask|describe|"
-    r"translate|generate|tidy|bump|upgrade)\b",
-    re.IGNORECASE,
-)
-# A question typed without "?" ("what is the time right now") is still a
-# question. Live 2026-10-10: the missing "?" left the room in silence.
-_QUESTION_OPENER_RE = re.compile(
-    r"^\s*(what|what's|whats|when|where|who|whom|whose|why|how|which|"
-    r"is|are|was|were|am|do|does|did|can|could|will|would|should|shall|"
-    r"may|might|have|has|had|any|anyone|anybody|got)\b"
-    r"|\bif you(?:'re| are| get| got| can| see)\b",
-    re.IGNORECASE,
-)
 # A bare agent name used as an address ("arav-claude what time is it").
 _BARE_AGENT_RE = re.compile(
     r"(?<![\w@-])([A-Za-z][\w-]*-(?:claude|codex|gemini|cursor|opencode|cline))"
@@ -405,26 +374,18 @@ def classify_message(
     if text.rstrip().endswith("?") and not is_agent_sender(sender):
         return TriageResult("RESPOND", "question mark", kind="question")
 
-    # 6. A HUMAN talking to the room ("hello guys", "please reply if you get
-    #    this") is talking to the agents. Ignoring it because it had no @,
-    #    no @open and no "?" made the product look dead (live 2026-10-09).
-    #    One agent answers — the auction picks who. Skip messages aimed at
-    #    someone else, and bare acknowledgements.
+    # 6. A HUMAN talking to the room wakes one agent (the auction picks who),
+    #    and that agent decides whether to answer or reply NO_REPLY. Keyword
+    #    lists kept missing real requests ("respond to this", "arav-claude
+    #    what time is it" — live 2026-10-10). Only routing is decided here:
+    #    a message addressed to someone else is left to them.
     if not is_agent_sender(sender):
         named = _addressed_by_bare_name(text)
         if self_name.lower() in named:
             return TriageResult("RESPOND", "named without @", kind="mention")
-        if named:
+        if named or _ANY_MENTION_RE.search(text):
             return TriageResult("IGNORE", "addressed to someone else")
-        if _ANY_MENTION_RE.search(text):
-            return TriageResult("IGNORE", "addressed to someone else")
-        if _ACK_RE.match(text):
-            return TriageResult("IGNORE", "acknowledgement")
-        # Greetings, requests, the group, or an instruction ("fix the login
-        # bug") get an answer; a plain statement ("just a status update")
-        # is someone thinking out loud and stays quiet.
-        if (_HUMAN_ASK_RE.search(text) or _IMPERATIVE_RE.match(text)
-                or _QUESTION_OPENER_RE.search(text)):
+        if text.strip():
             return TriageResult("RESPOND", "human to room", kind="question")
 
     return TriageResult("IGNORE", "no signal")

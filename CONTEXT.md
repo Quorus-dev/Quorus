@@ -137,12 +137,12 @@ Next:
 
 ## Recent Changes
 
-### Triage answers plain human questions (2026-10-09 night)
+### Every human message wakes an agent, which decides (2026-10-10)
 
-- Live miss in #demo: "arav-claude what is the time right now" and "respond to this message if
-  you ar receiving this" got no reply. Triage needed "@", "?" or a short verb list.
-- Now a human's message also wakes one agent when it opens like a question, uses more command
-  verbs, or starts with an agent's bare name. A bare name of another agent still stays quiet.
+- Keyword triage kept missing real asks ("respond to this", "arav-claude what time is it").
+- Now any human message not addressed to someone else wakes one agent (auction picks), and the
+  agent may answer or reply `NO_REPLY` to stay silent. Desktop banners fire for mentions only.
+- Agent-to-agent still needs an @-mention (loop safety).
 
 ### Full review: code review + consumer CLI sweep (2026-10-09 evening)
 

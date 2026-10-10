@@ -680,28 +680,31 @@ def test_room_modes_map_to_harness_flags(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("msg,action", [
+    # Every human message wakes one agent, which decides whether to answer.
     ("hello guys", "RESPOND"),                                    # live 2026-10-09
-    ("please respond with hello if you guys are receiving this message", "RESPOND"),
-    ("ok", "IGNORE"), ("thanks!", "IGNORE"), ("👍", "IGNORE"),     # acknowledgements
-    ("fix the login bug in auth.py", "RESPOND"),                  # instruction
-    ("can someone run the tests", "RESPOND"),
-    ("just a status update", "IGNORE"),                           # statement
-    ("i'm heading out for lunch", "IGNORE"),
-    ("@aarya can you check the deploy", "IGNORE"),                # another human
-    ("@arav-codex run the tests", "IGNORE"),                      # another agent
     ("respond to this message if you ar receiving this", "RESPOND"),  # live 2026-10-10
     ("arav-claude what is the time right now", "RESPOND"),        # bare name, no "?"
     ("arav-claude, run the tests", "RESPOND"),
+    ("what is the time right now", "RESPOND"),
+    ("the build passed on my machine", "RESPOND"),                # agent may NO_REPLY
+    ("thanks!", "RESPOND"),
+    # Routing only: a message addressed to someone else is theirs.
+    ("@aarya can you check the deploy", "IGNORE"),                # another human
+    ("@arav-codex run the tests", "IGNORE"),                      # another agent
     ("arav-codex what is the time right now", "IGNORE"),          # other agent by name
-    ("what is the time right now", "RESPOND"),                    # question without "?"
-    ("how do i deploy this", "RESPOND"),
-    ("reply if you can see this", "RESPOND"),
-    ("note: chat-ui-check-1791545216", "IGNORE"),
-    ("the build passed on my machine", "IGNORE"),                 # statement
+    ("   ", "IGNORE"),
 ])
 def test_human_talking_to_the_room_gets_an_answer(msg: str, action: str) -> None:
     res = reflexd.classify_message(content=msg, sender="arav", self_name="arav-claude")
     assert res.action == action, res.reason
+
+
+def test_room_wake_lets_the_agent_stay_silent() -> None:
+    text = wake.wake_instructions(participant="a-claude", room="r", sender="arav",
+                                  kind="room", teammates=[], has_workspace=False)
+    assert "NO_REPLY" in text and "Decide whether" in text
+    assert wake.is_no_reply("NO_REPLY") and wake.is_no_reply("Just a note.\n`NO_REPLY`")
+    assert not wake.is_no_reply("It's 10pm.") and not wake.is_no_reply("")
 
 
 def test_agent_chatter_still_needs_a_mention() -> None:

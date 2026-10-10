@@ -575,6 +575,11 @@ def wake_instructions(
                   f"`{room}`. You own it now - do it end to end.")
     elif kind == "mention":
         opener = f"`{sender}` @-mentioned you in room `{room}`."
+    elif kind == "room":
+        opener = (f"`{sender}` (a human) posted in room `{room}` without addressing "
+                  "anyone, and you were picked to handle it. Decide whether it needs "
+                  "an answer from you. Greetings, questions and requests do. Notes, "
+                  "thanks and people talking to each other usually don't.")
     else:
         opener = f"`{sender}` asked something in room `{room}` and you won the pick."
     ws = (worktree_instructions(worktree, dirty=worktree_dirty(worktree))
@@ -608,4 +613,15 @@ def wake_instructions(
         "- Your FINAL message is posted to the room for you automatically. Do not "
         "also post it with tools. Make it the result: what changed (files, commit "
         "hash, test status), or the answer. Keep it under 8 lines.\n"
+        f"- If nothing here needs a reply from you, make your final message exactly "
+        f"{NO_REPLY} and nothing is posted.\n"
     )
+
+
+NO_REPLY = "NO_REPLY"
+
+
+def is_no_reply(reply: str) -> bool:
+    """True when the agent chose silence (its last line is the NO_REPLY token)."""
+    lines = [ln.strip().strip("`*_.\"'") for ln in (reply or "").splitlines() if ln.strip()]
+    return bool(lines) and lines[-1].upper() == NO_REPLY

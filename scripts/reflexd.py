@@ -1806,16 +1806,13 @@ class Reflexd:
         # on the same host. PII guard: the body we pass IS the chat
         # content but the notifications module never persists it — only
         # sender+room hit disk.
-        try:
-            from quorus.notifications import notify as _notify
-            _notify(
-                f"Quorus — {room or 'DM'}",
-                content,
-                sender=sender,
-                room=room,
-            )
-        except Exception as exc:  # pragma: no cover — notifications are best-effort
-            logger.debug("notify dispatch failed: %s", exc)
+        # Every human line now wakes someone, so only direct mentions get a banner.
+        if triage.kind == "mention":
+            try:
+                from quorus.notifications import notify as _notify
+                _notify(f"Quorus — {room or 'DM'}", content, sender=sender, room=room)
+            except Exception as exc:  # pragma: no cover — notifications are best-effort
+                logger.debug("notify dispatch failed: %s", exc)
 
         if is_busy(self.config.participant_name, self.config.runtime_dir):
             logger.info("busy-file present, queueing wake room=%s id=%s", room, message_id)
@@ -2062,6 +2059,10 @@ class Reflexd:
             return
 
         reply = (reply or "").strip()
+        if reflexd_wake.is_no_reply(reply):
+            # The agent read the message and chose not to answer.
+            logger.info("agent chose NO_REPLY room=%s", room)
+            reply = ""
         if worktree is not None:
             try:
                 published = await self._publish_with_resolution(
@@ -2247,6 +2248,8 @@ class Reflexd:
         # its teammates for handoffs, and keep the final reply short.
         preamble = ""
         kind = triage.kind if triage is not None else "mention"
+        if triage is not None and triage.reason == "human to room":
+            kind = "room"  # agent may decide to stay silent
         if kind in ("open_todo", "role_request"):
             preamble = self_assign_preamble(description=triage.description) + "\n"
             kind = "open_todo"

@@ -77,13 +77,13 @@ def test_self_message_never_triggers_respond(vendor: str) -> None:
 
 
 def test_unrelated_chat_does_not_match_mention() -> None:
-    """Plain chat without @-prefix is IGNOREd (so notify never fires)."""
+    """Plain chat wakes one agent to decide, but is not a mention (no banner)."""
     result = reflexd_triage.classify_message(
         content="just a status update",
         sender="arav",
         self_name="claude",
     )
-    assert result.action == "IGNORE"
+    assert result.kind != "mention"
 
 
 def test_at_mention_substring_does_not_match() -> None:
