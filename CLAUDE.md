@@ -21,6 +21,7 @@ Quorus — coordination layer for AI agent swarms. Real-time rooms, messaging, d
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich
 
 **Run tests:** `pytest -v`
+**From an agent worktree** (no venv of its own): `PYTHONPATH=.:packages/cli:packages/mcp:packages/sdk:packages/tui ~/dev/Quorus/.venv/bin/python -m pytest -q`
 **Lint:** `ruff check .`
 **Lint fix:** `ruff check . --fix`
 
