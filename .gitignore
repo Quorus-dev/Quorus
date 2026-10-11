@@ -25,5 +25,8 @@ website/*.tsbuildinfo
 MagicMock/
 
 # Graphify local knowledge graph (do not commit)
-graphify-out/
+# Share only the readable graph report and page; rebuild the rest with `graphify update .`
+graphify-out/*
+!graphify-out/GRAPH_REPORT.md
+!graphify-out/graph.html
 .graphify/
