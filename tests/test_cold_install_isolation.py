@@ -32,12 +32,10 @@ Fix — what this test asserts
 The smoke now redirects ``HOME`` (and ``USERPROFILE`` for Windows parity) to
 a scratch dir before spawning any subprocess. This test:
 
-  1. Drops sentinel files at the real host paths with random known content.
+  1. Snapshots every real host path (read-only; it never writes to $HOME).
   2. Runs the smoke in a subprocess (or skips if the binaries aren't
      available — same skip rule as ``test_cold_install.py``).
-  3. Asserts the sentinels are byte-for-byte unchanged.
-  4. Asserts no new files appeared at any host path that didn't have one
-     before the test ran.
+  3. Asserts every path is byte-for-byte unchanged and no new file appeared.
 
 If anyone re-introduces the bug — by adding a new mcp writer that
 hard-codes ``Path.home()`` and forgetting to honour the smoke's HOME
@@ -46,7 +44,6 @@ override — this test fails before the regression hits real users.
 from __future__ import annotations
 
 import os
-import secrets
 import shutil
 import socket
 import subprocess
@@ -99,113 +96,49 @@ def test_cold_install_smoke_does_not_touch_host_configs(tmp_path: Path) -> None:
     """Run the cold smoke and assert no real host config drifted.
 
     This is the gate that would have caught the bug where the smoke
-    silently overwrote the user's ``~/.gemini/settings.json``. We seed
-    each host path with a sentinel containing random bytes; if any path
-    we seeded changes by even one byte, the test fails.
+    silently overwrote the user's ``~/.gemini/settings.json``. If any host
+    path changes by even one byte, or appears, the test fails.
     """
     assert SMOKE_PY.exists(), f"smoke script missing at {SMOKE_PY}"
 
     home = Path.home()
 
-    # ── Step 1: snapshot the current state of every host config path.
-    #
-    # Two states matter:
-    #   - existed_before[path] -> Optional[bytes]: original content (if any).
-    #   - sentinel_canary[path] -> bytes: a unique marker we'll plant.
-    # We restore originals at the end whether or not the test passes.
-    existed_before: dict[Path, bytes | None] = {}
-    sentinels: dict[Path, bytes] = {}
-    for rel in HOST_CONFIG_RELS:
-        p = home / rel
-        existed_before[p] = p.read_bytes() if p.exists() else None
-        # Distinct token per path so we can prove no swapping happened.
-        sentinels[p] = (
-            f"# cold-install-isolation-canary {rel} "
-            f"{secrets.token_hex(16)}\n"
-        ).encode("utf-8")
+    # Snapshot only: never write into the real $HOME. An earlier version
+    # planted canary files there and a killed run left them behind, breaking
+    # the user's opencode/Cursor/Cline configs (2026-10-11).
+    before: dict[Path, bytes | None] = {
+        home / rel: ((home / rel).read_bytes() if (home / rel).exists() else None)
+        for rel in HOST_CONFIG_RELS
+    }
 
-    # ── Step 2: plant sentinels at every host path.
-    # We only plant sentinels at paths that DID NOT pre-exist, to avoid
-    # corrupting the user's real settings. For paths that DID exist, the
-    # snapshot above already captured the canary state — any byte drift
-    # is a regression.
-    seeded_paths: list[Path] = []
-    try:
-        for path, original in existed_before.items():
-            if original is None:
-                # Path didn't exist before — plant a sentinel so we can
-                # detect "smoke created a fresh file at a host path".
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(sentinels[path])
-                seeded_paths.append(path)
+    port = _free_port()
+    result = subprocess.run(
+        [sys.executable, str(SMOKE_PY), "--port", str(port), "--timeout", "60"],
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
 
-        # Capture post-seed state — this is the "expected" baseline that
-        # must hold across the smoke run.
-        expected_after: dict[Path, bytes] = {
-            p: (p.read_bytes() if p.exists() else b"")
-            for p in existed_before
-        }
-
-        # ── Step 3: run the smoke in a subprocess.
-        port = _free_port()
-        result = subprocess.run(
-            [
-                sys.executable, str(SMOKE_PY),
-                "--port", str(port),
-                "--timeout", "60",
-            ],
-            capture_output=True,
-            timeout=120,
-            check=False,
+    # Isolation first: if both fail, the clobbered config is the bigger problem.
+    drift: list[str] = []
+    for p, original in before.items():
+        actual = p.read_bytes() if p.exists() else None
+        if actual != original:
+            drift.append(f"{p}\n  before[:200]={(original or b'')[:200]!r}\n"
+                         f"  after[:200]={(actual or b'')[:200]!r}")
+    assert not drift, (
+        "cold-install smoke clobbered host config paths — "
+        "HOME isolation broken in scripts/cold_install_smoke.py:\n"
+        + "\n".join(drift)
+        + f"\n\nsmoke stderr:\n{result.stderr.decode(errors='replace')[-2000:]}"
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            "smoke isolated correctly but exited non-zero — "
+            f"returncode={result.returncode}\n"
+            f"stdout:\n{result.stdout.decode(errors='replace')}\n"
+            f"stderr:\n{result.stderr.decode(errors='replace')}"
         )
-
-        # ── Step 4: assert no host config drifted.
-        # We do this BEFORE asserting smoke success, so if both fail we
-        # surface the more important regression first.
-        drift: list[str] = []
-        for p, expected in expected_after.items():
-            actual = p.read_bytes() if p.exists() else b""
-            if actual != expected:
-                # Truncate large diffs — we only need enough to identify
-                # the offender.
-                drift.append(
-                    f"{p}\n"
-                    f"  expected[:200]={expected[:200]!r}\n"
-                    f"  actual[:200]={actual[:200]!r}"
-                )
-
-        assert not drift, (
-            "cold-install smoke clobbered host config paths — "
-            "HOME isolation broken in scripts/cold_install_smoke.py:\n"
-            + "\n".join(drift)
-            + f"\n\nsmoke stdout:\n{result.stdout.decode(errors='replace')[-2000:]}"
-            + f"\n\nsmoke stderr:\n{result.stderr.decode(errors='replace')[-2000:]}"
-        )
-
-        # The smoke itself should also pass — but the isolation assertion
-        # is the load-bearing one for this test file. Surface smoke failures
-        # only if isolation held.
-        if result.returncode != 0:
-            pytest.fail(
-                "smoke isolated correctly but exited non-zero — "
-                f"returncode={result.returncode}\n"
-                f"stdout:\n{result.stdout.decode(errors='replace')}\n"
-                f"stderr:\n{result.stderr.decode(errors='replace')}"
-            )
-
-    finally:
-        # ── Cleanup: restore every path to its pre-test state.
-        for path, original in existed_before.items():
-            try:
-                if original is None:
-                    if path.exists():
-                        path.unlink()
-                else:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(original)
-            except OSError:
-                # Best effort — never let cleanup mask a real assertion.
-                pass
 
 
 def test_cold_install_smoke_has_home_override() -> None:
