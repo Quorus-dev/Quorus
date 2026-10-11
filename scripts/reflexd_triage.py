@@ -302,7 +302,10 @@ def classify_message(
         # "/queue @me review X" / "/defer @me ..." hands work to me: QOD tells
         # agents to use these verbs for handoffs, so abstaining here stalled
         # the loop. Other verbs (vote, disagree, ...) stay with the relay.
-        if verb_match[0] in ("queue", "defer") and _has_literal_mention(text, self_name):
+        # An @-mention of me reaches me after any verb but a vote or release,
+        # which only report state. Live 2026-10-11: "/claim ... @arav-claude
+        # /queue please review" was swallowed and the reviewer never woke.
+        if verb_match[0] not in ("vote", "release") and _has_literal_mention(text, self_name):
             return TriageResult("RESPOND", f"social_handoff:{verb_match[0]}", kind="mention")
         return TriageResult(
             "IGNORE",

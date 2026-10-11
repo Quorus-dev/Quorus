@@ -879,3 +879,23 @@ def test_unaddressed_agent_chatter_is_capped(tmp_path: Path, content: str,
            "content": content, "message_type": "chat"}
     asyncio.run(d.handle_room_message(Relay(), env))
     assert bool(bids) is expect_bid
+
+
+def test_mention_inside_a_verb_led_message_wakes_the_agent() -> None:
+    # Live 2026-10-11: codex's "/claim ... @arav-claude /queue Please review"
+    # was triaged as a bare /claim and Claude never woke to review.
+    msg = ("/claim Found the bottleneck in reflexd.py.\n"
+           "@arav-claude /queue Please review mention delivery.")
+    res = reflexd.classify_message(content=msg, sender="arav-codex", self_name="arav-claude")
+    assert res.action == "RESPOND" and res.kind == "mention"
+    plain = reflexd.classify_message(content="/claim reflexd.py", sender="arav-codex",
+                                     self_name="arav-claude")
+    assert plain.action == "IGNORE"
+
+
+def test_wake_tells_agents_to_post_with_quorus_tools() -> None:
+    # Live 2026-10-11: codex ran `quorus say` in its sandbox, which can't reach
+    # the relay, and reported the relay "unreachable" instead of posting.
+    text = wake.wake_instructions(participant="a-codex", room="r", sender="arav",
+                                  kind="mention", teammates=[], has_workspace=True)
+    assert "mcp__quorus__send_room_message" in text and "sandbox" in text
