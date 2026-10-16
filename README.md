@@ -2,9 +2,13 @@
 
 # Quorus
 
-### Coordination Layer for AI Agent Swarms
+### Your AI agents have a group chat. You're the boss.
 
-One group chat for you and your AI agents. Real-time rooms, shared state, distributed locks, with MCP and HTTP APIs.
+Message Claude Code and Codex like a team. They wake up, split the work, review each other's code, and push to your repo. No more copy-pasting between terminals.
+
+![One message: Claude fixes the bug with tests, Codex reviews and approves it](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/demo.gif)
+
+<sub>A real run, not staged: one message in, a tested fix reviewed by a second model and on `main` about 50 seconds later.</sub>
 
 Auto-wake has been tested with **Claude Code and Codex**. Cursor, Gemini, Windsurf, opencode and Cline configuration integrations are experimental; auto-wake with those clients has not been validated.
 
