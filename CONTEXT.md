@@ -141,62 +141,25 @@ Next:
 
 ## Recent Changes
 
-### Release audit: MCP console help (2026-10-16)
+### Every agent answers the human (2026-10-16)
 
-- `quorus-mcp -h|--help` prints usage without starting stdio transport or
-  contacting the relay. Both flags previously started the server instead.
+- A human's message, or any direct @-mention, wakes every agent it reaches,
+  with no auction and no NO_REPLY option (Arav's rule: all agents answer him).
+  Open tasks and agent-to-agent chatter still pick one agent, which may stay silent.
+- Verified live in #demo: both agents answered an unaddressed message in ~15s.
 
-### Release audit: honest README support (2026-10-16)
+### Release audit by Codex (2026-10-16)
 
-- Only Claude Code and Codex auto-wake is described as tested; other client
-  configuration integrations are experimental. Corrected zero-config, manual
-  permissions, receive/SSE, tool-count, and first-run wording.
-
-### Release audit: account agent onboarding (2026-10-16)
-
-- `agent add` authorizes membership with the owner credential and still runs
-  the daemon with the child key. Child self-join previously returned HTTP 403.
-- Real ASGI tests cover both Claude and Codex without relaxing relay policy.
-
-### Release audit: telemetry credentials (2026-10-16)
-
-- Sentry scrubs query tokens and bootstrap/auth headers case-insensitively.
-  An offline SDK transport reproduced the leak and now receives no credentials.
-
-### Release audit: relay access logs (2026-10-16)
-
-- Uvicorn access records redact stream-token query values before formatting.
-  Subprocess regressions exercise the actual AccessFormatter for CLI and ASGI
-  entry points without sockets.
-
-### Release audit: daemon identity paths (2026-10-16)
-
-- Validate participant names before constructing daemon state paths or writing
-  private profiles; agent suffixes alone did not reject traversal or absolute paths.
-
-### Release audit: private credential files (2026-10-16)
-
-- Config/profile, agent cache/plist, and wake credential writes use exclusive
-  random temporary files and atomic replacement. Existing loose permissions
-  and planted destination or predictable-temp symlinks cannot leak secrets
-  or truncate unrelated files. Ten regression cases failed before the fix.
-
-### Release audit: wake log secrets (2026-10-16)
-
-- Redact stream-token query parameters at daemon log sinks, including httpx
-  URL logs and exception tracebacks; DM subscription logs name only the agent.
-- Harness errors log exit status, never raw stderr that can echo credentials.
-
-### Release audit: DM stream auth (2026-10-16)
-
-- DM streams reject the shared-secret fallback when DATABASE_URL is set,
-  matching the main SSE route; minted stream tokens remain supported.
-
-### Release audit: supervisor log isolation (2026-10-16)
-
-- Resolve the supervisor log from the active config directory at use time;
-  imported CLI code no longer writes to the real home after a config override.
-- Regression guard rejects any log open outside the isolated config directory.
+Ten fixes, each with a failing-first test. Report kept out of git; summary:
+- Secrets: redacted from relay access logs, Sentry events, daemon logs and
+  harness stderr; credential files written via private temp + atomic replace.
+- Auth: DM streams refuse the shared secret when DATABASE_URL is set;
+  `quorus agent add` joins with the owner key in account mode (was HTTP 403).
+- Paths: participant names validated before building daemon state paths;
+  supervisor log follows the active config dir (was hard-coded to the real home).
+- README now claims auto-wake only for Claude Code and Codex.
+- Open (medium): agent worktrees live at `<repo-parent>/.quorus-worktrees/`,
+  outside the bound repo; moving them needs a migration that keeps unpublished branches.
 
 ## Architecture
 
