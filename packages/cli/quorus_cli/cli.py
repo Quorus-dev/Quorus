@@ -1764,7 +1764,11 @@ def _reflexd_doctor(args) -> None:
 # ---------------------------------------------------------------------------
 
 _SUPERVISOR_PIDFILE = _REFLEXD_RUNTIME_DIR / "supervisor.pid"
-_SUPERVISOR_LOG = Path.home() / ".quorus" / "reflexd-manager.log"
+
+
+def _supervisor_log_path() -> Path:
+    """Resolve at use time so isolated configs never write to the host home."""
+    return _config_dir() / "reflexd-manager.log"
 
 
 def _resolve_manager_participants(
@@ -1873,7 +1877,7 @@ def _manager_start(args) -> None:
         raise SystemExit(5)
 
     _REFLEXD_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    _SUPERVISOR_LOG.parent.mkdir(parents=True, exist_ok=True)
+    _supervisor_log_path().parent.mkdir(parents=True, exist_ok=True)
 
     foreground = bool(getattr(args, "foreground", False))
     detach = bool(getattr(args, "detach", False))
@@ -1892,9 +1896,9 @@ def _manager_start(args) -> None:
         if getattr(args, "participants", None):
             cmd.extend(["--participants", args.participants])
         try:
-            log_fp = open(_SUPERVISOR_LOG, "ab", buffering=0)
+            log_fp = open(_supervisor_log_path(), "ab", buffering=0)
         except OSError as exc:
-            _ui.error(f"reflexd-manager: cannot open {_SUPERVISOR_LOG}: {exc}")
+            _ui.error(f"reflexd-manager: cannot open {_supervisor_log_path()}: {exc}")
             raise SystemExit(1) from exc
         try:
             proc = subprocess.Popen(
@@ -1908,7 +1912,7 @@ def _manager_start(args) -> None:
         if not _pid_is_alive(proc.pid):
             _ui.error(
                 "reflexd-manager: supervisor exited immediately. Check the log.",
-                hint=f"tail [accent]{_SUPERVISOR_LOG}[/]",
+                hint=f"tail [accent]{_supervisor_log_path()}[/]",
             )
             raise SystemExit(1)
         # Read the children's PIDs out of the persisted state file.
@@ -4436,9 +4440,9 @@ def _init_autostart_supervisor(*, ui) -> int | None:
     else:
         cmd = [sys.executable, "-m", "quorus_cli.cli", "reflexd-manager", "start"]
 
-    _SUPERVISOR_LOG.parent.mkdir(parents=True, exist_ok=True)
+    _supervisor_log_path().parent.mkdir(parents=True, exist_ok=True)
     try:
-        log_fp = open(_SUPERVISOR_LOG, "ab", buffering=0)
+        log_fp = open(_supervisor_log_path(), "ab", buffering=0)
     except OSError as exc:
         ui.warn(f"Couldn't open supervisor log: {exc}")
         return None
@@ -4480,7 +4484,7 @@ def _init_autostart_supervisor(*, ui) -> int | None:
     if proc.poll() is not None:
         ui.warn(
             "reflexd-manager exited before the pidfile appeared",
-            hint=f"tail [accent]{_SUPERVISOR_LOG}[/] for the supervisor log",
+            hint=f"tail [accent]{_supervisor_log_path()}[/] for the supervisor log",
         )
     return None
 

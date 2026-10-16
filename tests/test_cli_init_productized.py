@@ -443,3 +443,27 @@ def test_init_help_documents_new_flags(
     assert "--no-smoke" in out
     assert "--no-launchd" in out
     assert "--auto-launchd" in out
+
+
+def test_supervisor_log_uses_active_config(monkeypatch, tmp_path):
+    """An imported CLI must respect a later config-dir override."""
+    from quorus_cli import cli, ui
+
+    config = tmp_path / "isolated-config"
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(config))
+    monkeypatch.setattr(cli, "_supervisor_alive", lambda: False)
+    monkeypatch.setattr(cli, "_read_supervisor_pid", lambda: 12345)
+    monkeypatch.setattr(cli, "_pid_is_alive", lambda pid: True)
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    import builtins
+
+    real_open = builtins.open
+
+    def guarded_open(path, *args, **kwargs):
+        assert Path(path).is_relative_to(config), f"write escaped config: {path}"
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    assert cli._init_autostart_supervisor(ui=ui) == 12345
+    assert (config / "reflexd-manager.log").exists()

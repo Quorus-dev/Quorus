@@ -141,6 +141,12 @@ Next:
 
 ## Recent Changes
 
+### Release audit: supervisor log isolation (2026-10-16)
+
+- Resolve the supervisor log from the active config directory at use time;
+  imported CLI code no longer writes to the real home after a config override.
+- Regression guard rejects any log open outside the isolated config directory.
+
 ### Every human message wakes an agent, which decides (2026-10-10)
 
 - Keyword triage kept missing real asks ("respond to this", "arav-claude what time is it").
