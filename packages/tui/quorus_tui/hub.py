@@ -3902,10 +3902,19 @@ def _run_session(
             chat_identity=chat_identity,
         )
     finally:
-        stop_event.set()
-        poller.join(timeout=2)
-        sse_listener.join(timeout=2)
-        dm_listener.join(timeout=2)
+        _stop_listeners(stop_event, (poller, sse_listener, dm_listener))
+
+
+def _stop_listeners(stop_event: threading.Event, threads: tuple) -> None:
+    """Give listeners a moment to exit. A second Ctrl-C during this wait (how
+    people quit) printed a KeyboardInterrupt traceback; they're daemon
+    threads, so abandoning them is safe."""
+    stop_event.set()
+    try:
+        for t in threads:
+            t.join(timeout=0.5)
+    except KeyboardInterrupt:
+        pass
 
 
 def run_hub() -> None:

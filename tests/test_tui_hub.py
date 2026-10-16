@@ -587,3 +587,17 @@ def test_welcome_tells_a_lone_user_how_to_add_an_agent():
         unread_by_room={}, selected_room_name="", messages=[], agent_name="trial",
     )
     assert "quorus agent add" not in team
+
+
+def test_second_ctrl_c_while_quitting_is_not_a_traceback():
+    import threading
+
+    from quorus_tui import hub
+
+    class Stuck:
+        def join(self, timeout=None):
+            raise KeyboardInterrupt  # the user pressed Ctrl-C again
+
+    stop = threading.Event()
+    hub._stop_listeners(stop, (Stuck(), Stuck()))
+    assert stop.is_set()
