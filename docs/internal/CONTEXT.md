@@ -141,6 +141,19 @@ Next:
 
 ## Recent Changes
 
+### Fresh-user run + launch prep (2026-10-16)
+
+Installed the wheel as a brand-new user and followed the README. Found and fixed:
+- Daemon auto-committed `__pycache__` to the user's main; leftovers now ignored.
+- Codex could never use its Quorus tools: MCP approval auto-cancelled in
+  `codex exec`, and the user's `~/.codex/config.toml` quorus entry (human's
+  secret) overrode the agent's. Fixed and verified live.
+- Chatter: stray "/ defer" lines, agents forced to answer passing mentions,
+  15-line replies. Second Ctrl-C printed a traceback. Hub never said how to add an agent.
+- Repo: removed a hardcoded old-relay API key and stale secret configs; internal
+  notes moved here; README has a real demo GIF and the new tagline.
+- Still open: Linux daemon path untested; agent worktrees live outside the repo.
+
 ### Every agent answers the human (2026-10-16)
 
 - A human's message, or any direct @-mention, wakes every agent it reaches,
