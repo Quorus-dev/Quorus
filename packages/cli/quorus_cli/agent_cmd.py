@@ -217,7 +217,10 @@ def _add(args: Any, console: Any) -> None:
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
     cred, legacy = _credentials(cfg, name, harness)
-    _join(cfg, args.room, name, _bearer(cfg, cred, legacy))
+    # Adding members requires the room owner/admin, not the child agent
+    # (self-join is deliberately forbidden even if it inherited membership).
+    join_cred = cred if legacy else cfg["api_key"]
+    _join(cfg, args.room, name, _bearer(cfg, join_cred, legacy))
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
         mode = _bind(args.room, repo, args.mode)

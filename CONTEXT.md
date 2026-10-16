@@ -141,6 +141,12 @@ Next:
 
 ## Recent Changes
 
+### Release audit: account agent onboarding (2026-10-16)
+
+- `agent add` authorizes membership with the owner credential and still runs
+  the daemon with the child key. Child self-join previously returned HTTP 403.
+- Real ASGI tests cover both Claude and Codex without relaxing relay policy.
+
 ### Release audit: telemetry credentials (2026-10-16)
 
 - Sentry scrubs query tokens and bootstrap/auth headers case-insensitively.
@@ -209,25 +215,6 @@ owner-only approvals against a malicious local agent (needs account mode);
 kick is advisory in legacy mode; several commands still exit 0 on
 not-found; DMs to unknown names are accepted; bindings don't follow
 `rename`; no public/hosted relay exists.
-
-### Scenario gate + CI green (2026-10-09)
-
-`scripts/scenarios.py`: 20 real-user scenarios against an isolated relay
-with REAL claude/codex (setup, greetings/acks/questions/mentions, other-human
-silence, @open build+publish+review, parallel same-file tasks, two projects,
-manual-mode approve/deny + owner-only, unbound room, daemon down, restart
-mid-job, relay restart, second human, ping-pong guard, burst, CLI errors,
-agent remove). FINAL: 20/20 in one clean run on dac8433 (5 full runs total).
-Later fixes from the gate: drain acked in-flight jobs (lost on restart);
-a denied agent kept retrying (now stops after first deny/timeout); manual
-approvals wait 120s not 300 (one agent = one job across rooms). Bugs it
-found: codex `exec resume` has no `-s` (resumed wakes were read-only) and
-Codex's sandbox blocks all .git writes → daemon now commits agents' work;
-manual mode lost to owners' Claude "auto" default; humans' messages without
-@/?/@open were ignored. CI (3.10–3.13, Postgres, Redis, Windows/mac/linux
-cold install) green for the first time: py3.10 TimeoutError/asyncio.timeout
-bugs, git identity on runners, unconfigured `import quorus_mcp`, Windows
-cp1252 crash, sys.modules pollution in tests.
 
 ## Architecture
 

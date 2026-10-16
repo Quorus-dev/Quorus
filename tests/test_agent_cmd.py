@@ -81,7 +81,7 @@ def test_account_relay_mints_and_caches_an_agent_key(env: dict, monkeypatch) -> 
     for _ in range(2):
         agent_cmd.cmd_agent(_Args(tool="codex"), _Console())
     assert minted == ["codex"]  # second run reuses the cached key
-    assert env["joins"][-1] == ("build", "arav-codex", "jwt:agent-key")
+    assert env["joins"][-1] == ("build", "arav-codex", "jwt:parent-key")
     assert env["daemons"][-1] == ("arav-codex", "agent-key", False)
 
 
