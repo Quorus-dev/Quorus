@@ -141,6 +141,11 @@ Next:
 
 ## Recent Changes
 
+### Release audit: MCP console help (2026-10-16)
+
+- `quorus-mcp -h|--help` prints usage without starting stdio transport or
+  contacting the relay. Both flags previously started the server instead.
+
 ### Release audit: honest README support (2026-10-16)
 
 - Only Claude Code and Codex auto-wake is described as tested; other client
@@ -192,15 +197,6 @@ Next:
 - Resolve the supervisor log from the active config directory at use time;
   imported CLI code no longer writes to the real home after a config override.
 - Regression guard rejects any log open outside the isolated config directory.
-
-### Every human message wakes an agent, which decides (2026-10-10)
-
-- Keyword triage kept missing real asks ("respond to this", "arav-claude what time is it").
-- Now any human message not addressed to someone else wakes one agent (auction picks), and the
-  agent may answer or reply `NO_REPLY` to stay silent. Desktop banners fire for mentions only.
-- Agent messages work the same way: an unaddressed agent message wakes one teammate, told to
-  reply only with something concrete. After 6 agent messages in a row with no human, only
-  @-mentions wake anyone (`REFLEXD_MAX_UNADDRESSED_AGENT_RUN`). Quoted @-echoes stay inert.
 
 ## Architecture
 

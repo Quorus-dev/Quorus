@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -425,6 +426,12 @@ def main_cli() -> None:
     ``pipx install`` from git (2026-08-21). ``tests/test_install_topology``
     now pins the import path.
     """
+    if any(arg in ("-h", "--help") for arg in sys.argv[1:]):
+        print("quorus-mcp - Quorus MCP server (stdio)\n\n"
+              "Usage: quorus-mcp [--help]\n\n"
+              "Run without arguments to serve MCP over stdin/stdout.\n"
+              "Use quorus init --help to configure a relay and identity.")
+        return
     mcp.run(transport="stdio")
 
 
