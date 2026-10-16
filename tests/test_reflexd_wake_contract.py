@@ -960,6 +960,13 @@ def test_wake_tells_agents_to_post_with_quorus_tools() -> None:
     text = wake.wake_instructions(participant="a-codex", room="r", sender="arav",
                                   kind="mention", teammates=[], has_workspace=True)
     assert "mcp__quorus__send_room_message" in text and "sandbox" in text
+    # The example must match the real tool signature or agents' calls fail
+    # validation (fresh-user run 2026-10-16: it said room=, the tool takes room_id).
+    import inspect
+
+    import quorus_mcp.server as srv
+    params = inspect.signature(srv.send_room_message).parameters
+    assert "room_id" in params and 'send_room_message(room_id="r"' in text
 
 
 def test_commit_all_skips_generated_files(tmp_path: Path) -> None:
@@ -1037,3 +1044,35 @@ def test_daemon_reads_log_path_from_env(monkeypatch: pytest.MonkeyPatch) -> None
     assert reflexd.ReflexdConfig.from_env().log_path == Path("/tmp/q/a-claude.log")
     monkeypatch.delenv("REFLEXD_LOG_PATH")
     assert reflexd.ReflexdConfig.from_env().log_path == reflexd.DEFAULT_LOG_PATH
+
+
+def test_codex_may_use_quorus_tools_headless() -> None:
+    # codex exec cancelled every Quorus MCP call ("requires approval, but
+    # approval policy is never"), so codex couldn't post plans to the room.
+    spec = wake.quorus_mcp_spec(relay_url="http://r", api_key="k", participant="qt-codex",
+                                legacy=False)
+    flags = wake.codex_wake_flags(spec)
+    assert 'mcp_servers.quorus.default_tools_approval_mode="approve"' in flags
+    assert not any("dangerously" in f or "danger-full-access" in f for f in flags)
+
+
+def test_wake_asks_for_chat_length_replies() -> None:
+    # Fresh-user run: replies were 15-line essays with markdown headings.
+    text = wake.wake_instructions(participant="a", room="r", sender="s", kind="mention",
+                                  teammates=[], has_workspace=False)
+    assert "1-4" in text and "no headings" in text
+
+
+def test_codex_mcp_ignores_the_users_stale_quorus_secret(tmp_path: Path) -> None:
+    # ~/.codex/config.toml's [mcp_servers.quorus.env] (written by `quorus init`
+    # with the human's secret) merges key by key under our -c flags; its stale
+    # secret won, so codex's room tools got 401 or would post as the human.
+    spec = wake.quorus_mcp_spec(relay_url="http://r", api_key="sk-SECRET",
+                                participant="qt-codex", legacy=True, config_dir=tmp_path)
+    flags = wake.codex_wake_flags(spec)
+    for key in ("QUORUS_RELAY_SECRET", "QUORUS_API_KEY"):
+        assert f'mcp_servers.quorus.env.{key}=""' in flags  # blank -> agent profile
+    assert not any("sk-SECRET" in f for f in flags)
+    no_dir = wake.quorus_mcp_spec(relay_url="http://r", api_key="k", participant="qt-codex",
+                                  legacy=True)
+    assert not any(f.endswith('=""') for f in wake.codex_wake_flags(no_dir))

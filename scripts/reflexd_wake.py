@@ -165,11 +165,24 @@ def codex_wake_flags(
         "-c", f"mcp_servers.quorus.command={_toml_str(spec['command'])}",
         "-c", "mcp_servers.quorus.args="
         + "[" + ",".join(_toml_str(a) for a in spec["args"]) + "]",
+        # Headless `codex exec` cancels every MCP call that needs approval
+        # ("approval policy is never"), so agents couldn't post to the room
+        # (fresh-user run, 2026-10-16; verified fixed on codex-cli 0.160.1).
+        # Scoped to Quorus's own room tools; the sandbox is unchanged.
+        "-c", 'mcp_servers.quorus.default_tools_approval_mode="approve"',
     ]
     for key, val in spec["env"].items():
         if key in _SECRET_KEYS:
             continue  # forwarded from the process env, never put in argv
         flags += ["-c", f"mcp_servers.quorus.env.{key}={_toml_str(val)}"]
+    # ~/.codex/config.toml's [mcp_servers.quorus.env] (written by `quorus
+    # init`) holds the HUMAN's secret, and codex merges it key by key under
+    # ours: its stale value beat the forwarded one, so codex's room tools got
+    # 401 or would post as the human (verified on codex-cli 0.160.1). Blank
+    # both keys; the MCP server treats blank as unset and reads the agent's
+    # own 0600 profile from QUORUS_CONFIG_DIR. No secret ever enters argv.
+    if "QUORUS_CONFIG_DIR" in spec["env"]:  # else blank would fall back to the human
+        flags += [a for k in _SECRET_KEYS for a in ("-c", f'mcp_servers.quorus.env.{k}=""')]
     secrets = [k for k in _SECRET_KEYS if k in spec["env"]]
     if secrets:
         flags += ["-c", "mcp_servers.quorus.env_vars=["
@@ -630,7 +643,7 @@ def wake_instructions(
         "- If it is just a question, answer it in 1-3 sentences.\n"
         f"- {ws}\n"
         "- For anything longer than a few minutes, post a 1-line plan first with "
-        f"the Quorus tool mcp__quorus__send_room_message(room=\"{room}\", "
+        f"the Quorus tool mcp__quorus__send_room_message(room_id=\"{room}\", "
         "content=\"plan: ...\"). Plan lines never wake anyone. Use the Quorus "
         "tools (send_room_message, list_participants, ...) for anything about the "
         "room: a sandboxed shell often can't reach the relay, so `quorus` CLI "
@@ -641,7 +654,8 @@ def wake_instructions(
         "thanks or acknowledge.\n"
         "- Your FINAL message is posted to the room for you automatically. Do not "
         "also post it with tools. Make it the result: what changed (files, commit "
-        "hash, test status), or the answer. Keep it under 8 lines.\n"
+        "hash, test status), or the answer. Write it like a chat message: 1-4 "
+        "short lines, no headings, no bold, a list only when it saves words.\n"
         + (f"- If nothing here needs a reply from you, make your final message "
            f"exactly {NO_REPLY} and nothing is posted.\n"
            if kind == "agent_room" or from_agent else "")
