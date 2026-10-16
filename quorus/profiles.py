@@ -17,13 +17,13 @@ Writes are atomic (``O_CREAT | 0o600`` tmp file, then ``os.replace``).
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
 
 from quorus import config as _config
 from quorus.config import CONFIG_FILENAME, resolve_config_dir
+from quorus.private_files import write_private_json
 
 PROFILES_SUBDIR = "profiles"
 POINTER_FILENAME = CONFIG_FILENAME  # ~/.quorus/config.json
@@ -200,15 +200,4 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
             "Move your config to ~/.quorus/."
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2, sort_keys=True)
-    except BaseException:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-        raise
-    os.replace(tmp, path)
+    write_private_json(path, data, indent=2, sort_keys=True)

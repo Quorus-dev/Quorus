@@ -28,6 +28,7 @@ from typing import Any
 import httpx
 
 from quorus.config import load_config, resolve_config_dir
+from quorus.private_files import write_private_text
 
 HARNESSES = ("claude", "codex", "gemini")
 LABEL_PREFIX = "dev.quorus.agent."
@@ -43,9 +44,7 @@ def _agents_dir() -> Path:
 
 
 def _write_private(path: Path, text: str) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(text)
+    write_private_text(path, text)
 
 
 def _uid() -> int:

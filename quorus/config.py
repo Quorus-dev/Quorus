@@ -17,6 +17,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from quorus.private_files import write_private_json
+
 CONFIG_FILENAME = "config.json"
 
 # Kept for back-compat with tests that monkeypatch these names. Active
@@ -220,20 +222,7 @@ class ConfigManager:
                 "Move your config to ~/.quorus/."
             )
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Write via O_CREAT | 0o600 so the file is never readable by others on
-        # shared hosts, then atomically rename into place.
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(data, f, indent=2, sort_keys=True)
-        except BaseException:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            raise
-        os.replace(tmp, path)
+        write_private_json(path, data, indent=2, sort_keys=True)
 
 
 def _read_json_or_empty(path: Path) -> dict[str, Any]:

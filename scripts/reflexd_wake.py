@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from quorus.private_files import write_private_json
+
 # Codex sandbox for woken agents. Default "" = whatever the owner's
 # ~/.codex/config.toml says (headless `codex exec` is read-only by default,
 # so codex can review but not write). The owner opts in per daemon, e.g.
@@ -93,10 +95,7 @@ _SECRET_KEYS = ("QUORUS_API_KEY", "QUORUS_RELAY_SECRET")
 def write_claude_mcp_config(spec: dict[str, Any], path: Path) -> Path:
     """Write the ``--mcp-config`` file (0600). A file, not inline JSON, so the
     agent's API key never appears in ``ps`` output."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump({"mcpServers": {"quorus": spec}}, f)
+    write_private_json(path, {"mcpServers": {"quorus": spec}})
     return path
 
 
@@ -187,10 +186,7 @@ _DAEMON_ONLY = ("API_KEY", "RELAY_URL", "RELAY_SECRET", "INSTANCE_NAME",
 
 
 def _write_private_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    write_private_json(path, data, indent=2)
 
 
 def write_agent_config_dir(
