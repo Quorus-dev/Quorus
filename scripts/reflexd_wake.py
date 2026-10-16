@@ -189,6 +189,12 @@ def _write_private_json(path: Path, data: dict[str, Any]) -> None:
     write_private_json(path, data, indent=2)
 
 
+def validate_participant(participant: str) -> None:
+    """Reject path components before constructing any per-agent state path."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", participant):
+        raise ValueError("participant must be 1-64 letters, digits, hyphens or underscores")
+
+
 def write_agent_config_dir(
     root: Path, *, relay_url: str, api_key: str, participant: str, legacy: bool,
 ) -> Path:
@@ -198,6 +204,7 @@ def write_agent_config_dir(
     and the MCP server post as the agent, never as whatever profile the
     human has active.
     """
+    validate_participant(participant)
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
     profile = {"instance_name": participant, "relay_url": relay_url}

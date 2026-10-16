@@ -141,6 +141,11 @@ Next:
 
 ## Recent Changes
 
+### Release audit: daemon identity paths (2026-10-16)
+
+- Validate participant names before constructing daemon state paths or writing
+  private profiles; agent suffixes alone did not reject traversal or absolute paths.
+
 ### Release audit: private credential files (2026-10-16)
 
 - Config/profile, agent cache/plist, and wake credential writes use exclusive
@@ -235,36 +240,6 @@ leaves its rooms. `quorus` symlinked into ~/.local/bin on Arav's Mac.
 - Overnight #overnight result: 14/14 tasks shipped (mdsite static site
   generator), 20+ commits, 219 tests, example blog builds with index, tag
   pages and RSS. Zero human edits.
-
-### Overnight-run hardening (2026-10-08 night)
-
-Backlog runs on `~/dev/quorus-playground` (#night: 7 features + reviews in
-~16 min, tests 52→210, zero human input; Codex blocked → `/defer` → Claude
-integrated its commits) and `~/dev/quorus-overnight` (#overnight: 14-task
-static-site generator, running overnight). Check with
-`scripts/dogfood.sh report overnight`. Bugs found by the runs, all fixed +
-tested:
-- **Per-agent git worktrees** (`quorus/<agent>` branches). Daemon syncs a
-  clean branch onto main before each wake, rebases + fast-forwards main
-  after it, wakes the agent once to resolve a conflict or commit leftovers.
-  Agents never rebase (Codex's sandbox blocks git metadata dirs).
-- **Bid penalty inverted**: idle agents bid 0 on every @open after their
-  first job. Now penalises only a win in the last 5s.
-- **Restart dropped queued jobs** twice over (persisted at dispatch, then
-  in a `finally` on cancel). Now persisted only on normal completion;
-  proven live: restart mid-queue → both agents re-woke in 4s.
-- Loop guard per reply chain (12) + room backstop (40); `/queue|/defer @me`
-  are handoffs; dedupe keeps handoff + publish lines; status prefix
-  `(quorus)` (TUI ate `[quorus]` as Rich markup); startup sweep publishes
-  stranded branches once per repo; tests isolated from real bindings.
-- Later the same night: agents resolve + stage conflicts and the daemon
-  completes the merge (Codex can't finish merges in its sandbox — proven
-  live, codex's 5 stuck commits published); idle periodic inbox re-drain
-  (restart mid-drain hid jobs); bids floored at 0.05 (a 0 bid silently
-  dropped re-evaluated queued jobs). Open: an idle agent sometimes loses an
-  @open to a busy one (relay fairness/tie-break?) — investigate.
-
----
 
 ## Architecture
 

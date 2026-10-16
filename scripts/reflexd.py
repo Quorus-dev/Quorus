@@ -1657,6 +1657,7 @@ class Reflexd:
             )
             sys.stderr.flush()
             raise SystemExit(2)
+        reflexd_wake.validate_participant(config.participant_name)
         self.config = config
         self.adapter = adapter or HeadlessAdapter()
         if getattr(self.adapter, "wake_spec", None) is None and hasattr(
