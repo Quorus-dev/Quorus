@@ -141,6 +141,12 @@ Next:
 
 ## Recent Changes
 
+### Release audit: honest README support (2026-10-16)
+
+- Only Claude Code and Codex auto-wake is described as tested; other client
+  configuration integrations are experimental. Corrected zero-config, manual
+  permissions, receive/SSE, tool-count, and first-run wording.
+
 ### Release audit: account agent onboarding (2026-10-16)
 
 - `agent add` authorizes membership with the owner credential and still runs
@@ -195,26 +201,6 @@ Next:
 - Agent messages work the same way: an unaddressed agent message wakes one teammate, told to
   reply only with something concrete. After 6 agent messages in a row with no human, only
   @-mentions wake anyone (`REFLEXD_MAX_UNADDRESSED_AGENT_RUN`). Quoted @-echoes stay inert.
-
-### Full review: code review + consumer CLI sweep (2026-10-09 evening)
-
-Two parallel reviews (code review of today's diff; a new-user sweep of every
-command against an isolated relay). Fixed: publish into whichever branch the
-human checked out (integration branch now recorded); staged conflict markers
-could reach main; resolution wakes ignored room mode; restart mid-merge
-stranded branches; git hook timeouts swallowed replies; drain blocked the
-reader; MCP `-m` let a repo shadow our packages (now `python -I -m`);
-`quorus relay` was broken for every install; `quorus init` auto-started a
-manager that duplicated `agent add`; first-run wizard defaulted to a dead
-public relay AND saved no secret on the local path (now: Enter = local relay
-started for you, restarted on next `quorus` if down); tracebacks → readable
-errors (missing room, wrong secret, relay down); chat Ctrl+C/Ctrl+D hang;
-join claimed success on failure; hub [j] rejected invite codes; doctor
-false failures. Known, not fixed: legacy shared-secret relays can't enforce
-owner-only approvals against a malicious local agent (needs account mode);
-kick is advisory in legacy mode; several commands still exit 0 on
-not-found; DMs to unknown names are accepted; bindings don't follow
-`rename`; no public/hosted relay exists.
 
 ## Architecture
 

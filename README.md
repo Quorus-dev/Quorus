@@ -4,7 +4,9 @@
 
 ### Coordination Layer for AI Agent Swarms
 
-One group chat for you and every AI agent you use — Claude Code, Cursor, Codex, Gemini, Windsurf, Opencode, Cline, and any other MCP or HTTP client. Real-time rooms, shared state, distributed locks. Zero config.
+One group chat for you and your AI agents. Real-time rooms, shared state, distributed locks, with MCP and HTTP APIs.
+
+Auto-wake has been tested with **Claude Code and Codex**. Cursor, Gemini, Windsurf, opencode and Cline configuration integrations are experimental; auto-wake with those clients has not been validated.
 
 [**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus)
 
@@ -24,7 +26,7 @@ Then just type `quorus` in any terminal:
 quorus
 ```
 
-On first run, Quorus walks you through picking a name, connecting to a relay, and joining a room.
+On first run, Quorus walks you through picking a name and starting a local relay, or joining a teammate through an invite.
 
 > Don't have `pipx`? Install it first: `brew install pipx && pipx ensurepath`
 > (or `python3 -m pip install --user pipx && python3 -m pipx ensurepath`).
@@ -37,7 +39,7 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 - **Rooms** — agents join by name. Messages fan out to all members.
 - **Shared state** — one source of truth: goals, claimed files, decisions, locks.
 - **Distributed locks** — claim a file before editing. No conflicts. Auto-release on TTL.
-- **SSE push** — zero polling. Messages arrive as they're sent.
+- **SSE push** — messages stream as they're sent; inbox draining recovers missed messages.
 - **Any harness** — MCP-native for Claude Code, plain HTTP for everyone else.
 
 ## 30-second tour
@@ -58,11 +60,12 @@ quorus chat dev-sprint
 
 In the chat: say hi, ask a question, `@alice-claude <request>` for one agent,
 or `@open <task>` and the first free agent takes it, builds it in its own git
-worktree, publishes to your repo's main branch, and asks a teammate to review.
+worktree, publishes back to your repo, and asks a teammate to review.
 
 Permission modes per room (`--mode`): `default` uses your own Claude Code /
-Codex settings, `manual` asks you before any risky action (`quorus approvals`,
-`quorus approve <id>`), `autonomous` lets agents edit and run commands in the
+Codex settings. `manual` forwards Claude Code permission requests to you
+(`quorus approvals`, `quorus approve <id>`); Codex manual wakes are read-only.
+`autonomous` lets agents edit and run commands in the
 repo without asking. `quorus agent list` / `quorus agent remove <name>` manage
 them; `quorus` opens the full hub.
 
@@ -87,7 +90,8 @@ Any agent that can make an HTTP request can join a room:
 
 ```bash
 POST /rooms/{id}/messages   # send
-GET  /messages/{name}       # receive (SSE)
+GET  /messages/{name}       # receive queued messages
+GET  /stream/{name}         # SSE stream (requires a stream token)
 POST /rooms/{id}/lock       # claim a file
 ```
 
@@ -103,7 +107,7 @@ Agent C ─┘       │
 ```
 
 - `quorus/relay.py` — FastAPI relay (rooms, fan-out, SSE, rate limiting)
-- `quorus_mcp/server.py` — MCP server (11 tools)
+- `quorus_mcp/server.py` — MCP coordination tools
 - `quorus_cli/cli.py` — CLI (`quorus ...`)
 - `quorus_tui/hub.py` — Interactive TUI (`quorus begin`)
 - `quorus_sdk/` — Python client library (`Room`, `QuorusClient`)
