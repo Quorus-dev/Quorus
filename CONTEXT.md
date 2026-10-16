@@ -141,6 +141,11 @@ Next:
 
 ## Recent Changes
 
+### Release audit: telemetry credentials (2026-10-16)
+
+- Sentry scrubs query tokens and bootstrap/auth headers case-insensitively.
+  An offline SDK transport reproduced the leak and now receives no credentials.
+
 ### Release audit: relay access logs (2026-10-16)
 
 - Uvicorn access records redact stream-token query values before formatting.
@@ -223,16 +228,6 @@ manual mode lost to owners' Claude "auto" default; humans' messages without
 cold install) green for the first time: py3.10 TimeoutError/asyncio.timeout
 bugs, git identity on runners, unconfigured `import quorus_mcp`, Windows
 cp1252 crash, sys.modules pollution in tests.
-
-### `quorus agent add` — real-user onboarding (2026-10-09)
-
-Re-enacting a new user showed only scripts/dogfood.sh could give an agent a
-wake daemon; `quorus add-agent` built a legacy polling workspace. Now:
-`quorus create <room>` → `quorus agent add claude|codex|gemini --room <room>
-[--repo PATH --mode default|manual|autonomous]` → `quorus say <room> ...`.
-One launchd daemon per agent (reuses an existing one, incl. dogfood's);
-account relays mint + cache a per-agent key; `agent remove` stops it and
-leaves its rooms. `quorus` symlinked into ~/.local/bin on Arav's Mac.
 
 ## Architecture
 

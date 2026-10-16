@@ -14,6 +14,8 @@ import logging
 import os
 from typing import Any
 
+from quorus.observability.redaction import redact_query_tokens
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,10 +32,14 @@ def _scrub_event(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] 
     if isinstance(request, dict):
         request.pop("data", None)
         request.pop("cookies", None)
+        request.pop("query_string", None)
+        if isinstance(request.get("url"), str):
+            request["url"] = redact_query_tokens(request["url"])
         headers = request.get("headers")
         if isinstance(headers, dict):
-            for h in ("authorization", "Authorization", "cookie", "Cookie"):
-                headers.pop(h, None)
+            for h in list(headers):
+                if h.lower() in {"authorization", "cookie", "bootstrap-secret"}:
+                    headers.pop(h, None)
 
     breadcrumbs = event.get("breadcrumbs")
     if isinstance(breadcrumbs, dict):
