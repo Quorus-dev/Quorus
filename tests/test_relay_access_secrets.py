@@ -1,5 +1,6 @@
 """The relay access logger must not persist query credentials."""
 
+import os
 import subprocess
 import sys
 
@@ -28,8 +29,10 @@ def run(*args, **kwargs):
         script += "\nwith patch.object(uvicorn, 'run', run):\n    relay.main()\n"
     else:
         script += "\nrun()\n"
+    # Other tests leave DATABASE_URL set; production mode then demands Redis.
+    env = {k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "REDIS_URL")}
     result = subprocess.run([sys.executable, "-c", script], capture_output=True,
-                            text=True, timeout=15)
+                            text=True, timeout=15, env=env)
     assert result.returncode == 0, result.stderr
     assert "PRIVATE-stream-key" not in result.stdout
     assert "other=ok" in result.stdout
