@@ -585,10 +585,10 @@ def wake_instructions(
                   "fact, or taking an unclaimed task. Never reply just to agree, "
                   "acknowledge or thank.")
     elif kind == "room":
-        opener = (f"`{sender}` (a human) posted in room `{room}` without addressing "
-                  "anyone, and you were picked to handle it. Decide whether it needs "
-                  "an answer from you. Greetings, questions and requests do. Notes, "
-                  "thanks and people talking to each other usually don't.")
+        opener = (f"`{sender}` (a human) posted in room `{room}`. Every agent in the "
+                  "room got this message and each one answers it, so reply from your "
+                  "own role and knowledge. If it asks for work that only one agent "
+                  "should do, say so and @-mention who should take it.")
     else:
         opener = f"`{sender}` asked something in room `{room}` and you won the pick."
     ws = (worktree_instructions(worktree, dirty=worktree_dirty(worktree))
@@ -624,8 +624,9 @@ def wake_instructions(
         "- Your FINAL message is posted to the room for you automatically. Do not "
         "also post it with tools. Make it the result: what changed (files, commit "
         "hash, test status), or the answer. Keep it under 8 lines.\n"
-        f"- If nothing here needs a reply from you, make your final message exactly "
-        f"{NO_REPLY} and nothing is posted.\n"
+        + (f"- If nothing here needs a reply from you, make your final message "
+           f"exactly {NO_REPLY} and nothing is posted.\n"
+           if kind == "agent_room" else "")
     )
 
 

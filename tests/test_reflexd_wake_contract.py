@@ -701,12 +701,68 @@ def test_human_talking_to_the_room_gets_an_answer(msg: str, action: str) -> None
     assert res.action == action, res.reason
 
 
-def test_room_wake_lets_the_agent_stay_silent() -> None:
+def test_human_room_wake_tells_every_agent_to_answer() -> None:
+    # The owner wants every agent to answer them (2026-10-16): no opt-out.
     text = wake.wake_instructions(participant="a-claude", room="r", sender="arav",
                                   kind="room", teammates=[], has_workspace=False)
-    assert "NO_REPLY" in text and "Decide whether" in text
+    assert "NO_REPLY" not in text and "each one answers" in text
     assert wake.is_no_reply("NO_REPLY") and wake.is_no_reply("Just a note.\n`NO_REPLY`")
     assert not wake.is_no_reply("It's 10pm.") and not wake.is_no_reply("")
+
+
+def _route(tmp_path: Path, name: str, env: dict[str, Any]) -> tuple[list, list]:
+    """Run one daemon's routing against a relay whose auction ``other`` wins."""
+    d = _daemon(tmp_path / name, name)
+    (tmp_path / name).mkdir(exist_ok=True)
+    bids: list[float] = []
+    woke: list[str] = []
+
+    class Relay:
+        async def submit_bid(self, **kw: Any) -> None:
+            bids.append(kw["bid"])
+
+        async def claim(self, **kw: Any) -> dict[str, Any]:
+            return {"claimed": True, "winner": "other"}
+
+        async def post_social_defer(self, **kw: Any) -> None:
+            return None
+
+        async def fetch_recent(self, **kw: Any) -> list:
+            return []
+
+    async def fake_wake(relay: Any, envelope: Any, *, triage: Any = None) -> None:
+        woke.append(name)
+
+    d._wake_and_reply = fake_wake  # type: ignore[method-assign]
+    asyncio.run(d.handle_room_message(Relay(), env))
+    return bids, woke
+
+
+@pytest.mark.parametrize("content", ["hello guys", "what time is it?",
+                                     "both of you write me an essay"])
+def test_human_message_wakes_every_agent_without_an_auction(
+    tmp_path: Path, content: str,
+) -> None:
+    # Live 2026-10-11: "both of you write an essay" woke only the auction
+    # winner, so codex never saw it.
+    env = {"from_name": "arav", "room": "r", "message_id": "m1",
+           "content": content, "message_type": "chat"}
+    for name in ("x-claude", "x-codex"):
+        bids, woke = _route(tmp_path, name, env)
+        assert woke == [name] and bids == []
+
+
+def test_mention_wakes_each_named_agent_and_agent_chatter_still_bids(
+    tmp_path: Path,
+) -> None:
+    both = {"from_name": "arav", "room": "r", "message_id": "m2",
+            "content": "@x-claude @x-codex review this", "message_type": "chat"}
+    for name in ("x-claude", "x-codex"):
+        assert _route(tmp_path, name, both)[1] == [name]
+    chatter = {"from_name": "x-codex", "room": "r", "message_id": "m3",
+               "content": "pushed the fix", "message_type": "chat"}
+    bids, woke = _route(tmp_path, "x-claude", chatter)
+    assert bids and woke == []  # one agent is picked for agent chatter
 
 
 def test_agent_chatter_wakes_one_agent_to_decide() -> None:
@@ -849,14 +905,19 @@ def test_mcp_server_launch_ignores_the_repo_cwd() -> None:
     assert spec["args"] == ["-I", "-m", "quorus_mcp.server"]  # isolated: no cwd on path
 
 
-@pytest.mark.parametrize("content,expect_bid", [
+@pytest.mark.parametrize("content,expect_wake", [
     ("looks good to me, nice work", False),       # unaddressed: capped after a run
     ("@qt-claude please review abc123", True),    # a mention still gets through
 ])
 def test_unaddressed_agent_chatter_is_capped(tmp_path: Path, content: str,
-                                             expect_bid: bool) -> None:
+                                             expect_wake: bool) -> None:
     d = _daemon(tmp_path)
-    bids: list[float] = []
+    bids: list[float] = []  # agent chatter bids; a mention wakes directly
+
+    async def fake_wake(relay: Any, envelope: Any, *, triage: Any = None) -> None:
+        bids.append(1.0)
+
+    d._wake_and_reply = fake_wake  # type: ignore[method-assign]
     run = wake.MAX_UNADDRESSED_AGENT_RUN
     hist = [{"from_name": "arav", "content": "go"}] + [
         {"id": f"a{i}", "from_name": "qt-codex" if i % 2 else "qt-claude", "content": "x"}
@@ -878,7 +939,7 @@ def test_unaddressed_agent_chatter_is_capped(tmp_path: Path, content: str,
     env = {"from_name": "qt-codex", "room": "r", "message_id": "m9",
            "content": content, "message_type": "chat"}
     asyncio.run(d.handle_room_message(Relay(), env))
-    assert bool(bids) is expect_bid
+    assert bool(bids) is expect_wake
 
 
 def test_mention_inside_a_verb_led_message_wakes_the_agent() -> None:

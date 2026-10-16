@@ -1832,6 +1832,15 @@ class Reflexd:
                 )
             return False
 
+        # A human's message, or a direct mention, wakes every agent it reaches:
+        # the owner wants all agents to answer them (2026-10-16), and a mention
+        # must never lose an auction. Only open tasks and agent chatter bid.
+        if triage.kind == "mention" or (
+                triage.kind == "question" and not is_agent_participant(sender)):
+            async with self._wake_lock:
+                await self._wake_and_reply(relay, envelope, triage=triage)
+            return True
+
         # Capability-aware bid scoring. Score 0.0 ⇒ this agent isn't a fit;
         # skip the bid POST entirely so we don't poison the auction with
         # zero-bids that look like real participants.
@@ -2250,9 +2259,10 @@ class Reflexd:
         # its teammates for handoffs, and keep the final reply short.
         preamble = ""
         kind = triage.kind if triage is not None else "mention"
-        if triage is not None and triage.reason in ("human to room", "agent to room"):
-            # Unaddressed: the agent decides whether to answer (or NO_REPLY).
-            kind = "room" if triage.reason == "human to room" else "agent_room"
+        if triage is not None and triage.reason == "agent to room":
+            kind = "agent_room"  # the agent decides whether to answer (or NO_REPLY)
+        elif kind == "question" and not is_agent_participant(wake_sender):
+            kind = "room"  # every agent got it and each one answers
         if kind in ("open_todo", "role_request"):
             preamble = self_assign_preamble(description=triage.description) + "\n"
             kind = "open_todo"

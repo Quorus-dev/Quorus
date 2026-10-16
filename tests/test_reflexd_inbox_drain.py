@@ -166,11 +166,11 @@ def test_bid_keys_on_canonical_message_id(monkeypatch: pytest.MonkeyPatch) -> No
         "message_id": "canonical-room-msg-id",
         "room": "dev",
         "from_name": "arav",
-        "content": f"@{SELF} please fix the tests",
+        "content": "@open please fix the tests",
         "message_type": "chat",
     }
     asyncio.run(daemon.handle_room_message(BidRelay(), envelope))
-    assert bids, "an @-mention must produce a bid"
+    assert bids, "an @open task must produce a bid"
     assert bids[0]["message_id"] == "canonical-room-msg-id"
 
 
@@ -195,7 +195,7 @@ def test_bid_falls_back_to_id_for_legacy_envelopes(
         "id": "legacy-only-id",
         "room": "dev",
         "from_name": "arav",
-        "content": f"@{SELF} legacy envelope",
+        "content": "@open legacy envelope",
         "message_type": "chat",
     }
     asyncio.run(daemon.handle_room_message(BidRelay(), envelope))

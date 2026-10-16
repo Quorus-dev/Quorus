@@ -472,10 +472,13 @@ def _sse_message_event(envelope: dict[str, Any]) -> bytes:
     ).encode()
 
 
-def test_smoke_e2e_at_mention_triggers_bid_and_post(
+def test_smoke_e2e_at_mention_wakes_and_posts_without_bid(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """End-to-end: mocked SSE delivers @-mention → daemon bids, claims, posts."""
+    """End-to-end: mocked SSE delivers @-mention → daemon wakes and posts.
+
+    A mention never enters the auction: every mentioned agent must answer.
+    """
     envelope = {
         "id": "msg-1",
         "from_name": "arav",
@@ -527,15 +530,7 @@ def test_smoke_e2e_at_mention_triggers_bid_and_post(
     asyncio.run(go())
 
     # Assertions on the mocked lane:
-    assert len(fake.bid_calls) == 1, f"expected exactly one /v1/bid POST, got {fake.bid_calls}"
-    bid = fake.bid_calls[0]
-    assert bid["participant"] == SELF
-    assert bid["bid"] == pytest.approx(1.0)
-    assert bid["room_id"] == "quorus-may4-sprint"
-
-    assert len(fake.claim_calls) >= 1
-    assert fake.claim_calls[0]["message_id"] == "msg-1"
-
+    assert fake.bid_calls == [] and fake.claim_calls == []
     assert len(fake.posts) == 1, f"expected exactly one reply post, got {fake.posts}"
     post = fake.posts[0]
     assert post["from_name"] == SELF
