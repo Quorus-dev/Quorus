@@ -1210,8 +1210,9 @@ class HeadlessAdapter:
             return "[reflexd] harness timed out"
         if proc.returncode != 0:
             raw = (stderr or b"").decode("utf-8", errors="replace")
-            err = raw[:200]
-            logger.warning("harness %s exited %s: %s", argv[0], proc.returncode, err)
+            # Harness stderr can echo credentials or tool inputs. Diagnose
+            # it locally, but only persist the binary and exit status.
+            logger.warning("harness %s exited %s", argv[0], proc.returncode)
             diagnosis = diagnose_harness_failure(argv[0], raw)
             if diagnosis:
                 # Actionable > generic: the room learns WHY nobody answered.
@@ -2752,7 +2753,7 @@ def configure_logging(log_path: Path, *, debug: bool = False) -> None:
         log_path, maxBytes=LOG_MAX_BYTES,
         backupCount=LOG_BACKUP_COUNT, encoding="utf-8",
     )
-    handler.setFormatter(logging.Formatter(
+    handler.setFormatter(reflexd_streamb.StreamLogFormatter(
         fmt="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S%z",
     ))

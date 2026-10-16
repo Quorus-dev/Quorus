@@ -15,7 +15,21 @@ they are too small to need a daemon-level integration test.
 """
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any
+
+
+class StreamLogFormatter(logging.Formatter):
+    """Redact stream credentials after formatting, including exception traces.
+
+    httpx logs request URLs too, so redacting only our own log calls leaves
+    tokens exposed in the same daemon log.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return re.sub(r"([?&]token=)[^&\s\"'<>]+", r"\1[REDACTED]", super().format(record))
+
 
 # Cap how many past memory entries we drop into the wake prompt. The
 # memory module also caps to 5KB on disk; this is a second guard so the
@@ -147,7 +161,7 @@ async def run_dm_loop(
 
         url = relay.dm_stream_url(participant, token)
         try:
-            log.info("dm stream subscribing url=%s", url)
+            log.info("dm stream subscribing participant=%s", participant)
             async for event_name, data in iter_sse_events(
                 relay.client, url,
             ):

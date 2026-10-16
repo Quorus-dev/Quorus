@@ -141,6 +141,12 @@ Next:
 
 ## Recent Changes
 
+### Release audit: wake log secrets (2026-10-16)
+
+- Redact stream-token query parameters at daemon log sinks, including httpx
+  URL logs and exception tracebacks; DM subscription logs name only the agent.
+- Harness errors log exit status, never raw stderr that can echo credentials.
+
 ### Release audit: DM stream auth (2026-10-16)
 
 - DM streams reject the shared-secret fallback when DATABASE_URL is set,
