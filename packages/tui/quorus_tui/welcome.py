@@ -221,9 +221,25 @@ def render_welcome(
         ):
             console.print(row)
 
+    # A fresh install lands here alone in #general with no way to know the
+    # next step is adding an agent (fresh-user run, 2026-10-16).
+    if all(_member_count(r) <= 1 for r in rooms):
+        console.print()
+        first = _room_key(sorted_rooms[0])
+        console.print(Text(f"{INDENT}Next: put an agent in #{first}", style="muted"))
+        console.print(Text(f"{INDENT}  quorus agent add claude --room {first} "
+                           "--repo <your-project>", style="accent"))
+
     # ── 5. Footer ────────────────────────────────────────────────────────────
     console.print()
     console.print(_footer_hint_line())
+
+
+def _member_count(room: dict) -> int:
+    members = room.get("members") or []
+    if isinstance(members, list) and members:
+        return len(members)
+    return int(room.get("member_count") or 0)
 
 
 def _room_key(room: dict) -> str:
@@ -260,11 +276,7 @@ def _chat_rows(
     rows: list[Text] = []
     for room in rooms:
         name = room.get("name") or room.get("id", "?")
-        members = room.get("members") or []
-        if isinstance(members, list) and members:
-            member_count = len(members)
-        else:
-            member_count = int(room.get("member_count") or 0)
+        member_count = _member_count(room)
         unread = unread_by_room.get(name, 0)
         preview = _last_preview_for_room(
             name, selected_room_name, messages, preview_width,

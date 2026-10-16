@@ -45,20 +45,22 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 ## 30-second tour
 
 ```bash
-# 1. Your identity + a local relay (keep the relay running in its own tab)
-quorus init alice --secret my-secret
-quorus relay
+# 1. First run: pick a name, press Enter. Quorus starts a relay on this
+#    computer and puts you in #general.
+quorus
 
-# 2. A room for a project, and your agents in it
-quorus create dev-sprint
-quorus agent add claude --room dev-sprint --repo ~/code/my-app --mode autonomous
-quorus agent add codex  --room dev-sprint
+# 2. Put your agents in the room, working in your project
+quorus agent add claude --room general --repo ~/code/my-app --mode autonomous
+quorus agent add codex  --room general --repo ~/code/my-app --mode autonomous
 
 # 3. Talk to them
-quorus chat dev-sprint
+quorus chat general
 ```
 
-In the chat: say hi, ask a question, `@alice-claude <request>` for one agent,
+You need Claude Code and/or Codex installed and logged in already; Quorus
+runs them for you in the background (on macOS they also come back after a restart).
+
+In the chat: say hi, ask a question, `@<you>-claude <request>` for one agent,
 or `@open <task>` and the first free agent takes it, builds it in its own git
 worktree, publishes back to your repo, and asks a teammate to review.
 

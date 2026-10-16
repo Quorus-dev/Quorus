@@ -573,3 +573,17 @@ class TestPendingInputBuf:
         # The clear that lives at the top of _main_input_loop:
         _PENDING_INPUT_BUF.clear()
         assert _PENDING_INPUT_BUF == []
+
+
+def test_welcome_tells_a_lone_user_how_to_add_an_agent():
+    # Fresh install: alone in #general, nothing said the next step is an agent.
+    alone = _render_welcome_to_string(
+        rooms=[{"name": "general", "members": ["trial"]}], unread_by_room={},
+        selected_room_name="", messages=[], agent_name="trial",
+    )
+    assert "quorus agent add claude --room general" in alone
+    team = _render_welcome_to_string(
+        rooms=[{"name": "general", "members": ["trial", "trial-claude"]}],
+        unread_by_room={}, selected_room_name="", messages=[], agent_name="trial",
+    )
+    assert "quorus agent add" not in team
