@@ -6,9 +6,8 @@ __pycache__
 .gitignore
 tests/
 CLAUDE.md
-CONTEXT.md
+docs/internal/
 CONTRIBUTING.md
-agent-prompt-template.md
 .claude/
 .mcp.json
 messages.json

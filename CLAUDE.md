@@ -2,9 +2,9 @@
 
 ## Shared Context Protocol
 
-**Read `CONTEXT.md` at the start of every session.** It contains the current project state, what's in progress, recent changes, architectural decisions, and next priorities. It is the shared memory between all contributors' Claude instances.
+**Read `docs/internal/CONTEXT.md` at the start of every session.** It contains the current project state, what's in progress, recent changes, architectural decisions, and next priorities. It is the shared memory between all contributors' Claude instances.
 
-**Update `CONTEXT.md` after every significant change:**
+**Update `docs/internal/CONTEXT.md` after every significant change:**
 
 - Add your changes to "Recent Changes" (keep last 10, drop oldest)
 - Update "In Progress" when starting/finishing work

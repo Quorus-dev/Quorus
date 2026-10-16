@@ -4,7 +4,7 @@
 Starts the relay server, creates a room, joins 3 agents, sends messages
 with mixed types, and verifies fan-out, SSE delivery, and docker build.
 
-Run:  python test_e2e_live.py
+Run:  python scripts/e2e_live.py
 """
 
 import asyncio
@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import httpx
 
@@ -342,6 +343,7 @@ def test_docker_build() -> None:
     """Verify Docker image builds successfully."""
     result = subprocess.run(
         ["docker", "build", "-t", "murmur-e2e-test", "."],
+        cwd=Path(__file__).resolve().parent.parent,
         capture_output=True,
         text=True,
         timeout=120,

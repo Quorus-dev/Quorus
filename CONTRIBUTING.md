@@ -24,7 +24,7 @@ pytest -v
 ## Running the E2E Test
 
 ```bash
-python test_e2e_live.py
+python scripts/e2e_live.py
 ```
 
 ## Code Standards
@@ -51,7 +51,7 @@ python test_e2e_live.py
 
 ## Architecture
 
-See `CONTEXT.md` for current architecture and design decisions.
+See `docs/internal/CONTEXT.md` for current architecture and design decisions.
 
 ## License
 
