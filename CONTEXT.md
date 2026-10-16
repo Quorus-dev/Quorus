@@ -3,7 +3,7 @@
 > **This file is the shared memory between all contributors' Claude instances.**
 > Read this at session start. Update it after every significant change. Commit it with your work.
 
-Last updated: 2026-10-08 (wake loop + live channel push proven with REAL claude + codex; merged to main)
+Last updated: 2026-10-16 (release audit; see Recent Changes)
 
 ---
 
@@ -141,6 +141,12 @@ Next:
 
 ## Recent Changes
 
+### Release audit: relay access logs (2026-10-16)
+
+- Uvicorn access records redact stream-token query values before formatting.
+  Subprocess regressions exercise the actual AccessFormatter for CLI and ASGI
+  entry points without sockets.
+
 ### Release audit: daemon identity paths (2026-10-16)
 
 - Validate participant names before constructing daemon state paths or writing
@@ -227,19 +233,6 @@ wake daemon; `quorus add-agent` built a legacy polling workspace. Now:
 One launchd daemon per agent (reuses an existing one, incl. dogfood's);
 account relays mint + cache a per-agent key; `agent remove` stops it and
 leaves its rooms. `quorus` symlinked into ~/.local/bin on Arav's Mac.
-
-### Permission modes + owner approvals; overnight result (2026-10-09)
-
-- `quorus room bind <room> <repo> --mode default|manual|autonomous`
-  (claude manual = approvals routed to owner via mcp__quorus__approve;
-  autonomous = acceptEdits + Bash/Edit/Write allowed; codex manual =
-  read-only, autonomous = workspace-write). Proven live in autonomous.
-- Approvals in shared rooms: only the agent's owner (`<owner>-<harness>`)
-  decides when that owner is a member; ownerless agents fall back to any
-  human member. One person can run many rooms/projects/teams.
-- Overnight #overnight result: 14/14 tasks shipped (mdsite static site
-  generator), 20+ commits, 219 tests, example blog builds with index, tag
-  pages and RSS. Zero human edits.
 
 ## Architecture
 

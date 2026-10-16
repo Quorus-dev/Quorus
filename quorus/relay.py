@@ -17,6 +17,8 @@ from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from quorus.observability.redaction import protect_access_log
+
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
 structlog.configure(
@@ -36,6 +38,8 @@ structlog.configure(
     cache_logger_on_first_use=True,
 )
 
+# Cover both the console entry point and `uvicorn quorus.relay:app`.
+protect_access_log()
 logger = structlog.get_logger("quorus.relay")
 
 RELAY_SECRET = os.environ.get("RELAY_SECRET", "")
