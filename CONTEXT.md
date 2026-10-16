@@ -141,6 +141,11 @@ Next:
 
 ## Recent Changes
 
+### Release audit: DM stream auth (2026-10-16)
+
+- DM streams reject the shared-secret fallback when DATABASE_URL is set,
+  matching the main SSE route; minted stream tokens remain supported.
+
 ### Release audit: supervisor log isolation (2026-10-16)
 
 - Resolve the supervisor log from the active config directory at use time;

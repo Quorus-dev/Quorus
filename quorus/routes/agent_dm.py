@@ -505,6 +505,7 @@ async def stream_agent_dms(
         legacy_secret = _os.environ.get("RELAY_SECRET", "")
         if not (
             ALLOW_LEGACY_AUTH
+            and not _os.environ.get("DATABASE_URL", "")
             and legacy_secret
             and _hmac.compare_digest(token, legacy_secret)
         ):

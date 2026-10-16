@@ -475,3 +475,20 @@ def test_agent_dm_queue_migrates_legacy_list_to_set():
     migrated = _get_dm_queues(fake_request)
     assert isinstance(migrated[("t", "p")], set)
     assert sentinel_q in migrated[("t", "p")]
+
+
+async def test_dm_stream_rejects_legacy_secret_in_production(monkeypatch):
+    """Match the main SSE route's production lockdown without opening a socket."""
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from quorus.auth import middleware
+    from quorus.routes.agent_dm import stream_agent_dms
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://not-connected")
+    monkeypatch.setenv("RELAY_SECRET", "test-secret")
+    monkeypatch.setattr(middleware, "ALLOW_LEGACY_AUTH", True)
+    request = Request({"type": "http", "app": app, "headers": []})
+    with pytest.raises(HTTPException) as caught:
+        await stream_agent_dms("bob", request, token="test-secret")
+    assert caught.value.status_code == 401
