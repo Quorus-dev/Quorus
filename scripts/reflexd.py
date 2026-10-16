@@ -1625,11 +1625,13 @@ class ReflexdConfig:
             raise SystemExit(
                 "reflexd: no API key. Set REFLEXD_API_KEY or run `quorus init`."
             )
+        log_path = os.environ.get("REFLEXD_LOG_PATH")  # per-agent log from `agent add`
         return cls(
             relay_url=relay_url.rstrip("/"),
             api_key=api_key,
             participant_name=participant,
             legacy_bearer=legacy_bearer,
+            **({"log_path": Path(log_path)} if log_path else {}),
         )
 
 
@@ -1931,8 +1933,11 @@ class Reflexd:
                 room, message_id, winner,
             )
             # Stream B defer-announce: post `defer(to=<winner>)` so the
-            # room state machine records the dependency edge. Best-effort.
-            if winner and winner != self.config.participant_name:
+            # room state machine records who took an open task. Best-effort.
+            # Only for open tasks: on agent chatter it was a stray "/ defer"
+            # line after every message (fresh-user run, 2026-10-16).
+            if (winner and winner != self.config.participant_name
+                    and triage.kind == "open_todo"):
                 try:
                     await relay.post_social_defer(
                         room_id=room,
@@ -2272,6 +2277,7 @@ class Reflexd:
             participant=self.config.participant_name, room=wake_room,
             sender=wake_sender, kind=kind, teammates=list(teammates or []),
             has_workspace=has_workspace, worktree=worktree,
+            from_agent=is_agent_participant(wake_sender),
             manual=mode_for(wake_room) == "manual",
         )
 

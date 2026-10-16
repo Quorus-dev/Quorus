@@ -381,9 +381,19 @@ def agent_worktree(repo: Path, participant: str) -> Worktree | None:
     return Worktree(path, repo, branch, main)
 
 
+# Never auto-commit test/build leftovers, even in a repo with no .gitignore
+# (a chat-only wake once committed __pycache__ to a user's main).
+_GENERATED = tuple(f":(exclude,glob){g}" for g in (
+    "**/__pycache__/**", "**/*.py[co]", "**/.pytest_cache/**", "**/.mypy_cache/**",
+    "**/.ruff_cache/**", "**/node_modules/**", "**/.DS_Store", "**/.coverage",
+    "**/*.egg-info/**", "**/.venv/**", "**/.tox/**",
+))
+
+
 def worktree_dirty(wt: Worktree) -> bool:
     return bool(_git("status", "--porcelain", "--untracked-files=no", cwd=wt.path).stdout.strip()
-                or _git("ls-files", "--others", "--exclude-standard", cwd=wt.path).stdout.strip())
+                or _git("ls-files", "--others", "--exclude-standard", "--", ".", *_GENERATED,
+                        cwd=wt.path).stdout.strip())
 
 
 def sync_worktree(wt: Worktree) -> None:
@@ -498,8 +508,10 @@ def commit_all(wt: Worktree, participant: str, message: str) -> bool:
     sandboxed: it commits for the agent. Honors .gitignore."""
     if not worktree_dirty(wt) or merge_in_progress(wt):
         return False
-    if _git("add", "-A", cwd=wt.path).returncode != 0:
+    if _git("add", "-A", "--", ".", *_GENERATED, cwd=wt.path).returncode != 0:
         return False
+    if _git("diff", "--cached", "--quiet", cwd=wt.path).returncode == 0:
+        return False  # only build/test leftovers changed
     if _staged_conflict_markers(wt):
         _git("reset", "-q", cwd=wt.path)
         return False
@@ -572,13 +584,16 @@ def existing_worktree(repo: Path, participant: str) -> Worktree | None:
 def wake_instructions(
     *, participant: str, room: str, sender: str, kind: str,
     teammates: list[str], has_workspace: bool, worktree: Worktree | None = None,
-    manual: bool = False,
+    manual: bool = False, from_agent: bool = False,
 ) -> str:
     """The Wake Intent block — tells the agent it may (and should) do work."""
     others = ", ".join(f"@{t}" for t in teammates if t != participant) or "(none)"
     if kind == "open_todo":
         opener = (f"You picked up an open task posted by `{sender}` in room "
                   f"`{room}`. You own it now - do it end to end.")
+    elif kind == "mention" and from_agent:
+        opener = (f"Your teammate agent `{sender}` @-mentioned you in room `{room}`. "
+                  "Do what it asks. If it only named you in passing, don't reply.")
     elif kind == "mention":
         opener = f"`{sender}` @-mentioned you in room `{room}`."
     elif kind == "agent_room":
@@ -629,7 +644,7 @@ def wake_instructions(
         "hash, test status), or the answer. Keep it under 8 lines.\n"
         + (f"- If nothing here needs a reply from you, make your final message "
            f"exactly {NO_REPLY} and nothing is posted.\n"
-           if kind == "agent_room" else "")
+           if kind == "agent_room" or from_agent else "")
     )
 
 

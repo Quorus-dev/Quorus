@@ -166,15 +166,17 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool) -> st
 
     label = LABEL_PREFIX + name
     log = _agents_dir() / f"{name}.log"
+    crash_log = _agents_dir() / f"{name}.crash.log"  # launchd stdout/stderr
     env = {"PATH": _harness_path(), "RELAY_URL": cfg["relay_url"], "API_KEY": cred,
-           "REFLEXD_PARTICIPANT": name, "PYTHONUNBUFFERED": "1"}
+           "REFLEXD_PARTICIPANT": name, "PYTHONUNBUFFERED": "1",
+           "REFLEXD_LOG_PATH": str(log)}
     if legacy:
         env["REFLEXD_LEGACY_BEARER"] = "1"
     argv = [sys.executable, str(_reflexd_script_path()), "start",
             "--participant", name, "--relay-url", cfg["relay_url"]]
     if sys.platform != "darwin":
         # No launchd: run detached; `quorus agent remove` stops it via pid.
-        with log.open("ab") as out:
+        with crash_log.open("ab") as out:
             proc = subprocess.Popen(argv, env={**os.environ, **env}, stdout=out,
                                     stderr=out, stdin=subprocess.DEVNULL,
                                     start_new_session=True)
@@ -182,7 +184,7 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool) -> st
         return f"pid {proc.pid}"
     _LA.mkdir(parents=True, exist_ok=True)
     plist = _LA / f"{label}.plist"
-    _write_private(plist, _plist(label, argv, env, log))
+    _write_private(plist, _plist(label, argv, env, crash_log))
     subprocess.run(["launchctl", "bootstrap", f"gui/{_uid()}", str(plist)],
                    capture_output=True, check=False, timeout=15)
     return label

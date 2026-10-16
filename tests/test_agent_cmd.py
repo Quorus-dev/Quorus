@@ -129,3 +129,18 @@ def test_version_flag_prints_version() -> None:
         capture_output=True, text=True, timeout=60,
     )
     assert out.returncode == 0 and __version__ in out.stdout, out.stderr[-300:]
+
+
+def test_each_agent_daemon_gets_its_own_log(tmp_path: Path, monkeypatch) -> None:
+    # Every agent used to log into one shared ~/.quorus/reflexd.log.
+    import sys as _sys
+
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
+    monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(_sys, "platform", "darwin")
+    agent_cmd._start_daemon({"relay_url": "http://r"}, "a-claude", "k", True)
+    xml = (tmp_path / "LA" / "dev.quorus.agent.a-claude.plist").read_text()
+    assert "<key>REFLEXD_LOG_PATH</key>" in xml and "a-claude.log</string>" in xml
+    assert "a-claude.crash.log" in xml  # launchd output kept out of the rotating log
+

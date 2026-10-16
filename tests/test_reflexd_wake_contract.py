@@ -960,3 +960,80 @@ def test_wake_tells_agents_to_post_with_quorus_tools() -> None:
     text = wake.wake_instructions(participant="a-codex", room="r", sender="arav",
                                   kind="mention", teammates=[], has_workspace=True)
     assert "mcp__quorus__send_room_message" in text and "sandbox" in text
+
+
+def test_commit_all_skips_generated_files(tmp_path: Path) -> None:
+    # Fresh-user run 2026-10-16: a chat-only wake ran pytest, and the daemon
+    # committed __pycache__/*.pyc to the user's main (repo had no .gitignore).
+    import subprocess as sp
+    repo = _git_repo(tmp_path / "proj")
+    wt = wake.agent_worktree(repo, "a-claude")
+    for junk in ("__pycache__/tip.cpython-312.pyc", ".pytest_cache/v/cache/nodeids",
+                 "node_modules/x/index.js", ".DS_Store", "pkg/__pycache__/m.pyc"):
+        (wt.path / junk).parent.mkdir(parents=True, exist_ok=True)
+        (wt.path / junk).write_text("x")
+    assert wake.commit_all(wt, "a-claude", "chat only") is False
+    assert wake.worktree_dirty(wt) is False  # leftovers never block sync/publish
+    (wt.path / "tip.py").write_text("x = 1\n")
+    assert wake.commit_all(wt, "a-claude", "real work") is True
+    files = sp.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=wt.path,
+                   capture_output=True, text=True).stdout.split()
+    assert files == ["tip.py"]
+
+
+def test_losing_an_auction_on_agent_chatter_posts_no_defer(tmp_path: Path) -> None:
+    d = _daemon(tmp_path, "x-claude")
+    defers: list[dict[str, Any]] = []
+
+    class Relay:
+        async def submit_bid(self, **kw: Any) -> None:
+            return None
+
+        async def claim(self, **kw: Any) -> dict[str, Any]:
+            return {"claimed": True, "winner": "x-codex"}
+
+        async def post_social_defer(self, **kw: Any) -> None:
+            defers.append(kw)
+
+        async def fetch_recent(self, **kw: Any) -> list:
+            return []
+
+    for content, expected in (("pushed the fix", 0), ("@open add csv export", 1)):
+        env = {"from_name": "x-gemini" if expected == 0 else "arav", "room": "r",
+               "message_id": content, "content": content, "message_type": "chat"}
+        asyncio.run(d.handle_room_message(Relay(), env))
+        assert len(defers) == expected, content
+
+
+def test_agent_mention_may_be_ignored_but_human_mention_may_not() -> None:
+    # Fresh-user run: codex named claude in its intro and claude had to post
+    # "nothing for me to pick up". A human's mention must always be answered.
+    def text(from_agent: bool) -> str:
+        return wake.wake_instructions(participant="x-claude", room="r", sender="s",
+                                      kind="mention", teammates=[], has_workspace=False,
+                                      from_agent=from_agent)
+    assert "NO_REPLY" in text(True) and "in passing" in text(True)
+    assert "NO_REPLY" not in text(False)
+
+
+def test_prompt_marks_agent_senders(tmp_path: Path) -> None:
+    d = _daemon(tmp_path, "x-claude")
+    env = {"from_name": "x-codex", "room": "r", "content": "@x-claude thoughts?"}
+    tri = reflexd.classify_message(content=env["content"], sender="x-codex",
+                                   self_name="x-claude")
+    assert "NO_REPLY" in d.build_prompt(env, [], triage=tri, teammates=[])
+    env = {"from_name": "arav", "room": "r", "content": "@x-claude thoughts?"}
+    tri = reflexd.classify_message(content=env["content"], sender="arav", self_name="x-claude")
+    assert "NO_REPLY" not in d.build_prompt(env, [], triage=tri, teammates=[])
+
+
+def test_daemon_reads_log_path_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `quorus agent add` gives each agent its own log via REFLEXD_LOG_PATH.
+    monkeypatch.setattr(reflexd, "ConfigManager",
+                        lambda: type("C", (), {"load": lambda s: {}})())
+    for k, v in {"REFLEXD_PARTICIPANT": "a-claude", "API_KEY": "k",
+                 "REFLEXD_LOG_PATH": "/tmp/q/a-claude.log"}.items():
+        monkeypatch.setenv(k, v)
+    assert reflexd.ReflexdConfig.from_env().log_path == Path("/tmp/q/a-claude.log")
+    monkeypatch.delenv("REFLEXD_LOG_PATH")
+    assert reflexd.ReflexdConfig.from_env().log_path == reflexd.DEFAULT_LOG_PATH
