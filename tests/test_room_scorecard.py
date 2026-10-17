@@ -73,3 +73,22 @@ async def test_rejects_odd_since_and_needs_auth(client: AsyncClient) -> None:
                          params={"since": "--output=/etc/passwd"})
     assert r.status_code == 422
     assert (await client.get("/v1/rooms/build/scorecard")).status_code == 401
+
+
+async def test_another_tenants_room_with_the_same_name_gets_nothing(
+        client: AsyncClient, tmp_path: Path) -> None:
+    """Codex on 1fae77f7: a tenant that named its room like a locally bound one
+    got this machine's scorecard (200). Bindings belong to the shared-secret
+    relay's own rooms only."""
+    from quorus.auth.tokens import create_jwt
+
+    repo = _repo(tmp_path)
+    (tmp_path / ".quorus").mkdir()
+    (tmp_path / ".quorus" / "room-bindings.json").write_text(json.dumps({"build": str(repo)}))
+    eve = {"Authorization": "Bearer " + create_jwt(sub="eve", tenant_id="t-other",
+                                                   tenant_slug="other")}
+    made = await client.post("/rooms", json={"name": "build", "created_by": "eve"}, headers=eve)
+    assert made.status_code == 200, made.text
+    r = await client.get(f"/v1/rooms/{made.json()['id']}/scorecard", headers=eve)
+    assert r.status_code == 404, r.text
+    assert "a-codex" not in r.text
