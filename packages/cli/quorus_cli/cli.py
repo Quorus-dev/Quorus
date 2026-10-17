@@ -8258,7 +8258,7 @@ def _print_grouped_help():
             ("deny <id>",          "Refuse an agent's blocked tool call"),
         ]),
         ("AGENTS & SWARMS", [
-            ("agent add <tool>",   "Add your Claude/Codex/Gemini to a room"),
+            ("agent add <tool>",   "Add Claude, Codex, Gemini or opencode to a room"),
             ("agent list",         "Your agents running on this machine"),
             ("ps",                 "Show agent presence (online/offline)"),
             ("spawn <name>",       "Create agent workspace + launch Claude Code"),
