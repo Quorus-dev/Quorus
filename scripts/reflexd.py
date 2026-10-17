@@ -351,6 +351,8 @@ _HANDLED_ID_CAP = 2000
 CHAT_MAX_TURNS = int(os.environ.get("REFLEXD_CHAT_MAX_TURNS", "60"))
 MISSION_TIMEOUT_S = int(os.environ.get("REFLEXD_MISSION_TIMEOUT_S", "3600"))
 HEARTBEAT_HISTORY_LIMIT = 10
+# At most one "is stuck" desktop banner per agent this often.
+STUCK_ALERT_EVERY_S = 3600.0
 # Live steps: at most one presence post this often while a wake runs.
 STEP_POST_MIN_S = 3.0
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
@@ -1219,6 +1221,10 @@ class HeadlessAdapter:
         # Set by Reflexd: called with "editing relay.py"-style steps parsed
         # from the harness's JSON stream while a wake runs.
         self.on_step: Callable[[str], None] | None = None
+        # opencode free-model failover: the agent's own model, and when it
+        # moved off it (0 = it hasn't).
+        self._home_model: str | None = None
+        self._rotated_at = 0.0
         # Records the argv (or sdk-call signature) that WOULD have been spawned
         # in dry-run mode. Kept on the instance for tests + smoke scripts.
         self.last_dry_run: dict[str, Any] | None = None
@@ -1480,6 +1486,8 @@ class HeadlessAdapter:
         user's very first message hit it, 2026-10-17). On a free model, a limit
         moves the agent to the next free model at once instead of dropping
         the wake. A model the user picked and pays for is never swapped."""
+        if self._rotated_at and time.time() - self._rotated_at > reflexd_models.ROTATE_BACK_S:
+            self.model, self._rotated_at = self._home_model, 0.0
         first = self.model
         reply = await self._opencode_once(context, cwd=cwd, resume=resume,
                                           on_session=on_session, timeout_s=timeout_s,
@@ -1495,12 +1503,16 @@ class HeadlessAdapter:
             tried.add(alt)
             logger.warning("opencode %s is rate-limited; trying %s", self.model or "default",
                            alt)
+            if not self._rotated_at:
+                self._home_model, self._rotated_at = first, time.time()
             self.model, self.limited_until = alt, 0.0
             reply = await self._opencode_once(context, cwd=cwd, resume=resume,
                                               on_session=on_session, timeout_s=timeout_s,
                                               mode=mode)
         if self.limited_until > time.time():
             self.model = first  # every free model is busy: cool down as before
+            if first == self._home_model:
+                self._rotated_at = 0.0
         return reply
 
     async def _opencode_once(
@@ -2224,6 +2236,7 @@ class Reflexd:
         # The live step of the running wake ("editing relay.py"), sent with
         # the busy presence at most every STEP_POST_MIN_S.
         self._activity = ""
+        self._stuck_alerted_at = 0.0
         self._presence_relay: Any = None
         self._step_task: asyncio.Task[None] | None = None
         if hasattr(self.adapter, "on_step"):
@@ -3102,6 +3115,14 @@ class Reflexd:
         if alert is None:
             return
         title, body = alert
+        if title.endswith(" is stuck"):
+            # One banner per agent per hour: rate limits fired one per failed
+            # wake, 15 "opencode is stuck" in a day (2026-10-17). The room
+            # still shows each one.
+            if time.time() - self._stuck_alerted_at < STUCK_ALERT_EVERY_S:
+                logger.info("owner alert suppressed room=%s: %s (sent recently)", room, title)
+                return
+            self._stuck_alerted_at = time.time()
         logger.info("owner alert room=%s: %s", room, title)  # never the body
         try:
             asyncio.get_running_loop().run_in_executor(

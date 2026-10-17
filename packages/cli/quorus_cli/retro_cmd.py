@@ -6,6 +6,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from rich.markup import escape
+
 from quorus import retro
 from quorus_cli.scorecard_cmd import _history
 
@@ -33,11 +35,12 @@ def cmd_retro(args: Any, console: Any) -> None:
     console.print(f"[bold]#{args.room}: retro, last {args.since:g}h[/] "
                   f"[dim]({len(history)} messages)[/]")
     for i, f in enumerate(findings[:args.top], 1):
-        console.print(f"\n{i}. [bold]{f.title}[/]")
-        console.print(f"   likely: {f.cause}")
-        console.print(f"   try:    {f.fix}")
+        # Room text like "[reflexd] harness timed out" is not Rich markup.
+        console.print(f"\n{i}. [bold]{escape(f.title)}[/]")
+        console.print(f"   likely: {escape(f.cause)}")
+        console.print(f"   try:    {escape(f.fix)}")
         for e in f.evidence[:2]:
-            console.print(f"   [dim]{e}[/]", markup=True, highlight=False)
+            console.print(f"   [dim]{escape(e)}[/]", markup=True, highlight=False)
     if args.post:
         import subprocess
         import sys

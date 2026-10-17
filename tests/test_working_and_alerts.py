@@ -153,3 +153,30 @@ def test_lead_telling_owner_its_done_pings() -> None:
     assert agent_events.owner_alert(agent="a-claude", owner="arav", reply=reply) == (
         "a-claude: done", reply)
     assert agent_events.tells_owner_done("@arav-codex done with review", "arav") is None
+
+
+def test_alerts_name_the_branch_and_ignore_status_reports() -> None:
+    """Live 2026-10-17: 'shipped to main' for weekend-branch work, and a
+    review report ("@arav: ... reviewed and approved") fired 'needs you'."""
+    alert = agent_events.owner_alert
+    shipped = "✅ docs\n(quorus) published 1 commit(s) from quorus/a-gemini to weekend/betu"
+    assert alert(agent="a-gemini", owner="arav", reply=shipped)[0] == (
+        "a-gemini shipped to weekend/betu")
+    report = "@arav: `7ebd213d` is reviewed and approved, along with MCP `3eb4f615`."
+    assert alert(agent="a-codex", owner="arav", reply=report) is None
+    for ask in ("@arav please approve the merge", "@arav I need your approval to push",
+                "@arav should I take the legal memo next"):
+        assert alert(agent="a-codex", owner="arav", reply=ask)[0] == "a-codex needs you"
+
+
+def test_stuck_banner_at_most_once_an_hour(monkeypatch) -> None:
+    d = _daemon()
+    sent: list[str] = []
+    monkeypatch.setattr(reflexd, "_notify", lambda title, *a, **k: sent.append(title))
+    monkeypatch.setattr(reflexd._agent_events, "enabled", lambda: True)
+    for _ in range(4):  # a rate-limit storm: one banner, four room lines
+        d._alert_owner("build", "⚠ opencode: the vendor rate-limited this account")
+    assert sent == ["arav-claude is stuck · #build"]
+    d._stuck_alerted_at -= reflexd.STUCK_ALERT_EVERY_S + 1
+    d._alert_owner("build", "⚠ opencode: still limited")
+    assert len(sent) == 2

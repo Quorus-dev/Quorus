@@ -169,11 +169,21 @@ def infer_from_room(history: Iterable[dict[str, Any]],
     return claimed
 
 
+# A quote of someone else's message ("12:06 @arav-codex: /disagree blocking",
+# "> ...") is not the quoter's verdict: Gemini pasting retro output was scored
+# as Gemini flagging two commits (2026-10-17).
+_QUOTED = re.compile(r"^\s*(>|\d{1,2}:\d{2}\s+@[\w-]+:)")
+
+
+def _own_words(body: str) -> str:
+    return "\n".join(ln for ln in body.splitlines() if not _QUOTED.match(ln))
+
+
 def _review(history: list[dict[str, Any]], sha: str, author: str) -> tuple[str, list[str]]:
     short = sha[:7]
     verdict, who = "none", []
     for m in sorted(history, key=lambda m: m.get("timestamp") or ""):
-        body, sender = m.get("content") or "", m.get("from_name") or ""
+        body, sender = _own_words(m.get("content") or ""), m.get("from_name") or ""
         if short not in body or sender == author or body.startswith("(quorus)"):
             continue
         approve, flag = _APPROVE.search(body), _FLAG.search(body)

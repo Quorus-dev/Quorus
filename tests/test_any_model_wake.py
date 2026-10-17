@@ -310,8 +310,39 @@ def test_a_failed_turns_leftover_work_gets_a_real_commit_message() -> None:
         "chore: unfinished work from a cut-off turn"
     assert msg("⚠ opencode: rate-limited", "a-opencode").startswith("chore: unfinished")
     assert msg("✅ fix: add() in calc.py", "a-codex") == "fix: add() in calc.py"
+    # A chat-style reply ("@arav-claude I have created...") still gets a
+    # conventional subject (BetU commits, 2026-10-17).
+    assert msg("@arav-claude I have created docs/x.md", "a-gemini").startswith("chore: ")
 
 
 def test_timeout_notice_says_what_happened() -> None:
     assert reflexd._timed_out_line().startswith("⚠ ran out of time")
     assert "published below" in reflexd._timed_out_line(published=True)
+
+
+def test_failover_goes_back_to_the_agents_own_model(monkeypatch) -> None:
+    """It moved to the slowest free model at 09:29 and stayed there, timing
+    out two 30-minute turns (2026-10-17)."""
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter, tried = _rotating_adapter({free[0]})
+    adapter.model = free[0]
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert adapter.model == free[1]
+    import time as _time
+
+    real = _time.time
+    monkeypatch.setattr(reflexd.time, "time",
+                        lambda: real() + reflexd.reflexd_models.ROTATE_BACK_S + 1)
+    tried.clear()
+
+    async def ok(*_a: Any, **_k: Any) -> str:  # the limit has cleared
+        tried.append(adapter.model)
+        return "done"
+
+    adapter._opencode_once = ok  # type: ignore[method-assign]
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert tried == [free[0]] and adapter.model == free[0]  # back on its own model
+
+
+def test_nemotron_is_not_a_fallback() -> None:
+    assert not any("nemotron" in m for m in reflexd.reflexd_models.OPENCODE_FREE_MODELS)
