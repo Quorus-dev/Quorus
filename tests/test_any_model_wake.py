@@ -306,9 +306,13 @@ def test_a_paid_model_is_never_swapped() -> None:
 def test_a_failed_turns_leftover_work_gets_a_real_commit_message() -> None:
     """Gemini's timed-out work was committed as "[reflexd] harness timed out"."""
     msg = reflexd.reflexd_wake.commit_message_from
-    assert msg("[reflexd] harness timed out", "a-gemini") == "wip: unfinished work by a-gemini"
-    assert msg("⚠ opencode: rate-limited", "a-opencode").startswith("wip:")
-    assert msg("✅ fixed add() in calc.py", "a-codex") == "fixed add() in calc.py"
+    assert msg("[reflexd] harness timed out", "a-gemini") == \
+        "chore: unfinished work from a cut-off turn"
+    assert msg("⚠ opencode: rate-limited", "a-opencode").startswith("chore: unfinished")
+    assert msg("✅ fix: add() in calc.py", "a-codex") == "fix: add() in calc.py"
+    # A chat-style reply ("@arav-claude I have created...") still gets a
+    # conventional subject (BetU commits, 2026-10-17).
+    assert msg("@arav-claude I have created docs/x.md", "a-gemini").startswith("chore: ")
 
 
 def test_timeout_notice_says_what_happened() -> None:

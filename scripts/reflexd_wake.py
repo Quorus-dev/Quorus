@@ -411,12 +411,13 @@ def agent_worktree(repo: Path, participant: str) -> Worktree | None:
 _GENERATED = tuple(f":(exclude,glob){g}" for g in (
     "**/__pycache__/**", "**/*.py[co]", "**/.pytest_cache/**", "**/.mypy_cache/**",
     "**/.ruff_cache/**", "**/node_modules/**", "**/.DS_Store", "**/.coverage",
-    "**/*.egg-info/**", "**/.venv/**", "**/.tox/**",
+    "**/*.egg-info/**", "**/.venv/**", "**/.tox/**", "graphify-out/**",
 ))
 
 
 def worktree_dirty(wt: Worktree) -> bool:
-    return bool(_git("status", "--porcelain", "--untracked-files=no", cwd=wt.path).stdout.strip()
+    return bool(_git("status", "--porcelain", "--untracked-files=no", "--", ".", *_GENERATED,
+                     cwd=wt.path).stdout.strip()
                 or _git("ls-files", "--others", "--exclude-standard", "--", ".", *_GENERATED,
                         cwd=wt.path).stdout.strip())
 
@@ -515,19 +516,26 @@ def _staged_conflict_markers(wt: Worktree) -> list[str]:
 
 
 def commit_message_from(reply: str, participant: str) -> str:
-    """A commit subject from the agent's own final reply.
+    """Make a conventional subject of at most 50 chars, keeping whole words.
 
     A failed turn's reply is the daemon's own error text: Gemini's timed-out
     work was committed as "[reflexd] harness timed out" (2026-10-17)."""
-    import re as _re
-
+    conventional = (
+        r"(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
+        r"(?:\([^()]+\))?!?: "
+    )
     if (reply or "").lstrip().startswith(("[reflexd]", "⚠")):
-        return f"wip: unfinished work by {participant}"
+        return "chore: unfinished work from a cut-off turn"
     for line in (reply or "").splitlines():
-        line = _re.sub(r"[`*_#>]|^\s*[-✅☑️✔️]+\s*", "", line).strip()
-        if len(line) >= 8 and not line.startswith(STATUS_PREFIX):
-            return line[:72]
-    return f"work by {participant}"
+        line = re.sub(r"[`*_#>]|^\s*[-✅☑️✔️]+\s*", "", line).strip()
+        line = " ".join(line.split())
+        if line and not line.startswith(STATUS_PREFIX):
+            subject = line if re.match(conventional, line) else f"chore: {line}"
+            if len(subject) > 50:
+                subject = subject[:51].rsplit(" ", 1)[0]
+            if len(subject) <= 50 and re.match(conventional + r"\S", subject):
+                return subject
+    return "chore: update agent work"
 
 
 def commit_all(wt: Worktree, participant: str, message: str) -> bool:
