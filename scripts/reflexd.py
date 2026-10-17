@@ -1184,6 +1184,10 @@ class HeadlessAdapter:
         # Set by Reflexd: called with "editing relay.py"-style steps parsed
         # from the harness's JSON stream while a wake runs.
         self.on_step: Callable[[str], None] | None = None
+        # opencode free-model failover: the agent's own model, and when it
+        # moved off it (0 = it hasn't).
+        self._home_model: str | None = None
+        self._rotated_at = 0.0
         # Records the argv (or sdk-call signature) that WOULD have been spawned
         # in dry-run mode. Kept on the instance for tests + smoke scripts.
         self.last_dry_run: dict[str, Any] | None = None
@@ -1445,6 +1449,8 @@ class HeadlessAdapter:
         user's very first message hit it, 2026-10-17). On a free model, a limit
         moves the agent to the next free model at once instead of dropping
         the wake. A model the user picked and pays for is never swapped."""
+        if self._rotated_at and time.time() - self._rotated_at > reflexd_models.ROTATE_BACK_S:
+            self.model, self._rotated_at = self._home_model, 0.0
         first = self.model
         reply = await self._opencode_once(context, cwd=cwd, resume=resume,
                                           on_session=on_session, timeout_s=timeout_s,
@@ -1460,12 +1466,16 @@ class HeadlessAdapter:
             tried.add(alt)
             logger.warning("opencode %s is rate-limited; trying %s", self.model or "default",
                            alt)
+            if not self._rotated_at:
+                self._home_model, self._rotated_at = first, time.time()
             self.model, self.limited_until = alt, 0.0
             reply = await self._opencode_once(context, cwd=cwd, resume=resume,
                                               on_session=on_session, timeout_s=timeout_s,
                                               mode=mode)
         if self.limited_until > time.time():
             self.model = first  # every free model is busy: cool down as before
+            if first == self._home_model:
+                self._rotated_at = 0.0
         return reply
 
     async def _opencode_once(

@@ -28,7 +28,7 @@ import httpx
 # DeepSeek and MiMo rate-limited while LongCat answered), so probe and use the
 # first two that respond: one builds, the other reviews.
 FREE_MODELS = ("opencode/deepseek-v4.1-flash-free", "opencode/longcat-2.5-preview-free",
-               "opencode/mimo-v2.6-flash-free", "opencode/nemotron-3.5-lightning-free")
+               "opencode/mimo-v2.6-flash-free")
 BUILDER, REVIEWER, HUMAN, ROOM = "demo-opencode", "demo-review-opencode", "you", "demo"
 # The reviewer is named WITHOUT an @: mentioning it here woke it early to say
 # "nothing to review yet" (live run, 2026-10-17). The builder's hand-off wakes it.

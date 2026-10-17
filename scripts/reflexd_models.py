@@ -110,10 +110,16 @@ def opencode_flags(
 
 # opencode's free models (no key). Each one's limit comes and goes on its own,
 # so a limited agent moves down this list. Keep in sync with `quorus demo`.
+# Not nemotron-3.5-lightning: it answers, but took 200s to its first step and
+# timed out two 30-minute turns running in a row (2026-10-17). Waiting out a
+# limit beats burning a turn on it.
 OPENCODE_FREE_MODELS = (
     "opencode/deepseek-v4.1-flash-free", "opencode/longcat-2.5-preview-free",
-    "opencode/mimo-v2.6-flash-free", "opencode/nemotron-3.5-lightning-free",
+    "opencode/mimo-v2.6-flash-free",
 )
+# A free model's limit clears on its own: go back to the agent's own model
+# after this long instead of staying on the fallback all day.
+ROTATE_BACK_S = 30 * 60
 
 
 def is_free_opencode(model: str | None) -> bool:
