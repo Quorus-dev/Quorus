@@ -55,6 +55,7 @@ from quorus.config import ConfigManager, resolve_config_dir
 
 from . import autocomplete as _autocomplete
 from . import welcome as _welcome
+from . import working as _working
 from .approvals_panel import render_approvals_panel
 from .autocomplete import AutocompletePopover
 from .chat_widgets import plain_markdown
@@ -923,6 +924,7 @@ class HubState:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self.working = _working.WorkingTracker()
         self.rooms: list[dict] = []
         self.messages: list[dict] = []
         # Dedup set of recently-seen message IDs. Prevents SSE push + history
@@ -1503,9 +1505,16 @@ def _sse_loop(
                                         tok in _content.lower()
                                         for tok in _mention_tokens
                                     )
+                                    # Your own agents' daemons ping you
+                                    # themselves (agent_events); a second
+                                    # banner here would double every one.
+                                    _own_agent = _from.startswith(
+                                        f"{chat_identity or recipient}-",
+                                    )
                                     if (
                                         _from
                                         and _from != recipient
+                                        and not _own_agent
                                         and (_hit_mention or _is_dm)
                                         and _tui_is_unfocused()
                                     ):
@@ -3256,6 +3265,9 @@ def _main_input_loop(
                         thread_collapsed=state.get_thread_collapsed(),
                     ):
                         console.print(feed_line)
+                    working_line = _working.render_working_line(state.working.snapshot())
+                    if working_line is not None:
+                        console.print(working_line)
                     console.print()
                     console.print(_chat.render_composer_hint())
                 # Transient status line (if any) above the bare prompt.
@@ -3892,6 +3904,24 @@ def _run_session(
     )
     dm_listener.start()
 
+    def _selected_room_name() -> str:
+        room = state.get_selected_room() or {}
+        return room.get("name") or room.get("id", "")
+
+    def _announce_working(name: str) -> None:
+        line = Text("  ⋯ ", style="dim")
+        line.append(f"@{name}", style="bold accent")
+        line.append(" is working on it", style="muted italic")
+        console.print(line)
+
+    presence_watcher = threading.Thread(
+        target=_working.presence_loop,
+        args=(relay_url, _auth_headers(secret), state.working, _selected_room_name,
+              _announce_working, stop_event),
+        daemon=True,
+    )
+    presence_watcher.start()
+
     try:
         return _main_input_loop(
             console=console,
@@ -3903,7 +3933,7 @@ def _run_session(
             chat_identity=chat_identity,
         )
     finally:
-        _stop_listeners(stop_event, (poller, sse_listener, dm_listener))
+        _stop_listeners(stop_event, (poller, sse_listener, dm_listener, presence_watcher))
 
 
 def _stop_listeners(stop_event: threading.Event, threads: tuple) -> None:

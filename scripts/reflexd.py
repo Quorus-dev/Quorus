@@ -76,6 +76,8 @@ if _IN_CHECKOUT:
 import importlib.util as _ilu  # noqa: E402
 
 from quorus.config import ConfigManager  # noqa: E402
+from quorus.notifications import agent_events as _agent_events  # noqa: E402
+from quorus.notifications import notify as _notify  # noqa: E402
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
 from quorus.private_files import write_private_json  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
@@ -1808,6 +1810,7 @@ class Reflexd:
                 config.runtime_dir / f"wake-mcp-{config.participant_name}.json"
             )
         self._stop = asyncio.Event()
+        self._presence: tuple[str, str] = ("active", "")  # (status, room)
         self._last_wake_at: float = 0.0
         # Bounded in-memory queue for messages that arrive while a busy-file
         # is set. Drained on stop, not replayed across restarts (PR-C1 scope).
@@ -2090,6 +2093,30 @@ class Reflexd:
         self, relay: RelayClient, envelope: dict[str, Any], *,
         triage: "TriageResult | None" = None, reason: str | None = None,
     ) -> None:
+        """One wake, shown to the room as presence ``busy`` while it runs:
+        before this, nobody could tell a working agent from a dead one
+        until its reply landed (sometimes minutes later)."""
+        await self._set_presence(relay, "busy", envelope.get("room") or "")
+        try:
+            await self._wake_and_reply_inner(
+                relay, envelope, triage=triage, reason=reason)
+        finally:
+            await self._set_presence(relay, "active", "")
+
+    async def _set_presence(self, relay: RelayClient, status: str, room: str) -> None:
+        self._presence = (status, room)
+        post = getattr(relay, "post_heartbeat", None)
+        if post is None:
+            return
+        try:
+            await post(participant=self.config.participant_name, status=status, room=room)
+        except Exception as exc:  # presence is cosmetic: never fail a wake on it
+            logger.debug("presence update failed: %s", exc)
+
+    async def _wake_and_reply_inner(
+        self, relay: RelayClient, envelope: dict[str, Any], *,
+        triage: "TriageResult | None" = None, reason: str | None = None,
+    ) -> None:
         """Render wake context, dispatch to the harness, post the reply.
 
         Stream B additions:
@@ -2258,6 +2285,8 @@ class Reflexd:
             logger.warning("harness %s produced no reply text room=%s", harness, room)
             return
 
+        self._alert_owner(room, reply)
+
         # Don't double-post: if the agent already posted this result itself
         # (QOD tells it to post ✅), the room has it.
         try:
@@ -2338,6 +2367,26 @@ class Reflexd:
             )
         except Exception as exc:
             logger.debug("memory append failed (non-fatal): %s", exc)
+
+    def _alert_owner(self, room: str, reply: str) -> None:
+        """Desktop banner for the agent's owner when the wake shipped work,
+        needs them, or got stuck. Fire-and-forget; never blocks the reply."""
+        if not _agent_events.enabled():
+            return
+        alert = _agent_events.owner_alert(
+            agent=self.config.participant_name,
+            owner=os.environ.get("REFLEXD_OWNER") or None, reply=reply,
+        )
+        if alert is None:
+            return
+        title, body = alert
+        try:
+            asyncio.get_running_loop().run_in_executor(
+                None, lambda: _notify(f"{title} · #{room}", body,
+                                      sender=self.config.participant_name, room=room))
+        except RuntimeError:  # no loop (sync caller in tests)
+            _notify(f"{title} · #{room}", body, sender=self.config.participant_name,
+                    room=room)
 
     def build_prompt(
         self, envelope: dict[str, Any], history: list[dict[str, Any]],
@@ -2784,9 +2833,10 @@ class Reflexd:
         """R2: periodic presence heartbeat until stopped. Never raises."""
         while not self._stop.is_set():
             try:
+                status, room = self._presence
                 await relay.post_heartbeat(
                     participant=self.config.participant_name,
-                    status="active",
+                    status=status, room=room,
                 )
             except Exception as exc:
                 logger.debug("heartbeat failed: %s", exc)

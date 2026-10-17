@@ -184,7 +184,9 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
            "REFLEXD_LOG_PATH": str(log),
            # The daemon reads room bindings from the same home `agent add`
            # wrote them to (launchd would otherwise use the login HOME).
-           "HOME": str(Path.home())}
+           "HOME": str(Path.home()),
+           # Whose desktop gets "shipped / needs you / stuck" banners.
+           "REFLEXD_OWNER": (cfg.get("instance_name") or "").strip()}
     if legacy:
         env["REFLEXD_LEGACY_BEARER"] = "1"
     if model:
