@@ -34,6 +34,16 @@ class RedeemRequest(BaseModel):
         return _validate_name(v)
 
 
+async def _known_names(request: Request) -> set[str]:
+    """Every name this relay already answers to: registered participants and
+    members of any room. On a shared-secret relay these rarely hold a claim,
+    yet rooms grant access by name, so none of them may be redeemed into."""
+    names = set(await request.app.state.backends.participants.list_all(LEGACY_TENANT))
+    for room in await request.app.state.room_service.list_all(LEGACY_TENANT):
+        names.update(room.get("members") or ())
+    return names
+
+
 @router.post("/redeem")
 async def redeem(req: RedeemRequest, request: Request) -> dict:
     if os.environ.get("DATABASE_URL"):
@@ -45,18 +55,21 @@ async def redeem(req: RedeemRequest, request: Request) -> dict:
     from quorus.auth.participant_routes import _store
 
     store = _store(request)
+    rooms = request.app.state.room_service
+    known = await _known_names(request)
     try:
-        key, invite = await asyncio.to_thread(invite_codes.redeem, store, req.code, req.name)
+        key, claim_id, invite = await asyncio.to_thread(
+            invite_codes.redeem, store, req.code, req.name, known)
     except invite_codes.InviteError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from None
-    rooms = request.app.state.room_service
     try:
         rid, _ = await rooms.get(LEGACY_TENANT, invite.room_id)
         await rooms.join(LEGACY_TENANT, rid, req.name, invite.role, MAX_ROOM_MEMBERS)
         await request.app.state.backends.participants.add(LEGACY_TENANT, req.name)
     except Exception:
         # The room went away or is full: give the use back and free the name.
-        await asyncio.to_thread(invite_codes.undo_redeem, store, invite.id, req.name)
+        await asyncio.to_thread(invite_codes.undo_redeem, store, invite.id, req.name,
+                                claim_id)
         raise HTTPException(status_code=409, detail="couldn't join the room; ask for a "
                                                     "new invite") from None
     return {"participant_key": key, "name": req.name, "room": invite.room_name,
