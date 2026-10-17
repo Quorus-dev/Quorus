@@ -200,12 +200,16 @@ function refresh() {
     ? api("/rooms/" + enc(B.room)).then((r) => { B.members = r.members || []; B.membersAt = now; })
         .catch(() => {})
     : Promise.resolve();
-  const card = now - B.cardAt > 60
-    ? api("/v1/rooms/" + enc(B.room) + "/scorecard").then((r) => {
-        B.card = {}; (r.agents || []).forEach((a) => { B.card[a.agent] = a; }); B.cardAt = now;
-      }).catch(() => { B.card = {}; B.cardAt = now; })  // 404: no repo here; hide it
-    : Promise.resolve();
-  return Promise.all([members, card]).then(() => Promise.all([
+  if (now - B.cardAt > 60) {
+    // In the background: the first scorecard walks the repo's git history and
+    // can take many seconds. Waiting for it left the board blank (Arav, live).
+    B.cardAt = now;
+    api("/v1/rooms/" + enc(B.room) + "/scorecard").then((r) => {
+      B.card = {}; (r.agents || []).forEach((a) => { B.card[a.agent] = a; });
+      refresh();
+    }).catch(() => { B.card = {}; });  // 404: no repo bound here; hide the line
+  }
+  return members.then(() => Promise.all([
     api("/presence").catch(() => []),
     api("/rooms/" + enc(B.room) + "/history?limit=100").catch(() => []),
     api("/v1/approvals?room=" + enc(B.room)).then((r) => r.pending || []).catch(() => []),
@@ -229,6 +233,9 @@ function refresh() {
 function show(on) {
   B.on = on;
   $("board").hidden = !on;
+  if (on && !$("boardRows").children.length) {
+    $("boardRows").replaceChildren(el("p", "hint", "Loading the team…"));
+  }
   ["messages", "working", "composer"].forEach((id) => { $(id).hidden = on; });
   $("viewToggle").textContent = on ? "Chat" : "Board";
   if (on) { refresh(); if (!B.timer) B.timer = setInterval(refresh, 3000); }
