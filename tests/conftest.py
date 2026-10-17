@@ -10,6 +10,18 @@ os.environ.setdefault("RELAY_SECRET", "test-secret")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-that-is-at-least-32-bytes-long")
 os.environ.setdefault("BOOTSTRAP_SECRET", "test-bootstrap-secret")
 
+# An agent woken by reflexd runs the suite with its live identity in the
+# environment (QUORUS_RELAY_URL etc.), and config tests then resolve the real
+# relay instead of their defaults, and the daemon's REFLEXD_* settings (e.g.
+# REFLEXD_CODEX_SANDBOX) change the argv tests pin (found 2026-10-17). Tests
+# that need these set them with monkeypatch.
+AMBIENT_IDENTITY_VARS = (
+    "QUORUS_API_KEY", "QUORUS_RELAY_SECRET", "QUORUS_CONFIG_DIR", "QUORUS_RELAY_URL",
+    "QUORUS_INSTANCE_NAME", "QUORUS_PROFILE", "QUORUS_PARTICIPANT", "QUORUS_APPROVAL_ROOM",
+)
+for _var in [*AMBIENT_IDENTITY_VARS, *(v for v in os.environ if v.startswith("REFLEXD_"))]:
+    os.environ.pop(_var, None)
+
 
 def _preimport_patch_targets() -> None:
     """Python 3.10's ``unittest.mock`` resolves ``patch("pkg.sub.attr")`` with
