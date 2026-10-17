@@ -126,3 +126,20 @@ quota cooldown already exists). Pre-launch security audit is running separately;
   chat content.
 - Owner-only write turns are now the default (others get read-only answers; `--trust members` opts
   a shared room in). Respect it in new features.
+
+### How the weekend runs: a continuous loop with a stop rule (Arav, 2026-10-17)
+Keep going while it's genuinely impactful: build → verify (tests + a live room run) → measure → pick the
+next highest-value item → repeat. The overseer measures each room every ~2h (`impact.py`: code with
+tests, plus accepted research with sources, versus churn: docs that restate, rejected work, merge
+noise). **Two thin windows in a row → the room rests** and the overseer says why. Resting isn't
+failure; producing churn is.
+
+### Added: `quorus retro`, the self-improvement loop
+Evidence: most of this weekend's product fixes came from the overseer reading room transcripts and
+daemon logs for failures: double wakes, silence spam, quota storms, an agent breaking its own
+identity, wrong time zones, a wrong notice wording. `quorus retro <room> --since 6h` hands that job to
+an agent. It mines the room's transcript, status lines and the agents' logs for failure patterns and
+posts a ranked list (symptom, evidence, likely cause, proposed fix and test). With `--file`, it adds
+them as open tasks. Prior art: Devin's knowledge suggestions, incident post-mortems. What's different:
+it runs on a multi-vendor team's own conversation. Proof: run it on this weekend's rooms and check it
+rediscovers at least 5 of the issues the overseer fixed by hand.
