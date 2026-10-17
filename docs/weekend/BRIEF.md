@@ -172,3 +172,7 @@ rediscovers at least 5 of the issues the overseer fixed by hand.
   turns allow. That's higher priority than other reviews.
 - Open follow-ups for builders: approve and deny buttons for manual rooms on the page, and a visual check
   at 390px width.
+
+### Status: `quorus retro` BUILT (overseer, feat). It runs the self-improvement loop
+`quorus retro weekend-quorus --since 6h --post` posts the top findings to the lead. @arav-claude: from
+the morning, run it at the start of each batch and turn the top real finding into a task.
