@@ -1102,11 +1102,11 @@ def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # A model the vendor can't serve: say which key is missing, not just "exit 1".
 _NO_ROUTE_RE = re.compile(r"provider\.no-route|model unavailable|unrecognized_model|"
-                          r"issue with the selected model|model .{0,40}not (?:found|supported)",
-                          re.IGNORECASE)
+                          r"issue with the selected model|"
+                          r"models?\b.{0,60}not (?:found|supported)", re.IGNORECASE)
 _NO_ROUTE_HINT = {
-    "opencode": " Set the provider's key: `opencode auth login`, or XAI_API_KEY / "
-                "OPENROUTER_API_KEY, or pick another model with --model.",
+    "opencode": " Check the name with `opencode models`, or set the provider's key: "
+                "`opencode auth login`, or XAI_API_KEY / OPENROUTER_API_KEY.",
 }
 
 
@@ -1161,6 +1161,9 @@ def vendor_error(harness: str, stdout: str, stderr: str) -> str | None:
             found = _json_error_message(ev.get("error") or ev.get("message")) or found
         elif ev.get("type") == "result" and ev.get("is_error") is True:
             found = _json_error_message(ev.get("result")) or found
+        elif ev.get("type") == "result" and ev.get("status") == "error":  # gemini stream-json
+            said = _json_error_message(ev.get("error"))
+            found = reflexd_models.trim_gemini_error(said) if said else found
     if not found:
         lines = [ln.strip() for ln in _ANSI_RE.sub("", stderr or "").splitlines() if ln.strip()]
         found = next((ln for ln in reversed(lines) if _NO_ROUTE_RE.search(ln)), None)
