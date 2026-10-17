@@ -134,6 +134,25 @@ def _write_sensitive_json(path: Path, data: dict) -> None:
     ConfigManager(path).save(data)
 
 
+def _backup_before_overwrite(path: Path) -> Path | None:
+    """Copy *path* to ``<path>.bak`` before init overwrites it.
+
+    When the relay is down, init cannot check the credential, so it warns and
+    writes anyway. Without a copy on disk, a typo made while offline destroyed
+    the last working secret with nothing to recover it from (review
+    2026-10-17). Best-effort: a failed backup must never block init.
+    """
+    if not path.exists():
+        return None
+    backup = path.with_suffix(path.suffix + ".bak")
+    try:
+        shutil.copyfile(path, backup)
+        os.chmod(backup, 0o600)
+    except OSError:
+        return None
+    return backup
+
+
 def _config_is_profile_pointer(path: Path) -> bool:
     """True when *path* holds a ProfileManager pointer, not a flat config.
 
@@ -4378,11 +4397,12 @@ def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
     Returns ``None`` on any failure — caller falls back to a fresh tenant.
     """
     try:
+        # No follow_redirects: a 307/308 re-sends the body, so the API key
+        # would go to whatever host the redirect names (review 2026-10-17).
         token_resp = httpx.post(
             f"{relay_url}/v1/auth/token",
             json={"api_key": api_key},
             timeout=10,
-            follow_redirects=True,
         )
         if token_resp.status_code != 200:
             return None
@@ -4841,8 +4861,10 @@ def _cmd_init(args):
             # the cheapest way to ask the relay whether it knows the key.
             # Without this the profile was written with the bad key first and
             # only failed later at mint time — the same data loss as a secret.
+            # No follow_redirects: a 307/308 re-sends the body, so the API key
+            # would go to whatever host the redirect names (review 2026-10-17).
             token = httpx.post(f"{relay_url}/v1/auth/token", json={"api_key": api_key},
-                               timeout=5.0, follow_redirects=True)
+                               timeout=5.0)
             if token.status_code in (401, 403):
                 relay_status = "rejected"
     except Exception as exc:  # the exception text is the useful part
@@ -4910,6 +4932,9 @@ def _cmd_init(args):
         merged = dict(pm.get(profile_slug) or {})
         merged.pop("api_key" if not api_key else "relay_secret", None)
         merged.update(config)
+        backup_path = _backup_before_overwrite(profile_path)
+        if backup_path:
+            console.print(f"[dim]Previous profile saved to {backup_path}[/dim]")
         pm.save(profile_slug, merged)
         pm.set_current(profile_slug)
         console.print(
@@ -4920,6 +4945,9 @@ def _cmd_init(args):
             console.print(
                 f"[yellow]Warning: config already exists at {config_path} — overwriting.[/yellow]"
             )
+        backup_path = _backup_before_overwrite(config_path)
+        if backup_path:
+            console.print(f"[dim]Previous config saved to {backup_path}[/dim]")
         _write_sensitive_json(config_path, config)
         # (atomic 0600 write via _write_sensitive_json)
         console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")

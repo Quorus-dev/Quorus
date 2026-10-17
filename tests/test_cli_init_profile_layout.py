@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from quorus_cli.cli import _cmd_init, _config_is_profile_pointer
 
@@ -160,6 +161,59 @@ def test_init_rejected_secret_leaves_the_profile_untouched(hub_home, monkeypatch
     # Nothing else should have been written either (no MCP registration).
     assert not (hub_home / ".mcp.json").exists()
     assert not (hub_home / ".claude.json").exists()
+
+
+def test_init_backs_up_the_profile_before_overwriting_it(hub_home, monkeypatch) -> None:
+    """Relay down → init warns and writes anyway, so keep the old secret.
+
+    Without the copy, a typo made while the relay is offline destroyed the last
+    working secret with nothing left to recover from (review 2026-10-17).
+    """
+    profile = _write_hub_layout(hub_home, "default")
+    before = profile.read_text()
+
+    def _unreachable(*_a, **_kw):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr("quorus.cli.httpx.get", _unreachable)
+
+    _cmd_init(_make_init_args())
+
+    backup = profile.with_suffix(".json.bak")
+    assert backup.exists(), "no copy of the previous secret was kept"
+    assert backup.read_text() == before
+    assert (backup.stat().st_mode & 0o777) == 0o600, "backup holds a secret"
+    assert json.loads(profile.read_text())["relay_secret"] == "TYPED-WRONG"
+
+
+def test_init_never_sends_an_api_key_through_a_redirect(hub_home, monkeypatch) -> None:
+    """A 307/308 re-sends the POST body, so the API key must not ride it.
+
+    Covers every init-path POST that puts the key in the body, not just the
+    pre-write check: the tenant lookup posts the same key to the same endpoint.
+    """
+    calls: list[tuple[str, dict]] = []
+
+    def _post(url, **kw):
+        calls.append((url, kw))
+        return MagicMock(status_code=307)
+
+    monkeypatch.setattr("quorus.cli.httpx.get", _relay_get(health=200))
+    monkeypatch.setattr("quorus.cli.httpx.post", _post)
+    monkeypatch.setattr("quorus.cli._register_agent_identity", lambda **_: None)
+    args = _make_init_args(secret=None)
+    args.api_key = "mct_parent"
+
+    _cmd_init(args)
+
+    leaks = [
+        url
+        for url, kw in calls
+        if isinstance(kw.get("json"), dict)
+        and kw["json"].get("api_key")
+        and kw.get("follow_redirects") is True
+    ]
+    assert not leaks, f"the API key would follow a redirect to: {leaks}"
 
 
 def test_init_rejected_api_key_leaves_the_profile_untouched(hub_home, monkeypatch) -> None:

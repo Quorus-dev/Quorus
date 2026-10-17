@@ -132,7 +132,12 @@ key) — without it the profile was written with the bad key first and only fail
 later at mint time. A relay that is simply down still
 warns and proceeds (it can't be asked). The profile write also **merges** the
 new values into the existing profile (dropping the superseded credential shape)
-instead of replacing it, so `agent_api_keys` and push settings survive. Proven
+instead of replacing it, so `agent_api_keys` and push settings survive, and it
+copies the file to `profiles/<slug>.json.bak` (0600) first — offline, an
+unverifiable typo can no longer destroy the last working secret with nothing to
+recover from. The credential POSTs also no longer follow redirects: a 307/308
+re-sends the body, which would hand the API key to whatever host the redirect
+names. Proven
 against a real relay: wrong secret → exit 3, `profiles/work.json` byte-identical;
 correct secret → same profile updated, pointer intact.
 
