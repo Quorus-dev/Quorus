@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from pathlib import Path
 
@@ -129,13 +130,30 @@ async def test_bundle_is_only_readable_from_its_room_and_tenant(repo: Path) -> N
     assert await svc.get("other-tenant", "r1", meta.id) is None
 
 
-async def test_disk_store_writes_owner_only_files(repo: Path, tmp_path: Path) -> None:
-    svc = BundleService(tmp_path / "store")
+async def test_total_relay_quota_is_enforced(repo: Path, monkeypatch) -> None:
     data = _bundle(repo, "main..fix/relay")
-    meta = await svc.put(_TID, "r1", "bob", data)
-    path = tmp_path / "store" / _TID / meta.id
-    assert path.stat().st_mode & 0o777 == 0o600
-    assert (await svc.get(_TID, "r1", meta.id))[1] == data
+    monkeypatch.setattr(bundle_svc, "TOTAL_QUOTA_BYTES", len(data))
+    svc = BundleService()
+    await svc.put(_TID, "r1", "bob", data)
+    with pytest.raises(QuotaError, match="relay"):
+        await svc.put("another-tenant", "r9", "dan", data)
+
+
+async def test_download_racing_an_expiry_sweep_never_errors(repo: Path) -> None:
+    now = [1000.0]
+    svc = BundleService(clock=lambda: now[0])
+    meta = await svc.put(_TID, "r1", "bob", _bundle(repo, "main..fix/relay"))
+    now[0] += bundle_svc.BUNDLE_TTL_S + 1
+    results = await asyncio.gather(svc.list(_TID, "r1"), svc.get(_TID, "r1", meta.id),
+                                   svc.list(_TID, "r1"), svc.get(_TID, "r1", meta.id))
+    assert results == [[], None, [], None]
+
+
+def test_multi_instance_relay_gets_no_bundle_service() -> None:
+    from quorus.relay import _bundle_service
+
+    assert _bundle_service(redis_conn=object()) is None
+    assert isinstance(_bundle_service(redis_conn=None), BundleService)
 
 
 def test_concurrent_upload_slots_are_bounded() -> None:
@@ -186,11 +204,12 @@ async def test_round_trip_lets_a_teammate_git_show_the_commit(
     assert down.content == data
     assert down.headers["x-quorus-bundle-sha256"] == meta["sha256"]
 
-    # Laptop 1 has the base commit; it fetches into a namespaced ref only.
+    # Laptop 1 has only the base; the reviewed commit must arrive by bundle.
     laptop1 = tmp_path / "laptop1"
-    _git(tmp_path, "clone", "-q", str(repo), str(laptop1))
-    _git(laptop1, "checkout", "-q", "main")
-    _git(laptop1, "branch", "-q", "-D", "fix/relay")
+    _git(tmp_path, "clone", "-q", "--single-branch", "--branch", "main",
+         f"file://{repo}", str(laptop1))
+    missing = subprocess.run(["git", "cat-file", "-e", meta["head"]], cwd=laptop1)
+    assert missing.returncode != 0, "laptop 1 must not have the head before fetching"
     (tmp_path / "in.bundle").write_bytes(down.content)
     _git(laptop1, "fetch", "-q", str(tmp_path / "in.bundle"),
          "refs/heads/fix/relay:refs/quorus/bob/fix/relay")

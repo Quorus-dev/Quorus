@@ -2,6 +2,10 @@
 
 The relay is a courier, not a code host: it validates the bundle header,
 enforces size, quota and TTL, and hands the bytes back to room members.
+Bundles live in this process's memory only. A relay running several
+instances can't share them, so it gets no BundleService and the routes
+answer 501 (review of ffe25d3b: a shared directory without shared metadata
+let one instance delete another's live bundles).
 """
 
 from __future__ import annotations
@@ -13,13 +17,13 @@ import re
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 
 MAX_BUNDLE_BYTES = int(os.environ.get("QUORUS_MAX_BUNDLE_BYTES", str(10 * 1024 * 1024)))
 BUNDLE_TTL_S = int(os.environ.get("QUORUS_BUNDLE_TTL_S", str(24 * 3600)))
 PARTICIPANT_QUOTA_BYTES = int(os.environ.get("QUORUS_BUNDLE_QUOTA_BYTES", str(50 * 1024 * 1024)))
 TENANT_QUOTA_BYTES = int(os.environ.get("QUORUS_BUNDLE_TENANT_QUOTA_BYTES",
-                                        str(500 * 1024 * 1024)))
+                                        str(200 * 1024 * 1024)))
+TOTAL_QUOTA_BYTES = int(os.environ.get("QUORUS_BUNDLE_TOTAL_BYTES", str(512 * 1024 * 1024)))
 MAX_CONCURRENT_UPLOADS = 2  # per participant
 MAX_HEADER_BYTES = 64 * 1024
 
@@ -112,20 +116,14 @@ class BundleMeta:
 
 
 class BundleService:
-    """In-memory metadata; bytes in memory or, with *root*, on disk (0600)."""
+    """Bundles and their metadata, in memory, behind one lock."""
 
-    def __init__(self, root: Path | None = None, *, clock=time.time) -> None:
-        self._root = root
+    def __init__(self, *, clock=time.time) -> None:
         self._clock = clock
         self._meta: dict[str, BundleMeta] = {}
         self._blobs: dict[str, bytes] = {}
         self._lock = asyncio.Lock()
         self._uploading: dict[tuple[str, str], int] = {}
-        if root is not None:
-            # Metadata lives in memory, so bytes left by a previous run can
-            # never be served again: drop them rather than leak disk.
-            for stale in root.glob("*/*"):
-                stale.unlink(missing_ok=True)
 
     def begin_upload(self, tenant_id: str, uploader: str) -> bool:
         """Reserve one of the uploader's concurrent upload slots."""
@@ -144,13 +142,8 @@ class BundleService:
 
     def _sweep(self) -> None:
         for bid in [b for b, m in self._meta.items() if not self._live(m)]:
-            self._drop(bid)
-
-    def _drop(self, bid: str) -> None:
-        meta = self._meta.pop(bid, None)
-        self._blobs.pop(bid, None)
-        if meta is not None and self._root is not None:
-            (self._root / meta.tenant_id / bid).unlink(missing_ok=True)
+            self._meta.pop(bid, None)
+            self._blobs.pop(bid, None)
 
     async def put(self, tenant_id: str, room_id: str, uploader: str, data: bytes) -> BundleMeta:
         if len(data) > MAX_BUNDLE_BYTES:
@@ -158,13 +151,16 @@ class BundleService:
         header = parse_header(data)
         async with self._lock:
             self._sweep()
-            mine = sum(m.size for m in self._meta.values()
+            sizes = list(self._meta.values())
+            mine = sum(m.size for m in sizes
                        if m.tenant_id == tenant_id and m.uploader == uploader)
-            tenant = sum(m.size for m in self._meta.values() if m.tenant_id == tenant_id)
+            tenant = sum(m.size for m in sizes if m.tenant_id == tenant_id)
             if mine + len(data) > PARTICIPANT_QUOTA_BYTES:
                 raise QuotaError("your shared bundles exceed your quota; wait for them to expire")
             if tenant + len(data) > TENANT_QUOTA_BYTES:
                 raise QuotaError("this workspace's shared bundles exceed its quota")
+            if sum(m.size for m in sizes) + len(data) > TOTAL_QUOTA_BYTES:
+                raise QuotaError("this relay is holding too many bundles; try again later")
             now = self._clock()
             meta = BundleMeta(
                 id="b_" + secrets.token_urlsafe(9), room_id=room_id, uploader=uploader,
@@ -173,36 +169,23 @@ class BundleService:
                 sha256=hashlib.sha256(data).hexdigest(), created_at=now,
                 expires_at=now + BUNDLE_TTL_S, tenant_id=tenant_id,
             )
-            if self._root is not None:
-                await asyncio.to_thread(self._write, tenant_id, meta.id, data)
-            else:
-                self._blobs[meta.id] = data
             self._meta[meta.id] = meta
+            self._blobs[meta.id] = data
             return meta
 
-    def _write(self, tenant_id: str, bid: str, data: bytes) -> None:
-        folder = self._root / tenant_id
-        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        tmp = folder / f".{bid}.tmp"
-        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-        os.replace(tmp, folder / bid)
-
     async def get(self, tenant_id: str, room_id: str, bid: str) -> tuple[BundleMeta, bytes] | None:
-        """The bundle, or None when unknown, expired, or from another room."""
+        """The bundle, or None when unknown, expired, or from another room.
+
+        Metadata and bytes are read under the same lock that expiry deletes
+        under, so a sweep can never remove the bytes mid-download."""
         async with self._lock:
             meta = self._meta.get(bid)
             if meta is None or meta.tenant_id != tenant_id or meta.room_id != room_id:
                 return None
             if not self._live(meta):
-                self._drop(bid)
+                self._sweep()
                 return None
-        if self._root is not None:
-            data = await asyncio.to_thread((self._root / tenant_id / bid).read_bytes)
-        else:
-            data = self._blobs[bid]
-        return meta, data
+            return meta, self._blobs[bid]
 
     async def list(self, tenant_id: str, room_id: str) -> list[BundleMeta]:
         async with self._lock:

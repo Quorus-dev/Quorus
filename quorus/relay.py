@@ -314,16 +314,11 @@ async def _run_migrations():
 
 
 def _bundle_service(redis_conn):
-    """Git bundle courier. Several relay instances (Redis) can't share an
-    in-memory store, so they need QUORUS_BUNDLE_DIR on a shared disk; without
-    it the routes answer 501 rather than lose bundles between instances."""
-    from pathlib import Path
-
+    """Git bundle courier, held in this process's memory. Several relay
+    instances (Redis) can't share it, so there the routes answer 501 rather
+    than lose bundles between instances."""
     from quorus.services.bundle_svc import BundleService
 
-    folder = os.environ.get("QUORUS_BUNDLE_DIR")
-    if folder:
-        return BundleService(Path(folder))
     return None if redis_conn is not None else BundleService()
 
 

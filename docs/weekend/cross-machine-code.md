@@ -6,8 +6,8 @@ review of 6a947e63 is folded in:
   membership check, so the bundle routes refuse legacy auth with 401.
 - Strict `git check-ref-format` rules: no `.lock`, no `//`, no leading-dot
   components, and so on.
-- Quotas on retained bytes: 50 MB per participant and 500 MB per tenant,
-  checked under one lock. At most 2 concurrent uploads per participant.
+- Quotas on retained bytes: 50 MB per participant, 200 MB per tenant and
+  512 MB per relay, checked under one lock. At most 2 concurrent uploads per participant.
 - Expiry is checked on every read, not only during the sweep.
 - Missing prerequisites, empty ranges, shallow repos and over-cap full
   bundles all end in "ask the uploader to reshare". Full-history upload is
@@ -89,14 +89,13 @@ the same size cap.
 
 ### Storage
 
-There is a `BundleStore` protocol with two implementations:
-- in-memory, for tests;
-- file-backed, next to the SQLite history DB as
-  `<data_dir>/bundles/<tenant>/<id>`, written atomically with mode 0600.
-
-Known limit: a multi-instance relay without a shared disk (Fly with Postgres)
-needs object storage later. Until then the relay returns 501 there instead of
-losing bundles silently.
+Bundles and their metadata live in the relay process's memory, behind one lock.
+Reads happen under the same lock that expiry deletes under, so a download can't
+race a sweep. Byte quotas: 50 MB per participant, 200 MB per tenant, and
+512 MB per relay. A multi-instance relay (Redis) gets no bundle service and
+answers 501. Codex's review of ffe25d3b showed that a shared directory without
+shared metadata lets one instance delete another's live bundles. Shared storage
+(object store plus metadata in Postgres or Redis) is future work.
 
 ## Build plan (each step its own commit with tests)
 
