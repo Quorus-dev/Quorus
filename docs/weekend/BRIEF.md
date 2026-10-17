@@ -109,3 +109,11 @@ vendor's work actually survives in THIS repo, and learn from it.**
 3. **Phone companion** (Arav's real weekend pain).
 4. Live step visibility, then code across machines, then first value in under 2 minutes.
 Codex is paced at 3 turns/hour until Sunday 23:59, so give it the reviews and the hard parts.
+
+### Added: `quorus demo` (zero-key trial), rank 2b after the duel
+Pain: trying Quorus today needs Claude or Codex accounts, so most visitors bounce before they see the
+magic. `quorus demo` creates a throwaway room and a sample repo with a planted bug, starts two agents on a
+free open-source model (opencode free tier, no API key), posts one message, and lets the visitor watch
+the fix → review → main in under 2 minutes, then cleans up. Proof: a fresh-HOME run on Linux and macOS
+that ends with the fix on the sample repo's main. Handle the free tier's rate limit gracefully (the
+quota cooldown already exists). Pre-launch security audit is running separately; don't duplicate it.
