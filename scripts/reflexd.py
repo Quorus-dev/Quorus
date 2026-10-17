@@ -1491,6 +1491,7 @@ class HeadlessAdapter:
                 build_cline_argv(context),
                 parser=lambda out: out.strip(),
                 cwd=cwd,
+                env=reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir),
             )
         raise ValueError(f"unknown harness {harness!r}")
 
@@ -1915,6 +1916,7 @@ class HeadlessAdapter:
                 out = await self._run_subprocess(
                     build_cursor_argv(context),
                     parser=lambda o: o.strip(),
+                    env=reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir),
                 )
                 if not out.startswith("[reflexd] cursor-agent not installed"):
                     return out
@@ -2480,18 +2482,19 @@ class Reflexd:
             self.adapter, "wake_spec",
         ):
             agent_dir = config.runtime_dir / "agents" / config.participant_name
+            credential, legacy = self._agent_credential()
             try:
                 reflexd_wake.write_agent_config_dir(
-                    agent_dir, relay_url=config.relay_url, api_key=config.api_key,
-                    participant=config.participant_name, legacy=config.legacy_bearer,
+                    agent_dir, relay_url=config.relay_url, api_key=credential,
+                    participant=config.participant_name, legacy=legacy,
                 )
                 self.adapter.agent_config_dir = agent_dir
             except OSError as exc:
                 logger.warning("could not write agent config dir: %s", exc)
                 agent_dir = None
             self.adapter.wake_spec = reflexd_wake.quorus_mcp_spec(
-                relay_url=config.relay_url, api_key=config.api_key,
-                participant=config.participant_name, legacy=config.legacy_bearer,
+                relay_url=config.relay_url, api_key=credential,
+                participant=config.participant_name, legacy=legacy,
                 config_dir=agent_dir,
             )
             self.adapter.mcp_config_path = (
@@ -3027,6 +3030,29 @@ class Reflexd:
             cap = pace_for(self.config.participant_name)
             wait = 0.0 if cap is None else max(1.0, pace_wait_s(self._turns, cap, time.time()))
 
+    def _agent_credential(self) -> tuple[str, bool]:
+        """``(credential, legacy)`` for the woken agent.
+
+        Never the relay's shared secret when the agent has its own key: the
+        secret is an admin credential (post as anyone, claim any free name),
+        and the agent's text can be steered by anyone in the room. On a
+        shared-secret relay the daemon's sign-in saved this agent's
+        participant key in its agent dir; the agent signs in with that and
+        acts only as itself. A relay too old for participant keys has none,
+        and the daemon itself runs on the secret there, so the agent does too.
+        """
+        if not self.config.legacy_bearer:
+            return self.config.api_key, False
+        from quorus import bundle_client
+
+        key = bundle_client.load_participant_key(
+            self.config.relay_url, self.config.participant_name,
+            self.config.runtime_dir / "agents" / self.config.participant_name)
+        if key:
+            return key, False
+        logger.warning("relay has no participant keys: the woken agent gets the shared secret")
+        return self.config.api_key, True
+
     def _refresh_identity(self) -> None:
         """Rewrite the agent's private config dir before every wake. An agent
         testing `quorus init` inside its wake wrote a bogus profile there and
@@ -3035,10 +3061,17 @@ class Reflexd:
         agent_dir = getattr(self.adapter, "agent_config_dir", None)
         if agent_dir is None:
             return
+        credential, legacy = self._agent_credential()
+        if getattr(self.adapter, "wake_spec", None) is not None:
+            self.adapter.wake_spec = reflexd_wake.quorus_mcp_spec(
+                relay_url=self.config.relay_url, api_key=credential,
+                participant=self.config.participant_name, legacy=legacy,
+                config_dir=agent_dir,
+            )
         try:
             reflexd_wake.write_agent_config_dir(
-                agent_dir, relay_url=self.config.relay_url, api_key=self.config.api_key,
-                participant=self.config.participant_name, legacy=self.config.legacy_bearer,
+                agent_dir, relay_url=self.config.relay_url, api_key=credential,
+                participant=self.config.participant_name, legacy=legacy,
             )
             for stray in (agent_dir / "profiles").glob("*.json"):
                 if stray.stem != self.config.participant_name:
