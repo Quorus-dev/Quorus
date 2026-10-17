@@ -30,11 +30,26 @@ def _tid(auth: AuthContext) -> str:
     return auth.tenant_id or _LEGACY_TENANT
 
 
+def _as_epoch(value: object) -> float | None:
+    """Coerce an ISO-8601 string or epoch number to epoch seconds."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(
+                value.replace("Z", "+00:00")
+            ).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
 def derive_active_agents(
     presence_entries: list[dict],
     history: list[dict],
     rid: str,
     room_name: str,
+    window_seconds: int = _PRESENCE_TIMEOUT,
 ) -> list[str]:
     """Names of online agents associated with a room.
 
@@ -42,8 +57,9 @@ def derive_active_agents(
     with ``room=""`` (or a stale room), so trusting it alone made
     ``/rooms/{id}/state`` and ``/rooms/{id}/usage`` list the wrong
     ``active_agents``. An agent counts as active when it is online AND
-    either claims this room in its heartbeat or has posted in this room's
-    recent history.
+    either claims this room in its heartbeat or posted here within
+    ``window_seconds`` — the activity signal is time-bounded so an agent
+    that posted once and left hours ago doesn't stay "active" forever.
     """
     online = {e.get("name") for e in presence_entries if e.get("_online")}
     attributed = {
@@ -51,8 +67,15 @@ def derive_active_agents(
         for e in presence_entries
         if e.get("room") in (rid, room_name)
     }
-    senders = {m.get("from_name") or m.get("from") for m in history}
-    return sorted(name for name in (online & (attributed | senders)) if name)
+    cutoff = datetime.now(timezone.utc).timestamp() - window_seconds
+    senders: set[str] = set()
+    for m in history:
+        epoch = _as_epoch(m.get("timestamp"))
+        if epoch is not None and epoch >= cutoff:
+            senders.add(m.get("from_name") or m.get("from"))
+    return sorted(
+        name for name in (online & (attributed | senders)) if name
+    )
 
 
 @router.get("/rooms/{room_id}/state")

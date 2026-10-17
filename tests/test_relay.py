@@ -2398,19 +2398,45 @@ async def test_room_state_active_agents_uses_recent_activity(
 
 def test_derive_active_agents_ignores_blank_and_stale_rooms():
     """Pure-function check: online ∩ (room-match ∪ recent-sender)."""
+    from datetime import datetime, timezone
+
     from quorus.routes.room_state import derive_active_agents
 
+    now = datetime.now(timezone.utc).isoformat()
     presence = [
         {"name": "alice", "room": "", "_online": True},
         {"name": "carol", "room": "state-test-room", "_online": True},
         {"name": "dave", "room": "elsewhere", "_online": True},
         {"name": "erin", "room": "", "_online": False},
     ]
-    history = [{"from_name": "alice"}, {"from_name": "erin"}]
+    history = [
+        {"from_name": "alice", "timestamp": now},
+        {"from_name": "erin", "timestamp": now},
+    ]
     assert derive_active_agents(presence, history, "rid-1", "state-test-room") == [
         "alice",
         "carol",
     ]
+
+
+def test_derive_active_agents_excludes_stale_senders():
+    """An online agent that posted before the window is not active."""
+    from datetime import datetime, timedelta, timezone
+
+    from quorus.routes.room_state import derive_active_agents
+
+    old = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    presence = [{"name": "alice", "room": "", "_online": True}]
+    history = [{"from_name": "alice", "timestamp": old}]
+    assert derive_active_agents(presence, history, "rid-1", "state-test-room") == []
+    # ...but it does count inside the window.
+    assert derive_active_agents(
+        presence,
+        [{"from_name": "alice",
+          "timestamp": datetime.now(timezone.utc).isoformat()}],
+        "rid-1",
+        "state-test-room",
+    ) == ["alice"]
 
 
 # ---------------------------------------------------------------------------
