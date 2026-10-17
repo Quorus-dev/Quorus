@@ -26,7 +26,8 @@ async def heartbeat(
 ):
     require_identity(auth, req.instance_name)
     svc = request.app.state.presence_service
-    entry = await svc.heartbeat(_tid(auth), req.instance_name, req.status, req.room, req.reason)
+    entry = await svc.heartbeat(_tid(auth), req.instance_name, req.status, req.room,
+                                reason=req.reason, activity=req.activity)
     await request.app.state.backends.participants.add(_tid(auth), req.instance_name)
     return {"status": "ok", "timestamp": entry.get("last_heartbeat", "")}
 
@@ -51,6 +52,7 @@ async def get_presence(
             "online": online,
             "status": e.get("status", "active") if online else "offline",
             "room": e.get("room", ""),
+            "activity": (e.get("activity") or "") if online and e.get("status") == "busy" else "",
             "last_heartbeat": e.get("last_heartbeat", ""),
             "uptime_start": e.get("uptime_start", ""),
             "reason": e.get("reason", ""),

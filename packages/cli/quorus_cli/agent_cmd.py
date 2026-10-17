@@ -128,6 +128,33 @@ def _join(cfg: dict[str, Any], room: str, name: str, bearer: str) -> None:
     resp.raise_for_status()
 
 
+def _pace(args: Any, console: Any) -> None:
+    """`quorus agent pace <name> <turns-per-hour|off>`: keep an agent inside its
+    plan. Over the cap it waits for a slot; a human's message always goes first."""
+    path = Path.home() / ".quorus" / "pacing.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    value = str(args.per_hour).strip().lower()
+    if value in ("off", "0", "none"):
+        data.pop(args.name, None)
+        msg = f"@{args.name} is no longer paced"
+    else:
+        try:
+            cap = int(value)
+        except ValueError:
+            raise SystemExit("agent pace: give a number of turns per hour, or `off`") from None
+        if not 1 <= cap <= 120:
+            raise SystemExit("agent pace: turns per hour must be 1-120")
+        data[args.name] = {"per_hour": cap}
+        msg = (f"@{args.name} takes at most {cap} turns per hour from teammates; "
+               "your own messages always go first")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_private(path, json.dumps(data, indent=2))
+    console.print(f"[success]✓[/] {msg} [dim](applies from its next turn)[/]")
+
+
 def _leads_path() -> Path:
     return Path.home() / ".quorus" / "room-leads.json"
 
@@ -157,7 +184,7 @@ def _drop_lead_everywhere(name: str) -> None:
         _set_lead(room, None)
 
 
-def _bind(room: str, repo: Path, mode: str | None) -> str:
+def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> str:
     path = Path.home() / ".quorus" / "room-bindings.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -166,7 +193,12 @@ def _bind(room: str, repo: Path, mode: str | None) -> str:
     prev = data.get(room)
     if mode is None:  # keep the room's existing mode
         mode = prev.get("mode", "default") if isinstance(prev, dict) else "default"
-    data[room] = str(repo) if mode == "default" else {"path": str(repo), "mode": mode}
+    if trust is None and isinstance(prev, dict):
+        trust = prev.get("trust")
+    entry: dict[str, str] = {"path": str(repo), "mode": mode}
+    if trust == "members":  # anyone in the room may trigger write-capable turns
+        entry["trust"] = "members"
+    data[room] = str(repo) if entry == {"path": str(repo), "mode": "default"} else entry
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_private(path, json.dumps(data, indent=2))
     return mode
@@ -246,6 +278,8 @@ def cmd_agent(args: Any, console: Any) -> None:
         _list(console)
     elif action == "remove":
         _remove(args, console)
+    elif action == "pace":
+        _pace(args, console)
     else:
         console.print("usage: quorus agent add <claude|codex|gemini|opencode> --room <room> "
                       "[--repo PATH] [--mode default|manual|autonomous] "
@@ -283,7 +317,7 @@ def _add(args: Any, console: Any) -> None:
     _join(cfg, args.room, name, _bearer(cfg, join_cred, legacy))
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
-        mode = _bind(args.room, repo, args.mode)
+        mode = _bind(args.room, repo, args.mode, getattr(args, "trust", None))
         console.print(f"[success]✓[/] #{args.room} works in {repo} [dim]({mode})[/]")
     if getattr(args, "lead", False):
         previous = _read_leads().get(args.room)
@@ -363,6 +397,10 @@ def _readiness_warnings(harness: str, model: str | None) -> list[str]:
                    "a personal Google account. Get a free key at "
                    "https://aistudio.google.com/apikey and put GEMINI_API_KEY=<key> "
                    "in ~/.gemini/.env")
+    if harness == "gemini" and not model:
+        out.append("Gemini's free tier allows only about 20 requests a day on its default "
+                   "model, and one agent turn can use a dozen. For an always-on agent, add "
+                   "`--model gemini-3.5-flash-lite`")
     if harness == "opencode":
         version = _opencode_version()
         if version and int(version.split(".")[0]) < 2:

@@ -24,6 +24,16 @@ Auto-wake is tested with **Claude Code, Codex, Gemini CLI and opencode** (openco
 pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git"
 ```
 
+**See it work in 2 minutes, with no accounts or keys:**
+
+```bash
+quorus demo
+```
+
+Two agents on a free open-source model fix a planted bug in a throwaway repo. One fixes and commits,
+the other reviews, and you watch it happen live. It needs [opencode](https://opencode.ai) 2.x
+(`brew install opencode`); nothing in your own setup is touched.
+
 Then just type `quorus` in any terminal:
 
 ```bash
@@ -113,6 +123,29 @@ quorus init <your-name> --relay-url http://localhost:8080 --secret <your-secret>
 
 then tell them "join the Quorus room dev-sprint". `init` updates your existing
 profile in place — your other profiles, agent keys and push settings survive.
+
+## Security model
+
+Quorus runs coding agents that can edit files and run commands, so be clear about who can make them act.
+
+- **Only you can make your agents change code.** In `autonomous` and `manual` rooms, a message from you
+  or from your own agents (`<you>-*`) gets a full turn. Anyone else, including text pasted into the
+  room, gets a read-only turn: the agent answers or reviews and asks you before changing anything. For
+  a room you share with trusted teammates, opt in with `quorus agent add ... --trust members`.
+- **Autonomous agents are not sandboxed by Quorus.** Claude Code (`acceptEdits` + Bash), Gemini (`yolo`)
+  and opencode run with your user's permissions in their own git worktree. Codex runs in its
+  `workspace-write` sandbox. Use `autonomous` only on repos and machines you're comfortable with.
+- **The local relay trusts its secret.** On the default shared-secret relay, everyone holding the
+  secret, every agent included, can post as anyone and approve requests. So `manual` approvals are
+  a speed bump there, not a security boundary, and an invite code from a shared-secret relay *is* the
+  secret: send it only to people you'd trust with every room. For separate identities per person and
+  per agent, use account mode (`quorus init --api-key ...`).
+- **Agents inherit your environment.** The wake daemon passes its environment to the agent CLIs
+  (minus Quorus's own secrets), so don't start agents from a shell holding keys they shouldn't see.
+- The relay binds to `127.0.0.1` by default. Room text is fenced as untrusted data in every agent
+  prompt, and credentials are masked before agents post.
+
+Found a vulnerability? Please open a private security advisory on GitHub rather than a public issue.
 
 ## MCP integration
 

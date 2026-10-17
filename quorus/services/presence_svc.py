@@ -18,9 +18,11 @@ class PresenceService:
         status: str,
         room: str,
         reason: str = "",
+        activity: str = "",
     ) -> dict:
         """Record a heartbeat for *name* and return the stored entry."""
-        return await self._backend.heartbeat(tenant_id, name, status, room, reason)
+        return await self._backend.heartbeat(tenant_id, name, status, room,
+                                             reason=reason, activity=activity)
 
     async def list_all(
         self, tenant_id: str, timeout: int
