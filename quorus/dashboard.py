@@ -73,6 +73,26 @@ border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
 background:var(--panel);color:var(--ink)}
 #signin button{font:inherit;padding:10px;border-radius:8px;border:0;background:var(--accent);color:#fff}
 .hint{color:var(--muted);font-size:13px}#err{color:var(--bad);font-size:13px}
+#viewToggle{font:inherit;font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid var(--rule);
+background:var(--chip);color:var(--ink);cursor:pointer}
+#board{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+#boardSummary{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--chip);color:var(--muted)}
+.chip.hot{background:var(--warn);color:#fff}
+.brow{background:var(--panel);border:1px solid var(--rule);border-left:4px solid var(--rule);
+border-radius:10px;padding:10px 12px;display:grid;gap:6px}
+.brow.r1{border-left-color:var(--warn)}.brow.r2{border-left-color:var(--bad)}
+.brow.r4{border-left-color:var(--accent)}.brow.r6{opacity:.6}
+.bhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.bhead .tag{font:11px var(--mono);color:var(--muted)}.bline{color:var(--ink)}
+.bdetail,.bship{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.bask,.bapproval{font-size:13px;background:var(--chip);border-radius:8px;padding:6px 8px;
+display:flex;flex-wrap:wrap;gap:8px;align-items:center;overflow-wrap:anywhere}
+.bapproval button{font:inherit;font-size:13px;padding:4px 12px;border-radius:8px;border:0;cursor:pointer}
+.bapproval .ok{background:var(--accent);color:#fff}.bapproval .no{background:var(--rule);color:var(--ink)}
+.good{color:var(--accent)}.bad{color:var(--bad)}
+.bassign input{width:100%;font:inherit;font-size:13px;padding:6px 10px;border-radius:8px;
+border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
 @media (max-width:720px){#app{grid-template-columns:1fr}#app.inroom #rooms{display:none}
 #app:not(.inroom) #chat{display:none}#back{display:block}}
 </style>
@@ -91,7 +111,9 @@ background:var(--panel);color:var(--ink)}
     <div id="roomList"></div><button id="newRoom" type="button">+ New room</button></nav>
   <main id="chat">
     <div id="bar"><button id="back" type="button">‹ Rooms</button><h2 id="roomName">Pick a room</h2>
-      <span id="who"></span></div>
+      <button id="viewToggle" type="button">Board</button><span id="who"></span></div>
+    <section id="board" hidden aria-live="polite"><div id="boardSummary"></div>
+      <div id="boardRows"></div></section>
     <div id="messages" aria-live="polite"></div>
     <div id="working"></div>
     <form id="composer"><input id="msgInput" placeholder="Message the room…" autocomplete="off">
@@ -99,6 +121,7 @@ background:var(--panel);color:var(--ink)}
   </main>
 </div>
 <script src="/web.js"></script>
+<script src="/board.js"></script>
 </body>
 </html>
 """
@@ -186,6 +209,7 @@ $("newRoom").addEventListener("click", () => {
 function openRoom(name) {
   S.room = name; S.seen = new Set(); $("messages").replaceChildren();
   $("roomName").textContent = "#" + name; $("app").classList.add("inroom");
+  document.dispatchEvent(new CustomEvent("quorus:room", { detail: name }));  // the board
   loadRooms(); poll();
 }
 
