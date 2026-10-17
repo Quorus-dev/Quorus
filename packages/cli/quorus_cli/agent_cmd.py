@@ -184,7 +184,7 @@ def _drop_lead_everywhere(name: str) -> None:
         _set_lead(room, None)
 
 
-def _bind(room: str, repo: Path, mode: str | None) -> str:
+def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> str:
     path = Path.home() / ".quorus" / "room-bindings.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -193,7 +193,12 @@ def _bind(room: str, repo: Path, mode: str | None) -> str:
     prev = data.get(room)
     if mode is None:  # keep the room's existing mode
         mode = prev.get("mode", "default") if isinstance(prev, dict) else "default"
-    data[room] = str(repo) if mode == "default" else {"path": str(repo), "mode": mode}
+    if trust is None and isinstance(prev, dict):
+        trust = prev.get("trust")
+    entry: dict[str, str] = {"path": str(repo), "mode": mode}
+    if trust == "members":  # anyone in the room may trigger write-capable turns
+        entry["trust"] = "members"
+    data[room] = str(repo) if entry == {"path": str(repo), "mode": "default"} else entry
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_private(path, json.dumps(data, indent=2))
     return mode
@@ -312,7 +317,7 @@ def _add(args: Any, console: Any) -> None:
     _join(cfg, args.room, name, _bearer(cfg, join_cred, legacy))
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
-        mode = _bind(args.room, repo, args.mode)
+        mode = _bind(args.room, repo, args.mode, getattr(args, "trust", None))
         console.print(f"[success]✓[/] #{args.room} works in {repo} [dim]({mode})[/]")
     if getattr(args, "lead", False):
         previous = _read_leads().get(args.room)

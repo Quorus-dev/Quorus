@@ -80,7 +80,7 @@ from quorus.notifications import agent_events as _agent_events  # noqa: E402
 from quorus.notifications import notify as _notify  # noqa: E402
 from quorus.observability.redaction import env_secret_values, redact_secrets  # noqa: E402
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
-from quorus.private_files import write_private_json  # noqa: E402
+from quorus.private_files import write_private_json, write_private_text  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
 from quorus.runtime.turnguard import is_busy as _tg_is_busy  # noqa: E402
@@ -190,6 +190,27 @@ def _pause_announced(recent: list[dict[str, Any]], marker: str = PAUSE_NOTICE) -
         if not is_agent_participant(m.get("from_name") or ""):
             return False
     return False
+
+
+def trust_for(room: str, *, bindings_path: Path | None = None) -> str:
+    """Who may trigger write-capable turns in *room*: "owner" (default) or "members"."""
+    try:
+        data = json.loads((bindings_path or ROOM_BINDINGS_PATH).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "owner"
+    raw = data.get(room) if isinstance(data, dict) else None
+    trust = raw.get("trust") if isinstance(raw, dict) else None
+    return "members" if trust == "members" else "owner"
+
+
+def agent_owner(participant: str) -> str:
+    """The human who owns this agent: REFLEXD_OWNER, else the name's first part."""
+    return (os.environ.get("REFLEXD_OWNER") or "").strip() or participant.split("-", 1)[0]
+
+
+def trusted_sender(sender: str, owner: str) -> bool:
+    """The owner, or one of the owner's own agents (``<owner>-...``)."""
+    return bool(sender) and (sender == owner or sender.startswith(f"{owner}-"))
 
 
 def _answer_only(triage: Any, envelope: dict[str, Any], me: str, lead: str | None) -> bool:
@@ -1501,7 +1522,8 @@ class HeadlessAdapter:
         inbox = Path.home() / ".cursor" / "inbox" / who
         inbox.mkdir(parents=True, exist_ok=True)
         fname = inbox / f"wake_{int(time.time() * 1000)}.md"
-        fname.write_text(context, encoding="utf-8")
+        # The prompt holds the room transcript: owner-only, not 0644 (audit).
+        write_private_text(fname, context)
         logger.info("cursor file-inbox wrote %s", fname)
         return f"[reflexd] wrote prompt to {fname}"
 
@@ -2453,6 +2475,16 @@ class Reflexd:
                 # arrived next resumed it read-only and the agent reported
                 # "no write tools" (live 2026-10-17).
                 prior_session, _persist_session = None, None
+            sender = envelope.get("from_name") or ""
+            if (room_mode != "default" and trust_for(room) == "owner"
+                    and not trusted_sender(sender, agent_owner(self.config.participant_name))):
+                # Pre-launch audit: in autonomous mode any room member (or text
+                # injected into the room) could make the agent run code. Only
+                # the owner and the owner's own agents get write-capable turns
+                # unless the owner set the room to `trust: members`.
+                logger.info("read-only turn: %s is not this agent's owner", sender)
+                room_mode = "readonly"
+                prior_session, _persist_session = None, None
             if room_mode != "default":
                 extra_kw["mode"] = room_mode
             if room_mode == "manual":
@@ -2733,6 +2765,7 @@ class Reflexd:
         if kind in ("open_todo", "role_request"):
             preamble = self_assign_preamble(description=triage.description) + "\n"
             kind = "open_todo"
+        owner = agent_owner(self.config.participant_name)
         intent_blurb = reflexd_wake.wake_instructions(
             participant=self.config.participant_name, room=wake_room,
             sender=wake_sender, kind=kind, teammates=list(teammates or []),
@@ -2741,6 +2774,9 @@ class Reflexd:
             manual=mode_for(wake_room) == "manual",
             lead=lead_for(wake_room),
             owner=os.environ.get("REFLEXD_OWNER") or None,
+            untrusted=(owner if mode_for(wake_room) != "default"
+                       and trust_for(wake_room) == "owner"
+                       and not trusted_sender(wake_sender, owner) else None),
         )
 
         memory_block = render_memory_context(memory_entries or [])

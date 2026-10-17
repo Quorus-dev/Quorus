@@ -9229,6 +9229,10 @@ def main():
         "--name", help="Label for a second agent of the same tool, e.g. backend "
                        "-> <you>-backend-claude")
     p_agent_add.add_argument(
+        "--trust", choices=["owner", "members"], default=None,
+        help="Who may make this room's agents change code: owner (default; others "
+             "get read-only answers) or members (anyone in the room)")
+    p_agent_add.add_argument(
         "--lead", action="store_true",
         help="Make this agent the room's lead: it splits requests into tasks, "
              "assigns teammates, reviews, and reports back")
