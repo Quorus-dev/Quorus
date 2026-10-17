@@ -141,6 +141,21 @@ Next:
 
 ## Recent Changes
 
+### Proactive + notified for every agent; lead; catch-up (2026-10-17)
+
+Verified live with claude + codex + gemini + opencode in one room (real
+logins): all 4 answer a human in 22s; `@open` claimed and shipped by one agent
+in 37s (it found a second bug and handed it to Claude); peer review handoff;
+one agent in two rooms/two repos; presence `busy` seen for all 4; owner
+banners sent. New: reflexd posts presence busy/active per wake (TUI shows
+`⋯ @x working 1m 20s`); daemon pings the owner (shipped / needs you / done /
+stuck, quorus/notifications/agent_events.py, REFLEXD_OWNER); home screen
+"While you were away" digest; `--lead`: lead splits and assigns, non-leads
+answer human room messages READ-ONLY (enforced per harness, never resume that
+session). Gemini: each agent gets GEMINI_CLI_HOME (user's ~/.gemini had a
+retired Google login → IneligibleTierError even with a key); needs
+gemini-cli >= 0.64. Lead test: 2 jobs split across agents, on main in 53s.
+
 ### Linux verified in Docker (2026-10-16)
 
 First Linux run (python:3.12-slim, wheel install, opencode 2.0.32 + free
