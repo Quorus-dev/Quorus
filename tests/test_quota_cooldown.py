@@ -84,7 +84,7 @@ def test_limited_agent_is_not_woken_and_says_so_once(monkeypatch) -> None:
     for _ in range(3):
         asyncio.run(d._wake_and_reply(relay, env, reason="t"))
     assert woke == []
-    assert len(relay.posted) == 1 and "out of quota until" in relay.posted[0]["content"]
+    assert len(relay.posted) == 1 and "out of quota for about 60 min" in relay.posted[0]["content"]
     assert relay.posted[0]["message_type"] == "status"
 
 
@@ -142,3 +142,11 @@ def test_codex_usage_limit_try_again_at_is_parsed() -> None:
     assert reflexd._retry_after_s(msg, now=later) > 23 * 3600
     pm = reflexd._retry_after_s("try again at 3:15 PM", now=now)
     assert abs(pm - (14 * 3600 + 25 * 60 + 60)) < 1
+
+
+def test_wait_is_human_and_timezone_free() -> None:
+    assert reflexd._human_wait(30) == "1 min"
+    assert reflexd._human_wait(30 * 60) == "30 min"
+    assert reflexd._human_wait(3 * 3600) == "3 h"
+    assert reflexd._human_wait(2.5 * 3600) == "2.5 h"
+    assert reflexd._human_wait(21.6 * 3600) == "22 h"

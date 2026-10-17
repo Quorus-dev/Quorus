@@ -938,6 +938,14 @@ LIMIT_DEFAULT_S = 30 * 60
 LIMIT_MAX_S = 24 * 3600
 
 
+def _human_wait(seconds: float) -> str:
+    minutes = max(1, round(seconds / 60))
+    if minutes < 90:
+        return f"{minutes} min"
+    hours = minutes / 60
+    return f"{hours:.0f} h" if hours >= 10 else f"{hours:.1f} h".replace(".0 h", " h")
+
+
 def _is_limit(stderr: str) -> bool:
     return bool(_LIMIT_RE.search(stderr or ""))
 
@@ -2257,11 +2265,12 @@ class Reflexd:
         room = envelope.get("room") or ""
         if (room, until) not in self._limit_announced:
             self._limit_announced.add((room, until))
-            when = datetime.fromtimestamp(until).strftime("%a %H:%M")
+            # Relative, not a clock time: laptop 2 (UTC) said "until about Sat
+            # 04:33" to a room reading it in Toronto (2026-10-17).
             await self._post_status(
                 relay, room, envelope,
-                f"@{self.config.participant_name} is out of quota until about {when} "
-                "and will pick up again then")
+                f"@{self.config.participant_name} is out of quota for about "
+                f"{_human_wait(until - time.time())} and will pick up again then")
         logger.info("skipping wake: harness out of quota until %s", until)
         return True
 
