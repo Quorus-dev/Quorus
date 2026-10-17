@@ -4822,7 +4822,40 @@ def _cmd_init(args):
         )
         sys.exit(1)
 
-    # 1. Write config (warn if overwriting). Prefer explicit --config-dir arg
+    # 1. Verify the relay is reachable AND accepts these credentials BEFORE
+    # anything is written. Writing first meant a mistyped --secret destroyed
+    # the previous (working) one: the profile no longer held a copy to
+    # recover from (review 2026-10-17).
+    relay_status = "unknown"
+    relay_reason = ""
+    try:
+        resp = httpx.get(f"{relay_url}/health", timeout=3.0, follow_redirects=True)
+        relay_status = "up" if resp.status_code == 200 else "bad"
+        if relay_status == "up" and secret and not api_key:
+            auth = httpx.get(f"{relay_url}/rooms", timeout=5.0, follow_redirects=True,
+                             headers={"Authorization": f"Bearer {secret}"})
+            if auth.status_code in (401, 403):
+                relay_status = "rejected"
+    except Exception as exc:  # the exception text is the useful part
+        relay_status = "down"
+        relay_reason = _relay_error_reason(exc, relay_url)[0]
+
+    if relay_status == "rejected":
+        _ui.error(
+            f"The relay at {relay_url} rejected that secret",
+            hint="nothing was written — your existing config is untouched. "
+                 "Re-run with the secret the relay was started with "
+                 "(`quorus relay` uses the one from `quorus init`).",
+        )
+        sys.exit(3)
+    if relay_status == "down":
+        detail = f" ({relay_reason})" if relay_reason else ""
+        console.print(f"[yellow]Warning: relay not reachable at {relay_url}{detail} — start it "
+                      "with: quorus relay[/yellow]")
+    elif relay_status == "bad":
+        console.print(f"[yellow]Warning: {relay_url} answered but isn't healthy[/yellow]")
+
+    # 2. Write config (warn if overwriting). Prefer explicit --config-dir arg
     # over env var, which in turn beats the default ~/.quorus location.
     cli_override = getattr(args, "config_dir", None)
     # isinstance check: MagicMock-based tests set args.config_dir to a mock
@@ -4860,7 +4893,14 @@ def _cmd_init(args):
             f"[yellow]Updating profile '{profile_slug}' at {profile_path} — "
             "its relay URL and credentials are replaced.[/yellow]"
         )
-        pm.save(profile_slug, config)
+        # Merge into the profile we found rather than replacing it, so keys
+        # this run doesn't set (agent_api_keys, push settings, ...) survive.
+        # Drop the superseded credential shape: a lingering api_key would
+        # keep winning over the relay_secret we are writing.
+        merged = dict(pm.get(profile_slug) or {})
+        merged.pop("api_key" if not api_key else "relay_secret", None)
+        merged.update(config)
+        pm.save(profile_slug, merged)
         pm.set_current(profile_slug)
         console.print(
             f"[green]Config written to {profile_path} (permissions: 0600)[/green]"
@@ -4874,10 +4914,10 @@ def _cmd_init(args):
         # (atomic 0600 write via _write_sensitive_json)
         console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
-    # 2. Build MCP server command — prefer entry point, then uv, then python
+    # 3. Build MCP server command — prefer entry point, then uv, then python
     mcp_command, mcp_args = _mcp_server_command()
 
-    # 3. Register MCP server with every detected MCP-compatible client
+    # 4. Register MCP server with every detected MCP-compatible client
     # via the shared multi-platform helper. ``per_platform_keys`` is keyed
     # by platform suffix (claude/codex/...) and is reused by the agent-mint
     # step below so we never double-mint and revoke in-flight credentials.
@@ -4890,33 +4930,6 @@ def _cmd_init(args):
         mcp_args=mcp_args,
         ui=ui,
     )
-
-    # 4. Verify the relay is reachable AND accepts these credentials. A wrong
-    # secret used to get a green ✓ here and a 401 traceback on the next
-    # command (review 2026-10-09).
-    relay_status = "unknown"
-    relay_reason = ""
-    try:
-        resp = httpx.get(f"{relay_url}/health", timeout=3.0, follow_redirects=True)
-        relay_status = "up" if resp.status_code == 200 else "bad"
-        if relay_status == "up" and secret and not api_key:
-            auth = httpx.get(f"{relay_url}/rooms", timeout=5.0, follow_redirects=True,
-                             headers={"Authorization": f"Bearer {secret}"})
-            if auth.status_code in (401, 403):
-                relay_status = "rejected"
-    except Exception as exc:  # the exception text is the useful part
-        relay_status = "down"
-        relay_reason = _relay_error_reason(exc, relay_url)[0]
-    if relay_status == "rejected":
-        _ui.error(f"The relay at {relay_url} rejected that secret",
-                  hint="use the secret the relay was started with "
-                       "(`quorus relay` uses the one from `quorus init`)")
-    elif relay_status == "down":
-        detail = f" ({relay_reason})" if relay_reason else ""
-        console.print(f"[yellow]Warning: relay not reachable at {relay_url}{detail} — start it "
-                      "with: quorus relay[/yellow]")
-    elif relay_status == "bad":
-        console.print(f"[yellow]Warning: {relay_url} answered but isn't healthy[/yellow]")
 
     # ── Productized init steps (mint, profile, daemon, smoke) ──────────────
     # Agents are added explicitly with `quorus agent add` (one launchd daemon
@@ -5099,8 +5112,6 @@ def _cmd_init(args):
         "  [accent]quorus agent add claude --room myroom --repo <path-to-repo>[/]\n"
         "  [accent]quorus chat myroom[/]   then say hi, or [accent]@open <task>[/]"
     )
-    if relay_status == "rejected":
-        raise SystemExit(3)
 
 
 def _cmd_invite_link(args):

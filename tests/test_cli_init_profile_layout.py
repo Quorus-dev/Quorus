@@ -129,3 +129,68 @@ def test_init_warns_it_is_replacing_profile_credentials(hub_home: Path, capsys) 
     out = " ".join(capsys.readouterr().out.split())
     assert "Updating profile 'default'" in out
     assert "credentials are replaced" in out
+
+
+def _relay_get(*, health: int = 200, rooms: int = 200):
+    """httpx.get stand-in: /health and /rooms can answer differently."""
+
+    def _get(url, **_kw):
+        return MagicMock(status_code=rooms if url.endswith("/rooms") else health)
+
+    return _get
+
+
+def test_init_rejected_secret_leaves_the_profile_untouched(hub_home, monkeypatch, capsys) -> None:
+    """A mistyped --secret must not destroy the working one (review 2026-10-17).
+
+    Verified before writing: before the fix the profile was overwritten with
+    the bad secret and nothing on disk still held the real one.
+    """
+    profile = _write_hub_layout(hub_home, "default")
+    before = profile.read_text()
+    monkeypatch.setattr("quorus.cli.httpx.get", _relay_get(health=200, rooms=401))
+
+    with pytest.raises(SystemExit) as caught:
+        _cmd_init(_make_init_args())
+
+    assert caught.value.code == 3
+    assert profile.read_text() == before, "the rejected run rewrote the profile"
+    assert json.loads(profile.read_text())["relay_secret"] == REAL_SECRET
+    assert "rejected that secret" in " ".join(capsys.readouterr().out.split())
+    # Nothing else should have been written either (no MCP registration).
+    assert not (hub_home / ".mcp.json").exists()
+    assert not (hub_home / ".claude.json").exists()
+
+
+def test_init_rejected_secret_leaves_flat_config_untouched(hub_home, monkeypatch) -> None:
+    config_dir = hub_home / ".quorus"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "config.json"
+    config_path.write_text('{"relay_url": "http://localhost:8080", "relay_secret": "KEEP"}')
+    monkeypatch.setattr("quorus.cli.httpx.get", _relay_get(health=200, rooms=403))
+
+    with pytest.raises(SystemExit) as caught:
+        _cmd_init(_make_init_args())
+
+    assert caught.value.code == 3
+    assert json.loads(config_path.read_text())["relay_secret"] == "KEEP"
+
+
+def test_init_merges_into_the_existing_profile(hub_home, monkeypatch) -> None:
+    """Keys a later init doesn't set must survive, and the stale credential goes."""
+    profile = _write_hub_layout(hub_home, "work")
+    stored = json.loads(profile.read_text())
+    stored["agent_api_keys"] = {"claude": "mct_claude_test"}
+    stored["api_key"] = "mct_old_parent"
+    stored["custom_key"] = "keep-me"
+    profile.write_text(json.dumps(stored))
+    monkeypatch.setattr("quorus.cli.httpx.get", _relay_get(health=200, rooms=200))
+
+    _cmd_init(_make_init_args())
+
+    merged = json.loads(profile.read_text())
+    assert merged["agent_api_keys"] == {"claude": "mct_claude_test"}
+    assert merged["custom_key"] == "keep-me"
+    assert merged["relay_secret"] == "TYPED-WRONG"
+    assert "api_key" not in merged, "the superseded api_key would still win"
+

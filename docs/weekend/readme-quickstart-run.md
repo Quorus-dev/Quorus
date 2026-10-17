@@ -122,6 +122,17 @@ pointer and every other profile intact. The message reads `Updating profile
 `tests/test_cli_init_profile_layout.py`. This also fixes the pointer case of #2
 below.
 
+**Refinement (review 2026-10-17).** Writing *first* still meant a mistyped
+`--secret` overwrote the last working copy with no way back. `_cmd_init` now
+checks the secret against the relay *before* touching the disk: `/health`, then
+`GET /rooms` with the secret, and a `401`/`403` exits `3` with `nothing was
+written — your existing config is untouched`. A relay that is simply down still
+warns and proceeds (it can't be asked). The profile write also **merges** the
+new values into the existing profile (dropping the superseded credential shape)
+instead of replacing it, so `agent_api_keys` and push settings survive. Proven
+against a real relay: wrong secret → exit 3, `profiles/work.json` byte-identical;
+correct secret → same profile updated, pointer intact.
+
 ### 2. `quorus init` never warns it is replacing a *working* secret
 
 Same repro as #1: the warning is `config already exists at …/config.json —
