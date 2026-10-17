@@ -1068,6 +1068,12 @@ def _cmd_phone(args):
     cmd_phone(args, console)
 
 
+def _cmd_retro(args):
+    from quorus_cli.retro_cmd import cmd_retro
+
+    cmd_retro(args, console)
+
+
 def _cmd_scorecard(args):
     from quorus_cli.scorecard_cmd import cmd_scorecard
 
@@ -9221,6 +9227,13 @@ def main():
                          help="Share on this Wi-Fi instead of Tailscale (trusted networks only)")
     p_phone.add_argument("--port", type=int, default=None, help="Port to share on (default 8790)")
 
+    p_retro = sub.add_parser("retro", help="What's going wrong in a room, ranked, with fixes")
+    p_retro.add_argument("room", help="Room to look at")
+    p_retro.add_argument("--since", type=float, default=6.0, help="Hours to look back (default 6)")
+    p_retro.add_argument("--top", type=int, default=5, help="How many findings to show")
+    p_retro.add_argument("--post", action="store_true",
+                         help="Post the summary to the room (for its lead to act on)")
+
     p_score = sub.add_parser(
         "scorecard", help="Which agent and vendor's work holds up in this repo")
     p_score.add_argument("--repo", help="Repo path (default: current directory)")
@@ -9567,6 +9580,7 @@ def main():
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
         "phone": _cmd_phone,
+        "retro": _cmd_retro,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,
