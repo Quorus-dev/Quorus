@@ -136,9 +136,11 @@ async def verify_auth(request: Request) -> AuthContext:
                     detail="API key has been revoked",
                 )
 
-        if "pk_claim" in claims:
+        if "pk_claim" in claims or claims.get("tenant_id") == "_legacy":
             # Shared-secret relay participant: the name may have been released
-            # and reclaimed since this token was issued.
+            # and reclaimed since this token was issued. Only participant keys
+            # mint `_legacy` JWTs, so one without a current pk_claim (e.g. from
+            # 98b488c7, before generations) is refused too.
             from quorus.auth.participant_routes import claim_still_current
 
             if not await claim_still_current(request, claims):

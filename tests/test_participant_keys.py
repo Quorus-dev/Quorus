@@ -188,3 +188,16 @@ def test_claims_file_from_98b488c7_is_migrated(tmp_path: Path) -> None:
     store = ParticipantKeyStore(tmp_path)
     assert not store.is_current("bob", "")  # tokens from before the column are retired
     assert store.claim("bob") is None       # but the claim itself is kept
+
+
+def test_participant_jwt_without_a_generation_is_refused(client: TestClient) -> None:
+    """Codex's repro on 6a93cec1: tokens minted by 98b488c7 carry no pk_claim
+    and still got 200 after the name was released and reclaimed."""
+    rid = client.post("/rooms", json={"name": "r", "created_by": "alice"},
+                      headers=LEGACY).json()["id"]
+    client.post(f"/rooms/{rid}/join", json={"participant": "bob"}, headers=LEGACY)
+    _claim(client, "bob")
+    pre_generation = tokens.create_jwt(sub="bob", tenant_id="_legacy", tenant_slug="_legacy")
+    resp = client.get(f"/v1/rooms/{rid}/bundles",
+                      headers={"Authorization": f"Bearer {pre_generation}"})
+    assert resp.status_code == 401
