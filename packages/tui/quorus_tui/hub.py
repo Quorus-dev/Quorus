@@ -57,6 +57,7 @@ from . import autocomplete as _autocomplete
 from . import welcome as _welcome
 from .approvals_panel import render_approvals_panel
 from .autocomplete import AutocompletePopover
+from .chat_widgets import plain_markdown
 from .dm_inbox import render_dm_inbox_panel
 from .work_queue_panel import render_work_queue_panel
 
@@ -1382,7 +1383,7 @@ def _print_inline_message(
     from rich.rule import Rule
 
     sender = msg.get("from_name", "?")
-    content = msg.get("content", "")
+    content = plain_markdown(msg.get("content", ""))
     ts_raw = msg.get("timestamp", "")
     try:
         hhmm = ts_raw[11:16] if len(ts_raw) >= 16 else ""
@@ -1735,7 +1736,7 @@ def _format_header_line(
     just indent.
     """
     sender = msg.get("from_name") or msg.get("sender", "?")
-    content = msg.get("content", "")
+    content = plain_markdown(msg.get("content", ""))
     ts_raw = msg.get("timestamp", "")
 
     try:
@@ -1771,7 +1772,7 @@ def _format_continuation_line(msg: dict, my_name: str) -> Text:
     reads each sender-group as a block (iMessage rhythm).
     """
     sender = msg.get("from_name") or msg.get("sender", "?")
-    content = msg.get("content", "")
+    content = plain_markdown(msg.get("content", ""))
     is_me = sender == my_name
     # Indent matches the `  · [HH:MM]  @sender  ` column — roughly
     # 2 + 2 + 7 + 2 + len(@sender) + 2, but we fix at 20 so names of

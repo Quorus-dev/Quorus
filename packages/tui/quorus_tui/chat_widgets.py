@@ -130,6 +130,29 @@ def bubble_width(console_width: int) -> int:
     return max(20, int((console_width - 4) * MAX_FEED_WIDTH_PCT))
 
 
+_MD_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+")
+_MD_BULLET = re.compile(r"^(\s*)[-*+]\s+")
+# ** only: `__` would eat Python names like __init__.
+_MD_BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+_MD_CODE = re.compile(r"`([^`\n]+)`")
+_MD_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s]+)\)")
+
+
+def plain_markdown(text: str) -> str:
+    """Agent replies are markdown; a terminal showed `**bold**`, `## Heads`
+    and `- items` raw. Keep the words, drop the syntax. Fenced code is split
+    out before this runs, so only inline markers are touched."""
+    out = []
+    for line in text.splitlines():
+        line = _MD_HEADING.sub("", line)
+        line = _MD_BULLET.sub(lambda m: f"{m.group(1)}• ", line)
+        line = _MD_BOLD.sub(r"\1", line)
+        line = _MD_CODE.sub(r"\1", line)
+        line = _MD_LINK.sub(r"\1 (\2)", line)
+        out.append(line)
+    return "\n".join(out)
+
+
 def wrap_lines(content: str, width: int) -> list[str]:
     """Word-wrap *content* to *width* cells. Preserves explicit newlines."""
     width = max(20, width)

@@ -19,6 +19,7 @@ from __future__ import annotations
 from rich.text import Text
 
 from . import chat_widgets as _w
+from .chat_widgets import plain_markdown
 from .render import INDENT, two_col
 
 # Pull every widget through a single namespace alias so the import block
@@ -677,6 +678,7 @@ def render_bubble_feed(
             if kind == "code":
                 out.extend(_code_block(body, console_width))
                 continue
+            body = plain_markdown(body)
             if is_me:
                 out.extend(_own_bubble(
                     body, ts_show, console_width,
