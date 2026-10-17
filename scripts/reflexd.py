@@ -229,6 +229,36 @@ def trusted_sender(sender: str, owner: str) -> bool:
     return bool(sender) and (sender == owner or sender.startswith(f"{owner}-"))
 
 
+TRUST_CHAIN_LIMIT = 100  # messages searched for the request an agent's message serves
+
+
+def trusted_origin(envelope: dict[str, Any], history: list[dict[str, Any]], owner: str) -> bool:
+    """Whether this message serves the owner's own request.
+
+    An owner's agent carries the trust of whoever it is working for, not of
+    its name: a stranger given a read-only turn could otherwise have that
+    agent ask a teammate to do the work and get it done write-capable. Walk
+    the reply chain through the owner's agents to the first human; only the
+    owner counts. A chain that leaves the history, or never reaches a human
+    (a mid-turn message carries no reply_to), is not trusted."""
+    sender = envelope.get("from_name") or ""
+    if not trusted_sender(sender, owner):
+        return False
+    if sender == owner:
+        return True
+    by_id = {m.get("id"): m for m in history if m.get("id")}
+    cur, seen = envelope.get("reply_to"), set()
+    while cur and cur in by_id and cur not in seen:
+        seen.add(cur)
+        who = by_id[cur].get("from_name") or ""
+        if not trusted_sender(who, owner):
+            return False
+        if who == owner:
+            return True
+        cur = by_id[cur].get("reply_to")
+    return False
+
+
 def _answer_only(triage: Any, envelope: dict[str, Any], me: str, lead: str | None) -> bool:
     """A non-lead agent woken by a human's message to the whole room."""
     if not lead or lead == me or triage is None or triage.kind != "question":
@@ -3172,12 +3202,13 @@ class Reflexd:
                 logger.warning("auto-fetch skipped: %s", exc)
         _members = getattr(relay, "fetch_members", None)
         teammates = await _members(room=room) if _members is not None else []
+        trusted = await self._trusted_wake(relay, envelope, history)
         prompt = self._build_prompt(
             envelope, history, triage=triage,
             memory_entries=memory_entries,
             teammates=[t for t in teammates if is_agent_participant(t)],
             has_workspace=ws is not None, worktree=worktree,
-            shared_note=shared_note,
+            shared_note=shared_note, trusted=trusted,
         )
         log_reason = (triage.reason if triage else None) or reason or "?"
         # D2: resume the room's prior session so the agent keeps its memory.
@@ -3243,14 +3274,14 @@ class Reflexd:
                 # arrived next resumed it read-only and the agent reported
                 # "no write tools" (live 2026-10-17).
                 prior_session, _persist_session = None, None
-            sender = envelope.get("from_name") or ""
-            if (room_mode != "default" and trust_for(room) == "owner"
-                    and not trusted_sender(sender, agent_owner(self.config.participant_name))):
+            if room_mode != "default" and not trusted:
                 # Pre-launch audit: in autonomous mode any room member (or text
                 # injected into the room) could make the agent run code. Only
-                # the owner and the owner's own agents get write-capable turns
-                # unless the owner set the room to `trust: members`.
-                logger.info("read-only turn: %s is not this agent's owner", sender)
+                # the owner, and the owner's agents working on the owner's own
+                # requests, get write-capable turns unless the owner set the
+                # room to `trust: members`.
+                logger.info("read-only turn: %s isn't serving this agent's owner",
+                            envelope.get("from_name") or "")
                 room_mode = "readonly"
                 prior_session, _persist_session = None, None
             if room_mode != "default":
@@ -3627,6 +3658,24 @@ class Reflexd:
             **kw,
         )
 
+    async def _trusted_wake(self, relay: Any, envelope: dict[str, Any],
+                            history: list[dict[str, Any]]) -> bool:
+        """Whether this wake may run write-capable (see :func:`trusted_origin`)."""
+        room = envelope.get("room") or ""
+        if trust_for(room) != "owner":
+            return True
+        owner = agent_owner(self.config.participant_name)
+        if trusted_origin(envelope, history, owner):
+            return True
+        sender = envelope.get("from_name") or ""
+        if sender == owner or not trusted_sender(sender, owner):
+            return False
+        try:  # the owner's request may sit further back than the prompt's history
+            longer = await relay.fetch_recent(room=room, limit=TRUST_CHAIN_LIMIT)
+        except Exception:
+            return False
+        return trusted_origin(envelope, longer, owner)
+
     def _build_prompt(
         self, envelope: dict[str, Any], history: list[dict[str, Any]],
         *, triage: "TriageResult | None" = None,
@@ -3635,6 +3684,7 @@ class Reflexd:
         has_workspace: bool = True,
         worktree: Any = None,
         shared_note: str = "",
+        trusted: bool | None = None,
     ) -> str:
         """Compose QOD + recent memory + history + WakeIntent.
 
@@ -3688,7 +3738,9 @@ class Reflexd:
             owner=os.environ.get("REFLEXD_OWNER") or None,
             untrusted=(owner if mode_for(wake_room) != "default"
                        and trust_for(wake_room) == "owner"
-                       and not trusted_sender(wake_sender, owner) else None),
+                       and not (trusted if trusted is not None
+                                else trusted_origin(envelope, history, owner))
+                       else None),
         )
 
         memory_block = render_memory_context(memory_entries or [])
