@@ -14,6 +14,7 @@ Every line has evidence. "GO" means verified this weekend, not believed.
 | 8 | README is accurate | GO | README text is under test; updated 5ba442df for live steps, scorecard, duel, retro, replay, phone. |
 | 9 | PyPI name and publishing | NEEDS ARAV | `quorus-ai` is free on PyPI (404). `.github/workflows/publish.yml` publishes on `v*` tags via trusted publishing, but the trusted publisher on pypi.org is **not** set up. Arav must add it (PyPI → Publishing → GitHub: Quorus-dev/Quorus, workflow publish.yml) and say go. |
 | 10 | Public repo hygiene | NO-GO until decided | The public repo has docs/YC_S26_APPLICATION_v8.md, FINC_APPLICATION_v8.md, LAUNCH_TWEET_v8.md, MARKETING_LAUNCH_TWEET.md and KLIMENT_DEMO_RUNCARD.md. Business plans shouldn't ship with a launch: move them to a private repo (Arav's call). |
+| 12 | Vendor failover (slate item 6) | NO-GO (not a launch blocker) | Live proof (docs/weekend/proofs/): the `/defer` handoff gets 403 on shared-secret relays, so it never fires in the default setup; it also only runs in `default`-mode rooms. Assigned to @arav-claude: daemons use participant keys. Don't advertise failover until it passes. |
 | 11 | Traction | NOT STARTED | 0 stars. Drafts in docs/weekend/marketing/ (launch post, demo script, communities list). Posting needs Arav logged in; agents never post. |
 
 ## The pitch that survives the competition
