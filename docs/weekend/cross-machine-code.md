@@ -178,3 +178,27 @@ anonymous admin, so most users hit the refusal.
   `RELAY_SECRET`, or with any key derived from it, are rejected.
 - Release-name frees the name for a new claim.
 - A relay restart keeps the claims (they're on disk).
+
+## Live proof on one Mac (2026-10-17 15:0x, 98b488c7)
+
+This used a real relay process on `127.0.0.1` with only a shared secret: no
+Postgres, no API keys. Two configs and two repos acted as two machines, using
+the real CLI over HTTP. The second half, fetching from the `quorus-laptop2`
+container, is still to be run.
+
+```text
+## laptop1 has 10a07c1… before fetch?   no
+## bob (laptop2): quorus share-branch --room lan
+✓ shared fix/relay-host @10a07c1 (391 bytes) in #lan
+  teammates run: quorus fetch b_SeSTDoxopW0Y --room lan
+## room sees:
+  bob: 📦 shared fix/relay-host @10a07c1 (391 B) — quorus fetch b_SeSTDoxopW0Y
+## alice (laptop1): quorus fetch b_SeSTDoxopW0Y --room lan
+✓ fetched @bob's fix/relay-host into refs/quorus/bob/fix/relay-host
+## alice: git show --stat 10a07c1
+10a07c1 fix: validate relay host (author bob)
+ b.txt | 1 +
+## alice's branches:        * main   (nothing created)
+## mallory claims bob's name: 409 "the name 'bob' is already claimed on this relay"
+## key files: participant_keys.json, jwt-signing.key, participant_keys.db all -rw-------
+```
