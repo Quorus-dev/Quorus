@@ -36,7 +36,8 @@ def test_render_shows_notable_rooms_only() -> None:
                                 me="arav", since=SINCE)
     text = "\n".join(r.plain for r in catchup.render([busy, quiet]))
     assert "While you were away" in text and "#build" in text and "#chat" not in text
-    assert "2 commits shipped to main" in text and "1 needs you" in text and "stuck: @a-gemini" in text
+    assert "2 commits shipped to main" in text and "1 needs you" in text
+    assert "stuck: @a-gemini" in text
     assert "@a-codex: @arav should the token" in text
     assert catchup.render([quiet]) == []
 

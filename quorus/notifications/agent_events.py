@@ -28,6 +28,26 @@ def _first_line(text: str) -> str:
     return text.strip()
 
 
+_ASKS = re.compile(r"\?|\b(approve|approval|confirm|decide|decision|blocked|need you|"
+                   r"your call|which one|permission)\b", re.IGNORECASE)
+
+
+def asks_owner(text: str, owner: str | None) -> str | None:
+    """The line where an agent asks *owner* something, or None. A greeting
+    that starts "@arav here" is not a question (live 2026-10-17: a roll-call
+    reply fired a "needs you" banner)."""
+    if not owner:
+        return None
+    mention = re.compile(rf"(?<![\w-])@{re.escape(owner)}(?![\w-])")
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    for i, line in enumerate(lines):
+        if mention.search(line):
+            window = " ".join(lines[i:i + 2])  # the ask can wrap onto the next line
+            if _ASKS.search(window):
+                return line
+    return None
+
+
 def owner_alert(*, agent: str, owner: str | None, reply: str) -> tuple[str, str] | None:
     """``(title, body)`` for the owner's banner, or None to stay quiet."""
     reply = (reply or "").strip()
@@ -35,8 +55,9 @@ def owner_alert(*, agent: str, owner: str | None, reply: str) -> tuple[str, str]
         return None
     if reply.startswith(_STUCK_PREFIXES):
         return f"{agent} is stuck", reply
-    if owner and re.search(rf"(?<![\w-])@{re.escape(owner)}(?![\w-])", reply):
-        return f"{agent} needs you", _first_line(reply)
+    ask = asks_owner(reply, owner)
+    if ask:
+        return f"{agent} needs you", ask
     if any(line.startswith("(quorus) " + PUBLISHED_MARK) for line in reply.splitlines()):
         return f"{agent} shipped to main", _first_line(reply)
     return None

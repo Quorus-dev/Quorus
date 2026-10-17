@@ -120,7 +120,8 @@ def test_owner_alert_rules() -> None:
     assert alert(agent="a-claude", owner="arav", reply="⚠ codex: quota")[0] == (
         "a-claude is stuck")
     # Plain chat, a teammate mention, or a longer name never ping.
-    for quiet in ("hi! ready to help", "@arav-codex please review", "@aravind hi", ""):
+    for quiet in ("hi! ready to help", "@arav-codex please review", "@aravind hi", "",
+                  "@arav here — maya-opencode, idle and ready."):
         assert alert(agent="a-claude", owner="arav", reply=quiet) is None
 
 
@@ -135,3 +136,13 @@ def test_daemon_pings_owner_when_work_ships(monkeypatch) -> None:
     monkeypatch.setenv("QUORUS_NOTIFY", "0")
     d._alert_owner("build", "@arav help")
     assert len(sent) == 1
+
+
+def test_asks_owner_needs_a_real_ask() -> None:
+    ask = agent_events.asks_owner
+    assert ask("Done.\n@arav should tokens expire in 1h or 24h?", "arav") == (
+        "@arav should tokens expire in 1h or 24h?")
+    assert ask("@arav please approve the migration", "arav")
+    assert ask("@arav I'm blocked on the API key", "arav")
+    assert ask("@arav here, ready", "arav") is None
+    assert ask("@arav-claude any blockers?", "arav") is None

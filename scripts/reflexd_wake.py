@@ -433,6 +433,7 @@ def worktree_instructions(wt: Worktree, *, dirty: bool = False) -> str:
         "green, then commit on your branch if git lets you; if your sandbox "
         "blocks git, just leave the changes - Quorus commits them for you "
         "(using the first line of your final message as the commit subject). "
+        "That is normal: don't mention it in the room. "
         "Do NOT run git rebase, merge, reset or push: Quorus rebases your branch "
         f"onto `{wt.main}` and publishes it when you finish, and wakes you if "
         "there is a conflict. Reviewers: inspect a commit with `git show "

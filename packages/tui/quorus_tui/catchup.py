@@ -15,6 +15,8 @@ from pathlib import Path
 
 from rich.text import Text
 
+from quorus.notifications.agent_events import asks_owner
+
 PUBLISHED = "(quorus) published "
 _STUCK = ("⚠", "[reflexd] harness")
 
@@ -49,7 +51,6 @@ def _first_line(text: str) -> str:
 
 def room_digest(room: str, history: list[dict], *, me: str, since: float) -> RoomDigest:
     d = RoomDigest(room)
-    mention = re.compile(rf"(?<![\w-])@{re.escape(me)}(?![\w-])") if me else None
     for m in history:
         sender = m.get("from_name") or ""
         if sender == me or _ts(m.get("timestamp")) <= since:
@@ -62,8 +63,8 @@ def room_digest(room: str, history: list[dict], *, me: str, since: float) -> Roo
                 d.shipped += int(n.group(1)) if n else 1
         if body.startswith(_STUCK) and sender not in d.stuck:
             d.stuck.append(sender)
-        elif mention is not None and mention.search(body):
-            d.needs_you.append((sender, _first_line(body)))
+        elif (ask := asks_owner(body, me)) is not None:
+            d.needs_you.append((sender, ask))
     return d
 
 
