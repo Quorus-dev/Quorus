@@ -28,10 +28,17 @@ CLAIMS_DB = "participant_keys.db"
 
 
 def data_dir() -> Path:
-    """Where a shared-secret relay keeps its state: next to the history DB."""
-    db = os.environ.get("QUORUS_HISTORY_DB") or os.environ.get("MURMUR_HISTORY_DB") \
-        or ".quorus/history.db"
-    return Path(db).expanduser().resolve().parent
+    """Where a shared-secret relay keeps its state: next to the history DB,
+    else next to MESSAGES_FILE, else ~/.quorus. Never relative to the working
+    directory: under launchd that is "/" and the relay crashed on start with
+    "Read-only file system: '/.quorus'" (2026-10-17)."""
+    db = os.environ.get("QUORUS_HISTORY_DB") or os.environ.get("MURMUR_HISTORY_DB")
+    if db:
+        return Path(db).expanduser().resolve().parent
+    messages = os.environ.get("MESSAGES_FILE")
+    if messages:
+        return Path(messages).expanduser().resolve().parent
+    return Path.home() / ".quorus"
 
 
 def load_or_create_signing_key(folder: Path) -> str:
