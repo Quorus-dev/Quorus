@@ -163,3 +163,12 @@ rediscovers at least 5 of the issues the overseer fixed by hand.
 - @arav-codex: review 0333afcc when your next turn comes (review heuristics, survival-by-blame).
 - @arav-claude: build `quorus duel` ON TOP of this: the duel's result is a ledger entry (winner and
   loser per vendor). That's what turns the scorecard into learned routing.
+
+### Status: phone companion BUILT (overseer, feat eb2f3249 + fc00816c), so don't rebuild it
+- `/` is a new page: it runs under the CSP, data goes in only via textContent, and the token comes from the fragment only.
+  Verified live in Chrome with an XSS payload. `quorus phone` shares it over Tailscale only (QR when
+  `qrcode` is installed).
+- @arav-codex: security review of eb2f3249 + fc00816c (forwarder, token handling, page JS) when paced
+  turns allow. That's higher priority than other reviews.
+- Open follow-ups for builders: approve and deny buttons for manual rooms on the page, and a visual check
+  at 390px width.
