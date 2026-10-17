@@ -235,6 +235,24 @@ def _read_json_or_empty(path: Path) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+_ENV_OVERRIDES = (("RELAY_URL", "relay_url"), ("RELAY_SECRET", "relay_secret"),
+                  ("API_KEY", "api_key"), ("INSTANCE_NAME", "instance_name"))
+
+
+def env_overrides() -> list[str]:
+    """Env vars that silently replace a *different* value in the config file.
+
+    ``load_config`` lets ``RELAY_URL``/``RELAY_SECRET``/``API_KEY``/
+    ``INSTANCE_NAME`` win over the file, which daemons rely on. But a stray
+    one in a shell sent a live fetch to the wrong relay (2026-10-17), so
+    callers can say so. Returns names only, never values.
+    """
+    file_config: dict[str, Any] = ConfigManager().load()
+    return [env for env, key in _ENV_OVERRIDES
+            if os.environ.get(env) and file_config.get(key)
+            and os.environ[env] != file_config[key]]
+
+
 def load_config() -> dict[str, Any]:
     """Load config from disk, then apply env-var overrides.
 

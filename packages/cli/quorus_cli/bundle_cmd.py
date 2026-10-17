@@ -18,6 +18,14 @@ from quorus.config import load_config
 
 
 def _relay(cfg: dict[str, Any]) -> tuple[str, str]:
+    from quorus.config import env_overrides
+
+    overridden = env_overrides()
+    if overridden:
+        import sys
+
+        print(f"note: {', '.join(overridden)} from your environment override the config "
+              f"file; using relay {cfg['relay_url']}", file=sys.stderr)
     relay_url = cfg["relay_url"]
     return relay_url, bearer(relay_url, api_key=cfg.get("api_key") or "",
                              secret=cfg.get("relay_secret") or "",

@@ -6956,6 +6956,20 @@ def _cmd_doctor(args):
         fix="Run: quorus init <name> --secret <secret>",
     )
 
+    # 1b. Env vars that silently override the file (a stray RELAY_URL sent a
+    # live fetch to the wrong relay, 2026-10-17).
+    from quorus.config import env_overrides
+
+    overridden = env_overrides()
+    check(
+        "Config file isn't overridden by env vars",
+        not overridden,
+        detail=(", ".join(overridden) + " in your environment overrides a different value "
+                "in the config file") if overridden else "",
+        fix="unset " + " ".join(overridden) + " (or update the config)" if overridden else "",
+        optional=True,
+    )
+
     # 2. Relay URL configured
     check(
         "Relay URL configured",
