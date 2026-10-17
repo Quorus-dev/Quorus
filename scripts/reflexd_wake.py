@@ -515,9 +515,14 @@ def _staged_conflict_markers(wt: Worktree) -> list[str]:
 
 
 def commit_message_from(reply: str, participant: str) -> str:
-    """A commit subject from the agent's own final reply."""
+    """A commit subject from the agent's own final reply.
+
+    A failed turn's reply is the daemon's own error text: Gemini's timed-out
+    work was committed as "[reflexd] harness timed out" (2026-10-17)."""
     import re as _re
 
+    if (reply or "").lstrip().startswith(("[reflexd]", "⚠")):
+        return f"wip: unfinished work by {participant}"
     for line in (reply or "").splitlines():
         line = _re.sub(r"[`*_#>]|^\s*[-✅☑️✔️]+\s*", "", line).strip()
         if len(line) >= 8 and not line.startswith(STATUS_PREFIX):
