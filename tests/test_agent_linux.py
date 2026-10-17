@@ -143,3 +143,12 @@ def test_add_on_linux_does_not_claim_it_restarts_at_login(linux: Path,
     text = "\n".join(console.lines)
     assert "restarts at login" not in text
     assert "not after a reboot" in text
+
+
+def test_warns_when_opencode_is_version_1(monkeypatch) -> None:
+    # `npm i -g opencode-ai` installs 1.x, which rejects `run --standalone`.
+    monkeypatch.setattr(agent_cmd, "_opencode_version", lambda: "1.19.3")
+    warnings = agent_cmd._readiness_warnings("opencode", "opencode/x-free")
+    assert any("@opencode/cli" in w for w in warnings)
+    monkeypatch.setattr(agent_cmd, "_opencode_version", lambda: "2.0.32")
+    assert agent_cmd._readiness_warnings("opencode", "opencode/x-free") == []

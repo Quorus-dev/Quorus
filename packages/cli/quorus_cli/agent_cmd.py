@@ -296,6 +296,19 @@ def _gemini_has_key() -> bool:
                for line in text.splitlines() if "=" in line)
 
 
+def _opencode_version() -> str | None:
+    exe = shutil.which("opencode")
+    if exe is None:
+        return None
+    try:
+        out = subprocess.run([exe, "--version"], capture_output=True, text=True,
+                             timeout=20, check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"\d+\.\d+(\.\d+)?", out)
+    return m.group(0) if m else None
+
+
 def _ollama_models() -> list[str] | None:
     try:
         resp = httpx.get("http://127.0.0.1:11434/api/tags", timeout=3)
@@ -313,6 +326,13 @@ def _readiness_warnings(harness: str, model: str | None) -> list[str]:
                    "a personal Google account. Get a free key at "
                    "https://aistudio.google.com/apikey and put GEMINI_API_KEY=<key> "
                    "in ~/.gemini/.env")
+    if harness == "opencode":
+        version = _opencode_version()
+        if version and int(version.split(".")[0]) < 2:
+            # The wake runs `opencode run --standalone`, which 1.x rejects.
+            out.append(f"opencode {version} is too old: Quorus needs opencode 2, so "
+                       "every wake would fail. Upgrade with `npm i -g @opencode/cli` "
+                       "(the `opencode-ai` npm package is still opencode 1)")
     if harness == "opencode" and not model:
         out.append("no --model given, so opencode uses its own default. Pick one with "
                    "--model, e.g. ollama/qwen3:4b (local) or "
