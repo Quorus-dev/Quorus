@@ -173,3 +173,16 @@ def test_wake_mcp_spec_marks_the_daemon_as_presence_owner():
     env = mod.quorus_mcp_spec(relay_url="http://r", api_key="k", participant="a-claude",
                               legacy=True)["env"]
     assert env["QUORUS_PRESENCE_OWNER"] == "daemon"
+
+
+@pytest.mark.parametrize("key,warns", [
+    ("mct_ab12_cd34", False),
+    ("quorus_pk_Abc-123_xyz", False),  # what a woken agent signs in with
+    ("hand-typed", True),
+])
+def test_key_shape_advisory_knows_participant_keys(monkeypatch, caplog, key, warns):
+    monkeypatch.setenv("QUORUS_API_KEY", key)
+    monkeypatch.setenv("QUORUS_RELAY_URL", "http://relay.test")
+    with caplog.at_level("WARNING", logger=runtime.logger.name):
+        runtime.load_runtime_config()
+    assert ("does not match the expected" in caplog.text) is warns
