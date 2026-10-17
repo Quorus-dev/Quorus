@@ -152,6 +152,26 @@ def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
 
 
 ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
+PACING_PATH = Path.home() / ".quorus" / "pacing.json"
+PACE_WINDOW_S = 3600.0
+
+
+def pace_for(participant: str, *, path: Path | None = None) -> int | None:
+    """Turns per hour this agent may take (`quorus agent pace`), or None."""
+    try:
+        data = json.loads((path or PACING_PATH).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    cap = (data.get(participant) or {}).get("per_hour") if isinstance(data, dict) else None
+    return int(cap) if isinstance(cap, (int, float)) and cap > 0 else None
+
+
+def pace_wait_s(starts: list[float], cap: int, now: float) -> float:
+    """Seconds until another turn fits under *cap* per rolling hour."""
+    recent = sorted(t for t in starts if now - t < PACE_WINDOW_S)
+    if len(recent) < cap:
+        return 0.0
+    return recent[len(recent) - cap] + PACE_WINDOW_S - now
 SILENCE_STATUS_EVERY_S = 10 * 60
 ANSWERED_MAX = 500
 PAUSE_NOTICE = "(quorus) agents paused"
@@ -1915,6 +1935,8 @@ class Reflexd:
         self._limit_announced: set[tuple[str, float]] = set()
         # room -> ordered ids the agent saw in a wake it then answered.
         self._answered: dict[str, dict[str, None]] = {}
+        self._turns: list[float] = []  # wake start times, for pacing
+        self._pace_announced: dict[str, float] = {}
         self._last_spoke: dict[str, float] = {}
         self._last_wake_at: float = 0.0
         # Bounded in-memory queue for messages that arrive while a busy-file
@@ -2237,6 +2259,35 @@ class Reflexd:
         while len(seen) > ANSWERED_MAX:
             seen.pop(next(iter(seen)))
 
+    async def _paced(self, relay: RelayClient, envelope: dict[str, Any]) -> bool:
+        """Keep the agent inside its owner's plan: past its turns-per-hour cap,
+        WAIT for a slot (messages queue meanwhile and are coalesced), never drop.
+        A human's message always goes straight through. Codex burned a 5-hour
+        plan window in ~24 turns on night one (2026-10-17)."""
+        cap = pace_for(self.config.participant_name)
+        if cap is None:
+            return True
+        now = time.time()
+        if not is_agent_participant(envelope.get("from_name") or ""):
+            self._turns.append(now)
+            return True
+        wait = pace_wait_s(self._turns, cap, now)
+        if wait > 0:
+            room = envelope.get("room") or ""
+            if now - self._pace_announced.get(room, 0.0) > PACE_WINDOW_S:
+                self._pace_announced[room] = now
+                await self._post_status(
+                    relay, room, envelope,
+                    f"@{self.config.participant_name} is pacing itself ({cap} turns/hour to "
+                    f"stay inside its plan); next turn in about {_human_wait(wait)}")
+            logger.info("pacing: waiting %.0fs (cap %d/h)", wait, cap)
+            await self._sleep_or_stop(wait)
+            if self._stop.is_set():
+                return False
+        self._turns = [t for t in self._turns if time.time() - t < PACE_WINDOW_S]
+        self._turns.append(time.time())
+        return True
+
     def _refresh_identity(self) -> None:
         """Rewrite the agent's private config dir before every wake. An agent
         testing `quorus init` inside its wake wrote a bogus profile there and
@@ -2290,6 +2341,8 @@ class Reflexd:
             logger.info("spawn disabled (test mode); skipping harness call")
             return
         if await self._limited(relay, envelope):
+            return
+        if not await self._paced(relay, envelope):
             return
         self._refresh_identity()
 

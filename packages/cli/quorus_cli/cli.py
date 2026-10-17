@@ -9222,6 +9222,10 @@ def main():
         "--model", help="Model to run, e.g. sonnet, gpt-5.5, gemini-2.5-pro, "
                         "ollama/qwen3:4b (opencode: any provider/model)")
     agent_sub.add_parser("list", help="Agents running on this machine")
+    p_agent_pace = agent_sub.add_parser(
+        "pace", help="Cap an agent's turns per hour to stay inside its plan")
+    p_agent_pace.add_argument("name", help="Agent name, e.g. arav-codex")
+    p_agent_pace.add_argument("per_hour", help="Turns per hour (1-120), or off")
     p_agent_rm = agent_sub.add_parser("remove", help="Stop an agent on this machine")
     p_agent_rm.add_argument("name", help="Agent name, e.g. arav-claude")
 
