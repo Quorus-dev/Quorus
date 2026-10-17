@@ -990,6 +990,15 @@ def _same_result(posted: str, reply: str) -> bool:
     return reply.lstrip().startswith("✅") and posted.lstrip().startswith("✅")
 
 
+class HarnessExitFailure(str):
+    """Keep exit metadata while preserving legacy sentinel/retry comparisons."""
+
+    def __new__(cls, exit_code: int):
+        obj = super().__new__(cls, "[reflexd] harness errored")
+        obj.exit_code = exit_code
+        return obj
+
+
 class HeadlessAdapter:
     """Spawn the right headless harness for a participant; return reply text.
 
@@ -1379,8 +1388,12 @@ class HeadlessAdapter:
                 # Actionable > generic: the room learns WHY nobody answered.
                 logger.error("harness %s: %s", argv[0], diagnosis)
                 return diagnosis
-            return "[reflexd] harness errored"
-        return parser((stdout or b"").decode("utf-8", errors="replace")) or "[reflexd] (no reply)"
+            return HarnessExitFailure(proc.returncode)
+        reply = parser((stdout or b"").decode("utf-8", errors="replace"))
+        if reply == "[reflexd] harness errored":
+            # Structured error results can accompany process exit zero.
+            return HarnessExitFailure(proc.returncode)
+        return reply or "[reflexd] (no reply)"
 
     async def _run_cursor(self, context: str) -> str:
         # Try the binary first; fall back to the file-inbox protocol if it's
@@ -2312,7 +2325,9 @@ class Reflexd:
             reply = "[reflexd] harness errored"
 
         vendor_failure = reply if isinstance(reply, _failover.VendorFailure) else None
+        exit_code = reply.exit_code if isinstance(reply, HarnessExitFailure) else "unknown"
         reply = (reply or "").strip()
+        unknown_exit = reply == "[reflexd] harness errored"
         previous_degraded = self._degraded_reason
         if vendor_failure:
             self._degraded_reason = vendor_failure.reason
@@ -2370,7 +2385,7 @@ class Reflexd:
         _UNKNOWN_OUTCOME = ("[reflexd] harness timed out",
                             "[reflexd] harness errored",
                             "[reflexd] (no reply)")
-        if reply in _UNKNOWN_OUTCOME:
+        if reply in _UNKNOWN_OUTCOME or unknown_exit:
             try:
                 recent = await relay.fetch_recent(room=room, limit=20)
                 wake_id = envelope_canonical_id(envelope)
@@ -2396,6 +2411,10 @@ class Reflexd:
                 f"⚠ {harness} work session {failure_reason}. "
                 "Mention me to retry."
             )
+            reply = reply.replace("[reflexd] harness errored", status, 1)
+        elif unknown_exit:
+            status = (f"⚠ {harness} exited {exit_code} with no known cause; "
+                      "mention me to retry")
             reply = reply.replace("[reflexd] harness errored", status, 1)
 
         self._alert_owner(room, reply)

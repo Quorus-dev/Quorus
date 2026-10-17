@@ -141,6 +141,14 @@ Next:
 
 ## Recent Changes
 
+### Unknown harness exits (2026-10-17)
+
+Unknown subprocess failures retain their exit status through adapter retries.
+After the D7 self-post check, the room receives the harness, exit code and a
+mention-to-retry hint instead of the bare error sentinel. Raw stderr stays
+private; structured error results with process exit zero use the same path.
+
+
 ### Marketing evidence review (2026-10-17)
 
 Reviewed c9494dc's launch, outreach and demo drafts against the weekend room

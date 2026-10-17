@@ -65,3 +65,42 @@ def test_cancelled_wake_does_not_post_failure(monkeypatch):
 
     assert relay.posted == []
     assert daemon._presence == ("active", "")
+
+
+@pytest.mark.parametrize("exit_code", [1, 17, -9, 0])
+@pytest.mark.parametrize("self_posted", [False, True])
+def test_unknown_subprocess_exit_status_after_self_post_check(
+    monkeypatch, exit_code, self_posted,
+):
+    """Exercise the subprocess, adapter and room paths without exposing stderr."""
+    import json
+
+    from tests.test_reflexd_adapters import _FakeProc
+    from tests.test_reflexd_inbox_drain import reflexd
+
+    daemon = _make_daemon()
+    history = ([{"from_name": SELF, "reply_to": "wake-msg-1", "content": "done"}]
+               if self_posted else [])
+    relay = _D7Relay(history=history)
+
+    async def spawn(*args, **kwargs):
+        return _FakeProc(
+            returncode=exit_code, stderr=b"private-token: unexplained error",
+            stdout=json.dumps({"type": "result", "is_error": True,
+                               "result": "private-token: unexplained error"}).encode(),
+        )
+
+    monkeypatch.setattr(reflexd.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(reflexd.shutil, "which", lambda name: "/bin/harness")
+    daemon.adapter = reflexd.HeadlessAdapter()
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
+
+    if self_posted:
+        assert relay.posted == []
+    else:
+        assert len(relay.posted) == 1
+        assert relay.posted[0]["content"] == (
+            f"⚠ claude exited {exit_code} with no known cause; mention me to retry"
+        )
+        assert relay.posted[0]["reply_to"] == "wake-msg-1"
+    assert daemon._presence == ("active", "")
