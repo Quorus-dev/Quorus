@@ -44,9 +44,16 @@ TASK = task_for(BUILDER, REVIEWER)
 # Claude Code / Codex the user already has, instead of failing (release check,
 # 2026-10-17). Both present: Claude builds and Codex reviews, across vendors.
 FALLBACK_ORDER = ("claude", "codex")
-# What each CLI needs from the real home to stay logged in; the demo's agents
-# run with a throwaway HOME, so these are linked into it (never copied).
-AUTH_PATHS = {"claude": (".claude", ".claude.json"), "codex": (".codex",)}
+# The demo's agents run with a throwaway HOME. Only each CLI's credential
+# store is shared with the real one (codex, review of 62eface2): config,
+# sessions and history are written inside the throwaway HOME and deleted with
+# it. They are linked, not copied: a copy would refresh the OAuth token on its
+# own and can revoke the user's real login. Claude Code on macOS keeps its
+# login in the keychain (found via $HOME/Library/Keychains), on Linux in
+# ~/.claude/.credentials.json; Codex in $CODEX_HOME/auth.json.
+AUTH_FILES = {"claude": ("Library/Keychains", ".claude/.credentials.json"),
+              "codex": (".codex/auth.json",)}
+LOGIN_CHECK = {"claude": ["claude", "auth", "status"], "codex": ["codex", "login", "status"]}
 _NOT_A_VERDICT = re.compile(r"nothing to review|standing by|will review|waiting for",
                             re.IGNORECASE)
 
@@ -102,25 +109,39 @@ def all_out_of_quota(history: list[dict[str, Any]],
     return set(agents) <= out
 
 
-def fallback_cast(which: Any = shutil.which) -> list[tuple[str, None]]:
+def logged_in(harness: str) -> bool:
+    """The CLI's own answer (exit 0 = logged in), not just "it's installed"
+    (codex, review of 62eface2)."""
+    try:
+        return subprocess.run(LOGIN_CHECK[harness], capture_output=True, text=True,
+                              timeout=20, stdin=subprocess.DEVNULL).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def fallback_cast(which: Any = shutil.which,
+                  is_logged_in: Any = logged_in) -> list[tuple[str, None]]:
     """``[(builder_harness, None), (reviewer_harness, None)]`` from the logged-in
     Claude Code / Codex on this machine, or ``[]``. None = the CLI's own model."""
-    from quorus_cli.quickstart import detect
-
-    ready = [f.harness for f in detect(which) if f.ready and f.harness in FALLBACK_ORDER]
-    ready.sort(key=FALLBACK_ORDER.index)
+    ready = [h for h in FALLBACK_ORDER if which(h) and is_logged_in(h)]
     if not ready:
         return []
     return [(ready[0], None), (ready[-1], None)]
 
 
-def link_auth(home: Path, harnesses: set[str], real_home: Path | None = None) -> None:
+def share_login(home: Path, harnesses: set[str], real_home: Path | None = None) -> None:
+    """Link each CLI's credential store, and nothing else, into *home*."""
     real_home = real_home or Path.home()
+    codex_home = os.environ.get("CODEX_HOME")
     for h in harnesses:
-        for name in AUTH_PATHS.get(h, ()):
-            src, dst = real_home / name, home / name
-            if src.exists() and not dst.exists() and not dst.is_symlink():
-                dst.symlink_to(src)
+        for rel in AUTH_FILES.get(h, ()):
+            src = (Path(codex_home) / "auth.json" if rel == ".codex/auth.json" and codex_home
+                   else real_home / rel)
+            dst = home / rel
+            if not src.exists() or dst.exists() or dst.is_symlink():
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)  # real dirs, private to the demo
+            dst.symlink_to(src)
 
 
 LABELS = {"claude": "Claude Code", "codex": "Codex", "opencode": "opencode"}
@@ -223,7 +244,7 @@ def cmd_demo(args: Any, console: Any) -> None:
         builder, reviewer = (BUILDER, REVIEWER) if models else (
             f"demo-{cast[0][0]}", f"demo-review-{cast[1][0]}")
         if not models:
-            link_auth(home, {h for h, _ in cast})
+            share_login(home, {h for h, _ in cast})
             tools = " and ".join(dict.fromkeys(LABELS[h] for h, _ in cast))
             why = "opencode isn't usable here" if problem else "opencode's free models are busy"
             console.print(f"{why}, so the demo runs on your own logged-in {tools} "
@@ -231,7 +252,8 @@ def cmd_demo(args: Any, console: Any) -> None:
         console.print("[dim]builder: " + _label(cast[0]) + " · reviewer: " + _label(cast[1])
                       + "[/]\n")
         base_env = {k: v for k, v in os.environ.items()
-                    if not k.startswith(("QUORUS_", "REFLEXD_")) and k not in ("API_KEY",)}
+                    if not k.startswith(("QUORUS_", "REFLEXD_"))
+                    and k not in ("API_KEY", "CLAUDE_CONFIG_DIR", "CODEX_HOME")}
         procs.append(subprocess.Popen(
             [sys.executable, "-m", "quorus.relay_cli"],
             env={**base_env, "RELAY_SECRET": secret, "PORT": str(port), "HOST": "127.0.0.1",
@@ -250,7 +272,8 @@ def cmd_demo(args: Any, console: Any) -> None:
         from quorus.runtime.supervisor import _reflexd_script_path
 
         for name, (_h, model) in ((builder, cast[0]), (reviewer, cast[1])):
-            env = {**base_env, "HOME": str(home), "RELAY_URL": url, "API_KEY": secret,
+            env = {**base_env, "HOME": str(home), "CODEX_HOME": str(home / ".codex"),
+                   "RELAY_URL": url, "API_KEY": secret,
                    "REFLEXD_PARTICIPANT": name, "REFLEXD_LEGACY_BEARER": "1",
                    **({"REFLEXD_MODEL": model} if model else {}), "REFLEXD_OWNER": HUMAN,
                    "PYTHONUNBUFFERED": "1", "QUORUS_NOTIFY": "0",

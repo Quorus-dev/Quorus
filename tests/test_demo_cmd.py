@@ -93,39 +93,81 @@ def test_demo_shows_each_agents_step_once(monkeypatch) -> None:
     assert len(c.out) == 1 and f"@{demo_cmd.BUILDER} editing calc.py" in c.out[0]
 
 
-def test_busy_free_models_fall_back_to_your_logged_in_claude_and_codex(monkeypatch,
-                                                                      tmp_path: Path) -> None:
+def test_busy_free_models_fall_back_to_your_logged_in_claude_and_codex() -> None:
     """Release check: with every free model rate-limited the demo just failed."""
-    codex_home = tmp_path / "codex"
-    codex_home.mkdir()
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    have = {"claude", "codex", "opencode"}
+    have, logged = {"claude", "codex", "opencode"}, {"claude"}
     which = lambda b: f"/bin/{b}" if b in have else None  # noqa: E731
-    # codex isn't logged in yet: claude does both jobs
-    assert demo_cmd.fallback_cast(which) == [("claude", None), ("claude", None)]
-    (codex_home / "auth.json").write_text("{}")
+    ok = lambda h: h in logged  # noqa: E731
+    # codex installed but not logged in: claude does both jobs
+    assert demo_cmd.fallback_cast(which, ok) == [("claude", None), ("claude", None)]
+    logged.add("codex")
     # both: Claude builds, Codex reviews (two vendors, as in the real product)
-    assert demo_cmd.fallback_cast(which) == [("claude", None), ("codex", None)]
+    assert demo_cmd.fallback_cast(which, ok) == [("claude", None), ("codex", None)]
+    logged.clear()  # codex on 62eface2: installed is not logged in
+    assert demo_cmd.fallback_cast(which, ok) == []
     have = {"opencode"}
-    assert demo_cmd.fallback_cast(which) == []  # nothing to fall back to: the old message
+    logged.update({"claude", "codex"})
+    assert demo_cmd.fallback_cast(which, ok) == []  # nothing installed: the old message
 
 
-def test_fallback_agents_keep_their_login_through_links(tmp_path: Path) -> None:
+def test_login_check_asks_the_cli_itself(monkeypatch) -> None:
+    import subprocess as sp
+
+    seen: list = []
+
+    def run(argv, **_kw):
+        seen.append(argv)
+        return sp.CompletedProcess(argv, 0 if argv[0] == "codex" else 1)
+
+    monkeypatch.setattr(demo_cmd.subprocess, "run", run)
+    assert demo_cmd.logged_in("codex") and not demo_cmd.logged_in("claude")
+    assert seen == [["codex", "login", "status"], ["claude", "auth", "status"]]
+
+
+def test_fallback_shares_only_the_login_not_the_cli_state(tmp_path: Path,
+                                                         monkeypatch) -> None:
+    """Codex on 62eface2: whole-directory links let a config write in the demo
+    reach the real HOME. Only the credential stores are linked now."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
     real, demo_home = tmp_path / "real", tmp_path / "demo"
-    (real / ".claude").mkdir(parents=True)
-    (real / ".claude.json").write_text("{}")
+    (real / "Library" / "Keychains").mkdir(parents=True)
+    (real / ".claude").mkdir()
+    (real / ".claude" / ".credentials.json").write_text("{}")
+    (real / ".claude" / "settings.json").write_text("REAL")
+    (real / ".claude.json").write_text("REAL")
     (real / ".codex").mkdir()
+    (real / ".codex" / "auth.json").write_text("{}")
+    (real / ".codex" / "config.toml").write_text("REAL")
     demo_home.mkdir()
-    demo_cmd.link_auth(demo_home, {"claude"}, real_home=real)
-    assert (demo_home / ".claude").resolve() == (real / ".claude").resolve()
-    assert (demo_home / ".claude.json").is_symlink() and not (demo_home / ".codex").exists()
-    demo_cmd.link_auth(demo_home, {"claude", "codex"}, real_home=real)  # idempotent
-    assert (demo_home / ".codex").is_symlink()
+    demo_cmd.share_login(demo_home, {"claude", "codex"}, real_home=real)
+    assert (demo_home / "Library" / "Keychains").is_symlink()
+    assert (demo_home / ".codex" / "auth.json").is_symlink()
+    assert (demo_home / ".claude" / ".credentials.json").is_symlink()
+    for d in (demo_home / ".claude", demo_home / ".codex"):
+        assert d.is_dir() and not d.is_symlink()  # real folders inside the demo
+    # what the CLIs write while the demo runs stays in the demo
+    (demo_home / ".codex" / "config.toml").write_text("DEMO")
+    (demo_home / ".claude" / "settings.json").write_text("DEMO")
+    (demo_home / ".claude.json").write_text("DEMO")
+    assert (real / ".codex" / "config.toml").read_text() == "REAL"
+    assert (real / ".claude" / "settings.json").read_text() == "REAL"
+    assert (real / ".claude.json").read_text() == "REAL"
+    demo_cmd.share_login(demo_home, {"claude", "codex"}, real_home=real)  # idempotent
     import shutil
 
     shutil.rmtree(demo_home)  # cleanup removes the links, never what they point to
-    assert (real / ".claude").is_dir() and (real / ".claude.json").exists()
+    assert (real / ".codex" / "auth.json").exists() and (real / "Library" / "Keychains").is_dir()
+
+
+def test_codex_home_points_at_the_users_auth(tmp_path: Path, monkeypatch) -> None:
+    custom = tmp_path / "codexhome"
+    custom.mkdir()
+    (custom / "auth.json").write_text("{}")
+    monkeypatch.setenv("CODEX_HOME", str(custom))
+    demo_home = tmp_path / "demo"
+    demo_home.mkdir()
+    demo_cmd.share_login(demo_home, {"codex"}, real_home=tmp_path / "nohome")
+    assert (demo_home / ".codex" / "auth.json").resolve() == (custom / "auth.json").resolve()
 
 
 def test_the_task_and_verdict_follow_whoever_is_cast() -> None:
