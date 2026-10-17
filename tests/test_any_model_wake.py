@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -145,6 +147,7 @@ def test_gemini_wake_gets_room_tools_and_approval_mode(
     adapter: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapter.model = "gemini-2.5-pro"
+    monkeypatch.setenv("GEMINI_API_KEY", "gk-test")
     out = 'MCP issues detected.\n{"response": "done", "session_id": "g1", "stats": {}}'
     calls = _capture(monkeypatch, [out])
     seen: list[str] = []
@@ -156,9 +159,15 @@ def test_gemini_wake_gets_room_tools_and_approval_mode(
     assert argv[argv.index("--approval-mode") + 1] == "yolo"
     assert argv[argv.index("--model") + 1] == "gemini-2.5-pro"
     assert "--skip-trust" in argv
-    settings = json.loads(Path(env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"]).read_text())
+    # The agent's own Gemini home: the user's ~/.gemini (retired Google
+    # login, stale hooks) is never read.
+    settings_path = Path(env["GEMINI_CLI_HOME"]) / ".gemini" / "settings.json"
+    assert stat.S_IMODE(os.stat(settings_path).st_mode) == 0o600
+    settings = json.loads(settings_path.read_text())
     quorus = settings["mcpServers"]["quorus"]
     assert quorus["trust"] is True and quorus["env"]["QUORUS_INSTANCE_NAME"] == "a-opencode"
+    assert settings["security"]["auth"]["selectedType"] == "gemini-api-key"
+    assert env["GEMINI_API_KEY"] == "gk-test" and "gk-test" not in " ".join(argv)
 
 
 def test_gemini_modes_and_errors() -> None:
@@ -231,3 +240,20 @@ def test_opencode_v1_runs_without_standalone(
     calls = _capture(monkeypatch, [OPENCODE_OUT])
     assert asyncio.run(adapter.run("opencode", context="ctx")) == "Wrote hello.txt"
     assert "--standalone" not in calls[0]["argv"]
+
+
+def test_gemini_key_is_read_from_the_users_gemini_env(tmp_path: Path) -> None:
+    (tmp_path / ".gemini").mkdir()
+    (tmp_path / ".gemini" / ".env").write_text("OTHER=1\nGEMINI_API_KEY='AQ.abc'\n")
+    assert models.gemini_api_key({"HOME": str(tmp_path)}) == "AQ.abc"
+    assert models.gemini_api_key({"HOME": str(tmp_path), "GEMINI_API_KEY": "e"}) == "e"
+    assert models.gemini_api_key({"HOME": str(tmp_path / "none")}) is None
+    assert "security" not in models.gemini_settings(None)  # no key: user's own sign-in
+
+
+def test_retired_gemini_model_tells_the_room_to_update() -> None:
+    # gemini-cli 0.40 defaulted to a model Google retired for new users.
+    err = ("ModelNotFoundError: This model models/gemini-2.5-flash-lite is no longer "
+           "available to new users.")
+    msg = reflexd.diagnose_harness_failure("gemini", err)
+    assert msg and "npm i -g @google/gemini-cli@latest" in msg

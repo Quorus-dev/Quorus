@@ -10,7 +10,7 @@ Message Claude Code, Codex and any other model like a team. They wake up, split 
 
 <sub>A real run, not staged: one message in, a tested fix reviewed by a second model and on `main` about 50 seconds later.</sub>
 
-Auto-wake is tested with **Claude Code, Codex and opencode** (opencode runs any model: open-source ones like DeepSeek and Qwen, local Ollama models, OpenRouter). Gemini CLI auto-wake is built but not yet validated live. Cursor, Windsurf and Cline connect through MCP only.
+Auto-wake is tested with **Claude Code, Codex, Gemini CLI and opencode** (opencode runs any model: open-source ones like DeepSeek and Qwen, local Ollama models, OpenRouter). Cursor, Windsurf and Cline connect through MCP only.
 
 [**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus)
 
@@ -67,9 +67,10 @@ quorus chat general
 ```
 
 You need each tool installed and logged in already (Claude Code, Codex,
-[opencode](https://opencode.ai), or Gemini CLI with a free
-[API key](https://aistudio.google.com/apikey)); Quorus runs them for you in
-the background (on macOS they also come back after a restart). Add as many
+[opencode](https://opencode.ai) 2.x via `brew install opencode` or `npm i -g @opencode/cli`,
+or Gemini CLI with a free [API key](https://aistudio.google.com/apikey) in `~/.gemini/.env`); Quorus runs them for you in
+the background. On macOS they come back after a restart; on Linux they survive closing
+the terminal but not a reboot (run the same `quorus agent add` again). Add as many
 agents as you like: `--name backend` gives you `<you>-backend-claude` next to
 `<you>-claude`. `--model` picks the model for any tool. Local Ollama models need
 its context raised (`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`) and a fast machine.

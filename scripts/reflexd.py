@@ -870,6 +870,11 @@ _HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
         "cannot wake until its login is migrated or switched.",
     ),
     (
+        "is no longer available to new users",
+        "this Gemini CLI asks for a model Google retired. Update it: "
+        "`npm i -g @google/gemini-cli@latest` (gemini-cli 0.40 hit this, 0.64 works).",
+    ),
+    (
         "not inside a trusted directory",
         "codex refused to run: the bound workspace is not a trusted "
         "directory. Reflexd passes --skip-git-repo-check; if you see this, "
@@ -1245,13 +1250,25 @@ class HeadlessAdapter:
         on_session: Callable[[str], None] | None, timeout_s: int | None = None,
         mode: str = "default",
     ) -> str:
-        """Gemini CLI wake: Quorus tools via system settings, room approval mode."""
+        """Gemini CLI wake in the agent's own Gemini home (GEMINI_CLI_HOME).
+
+        The user's ~/.gemini pins whatever they set up by hand: on most
+        machines a Google login that Google retired for the CLI
+        (IneligibleTierError even with an API key present, verified on
+        gemini-cli 0.64.0), plus stale hooks and MCP entries. The agent's
+        home holds only its Quorus tools and API-key sign-in.
+        """
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
-        path = self._side_file("gemini")
-        if path is not None and self.wake_spec is not None:
+        key = reflexd_models.gemini_api_key(env)
+        if key:
+            env["GEMINI_API_KEY"] = key  # env, never argv
+        if self.agent_config_dir is not None:
+            home = self.agent_config_dir / "gemini-home"
             try:
-                write_private_json(path, reflexd_models.gemini_settings(self.wake_spec))
-                env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(path)
+                write_private_json(home / ".gemini" / "settings.json",
+                                   reflexd_models.gemini_settings(
+                                       self.wake_spec, api_key=bool(key)))
+                env["GEMINI_CLI_HOME"] = str(home)
             except OSError as exc:
                 logger.warning("could not write gemini settings: %s", exc)
         flags = reflexd_models.gemini_flags(mode=mode, model=self.model)

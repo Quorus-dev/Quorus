@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 OLLAMA_PREFIX = "ollama/"
@@ -157,17 +158,39 @@ def parse_opencode_stream(out: str) -> tuple[str, str | None, str | None]:
 _GEMINI_APPROVAL = {"manual": "plan", "autonomous": "yolo"}
 
 
-def gemini_settings(spec: dict[str, Any] | None) -> dict[str, Any]:
-    """System-level settings: they override ``~/.gemini/settings.json``, so a
-    stale user ``quorus`` entry (dead venv, the human's secret) can't win."""
-    if spec is None:
-        return {}
-    return {"mcpServers": {"quorus": {
-        "command": spec["command"],
-        "args": list(spec["args"]),
-        "env": _mcp_env(spec),
-        "trust": True,  # headless runs can't confirm a tool call
-    }}}
+def gemini_api_key(env: dict[str, str]) -> str | None:
+    """The user's Gemini key: env first, then ~/.gemini/.env (where the
+    Gemini CLI itself reads it). The agent's own Gemini home has no .env."""
+    for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        if env.get(name):
+            return env[name]
+    home = Path(env.get("HOME") or Path.home())
+    try:
+        text = (home / ".gemini" / ".env").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        name, _, value = line.partition("=")
+        if name.strip() in ("GEMINI_API_KEY", "GOOGLE_API_KEY") and value.strip():
+            return value.strip().strip("'\"")
+    return None
+
+
+def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False) -> dict[str, Any]:
+    """settings.json for the agent's own Gemini home: Quorus tools, and
+    API-key sign-in when the user has a key (a retired Google login in the
+    user's own settings made every wake fail)."""
+    cfg: dict[str, Any] = {}
+    if api_key:
+        cfg["security"] = {"auth": {"selectedType": "gemini-api-key"}}
+    if spec is not None:
+        cfg["mcpServers"] = {"quorus": {
+            "command": spec["command"],
+            "args": list(spec["args"]),
+            "env": _mcp_env(spec),
+            "trust": True,  # headless runs can't confirm a tool call
+        }}
+    return cfg
 
 
 def gemini_flags(*, mode: str = "default", model: str | None = None) -> list[str]:
