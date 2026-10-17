@@ -94,11 +94,11 @@ the same size cap.
 - **Relay with Redis**, which every API-key relay has (`relay.py:67`): each
   bundle is one Redis hash (metadata plus base64 bytes) with a TTL. A single
   `HMGET` reads both together, and Redis drops both at expiry. A sorted set per
-  room indexes the live ids. Quotas are checked under a short Redis lock, so
+  room indexes the live ids. The quota check and the insert are one optimistic
+  `WATCH`/`MULTI` transaction on the size index: if another writer touches the
+  index between the read and `EXEC`, the transaction aborts and retries. So
   several instances share bundles and can't jointly overrun a quota.
 - **Quotas:** 50 MB per participant, 200 MB per tenant, 512 MB per relay.
-- **Known limit:** the lock release is GET then DEL, not atomic Lua (no `lupa`
-  in tests). The 5 s lock TTL bounds the damage.
 
 ## Build plan (each step its own commit with tests)
 
@@ -145,11 +145,14 @@ anonymous admin, so most users hit the refusal.
      mints `quorus_pk_…` once and returns it once. A name that is already
      claimed gets 409 ("name taken; the relay owner can release it with
      `quorus relay release-name <name>`", which runs locally against the DB).
-   - `POST /v1/auth/token` also accepts `quorus_pk_` keys. With no
-     `JWT_SECRET` configured, it signs with a key derived as
-     HMAC(`RELAY_SECRET`, "quorus-local-jwt"), and the middleware verifies with
-     the same key. The JWT `sub` is the claimed name, so `require_room_member`
-     and the `refs/quorus/<uploader>` namespace apply unchanged.
+   - `POST /v1/auth/token` also accepts `quorus_pk_` keys and signs the JWT
+     with a **random server-only key**. The key is generated on first start and
+     kept at 0600 in the relay's data dir, next to `participant_keys.db`. It is
+     never derived from `RELAY_SECRET` (codex's block on e1ca9088: a derived key
+     would let every invitee forge any participant's identity). With no
+     `JWT_SECRET` configured, the middleware verifies with this key. The JWT
+     `sub` is the claimed name, so `require_room_member` and the
+     `refs/quorus/<uploader>` namespace apply unchanged.
    - Clients claim their own name the first time they need it. `quorus join`
      and the hub's first run claim at join; `share-branch`, `fetch` and the MCP
      tools claim lazily when a profile has only the secret. The key is saved in
@@ -168,6 +171,7 @@ anonymous admin, so most users hit the refusal.
 - Claim then token then share: works on a relay with no DB.
 - A second claim of the same name gets 409, and a key for "alice" can't
   upload as "bob".
-- A forged JWT signed with a different derived key is rejected.
+- Knowing the shared secret can't mint a valid JWT: tokens signed with
+  `RELAY_SECRET`, or with any key derived from it, are rejected.
 - Release-name frees the name for a new claim.
 - A relay restart keeps the claims (they're on disk).

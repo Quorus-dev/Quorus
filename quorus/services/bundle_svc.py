@@ -200,73 +200,76 @@ class RedisBundleService(BundleService):
 
     Each bundle is one hash (metadata + base64 bytes) with a TTL, so a read
     gets both atomically and Redis drops both at expiry. A sorted set per room
-    indexes live ids. Quota checks and inserts run under a short Redis lock so
-    two instances can't both squeeze past a quota. Concurrent-upload slots stay
+    indexes live ids. Quota check and insert are one WATCH/MULTI transaction,
+    so two instances can't both squeeze past a quota. Concurrent-upload slots stay
     per instance."""
 
-    _LOCK = "qb:lock"
     _SIZES = "qb:sizes"  # member "tenant|uploader|id|size", score = expires_at
+    _RETRIES = 20
 
     def __init__(self, redis, *, clock=time.time) -> None:
         super().__init__(clock=clock)
         self._r = redis
 
-    async def _locked(self) -> str:
-        token = secrets.token_hex(8)
-        for _ in range(100):
-            if await self._r.set(self._LOCK, token, nx=True, px=5000):
-                return token
-            await asyncio.sleep(0.05)
-        raise QuotaError("the relay is busy storing other bundles; try again")
-
-    async def _unlock(self, token: str) -> None:
-        if await self._r.get(self._LOCK) == token:
-            await self._r.delete(self._LOCK)
+    async def _check_quota(self, live: list[str], tenant_id: str, uploader: str,
+                           size: int) -> None:
+        mine = tenant = total = 0
+        for member in live:
+            tid, who, _bid, used = member.rsplit("|", 3)
+            total += int(used)
+            if tid == tenant_id:
+                tenant += int(used)
+                mine += int(used) if who == uploader else 0
+        if mine + size > PARTICIPANT_QUOTA_BYTES:
+            raise QuotaError("your shared bundles exceed your quota; wait for them to expire")
+        if tenant + size > TENANT_QUOTA_BYTES:
+            raise QuotaError("this workspace's shared bundles exceed its quota")
+        if total + size > TOTAL_QUOTA_BYTES:
+            raise QuotaError("this relay is holding too many bundles; try again later")
 
     async def put(self, tenant_id: str, room_id: str, uploader: str, data: bytes) -> BundleMeta:
+        """Quota check and insert as one optimistic transaction: WATCH the size
+        index, read live usage, then MULTI/EXEC. Any other writer touching the
+        index between our read and EXEC aborts it, and we retry; no lease that
+        can expire mid-write (review of e165de8b)."""
         import base64
         import json
+
+        from redis.exceptions import WatchError
 
         if len(data) > MAX_BUNDLE_BYTES:
             raise BundleError(f"bundle exceeds {MAX_BUNDLE_BYTES} bytes")
         header = parse_header(data)
-        token = await self._locked()
-        try:
-            now = self._clock()
-            await self._r.zremrangebyscore(self._SIZES, "-inf", now)
-            mine = tenant = total = 0
-            for member in await self._r.zrange(self._SIZES, 0, -1):
-                tid, who, _bid, size = member.rsplit("|", 3)
-                total += int(size)
-                if tid == tenant_id:
-                    tenant += int(size)
-                    mine += int(size) if who == uploader else 0
-            if mine + len(data) > PARTICIPANT_QUOTA_BYTES:
-                raise QuotaError("your shared bundles exceed your quota; wait for them to expire")
-            if tenant + len(data) > TENANT_QUOTA_BYTES:
-                raise QuotaError("this workspace's shared bundles exceed its quota")
-            if total + len(data) > TOTAL_QUOTA_BYTES:
-                raise QuotaError("this relay is holding too many bundles; try again later")
-            meta = BundleMeta(
-                id="b_" + secrets.token_urlsafe(9), room_id=room_id, uploader=uploader,
-                branch=header.branch, head=header.head,
-                prerequisites=list(header.prerequisites), size=len(data),
-                sha256=hashlib.sha256(data).hexdigest(), created_at=now,
-                expires_at=now + BUNDLE_TTL_S, tenant_id=tenant_id,
-            )
-            key = f"qb:{tenant_id}:b:{meta.id}"
+        encoded = base64.b64encode(data).decode("ascii")
+        for _ in range(self._RETRIES):
             async with self._r.pipeline(transaction=True) as pipe:
-                pipe.hset(key, mapping={"meta": json.dumps(asdict(meta)),
-                                        "data": base64.b64encode(data).decode("ascii")})
-                pipe.expire(key, BUNDLE_TTL_S)
-                pipe.zadd(f"qb:{tenant_id}:room:{room_id}", {meta.id: meta.expires_at})
-                pipe.expire(f"qb:{tenant_id}:room:{room_id}", BUNDLE_TTL_S)
-                pipe.zadd(self._SIZES, {f"{tenant_id}|{uploader}|{meta.id}|{len(data)}":
-                                        meta.expires_at})
-                await pipe.execute()
-            return meta
-        finally:
-            await self._unlock(token)
+                try:
+                    await pipe.watch(self._SIZES)
+                    now = self._clock()
+                    live = await pipe.zrangebyscore(self._SIZES, f"({now}", "+inf")
+                    await self._check_quota(live, tenant_id, uploader, len(data))
+                    meta = BundleMeta(
+                        id="b_" + secrets.token_urlsafe(9), room_id=room_id, uploader=uploader,
+                        branch=header.branch, head=header.head,
+                        prerequisites=list(header.prerequisites), size=len(data),
+                        sha256=hashlib.sha256(data).hexdigest(), created_at=now,
+                        expires_at=now + BUNDLE_TTL_S, tenant_id=tenant_id,
+                    )
+                    key = f"qb:{tenant_id}:b:{meta.id}"
+                    index = f"qb:{tenant_id}:room:{room_id}"
+                    pipe.multi()
+                    pipe.zremrangebyscore(self._SIZES, "-inf", now)
+                    pipe.hset(key, mapping={"meta": json.dumps(asdict(meta)), "data": encoded})
+                    pipe.expire(key, BUNDLE_TTL_S)
+                    pipe.zadd(index, {meta.id: meta.expires_at})
+                    pipe.expire(index, BUNDLE_TTL_S)
+                    pipe.zadd(self._SIZES, {f"{tenant_id}|{uploader}|{meta.id}|{len(data)}":
+                                            meta.expires_at})
+                    await pipe.execute()
+                    return meta
+                except WatchError:
+                    await asyncio.sleep(0.01)
+        raise QuotaError("the relay is busy storing other bundles; try again")
 
     async def _fields(self, tenant_id: str, bid: str, *fields: str) -> list:
         return await self._r.hmget(f"qb:{tenant_id}:b:{bid}", *fields)

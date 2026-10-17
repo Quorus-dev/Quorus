@@ -172,6 +172,33 @@ async def test_redis_store_is_shared_by_two_relay_instances(repo: Path) -> None:
     assert await b.get(_TID, "r2", meta.id) is None
 
 
+async def test_redis_quota_survives_a_writer_racing_into_the_gap(
+        repo: Path, monkeypatch) -> None:
+    """Codex's repro on e165de8b: with a one-bundle quota, a second instance
+    inserting between the first's usage read and its write retained two."""
+    import fakeredis.aioredis
+
+    from quorus.services.bundle_svc import RedisBundleService
+
+    data = _bundle(repo, "main..fix/relay")
+    monkeypatch.setattr(bundle_svc, "PARTICIPANT_QUOTA_BYTES", len(data))
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    intruder = RedisBundleService(redis)
+
+    class Racing(RedisBundleService):
+        raced = False
+
+        async def _check_quota(self, live, tenant_id, uploader, size):
+            if not self.raced:  # the other instance writes after our read
+                self.raced = True
+                await intruder.put(tenant_id, "r1", uploader, data)
+            await super()._check_quota(live, tenant_id, uploader, size)
+
+    with pytest.raises(QuotaError):
+        await Racing(redis).put(_TID, "r1", "bob", data)
+    assert len(await intruder.list(_TID, "r1")) == 1
+
+
 async def test_redis_quota_holds_across_instances_and_expiry_frees_it(
         repo: Path, monkeypatch) -> None:
     import fakeredis.aioredis
