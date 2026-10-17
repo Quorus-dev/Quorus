@@ -2380,6 +2380,7 @@ class Reflexd:
         if alert is None:
             return
         title, body = alert
+        logger.info("owner alert room=%s: %s", room, title)  # never the body
         try:
             asyncio.get_running_loop().run_in_executor(
                 None, lambda: _notify(f"{title} · #{room}", body,

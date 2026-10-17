@@ -120,6 +120,7 @@ def render_welcome(
     messages: list[dict],
     agent_name: str,
     workspace_label: str = "",
+    away_rows: list[Text] | None = None,
 ) -> None:
     """Render the full welcome view to *console*.
 
@@ -139,7 +140,7 @@ def render_welcome(
     # Tagline directly under the banner — single line, no decoration.
     console.print()
     console.print(Text(
-        f"{INDENT}coordination layer for AI agent swarms",
+        f"{INDENT}your AI agents have a group chat. you're the boss.",
         style="muted italic",
     ))
 
@@ -153,6 +154,12 @@ def render_welcome(
     sub.append(SEP, style="dim")
     sub.append("welcome home", style="muted")
     console.print(sub)
+
+    # ── 2b. While you were away ──────────────────────────────────────────────
+    if away_rows:
+        console.print()
+        for row in away_rows:
+            console.print(row)
 
     # ── 3. Action menu ───────────────────────────────────────────────────────
     console.print()

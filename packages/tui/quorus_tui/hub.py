@@ -54,6 +54,7 @@ from quorus_cli import ui as _ui
 from quorus.config import ConfigManager, resolve_config_dir
 
 from . import autocomplete as _autocomplete
+from . import catchup as _catchup
 from . import welcome as _welcome
 from . import working as _working
 from .approvals_panel import render_approvals_panel
@@ -3195,6 +3196,7 @@ def _main_input_loop(
                         messages=msgs_snap,
                         agent_name=agent_name,
                         workspace_label=workspace_label,
+                        away_rows=getattr(state, "away_rows", None),
                     )
                 else:
                     # iMessage-style in-room view: pinned app-bar on top,
@@ -3878,6 +3880,7 @@ def _run_session(
         # Do NOT auto-join or pre-load messages; let the user choose intentionally.
     else:
         state.set_connected(False, "No rooms yet")
+    state.away_rows = _away_rows(relay_url, secret, rooms, chat_identity or agent_name)
 
     # Start SSE push listener (primary) + slow reconciliation poller (fallback).
     stop_event = threading.Event()
@@ -3934,6 +3937,25 @@ def _run_session(
         )
     finally:
         _stop_listeners(stop_event, (poller, sse_listener, dm_listener, presence_watcher))
+
+
+def _away_rows(relay: str, secret: str, rooms: list[dict], me: str) -> list:
+    """Home-screen "While you were away" rows since the last time Quorus
+    opened. Best effort: never blocks startup on a slow room."""
+    import time as _time
+
+    path = resolve_config_dir() / f"last-seen-{me or 'me'}.json"
+    since = _catchup.load_last_seen(path)
+    _catchup.save_last_seen(path, _time.time())
+    if since is None:  # first open: nothing to catch up on
+        return []
+    digests = []
+    for room in rooms[:12]:
+        name = room.get("name") or room.get("id", "")
+        msgs = _fetch_history(relay, secret, name) if name else None
+        if msgs:
+            digests.append(_catchup.room_digest(name, msgs, me=me, since=since))
+    return _catchup.render(digests)
 
 
 def _stop_listeners(stop_event: threading.Event, threads: tuple) -> None:
