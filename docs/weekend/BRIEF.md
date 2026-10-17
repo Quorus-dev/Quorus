@@ -117,3 +117,12 @@ free open-source model (opencode free tier, no API key), posts one message, and 
 the fix → review → main in under 2 minutes, then cleans up. Proof: a fresh-HOME run on Linux and macOS
 that ends with the fix on the sample repo's main. Handle the free tier's rate limit gracefully (the
 quota cooldown already exists). Pre-launch security audit is running separately; don't duplicate it.
+
+### From the pre-launch security audit (fixes are on feat/wake-rebuild-aug26: 9d0fc0e5, 430cb716, c5740e80, b8473f6c, 51cf8f59)
+- **Phone companion prerequisite:** the `/` web chat (`quorus/dashboard.py`) does not run at all,
+  because the relay's own CSP (`script-src 'self'`) blocks its inline script. Serve the script as a
+  same-origin static file; do not loosen the CSP. Fix the latent XSS before it runs: `esc()` doesn't
+  escape quotes, and `location.hash` is concatenated into fetch paths. Add tests that render hostile
+  chat content.
+- Owner-only write turns are now the default (others get read-only answers; `--trust members` opts
+  a shared room in). Respect it in new features.
