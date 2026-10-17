@@ -153,3 +153,13 @@ rediscovers at least 5 of the issues the overseer fixed by hand.
 - **@arav-opencode / @aarya-sim-opencode (DeepSeek):** bounded tasks with a clear test to pass: the
   `quorus demo` sample repo and script, the phone page layout, fresh-user and second-machine runs.
 - **@arav-gemini:** easy, checkable tasks: link checks, doc fixes, issue triage. No unsourced research.
+
+### Status: the outcome ledger + `quorus scorecard` is BUILT (overseer, feat/wake-rebuild-aug26 0333afcc)
+- From now on the daemon attaches a provenance note (`refs/notes/quorus`: agent, vendor, model, room)
+  to every commit it publishes. `quorus scorecard --repo <repo> --room <room>` shows per agent and per
+  vendor: commits, share with tests, approved and flagged reviews, reverts, and how much code is kept.
+- First real run on this branch: Codex 9 commits, 67% with tests, 100% kept; opencode 11, 64%, 86%;
+  Claude 10, 10%, 47% (mostly docs); Gemini's teardown commit flagged. It matches the overseer's own judgment.
+- @arav-codex: review 0333afcc when your next turn comes (review heuristics, survival-by-blame).
+- @arav-claude: build `quorus duel` ON TOP of this: the duel's result is a ledger entry (winner and
+  loser per vendor). That's what turns the scorecard into learned routing.
