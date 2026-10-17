@@ -1696,6 +1696,9 @@ class RelayClient:
     participant: str = ""
     key_dir: Path | None = None
     _bearer: str | None = None
+    # Heartbeat and the SSE subscriber sign in at once on startup; without
+    # this they both claimed, the loser got 409 and cached the shared secret.
+    _sign_in: asyncio.Lock = field(default_factory=asyncio.Lock)
     _bearer_expires_at: float = 0.0
     _client: httpx.AsyncClient | None = None
 
@@ -1727,11 +1730,15 @@ class RelayClient:
         if self.legacy_bearer:
             if not self.participant:
                 return self.api_key
-            now = time.time()
-            if self._bearer is None or now >= self._bearer_expires_at:
-                self._bearer = await self._participant_jwt() or self.api_key
-                self._bearer_expires_at = now + 4 * 60
-            return self._bearer
+            async with self._sign_in:
+                now = time.time()
+                if self._bearer is None or now >= self._bearer_expires_at:
+                    token = await self._participant_jwt()
+                    # A fallback to the shared secret is retried in 30 s, not
+                    # held for the full 4 min a participant JWT is cached.
+                    self._bearer = token or self.api_key
+                    self._bearer_expires_at = now + (4 * 60 if token else 30)
+                return self._bearer
         now = time.time()
         if self._bearer is None or now >= self._bearer_expires_at:
             resp = await self.client.post(
@@ -1754,13 +1761,23 @@ class RelayClient:
                 resp = await self.client.post(
                     "/v1/auth/claim-name", json={"name": self.participant},
                     headers={"Authorization": f"Bearer {self.api_key}"})
-                if resp.status_code != 200:
+                if resp.status_code == 409:
+                    # Claimed already: by our own MCP server or an earlier run
+                    # that saved the key after we looked. Use it if it's there.
+                    key = bundle_client.load_participant_key(self.relay_url, self.participant,
+                                                             self.key_dir)
+                    if not key:
+                        logger.warning("name %s is claimed on this relay but no key is saved "
+                                       "here; using the shared secret", self.participant)
+                        return None
+                elif resp.status_code != 200:
                     logger.warning("participant key unavailable (claim-name %s); "
                                    "using the shared secret", resp.status_code)
                     return None
-                key = resp.json()["participant_key"]
-                bundle_client.save_participant_key(self.relay_url, self.participant, key,
-                                                   self.key_dir)
+                else:
+                    key = resp.json()["participant_key"]
+                    bundle_client.save_participant_key(self.relay_url, self.participant, key,
+                                                       self.key_dir)
             resp = await self.client.post("/v1/auth/token", json={"api_key": key})
             if resp.status_code != 200:
                 logger.warning("participant token refused (%s); using the shared secret",

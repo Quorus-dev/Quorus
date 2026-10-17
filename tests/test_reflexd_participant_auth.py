@@ -70,3 +70,61 @@ def test_relay_without_claims_keeps_the_shared_secret(tmp_path, monkeypatch) -> 
 
     assert asyncio.run(go()) == SECRET
     _reset_state()
+
+
+def _relay_with_room(tmp_path, monkeypatch):
+    _reset_state()
+    monkeypatch.setattr(tokens, "JWT_SECRET", load_or_create_signing_key(tmp_path / "relay"))
+    app.state.participant_keys = ParticipantKeyStore(tmp_path / "relay")
+
+    async def make_room() -> str:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://r") as c:
+            rid = (await c.post("/rooms", json={"name": "r", "created_by": "a-codex"},
+                                headers=LEGACY)).json()["id"]
+            for who in ("a-codex", "b-claude"):
+                await c.post(f"/rooms/{rid}/join", json={"participant": who}, headers=LEGACY)
+            return rid
+
+    return asyncio.run(make_room())
+
+
+def test_concurrent_startup_calls_claim_once_and_never_fall_back(tmp_path, monkeypatch,
+                                                                 caplog) -> None:
+    """Overseer's live log: 'claim-name 409 Conflict … using the shared secret' at
+    startup. Heartbeat and SSE both signed in at once; the loser cached the secret."""
+    _relay_with_room(tmp_path, monkeypatch)
+
+    async def go() -> list[str]:
+        relay = _client("http://r", tmp_path / "agent")
+        return await asyncio.gather(*(relay.bearer_jwt() for _ in range(5)))
+
+    tokens_seen = asyncio.run(go())
+    assert all(t != SECRET and t.count(".") == 2 for t in tokens_seen)
+    assert "shared secret" not in caplog.text
+    _reset_state()
+
+
+def test_restart_reuses_the_saved_key_without_claiming(tmp_path, monkeypatch, caplog) -> None:
+    rid = _relay_with_room(tmp_path, monkeypatch)
+
+    async def first() -> None:
+        relay = _client("http://r", tmp_path / "agent")
+        await relay.bearer_jwt()
+
+    async def after_restart() -> None:
+        relay = _client("http://r", tmp_path / "agent")
+        calls: list[str] = []
+        orig = relay._client.post
+
+        async def spy(url, *a, **kw):
+            calls.append(url)
+            return await orig(url, *a, **kw)
+
+        relay._client.post = spy
+        await relay.post_social_defer(room_id=rid, actor="a-codex", target="b-claude")
+        assert "/v1/auth/claim-name" not in calls  # saved key, no new claim
+
+    asyncio.run(first())
+    asyncio.run(after_restart())
+    assert "409" not in caplog.text and "shared secret" not in caplog.text
+    _reset_state()
