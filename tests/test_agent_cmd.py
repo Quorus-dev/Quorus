@@ -191,7 +191,8 @@ def test_warns_before_adding_an_agent_that_cannot_wake(tmp_path: Path, monkeypat
     assert any("aistudio" in w for w in agent_cmd._readiness_warnings("gemini", None))
     (tmp_path / ".gemini").mkdir()
     (tmp_path / ".gemini" / ".env").write_text("GEMINI_API_KEY=x\n")
-    assert agent_cmd._readiness_warnings("gemini", None) == []
+    assert agent_cmd._readiness_warnings("gemini", "gemini-3.5-flash-lite") == []
+    assert any("flash-lite" in w for w in agent_cmd._readiness_warnings("gemini", None))
     monkeypatch.setattr(agent_cmd, "_ollama_models", lambda: None)
     assert any("isn't running" in w
                for w in agent_cmd._readiness_warnings("opencode", "ollama/qwen3:4b"))

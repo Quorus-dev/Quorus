@@ -916,8 +916,33 @@ _HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
     ("please run /login", "not logged in — run `claude /login` on this host."),
     ("not logged in", "not logged in — run the harness's login command on this host."),
     ("rate limit", "the vendor rate-limited this account; the wake was dropped."),
+    (
+        "exhausted your daily quota",
+        "hit the free tier's daily limit on this model (Gemini's default allows "
+        "about 20 requests a day). Switch to a lighter model: `quorus agent "
+        "remove <agent>` then add it again with `--model gemini-3.5-flash-lite`.",
+    ),
     ("quota", "the vendor reports the account is out of quota."),
 )
+
+
+_LIMIT_RE = re.compile(r"quota|rate.?limit|usage limit|resource_exhausted", re.IGNORECASE)
+_RETRY_RE = re.compile(r"retry in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?", re.IGNORECASE)
+LIMIT_DEFAULT_S = 30 * 60
+LIMIT_MAX_S = 24 * 3600
+
+
+def _is_limit(stderr: str) -> bool:
+    return bool(_LIMIT_RE.search(stderr or ""))
+
+
+def _retry_after_s(stderr: str) -> float:
+    """Vendor's "retry in 21h39m46s" → seconds (capped); default 30 min."""
+    m = _RETRY_RE.search(stderr or "")
+    if not m or not any(m.groups()):
+        return LIMIT_DEFAULT_S
+    h, mi, se = (float(g) if g else 0.0 for g in m.groups())
+    return max(60.0, min(LIMIT_MAX_S, h * 3600 + mi * 60 + se))
 
 
 def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
@@ -1013,6 +1038,8 @@ class HeadlessAdapter:
         # opencode 1.x rejects `run --standalone` (help text, exit 1): every
         # wake failed for users on the `opencode-ai` npm package (still 1.x).
         self.opencode_v1 = False
+        # Epoch seconds until which the vendor said "out of quota".
+        self.limited_until = 0.0
         # Records the argv (or sdk-call signature) that WOULD have been spawned
         # in dry-run mode. Kept on the instance for tests + smoke scripts.
         self.last_dry_run: dict[str, Any] | None = None
@@ -1371,6 +1398,10 @@ class HeadlessAdapter:
             # it locally, but only persist the binary and exit status.
             logger.warning("harness %s exited %s", argv[0], proc.returncode)
             diagnosis = diagnose_harness_failure(argv[0], raw)
+            if diagnosis and _is_limit(raw):
+                # Out of quota: stop waking this agent until it resets instead
+                # of posting the same ⚠ on every message (gemini, 2026-10-17).
+                self.limited_until = time.time() + _retry_after_s(raw)
             if diagnosis:
                 # Actionable > generic: the room learns WHY nobody answered.
                 logger.error("harness %s: %s", argv[0], diagnosis)
@@ -1842,6 +1873,7 @@ class Reflexd:
             )
         self._stop = asyncio.Event()
         self._presence: tuple[str, str] = ("active", "")  # (status, room)
+        self._limit_announced: set[tuple[str, float]] = set()
         self._last_wake_at: float = 0.0
         # Bounded in-memory queue for messages that arrive while a busy-file
         # is set. Drained on stop, not replayed across restarts (PR-C1 scope).
@@ -2149,6 +2181,23 @@ class Reflexd:
         except Exception as exc:  # presence is cosmetic: never fail a wake on it
             logger.debug("presence update failed: %s", exc)
 
+    async def _limited(self, relay: RelayClient, envelope: dict[str, Any]) -> bool:
+        """While the vendor's quota is out, don't wake the agent: say so once
+        per room, then stay quiet until it resets."""
+        until = getattr(self.adapter, "limited_until", 0.0) or 0.0
+        if until <= time.time():
+            return False
+        room = envelope.get("room") or ""
+        if (room, until) not in self._limit_announced:
+            self._limit_announced.add((room, until))
+            when = datetime.fromtimestamp(until).strftime("%a %H:%M")
+            await self._post_status(
+                relay, room, envelope,
+                f"@{self.config.participant_name} is out of quota until about {when} "
+                "and will pick up again then")
+        logger.info("skipping wake: harness out of quota until %s", until)
+        return True
+
     async def _wake_and_reply_inner(
         self, relay: RelayClient, envelope: dict[str, Any], *,
         triage: "TriageResult | None" = None, reason: str | None = None,
@@ -2163,6 +2212,8 @@ class Reflexd:
         room = envelope.get("room") or ""
         if not self.config.spawn_enabled:
             logger.info("spawn disabled (test mode); skipping harness call")
+            return
+        if await self._limited(relay, envelope):
             return
 
         history = await relay.fetch_recent(

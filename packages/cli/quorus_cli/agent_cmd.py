@@ -363,6 +363,10 @@ def _readiness_warnings(harness: str, model: str | None) -> list[str]:
                    "a personal Google account. Get a free key at "
                    "https://aistudio.google.com/apikey and put GEMINI_API_KEY=<key> "
                    "in ~/.gemini/.env")
+    if harness == "gemini" and not model:
+        out.append("Gemini's free tier allows only about 20 requests a day on its default "
+                   "model, and one agent turn can use a dozen. For an always-on agent, add "
+                   "`--model gemini-3.5-flash-lite`")
     if harness == "opencode":
         version = _opencode_version()
         if version and int(version.split(".")[0]) < 2:
