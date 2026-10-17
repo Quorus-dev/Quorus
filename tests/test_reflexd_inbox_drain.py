@@ -280,7 +280,8 @@ def test_d7_timeout_still_posted_when_no_self_reply(
     ])
     _run_wake(daemon, relay, monkeypatch, "[reflexd] harness timed out")
     assert len(relay.posted) == 1
-    assert relay.posted[0]["content"] == "[reflexd] harness timed out"
+    # A plain-language notice, never the raw sentinel (live 2026-10-17).
+    assert relay.posted[0]["content"].startswith("⚠ ran out of time before finishing")
 
 
 def test_d7_real_replies_never_suppressed(

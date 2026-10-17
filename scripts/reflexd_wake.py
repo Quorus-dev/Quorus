@@ -528,11 +528,16 @@ def _staged_conflict_markers(wt: Worktree) -> list[str]:
 
 
 def commit_message_from(reply: str, participant: str) -> str:
-    """Make a conventional subject of at most 50 chars, keeping whole words."""
+    """Make a conventional subject of at most 50 chars, keeping whole words.
+
+    A failed turn's reply is the daemon's own error text: Gemini's timed-out
+    work was committed as "[reflexd] harness timed out" (2026-10-17)."""
     conventional = (
         r"(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
         r"(?:\([^()]+\))?!?: "
     )
+    if (reply or "").lstrip().startswith(("[reflexd]", "⚠")):
+        return "chore: unfinished work from a cut-off turn"
     for line in (reply or "").splitlines():
         line = re.sub(r"[`*_#>]|^\s*[-✅☑️✔️]+\s*", "", line).strip()
         line = " ".join(line.split())

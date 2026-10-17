@@ -1117,6 +1117,12 @@ def _undelivered_lines(reply: str, posted: list[str]) -> list[str]:
     return out
 
 
+def _timed_out_line(published: bool = False) -> str:
+    """What the room sees instead of the raw "[reflexd] harness timed out"."""
+    done = " What it had committed is published below." if published else ""
+    return f"⚠ ran out of time before finishing its reply.{done} Mention me to continue."
+
+
 def _same_result(posted: str, reply: str) -> bool:
     """Did the agent already post *reply* (or its ✅ result) itself?"""
     a = " ".join(posted.split())[:60]
@@ -2794,6 +2800,9 @@ class Reflexd:
                              f"kept on {worktree.branch}")
             if published:
                 logger.info("%s", published)
+                if reply == "[reflexd] harness timed out":
+                    # Not a raw sentinel above real, published work.
+                    reply = _timed_out_line(published=True)
                 reply = f"{reply}\n{published}" if reply else published
         if not reply:
             logger.info("harness produced empty reply, skipping post")
@@ -2905,6 +2914,8 @@ class Reflexd:
                 "Mention me to continue, send /interrupt to stop me, or "
                 "release the task."
             )
+        elif reply == "[reflexd] harness timed out":
+            reply = _timed_out_line()
 
         thread_root_id = envelope_thread_root(envelope)
         # SSE fan-out gives each recipient a per-envelope id while the

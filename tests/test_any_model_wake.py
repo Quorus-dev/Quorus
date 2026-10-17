@@ -301,3 +301,17 @@ def test_a_paid_model_is_never_swapped() -> None:
     adapter.model = "openrouter/qwen/qwen3-coder"
     asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert tried == ["openrouter/qwen/qwen3-coder"]
+
+
+def test_a_failed_turns_leftover_work_gets_a_real_commit_message() -> None:
+    """Gemini's timed-out work was committed as "[reflexd] harness timed out"."""
+    msg = reflexd.reflexd_wake.commit_message_from
+    assert msg("[reflexd] harness timed out", "a-gemini") == \
+        "chore: unfinished work from a cut-off turn"
+    assert msg("⚠ opencode: rate-limited", "a-opencode").startswith("chore: unfinished")
+    assert msg("✅ fix: add() in calc.py", "a-codex") == "fix: add() in calc.py"
+
+
+def test_timeout_notice_says_what_happened() -> None:
+    assert reflexd._timed_out_line().startswith("⚠ ran out of time")
+    assert "published below" in reflexd._timed_out_line(published=True)
