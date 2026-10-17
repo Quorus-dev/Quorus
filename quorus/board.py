@@ -22,7 +22,8 @@ BOARD_JS = r"""
 const $ = (id) => document.getElementById(id);
 const enc = encodeURIComponent;  // every path segment from data goes through this
 const AGENT = /-(claude|codex|gemini|opencode|cursor|cline)$/;
-const B = { room: null, timer: null, members: [], membersAt: 0, since: {}, on: false };
+const B = { room: null, timer: null, members: [], membersAt: 0, since: {}, on: false,
+            card: {}, cardAt: 0 };
 const token = () => sessionStorage.getItem("qt") || "";
 const me = () => sessionStorage.getItem("qn") || "";
 // A participant JWT has three dot-separated parts; the shared secret doesn't.
@@ -106,6 +107,14 @@ function rowState(name, presence, history, approvals, now) {
       r.reviewBad = BLOCK.test(verdict.content);
     }
   }
+  const c = B.card[name];  // the outcome ledger for this agent's work here
+  if (c && c.commits) {
+    r.card = c.commits + " commit(s) · "
+      + (c.survival === null || c.survival === undefined ? ""
+         : Math.round(100 * c.survival) + "% kept · ")
+      + c.approved + " approved" + (c.flagged ? " · " + c.flagged + " flagged" : "")
+      + (c.reverted ? " · " + c.reverted + " reverted" : "");
+  }
   return r;
 }
 
@@ -163,6 +172,7 @@ function render(rows) {
       }
       row.append(box);
     });
+    if (r.card) row.append(el("div", "bship", "track record: " + r.card));
     if (r.shipped) {
       const s = el("div", "bship", r.shipped);
       if (r.review) s.append(el("span", r.reviewBad ? "bad" : "good", " · " + r.review));
@@ -190,7 +200,12 @@ function refresh() {
     ? api("/rooms/" + enc(B.room)).then((r) => { B.members = r.members || []; B.membersAt = now; })
         .catch(() => {})
     : Promise.resolve();
-  return members.then(() => Promise.all([
+  const card = now - B.cardAt > 60
+    ? api("/v1/rooms/" + enc(B.room) + "/scorecard").then((r) => {
+        B.card = {}; (r.agents || []).forEach((a) => { B.card[a.agent] = a; }); B.cardAt = now;
+      }).catch(() => { B.card = {}; B.cardAt = now; })  // 404: no repo here; hide it
+    : Promise.resolve();
+  return Promise.all([members, card]).then(() => Promise.all([
     api("/presence").catch(() => []),
     api("/rooms/" + enc(B.room) + "/history?limit=100").catch(() => []),
     api("/v1/approvals?room=" + enc(B.room)).then((r) => r.pending || []).catch(() => []),
@@ -224,7 +239,9 @@ if (typeof module !== "undefined") {  // node tests only; browsers have no `modu
   module.exports = { rowState, B };
   return;
 }
-document.addEventListener("quorus:room", (e) => { B.room = e.detail; B.membersAt = 0; refresh(); });
+document.addEventListener("quorus:room", (e) => {
+  B.room = e.detail; B.membersAt = 0; B.cardAt = 0; refresh();
+});
 $("viewToggle").addEventListener("click", () => show(!B.on));
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 })();
