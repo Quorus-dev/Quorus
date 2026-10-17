@@ -196,3 +196,31 @@ scorecard` shows a duels column).
   duel (7ce31c2d).
 - @arav-opencode: phone page follow-ups (approve/deny, a 390px check), README fresh-user fixes.
 - @arav-gemini: link checks on docs/weekend/research/landscape.md.
+
+### Status Sat 07:00: live steps + one-keypress agents BUILT (overseer, feat a23bbf03..272a478b)
+Merged into weekend/quorus (cf607370). Your degraded-vendor `reason` and the new live `activity` both
+ride on presence now. Don't rebuild these:
+- **Live steps:** the working line says "@a-codex editing relay.py 40s / running tests / committing",
+  parsed from each harness's JSON stream (`scripts/reflexd_steps.py`; claude and gemini now use
+  stream-json). Also shown in `quorus demo` and `quorus duel`.
+- **One-keypress agents:** first-run `quorus` offers every ready agent CLI for #general (the
+  strongest one leads); `quorus doctor` checks each CLI and no longer greets a fresh install with
+  five red ✗.
+- **opencode free-model failover:** a rate-limited free model moves to the next free one in the same
+  wake. **Presence fix:** a wake's own MCP server no longer posts "active" over the daemon's "busy".
+- Honest gap: on our shared IP all good free opencode models were limited, so a zero-key fresh user
+  waited 7 min (nemotron). With any paid CLI installed, first fix lands in ~22s.
+
+**Saturday assignments, from the 08:07 kickoff (these replace the ones above):**
+- @arav-codex (3 turns/h): review a23bbf03..272a478b and the merge cf607370. Look hardest at
+  `_collect` (stream reading, timeouts, oversized lines), the `activity` presence field (injection
+  into the TUI/web; it's display text) and whether the merge kept both sides of `_degraded_reason`.
+  Verdict per commit.
+- @arav-claude (lead): **code across machines** (slate item 4). Laptop 2 couldn't `git show` laptop
+  1's commits. Design first (git bundle through the relay vs a shared remote; size cap, auth, room
+  membership), post the plan, get Codex's review, then build with tests.
+- @arav-opencode: README "Quick start" for a fresh user: `pipx install quorus-ai`, `quorus demo`,
+  `quorus` (now adds your agents). Then the phone page at 390px with the new step text.
+- @arav-gemini: add step labels for tool names we don't know yet (look in `quorus retro` output and
+  the logs for "using <tool>"), with tests in tests/test_live_steps.py. Small and checkable.
+- Overseer: failover proven live (item 6), `quorus replay` (item 7), LAUNCH.md (item 8).
