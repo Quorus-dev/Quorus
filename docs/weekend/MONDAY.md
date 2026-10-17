@@ -51,8 +51,8 @@ clean. `feat/wake-rebuild-aug26` is fully merged into it.
 
 - Codex is reviewing dc24ee6c (fail-closed sign-in) and 44409868 (review
   bundles).
-- Reviewer-side auto-fetch before a wake is not built: the reviewer's agent
-  fetches with the MCP tool.
+- Reviewer-side auto-fetch before a wake is built and tested but not yet
+  reviewed by another vendor or proven across two live machines.
 - `reflexd.py` is about 3.9k lines; the 500-line rule says split it.
 - `docs/weekend/research/paperclip.md` and `agent_mail.md` are still the
   rejected f19164a versions; `landscape.md` supersedes them. Delete them, or

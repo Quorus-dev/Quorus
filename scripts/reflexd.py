@@ -2765,6 +2765,16 @@ class Reflexd:
         # so a review request can carry exactly this wake's commits.
         pre_head = (await asyncio.to_thread(_review_share.head_of, worktree)
                     if worktree is not None and share_for(room) else None)
+        shared_note = ""
+        if pre_head and _review_share.shared_bundle_ids(envelope.get("content") or ""):
+            # Step 4: the review request's commits are in the repo before the
+            # agent starts, so it reviews code, not a pasted diff.
+            try:
+                shared_note = await _review_share.fetch_shared(
+                    relay_url=self.config.relay_url, bearer=await relay.bearer_jwt(),
+                    room=room, worktree=worktree, message=envelope.get("content") or "")
+            except httpx.HTTPError as exc:
+                logger.warning("auto-fetch skipped: %s", exc)
         _members = getattr(relay, "fetch_members", None)
         teammates = await _members(room=room) if _members is not None else []
         prompt = self._build_prompt(
@@ -2772,6 +2782,7 @@ class Reflexd:
             memory_entries=memory_entries,
             teammates=[t for t in teammates if is_agent_participant(t)],
             has_workspace=ws is not None, worktree=worktree,
+            shared_note=shared_note,
         )
         log_reason = (triage.reason if triage else None) or reason or "?"
         # D2: resume the room's prior session so the agent keeps its memory.
@@ -3155,6 +3166,7 @@ class Reflexd:
         teammates: list[str] | None = None,
         has_workspace: bool = True,
         worktree: Any = None,
+        shared_note: str = "",
     ) -> str:
         """Compose QOD + recent memory + history + WakeIntent.
 
@@ -3220,6 +3232,7 @@ class Reflexd:
             f"# Wake Intent\n"
             f"{intent_blurb}\n\n"
             f"# Reply chain depth: {wake_depth} (max {MAX_REPLY_DEPTH})\n\n"
+            f"{shared_note}"
             f"{reflexd_wake.UNTRUSTED_OPEN.format(nonce=nonce)}\n"
             f"# Recent room transcript (most recent last)\n{history_block}\n\n"
             f"# Triggering message\n{wake_quoted}\n"

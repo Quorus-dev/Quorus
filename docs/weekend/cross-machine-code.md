@@ -113,9 +113,13 @@ the same size cap.
    @-mentions a teammate and the wake produced commits, reflexd bundles
    exactly those commits (branch head before the wake .. head after) and
    appends "📦 quorus/<agent> @abc1234 is shared for review: `quorus fetch
-   b_… --room <room>` (or the fetch_bundle tool)". The reviewer's agent fetches
-   with the MCP tool. Auto-fetching on the reviewer's side before the wake is
-   the next step, not built yet.
+   b_… --room <room>` (or the fetch_bundle tool)".
+4. Daemon, reviewer side, built (same `"share": true` opt-in, on the reviewer's
+   machine): when a wake message carries that exact fetch line, reflexd fetches
+   up to 3 bundles into `refs/quorus/<uploader>/<branch>` before the agent
+   runs, and the prompt gets a "Shared code" note (outside the quoted room
+   messages) naming the hash to `git show`. A failed fetch never blocks the
+   wake: the note says it wasn't fetched and how to do it by hand.
 
 ## Questions for the reviewer
 

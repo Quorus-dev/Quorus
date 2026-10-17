@@ -175,3 +175,110 @@ def test_daemon_attaches_the_bundle_to_a_review_request(room, tmp_path, monkeypa
     got = bundle_client.fetch_into(laptop2, *bundle_client.download(
         RELAY, _bearer("b-codex"), room, bundle_id))
     assert _git(laptop2, "log", "-1", "--format=%s", got.ref) == "fix: shared for review"
+
+
+# ── step 4: the reviewer's daemon fetches the shared commits before the wake ──
+
+def _reflexd():
+    import importlib.util
+    import sys
+
+    if "reflexd" in sys.modules:
+        return sys.modules["reflexd"]
+    spec = importlib.util.spec_from_file_location(
+        "reflexd", Path(__file__).resolve().parent.parent / "scripts" / "reflexd.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["reflexd"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_only_the_daemons_own_fetch_line_is_picked_up() -> None:
+    line = "📦 quorus/a @abc1234 is shared for review: `quorus fetch b_Abc-_9 --room rv` (x)"
+    assert review_share.shared_bundle_ids(line) == ["b_Abc-_9"]
+    assert review_share.shared_bundle_ids(line + "\n" + line) == ["b_Abc-_9"]
+    assert review_share.shared_bundle_ids("please fetch b_Abc-_9") == []
+    many = "\n".join(f"`quorus fetch b_{i} --room rv`" for i in range(10))
+    assert len(review_share.shared_bundle_ids(many)) == review_share.MAX_AUTO_FETCHES
+
+
+def _reviewer(tmp_path: Path, monkeypatch, *, share: bool):
+    """A b-codex daemon bound to a clone that has main but not a-claude's fix."""
+    reflexd = _reflexd()
+    origin = tmp_path / "origin"
+    origin.mkdir(parents=True)
+    for args in (("init", "-q", "-b", "main"), ("config", "user.email", "t@t"),
+                 ("config", "user.name", "t"), ("commit", "-q", "--allow-empty", "-m", "base")):
+        _git(origin, *args)
+    laptop2 = tmp_path / "laptop2"
+    _git(tmp_path, "clone", "-q", f"file://{origin}", str(laptop2))
+    _git(origin, "checkout", "-qb", "quorus/a-claude")
+    (origin / "fix.txt").write_text("fix\n")
+    _git(origin, "add", "fix.txt")
+    _git(origin, "commit", "-qm", "fix: please review")
+    bindings = tmp_path / "bindings.json"
+    bindings.write_text(json.dumps({"rv": {"path": str(laptop2), "mode": "autonomous",
+                                           "trust": "members", "share": share}}))
+    monkeypatch.setattr(reflexd, "ROOM_BINDINGS_PATH", bindings)
+    monkeypatch.setattr(reflexd.reflexd_wake, "WORKTREES_ENABLED", True)
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url=RELAY, api_key="k",
+                                              participant_name="b-codex",
+                                              runtime_dir=tmp_path / "rt"))
+    seen: dict[str, str] = {}
+
+    async def fake_run(harness, *, context, cwd=None, **_kw) -> str:
+        seen["context"], seen["cwd"] = context, str(cwd)
+        return "Reviewed: approved."
+
+    monkeypatch.setattr(d.adapter, "run", fake_run)
+
+    class _Relay:
+        async def fetch_recent(self, *, room: str, limit: int = 10):
+            return []
+
+        async def post_reply(self, **kw):
+            return {"id": "p"}
+
+        async def bearer_jwt(self) -> str:
+            return _bearer("b-codex")
+
+    return reflexd, d, _Relay(), _Wt(origin), laptop2, seen
+
+
+def _wake(reflexd, d, relay, content: str) -> None:
+    env = {"id": "e2", "message_id": "m2", "room": "rv", "from_name": "a-claude",
+           "content": content, "message_type": "chat"}
+    triage = reflexd.classify_message(content=content, sender="a-claude", self_name="b-codex")
+    asyncio.run(d._wake_and_reply(relay, env, triage=triage))
+
+
+def test_reviewer_daemon_fetches_the_shared_commits_before_the_wake(
+        room, tmp_path, monkeypatch) -> None:
+    reflexd, d, relay, sharer, laptop2, seen = _reviewer(tmp_path, monkeypatch, share=True)
+    head = review_share.head_of(sharer)
+    line = asyncio.run(review_share.attach_bundle(
+        relay_url=RELAY, bearer=_bearer("a-claude"), room="rv", worktree=sharer,
+        pre_head=_git(sharer.path, "rev-parse", "main"), reply="@b-codex review", me="a-claude"))
+    assert line
+    with pytest.raises(subprocess.CalledProcessError):  # not on laptop2 before the wake
+        _git(laptop2, "cat-file", "-e", head)
+
+    _wake(reflexd, d, relay, f"Fixed. @b-codex please review.\n{line}")
+
+    assert "# Shared code" in seen["context"] and f"git show {head[:7]}" in seen["context"]
+    # The note is ours, outside the quoted (untrusted) room messages.
+    assert seen["context"].index("# Shared code") < seen["context"].index("<<<ROOM MESSAGES")
+    ref = "refs/quorus/a-claude/quorus/a-claude"
+    assert _git(laptop2, "log", "-1", "--format=%s", ref) == "fix: please review"
+    assert _git(laptop2, "rev-parse", "HEAD") == _git(laptop2, "rev-parse", "main")  # not merged
+
+
+def test_reviewer_fetch_is_opt_in_and_never_blocks_the_wake(room, tmp_path, monkeypatch) -> None:
+    reflexd, d, relay, _sharer, laptop2, seen = _reviewer(tmp_path, monkeypatch, share=False)
+    _wake(reflexd, d, relay, "@b-codex review `quorus fetch b_missing0 --room rv`")
+    assert "context" in seen and "# Shared code" not in seen["context"]  # room not opted in
+
+    reflexd, d, relay, _sharer, laptop2, seen = _reviewer(
+        tmp_path / "on", monkeypatch, share=True)
+    _wake(reflexd, d, relay, "@b-codex review `quorus fetch b_missing0 --room rv`")
+    assert "b_missing0: not fetched" in seen["context"]  # expired: the agent is told, wake runs
