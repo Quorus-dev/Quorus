@@ -296,6 +296,23 @@ def test_every_free_model_limited_cools_down_on_the_original() -> None:
     assert adapter.model is None and adapter.limited_until > 0
 
 
+def test_rotation_reaches_a_live_free_model_the_tuple_never_had(monkeypatch) -> None:
+    """Release check: every tuple model was limited while nemotron-3.5-lightning
+    answered. The rotation now walks the live `opencode models` catalog."""
+    import subprocess
+
+    from quorus.runtime import opencode_free
+
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    catalog = "\n".join([*free, "opencode/nemotron-3.5-lightning-free"])
+    monkeypatch.setattr(opencode_free, "_default_run", lambda argv, **_k:
+                        subprocess.CompletedProcess(argv, 0, stdout=catalog, stderr=""))
+    adapter, tried = _rotating_adapter({None, *free})
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out == "fixed it on opencode/nemotron-3.5-lightning-free"
+    assert tried == [None, *free, "opencode/nemotron-3.5-lightning-free"]
+
+
 def test_a_paid_model_is_never_swapped() -> None:
     adapter, tried = _rotating_adapter({"openrouter/qwen/qwen3-coder"})
     adapter.model = "openrouter/qwen/qwen3-coder"

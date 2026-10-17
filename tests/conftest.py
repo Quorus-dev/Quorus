@@ -175,3 +175,18 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(
                 pytest.mark.skip(reason=f"opt-in: run with -m {marker}")
             )
+
+
+@pytest.fixture(autouse=True)
+def _no_live_opencode_catalog(monkeypatch):
+    """Tests never shell out to a real `opencode models`: unless a test passes
+    its own `run`, the catalog looks unavailable and the pinned tuple is used."""
+    import subprocess
+
+    from quorus.runtime import opencode_free
+
+    opencode_free.reset_cache()
+    monkeypatch.setattr(opencode_free, "_default_run", lambda argv, **_kw:
+                        subprocess.CompletedProcess(argv, 1, stdout="", stderr=""))
+    yield
+    opencode_free.reset_cache()

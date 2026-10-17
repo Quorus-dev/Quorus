@@ -121,8 +121,10 @@ def model_answers(model: str, cwd: Path, timeout: float = 45) -> bool:
 def pick_models(cwd: Path, console: Any, forced: str | None = None) -> list[str]:
     if forced:
         return [forced, forced]
+    from quorus.runtime.opencode_free import free_models
+
     working: list[str] = []
-    for model in FREE_MODELS:
+    for model in free_models(FREE_MODELS):  # the live catalog first; it churns
         console.print(f"[dim]checking {model.split('/', 1)[1]}…[/]")
         if model_answers(model, cwd):
             working.append(model)
