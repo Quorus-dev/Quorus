@@ -339,6 +339,8 @@ _HANDLED_ID_CAP = 2000
 CHAT_MAX_TURNS = int(os.environ.get("REFLEXD_CHAT_MAX_TURNS", "60"))
 MISSION_TIMEOUT_S = int(os.environ.get("REFLEXD_MISSION_TIMEOUT_S", "3600"))
 HEARTBEAT_HISTORY_LIMIT = 10
+# Live steps: at most one presence post this often while a wake runs.
+STEP_POST_MIN_S = 3.0
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
 # so 30s gives three missed beats of slack. Env-tunable for tests.
 HEARTBEAT_INTERVAL_S = float(os.environ.get("REFLEXD_HEARTBEAT_S", "30"))
@@ -534,6 +536,14 @@ assert _models_spec is not None and _models_spec.loader is not None
 reflexd_models = _ilu.module_from_spec(_models_spec)
 sys.modules.setdefault("reflexd_models", reflexd_models)
 _models_spec.loader.exec_module(reflexd_models)
+_STEPS_PATH = Path(__file__).resolve().parent / "reflexd_steps.py"
+_steps_spec = _ilu.spec_from_file_location("reflexd_steps", _STEPS_PATH)
+assert _steps_spec is not None and _steps_spec.loader is not None
+reflexd_steps = _ilu.module_from_spec(_steps_spec)
+sys.modules.setdefault("reflexd_steps", reflexd_steps)
+_steps_spec.loader.exec_module(reflexd_steps)
+# A stream line longer than this is a tool result (file contents), not a step.
+STEP_LINE_MAX = 256 * 1024
 
 
 _HARNESS_SUFFIXES = (
@@ -578,7 +588,8 @@ def build_claude_argv(
 ) -> list[str]:
     """Pinned argv shape for Claude Code CLI.
 
-    Contract: ``claude --print --output-format json [--resume <sid>] -- <ctx>``.
+    Contract: ``claude --print --output-format stream-json --verbose
+    [--resume <sid>] -- <ctx>``.
 
     ``--print`` (alias ``-p``) is the headless / non-interactive mode in the
     Claude Code CLI (verified on v2.1.126). Auth is whatever ``claude /login``
@@ -594,7 +605,10 @@ def build_claude_argv(
     a chat body that starts with a dash (e.g. ``"-config /etc/passwd"``) is
     parsed as the prompt, not as a CLI flag.
     """
-    argv = [CLAUDE_BIN, "--print", "--output-format", "json"]
+    # stream-json (it requires --verbose with --print) streams each tool call
+    # as it happens, for the live "editing relay.py" step; the reply and the
+    # session id arrive in the final ``result`` line.
+    argv = [CLAUDE_BIN, "--print", "--output-format", "stream-json", "--verbose"]
     if max_turns:
         argv += ["--max-turns", str(max_turns)]
     if resume:
@@ -609,12 +623,24 @@ def _parse_claude_json(out: str) -> tuple[str, str | None]:
 
     Returns ``(reply_text, session_id)``. Degrades to the raw text with no
     session id when the output isn't the expected JSON envelope (older CLI,
-    plain-text mode, or a crash message).
+    plain-text mode, or a crash message). Accepts the single ``json`` envelope
+    or a ``stream-json`` stream, whose last ``result`` line is that envelope.
     """
     try:
         data = json.loads(out)
     except (json.JSONDecodeError, TypeError):
-        return out.strip(), None
+        data = None
+        for line in reversed((out or "").splitlines()):
+            if line.startswith("{") and '"result"' in line:
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(ev, dict) and ev.get("type") == "result":
+                    data = ev
+                    break
+        if data is None:
+            return (out or "").strip(), None
     if isinstance(data, dict):
         text = data.get("result")
         sid = data.get("session_id")
@@ -1085,6 +1111,41 @@ def _same_result(posted: str, reply: str) -> bool:
     return reply.lstrip().startswith("✅") and posted.lstrip().startswith("✅")
 
 
+async def _collect(
+    proc: Any, on_line: Callable[[bytes], None] | None,
+) -> tuple[bytes, bytes]:
+    """``proc.communicate()``, but each stdout line also goes to *on_line* as it
+    arrives, so the room sees the agent's steps live instead of after the turn."""
+    if on_line is None or not isinstance(proc.stdout, asyncio.StreamReader):
+        return await proc.communicate()
+    out, err = bytearray(), bytearray()
+
+    async def drain_out() -> None:
+        pending, skip = b"", False
+        while chunk := await proc.stdout.read(65536):
+            out.extend(chunk)
+            pending += chunk
+            *lines, pending = pending.split(b"\n")
+            for raw in lines:
+                if skip or len(raw) > STEP_LINE_MAX:  # a tool result, not a step
+                    skip = False
+                    continue
+                try:
+                    on_line(raw)
+                except Exception as exc:  # a step is cosmetic: never fail a wake
+                    logger.debug("step parse failed: %s", exc)
+            if len(pending) > STEP_LINE_MAX:
+                pending, skip = b"", True
+
+    async def drain_err() -> None:
+        while chunk := await proc.stderr.read(65536):
+            err.extend(chunk)
+
+    await asyncio.gather(drain_out(), drain_err())
+    await proc.wait()
+    return bytes(out), bytes(err)
+
+
 class HeadlessAdapter:
     """Spawn the right headless harness for a participant; return reply text.
 
@@ -1114,6 +1175,9 @@ class HeadlessAdapter:
         self.opencode_v1 = False
         # Epoch seconds until which the vendor said "out of quota".
         self.limited_until = 0.0
+        # Set by Reflexd: called with "editing relay.py"-style steps parsed
+        # from the harness's JSON stream while a wake runs.
+        self.on_step: Callable[[str], None] | None = None
         # Records the argv (or sdk-call signature) that WOULD have been spawned
         # in dry-run mode. Kept on the instance for tests + smoke scripts.
         self.last_dry_run: dict[str, Any] | None = None
@@ -1417,6 +1481,17 @@ class HeadlessAdapter:
             resume=resume, on_session=on_session, timeout_s=timeout_s, env=env,
         )
 
+    def _step_handler(self) -> Callable[[bytes], None] | None:
+        sink = self.on_step
+        if sink is None:
+            return None
+
+        def handle(raw: bytes) -> None:
+            step = reflexd_steps.step_of(raw.decode("utf-8", errors="replace"))
+            if step:
+                sink(step)
+        return handle
+
     async def _run_subprocess(
         self,
         argv: list[str],
@@ -1459,7 +1534,7 @@ class HeadlessAdapter:
             return f"[reflexd] {argv[0]} could not start ({exc.strerror})"
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_s or self.timeout_s
+                _collect(proc, self._step_handler()), timeout=timeout_s or self.timeout_s
             )
         except asyncio.CancelledError:
             # Daemon stopping: never orphan a running agent.
@@ -1693,14 +1768,14 @@ class RelayClient:
 
     async def post_heartbeat(
         self, *, participant: str, status: str = "active", room: str = "",
+        activity: str = "",
     ) -> None:
         """Presence heartbeat (R2) — lets the relay show active/away + queued."""
         headers = await self._headers()
-        resp = await self.client.post(
-            "/heartbeat",
-            headers=headers,
-            json={"instance_name": participant, "status": status, "room": room},
-        )
+        body = {"instance_name": participant, "status": status, "room": room}
+        if activity:
+            body["activity"] = activity
+        resp = await self.client.post("/heartbeat", headers=headers, json=body)
         resp.raise_for_status()
 
     async def fetch_members(self, *, room: str) -> list[str]:
@@ -1964,6 +2039,13 @@ class Reflexd:
             )
         self._stop = asyncio.Event()
         self._presence: tuple[str, str] = ("active", "")  # (status, room)
+        # The live step of the running wake ("editing relay.py"), sent with
+        # the busy presence at most every STEP_POST_MIN_S.
+        self._activity = ""
+        self._presence_relay: Any = None
+        self._step_task: asyncio.Task[None] | None = None
+        if hasattr(self.adapter, "on_step"):
+            self.adapter.on_step = self._on_step
         self._limit_announced: set[tuple[str, float]] = set()
         # room -> ordered ids the agent saw in a wake it then answered.
         self._answered: dict[str, dict[str, None]] = {}
@@ -2316,13 +2398,37 @@ class Reflexd:
 
     async def _set_presence(self, relay: RelayClient, status: str, room: str) -> None:
         self._presence = (status, room)
-        post = getattr(relay, "post_heartbeat", None)
+        self._presence_relay = relay
+        self._activity = ""  # a new wake (or the end of one) has no step yet
+        await self._post_presence()
+
+    async def _post_presence(self) -> None:
+        post = getattr(self._presence_relay, "post_heartbeat", None)
         if post is None:
             return
+        status, room = self._presence
+        extra = {"activity": self._activity} if status == "busy" and self._activity else {}
         try:
-            await post(participant=self.config.participant_name, status=status, room=room)
+            await post(participant=self.config.participant_name, status=status, room=room,
+                       **extra)
         except Exception as exc:  # presence is cosmetic: never fail a wake on it
             logger.debug("presence update failed: %s", exc)
+
+    def _on_step(self, step: str) -> None:
+        """A step from the harness stream: show it on the working line soon."""
+        if self._presence[0] != "busy" or step == self._activity:
+            return
+        self._activity = step
+        if self._step_task is None or self._step_task.done():
+            self._step_task = asyncio.get_running_loop().create_task(self._flush_steps())
+
+    async def _flush_steps(self) -> None:
+        """At most one presence post per STEP_POST_MIN_S, ending on the latest step."""
+        sent = None
+        while self._presence[0] == "busy" and self._activity and self._activity != sent:
+            sent = self._activity
+            await self._post_presence()
+            await asyncio.sleep(STEP_POST_MIN_S)
 
     def _mark_answered(self, room: str, ids: set) -> None:
         self._last_spoke[room] = time.time()
@@ -3212,9 +3318,11 @@ class Reflexd:
         while not self._stop.is_set():
             try:
                 status, room = self._presence
+                extra = ({"activity": self._activity}
+                         if status == "busy" and self._activity else {})
                 await relay.post_heartbeat(
                     participant=self.config.participant_name,
-                    status=status, room=room,
+                    status=status, room=room, **extra,
                 )
             except Exception as exc:
                 logger.debug("heartbeat failed: %s", exc)

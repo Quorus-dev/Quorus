@@ -801,13 +801,15 @@ class RedisPresenceBackend:
             new_payload.append({**entry, "_score": score})
             self._list_all_cache[key] = (new_payload, fetched_at)
 
-    async def heartbeat(self, tenant_id: str, name: str, status: str, room: str) -> dict:
+    async def heartbeat(
+        self, tenant_id: str, name: str, status: str, room: str, activity: str = "",
+    ) -> dict:
         now = datetime.now(timezone.utc)
         now_iso, now_ts = now.isoformat(), now.timestamp()
         entry_key = self._entry_key(tenant_id, name)
         existing_start = await _with_timeout(self._r.hget(entry_key, "uptime_start"))
         entry = {
-            "name": name, "status": status, "room": room,
+            "name": name, "status": status, "room": room, "activity": activity,
             "last_heartbeat": now_iso,
             "uptime_start": existing_start or now_iso,
             "tenant_id": tenant_id,

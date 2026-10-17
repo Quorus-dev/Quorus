@@ -206,13 +206,15 @@ function renderMessage(m) {
 }
 
 function renderWorking(presence) {
-  const now = Date.now(), busy = presence.filter((p) => p.online && p.status === "busy"
-    && p.room === S.room).map((p) => p.name);
+  const live = presence.filter((p) => p.online && p.status === "busy" && p.room === S.room);
+  const now = Date.now(), busy = live.map((p) => p.name);
+  const step = {};
+  live.forEach((p) => { step[p.name] = p.activity || "working"; });
   Object.keys(S.workSince).forEach((n) => { if (!busy.includes(n)) delete S.workSince[n]; });
   busy.forEach((n) => { if (!S.workSince[n]) S.workSince[n] = now; });
   $("working").textContent = busy.map((n) => {
     const s = Math.round((now - S.workSince[n]) / 1000);
-    return "⋯ @" + n + " working " + (s < 60 ? s + "s" : Math.floor(s / 60) + "m");
+    return "⋯ @" + n + " " + step[n] + " " + (s < 60 ? s + "s" : Math.floor(s / 60) + "m");
   }).join(" · ");
 }
 

@@ -415,10 +415,10 @@ def test_claude_resume_failure_retries_fresh(
 def test_claude_argv_max_turns_placement() -> None:
     """D5: chat wakes cap turns; flag sits before the -- separator."""
     argv = reflexd.build_claude_argv("ctx", max_turns=15)
-    assert argv == ["claude", "--print", "--output-format", "json",
+    assert argv == ["claude", "--print", "--output-format", "stream-json", "--verbose",
                     "--max-turns", "15", "--", "ctx"]
     assert reflexd.build_claude_argv("ctx") == [
-        "claude", "--print", "--output-format", "json", "--", "ctx"]
+        "claude", "--print", "--output-format", "stream-json", "--verbose", "--", "ctx"]
 
 
 def _budget_daemon_and_capture(monkeypatch, mission):

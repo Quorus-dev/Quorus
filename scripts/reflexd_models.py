@@ -197,7 +197,8 @@ def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False) -> di
 def gemini_flags(*, mode: str = "default", model: str | None = None) -> list[str]:
     # --skip-trust: every agent worktree is a folder Gemini has never seen,
     # and headless runs fail its "trust this folder?" check.
-    flags = ["--skip-trust", "--output-format", "json"]
+    # stream-json: tool calls arrive while it works (the live step line).
+    flags = ["--skip-trust", "--output-format", "stream-json"]
     if mode in _GEMINI_APPROVAL:
         flags += ["--approval-mode", _GEMINI_APPROVAL[mode]]
     if model:
@@ -210,8 +211,11 @@ def parse_gemini_json(out: str) -> tuple[str, str | None, str | None]:
 
     Shape: ``{"response": "..", "session_id": "..", "stats": {..}}`` or
     ``{"error": {"type": "..", "message": ".."}}``. Banner lines (e.g. "MCP
-    issues detected") may precede the JSON object.
+    issues detected") may precede the JSON object. ``stream-json`` output is
+    one event per line; see :func:`_parse_gemini_stream`.
     """
+    if '"type":"init"' in out.replace(" ", "") or '"type":"result"' in out.replace(" ", ""):
+        return _parse_gemini_stream(out)
     start = out.find("{")
     try:
         data = json.loads(out[start:]) if start >= 0 else None
@@ -226,3 +230,42 @@ def parse_gemini_json(out: str) -> tuple[str, str | None, str | None]:
         error = str(err.get("message") or err.get("type") or "error")[:300]
     reply = data.get("response") if isinstance(data.get("response"), str) else ""
     return reply.strip(), sid, error
+
+
+def _parse_gemini_stream(out: str) -> tuple[str, str | None, str | None]:
+    """``gemini --output-format stream-json`` (verified 0.64)::
+
+        {"type":"init","session_id":"..","model":".."}
+        {"type":"tool_use","tool_name":"read_file","parameters":{..}}
+        {"type":"message","role":"assistant","content":"..","delta":true}
+        {"type":"result","status":"success","stats":{..}}
+
+    The reply is the assistant text after the last tool call: earlier text is
+    narration between tools.
+    """
+    sid: str | None = None
+    error: str | None = None
+    reply: list[str] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        kind = ev.get("type")
+        if kind == "init" and isinstance(ev.get("session_id"), str):
+            sid = ev["session_id"]
+        elif kind == "tool_use":
+            reply = []
+        elif (kind == "message" and ev.get("role") == "assistant"
+              and isinstance(ev.get("content"), str)):
+            reply.append(ev["content"])
+        elif kind == "error" or (kind == "result" and ev.get("status") not in (None, "success")):
+            err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
+            error = str(err.get("message") or ev.get("message") or ev.get("status")
+                        or "error")[:300]
+    return "".join(reply).strip(), sid, error

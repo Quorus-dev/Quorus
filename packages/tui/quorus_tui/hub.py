@@ -3267,7 +3267,8 @@ def _main_input_loop(
                         thread_collapsed=state.get_thread_collapsed(),
                     ):
                         console.print(feed_line)
-                    working_line = _working.render_working_line(state.working.snapshot())
+                    working_line = _working.render_working_line(
+                        state.working.snapshot(), activity=state.working.activity())
                     if working_line is not None:
                         console.print(working_line)
                     console.print()

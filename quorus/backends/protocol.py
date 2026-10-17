@@ -270,7 +270,7 @@ class RoomHistoryBackend(Protocol):
 @runtime_checkable
 class PresenceBackend(Protocol):
     async def heartbeat(
-        self, tenant_id: str, name: str, status: str, room: str
+        self, tenant_id: str, name: str, status: str, room: str, activity: str = "",
     ) -> dict:
         """Record a heartbeat and return the stored presence entry."""
         ...
