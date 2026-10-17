@@ -52,7 +52,8 @@ def test_rows_sort_by_what_needs_a_human(tmp_path: Path) -> None:
     now = 1792260000
     presence = {
         "a-claude": {"name": "a-claude", "online": True, "status": "busy",
-                     "activity": "editing relay.py", "room": "r"},
+                     "activity": "editing relay.py", "room": "r",
+                     "model": "claude-opus-5-5"},
         "a-codex": {"name": "a-codex", "online": True, "status": "active",
                     "waiting_on": "pacing", "waiting_until": now + 840},
         "a-gemini": {"name": "a-gemini", "online": True, "status": "active",
@@ -95,6 +96,7 @@ def test_rows_sort_by_what_needs_a_human(tmp_path: Path) -> None:
     assert rows["a-claude"]["line"].startswith("editing relay.py")
     assert rows["a-claude"]["review"] == "blocked by @a-codex"
     assert rows["a-claude"]["shipped"].startswith("shipped 2 commit(s) to main")
+    assert rows["a-claude"]["model"] == "claude-opus-5-5" and rows["a-codex"]["model"] == ""
 
 
 def test_quorus_web_link_lands_on_the_board_signed_in_as_you() -> None:
@@ -106,8 +108,8 @@ def test_quorus_web_link_lands_on_the_board_signed_in_as_you() -> None:
     assert "?" not in url  # the credential only ever rides in the fragment
     from quorus.dashboard import DASHBOARD_JS
 
-    assert 'sessionStorage.setItem("qr"' in DASHBOARD_JS and 'getItem("qv") === "board"' \
-        in BOARD_JS
+    assert 'sessionStorage.setItem("qr"' in DASHBOARD_JS
+    assert 'view === "board" || view === "quorum"' in BOARD_JS  # #view=quorum opens the table
 
 
 def test_board_never_waits_for_the_scorecard() -> None:

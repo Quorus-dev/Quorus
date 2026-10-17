@@ -2000,6 +2000,7 @@ class RelayClient:
         activity: str = "",
         waiting_on: str = "",
         waiting_until: float = 0.0,
+        model: str = "",
     ) -> None:
         """Presence heartbeat (R2) — lets the relay show active/away + queued."""
         headers = await self._headers()
@@ -2010,6 +2011,8 @@ class RelayClient:
             body["activity"] = activity
         if waiting_on:
             body["waiting_on"], body["waiting_until"] = waiting_on, max(0.0, waiting_until)
+        if model:
+            body["model"] = model
         resp = await self.client.post("/heartbeat", headers=headers, json=body)
         resp.raise_for_status()
 
@@ -3711,6 +3714,9 @@ class Reflexd:
                     participant=self.config.participant_name,
                     status=status, room=room, **extra,
                     **({"reason": self._degraded_reason} if status == "degraded" else {}),
+                    # Lets people tell agents apart by model, without vendor logos.
+                    **({"model": str(model)} if (model := getattr(self.adapter, "model", None))
+                       else {}),
                 )
             except Exception as exc:
                 logger.debug("heartbeat failed: %s", exc)

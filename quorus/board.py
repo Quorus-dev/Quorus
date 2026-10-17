@@ -67,6 +67,7 @@ function rowState(name, presence, history, approvals, now) {
   const p = presence[name] || { online: false, status: "offline" };
   const mine = history.filter((m) => m.from_name === name);
   const r = { name, vendor: (name.match(AGENT) || [, ""])[1], rank: 5, line: "", detail: "",
+              model: String(p.model || ""),  // tells agents apart without vendor logos
               asks: [], approvals: approvals.filter((a) => a.agent === name) };
   const myName = me();
   const ask = mine.slice().reverse().find((m) => myName && m.message_type !== "status"
@@ -110,6 +111,7 @@ function rowState(name, presence, history, approvals, now) {
   const c = B.card[name];  // the outcome ledger for this agent's work here
   if (c && c.survival !== null && c.survival !== undefined) r.keptPct = c.survival;
   if (c && c.commits) {
+    r.commits = c.commits;
     r.card = c.commits + " commit(s) · "
       + (c.survival === null || c.survival === undefined ? ""
          : Math.round(100 * c.survival) + "% kept · ")
@@ -158,7 +160,7 @@ function render(rows) {
 function rowEl(r) {
     const row = el("article", "brow r" + r.rank);
     const head = el("div", "bhead");
-    head.append(el("b", "", "@" + r.name), el("span", "tag", r.vendor),
+    head.append(el("b", "", "@" + r.name), el("span", "tag", r.model || r.vendor),
                 el("span", "bline", r.line));
     row.append(head);
     if (r.detail) row.append(el("div", "bdetail", r.detail));
@@ -267,9 +269,11 @@ if (typeof module !== "undefined") {  // node tests only; browsers have no `modu
 }
 document.addEventListener("quorus:room", (e) => {
   B.room = e.detail; B.membersAt = 0; B.cardAt = 0;
-  if (sessionStorage.getItem("qv") === "board" && !B.on) {  // `quorus web` lands here
+  const view = sessionStorage.getItem("qv");  // `quorus web` lands here (#view=board|quorum)
+  if ((view === "board" || view === "quorum") && !B.on) {
     sessionStorage.removeItem("qv");
     show(true);
+    if (view === "quorum") mode("quorum");
   } else {
     refresh();
   }

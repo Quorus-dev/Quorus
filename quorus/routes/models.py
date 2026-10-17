@@ -175,6 +175,9 @@ class HeartbeatRequest(BaseModel):
     # turn failed), until epoch seconds (0 = unknown). Not free text.
     waiting_on: str = ""
     waiting_until: float = Field(default=0.0, ge=0.0, le=4102444800.0)
+    # The model the agent runs ("claude-opus-5-5", "gpt-5.5"), so people can tell
+    # agents apart without vendor logos. Display text only, like activity.
+    model: str = ""
 
     @field_validator("instance_name")
     @classmethod
@@ -192,6 +195,11 @@ class HeartbeatRequest(BaseModel):
     @classmethod
     def check_activity(cls, v: str) -> str:
         return "".join(ch for ch in v if ch.isprintable())[:80].strip()
+
+    @field_validator("model")
+    @classmethod
+    def check_model(cls, v: str) -> str:
+        return "".join(ch for ch in v if ch.isprintable())[:48].strip()
 
     @field_validator("waiting_on")
     @classmethod

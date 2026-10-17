@@ -11,40 +11,56 @@ const VENDOR = {
 };
 const HUMAN = "#e8e4da";
 const R = 3.0;          // table radius
+const MAX_SEATS = 14;   // past this the figures blur together: the rest go to "+N more"
 const PUBLISHED = /\(quorus\) published (\d+) commit/;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+// Phones get the same table drawn flat in HTML: no WebGL, no 650 KB download.
+const phone = matchMedia("(max-width: 640px)");
 
 let THREE = null;       // loaded lazily
 const Q = { scene: null, cam: null, renderer: null, host: null, seats: new Map(),
             core: null, pillar: [], fx: [], seen: new Set(), on: false, raf: 0,
-            last: 0, rows: [], room: null, me: "", lastEvent: 0, ray: null };
+            last: 0, rows: [], room: null, me: "", lastEvent: 0, ray: null,
+            tags: new Map(), layer: null, flat: false, names: [], extra: 0 };
+
+function vendorOf(name) {
+  return (name.match(/-(claude|codex|gemini|opencode|cursor|cline)$/) || [])[1] || null;
+}
 
 function cssVar(name, fallback) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
-// A text card drawn on a canvas, used as a camera-facing sprite. textContent
-// rules don't apply to canvas, but nothing here is parsed as markup either.
-function label(text, color, bg, size) {
-  const c = document.createElement("canvas");
-  const x = c.getContext("2d");
-  const font = `600 ${size || 28}px -apple-system, Segoe UI, Roboto, sans-serif`;
-  x.font = font;
-  const w = Math.ceil(x.measureText(text).width) + 36, h = (size || 28) + 22;
-  c.width = w; c.height = h;
-  x.font = font;
-  x.fillStyle = bg || "rgba(16,20,18,0.86)";
-  const r = h / 2;
-  x.beginPath(); x.moveTo(r, 0); x.arcTo(w, 0, w, h, r); x.arcTo(w, h, 0, h, r);
-  x.arcTo(0, h, 0, 0, r); x.arcTo(0, 0, w, 0, r); x.fill();
-  x.fillStyle = color || "#fff"; x.textBaseline = "middle";
-  x.fillText(text, 18, h / 2 + 1);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
-  s.scale.set(w / 160, h / 160, 1);
-  s.renderOrder = 10;
-  return s;
+// Seat tags are HTML, not canvas sprites: textContent only (never markup from
+// room data), focusable buttons for keyboard users, and laid out in screen
+// space so a front seat's name can't sit on top of its own or a neighbour's
+// status (the overlap in Arav's screenshot).
+function tagFor(name) {
+  let t = Q.tags.get(name);
+  if (t) return t;
+  t = document.createElement("button");
+  t.type = "button";
+  t.className = "qtag";
+  const who = document.createElement("b"), model = document.createElement("span");
+  const status = document.createElement("span");
+  who.textContent = "@" + name;
+  model.className = "qm";
+  status.className = "qs";
+  t.append(who, model, status);
+  const v = vendorOf(name);
+  t.style.setProperty("--seat", v ? VENDOR[v][0] : HUMAN);
+  t.addEventListener("click", () => openCard(name));
+  Q.layer.append(t);
+  Q.tags.set(name, t);
+  return t;
+}
+
+function layer(host) {
+  if (Q.layer && Q.layer.parentNode === host) return Q.layer;
+  Q.layer = document.createElement("div");
+  Q.layer.className = "qtags";
+  host.append(Q.layer);
+  return Q.layer;
 }
 
 function mat(color, emissive) {
@@ -53,7 +69,6 @@ function mat(color, emissive) {
 }
 
 function build(host) {
-  Q.host = host;
   Q.scene = new THREE.Scene();
   Q.scene.background = new THREE.Color(cssVar("--bg", "#0f1412"));
   Q.cam = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
@@ -61,7 +76,7 @@ function build(host) {
   Q.cam.lookAt(0, 0.6, 0);
   Q.renderer = new THREE.WebGLRenderer({ antialias: true });
   Q.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
-  host.append(Q.renderer.domElement);
+  host.prepend(Q.renderer.domElement);  // tags stay above the canvas
   Q.scene.add(new THREE.HemisphereLight("#ffffff", "#30403a", 1.6));
   const sun = new THREE.DirectionalLight("#ffffff", 1.4);
   sun.position.set(4, 10, 6);
@@ -79,20 +94,22 @@ function build(host) {
   Q.scene.add(top, foot, Q.core);
   Q.ray = new THREE.Raycaster();
   Q.renderer.domElement.addEventListener("click", onClick);
-  new ResizeObserver(resize).observe(host);
   resize();
 }
 
 function resize() {
-  const w = Q.host.clientWidth || 600, h = Q.host.clientHeight || 420;
-  Q.renderer.setSize(w, h);
-  Q.cam.aspect = w / h;
-  Q.cam.updateProjectionMatrix();
-  draw();
+  if (!Q.flat && Q.renderer) {
+    const w = Q.host.clientWidth || 600, h = Q.host.clientHeight || 420;
+    Q.renderer.setSize(w, h);
+    Q.cam.aspect = w / h;
+    Q.cam.updateProjectionMatrix();
+    draw();
+  }
+  if (Q.names.length) placeTags();
 }
 
-// One member's seat: chair, figure (agents have a visor, people don't), name
-// plaque, a status bubble, and a floor ring that fills to "% of work kept".
+// One member's seat: chair, figure (agents have a visor, people don't) and a
+// floor ring that fills to "% of work kept". Name, model and status are HTML tags.
 function seat(name, vendor) {
   const g = new THREE.Group();
   const col = vendor ? VENDOR[vendor][0] : HUMAN;
@@ -123,23 +140,34 @@ function seat(name, vendor) {
   const halo = new THREE.Mesh(new THREE.RingGeometry(0.66, 0.74, 48),
     new THREE.MeshBasicMaterial({ color: "#e8a63a", transparent: true, opacity: 0 }));
   halo.rotation.x = -Math.PI / 2; halo.position.y = 0.03;
-  const plaque = label("@" + name, "#fff", vendor ? col : "#59645f", 24);
-  plaque.position.y = 2.05;
-  g.add(chair, back, fig, ringBg, ring, halo, plaque);
-  g.userData = { name, vendor, fig, body, head, arm, ring, halo, plaque, bubble: null,
-                 bubbleText: "", angle: 0, state: "" };
+  g.add(chair, back, fig, ringBg, ring, halo);
+  g.userData = { name, vendor, fig, body, head, arm, ring, halo, angle: 0, state: "" };
   g.traverse((o) => { o.userData.seat = name; });
   Q.scene.add(g);
   return g;
 }
 
+// Who gets a seat: everyone up to MAX_SEATS, offline members last.
+function seated(members, rows) {
+  const rank = new Map(rows.map((r) => [r.name, r.rank]));
+  const away = (n) => (rank.get(n) === 6 ? 1 : 0);
+  const order = members.slice().sort((a, b) => away(a) - away(b) || a.localeCompare(b));
+  Q.extra = Math.max(0, order.length - MAX_SEATS);
+  return order.slice(0, MAX_SEATS);
+}
+
 function layout(names) {
+  Q.names = names;
+  [...Q.tags.keys()].forEach((n) => {
+    if (!names.includes(n)) { Q.tags.get(n).remove(); Q.tags.delete(n); }
+  });
+  names.forEach(tagFor);
+  if (Q.flat) return;
   [...Q.seats.keys()].forEach((n) => {
     if (!names.includes(n)) { Q.scene.remove(Q.seats.get(n)); Q.seats.delete(n); }
   });
   names.forEach((n, i) => {
-    const vendor = (n.match(/-(claude|codex|gemini|opencode|cursor|cline)$/) || [])[1] || null;
-    const s = Q.seats.get(n) || seat(n, vendor);
+    const s = Q.seats.get(n) || seat(n, vendorOf(n));
     Q.seats.set(n, s);
     const a = (i / names.length) * Math.PI * 2 + Math.PI / 2;
     s.position.set(Math.cos(a) * (R + 0.75), 0, Math.sin(a) * (R + 0.75));
@@ -149,43 +177,94 @@ function layout(names) {
   });
 }
 
-function bubble(s, text, color) {
-  const u = s.userData;
-  if (u.bubbleText === text) return;
-  if (u.bubble) { s.remove(u.bubble); u.bubble.material.map.dispose(); u.bubble = null; }
-  u.bubbleText = text;
-  if (!text) return;
-  u.bubble = label(text.length > 34 ? text.slice(0, 33) + "…" : text, color || "#fff",
-    "rgba(16,20,18,0.92)", 22);
-  u.bubble.position.y = 2.5;
-  s.add(u.bubble);
+function stateOf(r) {
+  return !r ? "human" : r.rank === 1 ? "needs" : r.rank === 2 ? "stuck"
+    : r.rank === 4 ? "busy" : r.rank === 6 ? "offline"
+    : /quota/.test(r.line) ? "asleep" : /plan slot/.test(r.line) ? "pacing" : "idle";
+}
+
+function statusText(r, state) {
+  return !r ? "" : state === "needs" ? "✋ needs you"
+    : state === "stuck" ? "! stuck" : state === "asleep" ? "z z z " + r.line.replace("out of quota · ", "")
+    : state === "pacing" ? "⌛ " + r.line.replace("waiting for its plan slot · ", "")
+    : state === "busy" || state === "offline" ? r.line : "idle";
 }
 
 // Rows from board.js → poses. Rank 1 needs you, 2 stuck, 3 waiting, 4 working,
 // 5 idle, 6 offline (see board.js rowState).
 function apply(rows) {
   const byName = new Map(rows.map((r) => [r.name, r]));
+  Q.names.forEach((name) => {
+    const r = byName.get(name), state = stateOf(r), v = vendorOf(name);
+    const t = tagFor(name);
+    t.dataset.state = state;
+    // The model tells agents apart (Arav: no vendor logos); else the harness name.
+    t.children[1].textContent = r ? (r.model || (v ? VENDOR[v][1] : "")) : "person";
+    t.children[2].textContent = statusText(r, state);
+    t.setAttribute("aria-label", "@" + name + ", " + (t.children[1].textContent || "")
+      + ", " + (t.children[2].textContent || state));
+  });
+  if (Q.flat) return;
   Q.seats.forEach((s, name) => {
     const u = s.userData, r = byName.get(name);
-    u.fig.visible = true;
+    u.state = stateOf(r);
+    u.fig.visible = u.state !== "offline";
     u.halo.material.opacity = 0;
-    u.state = !r ? "human" : r.rank === 1 ? "needs" : r.rank === 2 ? "stuck"
-      : r.rank === 4 ? "busy" : r.rank === 6 ? "offline"
-      : /quota/.test(r.line) ? "asleep" : /plan slot/.test(r.line) ? "pacing" : "idle";
-    if (u.state === "offline") u.fig.visible = false;
-    const text = !r ? "" : u.state === "needs" ? "✋ needs you"
-      : u.state === "stuck" ? "! stuck" : u.state === "asleep" ? "z z z  " + r.line.replace("out of quota · ", "")
-      : u.state === "pacing" ? "⌛ " + r.line.replace("waiting for its plan slot · ", "")
-      : u.state === "busy" ? r.line : "";
-    bubble(s, text, u.state === "stuck" ? "#f2776e" : u.state === "needs" ? "#e8a63a" : "#fff");
-    const kept = r && r.keptPct !== undefined ? r.keptPct : 0;
+    // The ring fills to "% of work kept", but only once there's a track record:
+    // 3 commits isn't one (review of the Quorum pitch). Hollow until then.
+    const kept = r && r.keptPct !== undefined && (r.commits || 0) >= 5 ? r.keptPct : 0;
     u.ring.geometry.dispose();
     u.ring.geometry = new THREE.RingGeometry(0.5, 0.58, 48, 1, 0, Math.max(0.001, kept * Math.PI * 2));
   });
 }
 
+// Tags follow their seats in screen space; the camera never moves, so this runs
+// on layout and resize only. Then nudge any tag that overlaps one placed before
+// it, front seats first (they're nearest, so they keep their spot).
+function placeTags() {
+  if (Q.flat) {  // phones: the seats as a grid of cards, whoever needs you first
+    const rank = new Map(Q.rows.map((r) => [r.name, r.rank]));
+    Q.names.slice().sort((a, b) => (rank.get(a) || 5) - (rank.get(b) || 5) || a.localeCompare(b))
+      .forEach((n) => Q.layer.append(Q.tags.get(n)));
+    return;
+  }
+  const w = Q.host.clientWidth, h = Q.host.clientHeight;
+  const spots = Q.names.map((name) => {
+    const v = Q.seats.get(name).position.clone().setY(1.85).project(Q.cam);
+    const t = Q.tags.get(name);
+    return { t, x: (v.x + 1) / 2 * w, y: (1 - v.y) / 2 * h, tw: t.offsetWidth, th: t.offsetHeight };
+  }).sort((a, b) => b.y - a.y);
+  const placed = [];
+  spots.forEach((p) => {
+    const left = Math.max(4, Math.min(w - p.tw - 4, p.x - p.tw / 2));
+    const clash = (top) => placed.find((q) => left < q.left + q.tw + 4
+      && left + p.tw + 4 > q.left && top < q.top + q.th + 4 && top + p.th + 4 > q.top);
+    let top = Math.max(4, Math.min(h - p.th - 4, p.y - p.th)), up = true;
+    for (let tries = 0, hit; tries < 30 && (hit = clash(top)); tries++) {
+      // step above the tag it collided with; at the top edge, go below instead
+      if (up && hit.top - p.th - 6 >= 4) top = hit.top - p.th - 6;
+      else { up = false; top = hit.top + hit.th + 6; }
+    }
+    top = Math.min(h - p.th - 4, top);
+    p.t.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+    placed.push({ left, top, tw: p.tw, th: p.th });
+  });
+}
+
+function notes() {
+  let n = Q.host.querySelector(".qnote");
+  if (!n) { n = document.createElement("p"); n.className = "qnote hint"; Q.host.append(n); }
+  n.textContent = !Q.names.some(vendorOf)
+    ? "No agents at this table yet. Add one: quorus agent add claude --room " + (Q.room || "<room>")
+      + " (or codex, gemini, opencode)"
+    : Q.extra ? "+" + Q.extra + " more (offline or past " + MAX_SEATS + " seats): see List"
+    : Q.flat ? "Compact view: the 3D table needs a wider screen and WebGL." : "";
+  n.hidden = !n.textContent;
+}
+
 // New room messages since last time → one-shot light effects.
 function events(history) {
+  if (Q.flat) return;
   const fresh = history.filter((m) => m.id && !Q.seen.has(m.id));
   const first = Q.seen.size === 0;
   history.forEach((m) => m.id && Q.seen.add(m.id));
@@ -229,7 +308,7 @@ function fly(from, to, color, kind) {
 function step(now) {
   const t = now / 1000;
   Q.core.userData.pulse = Math.max(0, (Q.core.userData.pulse || 0) - 0.03);
-  Q.core.material.emissiveIntensity = 0.35 + 1.2 * (Q.core.userData.pulse || 0);
+  Q.core.material.emissiveIntensity = 0.35 + (reduceMotion ? 0.4 : 1.2) * (Q.core.userData.pulse || 0);
   Q.seats.forEach((s) => {
     const u = s.userData;
     const sway = reduceMotion ? 0 : Math.sin(t * 2 + u.angle) * 0.02;
@@ -237,11 +316,12 @@ function step(now) {
     u.body.position.y = (u.vendor ? 0.95 : 1.02) + (u.state === "busy" && !reduceMotion
       ? Math.abs(Math.sin(t * 9 + u.angle)) * 0.03 : sway);
     u.head.rotation.z = u.state === "asleep" ? 0.5 : 0;
-    u.arm.rotation.z = u.state === "needs" ? -2.7 + Math.sin(t * 4) * 0.15 : 0.15;
+    const wave = reduceMotion ? 0 : 1;  // reduced motion: same poses, nothing oscillates
+    u.arm.rotation.z = u.state === "needs" ? -2.7 + wave * Math.sin(t * 4) * 0.15 : 0.15;
     u.arm.position.y = u.state === "needs" ? 1.3 : 1.02;
-    if (u.state === "needs") u.halo.material.opacity = 0.45 + 0.4 * Math.sin(t * 4);
+    if (u.state === "needs") u.halo.material.opacity = 0.65 + wave * 0.25 * Math.sin(t * 4);
     else if (u.state === "stuck") { u.halo.material.color.set("#f2776e");
-      u.halo.material.opacity = 0.3 + 0.3 * Math.sin(t * 6); }
+      u.halo.material.opacity = 0.45 + wave * 0.15 * Math.sin(t * 6); }
     else u.halo.material.color.set("#e8a63a");
   });
   Q.fx = Q.fx.filter((f) => {
@@ -274,19 +354,47 @@ function onClick(ev) {
                               -((ev.clientY - r.top) / r.height) * 2 + 1);
   Q.ray.setFromCamera(p, Q.cam);
   const hit = Q.ray.intersectObjects(Q.scene.children, true).find((h) => h.object.userData.seat);
+  openCard(hit ? hit.object.userData.seat : "");
+}
+
+function openCard(name) {
   const card = document.getElementById("quorumCard");
   card.replaceChildren();
-  const row = hit && Q.rows.find((x) => x.name === hit.object.userData.seat);
+  const row = name && Q.rows.find((x) => x.name === name);
   if (!row || !window.QuorusBoard) { card.hidden = true; return; }
   card.append(window.QuorusBoard.rowEl(row));  // the board's own card, same actions
   card.hidden = false;
 }
 
-async function start(host) {
-  if (!THREE) THREE = await import("/vendor/three.module.min.js");
-  if (!Q.scene) build(host);
+// Two row events can arrive while three.js is still downloading; both must wait
+// for the one build, or the scene is built twice (two canvases, seen in the sandbox).
+function start(host) {
+  if (!Q.starting) Q.starting = boot(host);
+  return Q.starting.then(() => { Q.on = true; startLoop(); });
+}
+
+async function boot(host) {
+  layer(host);
+  if (!Q.host) { Q.host = host; new ResizeObserver(resize).observe(host); }
+  if (phone.matches) return goFlat(host);
+  try {
+    if (!THREE) THREE = await import("/vendor/three.module.min.js");
+    build(host);
+  } catch (err) {  // no WebGL (or the library failed): the flat table still works
+    return goFlat(host);
+  }
   Q.on = true;
-  if (!Q.raf) Q.raf = requestAnimationFrame(loop);
+  startLoop();
+}
+
+function goFlat(host) {
+  Q.flat = true;
+  Q.on = true;
+  host.classList.add("flat");
+}
+
+function startLoop() {
+  if (!Q.flat && !Q.raf) Q.raf = requestAnimationFrame(loop);
 }
 
 document.addEventListener("quorus:rows", (e) => {
@@ -296,13 +404,16 @@ document.addEventListener("quorus:rows", (e) => {
   if (!host || host.hidden) return;
   start(host).then(() => {
     if (room !== Q.room) { Q.room = room; Q.seen = new Set(); }
-    layout(members);
+    layout(seated(members, rows));
     apply(rows);
     events(history);
-    draw();
-  }).catch((err) => {
+    notes();
+    placeTags();
+    if (!Q.flat) draw();
+  }).catch((err) => {  // never a blank panel: say what failed
     host.replaceChildren(Object.assign(document.createElement("p"),
-      { className: "hint", textContent: "The Quorum view needs WebGL: " + err.message }));
+      { className: "hint", textContent: "The Quorum view failed: " + err.message
+        + " " + (err.stack || "").split("\n").slice(0, 3).join(" | ") }));
   });
 });
 document.addEventListener("quorus:quorum-off", () => { Q.on = false; });
