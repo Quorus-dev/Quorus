@@ -1272,10 +1272,14 @@ def _undelivered_lines(reply: str, posted: list[str]) -> list[str]:
     return out
 
 
-def _timed_out_line(published: bool = False) -> str:
-    """What the room sees instead of the raw "[reflexd] harness timed out"."""
+def _timed_out_line(published: bool = False, last_step: str = "") -> str:
+    """What the room sees instead of the raw "[reflexd] harness timed out".
+    With the last live step it says where the time went ("while searching the
+    code"), so a stuck agent says why instead of just that it stopped."""
     done = " What it had committed is published below." if published else ""
-    return f"⚠ ran out of time before finishing its reply.{done} Mention me to continue."
+    where = f" while {last_step}," if last_step else ""
+    return (f"⚠ ran out of time{where} before finishing its reply.{done} "
+            "Mention me to continue.")
 
 
 def _same_result(posted: str, reply: str) -> bool:
@@ -3237,7 +3241,7 @@ class Reflexd:
                 logger.info("%s", published)
                 if reply == "[reflexd] harness timed out":
                     # Not a raw sentinel above real, published work.
-                    reply = _timed_out_line(published=True)
+                    reply = _timed_out_line(published=True, last_step=self._activity)
                 reply = f"{reply}\n{published}" if reply else published
         if pre_head and reply:
             try:
@@ -3362,7 +3366,7 @@ class Reflexd:
                 "release the task."
             )
         elif reply == "[reflexd] harness timed out":
-            reply = _timed_out_line()
+            reply = _timed_out_line(last_step=self._activity)
 
         thread_root_id = envelope_thread_root(envelope)
         # SSE fan-out gives each recipient a per-envelope id while the
