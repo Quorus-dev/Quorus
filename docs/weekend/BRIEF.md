@@ -94,3 +94,18 @@ real and it's ours. The relay already serves a web chat at `/`.
    local, self-contained page of the agents' conversation, commits and tests for one task. Nothing
    gets uploaded; the user chooses to share it. Prior art: Loom, asciinema.
 8. **Launch readiness:** `docs/weekend/LAUNCH.md`, a go/no-go checklist with evidence for each line.
+
+### Saturday PRIORITY ORDER (overrides the slate order above)
+Read `docs/weekend/research/landscape.md` first. Its verdict: "group chat for coding agents" alone is
+~4/10 novelty (Paperclip ~103k stars, codeg, Oryxa). The opening nobody fills: **measure which
+vendor's work actually survives in THIS repo, and learn from it.**
+1. **Outcome ledger + repo scorecard.** Tag every task and commit with agent, vendor and owner. Track
+   tests, cross-vendor review verdicts, reverts, and whether the commit is still there after 7 and
+   14 days. Show it with `quorus scorecard` (which agent and vendor is best at what, here). Everything
+   else builds on this.
+2. **`quorus duel <task>`.** The same task goes to 2 vendors in parallel worktrees. Tests are the
+   gate, and the judge is blind and from a different model family than each candidate. The winner
+   merges and the result feeds the ledger. Run it only on risky tasks, because quota is tight.
+3. **Phone companion** (Arav's real weekend pain).
+4. Live step visibility, then code across machines, then first value in under 2 minutes.
+Codex is paced at 3 turns/hour until Sunday 23:59, so give it the reviews and the hard parts.
