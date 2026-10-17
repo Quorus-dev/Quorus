@@ -39,7 +39,7 @@ DASHBOARD_HTML = """\
 --chip:#1e2925;color-scheme:dark}}
 *{box-sizing:border-box}html,body{height:100%}[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--font)}
-#app{display:grid;grid-template-columns:260px 1fr;height:100%}
+#app{display:grid;grid-template-columns:260px 1fr;grid-template-rows:minmax(0,1fr);height:100vh;height:100dvh;overflow:hidden}
 #rooms{border-right:1px solid var(--rule);background:var(--panel);overflow-y:auto;
 padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 12px}
 #rooms h1{font-size:17px;margin:4px 6px 12px;display:flex;align-items:center;gap:8px}
@@ -49,7 +49,7 @@ padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 12px}
 padding:10px;border-radius:8px;font:inherit;cursor:pointer}
 .room:hover,.room.on{background:var(--chip)}.room small{color:var(--muted);display:block}
 #newRoom{margin:10px 6px;font:inherit;color:var(--accent);background:none;border:0;cursor:pointer}
-#chat{display:flex;flex-direction:column;min-width:0;height:100%}
+#chat{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%}
 #bar{display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 10px;
 border-bottom:1px solid var(--rule);background:var(--panel)}
 #bar h2{font-size:16px;margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}

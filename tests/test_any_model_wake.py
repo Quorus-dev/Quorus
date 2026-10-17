@@ -348,25 +348,13 @@ def test_nemotron_is_not_a_fallback() -> None:
     assert not any("nemotron" in m for m in reflexd.reflexd_models.OPENCODE_FREE_MODELS)
 
 
-def test_woken_claude_keeps_the_owners_guardrails_but_not_their_heavy_hooks(tmp_path) -> None:
-    """Every Claude wake ran Arav's SessionStart hooks (a graphify rebuild and a
-    secret scan), many times an hour, and slowed his laptop (2026-10-17)."""
-    w = reflexd.reflexd_wake
-    user = tmp_path / "settings.json"
-    user.write_text(json.dumps({
-        "model": "opus", "permissions": {"deny": ["Read(./.env)"]},
-        "hooks": {"SessionStart": [{"hooks": [{"command": "graphify.sh"}]}],
-                  "PreToolUse": [{"hooks": [{"command": "protect-files.sh"}]}],
-                  "Stop": [{"hooks": [{"command": "summary.sh"}]}]},
-        "enabledPlugins": {"x": True}}))
-    kept = w.claude_agent_settings(user)
-    assert set(kept) == {"model", "permissions", "hooks"}
-    assert set(kept["hooks"]) == {"PreToolUse"}  # guardrails stay, startup hooks go
-    assert w.claude_agent_settings(tmp_path / "missing.json") == {}
+def test_woken_claude_keeps_skills_but_runs_no_hooks(tmp_path) -> None:
+    """Hooks ran on every wake and slowed the laptop; the first fix also hid
+    274 of 293 skills. Now: the owner's settings load, hooks don't run."""
+    import json as _json
 
-
-def test_daemon_claude_wakes_load_only_project_settings(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     flags = reflexd.reflexd_wake.claude_isolation_flags(tmp_path / "agent-settings.json")
-    assert flags[:2] == ["--setting-sources", "project,local"]
-    assert flags[2] == "--settings" and (tmp_path / "agent-settings.json").exists()
+    assert flags == ["--settings", str(tmp_path / "agent-settings.json")]
+    assert "--setting-sources" not in flags  # user settings (skills, plugins) still load
+    assert _json.loads((tmp_path / "agent-settings.json").read_text()) == {
+        "disableAllHooks": True}

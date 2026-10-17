@@ -63,3 +63,11 @@ def test_relay_serves_page_and_script_under_its_csp() -> None:
     assert "script-src 'self'" in page.headers.get("content-security-policy", "")
     assert js.status_code == 200 and "javascript" in js.headers["content-type"]
     assert js.text == DASHBOARD_JS
+
+
+def test_only_the_messages_scroll_not_the_page() -> None:
+    """Live 2026-10-17: the grid row grew with the chat, the whole page
+    scrolled, and the room list and header scrolled out of sight."""
+    assert "grid-template-rows:minmax(0,1fr)" in DASHBOARD_HTML
+    assert "height:100dvh;overflow:hidden" in DASHBOARD_HTML
+    assert "min-height:0;height:100%" in DASHBOARD_HTML
