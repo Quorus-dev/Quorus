@@ -78,6 +78,7 @@ import importlib.util as _ilu  # noqa: E402
 from quorus.config import ConfigManager  # noqa: E402
 from quorus.notifications import agent_events as _agent_events  # noqa: E402
 from quorus.notifications import notify as _notify  # noqa: E402
+from quorus.observability.redaction import env_secret_values, redact_secrets  # noqa: E402
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
 from quorus.private_files import write_private_json  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
@@ -1426,6 +1427,9 @@ class HeadlessAdapter:
         except FileNotFoundError:
             logger.warning("harness binary missing: %s", argv[0])
             return f"[reflexd] {argv[0]} not installed on this host"
+        except OSError as exc:  # E2BIG etc.: never drop the wake silently
+            logger.warning("harness %s failed to start: %s", argv[0], exc.strerror)
+            return f"[reflexd] {argv[0]} could not start ({exc.strerror})"
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout_s or self.timeout_s
@@ -2465,7 +2469,10 @@ class Reflexd:
             logger.warning("harness %s raised: %s", harness, exc)
             return
 
-        reply = (reply or "").strip()
+        # The reply is auto-posted to the room: mask any credential the agent
+        # printed (prompt injection or not) before it is published.
+        reply = redact_secrets((reply or "").strip(),
+                               [self.config.api_key, *env_secret_values(os.environ)])
         if reflexd_wake.is_no_reply(reply):
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
@@ -2701,12 +2708,15 @@ class Reflexd:
         """
         recent = history[-HEARTBEAT_HISTORY_LIMIT:] if history else []
         lines = [
-            f"@{m.get('from_name') or m.get('sender') or '?'}: {m.get('content') or ''}"
+            reflexd_wake.quote_room_message(m.get("from_name") or m.get("sender"),
+                                            m.get("content"))
             for m in recent
         ]
         history_block = "\n".join(lines) if lines else "(no prior messages)"
         wake_sender = envelope.get("from_name") or "?"
-        wake_content = envelope.get("content") or ""
+        wake_quoted = reflexd_wake.quote_room_message(
+            wake_sender, envelope.get("content"), limit=reflexd_wake.TRIGGER_MESSAGE_CHARS)
+        nonce = os.urandom(6).hex()
         wake_room = envelope.get("room") or "?"
         wake_depth = envelope_reply_depth(envelope)
 
@@ -2730,6 +2740,7 @@ class Reflexd:
             from_agent=is_agent_participant(wake_sender),
             manual=mode_for(wake_room) == "manual",
             lead=lead_for(wake_room),
+            owner=os.environ.get("REFLEXD_OWNER") or None,
         )
 
         memory_block = render_memory_context(memory_entries or [])
@@ -2741,8 +2752,10 @@ class Reflexd:
             f"# Wake Intent\n"
             f"{intent_blurb}\n\n"
             f"# Reply chain depth: {wake_depth} (max {MAX_REPLY_DEPTH})\n\n"
+            f"{reflexd_wake.UNTRUSTED_OPEN.format(nonce=nonce)}\n"
             f"# Recent room transcript (most recent last)\n{history_block}\n\n"
-            f"# Triggering message\n@{wake_sender}: {wake_content}\n"
+            f"# Triggering message\n{wake_quoted}\n"
+            f"{reflexd_wake.UNTRUSTED_CLOSE.format(nonce=nonce)}\n"
         )
 
     # ── main loop ─────────────────────────────────────────────────────────
