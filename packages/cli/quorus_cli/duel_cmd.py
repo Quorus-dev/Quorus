@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from rich.markup import escape
+
 HARNESS_FAMILY = {"claude": "anthropic", "codex": "openai", "gemini": "google",
                   "opencode": "open", "cursor": "cursor", "cline": "cline"}
 JUDGE_ORDER = ("claude", "codex", "gemini", "opencode")
@@ -43,6 +45,7 @@ class Entry:
     model: str | None = None
     reply: str = ""
     tests_passed: bool | None = None
+    tests_ran: bool = True  # False: the command itself failed (pytest missing, typo)
     test_tail: str = ""
     diff: str = ""
     commits: int = 0
@@ -160,9 +163,24 @@ def _finish_entry(repo: Path, e: Entry, base: str, test_cmd: str | None) -> None
     if test_cmd:
         out = subprocess.run(test_cmd, shell=True, cwd=e.path, capture_output=True, text=True,
                              timeout=900)
-        e.tests_passed = out.returncode == 0
-        lines = ((out.stdout or "") + (out.stderr or "")).strip().splitlines()
-        e.test_tail = lines[-1][:160] if lines else ""
+        output = ((out.stdout or "") + (out.stderr or "")).strip()
+        e.tests_ran = tests_ran(out.returncode, output)
+        e.tests_passed = e.tests_ran and out.returncode == 0
+        e.test_tail = "\n".join(line[:160] for line in output.splitlines()[-6:])
+
+
+# Exit codes and messages that mean the test command never got to the tests:
+# the shell couldn't find or run it (127/126), pytest itself is missing, or
+# pytest ran but collected nothing / was misused (5/4). "Tests fail" would be a
+# lie there, and a broken command would make every duel look like a double loss.
+_DIDNT_RUN = re.compile(r"No module named pytest|command not found|: not found\b|"
+                        r"is not recognized as an internal or external command")
+
+
+def tests_ran(returncode: int, output: str) -> bool:
+    if returncode in (126, 127, 4, 5):
+        return False
+    return returncode == 0 or not _DIDNT_RUN.search(output)
 
 
 def cmd_duel(args: Any, console: Any) -> None:
@@ -207,9 +225,16 @@ def cmd_duel(args: Any, console: Any) -> None:
     asyncio.run(both())
     for e in entries:
         _finish_entry(repo, e, base, test_cmd)
-        mark = {True: "[success]tests pass[/]", False: "[error]tests fail[/]",
-                None: "[dim]no tests[/]"}[e.tests_passed]
+        mark = ("[warning]the test command did not run[/]" if not e.tests_ran else
+                {True: "[success]tests pass[/]", False: "[error]tests fail[/]",
+                 None: "[dim]no tests[/]"}[e.tests_passed])
         console.print(f"  @{e.agent}: {e.commits} commit(s), {mark}, {e.seconds:.0f}s")
+        if e.test_tail and not e.tests_passed:
+            for line in e.test_tail.splitlines():
+                console.print(f"    [dim]{escape(line)}[/]")
+    if test_cmd and not any(e.tests_ran for e in entries):
+        console.print(f"[warning]![/] `{escape(test_cmd)}` never ran the tests, so nothing "
+                      "can win; fix it or pass --test \"<command>\"")
 
     ok = eligible(entries) if test_cmd else [e for e in entries if e.commits]
     winner, reason = None, ""

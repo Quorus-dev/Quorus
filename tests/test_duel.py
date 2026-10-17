@@ -126,3 +126,38 @@ def test_agent_model_syntax(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(duel_cmd.shutil, "which", lambda b: f"/bin/{b}")
     duel_cmd.cmd_duel(_args(repo, agents="arav-claude,arav-opencode=opencode/longcat"), _C())
     assert seen == {"claude": None, "opencode": "opencode/longcat"}
+
+
+def test_a_test_command_that_never_ran_is_not_a_failing_test() -> None:
+    """Release check: pytest missing used to read as "tests fail" for both."""
+    assert duel_cmd.tests_ran(1, "1 failed, 3 passed") is True
+    assert duel_cmd.tests_ran(0, "") is True
+    assert duel_cmd.tests_ran(127, "sh: pytset: command not found") is False
+    assert duel_cmd.tests_ran(1, "/usr/bin/python3: No module named pytest") is False
+    assert duel_cmd.tests_ran(5, "no tests ran in 0.01s") is False
+
+
+def test_duel_says_when_the_tests_never_ran_and_shows_the_tail(tmp_path: Path,
+                                                               monkeypatch) -> None:
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(duel_cmd, "_load_reflexd",
+                        lambda: _fake_reflexd({"claude": "a + b", "codex": "a * b"}))
+    monkeypatch.setattr(duel_cmd.shutil, "which", lambda b: f"/bin/{b}")
+    c = _C()
+    duel_cmd.cmd_duel(_args(repo, test="quorus-no-such-test-runner -q"), c)
+    out = "\n".join(c.out)
+    assert out.count("the test command did not run") == 2 and "tests fail" not in out
+    assert "not found" in out  # the shell's own words, so the user sees why
+    assert "never ran the tests" in out and "No winner" in out
+    assert "a - b" in (repo / "calc.py").read_text()  # nothing merged
+
+
+def test_failing_tests_show_their_last_lines(tmp_path: Path, monkeypatch) -> None:
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(duel_cmd, "_load_reflexd",
+                        lambda: _fake_reflexd({"claude": "a + b", "codex": "a * b"}))
+    monkeypatch.setattr(duel_cmd.shutil, "which", lambda b: f"/bin/{b}")
+    c = _C()
+    duel_cmd.cmd_duel(_args(repo), c)
+    out = "\n".join(c.out)
+    assert "tests fail" in out and "1 failed" in out  # codex's a * b: pytest's summary line
