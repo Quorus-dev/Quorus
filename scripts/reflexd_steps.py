@@ -27,6 +27,17 @@ _SHELL = {"bash", "shell", "run_shell_command", "exec_command", "execute"}
 _WEB = {"websearch", "web_search", "google_web_search", "webfetch", "web_fetch", "fetch"}
 _SUBAGENT = {"task", "agent"}
 _QUIET = {"todowrite", "todoread", "update_topic", "todo_list", "exitplanmode"}
+_MEMORY = {
+    "memory_set", "memory_get", "memory_list", "memory_delete",
+    "set_memory", "get_memory", "list_memory", "delete_memory",
+}
+_CAPABILITIES = {
+    "publish_capability", "lookup_capability", "search_capabilities",
+    "get_capability", "list_capabilities",
+}
+_TOOL_CATALOG = {"register_tool", "list_room_tools", "unregister_tool", "list_tools"}
+_APPROVALS = {"request_approval", "approve", "deny_approval"}
+_SKILLS = {"activate_skill", "list_skills", "skill"}
 
 _TESTS = re.compile(r"\b(pytest|vitest|jest|mocha|go test|cargo test|rspec|phpunit|unittest|"
                     r"(npm|pnpm|yarn|bun)( run)? test)\b")
@@ -113,7 +124,30 @@ def tool_step(name: str, args: dict[str, Any]) -> str | None:
         return "writing to the room"
     if low in ("claim_task", "release_task", "check_messages", "room_history", "who_is_here"):
         return "checking the room"
-    return f"using {low[:30]}" if low else None
+    if low in _MEMORY:
+        return "accessing memory"
+    if low in _CAPABILITIES:
+        return "checking capabilities"
+    if low in _TOOL_CATALOG:
+        return "managing tools"
+    if low in _APPROVALS:
+        return "requesting approval"
+    if low in _SKILLS:
+        return "activating a skill"
+    if low in _MEMORY or "memory" in low:
+        return "accessing memory"
+    if low in _CAPABILITIES or "capability" in low or "capabilities" in low:
+        return "checking capabilities"
+    if low in _TOOL_CATALOG or "tool" in low.split("_"):
+        return "managing tools"
+    if low in _APPROVALS or "approval" in low:
+        return "requesting approval"
+    if low in _SKILLS or "skill" in low:
+        return "activating a skill"
+    if "agent" in low:
+        return "running a subagent"
+    cleaned = low.replace("_", " ")
+    return f"using {cleaned[:30]}" if cleaned else None
 
 
 def step_of(line: str) -> str | None:

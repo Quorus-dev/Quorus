@@ -215,3 +215,14 @@ def test_tui_and_web_show_the_step() -> None:
     assert "@a-codex editing relay.py 1m 15s" in line
     assert "@a-claude working 1m 15s" in line
     assert 'p.activity || "working"' in DASHBOARD_JS
+
+
+def test_unknown_and_phase1_tool_steps() -> None:
+    assert steps.tool_step("memory_set", {}) == "accessing memory"
+    assert steps.tool_step("mcp__quorus__memory_get", {}) == "accessing memory"
+    assert steps.tool_step("publish_capability", {}) == "checking capabilities"
+    assert steps.tool_step("register_tool", {}) == "managing tools"
+    assert steps.tool_step("approve", {}) == "requesting approval"
+    assert steps.tool_step("activate_skill", {}) == "activating a skill"
+    assert steps.tool_step("custom_unknown_action", {}) == "using custom unknown action"
+
