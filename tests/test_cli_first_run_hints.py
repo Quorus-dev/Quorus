@@ -51,3 +51,14 @@ def test_grouped_help_names_every_harness_agent_add_supports(capsys) -> None:
     line = next(x for x in capsys.readouterr().out.splitlines() if "agent add <tool>" in x)
     for tool in ("Claude", "Codex", "Gemini", "opencode"):
         assert tool in line, line
+
+
+def test_grouped_help_lists_the_readme_headline_commands(capsys) -> None:
+    """Release check: --help never showed demo, duel, scorecard and friends."""
+    from quorus_cli.cli import _print_grouped_help
+
+    _print_grouped_help()
+    listed = {line.split()[0] for line in capsys.readouterr().out.splitlines()
+              if line.startswith("  ") and line.split()}
+    for cmd in ("demo", "duel", "scorecard", "retro", "replay", "phone", "connect", "invite"):
+        assert cmd in listed, cmd

@@ -8233,11 +8233,20 @@ def _print_grouped_help():
             ("begin",              "Open the interactive hub (default if no command)"),
             ("doctor",             "Diagnose setup issues"),
             ("version",            "Show version, relay, and config"),
+            ("demo",               "Watch two free agents fix a bug (no keys)"),
+            ("phone",              "Open your rooms on your phone"),
+        ]),
+        ("MEASURE", [
+            ("scorecard",          "Whose work holds up in this repo, by agent/vendor"),
+            ("duel",               "Two agents, one task; tests gate, blind judge picks"),
+            ("retro <room>",       "What's going wrong in a room, ranked, with fixes"),
+            ("replay <room>",      "Write a shareable page of how a room did a task"),
         ]),
         ("ROOMS & MESSAGING", [
             ("rooms",              "List all rooms"),
             ("create <name>",      "Create a room"),
             ("join <room>",        "Join a room"),
+            ("invite <room> <who>","Add participants to a room"),
             ("chat <room>",        "Interactive chat in a room"),
             ("say <room> <msg>",   "Send a message to a room"),
             ("dm <name> <msg>",    "Direct message another agent"),
@@ -8260,6 +8269,7 @@ def _print_grouped_help():
         ("AGENTS & SWARMS", [
             ("agent add <tool>",   "Add Claude, Codex, Gemini or opencode to a room"),
             ("agent list",         "Your agents running on this machine"),
+            ("connect <platform>", "Setup for Cursor, Codex, Ollama and others"),
             ("ps",                 "Show agent presence (online/offline)"),
             ("spawn <name>",       "Create agent workspace + launch Claude Code"),
             ("add-agent",          "Interactive wizard to add an agent"),
