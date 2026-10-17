@@ -108,3 +108,13 @@ def test_quorus_web_link_lands_on_the_board_signed_in_as_you() -> None:
 
     assert 'sessionStorage.setItem("qr"' in DASHBOARD_JS and 'getItem("qv") === "board"' \
         in BOARD_JS
+
+
+def test_board_never_waits_for_the_scorecard() -> None:
+    """Live: the first scorecard took many seconds and the board stayed blank."""
+    i = BOARD_JS.index('"/scorecard")')
+    window = BOARD_JS[BOARD_JS.rindex("function refresh()", 0, i):i + 400]
+    assert "return members.then(() => Promise.all([" in BOARD_JS
+    assert "Promise.all([members, card])" not in BOARD_JS  # rows don't wait for it
+    assert "refresh();" in window  # it re-renders once the track records arrive
+    assert "Loading the team" in BOARD_JS
