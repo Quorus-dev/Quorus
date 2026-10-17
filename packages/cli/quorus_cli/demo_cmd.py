@@ -170,30 +170,44 @@ def _opencode_ok() -> str | None:
     return None
 
 
-def model_answers(model: str, cwd: Path, timeout: float = 45) -> bool:
-    """One tiny `pong` call: does this free model take requests right now?"""
+# A model that needs longer than this for a one-word reply makes the demo
+# crawl: nemotron took 111-300s to its first token while beam took 1.2s
+# (release check, 2026-10-17). Skip it rather than wait.
+PROBE_MAX_S = 20.0
+
+
+def model_answers(model: str, cwd: Path, timeout: float = PROBE_MAX_S) -> float | None:
+    """One tiny `pong` call: seconds this free model took to answer, or None
+    if it didn't (busy, rate-limited, or slower than *timeout*)."""
+    started = time.monotonic()
     try:
         out = subprocess.run(
             ["opencode", "run", "--standalone", "--format", "json", "-m", model, "--",
              "Reply with exactly: pong"], cwd=cwd, capture_output=True, text=True,
             timeout=timeout, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError):
-        return False
-    return '"type":"text"' in out.stdout.replace(" ", "") and "pong" in out.stdout.lower()
+        return None
+    if '"type":"text"' in out.stdout.replace(" ", "") and "pong" in out.stdout.lower():
+        return time.monotonic() - started
+    return None
 
 
 def pick_models(cwd: Path, console: Any, forced: str | None = None) -> list[str]:
     if forced:
         return [forced, forced]
-    from quorus.runtime.opencode_free import free_models
+    from quorus.runtime.opencode_free import free_models, mark_slow
 
-    working: list[str] = []
+    timed: list[tuple[float, str]] = []
     for model in free_models(FREE_MODELS):  # the live catalog first; it churns
         console.print(f"[dim]checking {model.split('/', 1)[1]}…[/]")
-        if model_answers(model, cwd):
-            working.append(model)
-            if len(working) == 2:
-                break
+        secs = model_answers(model, cwd)
+        if secs is None:
+            mark_slow(model)  # busy or slow: last in line if we come back to it
+            continue
+        timed.append((secs, model))
+        if len(timed) == 2:
+            break
+    working = [m for _, m in sorted(timed)]  # the faster one builds
     return working + working[:1] if len(working) == 1 else working
 
 
