@@ -272,7 +272,9 @@ else
 fi
 
 # 4. Join the room using the short code embedded in this script.
-quorus join "{code}" --name "$NAME"
+#    --relay is required: the code lives on *this* relay, and a fresh
+#    install otherwise falls back to the public default and can't resolve it.
+quorus join "{code}" --relay "{relay_url}" --name "$NAME"
 
 # 5. Open the hub.
 exec quorus
@@ -325,6 +327,7 @@ async def install_script(
     )
     script = _INSTALL_SCRIPT_TMPL.format(
         code=display,
+        relay_url=relay_url,
         install_url=f"{relay_url}/v1/join/install/{display}.sh",
     )
     return PlainTextResponse(script, media_type="application/x-sh")
