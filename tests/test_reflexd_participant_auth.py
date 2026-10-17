@@ -126,7 +126,9 @@ def test_restart_reuses_the_saved_key_without_claiming(tmp_path, monkeypatch, ca
 
     asyncio.run(first())
     asyncio.run(after_restart())
-    assert "409" not in caplog.text and "shared secret" not in caplog.text
+    # Match the status, not the digits: room ids are random UUIDs and one
+    # with "409" in it failed CI (run 39075681172).
+    assert "409 Conflict" not in caplog.text and "shared secret" not in caplog.text
     _reset_state()
 
 
