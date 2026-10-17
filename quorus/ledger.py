@@ -24,7 +24,7 @@ import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Container, Iterable
 
 NOTES_REF = "quorus"
 _HARNESSES = ("claude", "codex", "gemini", "opencode", "cursor", "cline")
@@ -141,12 +141,13 @@ def _reverted(repo: Path, rev_range: str) -> set[str]:
 
 
 def infer_from_room(history: Iterable[dict[str, Any]],
-                    commits: list[tuple[str, str, int]], branch: str | None = None,
-                    ) -> dict[str, str]:
+                    commits: list[tuple[str, str, int]],
+                    branches: Container[str] | None = None) -> dict[str, str]:
     """sha → agent, from the daemon's "published N commit(s)" status lines.
 
     Each status line at time T claims the N newest commits committed at or
     before T (the daemon publishes, then posts). Approximate; labelled inferred.
+    Only lines publishing into one of *branches* count, when given.
     """
     by_time = sorted(commits, key=lambda c: c[2])
     claimed: dict[str, str] = {}
@@ -155,7 +156,7 @@ def infer_from_room(history: Iterable[dict[str, Any]],
         if not hit:
             continue
         n, agent, target = int(hit.group(1)), hit.group(2), hit.group(3)
-        if branch and target != branch:  # e.g. laptop 2 publishing into its own branch
+        if branches is not None and target not in branches:  # e.g. laptop 2's own branch
             continue
         try:
             t = datetime.fromisoformat(str(m["timestamp"]).replace("Z", "+00:00"))
@@ -196,12 +197,33 @@ def _review(history: list[dict[str, Any]], sha: str, author: str) -> tuple[str, 
     return verdict, sorted(set(who))
 
 
+def _branches_in_line(repo: Path, history: list[dict[str, Any]]) -> set[str]:
+    """Publish targets on HEAD's line of history: the checked-out branch, or a
+    local branch that HEAD contains or is behind. Run from an agent's worktree
+    (`quorus/<agent>`), the room's `weekend/quorus` lines still count; laptop
+    2's diverged branch doesn't (scorecards differed by checkout, 2026-10-17)."""
+    head = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    targets = {hit.group(3) for m in history
+               if (hit := _PUBLISHED.search(m.get("content") or ""))}
+    found = {head} if head else set()
+    for target in targets - found:
+        if not _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{target}").strip():
+            continue
+        for older, newer in ((f"refs/heads/{target}", "HEAD"), ("HEAD", f"refs/heads/{target}")):
+            ancestor = subprocess.run(
+                ["git", "-c", "core.hooksPath=/dev/null", "merge-base", "--is-ancestor",
+                 older, newer], cwd=repo, capture_output=True, timeout=60)
+            if ancestor.returncode == 0:
+                found.add(target)
+                break
+    return found
+
+
 def outcomes(repo: Path, rev_range: str,
              history: list[dict[str, Any]] | None = None) -> list[Outcome]:
     history = history or []
     commits = _commits(repo, rev_range)
-    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() or None
-    inferred = infer_from_room(history, commits, branch)
+    inferred = infer_from_room(history, commits, _branches_in_line(repo, history))
     reverted = _reverted(repo, rev_range)
     out: list[Outcome] = []
     for sha, subject, _ts in commits:

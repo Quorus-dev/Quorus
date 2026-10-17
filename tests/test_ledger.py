@@ -84,6 +84,32 @@ def test_room_reviews_and_publish_lines(tmp_path: Path) -> None:
     assert row.review == "approved" and row.reviewers == ["a-claude"]
 
 
+def test_publish_lines_count_from_an_agent_worktree(tmp_path: Path) -> None:
+    """Run from `quorus/<agent>` (which is ahead of or behind the room's branch),
+    lines publishing into that branch still attribute; a diverged branch's don't.
+    Before: only the checked-out branch counted, so codex and opencode vanished
+    from the scorecard when it ran in an agent worktree (2026-10-17)."""
+    from datetime import datetime, timezone
+
+    repo, base = _repo(tmp_path)
+    sha = _commit(repo, "fix: x", {"app.py": "x = 3\n"})
+    _git(repo, "branch", "l2", base)
+    _git(repo, "checkout", "-q", "l2")
+    _commit(repo, "l2 only", {"l2.py": "1\n"})
+    _git(repo, "checkout", "-qb", "quorus/a-claude", "main")
+    _commit(repo, "agent wip", {"wip.py": "1\n"})  # ahead of main
+    when = datetime.fromtimestamp(int(_git(repo, "log", "-1", "--format=%ct", sha)) + 2,
+                                  timezone.utc).isoformat()
+    line = "(quorus) published 1 commit(s) from quorus/{} to {}"
+    history = [{"from_name": "a-opencode", "timestamp": when,
+                "content": line.format("a-opencode", "main")},
+               {"from_name": "l2-codex", "timestamp": when,
+                "content": line.format("l2-codex", "l2")}]
+    rows = {o.sha: o for o in ledger.outcomes(repo, f"{base}..main", history)}
+    assert rows[sha].agent == "a-opencode" and rows[sha].inferred
+    assert ledger._branches_in_line(repo, history) == {"quorus/a-claude", "main"}
+
+
 def test_a_flag_without_resolution_counts_as_flagged(tmp_path: Path) -> None:
     repo, base = _repo(tmp_path)
     sha = _commit(repo, "fix: y", {"app.py": "x = 4\n"})
