@@ -1068,6 +1068,12 @@ def _cmd_phone(args):
     cmd_phone(args, console)
 
 
+def _cmd_duel(args):
+    from quorus_cli.duel_cmd import cmd_duel
+
+    cmd_duel(args, console)
+
+
 def _cmd_demo(args):
     from quorus_cli.demo_cmd import cmd_demo
 
@@ -9233,6 +9239,20 @@ def main():
                          help="Share on this Wi-Fi instead of Tailscale (trusted networks only)")
     p_phone.add_argument("--port", type=int, default=None, help="Port to share on (default 8790)")
 
+    p_duel = sub.add_parser(
+        "duel", help="Two agents solve the same task; tests gate, a blind judge picks the winner")
+    p_duel.add_argument("task", help="What to build or fix")
+    p_duel.add_argument("--agents", required=True,
+                        help="Two contenders, e.g. arav-claude,arav-codex")
+    p_duel.add_argument("--repo", help="Repo (default: current directory)")
+    p_duel.add_argument("--judge", choices=["claude", "codex", "gemini", "opencode"],
+                        help="Judge tool (default: one from a family neither contender is in)")
+    p_duel.add_argument("--judge-model", help="Model for the judge, e.g. gemini-3.5-flash-lite")
+    p_duel.add_argument("--test", help="Test command (default: detected pytest / npm test)")
+    p_duel.add_argument("--timeout", type=int, default=1800, help="Seconds per contender")
+    p_duel.add_argument("--no-merge", action="store_true", help="Pick a winner, merge nothing")
+    p_duel.add_argument("--room", help="Room to credit in the ledger")
+
     p_demo = sub.add_parser("demo", help="Watch two free AI agents fix a bug together (no keys)")
     p_demo.add_argument("--model", help="opencode model (default: a free open-source one)")
     p_demo.add_argument("--timeout", type=int, default=300, help="Seconds to wait (default 300)")
@@ -9593,6 +9613,7 @@ def main():
         "phone": _cmd_phone,
         "retro": _cmd_retro,
         "demo": _cmd_demo,
+        "duel": _cmd_duel,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,

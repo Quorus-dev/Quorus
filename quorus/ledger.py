@@ -94,6 +94,8 @@ class Outcome:
     added: int = 0
     surviving: int = 0
     reviewers: list[str] = field(default_factory=list)
+    duel_id: str | None = None        # set on a duel winner's commits
+    duel_against: str | None = None
 
     @property
     def survival(self) -> float | None:
@@ -195,6 +197,10 @@ def outcomes(repo: Path, rev_range: str,
             o.agent = str(prov.get("agent") or "unknown")
             o.vendor = str(prov.get("vendor") or vendor_of(o.agent))
             o.model = prov.get("model")
+            duel = prov.get("duel") if isinstance(prov.get("duel"), dict) else None
+            if duel and duel.get("result") == "won":
+                o.duel_id = str(duel.get("id") or "") or None
+                o.duel_against = str(duel.get("against") or "") or None
         elif sha in inferred:
             o.agent, o.vendor, o.inferred = inferred[sha], vendor_of(inferred[sha]), True
         files, o.added, per_file = _files_and_added(repo, sha)
@@ -210,9 +216,24 @@ def scorecard(rows: list[Outcome], key: str = "agent") -> list[dict[str, Any]]:
     groups: dict[str, list[Outcome]] = {}
     for o in rows:
         groups.setdefault(getattr(o, key), []).append(o)
+    # One duel = one win for the winner and one loss for the other side, by duel id.
+    won: dict[str, set[str]] = {}
+    lost: dict[str, set[str]] = {}
+    for o in rows:
+        if o.duel_id and o.duel_against:
+            loser = o.duel_against if key == "agent" else vendor_of(o.duel_against)
+            won.setdefault(getattr(o, key), set()).add(o.duel_id)
+            lost.setdefault(loser, set()).add(o.duel_id)
+    for name in lost:
+        groups.setdefault(name, [])
     table = []
     for name, items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
         added = sum(o.added for o in items)
+        if not items:  # only lost duels in this range
+            table.append({key: name, "commits": 0, "with_tests": 0, "approved": 0, "flagged": 0,
+                          "reverted": 0, "survival": None, "inferred": 0, "duels_won": 0,
+                          "duels_lost": len(lost.get(name, ()))})
+            continue
         table.append({
             key: name,
             "commits": len(items),
@@ -222,6 +243,8 @@ def scorecard(rows: list[Outcome], key: str = "agent") -> list[dict[str, Any]]:
             "reverted": sum(o.reverted for o in items),
             "survival": round(sum(o.surviving for o in items) / added, 3) if added else None,
             "inferred": sum(o.inferred for o in items),
+            "duels_won": len(won.get(name, ())),
+            "duels_lost": len(lost.get(name, ())),
         })
     return table
 

@@ -56,12 +56,14 @@ def cmd_scorecard(args: Any, console: Any) -> None:
     by = args.by
     table = Table(title=f"{repo.name}: whose work holds up ({len(rows)} commits)",
                   title_justify="left", header_style="bold")
-    for col in (by, "commits", "tests", "approved", "flagged", "reverted", "kept"):
+    for col in (by, "commits", "tests", "approved", "flagged", "reverted", "kept", "duels"):
         table.add_column(col, justify="left" if col == by else "right", no_wrap=True)
     for r in ledger.scorecard(rows, key=by):
         surv = "-" if r["survival"] is None else f"{round(100 * r['survival'])}%"
+        duels = (f"{r['duels_won']}-{r['duels_lost']}"
+                 if r["duels_won"] or r["duels_lost"] else "-")
         table.add_row(r[by], str(r["commits"]), _pct(r["with_tests"], r["commits"]),
-                      str(r["approved"]), str(r["flagged"]), str(r["reverted"]), surv)
+                      str(r["approved"]), str(r["flagged"]), str(r["reverted"]), surv, duels)
     console.print(table)
     inferred = sum(o.inferred for o in rows)
     console.print("[dim]kept = share of the lines it added still in the code at HEAD"
