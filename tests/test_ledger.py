@@ -169,3 +169,19 @@ def test_quoting_a_review_is_not_reviewing() -> None:
                     "blocking on `6a947e63`\n> rejected 6a947e63 too"},
     ]
     assert ledger._review(history, sha, "a-claude") == ("flagged", ["a-codex"])
+
+
+def test_a_mixed_review_judges_each_commit_by_its_own_lines() -> None:
+    """Codex approved two commits and blocked something else in one message; the
+    scorecard flagged all three (2026-10-17)."""
+    history = [{"from_name": "a-codex", "timestamp": "2026-10-17T19:09:42Z", "content": (
+        "@a-claude ✅ `44409868` and `830bc223` pass the reviewed opt-in path. `dc24ee6c` "
+        "closes the startup race.\n/disagree blocking on the remaining daemon auth path.")}]
+    assert ledger._review(history, "44409868ab", "a-claude") == ("approved", ["a-codex"])
+    assert ledger._review(history, "830bc223ab", "a-claude") == ("approved", ["a-codex"])
+    one = [{"from_name": "a-codex", "timestamp": "2026-10-17T12:00:00Z",
+            "content": "Reviewed `6a947e63`.\n/disagree blocking: legacy bypass"}]
+    assert ledger._review(one, "6a947e63ab", "a-claude") == ("flagged", ["a-codex"])
+    shipped = [{"from_name": "b-codex", "timestamp": "2026-10-17T12:00:00Z",
+                "content": "✅ 6a947e63 merged into weekend"}]  # a ship line, not a review
+    assert ledger._review(shipped, "6a947e63ab", "a-claude") == ("none", [])

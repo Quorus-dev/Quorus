@@ -29,7 +29,9 @@ from typing import Any, Container, Iterable
 NOTES_REF = "quorus"
 _HARNESSES = ("claude", "codex", "gemini", "opencode", "cursor", "cline")
 _APPROVE = re.compile(
-    r"\b(approv\w*|lgtm|looks good|holds( up)?|accepted|signed off)\b|✅ reviewed",
+    # "✅ abc1234 passes": a ✅ alone is also how agents announce their own ships.
+    r"\b(approv\w*|lgtm|looks good|holds( up)?|accepted|signed off)\b|✅ reviewed"
+    r"|✅[^\n]*\bpass(es|ed)?\b",
     re.IGNORECASE)
 _FLAG = re.compile(r"\b(blocking|/disagree|reject\w*|regress\w*|broken|wrong|not approved|"
                    r"request(ed)? changes)\b", re.IGNORECASE)
@@ -187,7 +189,13 @@ def _review(history: list[dict[str, Any]], sha: str, author: str) -> tuple[str, 
         body, sender = _own_words(m.get("content") or ""), m.get("from_name") or ""
         if short not in body or sender == author or body.startswith("(quorus)"):
             continue
-        approve, flag = _APPROVE.search(body), _FLAG.search(body)
+        # Judge the commit by the lines that name it: "✅ abc1234 passes.\n
+        # /disagree blocking on <something else>" approved abc1234 but scored as
+        # a flag (codex, 2026-10-17). Lines with no verdict: the whole message.
+        own = "\n".join(ln for ln in body.splitlines() if short in ln)
+        if not (_APPROVE.search(own) or _FLAG.search(own)):
+            own = body
+        approve, flag = _APPROVE.search(own), _FLAG.search(own)
         if flag and not approve:  # "the regression was fixed; approved" is an approval
             verdict = "flagged"
             who.append(sender)
