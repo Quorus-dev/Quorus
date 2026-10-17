@@ -1998,14 +1998,18 @@ class RelayClient:
         self, *, participant: str, status: str = "active", room: str = "",
         reason: str = "",
         activity: str = "",
+        waiting_on: str = "",
+        waiting_until: float = 0.0,
     ) -> None:
         """Presence heartbeat (R2) — lets the relay show active/away + queued."""
         headers = await self._headers()
-        body = {"instance_name": participant, "status": status, "room": room}
+        body: dict[str, Any] = {"instance_name": participant, "status": status, "room": room}
         if reason:
             body["reason"] = reason
         if activity:
             body["activity"] = activity
+        if waiting_on:
+            body["waiting_on"], body["waiting_until"] = waiting_on, max(0.0, waiting_until)
         resp = await self.client.post("/heartbeat", headers=headers, json=body)
         resp.raise_for_status()
 
@@ -2296,6 +2300,7 @@ class Reflexd:
         # the busy presence at most every STEP_POST_MIN_S.
         self._activity = ""
         self._stuck_alerted_at = 0.0
+        self._waiting: tuple[str, float] = ("", 0.0)  # (kind, until epoch)
         self._presence_relay: Any = None
         self._step_task: asyncio.Task[None] | None = None
         if hasattr(self.adapter, "on_step"):
@@ -2665,7 +2670,7 @@ class Reflexd:
         if post is None:
             return
         status, room = self._presence
-        extra = {"activity": self._activity} if status == "busy" and self._activity else {}
+        extra = self._presence_extra(status)
         try:
             if status == "degraded":
                 extra["reason"] = self._degraded_reason
@@ -2673,6 +2678,31 @@ class Reflexd:
                        **extra)
         except Exception as exc:  # presence is cosmetic: never fail a wake on it
             logger.debug("presence update failed: %s", exc)
+
+    def _presence_extra(self, status: str) -> dict[str, Any]:
+        """The fields that go with a presence post: the live step while busy,
+        otherwise what the agent is waiting on, for the "needs you" board."""
+        if status == "busy":
+            return {"activity": self._activity} if self._activity else {}
+        kind, until = self._waiting_now()
+        return {"waiting_on": kind, "waiting_until": until} if kind else {}
+
+    def _waiting_now(self) -> tuple[str, float]:
+        until = getattr(self.adapter, "limited_until", 0.0) or 0.0
+        if until > time.time():
+            return "quota", until
+        kind, until = self._waiting
+        if kind == "pacing" and until and until < time.time():
+            return "", 0.0
+        return kind, until
+
+    def _note_outcome(self, reply: str) -> None:
+        """A failed turn leaves the agent "stuck" until its next good one."""
+        failed = (reply or "").lstrip().startswith(("⚠", "[reflexd]"))
+        if failed and not _is_limit(reply):
+            self._waiting = ("stuck", 0.0)
+        elif not failed and self._waiting[0] == "stuck":
+            self._waiting = ("", 0.0)
 
     def _on_step(self, step: str) -> None:
         """A step from the harness stream: show it on the working line soon."""
@@ -2723,8 +2753,10 @@ class Reflexd:
             logger.info("pacing: waiting %.0fs (cap %d/h)", wait, cap)
             # Waiting for a plan slot isn't working: it showed as "⋯ @a-codex
             # working 57m" for most of every hour (2026-10-17).
+            self._waiting = ("pacing", time.time() + wait)
             await self._set_presence(relay, "active", "")
             await self._sleep_or_stop(wait)
+            self._waiting = ("", 0.0)
             if self._stop.is_set():
                 return False
             await self._set_presence(relay, "busy", room)
@@ -3063,6 +3095,7 @@ class Reflexd:
                       "mention me to retry")
             reply = reply.replace("[reflexd] harness errored", status, 1)
 
+        self._note_outcome(reply)
         self._alert_owner(room, reply)
 
         # Don't double-post: if the agent already posted this result itself
@@ -3673,8 +3706,7 @@ class Reflexd:
         while not self._stop.is_set():
             try:
                 status, room = self._presence
-                extra = ({"activity": self._activity}
-                         if status == "busy" and self._activity else {})
+                extra = self._presence_extra(status)
                 await relay.post_heartbeat(
                     participant=self.config.participant_name,
                     status=status, room=room, **extra,

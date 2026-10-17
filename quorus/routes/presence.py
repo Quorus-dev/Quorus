@@ -14,6 +14,13 @@ _LEGACY_TENANT = "_legacy"
 HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))
 
 
+def _float(value: object) -> float:
+    try:
+        return float(value or 0)  # Redis stores it as a string
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _tid(auth: AuthContext) -> str:
     return auth.tenant_id or _LEGACY_TENANT
 
@@ -27,7 +34,8 @@ async def heartbeat(
     require_identity(auth, req.instance_name)
     svc = request.app.state.presence_service
     entry = await svc.heartbeat(_tid(auth), req.instance_name, req.status, req.room,
-                                reason=req.reason, activity=req.activity)
+                                reason=req.reason, activity=req.activity,
+                                waiting_on=req.waiting_on, waiting_until=req.waiting_until)
     await request.app.state.backends.participants.add(_tid(auth), req.instance_name)
     return {"status": "ok", "timestamp": entry.get("last_heartbeat", "")}
 
@@ -57,6 +65,8 @@ async def get_presence(
             "uptime_start": e.get("uptime_start", ""),
             "reason": e.get("reason", ""),
             "last_wake_at": e.get("last_wake_at", ""),
+            "waiting_on": (e.get("waiting_on") or "") if online else "",
+            "waiting_until": _float(e.get("waiting_until")) if online else 0.0,
         })
     result.sort(key=lambda x: (not x["online"], x["name"]))
     return result
