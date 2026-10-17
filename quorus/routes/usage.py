@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Request
 
 from quorus.auth.middleware import AuthContext, verify_auth
 from quorus.routes.room_auth import require_room_member
+from quorus.routes.room_state import derive_active_agents
 
 router = APIRouter(prefix="/v1")
 _LEGACY_TENANT = "_legacy"
@@ -152,15 +153,14 @@ async def get_room_usage(
     state = await backends.room_state.get(tid, rid)
 
     presence_entries = await backends.presence.list_all(tid, _PRESENCE_TIMEOUT)
-    active_agents = sorted(
-        e["name"] for e in presence_entries
-        if e.get("room") in (rid, room_name)
+    history = await backends.room_history.get_recent(tid, rid, limit=200)
+    active_agents = derive_active_agents(
+        presence_entries, history, rid, room_name
     )
     if not active_agents:
         members = await backends.rooms.get_members(tid, rid)
         active_agents = sorted(members.keys())
 
-    history = await backends.room_history.get_recent(tid, rid, limit=200)
     sender_counts: Counter[str] = Counter()
     bytes_sent = 0
     for msg in history:

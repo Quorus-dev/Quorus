@@ -30,6 +30,31 @@ def _tid(auth: AuthContext) -> str:
     return auth.tenant_id or _LEGACY_TENANT
 
 
+def derive_active_agents(
+    presence_entries: list[dict],
+    history: list[dict],
+    rid: str,
+    room_name: str,
+) -> list[str]:
+    """Names of online agents associated with a room.
+
+    The heartbeat ``room`` field is unreliable: agents routinely heartbeat
+    with ``room=""`` (or a stale room), so trusting it alone made
+    ``/rooms/{id}/state`` and ``/rooms/{id}/usage`` list the wrong
+    ``active_agents``. An agent counts as active when it is online AND
+    either claims this room in its heartbeat or has posted in this room's
+    recent history.
+    """
+    online = {e.get("name") for e in presence_entries if e.get("_online")}
+    attributed = {
+        e.get("name")
+        for e in presence_entries
+        if e.get("room") in (rid, room_name)
+    }
+    senders = {m.get("from_name") or m.get("from") for m in history}
+    return sorted(name for name in (online & (attributed | senders)) if name)
+
+
 @router.get("/rooms/{room_id}/state")
 async def get_room_state(
     room_id: str,
@@ -53,13 +78,16 @@ async def get_room_state(
     # Fetch mutable coordination state
     state = await backends.room_state.get(tid, rid)
 
-    # Derive active_agents from presence (heartbeat within timeout, in this room)
+    # Derive message_count and last_activity from room history
+    history = await backends.room_history.get_recent(tid, rid, limit=200)
+
+    # Derive active_agents from presence ∩ recent room activity. The
+    # heartbeat ``room`` field alone is unreliable (agents send ""), so
+    # activity in *this* room disambiguates.
     room_name = room_data.get("name", rid)
     presence_entries = await backends.presence.list_all(tid, _PRESENCE_TIMEOUT)
-    active_agents = sorted(
-        e["name"]
-        for e in presence_entries
-        if e.get("room") in (rid, room_name)
+    active_agents = derive_active_agents(
+        presence_entries, history, rid, room_name
     )
 
     # Fall back to room members if no presence data
@@ -67,8 +95,6 @@ async def get_room_state(
         members = await backends.rooms.get_members(tid, rid)
         active_agents = sorted(members.keys())
 
-    # Derive message_count and last_activity from room history
-    history = await backends.room_history.get_recent(tid, rid, limit=200)
     message_count = len(history)
     if history:
         last_ts = history[-1].get("timestamp", "")

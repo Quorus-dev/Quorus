@@ -2359,6 +2359,60 @@ async def test_room_state_active_agents_from_members(client: AsyncClient, auth_h
     assert "bob" in agents
 
 
+async def test_room_state_active_agents_uses_recent_activity(
+    client: AsyncClient, auth_headers: dict
+):
+    """Regression: agents heartbeat with ``room=""``, so ``active_agents``
+    listed the wrong agents.
+
+    An agent that heartbeats blank but posts in this room is active; an
+    online agent claiming a different room (and never posting here) is not.
+    ``carol`` matches the room so the old code found a non-empty result and
+    never fell back to members — which is exactly the case that hid the bug.
+    """
+    room_id = await _setup_state_room(client, auth_headers)  # members alice, bob
+    for name, room in (
+        ("carol", "state-test-room"),  # claims this room, never posts
+        ("alice", ""),                 # blank heartbeat, posts here
+        ("dave", "elsewhere"),         # online, stale/wrong room, no activity
+    ):
+        resp = await client.post(
+            "/heartbeat",
+            json={"instance_name": name, "status": "active", "room": room},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+    await client.post(
+        f"/rooms/{room_id}/messages",
+        json={"from_name": "alice", "content": "hello"},
+        headers=auth_headers,
+    )
+
+    data = (await client.get(
+        f"/rooms/{room_id}/state", headers=auth_headers
+    )).json()
+    assert "alice" in data["active_agents"], data["active_agents"]
+    assert "carol" in data["active_agents"], data["active_agents"]
+    assert "dave" not in data["active_agents"], data["active_agents"]
+
+
+def test_derive_active_agents_ignores_blank_and_stale_rooms():
+    """Pure-function check: online ∩ (room-match ∪ recent-sender)."""
+    from quorus.routes.room_state import derive_active_agents
+
+    presence = [
+        {"name": "alice", "room": "", "_online": True},
+        {"name": "carol", "room": "state-test-room", "_online": True},
+        {"name": "dave", "room": "elsewhere", "_online": True},
+        {"name": "erin", "room": "", "_online": False},
+    ]
+    history = [{"from_name": "alice"}, {"from_name": "erin"}]
+    assert derive_active_agents(presence, history, "rid-1", "state-test-room") == [
+        "alice",
+        "carol",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Room state Primitive B (distributed mutex / claim_task) tests
 # ---------------------------------------------------------------------------
