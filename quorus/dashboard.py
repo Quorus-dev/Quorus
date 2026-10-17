@@ -76,7 +76,16 @@ background:var(--panel);color:var(--ink)}
 #viewToggle{font:inherit;font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid var(--rule);
 background:var(--chip);color:var(--ink);cursor:pointer}
 #board{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+#boardTop{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:center}
 #boardSummary{display:flex;flex-wrap:wrap;gap:6px}
+#boardModes{display:flex;gap:4px}#boardModes button{font:inherit;font-size:12px;padding:4px 12px;
+border-radius:999px;border:1px solid var(--rule);background:none;color:var(--muted);cursor:pointer}
+#boardModes button.on{background:var(--chip);color:var(--ink)}
+#quorum{position:relative;flex:1;min-height:420px;border-radius:12px;overflow:hidden;
+border:1px solid var(--rule)}#quorum canvas{display:block;width:100%;height:100%}
+#board{position:relative}
+#quorumCard{position:absolute;right:28px;top:110px;width:min(440px,calc(100% - 56px));z-index:2;
+box-shadow:0 12px 40px rgba(0,0,0,.35);border-radius:12px}
 .chip{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--chip);color:var(--muted)}
 .chip.hot{background:var(--warn);color:#fff}
 .brow{background:var(--panel);border:1px solid var(--rule);border-left:4px solid var(--rule);
@@ -112,8 +121,12 @@ border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
   <main id="chat">
     <div id="bar"><button id="back" type="button">‹ Rooms</button><h2 id="roomName">Pick a room</h2>
       <button id="viewToggle" type="button">Board</button><span id="who"></span></div>
-    <section id="board" hidden aria-live="polite"><div id="boardSummary"></div>
-      <div id="boardRows"></div></section>
+    <section id="board" hidden aria-live="polite">
+      <div id="boardTop"><div id="boardSummary"></div>
+        <div id="boardModes"><button id="modeList" class="on" type="button">List</button>
+          <button id="modeQuorum" type="button">Quorum</button></div></div>
+      <div id="boardRows"></div>
+      <div id="quorum" hidden></div><div id="quorumCard" hidden></div></section>
     <div id="messages" aria-live="polite"></div>
     <div id="working"></div>
     <form id="composer"><input id="msgInput" placeholder="Message the room…" autocomplete="off">
@@ -122,6 +135,7 @@ border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
 </div>
 <script src="/web.js"></script>
 <script src="/board.js"></script>
+<script type="module" src="/quorum.js"></script>
 </body>
 </html>
 """

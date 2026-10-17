@@ -108,6 +108,7 @@ function rowState(name, presence, history, approvals, now) {
     }
   }
   const c = B.card[name];  // the outcome ledger for this agent's work here
+  if (c && c.survival !== null && c.survival !== undefined) r.keptPct = c.survival;
   if (c && c.commits) {
     r.card = c.commits + " commit(s) · "
       + (c.survival === null || c.survival === undefined ? ""
@@ -149,7 +150,12 @@ function render(rows) {
   });
   const list = $("boardRows");
   list.replaceChildren();
-  rows.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)).forEach((r) => {
+  rows.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name))
+    .forEach((r) => list.append(rowEl(r)));
+  if (!rows.length) list.append(el("p", "hint", "No agents in this room yet: quorus agent add …"));
+}
+
+function rowEl(r) {
     const row = el("article", "brow r" + r.rank);
     const head = el("div", "bhead");
     head.append(el("b", "", "@" + r.name), el("span", "tag", r.vendor),
@@ -185,9 +191,7 @@ function render(rows) {
     form.append(input);
     form.addEventListener("submit", (e) => { e.preventDefault(); ask(r.name, input); });
     row.append(form);
-    list.append(row);
-  });
-  if (!rows.length) list.append(el("p", "hint", "No agents in this room yet: quorus agent add …"));
+    return row;
 }
 
 function refresh() {
@@ -226,7 +230,11 @@ function refresh() {
     (presence || []).forEach((p) => {
       if (p.room === B.room && AGENT.test(p.name)) names.add(p.name);
     });
-    render([...names].map((n) => rowState(n, pres, history || [], approvals, now)));
+    const rows = [...names].map((n) => rowState(n, pres, history || [], approvals, now));
+    render(rows);
+    const members = B.members.length ? B.members : [...names];
+    document.dispatchEvent(new CustomEvent("quorus:rows",
+      { detail: { rows, history: history || [], room: B.room, members } }));
   });
 }
 
@@ -240,6 +248,17 @@ function show(on) {
   $("viewToggle").textContent = on ? "Chat" : "Board";
   if (on) { refresh(); if (!B.timer) B.timer = setInterval(refresh, 3000); }
   else if (B.timer) { clearInterval(B.timer); B.timer = null; }
+}
+
+function mode(m) {  // "list" or "quorum": two looks over the same rows
+  B.mode = m;
+  $("boardRows").hidden = m !== "list";
+  $("quorum").hidden = m !== "quorum";
+  $("quorumCard").hidden = true;
+  $("modeList").classList.toggle("on", m === "list");
+  $("modeQuorum").classList.toggle("on", m === "quorum");
+  if (m !== "quorum") document.dispatchEvent(new CustomEvent("quorus:quorum-off"));
+  refresh();
 }
 
 if (typeof module !== "undefined") {  // node tests only; browsers have no `module`
@@ -256,6 +275,9 @@ document.addEventListener("quorus:room", (e) => {
   }
 });
 $("viewToggle").addEventListener("click", () => show(!B.on));
+$("modeList").addEventListener("click", () => mode("list"));
+$("modeQuorum").addEventListener("click", () => mode("quorum"));
+window.QuorusBoard = { rowEl };  // the Quorum view's seat card is the board's row
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 })();
 """
