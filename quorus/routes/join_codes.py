@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hmac
 import os
-import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -21,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from quorus.auth.middleware import AuthContext, require_role, verify_auth
 from quorus.config import get_real_ip
+from quorus.relay_url import public_relay_url
 
 router = APIRouter(prefix="/v1/join", tags=["join-codes"])
 
@@ -46,52 +46,6 @@ class MintResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-# Host charset we accept when reconstructing the public relay URL from
-# request headers. Deliberately strict: anything else (quotes, ``$()``,
-# semicolons, spaces, slashes) must never reach the generated installer,
-# which interpolates the URL into a shell command line.
-_ALLOWED_RELAY_SCHEMES = ("http", "https")
-_HOST_RE = re.compile(r"^[A-Za-z0-9.-]+(:\d+)?$")
-
-
-def _validate_relay_url(value: str) -> str:
-    """Return ``value`` if it is a bare ``http(s)://host[:port]`` URL.
-
-    Raises 400 otherwise. This is the single choke point that keeps a
-    client-controlled ``X-Forwarded-Host`` from injecting shell
-    metacharacters into the join installer (see ``_request_relay_url``).
-    """
-    scheme, sep, host = value.partition("://")
-    scheme = scheme.lower()
-    if (
-        not sep
-        or scheme not in _ALLOWED_RELAY_SCHEMES
-        or not _HOST_RE.match(host)
-    ):
-        raise HTTPException(status_code=400, detail="invalid relay host")
-    return f"{scheme}://{host}"
-
-
-def _request_relay_url(request: Request) -> str:
-    """Reconstruct the public relay URL from the request, safely.
-
-    ``X-Forwarded-Host`` / ``X-Forwarded-Proto`` are attacker-controlled
-    unless every hop is trusted; a poisoned value would otherwise be baked
-    into the ``curl | sh`` installer and executed by whoever installs from
-    it. So: prefer the operator-configured ``QUORUS_PUBLIC_RELAY`` when
-    set, and otherwise only accept a strict ``http(s)://host[:port]``
-    shape, returning 400 on anything else.
-    """
-    configured = (os.environ.get("QUORUS_PUBLIC_RELAY") or "").strip().rstrip("/")
-    if configured:
-        return _validate_relay_url(configured)
-
-    scheme = request.headers.get("x-forwarded-proto", request.url.scheme).strip()
-    # Proxies append, so the left-most entry is the client-facing host.
-    host = request.headers.get("x-forwarded-host", request.url.netloc).split(",")[0].strip()
-    return _validate_relay_url(f"{scheme}://{host}")
 
 
 def _legacy_admin_secret() -> str:
@@ -170,7 +124,7 @@ async def mint_code(
     room_id, room_data = await room_svc.get(tenant_id, req.room)
     room_name = room_data.get("name", req.room)
 
-    relay_url = _request_relay_url(request).rstrip("/")
+    relay_url = public_relay_url(request).rstrip("/")
 
     # Create a scoped invite token so joiners can call /invite/{room}/join
     # without needing admin access. The token is embedded in the short code
@@ -354,7 +308,7 @@ async def install_script(
             status_code=404, detail="code not found or expired",
         )
 
-    relay_url = _request_relay_url(request).rstrip("/")
+    relay_url = public_relay_url(request).rstrip("/")
     # Insert the hyphen in the display code for aesthetics in the comment.
     display = (
         f"{canonical[:4]}-{canonical[4:]}"

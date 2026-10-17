@@ -87,6 +87,19 @@ def test_signup_response_json_has_no_raw_key_by_default():
         )
 
 
+def test_signup_source_routes_relay_url_through_validator():
+    """The signup handler must build its relay URL via the shared validator,
+    never by reading X-Forwarded-Host directly — that URL lands in the
+    copy-pasteable ``quorus init --relay-url`` command."""
+    source = inspect.getsource(auth_routes.signup)
+    assert "public_relay_url" in source, (
+        "signup must route the relay URL through quorus.relay_url.public_relay_url"
+    )
+    assert "x-forwarded-host" not in source, (
+        "signup must not read the raw forwarded host header"
+    )
+
+
 def test_signup_source_gates_raw_key_on_setup_local_header():
     """The signup handler's source must reference X-Quorus-Setup-Local and
     must only assign the raw key/setup_command when that flag is true."""

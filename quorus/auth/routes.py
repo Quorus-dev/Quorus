@@ -13,6 +13,7 @@ from sqlalchemy import select, update
 from quorus.admin.models import ApiKey, Participant, Tenant
 from quorus.auth.tokens import create_jwt, extract_key_prefix, generate_api_key, verify_api_key
 from quorus.config import get_real_ip
+from quorus.relay_url import public_relay_url
 from quorus.routes.helpers import _coerce_bool
 from quorus.storage.postgres import get_db_session
 
@@ -180,6 +181,12 @@ async def signup(
             headers={"Retry-After": str(_SIGNUP_WINDOW)},
         )
 
+    # Reconstruct the public relay URL up front and validate it: the
+    # forwarded headers are client-controlled and this URL lands in a
+    # copy-pasteable setup command, so a bad host must fail 400 before we
+    # create a tenant or mint a key.
+    relay_url = public_relay_url(request)
+
     async with get_db_session() as session:
         # If joining an existing tenant via invite code
         if req.join_tenant_id:
@@ -263,11 +270,9 @@ async def signup(
             req.workspace, req.name, tenant.id, prefix,
         )
 
-        # Build relay URL from request
-        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-        host = request.headers.get("x-forwarded-host", request.url.netloc)
-        relay_url = f"{scheme}://{host}"
-
+        # `relay_url` was validated at the top of the handler (see
+        # public_relay_url) so it is safe to interpolate into next_steps /
+        # setup_command.
         is_local_setup = x_quorus_setup_local == "1"
         return SignupResponse(
             tenant_slug=tenant.slug,
