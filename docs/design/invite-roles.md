@@ -1,7 +1,7 @@
 # Invites without the shared secret (step 1) and observer links (step 3)
 
-Status: design, revision 2 after codex's block on e1798ca0. No code merges
-before codex's ✅.
+Status: design, revision 3 (codex blocked rev 2's migration, 45e1f921). No code
+merges before codex's ✅.
 
 ## The gap
 
@@ -35,7 +35,8 @@ What already exists and is reused:
 | Invite as bearer proof needs atomic expiry, revocation and bounded uses | Invites become server-side records; redeem is one SQLite transaction |
 | Invite signing falls back to the distributed shared secret (`relay.py:404`) | Shared-secret relays issue opaque random invite codes, stored hashed; no JWT, no signing secret |
 | Retire the old unauthenticated join path | `/invite/{room}` and `/invite/{room}/join` answer 410 on shared-secret relays |
-| A name prefix is not ownership | Claims record an immutable `owner` and `kind`; per-request parent checks; agent cap |
+| A name prefix is not ownership | Claims record an immutable `owner`, `owner_claim_id` (generation) and `kind`; per-request parent checks; agent cap |
+| (rev 2) Migrating old rows to human gives daemon keys human authority | Old rows become `unclassified`: they can't approve or own agents until the relay owner classifies them |
 | Agents must never gain approval authority | Approval decisions require `kind=human`, whatever the name |
 | Observer limits must cover every mutation | Default-deny: observers get an allowlist, not a refusal list |
 | Observer turns read-only even with `trust: members` | The daemon reads the sender's role from the relay, and `observer` forces read-only |
@@ -79,16 +80,29 @@ today's behaviour for the owner's own machines and says it hands over admin.
 
 ## Agents belong to a person, not to a prefix
 
-- Claims gain `owner` and `kind` (`human` | `agent`). Both are set at insert and
-  never updated. Existing rows migrate to `kind=human, owner=NULL`.
+- Claims gain `kind` (`human` | `agent` | `unclassified`), `owner` and
+  `owner_claim_id`, all set at insert and never updated by any route.
+- Migration (codex, rev 2 block): existing rows include daemon keys, so they
+  become `kind=unclassified`, not human. An unclassified claim can sign in and
+  act as a plain member, but it can't decide approvals, own agents, or mint
+  invites. Only the relay owner can classify it, on the relay machine (like
+  `release-name`): `quorus classify-name <name> human` or `quorus classify-name
+  <name> agent --owner <human>`. Each change is logged.
+- New claims through the shared-secret `claim-name` must say what they are.
+  The caller holds admin, so the declaration is trusted: reflexd sends
+  `kind=agent` with its owner (`REFLEXD_OWNER`). `quorus phone`, `share-branch`
+  and `join` send `kind=human`. A request with no kind stores `unclassified`.
 - `POST /v1/auth/claim-name` with a participant JWT of `kind=human` claims an
-  agent: `kind=agent, owner=<sub>`. At most 8 agents per owner. The name is
+  agent: `kind=agent`, `owner=<sub>`, `owner_claim_id=<the owner's current
+  claim generation>`. At most 8 agents per owner generation. The name is
   validated as usual. `<owner>-<suffix>` is required as a readability
-  convention, not as proof: proof is the `owner` column.
-- An agent's JWT is honoured only while its owner's claim is current and the
-  owner is a member of the room being touched. The agent's room role is the
-  lower of its own and its owner's (`observer` < `member`). Kicking or
-  downgrading the owner covers their agents on the next request.
+  convention, not as proof: proof is the owner columns.
+- An agent's JWT is honoured only while its owner's claim still has the same
+  generation (`owner_claim_id`). If the owner's name is released and claimed
+  again, by them or by anyone else, every agent from the old generation is dead.
+  The owner must also be a member of the room being touched. The agent's room
+  role is the lower of its own and its owner's (`observer` < `member`). Kicking
+  or downgrading the owner covers their agents on the next request.
 - Owners add their own agents (`owner == caller`) to rooms they belong to
   (change at `rooms.py:132`). They can't add anyone else.
 - Approval decisions (`POST /v1/approvals/{id}/decision`) require `kind=human`
@@ -137,7 +151,10 @@ never automatic.
 - Agents: `alice` claims `alice-codex`; a 9th agent is refused; `bob` can't add
   `alice-codex` to a room. Kicking `alice` makes `alice-codex` 403 on the next
   request.
-- An agent named like a human (`kind=agent`) gets 403 on an approval decision.
+- An agent named like a human (`kind=agent`) gets 403 on an approval decision,
+  and so does a migrated (`unclassified`) daemon key.
+- Releasing `alice` and claiming her again (a new generation) kills
+  `alice-codex` from the old generation, even though the owner name is the same.
 - The route-table walk: every mutating room-scoped route refuses an observer.
 - Daemon: an observer's @-mention in a `trust: members` autonomous room gets a
   read-only turn.
