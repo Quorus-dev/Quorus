@@ -64,7 +64,11 @@ def record_provenance(repo: Path, old: str, new: str, meta: dict[str, Any]) -> i
     note = json.dumps({**meta, "published_at": datetime.now(timezone.utc).isoformat()},
                       sort_keys=True)
     for sha in shas:
-        _git(repo, "notes", f"--ref={NOTES_REF}", "add", "-f", "-m", note, sha)
+        # A notes ref is a commit, and git refuses one without an identity: on
+        # a fresh machine (and on CI) every note silently failed, so the
+        # scorecard saw nothing. The ledger signs its own notes.
+        _git(repo, "-c", "user.name=Quorus ledger", "-c", "user.email=ledger@quorus.local",
+             "notes", f"--ref={NOTES_REF}", "add", "-f", "-m", note, sha)
     return len(shas)
 
 
