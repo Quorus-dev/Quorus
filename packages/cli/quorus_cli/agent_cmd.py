@@ -7,7 +7,8 @@ The user-facing way to do what scripts/dogfood.sh did by hand (2026-10-09):
     quorus agent add codex  --room build
 
 Each agent is ``<you>-<tool>`` (arav-claude). It joins the room and gets ONE
-always-on wake daemon (launchd on macOS) that listens to every room the
+always-on wake daemon (launchd on macOS; a detached process elsewhere,
+see agent_proc) that listens to every room the
 agent is in and runs your locally logged-in ``claude`` / ``codex`` CLI in the
 room's repo when work arrives. Adding the same agent to another room only
 joins it; the daemon is shared. An existing daemon for the same agent
@@ -30,6 +31,7 @@ import httpx
 
 from quorus.config import load_config, resolve_config_dir
 from quorus.private_files import write_private_text
+from quorus_cli import agent_proc
 
 # opencode = any model: Ollama (local), OpenRouter, DeepSeek, Qwen, Gemini...
 HARNESSES = ("claude", "codex", "gemini", "opencode")
@@ -55,6 +57,8 @@ def _uid() -> int:
 
 
 def _launchd_labels() -> list[str]:
+    if sys.platform != "darwin":
+        return []
     try:
         out = subprocess.run(["launchctl", "list"], capture_output=True, text=True,
                              timeout=10, check=False).stdout
@@ -67,7 +71,11 @@ def _running_daemon_for(name: str) -> str | None:
     """An already-running wake daemon for *name*: a launchd job (ours or
     dogfood's) OR any reflexd process for it (e.g. started by the legacy
     reflexd-manager or `quorus reflexd start`). Two daemons for one agent
-    answer every message twice."""
+    answer every message twice. The pid file comes first: minimal Linux
+    images ship without pgrep."""
+    pid = agent_proc.live_pid(_agents_dir(), name)
+    if pid is not None:
+        return f"pid {pid}"
     for label in _launchd_labels():
         if label.endswith(f".{name}") and ("agent." in label or "reflexd." in label):
             return label
@@ -255,11 +263,26 @@ def _add(args: Any, console: Any) -> None:
                           f"remove {name}` and add it again to switch models[/]")
     else:
         where = _start_daemon(cfg, name, cred, legacy, model)
-        console.print(f"[success]✓[/] @{name} is running [dim]({where}; restarts at "
-                      "login)[/]")
-    console.print(f"\n[dim]Try it:[/] quorus say {args.room} \"@{name} hello, what can "
-                  "you do in this repo\"" if repo else
-                  f"\n[dim]Give it a repo to work in:[/] quorus room bind {args.room} <path>")
+        # Only launchd brings it back; elsewhere it is a plain detached process.
+        lasts = ("restarts at login" if sys.platform == "darwin" else
+                 "keeps running after you close this terminal, but not after a "
+                 "reboot: run this command again then")
+        console.print(f"[success]✓[/] @{name} is running [dim]({where}; {lasts})[/]")
+    if repo is not None or _room_bound(args.room):
+        console.print(f"\n[dim]Try it:[/] quorus say {args.room} \"@{name} hello, what "
+                      "can you do in this repo\"")
+    else:
+        console.print(f"\n[dim]Give it a repo to work in:[/] quorus room bind "
+                      f"{args.room} <path>")
+
+
+def _room_bound(room: str) -> bool:
+    try:
+        data = json.loads((Path.home() / ".quorus" / "room-bindings.json")
+                          .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and bool(data.get(room))
 
 
 def _gemini_has_key() -> bool:
@@ -312,33 +335,40 @@ def _readiness_warnings(harness: str, model: str | None) -> list[str]:
 
 def _list(console: Any) -> None:
     """Your agents only: <you>-<tool>. Listing every quorus launchd job showed
-    other identities' agents too (review 2026-10-09)."""
+    other identities' agents too (review 2026-10-09). Without launchd the
+    agents are pid files; a dead one is listed so a reboot isn't silent."""
     me = (load_config().get("instance_name") or "").strip()
     labels = [lb for lb in _launchd_labels()
               if ("agent." in lb or "reflexd." in lb)
               and lb.rsplit(".", 1)[-1].startswith(f"{me}-")]
-    if not labels:
+    rows = [(lb.rsplit(".", 1)[-1], lb, True) for lb in labels]
+    seen = {name for name, _, _ in rows}
+    for pf in sorted(_agents_dir().glob(f"{me}-*.pid")) if me else []:
+        if pf.stem not in seen:
+            pid = agent_proc.live_pid(_agents_dir(), pf.stem)
+            rows.append((pf.stem, f"pid {pid}" if pid else "", pid is not None))
+    if not rows:
         console.print(f"[dim]no agents for @{me} running on this machine — add one: "
                       "quorus agent add claude --room <room>[/]")
         return
-    for lb in sorted(labels):
-        console.print(f"  [success]●[/] @{lb.rsplit('.', 1)[-1]}  [dim]{lb}[/]")
+    for name, where, up in sorted(rows):
+        if up:
+            console.print(f"  [success]●[/] @{name}  [dim]{where}[/]")
+        else:
+            console.print(f"  [error]○[/] @{name}  [dim]stopped (reboot or crash): start "
+                          "it with the same `quorus agent add` command[/]")
 
 
 def _remove(args: Any, console: Any) -> None:
     label = LABEL_PREFIX + args.name
     plist = _LA / f"{label}.plist"
-    was_running = plist.exists() or (_agents_dir() / f"{args.name}.pid").exists()
-    subprocess.run(["launchctl", "bootout", f"gui/{_uid()}/{label}"],
-                   capture_output=True, check=False, timeout=15)
-    plist.unlink(missing_ok=True)
-    pidf = _agents_dir() / f"{args.name}.pid"
-    if pidf.exists():
-        try:
-            os.kill(int(pidf.read_text()), 15)
-        except (OSError, ValueError):
-            pass
-        pidf.unlink(missing_ok=True)
+    was_running = (plist.exists()
+                   or agent_proc.live_pid(_agents_dir(), args.name) is not None)
+    if sys.platform == "darwin":  # no launchctl elsewhere: it crashed `remove` on Linux
+        subprocess.run(["launchctl", "bootout", f"gui/{_uid()}/{label}"],
+                       capture_output=True, check=False, timeout=15)
+        plist.unlink(missing_ok=True)
+    agent_proc.stop(_agents_dir(), args.name)
     left = _leave_all_rooms(args.name)
     if not was_running and not left:
         console.print(f"[error]✗[/] no agent @{args.name} here — see [accent]quorus agent "
