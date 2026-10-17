@@ -1126,16 +1126,17 @@ LINGER_S = 5.0
 
 def _kill_group(proc: Any) -> None:
     """SIGKILL the harness and everything in its process group."""
-    if getattr(proc, "pid", None) is None:
-        return
+    pid = getattr(proc, "pid", None)
+    if isinstance(pid, int) and pid > 0:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+            return
+        except OSError:  # no group (or already gone): kill the process itself
+            pass
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
-        if proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+        proc.kill()
+    except (ProcessLookupError, OSError):
+        pass
 
 
 async def _reap(proc: Any, timeout: float = 10.0) -> None:
