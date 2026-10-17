@@ -350,11 +350,16 @@ def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     if args and args[0] in ("rebase", "merge", "commit") and not _has_identity(cwd):
         env = {**os.environ, **{k: v for k, v in _FALLBACK_IDENTITY.items()
                                 if k not in os.environ}}
-    # commit/rebase/merge run the repo's hooks (pre-commit test suites take
-    # minutes): 30s killed them mid-operation. Plumbing stays fast.
     slow = bool(args) and args[0] in ("rebase", "merge", "commit", "worktree")
-    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
-                          text=True, timeout=900 if slow else 60, check=False, env=env)
+    # Never run hooks from the daemon. Its git runs unsandboxed as the owner,
+    # and a sandboxed agent can edit tracked hooks (husky, .githooks,
+    # pre-commit `repo: local`) in its worktree: commit/rebase/merge here
+    # would execute them outside the sandbox, and a post-merge hook would
+    # fire in the human's main checkout (2026-10-16 audit). The owner's
+    # hooks still run on the owner's and the agent's own commits.
+    return subprocess.run(["git", "-c", f"core.hooksPath={os.devnull}", *args],
+                          cwd=str(cwd), capture_output=True, text=True,
+                          timeout=900 if slow else 60, check=False, env=env)
 
 
 def agent_worktree(repo: Path, participant: str) -> Worktree | None:
