@@ -2224,6 +2224,7 @@ class Reflexd:
             (prior_session[:8] + "…") if prior_session else "new",
             "mission" if mission else "chat",
         )
+        failure_reason = None
         try:
             # Only pass worktree extras when used: adapters written against
             # the older run() signature keep working.
@@ -2257,7 +2258,14 @@ class Reflexd:
             )
         except Exception as exc:
             logger.warning("harness %s raised: %s", harness, exc)
-            return
+            # Keep the D7 self-reply check: an adapter can fail after the
+            # agent already posted its answer. Never expose raw exception
+            # text here, which may contain credentials or prompt contents.
+            failure_reason = (
+                "timed out" if isinstance(exc, (TimeoutError, asyncio.TimeoutError))
+                else f"crashed ({type(exc).__name__})"
+            )
+            reply = "[reflexd] harness errored"
 
         reply = (reply or "").strip()
         if reflexd_wake.is_no_reply(reply):
@@ -2316,6 +2324,13 @@ class Reflexd:
             # Never post a junk sentinel into a human's room.
             logger.warning("harness %s produced no reply text room=%s", harness, room)
             return
+
+        if failure_reason:
+            status = (
+                f"⚠ {harness} work session {failure_reason}. "
+                "Mention me to retry."
+            )
+            reply = reply.replace("[reflexd] harness errored", status, 1)
 
         self._alert_owner(room, reply)
 

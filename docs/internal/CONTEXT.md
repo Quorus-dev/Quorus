@@ -141,6 +141,14 @@ Next:
 
 ## Recent Changes
 
+### Harness exception visibility (2026-10-17)
+
+Raised harness errors now post a short crash/timeout status on the wake's
+thread instead of silently returning. Only the exception type is exposed;
+the existing self-reply check suppresses false failures after an agent's
+own answer. Regression tests cover crashes, timeouts, self-replies and
+cancellation (`tests/test_reflexd_harness_failure.py`).
+
 ### Proactive + notified for every agent; lead; catch-up (2026-10-17)
 
 Verified live with claude + codex + gemini + opencode in one room (real
