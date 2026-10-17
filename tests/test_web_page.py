@@ -71,7 +71,7 @@ def test_the_app_never_grows_past_the_viewport() -> None:
     sized itself to the whole message list: a 30-message room was 3800px tall
     and the Quorum stage drew its table below the fold (2026-10-18)."""
     assert "#app{display:grid;grid-template-columns:260px 1fr;grid-template-rows:minmax(0,1fr);" \
-        "height:100%}" in DASHBOARD_HTML
+        "height:100vh;height:100dvh;overflow:hidden}" in DASHBOARD_HTML
 
 
 def test_chat_keeps_the_newest_message_in_view_when_the_box_resizes() -> None:
@@ -79,3 +79,11 @@ def test_chat_keeps_the_newest_message_in_view_when_the_box_resizes() -> None:
     which left the newest message below the fold (review of 608f638b)."""
     assert "new ResizeObserver(() => { if (wasAtBottom) box.scrollTop = box.scrollHeight; })" \
         in DASHBOARD_JS
+
+
+def test_only_the_messages_scroll_not_the_page() -> None:
+    """Live 2026-10-17: the grid row grew with the chat, the whole page
+    scrolled, and the room list and header scrolled out of sight."""
+    assert "grid-template-rows:minmax(0,1fr)" in DASHBOARD_HTML
+    assert "height:100dvh;overflow:hidden" in DASHBOARD_HTML
+    assert "min-height:0;height:100%" in DASHBOARD_HTML
