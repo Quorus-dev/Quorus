@@ -41,3 +41,13 @@ async def test_ps_empty_state_says_what_spawn_does(monkeypatch, capsys) -> None:
     assert "quorus agent add <tool> --room <room>" in out
     assert "quorus spawn <room> <name>" in out
     assert "drive a CLI in this terminal" in out
+
+
+def test_grouped_help_names_every_harness_agent_add_supports(capsys) -> None:
+    """Release check: `quorus --help` listed Claude/Codex/Gemini but not opencode."""
+    from quorus_cli.cli import _print_grouped_help
+
+    _print_grouped_help()
+    line = next(x for x in capsys.readouterr().out.splitlines() if "agent add <tool>" in x)
+    for tool in ("Claude", "Codex", "Gemini", "opencode"):
+        assert tool in line, line
