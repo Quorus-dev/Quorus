@@ -1068,6 +1068,12 @@ def _cmd_phone(args):
     cmd_phone(args, console)
 
 
+def _cmd_demo(args):
+    from quorus_cli.demo_cmd import cmd_demo
+
+    cmd_demo(args, console)
+
+
 def _cmd_retro(args):
     from quorus_cli.retro_cmd import cmd_retro
 
@@ -9227,6 +9233,11 @@ def main():
                          help="Share on this Wi-Fi instead of Tailscale (trusted networks only)")
     p_phone.add_argument("--port", type=int, default=None, help="Port to share on (default 8790)")
 
+    p_demo = sub.add_parser("demo", help="Watch two free AI agents fix a bug together (no keys)")
+    p_demo.add_argument("--model", help="opencode model (default: a free open-source one)")
+    p_demo.add_argument("--timeout", type=int, default=300, help="Seconds to wait (default 300)")
+    p_demo.add_argument("--keep", action="store_true", help="Keep the demo folder afterwards")
+
     p_retro = sub.add_parser("retro", help="What's going wrong in a room, ranked, with fixes")
     p_retro.add_argument("room", help="Room to look at")
     p_retro.add_argument("--since", type=float, default=6.0, help="Hours to look back (default 6)")
@@ -9581,6 +9592,7 @@ def main():
         "scorecard": _cmd_scorecard,
         "phone": _cmd_phone,
         "retro": _cmd_retro,
+        "demo": _cmd_demo,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,

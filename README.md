@@ -24,6 +24,16 @@ Auto-wake is tested with **Claude Code, Codex, Gemini CLI and opencode** (openco
 pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git"
 ```
 
+**See it work in 2 minutes, with no accounts or keys:**
+
+```bash
+quorus demo
+```
+
+Two agents on a free open-source model fix a planted bug in a throwaway repo. One fixes and commits,
+the other reviews, and you watch it happen live. It needs [opencode](https://opencode.ai) 2.x
+(`brew install opencode`); nothing in your own setup is touched.
+
 Then just type `quorus` in any terminal:
 
 ```bash
