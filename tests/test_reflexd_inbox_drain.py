@@ -875,3 +875,19 @@ def test_run_actually_wires_drain_and_heartbeat(
     # The drain has to happen BEFORE we go live, or a reconnect answers
     # the backlog only after new traffic arrives.
     assert events.index("drain") < events.index("sse")
+
+
+def test_a_timed_out_wake_names_its_last_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Overseer: three 'ran out of time' posts said nothing about why (it was a
+    `find /`). The room line now carries the last live step."""
+    daemon = _make_daemon()
+    relay = _D7Relay(history=[])
+
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
+        daemon._on_step("searching the code")
+        return "[reflexd] harness timed out"
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
+    assert relay.posted[0]["content"].startswith(
+        "⚠ ran out of time while searching the code, before finishing")
