@@ -125,9 +125,10 @@ def test_lines_reach_the_handler_while_the_process_runs() -> None:
     """A real subprocess: each line arrives before the process exits, an
     oversized line (a tool result) is skipped, and stdout is kept whole."""
     big = "x" * (reflexd.STEP_LINE_MAX + 10)
+    # Built inside the child: one 256 KB argv string is over Linux's per-arg cap.
     script = ("import sys, time\n"
               "print('one', flush=True); time.sleep(0.3)\n"
-              f"print('{big}', flush=True)\n"
+              f"print('x' * {len(big)}, flush=True)\n"
               "print('two', flush=True); time.sleep(0.3)\n"
               "sys.stderr.write('err')\n")
     seen: list[tuple[str, bool]] = []

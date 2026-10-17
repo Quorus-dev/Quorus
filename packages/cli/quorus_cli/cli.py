@@ -1210,6 +1210,12 @@ def _cmd_fetch(args):
     cmd_fetch(args, console)
 
 
+def _cmd_replay(args):
+    from quorus_cli.replay_cmd import cmd_replay
+
+    cmd_replay(args, console)
+
+
 def _cmd_retro(args):
     from quorus_cli.retro_cmd import cmd_retro
 
@@ -9495,6 +9501,14 @@ def main():
     p_retro.add_argument("--post", action="store_true",
                          help="Post the summary to the room (for its lead to act on)")
 
+    p_replay = sub.add_parser(
+        "replay", help="Write a shareable page of how a room's agents did a task")
+    p_replay.add_argument("room", help="Room to replay")
+    p_replay.add_argument("--since", type=float, default=2.0,
+                          help="Hours to look back (default 2)")
+    p_replay.add_argument("--repo", help="Repo for the commits (default: the room's binding)")
+    p_replay.add_argument("--out", help="Output file (default quorus-replay-<room>.html)")
+
     p_score = sub.add_parser(
         "scorecard", help="Which agent and vendor's work holds up in this repo")
     p_score.add_argument("--repo", help="Repo path (default: current directory)")
@@ -9844,6 +9858,7 @@ def main():
         "retro": _cmd_retro,
         "share-branch": _cmd_share_branch,
         "fetch": _cmd_fetch,
+        "replay": _cmd_replay,
         "demo": _cmd_demo,
         "duel": _cmd_duel,
         "turnguard": _cmd_turnguard,

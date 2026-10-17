@@ -54,7 +54,7 @@ def test_outcomes_measure_tests_survival_and_reverts(tmp_path: Path) -> None:
     ledger.record_provenance(repo, mark, "main", {"agent": "a-gemini", "vendor": "gemini"})
     _commit(repo, "refactor: rewrite", {"other.py": "1\nz\nz\nz\n"})  # 3 of 4 lines gone
     bad = _commit(repo, "fix: bad", {"bad.py": "oops\n"})
-    _git(repo, "revert", "--no-edit", bad)
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@x", "revert", "--no-edit", bad)
     rows = {o.sha: o for o in ledger.outcomes(repo, f"{base}..HEAD")}
     assert rows[kept].has_tests and rows[kept].survival == 1.0 and rows[kept].agent == "a-codex"
     assert rows[churned].survival == 0.25 and rows[churned].vendor == "gemini"
@@ -115,3 +115,18 @@ def test_daemon_publish_attaches_provenance(tmp_path: Path) -> None:
     assert status and "published 1 commit" in status
     prov = ledger.read_provenance(repo, _git(repo, "rev-parse", "main"))
     assert prov and prov["vendor"] == "codex" and prov["model"] == "gpt-6"
+
+
+def test_notes_need_no_git_identity(tmp_path: Path, monkeypatch) -> None:
+    """Fresh machines and CI have no user.name: notes used to fail silently."""
+    repo, base = _repo(tmp_path)
+    _commit(repo, "feat: y", {"y.py": "y = 2\n"})
+    cfg = tmp_path / "no-identity-gitconfig"
+    cfg.write_text("[user]\n\tuseConfigOnly = true\n")  # like CI: no guessed identity
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME",
+                "GIT_COMMITTER_EMAIL", "EMAIL"):
+        monkeypatch.delenv(var, raising=False)
+    assert ledger.record_provenance(repo, base, "HEAD", {"agent": "a-codex"}) == 1
+    assert (ledger.read_provenance(repo, "HEAD") or {}).get("agent") == "a-codex"
