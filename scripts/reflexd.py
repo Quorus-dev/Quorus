@@ -155,6 +155,8 @@ def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
 ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
 PACING_PATH = Path.home() / ".quorus" / "pacing.json"
 PACE_WINDOW_S = 3600.0
+MAX_WAKE_ATTEMPTS = 2
+GEMINI_TIMEOUT_S = 10 * 60  # its quiet internal retries hung one wake for 55 min
 
 
 def pace_for(participant: str, *, path: Path | None = None) -> int | None:
@@ -1404,6 +1406,7 @@ class HeadlessAdapter:
             except OSError as exc:
                 logger.warning("could not write gemini settings: %s", exc)
         flags = reflexd_models.gemini_flags(mode=mode, model=self.model)
+        timeout_s = min(timeout_s or self.timeout_s, GEMINI_TIMEOUT_S)
         return await self._run_with_resume(
             lambda sid: build_gemini_argv(
                 context, extra=flags + (["--resume", sid] if sid else [])),
@@ -1974,6 +1977,7 @@ class Reflexd:
         # every one of them after each restart (live run 2026-10-08: a
         # launchd restart re-ran an already-claimed build task).
         self._handled_path = config.runtime_dir / f"handled-{config.participant_name}.json"
+        self._attempts_path = config.runtime_dir / f"attempts-{config.participant_name}.json"
         self._handled_order: list[str] = self._load_handled()
         self._handled_ids: set[str] = set(self._handled_order)
         self._inflight: set[str] = set()
@@ -2259,12 +2263,53 @@ class Reflexd:
         """One wake, shown to the room as presence ``busy`` while it runs:
         before this, nobody could tell a working agent from a dead one
         until its reply landed (sometimes minutes later)."""
+        mid = envelope_canonical_id(envelope) or ""
+        if mid and self._attempt(mid) > MAX_WAKE_ATTEMPTS:
+            # A wake that never finished (hung harness, crash, restart) was
+            # replayed on every daemon restart forever: Gemini re-ran one stuck
+            # task 4 times overnight (2026-10-17). Give up after two tries.
+            logger.warning("giving up on %s after %d unfinished attempts", mid,
+                           MAX_WAKE_ATTEMPTS)
+            self._finish_attempt(mid)
+            await self._post_status(
+                relay, envelope.get("room") or "", envelope,
+                f"@{self.config.participant_name} couldn't finish this after "
+                f"{MAX_WAKE_ATTEMPTS} tries and dropped it; @-mention it again to retry")
+            return
         await self._set_presence(relay, "busy", envelope.get("room") or "")
         try:
             await self._wake_and_reply_inner(
                 relay, envelope, triage=triage, reason=reason)
         finally:
             await self._set_presence(relay, "active", "")
+        if mid:
+            self._finish_attempt(mid)  # reached only when the wake completed
+
+    def _attempt(self, mid: str) -> int:
+        """Count a start for *mid* (persisted, so restarts count); return it."""
+        data = self._load_attempts()
+        data[mid] = int(data.get(mid, 0)) + 1
+        self._save_attempts(data)
+        return data[mid]
+
+    def _finish_attempt(self, mid: str) -> None:
+        data = self._load_attempts()
+        if data.pop(mid, None) is not None:
+            self._save_attempts(data)
+
+    def _load_attempts(self) -> dict[str, int]:
+        try:
+            data = json.loads(self._attempts_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_attempts(self, data: dict[str, int]) -> None:
+        try:
+            keep = dict(list(data.items())[-200:])
+            write_private_json(self._attempts_path, keep)
+        except OSError as exc:
+            logger.debug("attempts save failed: %s", exc)
 
     async def _set_presence(self, relay: RelayClient, status: str, room: str) -> None:
         self._presence = (status, room)
