@@ -33,6 +33,8 @@ router = APIRouter(prefix="/v1/join", tags=["join-codes"])
 class MintRequest(BaseModel):
     room: str = Field(..., min_length=1, max_length=128)
     ttl_days: int = Field(default=1, ge=1, le=7)
+    # Shared-secret relays: how many people one code admits (each redeem spends one).
+    max_uses: int = Field(default=1, ge=1, le=20)
 
 
 class MintResponse(BaseModel):
@@ -147,33 +149,27 @@ async def mint_code(
 
     relay_url = _request_relay_url(request).rstrip("/")
 
-    # Create a scoped invite token so joiners can call /invite/{room}/join
-    # without needing admin access. The token is embedded in the short code
-    # payload and lets anyone with the code join the room.
-    invite_svc = request.app.state.invite_service
-    invite_token = invite_svc.create_token(
-        tenant_id=tenant_id,
-        room_id=room_id,
-        issuer=auth.sub or "admin",
-        role="member",
-        ttl=req.ttl_days * 86400,
-    )
+    if auth.is_legacy and not os.environ.get("DATABASE_URL"):
+        # Shared-secret relay: never ship the secret (it is admin). The payload
+        # carries an opaque, use-limited code that `quorus join` redeems for the
+        # joiner's own participant key (docs/weekend/invite-roles.md).
+        import asyncio
 
-    # Build a payload the CLI already knows how to decode — same shape as
-    # `_encode_join_token` so `quickjoin` can accept it without changes.
-    payload: dict = {
-        "r": relay_url,
-        "n": room_name,
-        "t": tenant_id,  # Tenant ID so joiners can join this tenant
-        "i": invite_token,  # Scoped invite token for /invite/{room}/join
-    }
-    # For legacy (RELAY_SECRET) admins we ship the secret directly so the
-    # recipient can auth without a key exchange; for JWT-role-admin we
-    # include the tenant_id so the CLI can request to join that tenant.
-    if auth.is_legacy:
-        secret = _legacy_admin_secret()
-        if secret:
-            payload["s"] = secret
+        from quorus.auth import invite_codes
+        from quorus.auth.participant_routes import _store
+
+        code, _inv = await asyncio.to_thread(
+            invite_codes.mint, _store(request), room_id=room_id, room_name=room_name,
+            role="member", issuer=auth.sub or "admin", ttl_s=req.ttl_days * 86400,
+            max_uses=req.max_uses)
+        payload: dict = {"r": relay_url, "n": room_name, "c": code, "v": 2}
+    else:
+        # API-key relays: a scoped invite token the joiner presents at signup.
+        # Same shape as `_encode_join_token`, so `quickjoin` decodes either path.
+        invite_token = request.app.state.invite_service.create_token(
+            tenant_id=tenant_id, room_id=room_id, issuer=auth.sub or "admin",
+            role="member", ttl=req.ttl_days * 86400)
+        payload = {"r": relay_url, "n": room_name, "t": tenant_id, "i": invite_token}
 
     svc = request.app.state.join_code_service
     display_code, expires_at = await svc.mint(

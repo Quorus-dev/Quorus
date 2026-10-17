@@ -1,0 +1,141 @@
+"""Invite codes on shared-secret relays (docs/weekend/invite-roles.md, step 1).
+
+An invite used to carry ``RELAY_SECRET``, which is admin. Now the relay keeps
+an invite record and hands out an opaque random code, stored only as sha256.
+Redeeming it claims a name and returns that name's participant key, so the
+joiner never holds the secret. Expiry, revocation and a bounded number of uses
+are checked and spent in one SQLite transaction (codex, review of e1798ca0).
+Nothing is signed, so there is no signing secret to fall back to.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import secrets
+import sqlite3
+import time
+from dataclasses import dataclass
+
+ROLES = ("member",)  # "observer" arrives with its enforcement (step 3), not before
+MAX_USES = 20
+MAX_TTL_S = 7 * 86400
+CODE_PREFIX = "qi_"
+
+
+def _hash(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
+def create_table(db: sqlite3.Connection) -> None:
+    db.execute("CREATE TABLE IF NOT EXISTS invites (id TEXT PRIMARY KEY, "
+               "code_hash TEXT NOT NULL UNIQUE, room_id TEXT NOT NULL, "
+               "room_name TEXT NOT NULL, role TEXT NOT NULL, issuer TEXT NOT NULL, "
+               "created_at REAL NOT NULL, expires_at REAL NOT NULL, "
+               "max_uses INTEGER NOT NULL, uses INTEGER NOT NULL DEFAULT 0, "
+               "revoked INTEGER NOT NULL DEFAULT 0)")
+
+
+@dataclass(frozen=True)
+class Invite:
+    id: str
+    room_id: str
+    room_name: str
+    role: str
+    expires_at: float
+    max_uses: int
+    uses: int
+
+
+class InviteError(Exception):
+    """Redeem refused. ``status`` is the HTTP code: 403 unusable, 409 name taken."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status, self.detail = status, detail
+
+
+def _connect(store) -> sqlite3.Connection:
+    # Autocommit mode so BEGIN IMMEDIATE takes the write lock *before* the read:
+    # two redeems racing for the last use can't both see it free.
+    return sqlite3.connect(store._path, isolation_level=None)
+
+
+def mint(store, *, room_id: str, room_name: str, role: str, issuer: str,
+         ttl_s: int, max_uses: int = 1) -> tuple[str, Invite]:
+    """A new code (returned once) and its record."""
+    if role not in ROLES:
+        raise ValueError(f"role must be one of {ROLES}")
+    if not 1 <= max_uses <= MAX_USES:
+        raise ValueError(f"max_uses must be 1..{MAX_USES}")
+    ttl_s = max(60, min(int(ttl_s), MAX_TTL_S))
+    code = CODE_PREFIX + secrets.token_urlsafe(24)
+    now = time.time()
+    inv = Invite(id="inv_" + secrets.token_hex(6), room_id=room_id, room_name=room_name,
+                 role=role, expires_at=now + ttl_s, max_uses=max_uses, uses=0)
+    with store._lock, store._connect() as db:
+        db.execute("INSERT INTO invites (id, code_hash, room_id, room_name, role, issuer, "
+                   "created_at, expires_at, max_uses) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   (inv.id, _hash(code), room_id, room_name, role, issuer, now,
+                    inv.expires_at, max_uses))
+    return code, inv
+
+
+def redeem(store, code: str, name: str) -> tuple[str, Invite]:
+    """Spend one use of *code* and claim *name* (kind=human), atomically.
+
+    Returns ``(participant_key, invite)``. A taken name raises 409 without
+    spending the use; an unknown, revoked, expired or used-up code raises 403.
+    """
+    from quorus.auth.participant_keys import insert_claim
+
+    if not code.startswith(CODE_PREFIX):
+        raise InviteError(403, "invalid invite code")
+    with store._lock:
+        db = _connect(store)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT id, room_id, room_name, role, expires_at, max_uses, "
+                             "uses, revoked FROM invites WHERE code_hash = ?",
+                             (_hash(code),)).fetchone()
+            if row is None or row[7] or row[4] <= time.time() or row[6] >= row[5]:
+                db.execute("ROLLBACK")
+                raise InviteError(403, "this invite is invalid, expired or used up")
+            key = insert_claim(db, name, "human", None, None)
+            if key is None:
+                db.execute("ROLLBACK")
+                raise InviteError(409, f"the name {name!r} is already claimed on this "
+                                       "relay; pick another with --name")
+            db.execute("UPDATE invites SET uses = uses + 1 WHERE id = ?", (row[0],))
+            db.execute("COMMIT")
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+        finally:
+            db.close()
+    return key, Invite(id=row[0], room_id=row[1], room_name=row[2], role=row[3],
+                       expires_at=row[4], max_uses=row[5], uses=row[6] + 1)
+
+
+def undo_redeem(store, invite_id: str, name: str) -> None:
+    """Compensation when joining the room failed after a redeem: give the use back
+    and free the name, so the joiner can retry."""
+    with store._lock, store._connect() as db:
+        db.execute("DELETE FROM claims WHERE name = ? AND kind = 'human' AND owner IS NULL",
+                   (name,))
+        db.execute("UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?", (invite_id,))
+
+
+def revoke(store, invite_id: str) -> bool:
+    with store._lock, store._connect() as db:
+        return db.execute("UPDATE invites SET revoked = 1 WHERE id = ?",
+                          (invite_id,)).rowcount > 0
+
+
+def list_invites(store) -> list[dict]:
+    """Live and past invites, never their codes."""
+    with store._lock, store._connect() as db:
+        rows = db.execute("SELECT id, room_name, role, issuer, expires_at, max_uses, uses, "
+                          "revoked FROM invites ORDER BY created_at DESC").fetchall()
+    keys = ("id", "room", "role", "issuer", "expires_at", "max_uses", "uses", "revoked")
+    return [dict(zip(keys, r)) for r in rows]
