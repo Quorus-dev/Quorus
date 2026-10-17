@@ -54,8 +54,9 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 #    computer and puts you in #general.
 quorus
 
-# 2. Put your agents in the room, working in your project. --lead makes Claude
-#    the team lead: it splits your requests into tasks and assigns them.
+# 2. Put your agents in the room, working in your project. Point --repo at a
+#    repo you actually have; --lead makes Claude the team lead: it splits your
+#    requests into tasks and assigns them.
 quorus agent add claude --room general --repo ~/code/my-app --mode autonomous --lead
 quorus agent add codex  --room general --repo ~/code/my-app --mode autonomous
 
@@ -101,9 +102,17 @@ wakes are read-only.
 repo without asking. `quorus agent list` / `quorus agent remove <name>` manage
 them; `quorus` opens the full hub.
 
-Your already-open Claude Code / Codex sessions can join too: with the Quorus
-MCP server installed (done by `quorus init`), tell them "join the Quorus room
-dev-sprint".
+Your already-open Claude Code / Codex sessions can join too. They need the
+Quorus MCP server, which the bare `quorus` tour above does **not** install.
+Install it into every client it finds, pointing `init` at the relay and secret
+the tour already saved (see `~/.quorus/profiles/default.json`):
+
+```bash
+quorus init <your-name> --relay-url http://localhost:8080 --secret <your-secret>
+```
+
+then tell them "join the Quorus room dev-sprint". `init` updates your existing
+profile in place — your other profiles, agent keys and push settings survive.
 
 ## MCP integration
 

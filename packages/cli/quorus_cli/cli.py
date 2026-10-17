@@ -2368,7 +2368,10 @@ async def _ps() -> None:
             console.print()
             console.print("  [muted]— no agents reporting presence yet —[/]")
             console.print(
-                "  [dim]spawn one with[/] [accent]quorus spawn <room> <name>[/]"
+                "  [dim]add one with[/] [accent]quorus agent add <tool> --room <room>"
+                "[/][dim] — it runs in the background and answers while you're away,[/]"
+                " [dim]or drive a CLI in this terminal with[/] "
+                "[accent]quorus spawn <room> <name>[/]"
             )
             return
 
@@ -4943,7 +4946,8 @@ def _cmd_init(args):
     else:
         if config_path.exists():
             console.print(
-                f"[yellow]Warning: config already exists at {config_path} — overwriting.[/yellow]"
+                f"[yellow]Warning: config already exists at {config_path} — "
+                "overwriting; the relay URL and credentials are replaced.[/yellow]"
             )
         backup_path = _backup_before_overwrite(config_path)
         if backup_path:

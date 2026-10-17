@@ -113,6 +113,21 @@ def test_init_over_hub_pointer_does_not_hijack_current_profile(hub_home: Path) -
     assert not (hub_home / ".quorus" / "profiles" / "default.json").exists()
 
 
+def test_init_flat_overwrite_warning_names_what_is_replaced(hub_home: Path, capsys) -> None:
+    """Finding #5: the old line just said "overwriting" — name what is gone."""
+    config_dir = hub_home / ".quorus"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        '{"relay_url": "http://localhost:8080", "relay_secret": "KEEP"}'
+    )
+
+    _cmd_init(_make_init_args())
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "config already exists" in out
+    assert "relay URL and credentials are replaced" in out
+
+
 def test_init_still_writes_flat_config_without_a_pointer(hub_home: Path) -> None:
     """Back-compat: a fresh install keeps the legacy flat shape."""
     _cmd_init(_make_init_args())

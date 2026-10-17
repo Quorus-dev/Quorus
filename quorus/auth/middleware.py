@@ -82,6 +82,20 @@ def _needs_revocation_refresh() -> bool:
     return age > _REVOCATION_CACHE_TTL
 
 
+def _looks_like_jwt(token: str) -> bool:
+    """True only for the three-segment shape of a JWT.
+
+    A legacy shared secret or a raw ``mct_`` API key is not a JWT. PyJWT still
+    raises for it, and we used to log a warning on every healthy request — the
+    first line a new user sees in ``relay.log`` was an error next to ``200 OK``
+    (weekend brief, finding #7).
+    """
+    if token.startswith("mct_"):
+        return False
+    parts = token.split(".")
+    return len(parts) == 3 and all(parts)
+
+
 async def verify_auth(request: Request) -> AuthContext:
     """FastAPI dependency — verify JWT or legacy Bearer token.
 
@@ -136,18 +150,28 @@ async def verify_auth(request: Request) -> AuthContext:
     except jwt.ExpiredSignatureError:
         logger.warning("JWT expired", extra={"client": _client_ip_for_log(request)})
     except jwt.InvalidTokenError as exc:
-        logger.warning(
-            "JWT invalid",
-            extra={
-                "reason": exc.__class__.__name__,
-                "client": _client_ip_for_log(request),
-            },
-        )
+        if _looks_like_jwt(token):
+            logger.warning(
+                "JWT invalid",
+                extra={
+                    "reason": exc.__class__.__name__,
+                    "client": _client_ip_for_log(request),
+                },
+            )
+        else:
+            # Legacy shared secret — expected, not a failure.
+            logger.debug("Bearer token is not a JWT (legacy shared secret)")
     except Exception as exc:
-        logger.warning(
-            "JWT decode unexpected error",
-            extra={"reason": str(exc), "client": _client_ip_for_log(request)},
-        )
+        if _looks_like_jwt(token):
+            logger.warning(
+                "JWT decode unexpected error",
+                extra={"reason": str(exc), "client": _client_ip_for_log(request)},
+            )
+        else:
+            logger.debug(
+                "JWT decode skipped — not a JWT (legacy shared secret?)",
+                extra={"reason": str(exc), "client": _client_ip_for_log(request)},
+            )
 
     # Legacy fallback: RELAY_SECRET as Bearer token
     if RELAY_SECRET and hmac.compare_digest(token, RELAY_SECRET):
