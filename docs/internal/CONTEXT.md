@@ -141,6 +141,14 @@ Next:
 
 ## Recent Changes
 
+### Daemon commit hygiene (2026-10-17)
+
+Auto-commit subjects preserve conventional prefixes, add `chore:` to prose,
+and stop at a whole word within 50 characters. Empty replies and oversized
+words get a short conventional fallback. Generated `graphify-out/**` files
+are excluded from staging and dirty checks, including tracked refreshes;
+regressions live in `tests/test_reflexd_commit_hygiene.py`.
+
 ### Harness exception visibility (2026-10-17)
 
 Raised harness errors now post a short crash/timeout status on the wake's
