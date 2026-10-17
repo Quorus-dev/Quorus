@@ -4,14 +4,16 @@ Redo of the five projects the lead assigned: `claude_codex_bridge`, `codeg`,
 `Claude-Code-Workflow`, Vibe Kanban, `claude-squad`. Paperclip and Agent Mail are
 `@arav-gemini`'s (see the room transcript / its branch).
 
-Method: for each project we fetched the GitHub repo metadata and the README over
-`webfetch` on 2026-10-17. Every factual claim links to the page it came from, or
-to the API object it was read from (`https://api.github.com/repos/<owner>/<repo>`).
-Anything we inferred rather than read is tagged **assumption**.
+**How to check this pass.** Each claim links to a specific line of the project's
+README on GitHub (`.../blob/main/README.md?plain=1#L<line>`), or to the GitHub
+API object it was read from. Everything was fetched with `webfetch` on
+2026-10-17. Repo metadata (stars / language / license / archived / pushed_at)
+comes from `https://api.github.com/repos/<owner>/<repo>` for each project.
+Anything inferred rather than read is tagged **assumption**.
 
 Scope note: this pass covers what each project *is and does*. It does **not**
-repeat the notifications/competition audit in `docs/NOTIFICATION_MVP_RESEARCH.md`,
-which already scored the category.
+repeat the notifications/competition audit in
+`docs/NOTIFICATION_MVP_RESEARCH.md`, which already scored the category.
 
 ## Snapshot
 
@@ -29,7 +31,7 @@ Star/language/license/last-push all read from each repo's
 ## What each one does better than us
 
 - **CCB** — visible live TUI panes with human takeover, and typed agent→agent
-  `ask` queues with draft protection. (details in `claude_codex_bridge.md`)
+  `ask`/`back` queues with draft protection. (details in `claude_codex_bridge.md`)
 - **Codeg** — one structured (non-terminal) surface over 17 agents via ACP, and
   cross-agent session portability (`@`-mention another agent's session).
   (details in `codeg.md`)
@@ -49,12 +51,13 @@ claiming/locks/audit between heterogeneous agents. That is the same gap
 `docs/NOTIFICATION_MVP_RESEARCH.md` §5 named, and this batch doesn't close it:
 
 - CCB, Codeg and claude-squad run many agents on one host for one human
-  ([CCB](https://github.com/SeemSeam/claude_codex_bridge#quick-start),
-  [Codeg](https://github.com/spacering-net/codeg),
-  [claude-squad](https://github.com/smtg-ai/claude-squad#how-it-works)).
+  ([CCB L47-L53](https://github.com/SeemSeam/claude_codex_bridge/blob/main/README.md?plain=1#L47-L53),
+  [Codeg L187-L189](https://github.com/spacering-net/codeg/blob/main/README.md?plain=1#L187-L189),
+  [claude-squad L3](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L3)).
 - Vibe Kanban's remote/SaaS layer is being removed — it is going "fully local"
   ([shutdown post](https://www.vibekanban.com/blog/shutdown)).
-- CCW is archived ([README banner](https://github.com/catlog22/Claude-Code-Workflow#readme)).
+- CCW is archived
+  ([README banner, L4](https://github.com/catlog22/Claude-Code-Workflow/blob/main/README.md?plain=1#L4)).
 
 The two ideas below are the genuinely new ones worth stealing, both about the
 *human's* view rather than the relay:

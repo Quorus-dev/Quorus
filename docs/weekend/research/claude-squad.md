@@ -1,7 +1,7 @@
 # Teardown: claude-squad
 
-Repo: <https://github.com/smtg-ai/claude-squad> · README:
-<https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md>
+Repo: <https://github.com/smtg-ai/claude-squad>
+· README fetched: <https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md>
 · Meta: <https://api.github.com/repos/smtg-ai/claude-squad>
 · Docs/site: <https://smtg-ai.github.io/claude-squad/> · License: AGPL-3.0
 · Language: Go · Stars 8,615 · created 2025-03-09 · last push 2026-08-20
@@ -14,47 +14,55 @@ manager" of the batch — parallelism and isolation, no inter-agent messaging.
 
 - Manages multiple agents — Claude Code, Codex, Gemini, Aider — in separate
   workspaces "allowing you to work on multiple tasks simultaneously"
-  ([README intro](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+  ([L3](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L3)).
 - **Each task gets its own isolated git workspace, "so no conflicts"**
-  ([Highlights](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+  ([L12](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L12)).
 - Under the hood: **tmux** for isolated terminal sessions + **git worktrees** for
   isolated codebases, each on its own branch
-  ([How It Works](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+  ([L152-L153](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L152-L153)).
 - **Review before applying**: "Review changes before applying them, checkout
   changes before pushing them" — menu keys `s` (commit+push), `c` (checkout;
   commits and pauses), `r` (resume)
-  ([Highlights](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md),
-  [Menu](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+  ([L11](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L11),
+  [L103-L105](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L103-L105)).
 - Background/yolo mode: `-y, --autoyes` auto-accepts prompts for Claude Code and
-  Aider ([Usage](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+  Aider ([L67](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L67)).
 - Profiles let one config hold several `name`/`program` pairs to switch programs
-  ([Profiles](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+  ([L117-L139](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L117-L139)).
 - Installed binary is `cs`; requires `tmux` and `gh`
-  ([Prerequisites](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+  ([L22](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L22),
+  [L49-L50](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L49-L50)).
 
 ## What it does better than Quorus
 
 1. **Worktree isolation is the default, not an option.** Every task is already
    on its own branch in its own worktree, so parallel agents cannot collide
-   ([How It Works](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+   ([L12](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L12),
+   [L153](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L153)).
    Quorus assigns a worktree per *session* via the harness; the tool itself does
    not guarantee isolation per task.
 2. **A one-key review-before-apply flow.** Commit+push, checkout or resume are
    single keystrokes in the menu, which is a cleaner review loop than our chat
-   `✅ <hash>` posts ([Menu](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+   `✅ <hash>` posts
+   ([L103-L105](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L103-L105)).
 3. **Zero-ceremony parallel fan-out** — `n` creates a session, `N` creates one
-   with a prompt ([Menu](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+   with a prompt
+   ([L95-L96](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L95-L96)).
 
 ## Where it is weaker / different
 
 - **No inter-agent communication.** The README never mentions agents talking to
   each other, shared state, or coordination; the model is a human juggling
   isolated parallel tasks
-  ([README](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
+  ([L3](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L3),
+  [L91-L111](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L91-L111)).
   **assumption**: there is no claim/lock/message layer at all.
 - **Single machine, single user, local TUI** — no relay, no rooms, no mobile
-  ([README](https://raw.githubusercontent.com/smtg-ai/claude-squad/main/README.md)).
-- Licensed **AGPL-3.0** ([API](https://api.github.com/repos/smtg-ai/claude-squad)),
+  ([L3](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L3),
+  [L47-L50](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L47-L50)).
+- Licensed **AGPL-3.0**
+  ([API](https://api.github.com/repos/smtg-ai/claude-squad),
+  [L158](https://github.com/smtg-ai/claude-squad/blob/main/README.md?plain=1#L158)),
   which restricts how its code could be reused.
 
 ## Takeaway for Quorus
