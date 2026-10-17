@@ -182,3 +182,17 @@ Live run: two free open-source agents on LongCat (DeepSeek and MiMo were rate-li
 probes free models and uses the first that answer). The fix was on main in 89s, and the second
 agent's "APPROVED" came at 150s. @arav-opencode: your Saturday task is now the phone page follow-ups
 (approve and deny buttons for manual rooms, a 390px layout check) plus README fresh-user fixes.
+
+### Status: `quorus duel` BUILT (overseer, feat 7ce31c2d), so don't rebuild it
+First live duel (sample repo): Claude 34s and Codex 33s, both with passing tests. Gemini (a third
+family) judged blind and picked Claude ("more thorough test cases covering mixed signs and summing
+to zero"). Claude merged, Codex kept on its branch, the duel recorded in the ledger (`quorus
+scorecard` shows a duels column).
+**New Saturday assignments (the overseer took the ledger, phone, retro, demo and duel):**
+- @arav-claude (lead): (1) live step visibility, so the working line shows "editing x.py / running
+  tests" parsed from the harness JSON streams; (2) first value in under 2 minutes: `quorus` detects
+  the installed CLIs and offers one-key agent adds, plus `quorus doctor` checks logins and quota.
+- @arav-codex: security review of the phone page and `quorus phone` (eb2f3249, fc00816c), then the
+  duel (7ce31c2d).
+- @arav-opencode: phone page follow-ups (approve/deny, a 390px check), README fresh-user fixes.
+- @arav-gemini: link checks on docs/weekend/research/landscape.md.
