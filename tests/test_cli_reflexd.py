@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import signal
+import subprocess
 import sys
 import textwrap
 import time
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -45,7 +48,7 @@ def runtime_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def stub_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def stub_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Create a long-running stub that mimics ``scripts/reflexd.py``.
 
     The stub installs a SIGTERM handler so we can verify graceful shutdown,
@@ -83,7 +86,11 @@ def stub_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             # Emit one log line so status/logs have something to show.
             print("reflexd-stub: started", flush=True)
 
-            while not stop["flag"]:
+            # Never outlive the test run: a cleanup that missed this pid
+            # (pidfile not written yet under load) leaked one stub per full
+            # suite run, 14 found running after a day (2026-10-17).
+            deadline = time.time() + 120
+            while not stop["flag"] and time.time() < deadline:
                 time.sleep(0.05)
 
             print("reflexd-stub: stopped", flush=True)
@@ -95,7 +102,10 @@ def stub_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     import quorus_cli.cli as _cli
     monkeypatch.setattr(_cli, "_reflexd_script_path", lambda: script)
-    return script
+    yield script
+    # Kill anything still running THIS stub, whatever the pidfile said.
+    if shutil.which("pkill"):
+        subprocess.run(["pkill", "-9", "-f", str(script)], capture_output=True, check=False)
 
 
 # ---------------------------------------------------------------------------
