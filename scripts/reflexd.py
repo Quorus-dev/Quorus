@@ -152,6 +152,8 @@ def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
 
 
 ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
+SILENCE_STATUS_EVERY_S = 10 * 60
+ANSWERED_MAX = 500
 PAUSE_NOTICE = "(quorus) agents paused"
 CHATTER_NOTICE = "(quorus) agents stopped answering unaddressed chatter"
 
@@ -1878,6 +1880,9 @@ class Reflexd:
         self._stop = asyncio.Event()
         self._presence: tuple[str, str] = ("active", "")  # (status, room)
         self._limit_announced: set[tuple[str, float]] = set()
+        # room -> ordered ids the agent saw in a wake it then answered.
+        self._answered: dict[str, dict[str, None]] = {}
+        self._last_spoke: dict[str, float] = {}
         self._last_wake_at: float = 0.0
         # Bounded in-memory queue for messages that arrive while a busy-file
         # is set. Drained on stop, not replayed across restarts (PR-C1 scope).
@@ -2190,6 +2195,15 @@ class Reflexd:
         except Exception as exc:  # presence is cosmetic: never fail a wake on it
             logger.debug("presence update failed: %s", exc)
 
+    def _mark_answered(self, room: str, ids: set) -> None:
+        self._last_spoke[room] = time.time()
+        seen = self._answered.setdefault(room, {})
+        for i in ids:
+            if i:
+                seen[i] = None
+        while len(seen) > ANSWERED_MAX:
+            seen.pop(next(iter(seen)))
+
     def _refresh_identity(self) -> None:
         """Rewrite the agent's private config dir before every wake. An agent
         testing `quorus init` inside its wake wrote a bogus profile there and
@@ -2248,6 +2262,15 @@ class Reflexd:
         history = await relay.fetch_recent(
             room=room, limit=HEARTBEAT_HISTORY_LIMIT,
         )
+        wake_id = envelope_canonical_id(envelope)
+        if wake_id and wake_id in self._answered.get(room, {}):
+            # A lead @-mentioned by every teammate built a queue of mentions,
+            # then woke once per item it had already seen in an earlier wake's
+            # transcript and answered: ~10 NO_REPLY wakes in a row (live
+            # 2026-10-17). Seen in context + posted after = handled.
+            logger.info("skipping wake: %s was already in an answered wake's context", wake_id)
+            return
+        context_ids = {m.get("id") for m in history if m.get("id")} | {wake_id}
         memory_entries: list[dict[str, Any]] = []
         try:
             memory_entries = await _mem.read_recent(
@@ -2382,8 +2405,12 @@ class Reflexd:
             logger.info("harness produced empty reply, skipping post")
             # Silence looked like a dead agent (Arav, 2026-10-17): say it read
             # the message. `status` messages never wake anyone.
-            await self._post_status(relay, room, envelope,
-                                    f"@{self.config.participant_name} read it, nothing to add")
+            if time.time() - self._last_spoke.get(room, 0.0) > SILENCE_STATUS_EVERY_S:
+                # Once per agent per room per 10 min: a busy agent's trail of
+                # "nothing to add" lines was noise, not reassurance.
+                self._last_spoke[room] = time.time()
+                await self._post_status(relay, room, envelope,
+                                        f"@{self.config.participant_name} read it, nothing to add")
             return
 
         # D7 (WAKE_REBUILD_SPEC): a woken Claude Code session is fully
@@ -2408,6 +2435,7 @@ class Reflexd:
                             "wake succeeded via agent's own post (id=%s); "
                             "suppressing %r", m.get("id"), reply,
                         )
+                        self._mark_answered(room, context_ids)
                         return
             except Exception as exc:
                 logger.debug("D7 self-reply check failed: %s", exc)
@@ -2437,6 +2465,7 @@ class Reflexd:
             leftover = _undelivered_lines(reply, [m.get("content") or "" for m in mine])
             if not leftover:
                 logger.info("agent already posted its result room=%s — not reposting", room)
+                self._mark_answered(room, context_ids)
                 return
             logger.info("agent posted its result; posting %d undelivered line(s)",
                         len(leftover))
@@ -2480,6 +2509,7 @@ class Reflexd:
                 "posted reply room=%s len=%d thread_root=%s id=%s",
                 room, len(reply), thread_root_id, posted_id,
             )
+            self._mark_answered(room, context_ids)
         except httpx.HTTPError as exc:
             logger.warning("reply POST failed: %s", exc)
             return

@@ -103,3 +103,54 @@ def test_full_pause_notice_covers_chatter() -> None:
     human = {"from_name": "arav", "content": "go"}
     full = {"from_name": "a-gemini", "content": f"{reflexd.PAUSE_NOTICE} after 7"}
     assert reflexd._pause_announced([human, full], reflexd.CHATTER_NOTICE)
+
+
+class _HistRelay(_Relay):
+    def __init__(self, history: list[dict]) -> None:
+        super().__init__()
+        self.history = history
+
+    async def fetch_recent(self, *, room: str, limit: int = 10):
+        return self.history
+
+
+def test_queued_mention_already_seen_and_answered_is_skipped(monkeypatch) -> None:
+    # Live 2026-10-17: the lead woke ~10 times in a row for queued mentions it
+    # had already seen in an earlier wake's transcript and answered.
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-claude"))
+    calls: list[str] = []
+
+    async def fake_run(harness, **_kw: Any) -> str:
+        calls.append("run")
+        return "Reviewed both: approved."
+
+    monkeypatch.setattr(d.adapter, "run", fake_run)
+    m1 = {"id": "m1", "message_id": "m1", "room": "r", "from_name": "a-codex",
+          "content": "@a-claude review x", "message_type": "chat"}
+    m2 = {"id": "m2", "message_id": "m2", "room": "r", "from_name": "a-gemini",
+          "content": "@a-claude review y", "message_type": "chat"}
+    relay = _HistRelay([m1, m2])  # m2 is already in the room when m1's wake runs
+    asyncio.run(d._wake_and_reply(relay, m1, reason="t"))
+    asyncio.run(d._wake_and_reply(relay, m2, reason="t"))
+    assert calls == ["run"]
+    # A message that arrived after the answered wake still wakes the agent.
+    m3 = dict(m2, id="m3", message_id="m3")
+    asyncio.run(d._wake_and_reply(_HistRelay([m1, m2, m3]), m3, reason="t"))
+    assert calls == ["run", "run"]
+
+
+def test_silence_line_at_most_once_per_ten_minutes(monkeypatch) -> None:
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+
+    async def fake_run(harness, **_kw: Any) -> str:
+        return "NO_REPLY"
+
+    monkeypatch.setattr(d.adapter, "run", fake_run)
+    relay = _Relay()
+    for i in range(3):
+        env = {"id": f"e{i}", "message_id": f"m{i}", "room": "build",
+               "from_name": "a-claude", "content": "thanks @a-codex", "message_type": "chat"}
+        asyncio.run(d._wake_and_reply(relay, env, reason="t"))
+    assert len(relay.posted) == 1
