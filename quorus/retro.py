@@ -18,13 +18,18 @@ from typing import Any, Iterable
 STUCK = re.compile(r"^(⚠|\[reflexd\] )")
 QUOTA = re.compile(r"out of quota|rate-limited|usage limit|quota", re.IGNORECASE)
 PLAN = re.compile(r"^plan:", re.IGNORECASE)
-DONE = re.compile(r"✅|\(quorus\) published|\bdone\b|\bfixed\b|\bcommitted\b", re.IGNORECASE)
+# A review verdict is delivered work too: codex's three design reviews read as
+# "3 plans, 1 delivered" (live retro, 2026-10-17).
+DONE = re.compile(r"✅|\(quorus\) published|\bdone\b|\bfixed\b|\bcommitted\b|\bapproved\b|"
+                  r"\bLGTM\b|/disagree|lifting my block|\bsigned off\b", re.IGNORECASE)
+MENTION = re.compile(r"(?<![\w-])@([a-z0-9][a-z0-9-]*)", re.IGNORECASE)
 NOTHING = re.compile(r"read it, nothing to add")
 PAUSED = re.compile(r"\(quorus\) agents (paused|stopped answering)")
 CONFLICT = re.compile(r"\(quorus\) conflict:")
 # Explicit verdicts only: "regression test" in a normal reply is not a pushback.
-FLAGGED = re.compile(r"(/disagree|\brejected\b|\bblocking\b|\bnot approved\b|"
-                     r"\brequest(?:ed)? changes\b|\bno sources\b)", re.IGNORECASE)
+FLAGGED = re.compile(r"(\bdisagree\b|\brejected\b|\bblocking\b|\bnot approved\b|"
+                     r"\brequest(?:ed)? changes\b|\bno sources\b|"
+                     r"\b(?:another|one more) pass\b)", re.IGNORECASE)
 
 
 @dataclass
@@ -83,7 +88,8 @@ def analyze(history: list[dict[str, Any]]) -> list[Finding]:
     by_agent = _by_agent(msgs)
     for agent, items in by_agent.items():
         plans = [m for m in items if PLAN.match((m.get("content") or "").strip())]
-        dones = [m for m in items if DONE.search(m.get("content") or "")]
+        dones = [m for m in items if DONE.search(m.get("content") or "")
+                 and not PLAN.match((m.get("content") or "").strip())]
         if len(plans) >= 2 and len(dones) < len(plans) / 2:
             found.append(Finding(
                 f"@{agent} announced {len(plans)} plans but delivered {len(dones)}",
@@ -108,14 +114,28 @@ def analyze(history: list[dict[str, Any]]) -> list[Finding]:
             "have the lead split work by file or module, not by feature",
             [_short(m) for m in conflicts[:3]]))
 
-    flagged = [m for m in msgs if FLAGGED.search(m.get("content") or "")
-               and not (m.get("content") or "").startswith("(quorus)")]
-    if len(flagged) >= 2:
-        found.append(Finding(
-            f"{len(flagged)} reviews pushed back on work", len(flagged), 2,
-            "work is landing before it meets the bar",
-            "run `quorus scorecard` to see whose work gets flagged; review theirs first",
-            [_short(m) for m in flagged[:3]]))
+    # Pushback is the review process working. The signal is one agent whose
+    # work keeps getting pushed back ("4 reviews pushed back" spread across
+    # a design review was noise, live retro 2026-10-17).
+    pushed: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for m in msgs:
+        body = m.get("content") or ""
+        # Verdicts lead with it ("@x /disagree blocking", "I disagree that");
+        # a design note saying "I rejected a shared remote" is not one.
+        if not FLAGGED.search(body[:80]) or body.startswith("(quorus)"):
+            continue
+        targets = [t for t in MENTION.findall(body) if t != m.get("from_name")]
+        if targets:
+            pushed[targets[0]].append(m)
+    for target, items in pushed.items():
+        if len(items) >= 3:
+            found.append(Finding(
+                f"@{target}'s work was pushed back {len(items)} times", len(items), 3,
+                "its work lands before it meets the bar, or it reports work as done "
+                "before committing it",
+                f"verify @{target}'s claims before building on them; give it smaller, "
+                "checkable tasks; see `quorus scorecard`",
+                [_short(m) for m in items[:3]]))
 
     return sorted(found, key=lambda f: -f.score)
 

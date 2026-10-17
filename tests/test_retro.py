@@ -25,8 +25,10 @@ HISTORY = [
     *[_m("a-claude", "@a-claude read it, nothing to add", f"03:0{i}", "status") for i in range(4)],
     _m("a-codex", "(quorus) agents paused after 40 agent messages in a row.", "03:11", "status"),
     _m("a-codex", "(quorus) conflict: quorus/a-codex conflicts with main", "03:12"),
-    _m("a-claude", "/disagree blocking: test_kit.md:137 still publishes the count", "03:13"),
-    _m("a-claude", "rejected: zero source links", "03:14"),
+    _m("a-claude", "@a-gemini /disagree blocking: test_kit.md:137 still publishes the count",
+       "03:13"),
+    _m("a-claude", "@a-gemini rejected: zero source links", "03:14"),
+    _m("a-claude", "@a-gemini I disagree that it's done: nothing is committed", "03:16"),
     _m("a-codex", "added a regression test for the blank score bug", "03:15"),
 ]
 
@@ -39,7 +41,7 @@ def test_rediscovers_the_weekend_failure_patterns() -> None:
     assert "@a-claude posted 'nothing to add' 4 times" in joined   # silence spam
     assert "paused or stopped chatter 1 times" in joined
     assert "1 merge conflicts" in joined
-    assert "2 reviews pushed back" in joined  # the regression-test reply is not a pushback
+    assert "@a-gemini's work was pushed back 3 times" in joined  # not the regression-test reply
 
 
 def test_ranking_puts_failures_above_noise_and_quota_gets_the_pacing_fix() -> None:
@@ -55,3 +57,37 @@ def test_summary_addresses_the_lead_and_quiet_rooms_say_so() -> None:
     assert text.startswith("@a-claude Retro, last 6h") and "\n1. " in text
     assert retro.summary([], 6).endswith("nothing stands out.")
     assert retro.analyze([_m("a-codex", "✅ fixed and committed", "01:00")]) == []
+
+
+def test_review_verdicts_are_delivery_and_design_pushback_is_not_a_problem() -> None:
+    """Live retro, 2026-10-17: codex's three reviews read as "3 plans, 1
+    delivered", and a healthy design review read as "4 reviews pushed back"."""
+    room = [
+        _m("a-codex", "plan: review the design", "12:06"),
+        _m("a-codex", "@a-claude /disagree blocking: legacy auth bypasses membership", "12:06"),
+        _m("a-codex", "plan: review ffe25d3b", "12:13"),
+        _m("a-codex", "✅ @a-claude approved f457fb94; lifting my block", "12:19"),
+        _m("a-codex", "plan: review 7ebd213d", "12:40"),
+        _m("a-codex", "@a-claude LGTM on 7ebd213d", "12:45"),
+        _m("a-claude", "@a-gemini rejected: no sources", "12:50"),
+        _m("a-claude", "The design is up in 6a947e63 with every alternative written out. "
+           "I rejected a shared remote. @a-codex please review", "12:05"),
+    ]
+    titles = " | ".join(f.title for f in retro.analyze(room))
+    assert "a-codex announced" not in titles
+    assert "pushed back" not in titles  # one pushback each: the process working
+
+
+def test_cli_shows_room_text_verbatim(monkeypatch) -> None:
+    """Rich ate "[reflexd]" as a markup tag: the title read ' harness timed out'."""
+    from types import SimpleNamespace
+
+    from quorus_cli import retro_cmd
+    from rich.console import Console
+
+    room = [_m("a-gemini", "[reflexd] harness timed out", "12:42")] * 2
+    monkeypatch.setattr(retro_cmd, "_history", lambda r: room)
+    monkeypatch.setattr(retro_cmd, "_since", lambda h, hours: h)
+    console = Console(record=True, width=200)
+    retro_cmd.cmd_retro(SimpleNamespace(room="r", since=6.0, top=3, post=False), console)
+    assert "[reflexd] harness timed out" in console.export_text()
