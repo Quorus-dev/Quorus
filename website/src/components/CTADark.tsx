@@ -19,7 +19,7 @@ const SANS = "'Plus Jakarta Sans', system-ui, sans-serif";
 // gives the wrong package. Use the git-installed pipx form until PyPI
 // republish lands.
 const INSTALL_CMD =
-  'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"';
+  'pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git"';
 
 const NOISE_SVG =
   "data:image/svg+xml;utf8," +

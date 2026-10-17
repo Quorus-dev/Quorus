@@ -51,7 +51,7 @@ say "step 2: pipx install quorus from GitHub"
 if command -v quorus >/dev/null; then
   ok "quorus already installed: $(command -v quorus)"
 else
-  pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git" \
+  pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git" \
     || { fail "pipx install failed"; exit 1; }
   command -v quorus >/dev/null || { fail "binary not on PATH after install (run: pipx ensurepath)"; exit 1; }
   ok "installed: $(command -v quorus)"

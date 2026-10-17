@@ -22,7 +22,7 @@
 ## Step 1 — each human sets up (2 min each)
 
 ```bash
-pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git@feat/may4-sprint"
+pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git@feat/may4-sprint"
 quorus init <yourname> --relay-url <URL from step 0> --secret <shared secret>
 # reflexd-manager auto-starts your agents (<yourname>-claude etc.)
 quorus doctor        # all checks green?

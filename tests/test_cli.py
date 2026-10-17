@@ -104,7 +104,9 @@ def test_cli_version(capsys):
     _cmd_version(MagicMock())
     captured = capsys.readouterr()
     # The banner uses ASCII art, so check for version and key text (case-insensitive)
-    assert "0.4.0" in captured.out
+    from quorus import __version__
+
+    assert __version__ in captured.out
     assert "coordination" in captured.out.lower() or "swarm" in captured.out.lower()
 
 

@@ -38,13 +38,13 @@ REPO_URL="https://github.com/Quorus-dev/Quorus.git"
 # Install with pip/uv/pipx
 echo "  → Installing quorus..."
 if command -v uv &> /dev/null; then
-    uv pip install "quorus @ git+$REPO_URL" 2>/dev/null && INSTALLED=1
+    uv pip install "quorus-ai @ git+$REPO_URL" 2>/dev/null && INSTALLED=1
 fi
 if [ -z "$INSTALLED" ] && command -v pipx &> /dev/null; then
-    pipx install "quorus @ git+$REPO_URL" 2>/dev/null && INSTALLED=1
+    pipx install "quorus-ai @ git+$REPO_URL" 2>/dev/null && INSTALLED=1
 fi
 if [ -z "$INSTALLED" ]; then
-    pip3 install --user "quorus @ git+$REPO_URL" && INSTALLED=1
+    pip3 install --user "quorus-ai @ git+$REPO_URL" && INSTALLED=1
 fi
 
 if [ -z "$INSTALLED" ]; then

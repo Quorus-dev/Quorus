@@ -260,7 +260,7 @@ if ! need_cmd pipx; then
 fi
 
 # 2. Install (or upgrade) Quorus from the repo.
-pipx install --force "quorus @ git+https://github.com/Quorus-dev/Quorus.git" >/dev/null
+pipx install --force "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git" >/dev/null
 
 # 3. Figure out a reasonable default name — can be overridden interactively.
 DEFAULT_NAME="${{USER:-user}}"

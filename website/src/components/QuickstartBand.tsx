@@ -32,7 +32,7 @@ const TABS: Tab[] = [
     // gives the wrong package. Use the git-installed pipx form until PyPI
     // republish lands.
     command:
-      'pipx install "quorus @ git+https://github.com/Quorus-dev/Quorus.git"',
+      'pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git"',
     lang: "bash",
   },
   {

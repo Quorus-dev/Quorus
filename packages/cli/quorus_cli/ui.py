@@ -135,7 +135,7 @@ def _gradient_text(line: str) -> Text:
     return text
 
 
-def banner(version: str = "0.4.0", tagline: bool = True) -> None:
+def banner(version: str = "0.5.0", tagline: bool = True) -> None:
     """Print the Quorus banner with teal gradient."""
     width = console.size.width
     if width < 60:

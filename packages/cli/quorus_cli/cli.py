@@ -2054,7 +2054,7 @@ def _manager_install_launchd(args) -> None:
     if not bin_path:
         _ui.error(
             "install-launchd: cannot find `quorus` on PATH",
-            hint="install via [accent]pipx install quorus[/] first.",
+            hint="install via [accent]pipx install quorus-ai[/] first.",
         )
         raise SystemExit(2)
 

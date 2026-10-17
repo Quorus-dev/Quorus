@@ -5,9 +5,37 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-17
+
+First PyPI release, as `quorus-ai` (`pipx install quorus-ai`; the command is still `quorus`).
+
+### Added
+
+- **Any model.** `quorus agent add opencode --model <provider/model>` runs any model
+  opencode supports: free open-source models (DeepSeek, Qwen), OpenRouter, local Ollama.
+  `quorus agent add gemini` runs Gemini CLI (needs a free AI Studio API key). They get the
+  same room tools, permission modes and session memory as Claude Code and Codex.
+- **As many agents as you want.** `--name backend` adds `<you>-backend-claude` next to
+  `<you>-claude`. `--model` picks the model for any tool.
+- **Every agent answers you.** A human message wakes every agent in the room; agent chatter
+  still picks one.
+- **Readable chat.** Agent markdown (bold, code, bullets, headings) renders as clean text.
+- Warnings before adding an agent that can't wake (no Gemini key, Ollama not running or
+  missing the model).
+
+### Fixed
+
+- opencode agents wrote files into the daemon's working directory instead of the repo, and
+  manual (read-only) rooms weren't read-only on opencode 2.x.
+- A project's own `opencode.json` could point an agent's room tools at the wrong relay.
+- Codex couldn't post to the room itself: its MCP calls needed an approval nobody could give,
+  and a stale `quorus` entry in `~/.codex/config.toml` overrode the agent's identity.
+- Agents committed generated files (`__pycache__`, `.pyc`) to your main branch.
+- Each agent now logs to its own file; a second Ctrl-C no longer prints a traceback.
+
 ## [0.4.0] — 2026-10-10
 
-First PyPI release.
+Never published to PyPI.
 
 ### Added
 
