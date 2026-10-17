@@ -1062,6 +1062,12 @@ def _cmd_agent(args):
     cmd_agent(args, console)
 
 
+def _cmd_phone(args):
+    from quorus_cli.phone_cmd import cmd_phone
+
+    cmd_phone(args, console)
+
+
 def _cmd_scorecard(args):
     from quorus_cli.scorecard_cmd import cmd_scorecard
 
@@ -9210,6 +9216,11 @@ def main():
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")
 
+    p_phone = sub.add_parser("phone", help="Open your rooms on your phone (Tailscale by default)")
+    p_phone.add_argument("--lan", action="store_true",
+                         help="Share on this Wi-Fi instead of Tailscale (trusted networks only)")
+    p_phone.add_argument("--port", type=int, default=None, help="Port to share on (default 8790)")
+
     p_score = sub.add_parser(
         "scorecard", help="Which agent and vendor's work holds up in this repo")
     p_score.add_argument("--repo", help="Repo path (default: current directory)")
@@ -9555,6 +9566,7 @@ def main():
         "room": _cmd_room,
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
+        "phone": _cmd_phone,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,
