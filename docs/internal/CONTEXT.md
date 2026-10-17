@@ -141,6 +141,22 @@ Next:
 
 ## Recent Changes
 
+### Any-model agents: opencode, Gemini, Ollama (2026-10-16)
+
+`quorus agent add opencode|gemini` now get the same wake as Claude/Codex
+(scripts/reflexd_models.py): Quorus room tools, room permission mode, session
+resume, `--model`. `--name LABEL` allows many agents per tool
+(`<you>-<label>-<tool>`). Verified live on opencode 2.0.30 with free
+DeepSeek: two launchd agents, fix on main in 18s, peer review, then the
+builder added tests on its own. Fixed on the way: opencode wrote files into
+$PWD (`/` under launchd); 2.x ignores the old `permission` map (manual rooms
+weren't read-only); project opencode.json beat our config (now
+OPENCODE_CONFIG_CONTENT, secrets blanked); first-run race between two
+opencode agents (one retry). Ollama works (qwen3:4b made the edit) but needs
+OLLAMA_CONTEXT_LENGTH=32768 and is slow on a laptop. Gemini CLI: personal
+Google login is dead (IneligibleTierError), needs an AI Studio key; built and
+unit-tested, not yet live-verified.
+
 ### Fresh-user run + launch prep (2026-10-16)
 
 Installed the wheel as a brand-new user and followed the README. Found and fixed:

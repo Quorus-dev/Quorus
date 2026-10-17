@@ -372,8 +372,9 @@ def test_gemini_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) 
 
     out = _run_adapter("gemini", context="hello-gemini")
     assert out == "hi gemini"
-    assert seen_argv == reflexd.build_gemini_argv("hello-gemini")
-    assert seen_argv == ["gemini", "--prompt=hello-gemini"]
+    # Prompt stays last and attached to its flag; wake flags come before it.
+    assert seen_argv[0] == "gemini" and seen_argv[-1] == "--prompt=hello-gemini"
+    assert "--skip-trust" in seen_argv and "--output-format" in seen_argv
 
 
 def test_gemini_adapter_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -675,8 +676,9 @@ def test_opencode_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch
 
     out = _run_adapter("opencode", context="hello-opencode")
     assert out == "hello-from-opencode"
-    assert seen_argv == reflexd.build_opencode_argv("hello-opencode")
-    assert seen_argv == ["opencode", "run", "--", "hello-opencode"]
+    assert seen_argv[:2] == ["opencode", "run"]
+    assert seen_argv[-2:] == ["--", "hello-opencode"]  # prompt stays positional
+    assert "--standalone" in seen_argv
 
 
 def test_opencode_adapter_handles_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:

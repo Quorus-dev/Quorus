@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,7 +31,9 @@ import httpx
 from quorus.config import load_config, resolve_config_dir
 from quorus.private_files import write_private_text
 
-HARNESSES = ("claude", "codex", "gemini")
+# opencode = any model: Ollama (local), OpenRouter, DeepSeek, Qwen, Gemini...
+HARNESSES = ("claude", "codex", "gemini", "opencode")
+_LABEL_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 LABEL_PREFIX = "dev.quorus.agent."
 _LA = Path.home() / "Library" / "LaunchAgents"
 MODES = ("default", "manual", "autonomous")
@@ -161,7 +164,8 @@ def _plist(label: str, argv: list[str], env: dict[str, str], log: Path) -> str:
     )
 
 
-def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool) -> str:
+def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
+                  model: str | None = None) -> str:
     from quorus.runtime.supervisor import _reflexd_script_path
 
     label = LABEL_PREFIX + name
@@ -169,9 +173,14 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool) -> st
     crash_log = _agents_dir() / f"{name}.crash.log"  # launchd stdout/stderr
     env = {"PATH": _harness_path(), "RELAY_URL": cfg["relay_url"], "API_KEY": cred,
            "REFLEXD_PARTICIPANT": name, "PYTHONUNBUFFERED": "1",
-           "REFLEXD_LOG_PATH": str(log)}
+           "REFLEXD_LOG_PATH": str(log),
+           # The daemon reads room bindings from the same home `agent add`
+           # wrote them to (launchd would otherwise use the login HOME).
+           "HOME": str(Path.home())}
     if legacy:
         env["REFLEXD_LEGACY_BEARER"] = "1"
+    if model:
+        env["REFLEXD_MODEL"] = model
     argv = [sys.executable, str(_reflexd_script_path()), "start",
             "--participant", name, "--relay-url", cfg["relay_url"]]
     if sys.platform != "darwin":
@@ -199,8 +208,9 @@ def cmd_agent(args: Any, console: Any) -> None:
     elif action == "remove":
         _remove(args, console)
     else:
-        console.print("usage: quorus agent add <claude|codex|gemini> --room <room> "
+        console.print("usage: quorus agent add <claude|codex|gemini|opencode> --room <room> "
                       "[--repo PATH] [--mode default|manual|autonomous] "
+                      "[--name LABEL] [--model MODEL] "
                       "| quorus agent list | quorus agent remove <name>")
         raise SystemExit(5)
 
@@ -214,11 +224,20 @@ def _add(args: Any, console: Any) -> None:
     if shutil.which(harness) is None:
         raise SystemExit(f"agent: the `{harness}` CLI isn't installed or not on PATH — "
                          f"install it and log in first")
-    name = f"{me}-{harness}"
+    label = (getattr(args, "name", None) or "").strip().lower()
+    if label and (len(label) > 20 or not _LABEL_RE.fullmatch(label)):
+        raise SystemExit("agent: --name must be 1-20 lowercase letters, digits or "
+                         "hyphens, e.g. backend")
+    # The tool stays last: the daemon routes by the name's suffix.
+    suffix = f"{label}-{harness}" if label else harness
+    name = f"{me}-{suffix}"
+    model = (getattr(args, "model", None) or "").strip() or None
+    for warning in _readiness_warnings(harness, model):
+        console.print(f"[warning]![/] {warning}")
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
-    cred, legacy = _credentials(cfg, name, harness)
+    cred, legacy = _credentials(cfg, name, suffix)
     # Adding members requires the room owner/admin, not the child agent
     # (self-join is deliberately forbidden even if it inherited membership).
     join_cred = cred if legacy else cfg["api_key"]
@@ -231,13 +250,64 @@ def _add(args: Any, console: Any) -> None:
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "
                       "— it now also listens to this room")
+        if model:
+            console.print(f"[dim]--model only applies to a new agent: run `quorus agent "
+                          f"remove {name}` and add it again to switch models[/]")
     else:
-        where = _start_daemon(cfg, name, cred, legacy)
+        where = _start_daemon(cfg, name, cred, legacy, model)
         console.print(f"[success]✓[/] @{name} is running [dim]({where}; restarts at "
                       "login)[/]")
     console.print(f"\n[dim]Try it:[/] quorus say {args.room} \"@{name} hello, what can "
                   "you do in this repo\"" if repo else
                   f"\n[dim]Give it a repo to work in:[/] quorus room bind {args.room} <path>")
+
+
+def _gemini_has_key() -> bool:
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        return True
+    try:
+        text = (Path.home() / ".gemini" / ".env").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(line.split("=", 1)[0].strip() in ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+               for line in text.splitlines() if "=" in line)
+
+
+def _ollama_models() -> list[str] | None:
+    try:
+        resp = httpx.get("http://127.0.0.1:11434/api/tags", timeout=3)
+        return [m.get("name", "") for m in resp.json().get("models", [])]
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+
+
+def _readiness_warnings(harness: str, model: str | None) -> list[str]:
+    """Problems that would make every wake fail, said up front instead of in
+    the room later."""
+    out: list[str] = []
+    if harness == "gemini" and not _gemini_has_key():
+        out.append("Gemini CLI needs an API key: Google no longer lets it sign in with "
+                   "a personal Google account. Get a free key at "
+                   "https://aistudio.google.com/apikey and put GEMINI_API_KEY=<key> "
+                   "in ~/.gemini/.env")
+    if harness == "opencode" and not model:
+        out.append("no --model given, so opencode uses its own default. Pick one with "
+                   "--model, e.g. ollama/qwen3:4b (local) or "
+                   "openrouter/qwen/qwen3-coder (see `opencode models`)")
+    if model and model.startswith("ollama/"):
+        if harness != "opencode":
+            out.append("ollama/ models run through opencode: use "
+                       "`quorus agent add opencode --model " + model + "`")
+        names = _ollama_models()
+        want = model.split("/", 1)[1]
+        if names is None:
+            out.append("Ollama isn't running: start it with "
+                       "`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`")
+        elif want not in names and f"{want}:latest" not in names:
+            out.append(f"Ollama doesn't have {want} yet: run `ollama pull {want}`")
+        out.append("local models need Ollama's context raised to 32k+ "
+                   "(OLLAMA_CONTEXT_LENGTH=32768) and run slowly on laptops")
+    return out
 
 
 def _list(console: Any) -> None:
@@ -283,9 +353,10 @@ def _leave_all_rooms(name: str) -> list[str]:
     """A stopped agent must not stay in rooms: teammates would keep handing
     it work nobody will ever pick up (seen live 2026-10-09)."""
     cfg = load_config()
-    harness = name.rsplit("-", 1)[-1]
+    me = (cfg.get("instance_name") or "").strip()
+    suffix = name[len(me) + 1:] if me and name.startswith(f"{me}-") else name.rsplit("-", 1)[-1]
     try:
-        cred, legacy = _credentials(cfg, name, harness)
+        cred, legacy = _credentials(cfg, name, suffix)
         headers = {"Authorization": f"Bearer {_bearer(cfg, cred, legacy)}"}
         rooms = httpx.get(f"{cfg['relay_url']}/rooms", headers=headers, timeout=10).json()
     except (httpx.HTTPError, SystemExit, ValueError):

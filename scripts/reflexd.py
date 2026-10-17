@@ -38,6 +38,7 @@ import json
 import logging
 import logging.handlers
 import os
+import random
 import re
 import shutil
 import signal
@@ -76,6 +77,7 @@ import importlib.util as _ilu  # noqa: E402
 
 from quorus.config import ConfigManager  # noqa: E402
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
+from quorus.private_files import write_private_json  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
 from quorus.runtime.turnguard import is_busy as _tg_is_busy  # noqa: E402
@@ -443,6 +445,12 @@ assert _wake_spec is not None and _wake_spec.loader is not None
 reflexd_wake = _ilu.module_from_spec(_wake_spec)
 sys.modules.setdefault("reflexd_wake", reflexd_wake)
 _wake_spec.loader.exec_module(reflexd_wake)
+_MODELS_PATH = Path(__file__).resolve().parent / "reflexd_models.py"
+_models_spec = _ilu.spec_from_file_location("reflexd_models", _MODELS_PATH)
+assert _models_spec is not None and _models_spec.loader is not None
+reflexd_models = _ilu.module_from_spec(_models_spec)
+sys.modules.setdefault("reflexd_models", reflexd_models)
+_models_spec.loader.exec_module(reflexd_models)
 
 
 _HARNESS_SUFFIXES = (
@@ -565,7 +573,7 @@ def build_codex_argv(
             "--", context]
 
 
-def build_gemini_argv(context: str) -> list[str]:
+def build_gemini_argv(context: str, *, extra: list[str] | None = None) -> list[str]:
     """Pinned argv shape for gemini CLI.
 
     Contract: ``gemini --prompt=<ctx>``.
@@ -576,7 +584,7 @@ def build_gemini_argv(context: str) -> list[str]:
     ``--key=value`` shape, which keeps the value attached to the flag and
     out of the option-parser's consideration.
     """
-    return [GEMINI_BIN, f"--prompt={context}"]
+    return [GEMINI_BIN, *(extra or []), f"--prompt={context}"]
 
 
 def build_cursor_argv(context: str) -> list[str]:
@@ -598,7 +606,7 @@ def build_cursor_argv(context: str) -> list[str]:
     return [CURSOR_BIN, "-p", "--", context]
 
 
-def build_opencode_argv(context: str) -> list[str]:
+def build_opencode_argv(context: str, *, extra: list[str] | None = None) -> list[str]:
     """Pinned argv shape for opencode (`opencode.ai/docs/cli/`).
 
     Contract: ``opencode run -- <ctx>``.
@@ -608,7 +616,7 @@ def build_opencode_argv(context: str) -> list[str]:
     options the user might leak into the body. Auth is whatever
     ``opencode auth login`` set up — reflexd never reads provider keys.
     """
-    return [OPENCODE_BIN, "run", "--", context]
+    return [OPENCODE_BIN, "run", *(extra or []), "--", context]
 
 
 def build_cline_argv(context: str) -> list[str]:
@@ -960,6 +968,10 @@ class HeadlessAdapter:
         self.wake_spec: dict[str, Any] | None = None
         self.mcp_config_path: Path | None = None
         self.agent_config_dir: Path | None = None
+        # `quorus agent add --model`: which model the harness runs (any
+        # provider/model for opencode, e.g. ollama/qwen3:4b). None = the
+        # harness's own default.
+        self.model: str | None = os.environ.get("REFLEXD_MODEL", "").strip() or None
         # Records the argv (or sdk-call signature) that WOULD have been spawned
         # in dry-run mode. Kept on the instance for tests + smoke scripts.
         self.last_dry_run: dict[str, Any] | None = None
@@ -1027,18 +1039,16 @@ class HeadlessAdapter:
                 timeout_s=timeout_s, writable_roots=writable_roots, mode=mode,
             )
         if harness == "gemini":
-            return await self._run_subprocess(
-                build_gemini_argv(context),
-                parser=lambda out: out.strip(),
-                cwd=cwd,
+            return await self._run_gemini(
+                context, cwd=cwd, resume=resume, on_session=on_session,
+                timeout_s=timeout_s, mode=mode,
             )
         if harness == "cursor":
             return await self._run_cursor(context)
         if harness == "opencode":
-            return await self._run_subprocess(
-                build_opencode_argv(context),
-                parser=lambda out: out.strip(),
-                cwd=cwd,
+            return await self._run_opencode(
+                context, cwd=cwd, resume=resume, on_session=on_session,
+                timeout_s=timeout_s, mode=mode,
             )
         if harness == "cline":
             return await self._run_subprocess(
@@ -1107,6 +1117,8 @@ class HeadlessAdapter:
             except OSError as exc:
                 logger.warning("could not write wake MCP config: %s", exc)
         extra = reflexd_wake.claude_wake_flags(cfg, mode)
+        if self.model:
+            extra += ["--model", self.model]
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         reply = await self._run_subprocess(
             build_claude_argv(context, resume=resume, max_turns=max_turns, extra=extra),
@@ -1141,6 +1153,8 @@ class HeadlessAdapter:
             return text
 
         extra = reflexd_wake.codex_wake_flags(self.wake_spec, writable_roots, mode)
+        if self.model:
+            extra += ["-c", f"model={json.dumps(self.model)}"]
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         reply = await self._run_subprocess(
             build_codex_argv(context, resume=resume, extra=extra), parser=parser,
@@ -1159,6 +1173,92 @@ class HeadlessAdapter:
             on_session(captured["tid"])
         return reply
 
+    def _side_file(self, kind: str) -> Path | None:
+        """Per-agent config file next to the claude MCP config (0600)."""
+        if self.mcp_config_path is None:
+            return None
+        name = self.mcp_config_path.name.replace("wake-mcp-", f"wake-{kind}-", 1)
+        return self.mcp_config_path.with_name(name)
+
+    async def _run_with_resume(
+        self, build: Callable[[str | None], list[str]], parse: Callable[[str], tuple],
+        *, harness: str, cwd: Path | None, resume: str | None,
+        on_session: Callable[[str], None] | None, timeout_s: int | None,
+        env: dict[str, str],
+    ) -> str:
+        """Shared wake for JSON-speaking harnesses: run, read (reply, session,
+        error), retry once fresh if a stored session can't be resumed."""
+        captured: dict[str, str | None] = {"sid": None, "err": None}
+
+        def parser(out: str) -> str:
+            reply, sid, err = parse(out)
+            captured["sid"], captured["err"] = sid, err
+            return reply
+
+        reply = await self._run_subprocess(
+            build(resume), parser=parser, cwd=cwd, timeout_s=timeout_s, env=env,
+        )
+        failed = reply == "[reflexd] harness errored"
+        if failed or (resume and captured["err"] and reply == "[reflexd] (no reply)"):
+            # A stale session id fails the resume; and two opencode agents
+            # woken by the same message on a fresh install race its first-run
+            # setup ("Standalone server exited before reporting readiness",
+            # reproduced on opencode 2.0.30). One retry, fresh, after a jitter.
+            logger.warning("%s wake failed (session %s) — retrying fresh",
+                           harness, resume or "new")
+            await asyncio.sleep(random.uniform(1.0, 3.0))
+            captured["sid"] = captured["err"] = None
+            reply = await self._run_subprocess(
+                build(None), parser=parser, cwd=cwd, timeout_s=timeout_s, env=env,
+            )
+        if captured["err"] and reply == "[reflexd] (no reply)":
+            # The vendor's own words beat a generic sentinel (e.g. "model not
+            # found", "OpenCode 1.18.0 or newer is required").
+            logger.error("harness %s error: %s", harness, captured["err"])
+            reply = (diagnose_harness_failure(harness, captured["err"])
+                     or f"⚠ {harness}: {captured['err']}")
+        if captured["sid"] and on_session is not None:
+            on_session(captured["sid"])
+        return reply
+
+    async def _run_opencode(
+        self, context: str, *, cwd: Path | None, resume: str | None,
+        on_session: Callable[[str], None] | None, timeout_s: int | None = None,
+        mode: str = "default",
+    ) -> str:
+        """opencode wake: Quorus tools, room permissions, any provider/model."""
+        env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(reflexd_models.opencode_config(
+            self.wake_spec, mode=mode, model=self.model))
+        return await self._run_with_resume(
+            lambda sid: build_opencode_argv(context, extra=reflexd_models.opencode_flags(
+                model=self.model, resume=sid)),
+            reflexd_models.parse_opencode_stream, harness="opencode", cwd=cwd,
+            resume=resume, on_session=on_session, timeout_s=timeout_s, env=env,
+        )
+
+    async def _run_gemini(
+        self, context: str, *, cwd: Path | None, resume: str | None,
+        on_session: Callable[[str], None] | None, timeout_s: int | None = None,
+        mode: str = "default",
+    ) -> str:
+        """Gemini CLI wake: Quorus tools via system settings, room approval mode."""
+        env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
+        path = self._side_file("gemini")
+        if path is not None and self.wake_spec is not None:
+            try:
+                write_private_json(path, reflexd_models.gemini_settings(self.wake_spec))
+                env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(path)
+            except OSError as exc:
+                logger.warning("could not write gemini settings: %s", exc)
+        flags = reflexd_models.gemini_flags(mode=mode, model=self.model)
+        return await self._run_with_resume(
+            lambda sid: build_gemini_argv(
+                context, extra=flags + (["--resume", sid] if sid else [])),
+            reflexd_models.parse_gemini_json, harness="gemini", cwd=cwd,
+            resume=resume, on_session=on_session, timeout_s=timeout_s, env=env,
+        )
+
     async def _run_subprocess(
         self,
         argv: list[str],
@@ -1175,6 +1275,10 @@ class HeadlessAdapter:
         if shutil.which(argv[0]) is None:
             logger.warning("harness binary missing on PATH: %s", argv[0])
             return f"[reflexd] {argv[0]} not installed on this host"
+        if cwd is not None:
+            # Node/Bun CLIs (opencode) resolve the project from $PWD, not the
+            # real cwd: an agent woken from launchd wrote files into `/`.
+            env = {**(env if env is not None else os.environ), "PWD": str(cwd)}
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,

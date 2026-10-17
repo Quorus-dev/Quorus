@@ -29,6 +29,8 @@ class _Args:
         self.room = "build"
         self.repo = None
         self.mode = "default"
+        self.name = None
+        self.model = None
         self.__dict__.update(kw)
 
 
@@ -44,7 +46,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(agent_cmd, "_join",
                         lambda c, room, name, bearer: calls["joins"].append((room, name, bearer)))
     monkeypatch.setattr(agent_cmd, "_start_daemon",
-                        lambda c, name, cred, legacy: calls["daemons"].append(
+                        lambda c, name, cred, legacy, model=None: calls["daemons"].append(
                             (name, cred, legacy)) or "label")
     monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda name: None)
     calls["cfg"] = cfg
@@ -144,3 +146,69 @@ def test_each_agent_daemon_gets_its_own_log(tmp_path: Path, monkeypatch) -> None
     assert "<key>REFLEXD_LOG_PATH</key>" in xml and "a-claude.log</string>" in xml
     assert "a-claude.crash.log" in xml  # launchd output kept out of the rotating log
 
+
+
+def test_name_label_adds_a_second_agent_of_the_same_tool(env: dict, monkeypatch) -> None:
+    # Users could run only one agent per tool: a second `agent add claude`
+    # reused arav-claude.
+    agent_cmd.cmd_agent(_Args(name="backend"), _Console())
+    assert env["joins"][-1] == ("build", "arav-backend-claude", "s3")
+    assert env["daemons"][-1][0] == "arav-backend-claude"
+    with pytest.raises(SystemExit, match="--name"):
+        agent_cmd.cmd_agent(_Args(name="Bad Name!"), _Console())
+
+
+def test_labelled_agent_registers_under_its_own_suffix(env: dict, monkeypatch) -> None:
+    env["cfg"]["api_key"] = "parent-key"
+    import quorus_cli.cli as cli
+
+    minted: list[str] = []
+    monkeypatch.setattr(cli, "_register_agent_identity",
+                        lambda url, key, suffix: minted.append(suffix) or "agent-key")
+    monkeypatch.setattr(agent_cmd, "_bearer", lambda c, cred, legacy: f"jwt:{cred}")
+    agent_cmd.cmd_agent(_Args(tool="opencode", name="local"), _Console())
+    assert minted == ["local-opencode"]  # relay names it arav-local-opencode
+
+
+def test_model_is_passed_to_the_daemon(tmp_path: Path, monkeypatch) -> None:
+    import sys as _sys
+
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
+    monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(_sys, "platform", "darwin")
+    agent_cmd._start_daemon({"relay_url": "http://r"}, "a-opencode", "k", True,
+                            "ollama/qwen3:4b")
+    xml = (tmp_path / "LA" / "dev.quorus.agent.a-opencode.plist").read_text()
+    assert "<key>REFLEXD_MODEL</key><string>ollama/qwen3:4b</string>" in xml
+    assert f"<key>HOME</key><string>{Path.home()}</string>" in xml
+
+
+def test_warns_before_adding_an_agent_that_cannot_wake(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(agent_cmd.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    assert any("aistudio" in w for w in agent_cmd._readiness_warnings("gemini", None))
+    (tmp_path / ".gemini").mkdir()
+    (tmp_path / ".gemini" / ".env").write_text("GEMINI_API_KEY=x\n")
+    assert agent_cmd._readiness_warnings("gemini", None) == []
+    monkeypatch.setattr(agent_cmd, "_ollama_models", lambda: None)
+    assert any("isn't running" in w
+               for w in agent_cmd._readiness_warnings("opencode", "ollama/qwen3:4b"))
+    monkeypatch.setattr(agent_cmd, "_ollama_models", lambda: ["llama3:latest"])
+    assert any("ollama pull qwen3:4b" in w
+               for w in agent_cmd._readiness_warnings("opencode", "ollama/qwen3:4b"))
+    assert any("--model" in w for w in agent_cmd._readiness_warnings("opencode", None))
+
+
+def test_cli_accepts_any_model_flags() -> None:
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-c", "import sys; from quorus_cli.cli import main; "
+         "sys.argv=['quorus','agent','add','--help']; main()"],
+        capture_output=True, text=True, timeout=60,
+    )
+    for flag in ("opencode", "--name", "--model"):
+        assert flag in out.stdout, out.stderr[-300:]

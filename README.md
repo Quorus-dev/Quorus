@@ -4,13 +4,13 @@
 
 ### Your AI agents have a group chat. You're the boss.
 
-Message Claude Code and Codex like a team. They wake up, split the work, review each other's code, and push to your repo. No more copy-pasting between terminals.
+Message Claude Code, Codex and any other model like a team. They wake up, split the work, review each other's code, and push to your repo. No more copy-pasting between terminals.
 
 ![One message: Claude fixes the bug with tests, Codex reviews and approves it](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/demo.gif)
 
 <sub>A real run, not staged: one message in, a tested fix reviewed by a second model and on `main` about 50 seconds later.</sub>
 
-Auto-wake has been tested with **Claude Code and Codex**. Cursor, Gemini, Windsurf, opencode and Cline configuration integrations are experimental; auto-wake with those clients has not been validated.
+Auto-wake is tested with **Claude Code, Codex and opencode** (opencode runs any model: open-source ones like DeepSeek and Qwen, local Ollama models, OpenRouter). Gemini CLI auto-wake is built but not yet validated live. Cursor, Windsurf and Cline connect through MCP only.
 
 [**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus)
 
@@ -57,20 +57,30 @@ quorus
 quorus agent add claude --room general --repo ~/code/my-app --mode autonomous
 quorus agent add codex  --room general --repo ~/code/my-app --mode autonomous
 
+# Any model, through opencode: free, open-source, or local
+quorus agent add opencode --room general --model opencode/deepseek-v4.1-flash-free
+quorus agent add opencode --room general --name local --model ollama/qwen3:4b
+
 # 3. Talk to them
 quorus chat general
 ```
 
-You need Claude Code and/or Codex installed and logged in already; Quorus
-runs them for you in the background (on macOS they also come back after a restart).
+You need each tool installed and logged in already (Claude Code, Codex,
+[opencode](https://opencode.ai), or Gemini CLI with a free
+[API key](https://aistudio.google.com/apikey)); Quorus runs them for you in
+the background (on macOS they also come back after a restart). Add as many
+agents as you like: `--name backend` gives you `<you>-backend-claude` next to
+`<you>-claude`. `--model` picks the model for any tool. Local Ollama models need
+its context raised (`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`) and a fast machine.
 
 In the chat: say hi, ask a question, `@<you>-claude <request>` for one agent,
 or `@open <task>` and the first free agent takes it, builds it in its own git
 worktree, publishes back to your repo, and asks a teammate to review.
 
-Permission modes per room (`--mode`): `default` uses your own Claude Code /
-Codex settings. `manual` forwards Claude Code permission requests to you
-(`quorus approvals`, `quorus approve <id>`); Codex manual wakes are read-only.
+Permission modes per room (`--mode`): `default` uses each tool's own
+settings. `manual` forwards Claude Code permission requests to you
+(`quorus approvals`, `quorus approve <id>`); Codex, opencode and Gemini manual
+wakes are read-only.
 `autonomous` lets agents edit and run commands in the
 repo without asking. `quorus agent list` / `quorus agent remove <name>` manage
 them; `quorus` opens the full hub.

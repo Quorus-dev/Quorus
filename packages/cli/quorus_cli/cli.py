@@ -9193,13 +9193,20 @@ def main():
     ))
     agent_sub = p_agent.add_subparsers(dest="agent_action")
     p_agent_add = agent_sub.add_parser("add", help="Add an agent to a room")
-    p_agent_add.add_argument("tool", choices=["claude", "codex", "gemini"])
+    p_agent_add.add_argument("tool", choices=["claude", "codex", "gemini", "opencode"],
+                             help="opencode runs any model: Ollama, OpenRouter, Qwen, ...")
     p_agent_add.add_argument("--room", required=True, help="Room to join")
     p_agent_add.add_argument("--repo", help="Repo the room works in (binds the room)")
     p_agent_add.add_argument(
         "--mode", choices=["default", "manual", "autonomous"], default=None,
         help="Permissions in this room's repo (with --repo)",
     )
+    p_agent_add.add_argument(
+        "--name", help="Label for a second agent of the same tool, e.g. backend "
+                       "-> <you>-backend-claude")
+    p_agent_add.add_argument(
+        "--model", help="Model to run, e.g. sonnet, gpt-5.5, gemini-2.5-pro, "
+                        "ollama/qwen3:4b (opencode: any provider/model)")
     agent_sub.add_parser("list", help="Agents running on this machine")
     p_agent_rm = agent_sub.add_parser("remove", help="Stop an agent on this machine")
     p_agent_rm.add_argument("name", help="Agent name, e.g. arav-claude")
