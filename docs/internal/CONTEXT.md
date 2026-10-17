@@ -148,6 +148,10 @@ and stop at a whole word within 50 characters. Empty replies and oversized
 words get a short conventional fallback. Generated `graphify-out/**` files
 are excluded from staging and dirty checks, including tracked refreshes;
 regressions live in `tests/test_reflexd_commit_hygiene.py`.
+Follow-up: both pre-wake sync and publication restore committed graph files
+before rebasing; excluding them from dirty checks alone left Git refusing
+the rebase. Scratch-repo regressions cover upstream graph changes and verify
+that publication stays linear (`tests/test_reflexd_graph_rebase.py`).
 
 ### Harness exception visibility (2026-10-17)
 

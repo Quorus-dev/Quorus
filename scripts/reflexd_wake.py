@@ -412,6 +412,16 @@ def worktree_dirty(wt: Worktree) -> bool:
                         cwd=wt.path).stdout.strip())
 
 
+def _discard_graph_refresh(wt: Worktree) -> bool:
+    """Restore committed graph artifacts so Git can rebase the worktree."""
+    tracked = _git("ls-tree", "-r", "--name-only", "-z", "HEAD", "--", "graphify-out/",
+                   cwd=wt.path)
+    if tracked.returncode != 0:
+        return False
+    paths = [p for p in tracked.stdout.split("\0") if p]
+    return not paths or _git("checkout", "HEAD", "--", *paths, cwd=wt.path).returncode == 0
+
+
 def sync_worktree(wt: Worktree) -> None:
     """Before a wake: put a clean agent branch on top of main so the agent
     starts from everyone's latest work. Agents can't rebase in Codex's
@@ -420,6 +430,8 @@ def sync_worktree(wt: Worktree) -> None:
     if worktree_dirty(wt) or merge_in_progress(wt):
         return
     if _git("merge-base", "--is-ancestor", wt.main, wt.branch, cwd=wt.repo).returncode == 0:
+        return
+    if not _discard_graph_refresh(wt):
         return
     if _git("rebase", "--quiet", wt.main, cwd=wt.path).returncode != 0:
         _git("rebase", "--abort", cwd=wt.path)
@@ -577,6 +589,9 @@ def publish_worktree(wt: Worktree, participant: str = "quorus") -> str | None:
             if worktree_dirty(wt):
                 return (f"{STATUS_PREFIX} {wt.branch} has uncommitted changes and is "
                         f"behind {wt.main}; not publishing yet")
+            if not _discard_graph_refresh(wt):
+                return (f"{STATUS_PREFIX} couldn't restore generated graph files on "
+                        f"{wt.branch}; not publishing yet")
             rebased = _git("rebase", "--quiet", wt.main, cwd=wt.path)
             if rebased.returncode != 0:
                 _git("rebase", "--abort", cwd=wt.path)
