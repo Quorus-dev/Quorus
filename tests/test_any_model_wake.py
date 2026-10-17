@@ -574,3 +574,23 @@ def test_an_opencode_typo_is_pointed_at_the_model_list() -> None:
     typo = ('{"type":"error","error":{"type":"provider.no-route",'
             '"message":"Model unavailable: opencode/beem-free"}}')
     assert "`opencode models`" in reflexd.vendor_error("opencode", typo, "")
+
+
+def test_gemini_reads_the_repos_agents_and_claude_files() -> None:
+    """Overseer's replay: Gemini read only GEMINI.md, never learned the venv, ran
+    `find /` and timed out three times. And find's steady 'Permission denied'
+    output kept the 300s shell inactivity timeout from ever firing."""
+    cfg = models.gemini_settings(None)
+    assert cfg["context"]["fileName"] == ["GEMINI.md", "AGENTS.md", "CLAUDE.md"]
+    assert cfg["tools"]["shell"]["inactivityTimeout"] == 120
+    keyed = models.gemini_settings(None, api_key=True)  # the other settings stay
+    assert keyed["security"]["auth"]["selectedType"] == "gemini-api-key"
+    assert keyed["context"] == cfg["context"]
+
+
+def test_a_timeout_says_what_the_agent_was_doing() -> None:
+    line = reflexd._timed_out_line(last_step="searching the code")
+    assert line == ("⚠ ran out of time while searching the code, before finishing its "
+                    "reply. Mention me to continue.")
+    assert reflexd._timed_out_line() == ("⚠ ran out of time before finishing its reply. "
+                                         "Mention me to continue.")
