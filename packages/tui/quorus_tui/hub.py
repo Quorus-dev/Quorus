@@ -659,26 +659,32 @@ def _decide_approval(
     relay: str, secret: str, approval_id: str, approve: bool,
 ) -> tuple[bool, str]:
     """Answer one approval. Returns ``(ok, message)`` for the status bar."""
+    from quorus.bundle_client import BundleClientError, bearer
+
+    name = _instance_name_for_approvals()
     try:
+        # The relay won't take a shared secret's word for who is deciding;
+        # sign in as the human first. An API-key login is already a JWT.
+        token = secret if secret.startswith("eyJ") else bearer(
+            relay, secret=secret, name=name)
         r = httpx.post(
             f"{relay}/v1/approvals/{approval_id}/decision",
-            headers=_auth_headers(secret),
-            json={
-                "approve": approve,
-                "reason": "",
-                # The relay refuses anonymous decisions (a shared secret is
-                # not an identity); send who we are.
-                "decided_by": _instance_name_for_approvals(),
-            },
+            headers=_auth_headers(token),
+            json={"approve": approve, "reason": ""},
             timeout=8,
-            follow_redirects=True,
+            follow_redirects=False,
         )
+    except BundleClientError as exc:
+        return False, f"can't sign in as {name or 'you'}: {exc}"
     except Exception as exc:
         return False, f"relay unreachable ({exc.__class__.__name__})"
     if r.status_code == 404:
         return False, f"unknown approval {approval_id}"
     if r.status_code == 403:
-        return False, "an agent cannot decide its own approval"
+        try:
+            return False, r.json().get("detail") or "not allowed to decide this"
+        except ValueError:
+            return False, "not allowed to decide this"
     if r.status_code != 200:
         return False, f"relay said {r.status_code}"
     try:

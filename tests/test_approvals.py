@@ -8,16 +8,36 @@ answer from any machine.
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from quorus.auth.participant_keys import ParticipantKeyStore
 from quorus.relay import _reset_state, app
 
 HEADERS = {"Authorization": "Bearer test-secret"}
 
 
+_SIGNED_IN: dict[str, dict[str, str]] = {}
+
+
 @pytest.fixture(autouse=True)
-async def clean_state():
+async def clean_state(tmp_path):
     _reset_state()
+    _SIGNED_IN.clear()
+    app.state.participant_keys = ParticipantKeyStore(tmp_path)
     yield
     _reset_state()
+
+
+async def _as(client: AsyncClient, name: str) -> dict[str, str]:
+    """Headers signed in as *name*: claim it with the shared secret, then
+    trade the participant key for a JWT, as the CLI and TUI do."""
+    if name in _SIGNED_IN:
+        return _SIGNED_IN[name]
+    claim = await client.post("/v1/auth/claim-name", json={"name": name}, headers=HEADERS)
+    assert claim.status_code == 200, claim.text
+    token = await client.post(
+        "/v1/auth/token", json={"api_key": claim.json()["participant_key"]})
+    assert token.status_code == 200, token.text
+    _SIGNED_IN[name] = {"Authorization": f"Bearer {token.json()['token']}"}
+    return _SIGNED_IN[name]
 
 
 @pytest.fixture
@@ -58,7 +78,7 @@ async def test_request_then_approve_roundtrip(client):
 
     dec = await client.post(
         f"/v1/approvals/{rec['id']}/decision",
-        json={"approve": True, "reason": "looks fine", "decided_by": "arav"}, headers=HEADERS,
+        json={"approve": True, "reason": "looks fine"}, headers=await _as(client, "arav"),
     )
     assert dec.status_code == 200
     assert dec.json()["status"] == "approved"
@@ -72,7 +92,7 @@ async def test_deny_is_recorded(client):
     rid = await _room(client)
     rec = await _create(client, rid)
     dec = await client.post(f"/v1/approvals/{rec['id']}/decision",
-                            json={"approve": False, "decided_by": "arav"}, headers=HEADERS)
+                            json={"approve": False}, headers=await _as(client, "arav"))
     assert dec.json()["status"] == "denied"
 
 
@@ -81,11 +101,11 @@ async def test_decision_is_idempotent(client):
     rid = await _room(client)
     rec = await _create(client, rid)
     await client.post(f"/v1/approvals/{rec['id']}/decision",
-                      json={"approve": True, "decided_by": "arav"},
-                      headers=HEADERS)
+                      json={"approve": True},
+                      headers=await _as(client, "arav"))
     second = await client.post(f"/v1/approvals/{rec['id']}/decision",
-                               json={"approve": False, "decided_by": "arav"},
-                               headers=HEADERS)
+                               json={"approve": False},
+                               headers=await _as(client, "arav"))
     assert second.json()["status"] == "approved"
 
 
@@ -114,8 +134,8 @@ async def test_unknown_id_404s(client):
     resp = await client.get("/v1/approvals/apr_missing", headers=HEADERS)
     assert resp.status_code == 404
     resp = await client.post("/v1/approvals/apr_missing/decision",
-                             json={"approve": True, "decided_by": "arav"},
-                             headers=HEADERS)
+                             json={"approve": True},
+                             headers=await _as(client, "arav"))
     assert resp.status_code == 404
 
 
@@ -192,9 +212,8 @@ async def test_mcp_bridge_end_to_end(client, monkeypatch):
             if pending:
                 await client.post(
                     f"/v1/approvals/{pending[0]['id']}/decision",
-                    json={"approve": True, "reason": "ok",
-                          "decided_by": "arav"},
-                    headers=HEADERS,
+                    json={"approve": True, "reason": "ok"},
+                    headers=await _as(client, "arav"),
                 )
                 return
 
@@ -240,7 +259,7 @@ async def test_another_agent_cannot_approve(client):
     rec = await _create(client, rid)
     resp = await client.post(
         f"/v1/approvals/{rec['id']}/decision",
-        json={"approve": True, "decided_by": "aarya-codex"}, headers=HEADERS,
+        json={"approve": True}, headers=await _as(client, "aarya-codex"),
     )
     assert resp.status_code == 403
     assert "agent" in resp.json()["detail"].lower()
@@ -253,20 +272,24 @@ async def test_requesting_agent_cannot_approve_itself(client):
     rec = await _create(client, rid)
     resp = await client.post(
         f"/v1/approvals/{rec['id']}/decision",
-        json={"approve": True, "decided_by": "arav-claude"}, headers=HEADERS,
+        json={"approve": True}, headers=await _as(client, "arav-claude"),
     )
     assert resp.status_code == 403
 
 
-async def test_anonymous_decision_is_refused(client):
-    """A shared secret is not an identity. Legacy auth carries no
-    participant, so an unnamed decision must be refused outright."""
+async def test_shared_secret_cannot_decide_even_naming_the_owner(client):
+    """A shared secret is not an identity. Every woken agent's config holds
+    it, so a secret-holder naming the owner in ``decided_by`` must not be
+    able to open its own gate."""
     rid = await _room(client)
     rec = await _create(client, rid)
-    resp = await client.post(f"/v1/approvals/{rec['id']}/decision",
-                             json={"approve": True}, headers=HEADERS)
-    assert resp.status_code == 403
-    assert "decider" in resp.json()["detail"].lower()
+    for body in ({"approve": True}, {"approve": True, "decided_by": "arav"}):
+        resp = await client.post(f"/v1/approvals/{rec['id']}/decision",
+                                 json=body, headers=HEADERS)
+        assert resp.status_code == 403, body
+        assert "signed in" in resp.json()["detail"].lower()
+    still = await client.get(f"/v1/approvals/{rec['id']}", headers=HEADERS)
+    assert still.json()["status"] == "pending"
 
 
 async def test_non_member_cannot_decide(client):
@@ -274,7 +297,7 @@ async def test_non_member_cannot_decide(client):
     rec = await _create(client, rid)
     resp = await client.post(
         f"/v1/approvals/{rec['id']}/decision",
-        json={"approve": True, "decided_by": "stranger"}, headers=HEADERS,
+        json={"approve": True}, headers=await _as(client, "stranger"),
     )
     assert resp.status_code == 403
     assert "room member" in resp.json()["detail"].lower()
@@ -313,7 +336,7 @@ async def test_padded_input_cannot_ride_an_approval(client, monkeypatch):
     rec = await _create(client, rid, tool_input=benign)
     await client.post(
         f"/v1/approvals/{rec['id']}/decision",
-        json={"approve": True, "decided_by": "arav"}, headers=HEADERS,
+        json={"approve": True}, headers=await _as(client, "arav"),
     )
     approved = (await client.get(f"/v1/approvals/{rec['id']}",
                                  headers=HEADERS)).json()
@@ -386,9 +409,8 @@ async def test_bridge_denies_when_human_denies(client, monkeypatch):
     rec = await _create(client, rid, tool_input="rm -rf /")
     await client.post(
         f"/v1/approvals/{rec['id']}/decision",
-        json={"approve": False, "reason": "absolutely not",
-              "decided_by": "arav"},
-        headers=HEADERS,
+        json={"approve": False, "reason": "absolutely not"},
+        headers=await _as(client, "arav"),
     )
     denied = (await client.get(f"/v1/approvals/{rec['id']}",
                                headers=HEADERS)).json()
@@ -445,12 +467,12 @@ async def test_only_the_agents_owner_decides_in_a_shared_room(client):
     rec = await _create(client, rid)  # agent arav-claude → owner arav
     other = await client.post(
         f"/v1/approvals/{rec['id']}/decision",
-        json={"approve": True, "decided_by": "aarya"}, headers=HEADERS,
+        json={"approve": True}, headers=await _as(client, "aarya"),
     )
     assert other.status_code == 403 and "arav" in other.json()["detail"]
     owner = await client.post(
         f"/v1/approvals/{rec['id']}/decision",
-        json={"approve": True, "decided_by": "arav"}, headers=HEADERS,
+        json={"approve": True}, headers=await _as(client, "arav"),
     )
     assert owner.status_code == 200
 
@@ -465,7 +487,7 @@ async def test_ownerless_agent_falls_back_to_any_human_member(client):
     rec = await _create(client, rid, agent="bot-claude")
     ok = await client.post(
         f"/v1/approvals/{rec['id']}/decision",
-        json={"approve": True, "decided_by": "aarya"}, headers=HEADERS,
+        json={"approve": True}, headers=await _as(client, "aarya"),
     )
     assert ok.status_code == 200
 
