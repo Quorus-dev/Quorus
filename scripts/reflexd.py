@@ -2516,6 +2516,7 @@ class Reflexd:
                     on_session=_persist_session, timeout_s=wake_timeout,
                     max_turns=wake_max_turns, writable_root=ws, summary=reply,
                     mode=room_mode, approval_room=room if room_mode == "manual" else None,
+                    room=room,
                 )
             except asyncio.CancelledError:
                 raise
@@ -2952,7 +2953,7 @@ class Reflexd:
         on_session: Callable[[str], None], timeout_s: int | None,
         max_turns: int | None, writable_root: Path | None,
         summary: str | None = None, mode: str = "default",
-        approval_room: str | None = None,
+        approval_room: str | None = None, room: str = "",
     ) -> str | None:
         """Publish the agent's branch; on a conflict, wake the SAME agent (same
         session) to resolve the merge left in its worktree, then retry once.
@@ -2960,7 +2961,9 @@ class Reflexd:
         async def publish() -> str | None:
             try:
                 return await asyncio.to_thread(
-                    reflexd_wake.publish_worktree, wt, self.config.participant_name)
+                    reflexd_wake.publish_worktree, wt, self.config.participant_name,
+                    {"agent": self.config.participant_name, "vendor": harness,
+                     "model": getattr(self.adapter, "model", None), "room": room})
             except (OSError, subprocess.SubprocessError) as exc:
                 return f"{reflexd_wake.STATUS_PREFIX} publish check failed: {exc}"
 

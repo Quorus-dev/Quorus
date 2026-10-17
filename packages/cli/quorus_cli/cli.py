@@ -1062,6 +1062,12 @@ def _cmd_agent(args):
     cmd_agent(args, console)
 
 
+def _cmd_scorecard(args):
+    from quorus_cli.scorecard_cmd import cmd_scorecard
+
+    cmd_scorecard(args, console)
+
+
 def _cmd_turnguard(args):
     """Mark the current agent busy/idle for the local Reflex daemon.
 
@@ -9204,6 +9210,15 @@ def main():
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")
 
+    p_score = sub.add_parser(
+        "scorecard", help="Which agent and vendor's work holds up in this repo")
+    p_score.add_argument("--repo", help="Repo path (default: current directory)")
+    p_score.add_argument("--room", help="Room whose reviews to include")
+    p_score.add_argument("--since", default="7 days ago", help="git date, e.g. '2 days ago'")
+    p_score.add_argument("--range", help="Explicit git range instead of --since, e.g. main..HEAD")
+    p_score.add_argument("--by", choices=["agent", "vendor"], default="agent")
+    p_score.add_argument("--json", action="store_true", help="One JSON row per commit")
+
     p_agent = sub.add_parser("agent", **_help_block(
         synopsis="Add your AI agents (Claude, Codex, Gemini) to a room.",
         description=(
@@ -9539,6 +9554,7 @@ def main():
         "deny": _cmd_deny,
         "room": _cmd_room,
         "agent": _cmd_agent,
+        "scorecard": _cmd_scorecard,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,

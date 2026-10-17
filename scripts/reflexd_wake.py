@@ -21,6 +21,7 @@ Proven missing in a real two-agent run (2026-10-08, claude 2.1.295 + codex
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -546,7 +547,8 @@ def merge_in_progress(wt: Worktree) -> bool:
     return _git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt.path).returncode == 0
 
 
-def publish_worktree(wt: Worktree, participant: str = "quorus") -> str | None:
+def publish_worktree(wt: Worktree, participant: str = "quorus",
+                     provenance: dict[str, Any] | None = None) -> str | None:
     """Rebase the agent's branch onto main if needed, then fast-forward main.
 
     Done by the daemon, not the agent: Codex's sandbox blocks the main
@@ -587,8 +589,17 @@ def publish_worktree(wt: Worktree, participant: str = "quorus") -> str | None:
         if dirty.stdout.strip():
             return (f"{STATUS_PREFIX} not publishing {wt.branch}: the main checkout "
                     f"{wt.repo} has uncommitted changes")
+        before = _git("rev-parse", wt.main, cwd=wt.repo).stdout.strip()
         merged = _git("merge", "--ff-only", "--quiet", wt.branch, cwd=wt.repo)
         if merged.returncode == 0:
+            if provenance is not None and before:
+                # The outcome ledger: who made each published commit. Git notes
+                # never change a commit id; best effort, never blocks a publish.
+                try:
+                    from quorus.ledger import record_provenance
+                    record_provenance(wt.repo, before, wt.main, provenance)
+                except Exception as exc:
+                    logging.getLogger("reflexd").warning("provenance note failed: %s", exc)
             return f"{STATUS_PREFIX} published {n} commit(s) from {wt.branch} to {wt.main}"
         if attempt:
             return (f"{STATUS_PREFIX} publishing {wt.branch} failed: "
