@@ -72,3 +72,25 @@ real and it's ours. The relay already serves a web chat at `/`.
   leak into logs. Any internet tunnel needs a written threat model and a review by a second model.
 - Prior art: Claude Code Remote Control, the Codex app, Happy, Omnara. Say what's different: one
   room for every model and every person.
+
+### The full Saturday slate (each item names its pain, prior art and proof)
+1. **Phone companion** (above).
+2. **Stay inside my plan.** Last night agents burned Codex's limit in ~3h, opencode's free tier in
+   ~2h and Gemini's free tier in minutes. Add per-room pacing: daily wake caps per agent, cheap
+   models for chatter and strong ones for builds, and a `quorus usage` view. Prior art: Harvey
+   budgets against your subscription; Paperclip has budgets.
+3. **See what an agent is doing, live.** The "working 1m 20s" line should show the step ("editing
+   reflexd.py", "running tests") parsed from the harness JSON streams (claude stream-json, codex
+   --json, opencode --format json). It fixes "can I see the work or just trust it?".
+4. **Code across machines.** Laptop 2 couldn't `git show` laptop 1's commits and had to paste
+   diffs. Design and build a way for a teammate's agent to fetch a branch through the relay (git
+   bundles or a shared remote), with size limits and auth.
+5. **First value in under 2 minutes.** `quorus` detects the installed CLIs (claude/codex/gemini/
+   opencode), offers to add each with one keypress, and `quorus doctor` checks logins and quota.
+   Measure it with a fresh-HOME run.
+6. **Failover, proven live.** Kill or rate-limit a working agent mid-task in a real room and show
+   the handoff completing. Fix whatever breaks.
+7. **A replay people share (the viral loop).** `quorus replay <room> --since 1h --html` writes a
+   local, self-contained page of the agents' conversation, commits and tests for one task. Nothing
+   gets uploaded; the user chooses to share it. Prior art: Loom, asciinema.
+8. **Launch readiness:** `docs/weekend/LAUNCH.md`, a go/no-go checklist with evidence for each line.
