@@ -68,3 +68,26 @@ def test_picks_the_free_models_that_answer(monkeypatch, tmp_path: Path) -> None:
     up.clear()
     assert demo_cmd.pick_models(tmp_path, _C()) == []
     assert demo_cmd.pick_models(tmp_path, _C(), "x/y") == ["x/y", "x/y"]
+
+
+def test_demo_shows_each_agents_step_once(monkeypatch) -> None:
+    class C:
+        out: list[str] = []
+
+        def print(self, *a, **_k) -> None:
+            self.out.append(" ".join(map(str, a)))
+
+    class R:
+        def __init__(self, data) -> None:
+            self.data = data
+
+        def json(self):
+            return self.data
+
+    beat = [{"name": demo_cmd.BUILDER, "activity": "editing calc.py"},
+            {"name": "someone-else", "activity": "x"}]
+    monkeypatch.setattr(demo_cmd.httpx, "get", lambda *a, **k: R(beat))
+    c, last = C(), {}
+    demo_cmd._show_steps(c, "http://r", {}, last, 0.0)
+    demo_cmd._show_steps(c, "http://r", {}, last, 0.0)
+    assert len(c.out) == 1 and f"@{demo_cmd.BUILDER} editing calc.py" in c.out[0]

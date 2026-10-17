@@ -130,9 +130,19 @@ def _load_reflexd() -> Any:
     return mod
 
 
-async def _run_entry(adapter: Any, e: Entry, task: str, common_git: Path, timeout: int) -> None:
+async def _run_entry(adapter: Any, e: Entry, task: str, common_git: Path, timeout: int,
+                     console: Any = None) -> None:
     adapter.model = e.model  # each contender gets its own adapter and model
     start = time.time()
+    last = [""]
+
+    def show(step: str) -> None:  # live: "@a-codex 0:42 editing relay.py"
+        if console is not None and step != last[0]:
+            last[0] = step
+            secs = int(time.time() - start)
+            console.print(f"[dim]  @{e.agent} {secs // 60}:{secs % 60:02d} {step}[/]",
+                          highlight=False)
+    adapter.on_step = show
     e.reply = await adapter.run(e.harness, context=task_prompt(task), cwd=e.path,
                                 timeout_s=timeout, mode="autonomous",
                                 writable_roots=[e.path, common_git])
@@ -192,7 +202,7 @@ def cmd_duel(args: Any, console: Any) -> None:
 
     async def both() -> None:
         await asyncio.gather(*(_run_entry(reflexd.HeadlessAdapter(timeout_s=args.timeout), e,
-                                          args.task, common_git, args.timeout)
+                                          args.task, common_git, args.timeout, console)
                                for e in entries))
     asyncio.run(both())
     for e in entries:

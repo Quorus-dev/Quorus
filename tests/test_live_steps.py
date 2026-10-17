@@ -98,6 +98,8 @@ def test_shell_steps_never_show_arguments() -> None:
     assert steps.shell_step("ls; cat calc.py") == "looking around the repo"
     assert steps.shell_step("cd /repo && make build") == "running make"
     assert steps.shell_step("/bin/zsh -lc 'cd app && cat calc.py'") == "reading calc.py"
+    # opencode 2.x calls its shell tool "execute" (live demo run).
+    assert steps.tool_step("execute", {"command": "pytest -q"}) == "running tests"
     assert steps.step_of("not json") is None
     assert steps.step_of('{"type": "assistant", "message": {"content": "x"}}') is None
 

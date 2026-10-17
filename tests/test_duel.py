@@ -52,6 +52,8 @@ def _fake_reflexd(fixes: dict[str, str], verdict: str = "") -> Any:
                 assert "Candidate A" in context and "Candidate B" in context
                 assert "arav-" not in context  # blind: no names
                 return verdict
+            self.on_step("editing calc.py")  # the daemon's live steps, shown in the duel
+            self.on_step("editing calc.py")
             (Path(cwd) / "calc.py").write_text(f"def add(a, b):\n    return {fixes[harness]}\n")
             return "done"
     return SimpleNamespace(HeadlessAdapter=Adapter)
@@ -83,6 +85,8 @@ def test_only_passing_entry_wins_without_a_judge(tmp_path: Path, monkeypatch) ->
     duel_cmd.cmd_duel(_args(repo), c)
     assert "a + b" in (repo / "calc.py").read_text()  # winner merged into main
     assert any("Winner: @arav-claude" in line for line in c.out)
+    shown = [line for line in c.out if "editing calc.py" in line]
+    assert len(shown) == 2 and any("@arav-codex 0:00 editing calc.py" in s for s in shown)
     card = {r["agent"]: r for r in ledger.scorecard(ledger.outcomes(repo, "HEAD~1..HEAD"))}
     assert card["arav-claude"]["duels_won"] == 1 and card["arav-codex"]["duels_lost"] == 1
     branches = subprocess.run(["git", "branch"], cwd=repo, capture_output=True, text=True).stdout

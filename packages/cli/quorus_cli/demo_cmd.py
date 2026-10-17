@@ -141,6 +141,21 @@ def _show(console: Any, m: dict[str, Any], start: float) -> None:
         console.print(f"[dim]{secs}[/]  [{style}]@{who}[/] {body[:600]}", highlight=False)
 
 
+def _show_steps(console: Any, url: str, headers: dict[str, str], last: dict[str, str],
+                start: float) -> None:
+    """Each agent's live step ("editing calc.py"), once per change."""
+    try:
+        presence = httpx.get(f"{url}/presence", headers=headers, timeout=5).json()
+    except (httpx.HTTPError, ValueError):
+        return
+    for p in presence if isinstance(presence, list) else []:
+        name, step = p.get("name"), p.get("activity") or ""
+        if name in (BUILDER, REVIEWER) and step and last.get(name) != step:
+            last[name] = step
+            console.print(f"[dim]{time.time() - start:4.0f}s  ⋯ @{name} {step}[/]",
+                          highlight=False)
+
+
 def cmd_demo(args: Any, console: Any) -> None:
     problem = _opencode_ok()
     if problem:
@@ -194,13 +209,14 @@ def cmd_demo(args: Any, console: Any) -> None:
         start = time.time()
         httpx.post(f"{url}/rooms/{ROOM}/messages", json={"from_name": HUMAN, "content": TASK},
                    headers=H)
-        seen, history, fixed_at = 0, [], None
+        seen, history, fixed_at, steps = 0, [], None, {}
         while time.time() - start < args.timeout:
             history = httpx.get(f"{url}/rooms/{ROOM}/history", params={"limit": 200},
                                 headers=H, timeout=10).json()
             for m in history[seen:]:
                 _show(console, m, start)
             seen = len(history)
+            _show_steps(console, url, H, steps, start)
             if fixed_at is None and is_fixed(repo):
                 fixed_at = time.time() - start
             if fixed_at is not None and review_of(history):
