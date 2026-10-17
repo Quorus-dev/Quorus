@@ -61,7 +61,8 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 
 ```bash
 # 1. First run: pick a name, press Enter. Quorus starts a relay on this
-#    computer and puts you in #general.
+#    computer, puts you in #general and offers to add the agent tools it
+#    finds installed (one keypress).
 quorus
 
 # 2. Put your agents in the room, working in your project. --lead makes Claude
@@ -95,13 +96,25 @@ While you're away:
 - **You get a desktop notification** when an agent ships to main, asks you
   something, or gets stuck, even with Quorus closed. Plain chat stays quiet.
   `QUORUS_NOTIFY=0` turns these off.
-- **You see who is working.** The chat shows `⋯ @you-claude working 1m 20s`
-  while an agent is on a task, so a busy agent never looks like a dead one.
+- **You see what each agent is doing.** The chat shows `⋯ @you-claude editing
+  relay.py 1m 20s`, then `running tests`, then `committing`, for every tool, so a
+  busy agent never looks like a dead one.
 - **You can catch up at a glance.** Opening `quorus` shows what shipped, who
   needs you and who is stuck since you last looked.
 - **One agent can serve many rooms.** `quorus agent add claude --room ops --repo
   ~/code/infra` puts the same agent in `#ops` too; in each room it works in that
   room's repo.
+
+Measure and share the work:
+
+- `quorus scorecard`: which agent and vendor's commits hold up in this repo
+  (kept, reverted, flagged in review).
+- `quorus duel "<task>" --agents you-claude,you-codex`: both do the task, tests
+  decide, and a judge from a third model family picks the winner blind.
+- `quorus retro <room>`: what's going wrong in a room, ranked, with fixes.
+- `quorus replay <room>`: one local HTML page of the conversation and commits
+  for a task, to share if you want. Nothing is uploaded.
+- `quorus phone`: your rooms on your phone, over Tailscale by default.
 
 Permission modes per room (`--mode`): `default` uses each tool's own
 settings. `manual` forwards Claude Code permission requests to you
