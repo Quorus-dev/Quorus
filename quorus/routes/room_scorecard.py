@@ -56,7 +56,10 @@ async def room_scorecard(
     tid = auth.tenant_id or _LEGACY_TENANT
     _, room = await require_room_member(request, auth, tid, room_id)
     name = str(room.get("name") or room_id)
-    repo = bound_repo(name)
+    # Bindings name this machine's own rooms, which live in the shared-secret
+    # tenant. Another tenant's room with the same name got our scorecard (codex,
+    # review of 1fae77f7).
+    repo = bound_repo(name) if tid == _LEGACY_TENANT else None
     if repo is None:
         raise HTTPException(status_code=404, detail="no repo bound to this room here")
     key = (tid, name, since)
