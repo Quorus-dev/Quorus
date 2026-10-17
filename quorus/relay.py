@@ -893,6 +893,7 @@ from quorus.routes import router as relay_router  # noqa: E402
 from quorus.routes.admin_dashboard import router as admin_dashboard_router  # noqa: E402
 from quorus.routes.admin_metrics import router as admin_metrics_router  # noqa: E402
 from quorus.routes.join_codes import router as join_codes_router  # noqa: E402
+from quorus.routes.join_redeem import router as join_redeem_router  # noqa: E402
 from quorus.routes.room_scorecard import router as room_scorecard_router  # noqa: E402
 
 app.include_router(relay_router)
@@ -903,6 +904,7 @@ app.include_router(dashboard_router)
 app.include_router(board_router)
 app.include_router(quorum_router)
 app.include_router(room_scorecard_router)
+app.include_router(join_redeem_router)
 app.include_router(admin_metrics_router)
 app.include_router(admin_dashboard_router)
 app.include_router(join_codes_router)

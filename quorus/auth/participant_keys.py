@@ -59,6 +59,25 @@ def _hash(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
+KINDS = ("human", "agent", "unclassified")
+
+
+def insert_claim(db: sqlite3.Connection, name: str, kind: str, owner: str | None,
+                 owner_claim_id: str | None) -> str | None:
+    """Insert one claim inside the caller's transaction; None if *name* is taken."""
+    if kind not in KINDS:
+        raise ValueError(f"kind must be one of {KINDS}")
+    key = KEY_PREFIX + secrets.token_urlsafe(32)
+    try:
+        db.execute("INSERT INTO claims (name, key_hash, created_at, claim_id, kind, owner, "
+                   "owner_claim_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                   (name, _hash(key), time.time(), secrets.token_hex(16), kind, owner,
+                    owner_claim_id))
+    except sqlite3.IntegrityError:
+        return None
+    return key
+
+
 class ParticipantKeyStore:
     """name -> sha256(key), in SQLite so claims survive relay restarts."""
 
@@ -79,22 +98,38 @@ class ParticipantKeyStore:
                 for (name,) in db.execute("SELECT name FROM claims").fetchall():
                     db.execute("UPDATE claims SET claim_id = ? WHERE name = ?",
                                (secrets.token_hex(16), name))
+            if "kind" not in columns:
+                # Who a claim belongs to (docs/weekend/invite-roles.md). Rows from
+                # before include daemon keys, so they are `unclassified`, never
+                # human: they can't approve or own agents until the relay owner
+                # classifies them (codex, review of 45e1f921).
+                db.execute("ALTER TABLE claims ADD COLUMN kind TEXT NOT NULL "
+                           "DEFAULT 'unclassified'")
+                db.execute("ALTER TABLE claims ADD COLUMN owner TEXT")
+                db.execute("ALTER TABLE claims ADD COLUMN owner_claim_id TEXT")
+            from quorus.auth.invite_codes import create_table
+
+            create_table(db)
         os.chmod(self._path, 0o600)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._path, isolation_level="IMMEDIATE")
 
-    def claim(self, name: str) -> str | None:
+    def claim(self, name: str, kind: str = "unclassified", owner: str | None = None,
+              owner_claim_id: str | None = None) -> str | None:
         """A new key for *name*, or None when someone already claimed it."""
-        key = KEY_PREFIX + secrets.token_urlsafe(32)
         with self._lock, self._connect() as db:
-            try:
-                db.execute("INSERT INTO claims (name, key_hash, created_at, claim_id) "
-                           "VALUES (?, ?, ?, ?)",
-                           (name, _hash(key), time.time(), secrets.token_hex(16)))
-            except sqlite3.IntegrityError:
-                return None
-        return key
+            return insert_claim(db, name, kind, owner, owner_claim_id)
+
+    def info(self, name: str) -> dict | None:
+        """A claim's kind, owner and generation (never the key hash)."""
+        with self._lock, self._connect() as db:
+            row = db.execute("SELECT claim_id, kind, owner, owner_claim_id FROM claims "
+                             "WHERE name = ?", (name,)).fetchone()
+        if row is None:
+            return None
+        return {"name": name, "claim_id": row[0], "kind": row[1], "owner": row[2],
+                "owner_claim_id": row[3]}
 
     def lookup(self, key: str) -> tuple[str, str] | None:
         """``(name, claim_id)`` for a participant key, or None."""

@@ -148,6 +148,18 @@ def _os_environ_snapshot():
             os.environ[key] = value
 
 
+@pytest.fixture(autouse=True)
+def _relay_state_in_tmp(tmp_path):
+    """The relay's claims store and invites live in a per-test folder, never in
+    the developer's real ~/.quorus (mint and redeem now open it on first use)."""
+    if not (os.environ.get("QUORUS_HISTORY_DB") or os.environ.get("MESSAGES_FILE")):
+        os.environ["QUORUS_HISTORY_DB"] = str(tmp_path / "relay-state" / "history.db")
+    relay = sys.modules.get("quorus.relay")
+    if relay is not None:
+        relay.app.state.participant_keys = None
+    yield
+
+
 _OPT_IN_MARKERS = {"real_harness", "cross_harness"}
 
 
