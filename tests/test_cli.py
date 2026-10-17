@@ -2072,6 +2072,7 @@ def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, ca
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
     # Mock shutil.which to return None for all commands (no uv, no quorus-mcp)
     monkeypatch.setattr("quorus.cli.shutil.which", lambda _: None)
+    monkeypatch.setattr("quorus.cli._sibling_quorus_mcp", lambda: None)
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     monkeypatch.setattr("quorus.cli.httpx.get", lambda *a, **kw: mock_resp)
@@ -2654,3 +2655,21 @@ def test_short_code_join_without_a_relay_says_so(monkeypatch, capsys):
     assert exc.value.code == 5
     out = capsys.readouterr().out
     assert "--relay" in out and "fly.dev" not in out
+
+
+def test_init_prefers_the_mcp_server_next_to_this_install(tmp_path, monkeypatch) -> None:
+    """Release check: with an older ~/.local/bin/quorus-mcp on PATH, init used
+    to register that one, so the agent got a mismatched MCP server."""
+    from quorus_cli import cli as cli_mod
+
+    venv_bin = tmp_path / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").write_text("")
+    mine = venv_bin / "quorus-mcp"
+    mine.write_text("#!/bin/sh\n")
+    mine.chmod(0o755)
+    monkeypatch.setattr(cli_mod.sys, "executable", str(venv_bin / "python"))
+    monkeypatch.setattr(cli_mod.shutil, "which", lambda _: "/home/u/.local/bin/quorus-mcp")
+    assert cli_mod._mcp_server_command() == (str(mine), [])
+    mine.unlink()  # no sibling: PATH's copy is still better than nothing
+    assert cli_mod._mcp_server_command() == ("/home/u/.local/bin/quorus-mcp", [])

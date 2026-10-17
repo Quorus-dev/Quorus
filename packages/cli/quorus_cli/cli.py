@@ -266,14 +266,30 @@ def _get_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(follow_redirects=True)
 
 
+def _sibling_quorus_mcp() -> str | None:
+    """The `quorus-mcp` installed beside the running interpreter, if any.
+
+    Not resolved through symlinks: a venv's bin/python is a link to the base
+    interpreter, but its entry points live in the venv's own bin/.
+    """
+    folder = Path(sys.executable).parent
+    for name in ("quorus-mcp", "quorus-mcp.exe"):
+        candidate = folder / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
 def _mcp_server_command() -> tuple[str, list[str]]:
     """Return the best (command, args) for launching the Quorus MCP server.
 
     Prefers the installed `quorus-mcp` entry point (instant startup) over
     `uv run` (which recreates a venv) over plain `python -m` (slower deps).
     """
-    # 1. Prefer installed entry point — instant startup, no venv overhead
-    quorus_mcp = shutil.which("quorus-mcp")
+    # 1. Prefer installed entry point — instant startup, no venv overhead.
+    # The one next to this Python first: with two installs (pipx and an older
+    # ~/.local/bin copy) PATH can hand back the other one's server.
+    quorus_mcp = _sibling_quorus_mcp() or shutil.which("quorus-mcp")
     if quorus_mcp:
         return quorus_mcp, []
     # 2. Fall back to uv if available
