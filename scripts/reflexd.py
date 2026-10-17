@@ -2187,6 +2187,25 @@ class Reflexd:
         except Exception as exc:  # presence is cosmetic: never fail a wake on it
             logger.debug("presence update failed: %s", exc)
 
+    def _refresh_identity(self) -> None:
+        """Rewrite the agent's private config dir before every wake. An agent
+        testing `quorus init` inside its wake wrote a bogus profile there and
+        made it current (its QUORUS_CONFIG_DIR beats HOME), so its room tools
+        401'd for the rest of the session (opencode, 2026-10-17)."""
+        agent_dir = getattr(self.adapter, "agent_config_dir", None)
+        if agent_dir is None:
+            return
+        try:
+            reflexd_wake.write_agent_config_dir(
+                agent_dir, relay_url=self.config.relay_url, api_key=self.config.api_key,
+                participant=self.config.participant_name, legacy=self.config.legacy_bearer,
+            )
+            for stray in (agent_dir / "profiles").glob("*.json"):
+                if stray.stem != self.config.participant_name:
+                    stray.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("could not refresh agent identity: %s", exc)
+
     async def _limited(self, relay: RelayClient, envelope: dict[str, Any]) -> bool:
         """While the vendor's quota is out, don't wake the agent: say so once
         per room, then stay quiet until it resets."""
@@ -2221,6 +2240,7 @@ class Reflexd:
             return
         if await self._limited(relay, envelope):
             return
+        self._refresh_identity()
 
         history = await relay.fetch_recent(
             room=room, limit=HEARTBEAT_HISTORY_LIMIT,

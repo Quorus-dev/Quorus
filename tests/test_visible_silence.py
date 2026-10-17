@@ -76,3 +76,24 @@ def test_chatter_stop_and_full_pause_are_told_apart() -> None:
     assert reflexd._pause_announced([human, chatter], reflexd.CHATTER_NOTICE)
     # A chatter notice doesn't suppress the later full-pause notice.
     assert not reflexd._pause_announced([human, chatter], reflexd.PAUSE_NOTICE)
+
+
+def test_wake_repairs_an_identity_the_agent_broke(tmp_path, monkeypatch) -> None:
+    # Live 2026-10-17: an agent ran `quorus init myagent --relay-url
+    # http://localhost:9999` in its wake; its QUORUS_CONFIG_DIR pointed at its
+    # own identity, so the bogus profile became current and its tools 401'd.
+    import json
+
+    cfg = reflexd.ReflexdConfig(relay_url="http://r", api_key="sec", legacy_bearer=True,
+                                participant_name="a-opencode", spawn_enabled=False)
+    d = reflexd.Reflexd(cfg)
+    agent_dir = tmp_path / "agent"
+    d.adapter.agent_config_dir = agent_dir
+    (agent_dir / "profiles").mkdir(parents=True)
+    (agent_dir / "profiles" / "default.json").write_text('{"relay_secret": "s3cret"}')
+    (agent_dir / "config.json").write_text('{"current": "default"}')
+    d._refresh_identity()
+    assert json.loads((agent_dir / "config.json").read_text())["current"] == "a-opencode"
+    assert sorted(p.name for p in (agent_dir / "profiles").iterdir()) == ["a-opencode.json"]
+    prof = json.loads((agent_dir / "profiles" / "a-opencode.json").read_text())
+    assert prof["relay_secret"] == "sec" and prof["relay_url"] == "http://r"
