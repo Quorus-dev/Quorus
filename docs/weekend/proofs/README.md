@@ -17,3 +17,8 @@ answered only because a human's message wakes every agent. The check for a real 
 `social` message from the failing agent followed by the teammate's answer.
 
 Re-run 2026-10-17 12:07 on 397dd2db/6c4982ef (participant keys for daemons): **passes**. `social/defer` returns 200; t-claude's log shows `reason=vendor failover`; answer in 42s.
+
+`needs_you_proof.py` (2026-10-17, on release/0.5.0 = 32c97a6e + 3288de2e): a private relay and
+one daemon per vendor (Claude Code, Codex, Gemini CLI, opencode) whose CLI is a stub answering in
+that vendor's real output format with "@arav should I merge the release PR now?". **Passes for all
+four:** each reply was parsed and posted, and each daemon fired a "needs you" desktop alert.
