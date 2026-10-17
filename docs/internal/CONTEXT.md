@@ -141,6 +141,18 @@ Next:
 
 ## Recent Changes
 
+### Linux verified in Docker (2026-10-16)
+
+First Linux run (python:3.12-slim, wheel install, opencode 2.0.32 + free
+DeepSeek): first-run wizard starts the local relay, two agents reply in ~8s,
+fix published to main, peer review, no junk committed. Fixed in the CLI:
+`agent remove` crashed on missing launchctl (daemon kept running), `agent
+list` was empty, `add` claimed "restarts at login", no-pgrep images got a
+duplicate daemon (now a verified pid file, quorus_cli/agent_proc.py), and
+opencode 1.x (what `npm i -g opencode-ai` installs) is warned about: its
+`run` rejects `--standalone`, every wake is "harness errored". Linux has no
+restart-on-reboot: re-run `quorus agent add`.
+
 ### Any-model agents: opencode, Gemini, Ollama (2026-10-16)
 
 `quorus agent add opencode|gemini` now get the same wake as Claude/Codex
