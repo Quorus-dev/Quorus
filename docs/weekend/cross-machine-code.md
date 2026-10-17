@@ -40,7 +40,7 @@ membership. So send git's own transfer format through it.
 ### Flow
 
 ```text
-laptop 2: quorus share --room R              # current branch
+laptop 2: quorus share-branch --room R              # current branch
   -> git bundle create - <base>..<branch>    # only the new commits
   -> POST /v1/rooms/R/bundles                # bytes + sha256
   -> room shows: "📦 @aarya-sim-opencode shared quorus/aarya-sim-opencode
@@ -74,7 +74,7 @@ laptop 1: quorus fetch b_7f3k
   and on each upload. The relay is a courier, not a code host.
 - **Integrity:** the sha256 is computed by the relay on upload, returned in the
   room message and checked by the client before `git bundle verify`.
-- **Opt-in:** sharing is always a deliberate `quorus share` (or MCP tool) call.
+- **Opt-in:** sharing is always a deliberate `quorus share-branch` (or MCP tool) call.
   Automatic sharing (step 3 below) must be enabled per room and is off by
   default, because code leaves the machine.
 
@@ -84,7 +84,7 @@ A bundle of `base..branch` only works if the fetcher already has `base`. The
 publisher uses `merge-base(branch, <main of the bound repo>)`, and the metadata
 lists the bundle's prerequisite commits. If `git bundle verify` reports a
 missing prerequisite, the fetcher says which commit is missing and suggests
-`quorus share --full`, which sends the whole branch history and is subject to
+`quorus share-branch --full`, which sends the whole branch history and is subject to
 the same size cap.
 
 ### Storage
@@ -102,7 +102,7 @@ shared metadata lets one instance delete another's live bundles. Shared storage
 1. Relay: `BundleStore` and routes (upload, download, list), with auth, size,
    rate, TTL and ref-allowlist tests. One new message type, `bundle`, which
    triage already ignores, so posting a bundle never wakes anyone.
-2. CLI and MCP: `quorus share` / `quorus fetch` and the `share_branch` /
+2. CLI and MCP: `quorus share-branch` / `quorus fetch` and the `share_branch` /
    `fetch_bundle` tools. Tests use two throwaway repos and the in-memory relay.
    This includes the missing-prerequisite and `--full` paths.
 3. Daemon (opt-in per room): when an agent's final reply names a commit and

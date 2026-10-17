@@ -1198,6 +1198,18 @@ def _cmd_demo(args):
     cmd_demo(args, console)
 
 
+def _cmd_share_branch(args):
+    from quorus_cli.bundle_cmd import cmd_share
+
+    cmd_share(args, console)
+
+
+def _cmd_fetch(args):
+    from quorus_cli.bundle_cmd import cmd_fetch
+
+    cmd_fetch(args, console)
+
+
 def _cmd_retro(args):
     from quorus_cli.retro_cmd import cmd_retro
 
@@ -9462,6 +9474,20 @@ def main():
     p_demo.add_argument("--timeout", type=int, default=300, help="Seconds to wait (default 300)")
     p_demo.add_argument("--keep", action="store_true", help="Keep the demo folder afterwards")
 
+    p_sbranch = sub.add_parser("share-branch",
+                               help="Share a branch with teammates on other machines")
+    p_sbranch.add_argument("--room", required=True, help="Room to share it in")
+    p_sbranch.add_argument("--branch", help="Branch to share (default: the current one)")
+    p_sbranch.add_argument("--base", help="Send only commits not on this ref (default: main)")
+    p_sbranch.add_argument("--full", action="store_true",
+                           help="Send the branch's whole history (when a teammate lacks the base)")
+    p_sbranch.add_argument("--repo", help="Repo path (default: current directory)")
+
+    p_fetch = sub.add_parser("fetch", help="Fetch a teammate's shared branch (read-only ref)")
+    p_fetch.add_argument("bundle_id", nargs="?", help="Bundle id from the room (omit to list)")
+    p_fetch.add_argument("--room", required=True, help="Room it was shared in")
+    p_fetch.add_argument("--repo", help="Repo path (default: current directory)")
+
     p_retro = sub.add_parser("retro", help="What's going wrong in a room, ranked, with fixes")
     p_retro.add_argument("room", help="Room to look at")
     p_retro.add_argument("--since", type=float, default=6.0, help="Hours to look back (default 6)")
@@ -9816,6 +9842,8 @@ def main():
         "scorecard": _cmd_scorecard,
         "phone": _cmd_phone,
         "retro": _cmd_retro,
+        "share-branch": _cmd_share_branch,
+        "fetch": _cmd_fetch,
         "demo": _cmd_demo,
         "duel": _cmd_duel,
         "turnguard": _cmd_turnguard,
