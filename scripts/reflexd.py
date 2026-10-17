@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -942,8 +942,24 @@ def _is_limit(stderr: str) -> bool:
     return bool(_LIMIT_RE.search(stderr or ""))
 
 
-def _retry_after_s(stderr: str) -> float:
-    """Vendor's "retry in 21h39m46s" → seconds (capped); default 30 min."""
+_AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AP]M)?", re.IGNORECASE)
+
+
+def _retry_after_s(stderr: str, now: datetime | None = None) -> float:
+    """Vendor's "retry in 21h39m46s" or Codex's "try again at 1:46 AM" →
+    seconds (capped); default 30 min."""
+    at = _AT_RE.search(stderr or "")
+    if at:
+        hour, minute, ampm = int(at.group(1)), int(at.group(2)), (at.group(3) or "").upper()
+        if ampm == "PM" and hour < 12:
+            hour += 12
+        if ampm == "AM" and hour == 12:
+            hour = 0
+        now = now or datetime.now()
+        target = now.replace(hour=hour % 24, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return max(60.0, min(LIMIT_MAX_S, (target - now).total_seconds() + 60))
     m = _RETRY_RE.search(stderr or "")
     if not m or not any(m.groups()):
         return LIMIT_DEFAULT_S

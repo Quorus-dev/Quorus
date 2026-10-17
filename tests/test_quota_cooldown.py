@@ -129,3 +129,16 @@ def test_reply_text_mentioning_quota_is_not_a_limit(monkeypatch) -> None:
     a = reflexd.HeadlessAdapter(timeout_s=5)
     asyncio.run(a._run_subprocess(["opencode", "run"], parser=str))
     assert a.limited_until == 0.0
+
+
+def test_codex_usage_limit_try_again_at_is_parsed() -> None:
+    from datetime import datetime
+
+    msg = ("You've hit your usage limit. Upgrade to Pro ... or try again at 1:46 AM.")
+    now = datetime(2026, 10, 17, 0, 50)
+    assert abs(reflexd._retry_after_s(msg, now=now) - (56 * 60 + 60)) < 1
+    assert reflexd._is_limit(msg)
+    later = datetime(2026, 10, 17, 2, 0)  # 1:46 AM already passed → tomorrow
+    assert reflexd._retry_after_s(msg, now=later) > 23 * 3600
+    pm = reflexd._retry_after_s("try again at 3:15 PM", now=now)
+    assert abs(pm - (14 * 3600 + 25 * 60 + 60)) < 1
