@@ -62,6 +62,37 @@ def test_relay_down_is_a_clean_error(monkeypatch, capsys) -> None:
     assert "Can't reach the relay" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("exc,needle", [
+    (httpx.ConnectTimeout("timed out"), "timed out connecting"),
+    (
+        httpx.UnsupportedProtocol(
+            "Request URL is missing an 'http://' or 'https://' protocol."
+        ),
+        "no http:// or https:// scheme",
+    ),
+])
+def test_transport_errors_are_a_clean_error(exc, needle, monkeypatch, capsys) -> None:
+    """A timeout or a scheme-less URL is a TransportError, not a ConnectError.
+
+    These used to escape the central handler as a traceback even though
+    ``_relay_error_reason`` already knows how to describe them.
+    """
+    import sys
+
+    import quorus_cli.cli as cli
+
+    def fake_rooms(args):
+        raise exc
+
+    monkeypatch.setitem(cli.__dict__, "_cmd_rooms", fake_rooms)
+    monkeypatch.setattr(sys, "argv", ["quorus", "rooms"])
+    with pytest.raises(SystemExit) as caught:
+        cli.main()
+    assert caught.value.code == 2
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Can't reach the relay" in out and needle in out
+
+
 def test_local_relay_never_hijacks_a_relay_with_another_secret(monkeypatch) -> None:
     from quorus.runtime import local_relay as lr
 

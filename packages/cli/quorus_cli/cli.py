@@ -9660,7 +9660,7 @@ def main():
     except KeyboardInterrupt:
         console.print("\n[dim]Cancelled.[/]")
         raise SystemExit(130) from None
-    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+    except (httpx.TransportError, httpx.InvalidURL) as exc:
         reason, fix = _relay_error_reason(exc)
         _ui.error(
             f"Can't reach the relay at {RELAY_URL}" + (f" — {reason}" if reason else ""),
