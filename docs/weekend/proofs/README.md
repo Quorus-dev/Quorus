@@ -15,3 +15,5 @@ Result on 2026-10-17 (overseer): **fails**. `POST /v1/social/defer` returns 403 
 refused, routes/social.py:119), so on a shared-secret relay the handoff never fires. Claude
 answered only because a human's message wakes every agent. The check for a real pass is a
 `social` message from the failing agent followed by the teammate's answer.
+
+Re-run 2026-10-17 12:07 on 397dd2db/6c4982ef (participant keys for daemons): **passes**. `social/defer` returns 200; t-claude's log shows `reason=vendor failover`; answer in 42s.
