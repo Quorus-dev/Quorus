@@ -190,6 +190,28 @@ class TestInstallScript:
         assert code in body
         # Must invoke the join command.
         assert f'quorus join "{code}"' in body
+        # Must pin the relay it was served from, or a fresh install falls
+        # back to the public default and can't resolve a self-hosted code.
+        assert '--relay "http://test"' in body
+
+    async def test_join_line_pins_served_relay(self, client: AsyncClient):
+        await _create_room(client)
+        mint = await client.post(
+            "/v1/join/mint", headers=ADMIN_HEADERS, json={"room": "general"},
+        )
+        code = mint.json()["code"]
+
+        resp = await client.get(
+            f"/v1/join/install/{code}.sh",
+            headers={"x-forwarded-host": "relay.example.com"},
+        )
+        assert resp.status_code == 200
+        for line in resp.text.splitlines():
+            if line.startswith("quorus join"):
+                assert '--relay "http://relay.example.com"' in line
+                break
+        else:
+            pytest.fail("installer has no `quorus join` line")
 
     async def test_404_on_unknown_code(self, client: AsyncClient):
         resp = await client.get("/v1/join/install/AAAA-BBBB.sh")
