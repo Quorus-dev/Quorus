@@ -4271,13 +4271,8 @@ def _mint_init_agent_keys(
     return minted
 
 
-def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
-    """Resolve the parent's tenant UUID via ``GET /v1/usage``.
-
-    Required so we can ``signup --join_tenant_id=<uuid>`` for the human
-    profile and land it inside the same workspace as the agent identities.
-    Returns ``None`` on any failure — caller falls back to a fresh tenant.
-    """
+def _workspace_jwt(*, relay_url: str, api_key: str) -> str:
+    """Exchange an API key for a JWT; ``""`` on any failure."""
     try:
         token_resp = httpx.post(
             f"{relay_url}/v1/auth/token",
@@ -4286,8 +4281,22 @@ def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
             follow_redirects=True,
         )
         if token_resp.status_code != 200:
-            return None
-        jwt = (token_resp.json() or {}).get("token", "")
+            return ""
+        token = (token_resp.json() or {}).get("token", "")
+        return token if isinstance(token, str) else ""
+    except Exception:
+        return ""
+
+
+def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
+    """Resolve the parent's tenant UUID via ``GET /v1/usage``.
+
+    Required so we can ``signup --join_tenant_id=<uuid>`` for the human
+    profile and land it inside the same workspace as the agent identities.
+    Returns ``None`` on any failure — caller falls back to a fresh tenant.
+    """
+    try:
+        jwt = _workspace_jwt(relay_url=relay_url, api_key=api_key)
         if not jwt:
             return None
         usage_resp = httpx.get(
@@ -4378,7 +4387,10 @@ def _create_init_human_profile(
                 "workspace": "human-placeholder",  # ignored when join_tenant_id set
                 "join_tenant_id": tenant_id,
             },
-            headers={"X-Quorus-Setup-Local": "1"},
+            # The relay admits a joiner only with proof of membership: the
+            # parent's own workspace token.
+            headers={"X-Quorus-Setup-Local": "1", "Authorization":
+                     f"Bearer {_workspace_jwt(relay_url=relay_url, api_key=api_key)}"},
             timeout=15,
             follow_redirects=True,
         )
@@ -5598,6 +5610,8 @@ def _apply_join_payload(payload: dict, name: str) -> None:
             signup_payload = {"name": name, "workspace": workspace}
             if tenant_id:
                 signup_payload["join_tenant_id"] = tenant_id
+                # The relay admits a joiner only with proof of invitation.
+                signup_payload["invite_token"] = invite_token
                 console.print("[dim]Joining existing workspace...[/dim]")
 
             signup_resp = httpx.post(
