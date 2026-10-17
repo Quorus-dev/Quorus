@@ -2238,6 +2238,11 @@ class Reflexd:
                 # prompt: a DeepSeek agent told "wait for the lead" did the
                 # whole task anyway, duplicating the lead's work (2026-10-17).
                 room_mode = "readonly"
+                # Never resume or save this session: opencode keeps a
+                # session's permissions, so the lead's assignment that
+                # arrived next resumed it read-only and the agent reported
+                # "no write tools" (live 2026-10-17).
+                prior_session, _persist_session = None, None
             if room_mode != "default":
                 extra_kw["mode"] = room_mode
             if room_mode == "manual":

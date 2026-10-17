@@ -93,3 +93,43 @@ def test_readonly_mode_blocks_edits_on_every_harness() -> None:
     assert perms["edit"] == "deny" and perms["bash"] == "deny"
     gem = models.gemini_flags(mode="readonly")
     assert gem[gem.index("--approval-mode") + 1] == "plan"
+
+
+class _Relay:
+    def __init__(self) -> None:
+        self.posted: list[dict] = []
+
+    async def fetch_recent(self, *, room: str, limit: int = 10):
+        return []
+
+    async def post_reply(self, **kw):
+        self.posted.append(kw)
+        return {"id": "p1"}
+
+
+def test_answer_only_wake_is_read_only_and_never_reuses_a_session(monkeypatch) -> None:
+    # Live 2026-10-17: the lead's assignment resumed the agent's read-only
+    # opencode session, whose permissions stick, and it reported "no write
+    # tools". Answer-only wakes must neither resume nor save a session.
+    import asyncio
+
+    cfg = reflexd.ReflexdConfig(relay_url="http://r", participant_name="arav-codex",
+                                api_key="k")
+    d = reflexd.Reflexd(cfg)
+    monkeypatch.setattr(reflexd, "lead_for", lambda room: "arav-claude")
+    monkeypatch.setattr(reflexd, "session_for", lambda *a: "old-session")
+    seen: dict = {}
+
+    async def fake_run(harness, *, context, cwd=None, resume=None, on_session=None,
+                       timeout_s=None, max_turns=None, mode="default", **_kw):
+        seen.update(resume=resume, on_session=on_session, mode=mode)
+        return "I can take the tests if @arav-claude assigns them."
+
+    monkeypatch.setattr(d.adapter, "run", fake_run)
+    envelope = {"id": "e1", "message_id": "m1", "room": "build", "from_name": "arav",
+                "content": "build me a login page", "message_type": "chat"}
+    triage = reflexd.classify_message(content=envelope["content"], sender="arav",
+                                      self_name="arav-codex")
+    assert triage.kind == "question"
+    asyncio.run(d._wake_and_reply(_Relay(), envelope, triage=triage))
+    assert seen == {"resume": None, "on_session": None, "mode": "readonly"}
