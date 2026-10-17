@@ -95,3 +95,16 @@ def test_rows_sort_by_what_needs_a_human(tmp_path: Path) -> None:
     assert rows["a-claude"]["line"].startswith("editing relay.py")
     assert rows["a-claude"]["review"] == "blocked by @a-codex"
     assert rows["a-claude"]["shipped"].startswith("shipped 2 commit(s) to main")
+
+
+def test_quorus_web_link_lands_on_the_board_signed_in_as_you() -> None:
+    from quorus_cli.web_cmd import web_url
+
+    url = web_url("http://127.0.0.1:8787", "a.b.c", "arav", "weekend-quorus", True)
+    assert url == ("http://127.0.0.1:8787/#token=a.b.c&name=arav&room=weekend-quorus"
+                   "&view=board")
+    assert "?" not in url  # the credential only ever rides in the fragment
+    from quorus.dashboard import DASHBOARD_JS
+
+    assert 'sessionStorage.setItem("qr"' in DASHBOARD_JS and 'getItem("qv") === "board"' \
+        in BOARD_JS

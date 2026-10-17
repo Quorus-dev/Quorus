@@ -240,7 +240,13 @@ if (typeof module !== "undefined") {  // node tests only; browsers have no `modu
   return;
 }
 document.addEventListener("quorus:room", (e) => {
-  B.room = e.detail; B.membersAt = 0; B.cardAt = 0; refresh();
+  B.room = e.detail; B.membersAt = 0; B.cardAt = 0;
+  if (sessionStorage.getItem("qv") === "board" && !B.on) {  // `quorus web` lands here
+    sessionStorage.removeItem("qv");
+    show(true);
+  } else {
+    refresh();
+  }
 });
 $("viewToggle").addEventListener("click", () => show(!B.on));
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
