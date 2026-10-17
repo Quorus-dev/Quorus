@@ -14,6 +14,7 @@ import hashlib
 import secrets
 import sqlite3
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 ROLES = ("member",)  # "observer" arrives with its enforcement (step 3), not before
@@ -80,11 +81,17 @@ def mint(store, *, room_id: str, room_name: str, role: str, issuer: str,
     return code, inv
 
 
-def redeem(store, code: str, name: str) -> tuple[str, Invite]:
+def redeem(store, code: str, name: str,
+           reserved: Iterable[str] = ()) -> tuple[str, str, Invite]:
     """Spend one use of *code* and claim *name* (kind=human), atomically.
 
-    Returns ``(participant_key, invite)``. A taken name raises 409 without
-    spending the use; an unknown, revoked, expired or used-up code raises 403.
+    Returns ``(participant_key, claim_id, invite)``. A taken name raises 409
+    without spending the use; an unknown, revoked, expired or used-up code
+    raises 403. *reserved* holds the names this relay already knows (room
+    members, registered participants): on a shared-secret relay most of them
+    never claimed a key, and authority follows the name, so an invitee must
+    not be able to claim "arav" and walk into arav's rooms (codex, review of
+    3bedbbea). Names compare case-insensitively, so "Arav" is refused too.
     """
     from quorus.auth.participant_keys import insert_claim
 
@@ -100,11 +107,16 @@ def redeem(store, code: str, name: str) -> tuple[str, Invite]:
             if row is None or row[7] or row[4] <= time.time() or row[6] >= row[5]:
                 db.execute("ROLLBACK")
                 raise InviteError(403, "this invite is invalid, expired or used up")
-            key = insert_claim(db, name, "human", None, None)
+            folded = name.casefold()
+            taken = any(r.casefold() == folded for r in reserved) or db.execute(
+                "SELECT 1 FROM claims WHERE lower(name) = ?", (folded,)).fetchone()
+            key = None if taken else insert_claim(db, name, "human", None, None)
             if key is None:
                 db.execute("ROLLBACK")
                 raise InviteError(409, f"the name {name!r} is already claimed on this "
                                        "relay; pick another with --name")
+            claim_id = db.execute("SELECT claim_id FROM claims WHERE name = ?",
+                                  (name,)).fetchone()[0]
             db.execute("UPDATE invites SET uses = uses + 1 WHERE id = ?", (row[0],))
             db.execute("COMMIT")
         except sqlite3.Error:
@@ -113,17 +125,25 @@ def redeem(store, code: str, name: str) -> tuple[str, Invite]:
             raise
         finally:
             db.close()
-    return key, Invite(id=row[0], room_id=row[1], room_name=row[2], role=row[3],
+    return key, claim_id, Invite(id=row[0], room_id=row[1], room_name=row[2], role=row[3],
                        expires_at=row[4], max_uses=row[5], uses=row[6] + 1)
 
 
-def undo_redeem(store, invite_id: str, name: str) -> None:
+def undo_redeem(store, invite_id: str, name: str, claim_id: str) -> bool:
     """Compensation when joining the room failed after a redeem: give the use back
-    and free the name, so the joiner can retry."""
+    and free the name, so the joiner can retry.
+
+    Only the claim generation this redeem created is removed: if the name was
+    released and claimed again meanwhile, that newer claim stays (codex, review
+    of 3bedbbea). The use comes back only when that claim was actually removed,
+    so running this twice changes nothing the second time."""
     with store._lock, store._connect() as db:
-        db.execute("DELETE FROM claims WHERE name = ? AND kind = 'human' AND owner IS NULL",
-                   (name,))
-        db.execute("UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?", (invite_id,))
+        gone = db.execute("DELETE FROM claims WHERE name = ? AND claim_id = ?",
+                          (name, claim_id)).rowcount > 0
+        if gone:
+            db.execute("UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?",
+                       (invite_id,))
+    return gone
 
 
 def revoke(store, invite_id: str) -> bool:

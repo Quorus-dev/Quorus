@@ -108,7 +108,7 @@ def test_two_redeems_racing_for_the_last_use_one_wins(tmp_path) -> None:
     def go(i: int) -> None:
         gate.wait()
         try:
-            invite_codes.redeem(store, code, f"p{i}")
+            invite_codes.redeem(store, code, f"p{i}")  # returns (key, claim_id, invite)
             results.append("ok")
         except invite_codes.InviteError as exc:
             results.append(str(exc.status))
@@ -153,3 +153,50 @@ async def test_the_old_unclaimed_join_path_is_gone_here(client: AsyncClient) -> 
     r = await client.post("/invite/build/join", json={"participant": "mallory",
                                                       "token": token})
     assert r.status_code == 410
+
+
+async def test_an_invitee_cant_take_a_name_the_relay_already_knows(client) -> None:
+    """Codex on 3bedbbea: "arav" never claimed a key (shared-secret owner), yet
+    rooms grant access by name, so redeeming as "arav" used to get 200."""
+    secret_room = await client.post("/rooms", json={"name": "private", "created_by": "arav"},
+                                    headers=ADMIN)
+    assert secret_room.status_code == 200, secret_room.text
+    await client.post("/heartbeat", headers=ADMIN, json={"instance_name": "arav-codex"})
+    for i, taken in enumerate(("arav", "Arav", "arav-codex")):
+        payload = await _mint(client)
+        r = await client.post("/v1/join/redeem", json={"code": payload["c"], "name": taken})
+        assert r.status_code == 409, (taken, r.text)
+        # the use wasn't spent: the same code still works for a fresh name
+        r = await client.post("/v1/join/redeem", json={"code": payload["c"],
+                                                       "name": f"guest{i}"})
+        assert r.status_code == 200, r.text
+
+
+def test_a_claimed_name_blocks_its_other_spellings(tmp_path) -> None:
+    store = ParticipantKeyStore(tmp_path / "relay")
+    code, _ = invite_codes.mint(store, room_id="x", room_name="r", role="member",
+                                issuer="arav", ttl_s=3600, max_uses=2)
+    invite_codes.redeem(store, code, "bob")
+    with pytest.raises(invite_codes.InviteError) as exc:
+        invite_codes.redeem(store, code, "BOB")
+    assert exc.value.status == 409
+
+
+def test_late_compensation_spares_a_newer_claim_and_runs_once(tmp_path) -> None:
+    """Codex on 3bedbbea: undo deleted by name, so a delayed undo removed a
+    replacement claim. It now matches the generation, and a repeat is a no-op."""
+    store = ParticipantKeyStore(tmp_path / "relay")
+    code, _ = invite_codes.mint(store, room_id="x", room_name="r", role="member",
+                                issuer="arav", ttl_s=3600, max_uses=3)
+    _, first, inv = invite_codes.redeem(store, code, "bob")
+    with store._lock, store._connect() as db:  # bob released, someone reclaims it
+        db.execute("DELETE FROM claims WHERE name = 'bob'")
+    _, second, _ = invite_codes.redeem(store, code, "bob")
+    assert first != second
+    assert invite_codes.undo_redeem(store, inv.id, "bob", first) is False
+    assert store.info("bob")["claim_id"] == second  # the newer claim survives
+    uses = lambda: next(i["uses"] for i in invite_codes.list_invites(store))  # noqa: E731
+    assert uses() == 2  # and no use came back for a claim it didn't remove
+    assert invite_codes.undo_redeem(store, inv.id, "bob", second) is True
+    assert invite_codes.undo_redeem(store, inv.id, "bob", second) is False
+    assert uses() == 1 and store.info("bob") is None
