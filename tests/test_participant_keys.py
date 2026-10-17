@@ -157,3 +157,34 @@ def test_release_name_command_frees_a_claim(tmp_path: Path) -> None:
     ParticipantKeyStore(tmp_path).claim("bob")
     cmd_release_name(SimpleNamespace(name="bob", data_dir=str(tmp_path)), Console())
     assert ParticipantKeyStore(tmp_path).claim("bob") is not None
+
+
+def test_release_and_reclaim_retires_the_old_holders_tokens(client: TestClient) -> None:
+    """Codex's repro on 98b488c7: after "bob" was released and reclaimed, the
+    previous holder's 24h JWT still opened the bundle routes."""
+    rid = client.post("/rooms", json={"name": "r", "created_by": "alice"},
+                      headers=LEGACY).json()["id"]
+    client.post(f"/rooms/{rid}/join", json={"participant": "bob"}, headers=LEGACY)
+    url = f"/v1/rooms/{rid}/bundles"
+    old = _jwt(client, _claim(client, "bob"))
+    assert client.get(url, headers=old).status_code == 200
+
+    store = app.state.participant_keys
+    assert store.release("bob")
+    assert client.get(url, headers=old).status_code == 401  # released: retired at once
+
+    new = _jwt(client, _claim(client, "bob"))
+    assert client.get(url, headers=old).status_code == 401  # reclaimed: old stays dead
+    assert client.get(url, headers=new).status_code == 200
+
+
+def test_claims_file_from_98b488c7_is_migrated(tmp_path: Path) -> None:
+    import sqlite3
+
+    with sqlite3.connect(tmp_path / "participant_keys.db") as db:
+        db.execute("CREATE TABLE claims (name TEXT PRIMARY KEY, key_hash TEXT NOT NULL, "
+                   "created_at REAL NOT NULL)")
+        db.execute("INSERT INTO claims VALUES ('bob', 'h', 0)")
+    store = ParticipantKeyStore(tmp_path)
+    assert not store.is_current("bob", "")  # tokens from before the column are retired
+    assert store.claim("bob") is None       # but the claim itself is kept

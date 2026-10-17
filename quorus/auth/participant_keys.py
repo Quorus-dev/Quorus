@@ -62,6 +62,16 @@ class ParticipantKeyStore:
         with self._connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS claims (name TEXT PRIMARY KEY, "
                        "key_hash TEXT NOT NULL, created_at REAL NOT NULL)")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(claims)")}
+            if "claim_id" not in columns:
+                # Each claim is a generation: tokens carry it, so a released and
+                # reclaimed name invalidates the old holder's tokens (review of
+                # 98b488c7). Rows from before this column get a fresh id, which
+                # retires any token issued from them.
+                db.execute("ALTER TABLE claims ADD COLUMN claim_id TEXT")
+                for (name,) in db.execute("SELECT name FROM claims").fetchall():
+                    db.execute("UPDATE claims SET claim_id = ? WHERE name = ?",
+                               (secrets.token_hex(16), name))
         os.chmod(self._path, 0o600)
 
     def _connect(self) -> sqlite3.Connection:
@@ -72,23 +82,36 @@ class ParticipantKeyStore:
         key = KEY_PREFIX + secrets.token_urlsafe(32)
         with self._lock, self._connect() as db:
             try:
-                db.execute("INSERT INTO claims VALUES (?, ?, ?)", (name, _hash(key), time.time()))
+                db.execute("INSERT INTO claims (name, key_hash, created_at, claim_id) "
+                           "VALUES (?, ?, ?, ?)",
+                           (name, _hash(key), time.time(), secrets.token_hex(16)))
             except sqlite3.IntegrityError:
                 return None
         return key
 
-    def name_for(self, key: str) -> str | None:
+    def lookup(self, key: str) -> tuple[str, str] | None:
+        """``(name, claim_id)`` for a participant key, or None."""
         if not key.startswith(KEY_PREFIX):
             return None
         digest = _hash(key)
         with self._lock, self._connect() as db:
-            rows = db.execute("SELECT name, key_hash FROM claims").fetchall()
+            rows = db.execute("SELECT name, key_hash, claim_id FROM claims").fetchall()
         # Constant-time compare per row; the table is small (one row per person).
         found = None
-        for name, stored in rows:
+        for name, stored, claim_id in rows:
             if hmac.compare_digest(stored, digest):
-                found = name
+                found = (name, claim_id)
         return found
+
+    def name_for(self, key: str) -> str | None:
+        found = self.lookup(key)
+        return found[0] if found else None
+
+    def is_current(self, name: str, claim_id: str) -> bool:
+        """True while *claim_id* is still *name*'s claim (not released/reclaimed)."""
+        with self._lock, self._connect() as db:
+            row = db.execute("SELECT claim_id FROM claims WHERE name = ?", (name,)).fetchone()
+        return bool(row and row[0] and claim_id and hmac.compare_digest(row[0], claim_id))
 
     def release(self, name: str) -> bool:
         with self._lock, self._connect() as db:

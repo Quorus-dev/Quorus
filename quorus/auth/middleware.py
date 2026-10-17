@@ -136,6 +136,14 @@ async def verify_auth(request: Request) -> AuthContext:
                     detail="API key has been revoked",
                 )
 
+        if "pk_claim" in claims:
+            # Shared-secret relay participant: the name may have been released
+            # and reclaimed since this token was issued.
+            from quorus.auth.participant_routes import claim_still_current
+
+            if not await claim_still_current(request, claims):
+                raise HTTPException(status_code=401, detail="This name was released; sign in again")
+
         return AuthContext(
             sub=claims.get("sub"),
             participant_id=claims.get("participant_id"),

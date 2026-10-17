@@ -17,6 +17,7 @@ from quorus.routes.helpers import _validate_name
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 LEGACY_TENANT = "_legacy"  # the tenant every shared-secret room lives in
 CLAIMS_PER_HOUR = 10
+CLAIM_CLAIM = "pk_claim"  # JWT claim holding the name's claim generation
 
 
 class ClaimNameRequest(BaseModel):
@@ -60,9 +61,24 @@ async def claim_name(req: ClaimNameRequest, request: Request,
 
 
 async def participant_token(request: Request, raw_key: str) -> dict:
-    """``/v1/auth/token`` for ``quorus_pk_`` keys: a JWT for exactly the claimed name."""
-    name = await asyncio.to_thread(_store(request).name_for, raw_key)
-    if name is None:
+    """``/v1/auth/token`` for ``quorus_pk_`` keys: a JWT for exactly the claimed
+    name, stamped with the claim's generation so a release retires it."""
+    found = await asyncio.to_thread(_store(request).lookup, raw_key)
+    if found is None:
         raise HTTPException(status_code=401, detail="Invalid participant key")
-    token = create_jwt(sub=name, tenant_id=LEGACY_TENANT, tenant_slug=LEGACY_TENANT)
+    name, claim_id = found
+    token = create_jwt(sub=name, tenant_id=LEGACY_TENANT, tenant_slug=LEGACY_TENANT,
+                       extra={CLAIM_CLAIM: claim_id})
     return {"token": token, "expires_in": JWT_TTL_SECONDS}
+
+
+async def claim_still_current(request: Request, claims: dict) -> bool:
+    """Checked on every request carrying a participant-key JWT."""
+    claim_id = claims.get(CLAIM_CLAIM)
+    store = getattr(request.app.state, "participant_keys", None)
+    if store is None:
+        try:
+            store = _store(request)
+        except HTTPException:
+            return False
+    return await asyncio.to_thread(store.is_current, claims.get("sub") or "", claim_id)
