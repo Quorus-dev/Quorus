@@ -139,6 +139,9 @@ if (frag.get("token")) {
   sessionStorage.setItem("qt", frag.get("token"));
   sessionStorage.setItem("qn", frag.get("name") || "web");
 }
+// `quorus web` can name the room and the view to land on.
+if (frag.get("room")) sessionStorage.setItem("qr", frag.get("room"));
+if (frag.get("view")) sessionStorage.setItem("qv", frag.get("view"));
 if (new URLSearchParams(location.search).has("token")) {
   console.warn("Quorus: ?token= in a URL is deprecated and leaks via server logs. Use #token=.");
 }
@@ -275,7 +278,9 @@ $("composer").addEventListener("submit", (ev) => {
 function start() {
   if (!S.token) return showSignin();
   $("signin").hidden = true; $("app").hidden = false; $("who").textContent = "@" + S.name;
-  loadRooms();
+  const landing = sessionStorage.getItem("qr");  // `quorus web <room>`
+  sessionStorage.removeItem("qr");
+  loadRooms().then(() => { if (landing) openRoom(landing); });
   clearInterval(S.timer);
   S.timer = setInterval(() => { poll(); }, 3000);
   setInterval(loadRooms, 30000);

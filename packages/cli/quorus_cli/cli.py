@@ -1231,6 +1231,12 @@ def _cmd_agent(args):
     cmd_agent(args, console)
 
 
+def _cmd_web(args):
+    from quorus_cli.web_cmd import cmd_web
+
+    cmd_web(args, console)
+
+
 def _cmd_phone(args):
     from quorus_cli.phone_cmd import cmd_phone
 
@@ -9687,6 +9693,12 @@ def main():
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")
 
+    p_web = sub.add_parser("web", help="Open your rooms and the needs-you board in this browser")
+    p_web.add_argument("room", nargs="?", help="Room to open (default: the room list)")
+    p_web.add_argument("--chat", action="store_true", help="Open the chat, not the board")
+    p_web.add_argument("--print-url", action="store_true", dest="print_url",
+                       help="Print the sign-in link instead of opening a browser")
+
     p_phone = sub.add_parser("phone", help="Open your rooms on your phone (Tailscale by default)")
     p_phone.add_argument("--lan", action="store_true",
                          help="Share on this Wi-Fi instead of Tailscale (trusted networks only)")
@@ -10098,6 +10110,7 @@ def main():
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
         "phone": _cmd_phone,
+        "web": _cmd_web,
         "retro": _cmd_retro,
         "share-branch": _cmd_share_branch,
         "fetch": _cmd_fetch,
