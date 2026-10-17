@@ -1210,6 +1210,12 @@ def _cmd_fetch(args):
     cmd_fetch(args, console)
 
 
+def _cmd_release_name(args):
+    from quorus_cli.bundle_cmd import cmd_release_name
+
+    cmd_release_name(args, console)
+
+
 def _cmd_replay(args):
     from quorus_cli.replay_cmd import cmd_replay
 
@@ -9494,6 +9500,11 @@ def main():
     p_fetch.add_argument("--room", required=True, help="Room it was shared in")
     p_fetch.add_argument("--repo", help="Repo path (default: current directory)")
 
+    p_rel = sub.add_parser("release-name",
+                           help="Relay owner: free a name claimed on this shared-secret relay")
+    p_rel.add_argument("name", help="Participant name to free")
+    p_rel.add_argument("--data-dir", help="Relay data dir (default: next to its history DB)")
+
     p_retro = sub.add_parser("retro", help="What's going wrong in a room, ranked, with fixes")
     p_retro.add_argument("room", help="Room to look at")
     p_retro.add_argument("--since", type=float, default=6.0, help="Hours to look back (default 6)")
@@ -9858,6 +9869,7 @@ def main():
         "retro": _cmd_retro,
         "share-branch": _cmd_share_branch,
         "fetch": _cmd_fetch,
+        "release-name": _cmd_release_name,
         "replay": _cmd_replay,
         "demo": _cmd_demo,
         "duel": _cmd_duel,

@@ -171,9 +171,23 @@ async def test_mcp_tools_share_and_fetch_like_the_cli(
     assert {"share_branch", "fetch_bundle"} <= names
 
 
-async def test_mcp_tools_refuse_a_shared_secret(laptop2: Path, monkeypatch) -> None:
+async def test_mcp_tools_work_on_a_shared_secret_relay(
+        room: str, laptop2: Path, tmp_path: Path, monkeypatch) -> None:
+    """No API key: the MCP claims its own name once and shares as that name."""
     from quorus_mcp import bundle_tools, server
 
+    from quorus.auth.participant_keys import ParticipantKeyStore
+
+    app.state.participant_keys = ParticipantKeyStore(tmp_path / "relay")
+    legacy = {"Authorization": "Bearer test-secret"}
+    relay = TestClient(app)
+    shared_room = relay.post("/rooms", json={"name": "lan", "created_by": "alice"},
+                             headers=legacy).json()["id"]
+    relay.post(f"/rooms/{shared_room}/join", json={"participant": "bob"}, headers=legacy)
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr(server, "RELAY_URL", RELAY)
     monkeypatch.setattr(server, "API_KEY", "")
-    out = await bundle_tools.share_branch_impl("r", str(laptop2))
-    assert out.startswith("Error:") and "API key" in out
+    monkeypatch.setattr(server, "RELAY_SECRET", "test-secret")
+    monkeypatch.setattr(server, "INSTANCE_NAME", "bob")
+    out = await bundle_tools.share_branch_impl(shared_room, str(laptop2))
+    assert out.startswith("Shared fix/relay"), out

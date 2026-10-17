@@ -7,6 +7,7 @@ from typing import Any
 
 from quorus.bundle_client import (
     BundleClientError,
+    bearer,
     download,
     fetch_into,
     list_bundles,
@@ -17,12 +18,10 @@ from quorus.config import load_config
 
 
 def _relay(cfg: dict[str, Any]) -> tuple[str, str]:
-    from quorus_cli.agent_cmd import _bearer
-
-    if not cfg.get("api_key"):
-        raise BundleClientError("sharing code needs a participant API key "
-                                "(`quorus init <name> --api-key ...`), not a shared secret")
-    return cfg["relay_url"], _bearer(cfg, cfg["api_key"], False)
+    relay_url = cfg["relay_url"]
+    return relay_url, bearer(relay_url, api_key=cfg.get("api_key") or "",
+                             secret=cfg.get("relay_secret") or "",
+                             name=cfg.get("instance_name") or "")
 
 
 def _repo(args: Any) -> Path:
@@ -67,3 +66,19 @@ def cmd_fetch(args: Any, console: Any) -> None:
     console.print(f"[success]✓[/] fetched @{got.uploader}'s {got.branch} into [accent]{got.ref}[/]")
     console.print(f"  review it: [accent]git show {got.head[:7]}[/]   "
                   f"[dim](no branch was created or checked out)[/]")
+
+
+def cmd_release_name(args: Any, console: Any) -> None:
+    """Free a claimed name on this machine's shared-secret relay (owner only:
+    it edits the relay's own claims file, so it can't be done over the wire)."""
+    from quorus.auth.participant_keys import ParticipantKeyStore, data_dir
+
+    folder = Path(args.data_dir).expanduser() if args.data_dir else data_dir()
+    if not (folder / "participant_keys.db").exists():
+        console.print(f"[error]release-name:[/] no claims file in {folder}; "
+                      "run this on the relay's machine (or pass --data-dir)")
+        raise SystemExit(1)
+    if ParticipantKeyStore(folder).release(args.name):
+        console.print(f"[success]✓[/] released {args.name!r}; the next claim gets a new key")
+    else:
+        console.print(f"[dim]{args.name!r} was not claimed[/]")

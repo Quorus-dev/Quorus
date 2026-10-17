@@ -17,10 +17,10 @@ from quorus_mcp.server import mcp
 async def _bearer() -> str:
     from quorus_mcp import server
 
-    if not server.API_KEY:
-        raise _bc.BundleClientError("sharing code needs a participant API key, "
-                                    "not a shared secret")
-    return await server._get_bearer_token()
+    if server.API_KEY:
+        return await server._get_bearer_token()
+    return await asyncio.to_thread(_bc.bearer, server.RELAY_URL,
+                                   secret=server.RELAY_SECRET, name=server.INSTANCE_NAME)
 
 
 def _repo(repo_path: str) -> Path:

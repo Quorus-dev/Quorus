@@ -8,6 +8,7 @@ a checkout or a merge (docs/weekend/cross-machine-code.md).
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 import tempfile
@@ -86,6 +87,45 @@ def make_bundle(repo: Path, *, branch: str | None = None, base: str | None = Non
         raise BundleClientError(f"the bundle is {mb:.1f} MB and the relay takes at most "
                                 f"{cap >> 20} MB{hint}")
     return data, branch
+
+
+def bearer(relay_url: str, *, api_key: str = "", secret: str = "", name: str = "") -> str:
+    """A participant JWT for this relay.
+
+    With an API key, exchange it. On a shared-secret relay, claim *name* once
+    (the relay returns a ``quorus_pk_`` key, saved at 0600 in the config dir)
+    and exchange that, so sharing works without any extra setup step."""
+    if api_key:
+        return _token(relay_url, api_key)
+    if not (secret and name):
+        raise BundleClientError("no credentials for this relay; run `quorus init` first")
+    from quorus.config import resolve_config_dir
+    from quorus.private_files import write_private_json
+
+    store = resolve_config_dir() / "participant_keys.json"
+    try:
+        keys = json.loads(store.read_text()) if store.exists() else {}
+    except ValueError:
+        keys = {}
+    slot = f"{relay_url.rstrip('/')}|{name}"
+    if slot not in keys:
+        resp = _http.post(f"{relay_url.rstrip('/')}/v1/auth/claim-name", json={"name": name},
+                          headers={"Authorization": f"Bearer {secret}"}, timeout=15)
+        if resp.status_code == 409:
+            raise BundleClientError(
+                f"the name {name!r} is already claimed on this relay from another machine "
+                "or config; the relay owner can free it with `quorus release-name`")
+        _check(resp, "claiming your name")
+        keys[slot] = resp.json()["participant_key"]
+        write_private_json(store, keys)
+    return _token(relay_url, keys[slot])
+
+
+def _token(relay_url: str, key: str) -> str:
+    resp = _http.post(f"{relay_url.rstrip('/')}/v1/auth/token", json={"api_key": key},
+                      timeout=15)
+    _check(resp, "signing in")
+    return resp.json()["token"]
 
 
 def _check(resp: httpx.Response, what: str) -> None:

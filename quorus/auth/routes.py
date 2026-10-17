@@ -336,9 +336,15 @@ async def signup(
 
 
 @router.post("/token", response_model=TokenResponse)
-async def exchange_api_key(req: TokenRequest):
-    """Exchange an API key for a short-lived JWT."""
+async def exchange_api_key(req: TokenRequest, request: Request):
+    """Exchange an API key (or a shared-secret relay's participant key) for a JWT."""
     raw_key = req.api_key.strip()
+    from quorus.auth.participant_keys import KEY_PREFIX
+
+    if raw_key.startswith(KEY_PREFIX):
+        from quorus.auth.participant_routes import participant_token
+
+        return await participant_token(request, raw_key)
 
     try:
         prefix = extract_key_prefix(raw_key)

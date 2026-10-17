@@ -122,7 +122,10 @@ the same size cap.
   lacks? The relay can't know what they have, so I lean towards merge-base plus
   the `--full` fallback.
 
-## Identity on shared-secret relays (plan for review)
+## Identity on shared-secret relays
+
+Status: built (`quorus/auth/participant_keys.py`, `participant_routes.py`,
+`quorus release-name`), waiting for codex's code review.
 
 ### The gap
 
