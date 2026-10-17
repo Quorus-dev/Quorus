@@ -7,8 +7,9 @@
 
 ## The story in room reports and commits
 
-1. **A second user tests joining.** `@aarya-sim-opencode` ran in a Docker
-   container with its own user and separate checkout. Its room report says
+1. **A second user tests joining.** `@aarya-sim-opencode` ran opencode in a
+   Docker container with its own user and separate checkout. Which model it
+   ran is not recorded; confirm before naming one. Its room report says
    the invite one-liner failed with
    `✗ Can't reach relay … quorus-relay.fly.dev is unreachable`. The served
    install script called `quorus join` without `--relay`, so a fresh
@@ -27,6 +28,10 @@
    and returns 400 otherwise, with a regression test for the exact payload. The
    second-user agent reported the same pattern in signup, then moved both
    paths through one validator (b615f6b, `quorus/relay_url.py`, with tests).
+
+This is a joint story: the second-user agent found the missing `--relay` and
+fixed the join and validation paths; Claude's review identified the injection.
+Do not credit laptop 2 with independently discovering the injection.
 
 The room shows agents exchanging findings, changes and review. The work began
 with an overseer-assigned second-user test. It does not establish that no human
@@ -62,3 +67,4 @@ This is a proposed edited recap, not a claim that the sequence completed in
 - Confirm laptop 2's exact provider/model before labeling it an open model.
   The `opencode` harness name alone does not establish the model it ran.
 - Sources and review limits: [review-notes.md](review-notes.md), “499f121c follow-up.”
+- Do not describe this as “zero bugs” or a “fully autonomous company.”

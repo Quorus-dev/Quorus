@@ -57,7 +57,7 @@ place.
 | "pick a name, press Enter. Quorus starts a relay on this computer and puts you in #general" (L53-55) | ✅ works, `#general` created and open |
 | HTTP API block `POST /rooms/{id}/messages`, `GET /messages/{name}`, `GET /stream/{name}`, `POST /rooms/{id}/lock` (L123-128) | ✅ all four exist (checked against the live relay's `/openapi.json`); `/docs` → 200 |
 | `opencode` "2.x via `brew install opencode` or `npm i -g @opencode/cli`" (L71) | ✅ `@opencode/cli` is the right npm package (2.0.32) |
-| "your already-open Claude Code / Codex sessions can join too: with the Quorus MCP server installed (**done by `quorus init`**)" (L104-106) | ❌ the quick start never installs MCP — see **#1** |
+| "your already-open Claude Code / Codex sessions can join too: with the Quorus MCP server installed (**done by `quorus init`**)" (L104-106) | ❌ the tour never installs MCP — **README corrected**: the section now says the bare `quorus` tour does *not* install it and gives the full `quorus init <name> --relay-url … --secret …` command |
 | "Quorus starts a relay … and puts you in #general" then the tour's later commands | ✅ `rooms`, `say`, `history`, `chat`, `agent list`, `ps`, `version` all clean |
 
 ## Findings
@@ -167,6 +167,11 @@ Press Enter to run Quorus on this computer, or paste a teammate's invite (quorus
 The empty `()` reads like a missing value. Cheap: `show_default=False`. (Both
 lines also say "press Enter" twice in a row.)
 
+**Status: fixed.** The prompt is `Invite, or Enter to run it here` with
+`show_default=False` (`hub.py:424`), so pressing Enter just returns `""`.
+Regression: `tests/test_tui_first_run_messages.py`. Verified against rich
+directly: `Invite, or Enter to run it here: ''` — no `()`.
+
 ### 4. First-run success prints before the connection it describes
 
 ```console
@@ -182,12 +187,25 @@ Created starter room #general — you can add more anytime.
 happy path read like a race. Cheap: move the `✓ You're in as …` line to after
 the "Connecting…" status.
 
+**Status: fixed.** The wizard no longer prints it at all; `_run_session` prints
+`✓ You're in as @name` once the relay has answered and the rooms are loaded, so
+it lands *after* `Connecting to …`. `run_hub` passes `announce_ready=True` only
+on the wizard path, so returning users see nothing extra. Regression:
+`test_first_run_announces_ready_after_connecting` (asserts the two lines and
+their order on a real `_run_session`).
+
 ### 5. The hub's config is a profile, but `quorus init`'s warning talks about `config.json`
 
 Follow-on to #1: every mutating message from `_cmd_init` names
 `…/.quorus/config.json`, while the thing a hub user cares about is
 `profiles/default.json`. A user reading `quorus doctor` / `init` output has no
 way to connect the two files.
+
+**Status: addressed.** The pointer path (the case a hub user hits) already
+names `profiles/<slug>.json`. The legacy flat path now says the relay URL and
+credentials are replaced instead of a bare "overwriting"
+(`cli.py:4946`). Regression:
+`test_init_flat_overwrite_warning_names_what_is_replaced`.
 
 ### 6. `quorus agent add` error doesn't mention the missing `--repo`
 
@@ -205,6 +223,13 @@ never validated against reality, and the very first thing the hub suggests
 (`<your-project>` vs `~/code/my-app`). Worth a repo-exists check with a clear
 "that path doesn't exist" line.
 
+**Status: verified — the check exists.** `agent_cmd.py:276-278` resolves
+`--repo` and exits with `agent: not a directory: <path>` before anything is
+started. The repro above only named `claude` because `env -i` stripped `PATH`
+(see the gotcha), so the harness check fired first. The README tour now says to
+point `--repo` at "a repo you actually have" so nobody copies the example path
+verbatim.
+
 ### 7. `relay.log` prints a scary line on healthy requests
 
 Every authenticated call logs `JWT decode unexpected error` (from a shared
@@ -220,6 +245,12 @@ INFO: 127.0.0.1:60425 - "GET /rooms HTTP/1.1" 200 OK
 error on a successful request. Cheap: log at debug, or say "shared-secret auth
 (no JWT)".
 
+**Status: fixed.** `quorus/auth/middleware.py` now only warns when the bearer
+token is actually JWT-shaped (`_looks_like_jwt`); a shared secret or raw
+`mct_` key logs at debug. A genuinely malformed JWT still warns. Regressions:
+`test_legacy_secret_logs_no_jwt_warning` and
+`test_jwt_shaped_garbage_still_warns` in `tests/test_auth.py`.
+
 ### 8. `ps` suggests `quorus spawn <room> <name>` without saying it launches a CLI
 
 ```console
@@ -231,6 +262,11 @@ $ quorus ps
 `quorus spawn`'s positional order is right (`spawn room name`), but a new user
 who just wants presence has no way to know it launches Claude Code locally
 (rather than just registering an agent). Minor.
+
+**Status: fixed.** The empty state now reads: `add one with quorus agent add
+<tool> --room <room> — it runs in the background and answers while you're away,
+or drive a CLI in this terminal with quorus spawn <room> <name>`. Regression:
+`tests/test_cli_first_run_hints.py`.
 
 ## Not findings (checked, all correct)
 
