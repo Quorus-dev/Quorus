@@ -137,7 +137,8 @@ def bearer(relay_url: str, *, api_key: str = "", secret: str = "", name: str = "
     key = load_participant_key(relay_url, name, store_dir)
     if not key:
         resp = _http.post(f"{relay_url.rstrip('/')}/v1/auth/claim-name", json={"name": name},
-                          headers={"Authorization": f"Bearer {secret}"}, timeout=15)
+                          headers={"Authorization": f"Bearer {secret}"}, timeout=15,
+                          follow_redirects=False)
         if resp.status_code == 409:
             raise BundleClientError(
                 f"the name {name!r} is already claimed on this relay from another machine "
@@ -149,15 +150,19 @@ def bearer(relay_url: str, *, api_key: str = "", secret: str = "", name: str = "
 
 
 def _token(relay_url: str, key: str) -> str:
+    # Never follow a redirect with a credential in the body (codex, dc24ee6c review).
     resp = _http.post(f"{relay_url.rstrip('/')}/v1/auth/token", json={"api_key": key},
-                      timeout=15)
+                      timeout=15, follow_redirects=False)
     _check(resp, "signing in")
     return resp.json()["token"]
 
 
 def _check(resp: httpx.Response, what: str) -> None:
-    if resp.status_code < 400:
+    if resp.status_code < 300:
         return
+    if resp.status_code < 400:
+        raise BundleClientError(f"{what} failed: the relay redirected ({resp.status_code}); "
+                                "check the relay URL")
     try:
         detail = resp.json().get("detail", "")
     except ValueError:

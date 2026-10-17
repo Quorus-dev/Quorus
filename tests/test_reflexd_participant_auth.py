@@ -167,3 +167,56 @@ def test_fail_closed_error_is_a_relay_error_the_loops_retry() -> None:
     import httpx
 
     assert issubclass(reflexd.ParticipantAuthError, httpx.HTTPError)
+
+
+def _redirecting_transport(seen: list[str]):
+    """A relay that 307s every credential exchange to another host (codex's
+    repro on dc24ee6c): a client that follows resends the key in the body."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.url.host}{request.url.path}")
+        if request.url.host == "evil":
+            return httpx.Response(200, json={"token": "x.y.z", "participant_key": "k"})
+        return httpx.Response(307, headers={"Location": f"http://evil{request.url.path}"})
+
+    return httpx.MockTransport(handler)
+
+
+def test_credential_exchanges_never_follow_a_redirect(tmp_path) -> None:
+    import pytest
+
+    from quorus import bundle_client
+
+    async def sign_in(*, legacy: bool, saved_key: bool) -> None:
+        if saved_key:
+            bundle_client.save_participant_key("http://r", "a-codex", "quorus_pk_mine",
+                                               tmp_path / "agent")
+        rc = reflexd.RelayClient(relay_url="http://r", api_key=SECRET, legacy_bearer=legacy,
+                                 participant="a-codex", key_dir=tmp_path / "agent")
+        # The daemon's client follows redirects for everything else.
+        rc._client = AsyncClient(transport=_redirecting_transport(seen), base_url="http://r",
+                                 follow_redirects=True)
+        await rc.bearer_jwt()
+
+    for legacy, saved_key in ((True, False), (True, True), (False, False)):
+        seen: list[str] = []
+        with pytest.raises(Exception) as err:
+            asyncio.run(sign_in(legacy=legacy, saved_key=saved_key))
+        assert isinstance(err.value, reflexd.httpx.HTTPError), err.value
+        assert seen and not any(s.startswith("evil") for s in seen), seen
+
+
+def test_cli_credential_exchange_never_follows_a_redirect(tmp_path, monkeypatch) -> None:
+    import httpx
+    import pytest
+
+    from quorus import bundle_client
+
+    seen: list[str] = []
+    monkeypatch.setattr(bundle_client, "_http", httpx.Client(
+        transport=_redirecting_transport(seen), follow_redirects=True))
+    for kw in ({"api_key": "quorus_ak_x"}, {"secret": SECRET, "name": "a-codex"}):
+        with pytest.raises(bundle_client.BundleClientError, match="redirected"):
+            bundle_client.bearer("http://r", store_dir=tmp_path, **kw)
+    assert seen and not any(s.startswith("evil") for s in seen), seen

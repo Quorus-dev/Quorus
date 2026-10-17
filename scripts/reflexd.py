@@ -1821,8 +1821,10 @@ class RelayClient:
         now = time.time()
         if self._bearer is None or now >= self._bearer_expires_at:
             resp = await self.client.post(
-                "/v1/auth/token", json={"api_key": self.api_key}
+                "/v1/auth/token", json={"api_key": self.api_key}, follow_redirects=False,
             )
+            if resp.is_redirect:  # never resend a credential to wherever it points
+                raise httpx.HTTPError(f"/v1/auth/token answered {resp.status_code} (redirect)")
             resp.raise_for_status()
             self._bearer = resp.json()["token"]
             self._bearer_expires_at = now + 4 * 60
@@ -1846,7 +1848,8 @@ class RelayClient:
             if not key:
                 resp = await self.client.post(
                     "/v1/auth/claim-name", json={"name": self.participant},
-                    headers={"Authorization": f"Bearer {self.api_key}"})
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    follow_redirects=False)
                 if resp.status_code in unsupported:
                     logger.info("relay has no participant keys; using the shared secret")
                     return None
@@ -1865,7 +1868,11 @@ class RelayClient:
                     key = resp.json()["participant_key"]
                     bundle_client.save_participant_key(self.relay_url, self.participant, key,
                                                        self.key_dir)
-            resp = await self.client.post("/v1/auth/token", json={"api_key": key})
+            # Credential exchanges never follow redirects: a 307/308 would resend
+            # the key in the body to another host (codex review of dc24ee6c).
+            # Any 3xx is "not 200" below and fails closed.
+            resp = await self.client.post("/v1/auth/token", json={"api_key": key},
+                                          follow_redirects=False)
             if resp.status_code in unsupported:
                 logger.info("relay has no participant keys; using the shared secret")
                 return None
