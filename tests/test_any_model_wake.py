@@ -218,3 +218,16 @@ def test_failed_start_is_retried_once(adapter: Any, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(reflexd.asyncio, "sleep", no_sleep)
     assert asyncio.run(adapter.run("opencode", context="ctx")) == "Wrote hello.txt"
     assert len(calls) == 2
+
+
+def test_opencode_v1_runs_without_standalone(
+    adapter: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `npm i -g opencode-ai` still installs 1.x, which rejects --standalone:
+    # every wake posted "harness errored" (Linux run, 2026-10-16).
+    assert models.is_opencode_v1("1.19.3") and not models.is_opencode_v1("opencode v2.0.30")
+    assert not models.is_opencode_v1(None)
+    adapter.opencode_v1 = True
+    calls = _capture(monkeypatch, [OPENCODE_OUT])
+    assert asyncio.run(adapter.run("opencode", context="ctx")) == "Wrote hello.txt"
+    assert "--standalone" not in calls[0]["argv"]

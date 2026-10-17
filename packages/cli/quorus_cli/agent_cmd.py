@@ -329,9 +329,10 @@ def _readiness_warnings(harness: str, model: str | None) -> list[str]:
     if harness == "opencode":
         version = _opencode_version()
         if version and int(version.split(".")[0]) < 2:
-            # The wake runs `opencode run --standalone`, which 1.x rejects.
-            out.append(f"opencode {version} is too old: Quorus needs opencode 2, so "
-                       "every wake would fail. Upgrade with `npm i -g @opencode/cli` "
+            # 1.x works (the daemon drops --standalone) but is what Quorus was
+            # least tested on, and its old permission format is the fallback.
+            out.append(f"opencode {version} is old: Quorus is tested on opencode 2. "
+                       "Upgrade with `npm i -g @opencode/cli` or `brew install opencode` "
                        "(the `opencode-ai` npm package is still opencode 1)")
     if harness == "opencode" and not model:
         out.append("no --model given, so opencode uses its own default. Pick one with "

@@ -12,6 +12,7 @@ local Ollama models, OpenRouter, DeepSeek, Qwen and Gemini API keys.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 OLLAMA_PREFIX = "ollama/"
@@ -85,10 +86,19 @@ def opencode_config(
     return cfg
 
 
-def opencode_flags(*, model: str | None, resume: str | None) -> list[str]:
-    # --standalone: a private server reads OUR config. The shared background
-    # service keeps whatever config it started with (opencode 2.x).
-    flags = ["--standalone", "--format", "json"]
+def is_opencode_v1(version: str | None) -> bool:
+    """``opencode v2.0.30`` / ``1.19.3`` → major < 2. Unknown → False."""
+    m = re.search(r"(\d+)\.\d+", version or "")
+    return bool(m) and int(m.group(1)) < 2
+
+
+def opencode_flags(
+    *, model: str | None, resume: str | None, standalone: bool = True,
+) -> list[str]:
+    # --standalone (2.x only): a private server reads OUR config. The shared
+    # background service keeps whatever config it started with. 1.x has no
+    # shared service and rejects the flag.
+    flags = (["--standalone"] if standalone else []) + ["--format", "json"]
     if model:
         flags += ["--model", model]
     if resume:

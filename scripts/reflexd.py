@@ -972,6 +972,9 @@ class HeadlessAdapter:
         # provider/model for opencode, e.g. ollama/qwen3:4b). None = the
         # harness's own default.
         self.model: str | None = os.environ.get("REFLEXD_MODEL", "").strip() or None
+        # opencode 1.x rejects `run --standalone` (help text, exit 1): every
+        # wake failed for users on the `opencode-ai` npm package (still 1.x).
+        self.opencode_v1 = False
         # Records the argv (or sdk-call signature) that WOULD have been spawned
         # in dry-run mode. Kept on the instance for tests + smoke scripts.
         self.last_dry_run: dict[str, Any] | None = None
@@ -1232,7 +1235,7 @@ class HeadlessAdapter:
             self.wake_spec, mode=mode, model=self.model))
         return await self._run_with_resume(
             lambda sid: build_opencode_argv(context, extra=reflexd_models.opencode_flags(
-                model=self.model, resume=sid)),
+                model=self.model, resume=sid, standalone=not self.opencode_v1)),
             reflexd_models.parse_opencode_stream, harness="opencode", cwd=cwd,
             resume=resume, on_session=on_session, timeout_s=timeout_s, env=env,
         )
@@ -2973,21 +2976,25 @@ async def cmd_start(args: argparse.Namespace) -> int:
 
     # Probe each adapter's version once at startup so support has a paper
     # trail when a vendor flag changes. Logged to ~/.quorus/reflexd.log.
-    log_adapter_versions()
+    versions = log_adapter_versions()
 
     # Announce real-vs-stub mode so the operator knows immediately whether
     # the claude CLI is reachable. Auto-falls-back to stub mode when the
     # binary is missing AND REFLEXD_STUB_REPLY is not set — the daemon
     # never refuses to start. Claude Code's own OAuth handles auth; we
-    # never check ANTHROPIC_API_KEY here.
-    log_claude_adapter_status()
+    # never check ANTHROPIC_API_KEY here. Only for Claude agents: every
+    # opencode daemon logged "ERROR claude CLI not found" (Linux run).
+    if detect_harness(cfg.participant_name) == "claude":
+        log_claude_adapter_status()
 
     if args.once:
         return await _run_once(cfg, args.once)
 
     pidfile = _pidfile()
     pidfile.write_text(str(os.getpid()), encoding="utf-8")
-    daemon = Reflexd(cfg, adapter=HeadlessAdapter(dry_run=cfg.dry_run))
+    adapter = HeadlessAdapter(dry_run=cfg.dry_run)
+    adapter.opencode_v1 = reflexd_models.is_opencode_v1(versions.get("opencode"))
+    daemon = Reflexd(cfg, adapter=adapter)
 
     loop = asyncio.get_running_loop()
     main = asyncio.current_task()
