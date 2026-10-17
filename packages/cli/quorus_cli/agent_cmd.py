@@ -128,6 +128,35 @@ def _join(cfg: dict[str, Any], room: str, name: str, bearer: str) -> None:
     resp.raise_for_status()
 
 
+def _leads_path() -> Path:
+    return Path.home() / ".quorus" / "room-leads.json"
+
+
+def _read_leads() -> dict[str, str]:
+    try:
+        data = json.loads(_leads_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _set_lead(room: str, name: str | None) -> None:
+    """One lead per room; None clears it. Read by reflexd's lead_for."""
+    data = _read_leads()
+    if name:
+        data[room] = name
+    else:
+        data.pop(room, None)
+    _leads_path().parent.mkdir(parents=True, exist_ok=True)
+    _write_private(_leads_path(), json.dumps(data, indent=2))
+
+
+def _drop_lead_everywhere(name: str) -> None:
+    data = _read_leads()
+    for room in [r for r, lead in data.items() if lead == name]:
+        _set_lead(room, None)
+
+
 def _bind(room: str, repo: Path, mode: str | None) -> str:
     path = Path.home() / ".quorus" / "room-bindings.json"
     try:
@@ -220,7 +249,7 @@ def cmd_agent(args: Any, console: Any) -> None:
     else:
         console.print("usage: quorus agent add <claude|codex|gemini|opencode> --room <room> "
                       "[--repo PATH] [--mode default|manual|autonomous] "
-                      "[--name LABEL] [--model MODEL] "
+                      "[--name LABEL] [--model MODEL] [--lead] "
                       "| quorus agent list | quorus agent remove <name>")
         raise SystemExit(5)
 
@@ -256,6 +285,12 @@ def _add(args: Any, console: Any) -> None:
     if repo is not None:
         mode = _bind(args.room, repo, args.mode)
         console.print(f"[success]✓[/] #{args.room} works in {repo} [dim]({mode})[/]")
+    if getattr(args, "lead", False):
+        previous = _read_leads().get(args.room)
+        _set_lead(args.room, name)
+        swap = f" [dim](was @{previous})[/]" if previous and previous != name else ""
+        console.print(f"[success]✓[/] @{name} leads #{args.room}: it splits your requests "
+                      f"into tasks and assigns them{swap}")
     existing = _running_daemon_for(name)
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "
@@ -392,6 +427,7 @@ def _remove(args: Any, console: Any) -> None:
                        capture_output=True, check=False, timeout=15)
         plist.unlink(missing_ok=True)
     agent_proc.stop(_agents_dir(), args.name)
+    _drop_lead_everywhere(args.name)
     left = _leave_all_rooms(args.name)
     if not was_running and not left:
         console.print(f"[error]✗[/] no agent @{args.name} here — see [accent]quorus agent "

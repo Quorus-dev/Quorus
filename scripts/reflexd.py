@@ -151,6 +151,19 @@ def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
     return mode if mode in reflexd_wake.MODES else "default"
 
 
+ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
+
+
+def lead_for(room: str, *, leads_path: Path | None = None) -> str | None:
+    """The agent that leads *room* (`quorus agent add ... --lead`), or None."""
+    try:
+        data = json.loads((leads_path or ROOM_LEADS_PATH).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    lead = data.get(room) if isinstance(data, dict) else None
+    return lead if isinstance(lead, str) and lead else None
+
+
 def live_session_for_workspace(ws: Path | None) -> dict[str, Any] | None:
     """L1/L2: is a human's interactive Claude session already open on this
     room's workspace? If so its Stop hook delivers the room's messages in
@@ -2453,6 +2466,7 @@ class Reflexd:
             has_workspace=has_workspace, worktree=worktree,
             from_agent=is_agent_participant(wake_sender),
             manual=mode_for(wake_room) == "manual",
+            lead=lead_for(wake_room),
         )
 
         memory_block = render_memory_context(memory_entries or [])

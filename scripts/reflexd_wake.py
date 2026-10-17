@@ -598,10 +598,12 @@ def existing_worktree(repo: Path, participant: str) -> Worktree | None:
 def wake_instructions(
     *, participant: str, room: str, sender: str, kind: str,
     teammates: list[str], has_workspace: bool, worktree: Worktree | None = None,
-    manual: bool = False, from_agent: bool = False,
+    manual: bool = False, from_agent: bool = False, lead: str | None = None,
 ) -> str:
     """The Wake Intent block — tells the agent it may (and should) do work."""
     others = ", ".join(f"@{t}" for t in teammates if t != participant) or "(none)"
+    is_lead = bool(lead) and lead == participant
+    led_by = lead if lead and not is_lead and lead in teammates else None
     if kind == "open_todo":
         opener = (f"You picked up an open task posted by `{sender}` in room "
                   f"`{room}`. You own it now - do it end to end.")
@@ -616,6 +618,19 @@ def wake_instructions(
                   "if you add something concrete: a review finding, a fix, a missing "
                   "fact, or taking an unclaimed task. Never reply just to agree, "
                   "acknowledge or thank.")
+    elif kind == "room" and is_lead:
+        opener = (f"`{sender}` (a human) posted in room `{room}`. You LEAD this room. "
+                  "If it asks for work: split it into concrete tasks, give each one "
+                  "to the best-suited teammate with an @-mention (take one yourself "
+                  "if you are the best fit), and say who does what in 1-3 lines. As "
+                  "teammates report back, review their work, send fixes back to "
+                  f"them, and tell `{sender}` when everything is done. If it is just "
+                  "a question, answer it.")
+    elif kind == "room" and led_by:
+        opener = (f"`{sender}` (a human) posted in room `{room}`. @{led_by} leads "
+                  "this room and assigns the work: reply in 1-2 lines from your own "
+                  f"role, and don't start work unless @{led_by} or `{sender}` gives "
+                  "it to you by name.")
     elif kind == "room":
         opener = (f"`{sender}` (a human) posted in room `{room}`. Every agent in the "
                   "room got this message and each one answers it, so reply from your "
@@ -650,7 +665,9 @@ def wake_instructions(
         "tools (send_room_message, list_participants, ...) for anything about the "
         "room: a sandboxed shell often can't reach the relay, so `quorus` CLI "
         "commands may fail there.\n"
-        f"- Teammates in this room: {others}. To hand work to one, @-mention "
+        + (f"- @{led_by} leads this room: when you finish work it gave you, "
+           f"@-mention @{led_by} with the result.\n" if led_by else "")
+        + f"- Teammates in this room: {others}. To hand work to one, @-mention "
         "them by name with a concrete request (e.g. review a commit, take a "
         "subtask). They wake automatically. Never @-mention someone just to say "
         "thanks or acknowledge.\n"

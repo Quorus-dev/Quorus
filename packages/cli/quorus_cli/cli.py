@@ -9205,6 +9205,10 @@ def main():
         "--name", help="Label for a second agent of the same tool, e.g. backend "
                        "-> <you>-backend-claude")
     p_agent_add.add_argument(
+        "--lead", action="store_true",
+        help="Make this agent the room's lead: it splits requests into tasks, "
+             "assigns teammates, reviews, and reports back")
+    p_agent_add.add_argument(
         "--model", help="Model to run, e.g. sonnet, gpt-5.5, gemini-2.5-pro, "
                         "ollama/qwen3:4b (opencode: any provider/model)")
     agent_sub.add_parser("list", help="Agents running on this machine")
