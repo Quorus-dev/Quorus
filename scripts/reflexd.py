@@ -670,7 +670,8 @@ def _parse_claude_json(out: str) -> tuple[str, str | None]:
             errors = [text] if isinstance(text, str) else []
             if isinstance(data.get("errors"), list):
                 errors.extend(e for e in data["errors"] if isinstance(e, str))
-            diagnosis = diagnose_harness_failure("claude", "\n".join(errors))
+            diagnosis = (diagnose_harness_failure("claude", "\n".join(errors))
+                         or vendor_error("claude", json.dumps({**data, "type": "result"}), ""))
             return diagnosis or "[reflexd] harness errored", sid if isinstance(sid, str) else None
         if isinstance(text, str):
             return text.strip(), sid if isinstance(sid, str) else None
@@ -1089,6 +1090,78 @@ def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
                         "ineligibletiererror": "login"}.get(needle)
             return _failover.VendorFailure(text, category) if category else text
     return None
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# A model the vendor can't serve: say which key is missing, not just "exit 1".
+_NO_ROUTE_RE = re.compile(r"provider\.no-route|model unavailable|unrecognized_model|"
+                          r"issue with the selected model|model .{0,40}not (?:found|supported)",
+                          re.IGNORECASE)
+_NO_ROUTE_HINT = {
+    "opencode": " Set the provider's key: `opencode auth login`, or XAI_API_KEY / "
+                "OPENROUTER_API_KEY, or pick another model with --model.",
+}
+
+
+def _json_error_message(value: Any) -> str | None:
+    """The innermost ``message`` in a vendor error, which may itself be JSON
+    in a string (codex wraps the API's error that way)."""
+    for _ in range(5):
+        if isinstance(value, str):
+            text = value.strip()
+            if not text.startswith("{"):
+                return text or None
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError:
+                return text
+            continue
+        if not isinstance(value, dict):
+            return None
+        if value.get("error") and isinstance(value["error"], (dict, str)):
+            value = value["error"]
+            continue
+        data = value.get("data")
+        value = value.get("message") or (data.get("message") if isinstance(data, dict) else None)
+        if value is None:
+            return None
+    return None
+
+
+def vendor_error(harness: str, stdout: str, stderr: str) -> str | None:
+    """The vendor's own words when it can't run the model, as a room line, or None.
+
+    "exited 1 with no known cause" told nobody that Grok needs an xAI key
+    (release check, 2026-10-17). Only bad-model / no-route errors are quoted:
+    anything else stays generic, because harness output can echo credentials
+    or tool inputs and must not reach the room (test_reflexd_harness_failure).
+    Error events on stdout (opencode, codex, claude's result envelope) win;
+    else the last matching stderr line. Control characters are stripped, the
+    line is capped, and the post is secret-redacted downstream like any reply.
+    """
+    found: str | None = None
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("type") in ("error", "turn.failed"):
+            found = _json_error_message(ev.get("error") or ev.get("message")) or found
+        elif ev.get("type") == "result" and ev.get("is_error") is True:
+            found = _json_error_message(ev.get("result")) or found
+    if not found:
+        lines = [ln.strip() for ln in _ANSI_RE.sub("", stderr or "").splitlines() if ln.strip()]
+        found = next((ln for ln in reversed(lines) if _NO_ROUTE_RE.search(ln)), None)
+    if not found or not _NO_ROUTE_RE.search(found):
+        return None
+    text = "".join(ch for ch in _ANSI_RE.sub("", found) if ch.isprintable())[:200].strip()
+    hint = _NO_ROUTE_HINT.get(harness, " Check the model name and that this CLI can use it.")
+    return f"⚠ {harness}: {text.rstrip('.')}.{hint}"
 
 
 def _parse_codex_stream(out: str) -> tuple[str, str | None]:
@@ -1718,6 +1791,10 @@ class HeadlessAdapter:
                 # Actionable > generic: the room learns WHY nobody answered.
                 logger.error("harness %s: %s", argv[0], diagnosis)
                 return diagnosis
+            said = vendor_error(Path(argv[0]).name,
+                                (stdout or b"").decode("utf-8", errors="replace"), raw)
+            if said:  # the vendor's own words beat "exited 1 with no known cause"
+                return said
             return HarnessExitFailure(proc.returncode)
         reply = parser((stdout or b"").decode("utf-8", errors="replace"))
         if reply == "[reflexd] harness errored":

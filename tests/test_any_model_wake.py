@@ -387,3 +387,55 @@ def test_daemon_claude_wakes_load_only_project_settings(tmp_path, monkeypatch) -
     flags = reflexd.reflexd_wake.claude_isolation_flags(tmp_path / "agent-settings.json")
     assert flags[:2] == ["--setting-sources", "project,local"]
     assert flags[2] == "--settings" and (tmp_path / "agent-settings.json").exists()
+
+
+# ── the vendor's own error instead of "exited 1 with no known cause" ────
+# Real output captured 2026-10-17 (opencode 2.0.30, codex, claude).
+
+OPENCODE_NO_ROUTE = ('{"type":"error","timestamp":1792278500185,"sessionID":"ses_x",'
+                     '"error":{"type":"provider.no-route",'
+                     '"message":"Model unavailable: xai/grok-code-fast-1"}}')
+CODEX_BAD_MODEL = "\n".join([
+    '{"type":"thread.started","thread_id":"01a1"}',
+    '{"type":"turn.started"}',
+    '{"type":"turn.failed","error":{"message":"{\\"type\\":\\"error\\",\\"status\\":400,'
+    '\\"error\\":{\\"type\\":\\"invalid_request_error\\",\\"message\\":\\"The '
+    '\'no-such-model-xyz\' model is not supported when using Codex with a ChatGPT '
+    'account.\\"}}"}}'])
+CLAUDE_BAD_MODEL = ('{"type":"result","is_error":true,"terminal_reason":"api_error",'
+                    '"result":"There\'s an issue with the selected model (no-such-model-xyz). '
+                    'It may not exist or you may not have access to it."}')
+
+
+def test_opencode_no_route_names_the_missing_key() -> None:
+    line = reflexd.vendor_error("opencode", OPENCODE_NO_ROUTE, "")
+    assert line.startswith("⚠ opencode: Model unavailable: xai/grok-code-fast-1.")
+    assert "opencode auth login" in line and "XAI_API_KEY" in line
+    _reply, _sid, err = reflexd.reflexd_models.parse_opencode_stream(OPENCODE_NO_ROUTE)
+    assert err == "Model unavailable: xai/grok-code-fast-1"  # exit-0 path too, not "error"
+
+
+def test_codex_and_claude_bad_models_say_so() -> None:
+    codex = reflexd.vendor_error("codex", CODEX_BAD_MODEL, "Reading additional input")
+    assert "model is not supported when using Codex with a ChatGPT account" in codex
+    assert "Check the model name" in codex and "{" not in codex  # unwrapped, not raw JSON
+    claude = reflexd.vendor_error("claude", CLAUDE_BAD_MODEL, "")
+    assert claude.startswith("⚠ claude: There's an issue with the selected model")
+    reply, _sid = reflexd._parse_claude_json(CLAUDE_BAD_MODEL)
+    assert reply.startswith("⚠ claude: There's an issue")  # exit 0 + is_error
+
+
+def test_stderr_fallback_is_short_and_clean() -> None:
+    stderr = "loading…\n\x1b[31mError: model gemini-9 not found\x1b[0m\n"
+    line = reflexd.vendor_error("gemini", "", stderr)
+    assert line == ("⚠ gemini: Error: model gemini-9 not found. Check the model name and "
+                    "that this CLI can use it.")
+    long = reflexd.vendor_error("gemini", "", "Error: model " + "y" * 30 + " not found" + "z" * 400)
+    assert len(long) < 320
+
+
+def test_errors_that_arent_about_the_model_stay_private() -> None:
+    """Harness output can echo secrets or tool inputs: only bad-model errors are quoted."""
+    assert reflexd.vendor_error("gemini", "", "Error: private-token abc123 rejected") is None
+    leak = '{"type":"error","error":{"message":"private-token: unexplained error"}}'
+    assert reflexd.vendor_error("opencode", leak, "") is None

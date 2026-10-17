@@ -168,7 +168,10 @@ def parse_opencode_stream(out: str) -> tuple[str, str | None, str | None]:
         elif ev.get("type") == "error":
             err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
             data = err.get("data") if isinstance(err.get("data"), dict) else {}
-            error = str(data.get("message") or err.get("name") or "error")[:300]
+            # Two shapes: {"name":"APIError","data":{"message":..}} and
+            # {"type":"provider.no-route","message":"Model unavailable: .."}.
+            error = str(data.get("message") or err.get("message") or err.get("name")
+                        or err.get("type") or "error")[:300]
     if not events:  # plain-text output (no --format json): the text is the reply
         return out.strip(), None, None
     reply = "".join(texts[order[-1]]).strip() if order else ""
