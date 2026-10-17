@@ -6728,9 +6728,18 @@ def _cmd_doctor(args):
             ui.console.print(f"       [dim]{detail}[/]")
 
     ui.heading("Quorus Doctor")
+    from quorus_cli import quickstart
 
     # 1. Config file
     config_file = resolve_config_file()
+    if not config_file.exists() and not RELAY_SECRET:
+        # A fresh install isn't broken: five red checks (and "run init with a
+        # secret" the user doesn't have) was the old first impression.
+        ui.console.print("  Quorus isn't set up yet. Run [accent]quorus[/] (one question, "
+                         "about a minute), or [accent]quorus demo[/] to watch two agents "
+                         "fix a bug first (no keys needed).\n")
+        quickstart.doctor_agents(check)
+        return
     check(
         "Config file exists",
         config_file.exists(),
@@ -6940,6 +6949,9 @@ def _cmd_doctor(args):
                 )
         except Exception:
             pass
+
+    # 13. Agent CLIs: the tools `quorus agent add` drives
+    quickstart.doctor_agents(check)
 
     ui.console.print()
     pct = int(checks_passed * 100 / checks_total) if checks_total else 0

@@ -3855,6 +3855,15 @@ def _run_session(
             console.print(
                 f"  [dim]Created starter room [room]#{starter}[/] — you can add more anytime.[/]"
             )
+            # Blank slate: offer the agent CLIs already installed, one keypress.
+            try:
+                from quorus_cli.quickstart import offer
+
+                offer(console, starter)
+            except (KeyboardInterrupt, EOFError):
+                console.print()
+            except Exception as exc:  # never block the hub on the offer
+                console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
             rooms = _fetch_rooms(relay_url, secret)
         elif status == "conflict":
             # Someone else made a room named `general` in the same tenant —
