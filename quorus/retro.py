@@ -18,7 +18,9 @@ from typing import Any, Iterable
 STUCK = re.compile(r"^(⚠|\[reflexd\] )")
 QUOTA = re.compile(r"out of quota|rate-limited|usage limit|quota", re.IGNORECASE)
 PLAN = re.compile(r"^plan:", re.IGNORECASE)
-DONE = re.compile(r"✅|\(quorus\) published|\bdone\b|\bfixed\b|\bcommitted\b", re.IGNORECASE)
+# A review plan is delivered by its verdict, even when the verdict is a block.
+DONE = re.compile(r"✅|\(quorus\) published|\bdone\b|\bfixed\b|\bcommitted\b|"
+                  r"/disagree|\bapproved?\b", re.IGNORECASE)
 NOTHING = re.compile(r"read it, nothing to add")
 PAUSED = re.compile(r"\(quorus\) agents (paused|stopped answering)")
 CONFLICT = re.compile(r"\(quorus\) conflict:")

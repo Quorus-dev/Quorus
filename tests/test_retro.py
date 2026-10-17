@@ -55,3 +55,17 @@ def test_summary_addresses_the_lead_and_quiet_rooms_say_so() -> None:
     assert text.startswith("@a-claude Retro, last 6h") and "\n1. " in text
     assert retro.summary([], 6).endswith("nothing stands out.")
     assert retro.analyze([_m("a-codex", "✅ fixed and committed", "01:00")]) == []
+
+
+def test_a_review_that_ends_in_a_block_counts_as_delivered() -> None:
+    # Live 2026-10-17: codex's two design reviews ended in /disagree blocking,
+    # and retro reported it as "announced 3 plans but delivered 1".
+    history = [
+        _m("a-codex", "plan: On it — /claim 6a947e63 design review", "12:06"),
+        _m("a-codex", "@a-claude /disagree blocking on 6a947e63: legacy auth bypass", "12:07"),
+        _m("a-codex", "plan: On it — /claim ffe25d3b review", "12:13"),
+        _m("a-codex", "@a-claude /disagree blocking on ffe25d3b: shared dir", "12:14"),
+        _m("a-codex", "plan: re-review f457fb94", "12:20"),
+        _m("a-codex", "approved f457fb94; lifting my block", "12:22"),
+    ]
+    assert not [f for f in retro.analyze(history) if "announced" in f.title]
