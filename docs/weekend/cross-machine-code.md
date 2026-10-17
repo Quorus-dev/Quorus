@@ -118,3 +118,53 @@ shared metadata lets one instance delete another's live bundles. Shared storage
 - Should step 3 send the whole branch each time or only commits the reviewer
   lacks? The relay can't know what they have, so I lean towards merge-base plus
   the `--full` fallback.
+
+## Identity on shared-secret relays (plan for review)
+
+### The gap
+
+`share-branch` / `fetch` need a participant JWT (codex's block on 6a947e63).
+But the default local relay has no database, so it can't hold API keys. Its
+only credential is the shared `RELAY_SECRET`, and invite codes hand that secret
+to every joiner (`join_codes.py:159-165`). On such a relay everyone is an
+anonymous admin, so most users hit the refusal.
+
+### Options
+
+1. **Let a secret holder mint a JWT for any name.** Rejected: anyone with the
+   secret could claim to be anyone, so the uploader namespace would mean
+   nothing. It is the legacy bypass under a new name.
+2. **Require Postgres for sharing.** Rejected: almost no local user runs it.
+3. **First claim wins (recommended).** A shared-secret relay keeps a small
+   persistent store, `participant_keys.db` next to the history DB, mapping
+   name → sha256(key).
+   - `POST /v1/auth/claim-name {name}` (Bearer `RELAY_SECRET`, rate-limited)
+     mints `quorus_pk_…` once and returns it once. A name that is already
+     claimed gets 409 ("name taken; the relay owner can release it with
+     `quorus relay release-name <name>`", which runs locally against the DB).
+   - `POST /v1/auth/token` also accepts `quorus_pk_` keys. With no
+     `JWT_SECRET` configured, it signs with a key derived as
+     HMAC(`RELAY_SECRET`, "quorus-local-jwt"), and the middleware verifies with
+     the same key. The JWT `sub` is the claimed name, so `require_room_member`
+     and the `refs/quorus/<uploader>` namespace apply unchanged.
+   - Clients claim their own name the first time they need it. `quorus join`
+     and the hub's first run claim at join; `share-branch`, `fetch` and the MCP
+     tools claim lazily when a profile has only the secret. The key is saved in
+     the profile at 0600. Existing users need no new step.
+
+### Limits we accept (honest)
+
+- Anyone holding the shared secret is still an admin everywhere else; this
+  only makes code sharing attributable. A name belongs to whoever claimed it
+  first since this relay's key DB was created.
+- Invites still ship the admin secret. Shipping a participant key instead is
+  the right follow-up, but it changes every join path, so it's a separate PR.
+
+### Tests
+
+- Claim then token then share: works on a relay with no DB.
+- A second claim of the same name gets 409, and a key for "alice" can't
+  upload as "bob".
+- A forged JWT signed with a different derived key is rejected.
+- Release-name frees the name for a new claim.
+- A relay restart keeps the claims (they're on disk).
