@@ -16,6 +16,39 @@ Method / limits:
 - The first-run wizard started a real local relay on `127.0.0.1:8080`; it was
   killed after the run.
 
+### Gotcha: a throwaway `HOME` does not isolate a first-run test run from an agent
+
+An agent's environment exports its *own* identity — `QUORUS_CONFIG_DIR`
+(→ `~/.quorus/runtime/agents/<agent>/`), plus `QUORUS_RELAY_SECRET`,
+`QUORUS_API_KEY` and `QUORUS_INSTANCE_NAME`. Those beat `HOME`, so a plain
+`HOME=$(mktemp -d) quorus init …` run from inside a wake writes the throwaway
+values into the **real** agent profile: `config.json` + `profiles/*.json`, with
+the bogus profile left as `current`. That is how my own room auth broke today
+(bridge 401 `Invalid API key format` / `Invalid or missing auth token`) — I
+restored `current` and removed the junk profile.
+
+Avoid it by unsetting the identity vars, not just `HOME`:
+
+```bash
+env -u QUORUS_CONFIG_DIR -u QUORUS_RELAY_SECRET -u QUORUS_API_KEY \
+    -u QUORUS_INSTANCE_NAME HOME=$(mktemp -d) quorus ...
+```
+
+I used `env -i HOME="$QH" PATH=/usr/bin:/bin …`, which also works because it
+drops everything — but it strips `PATH` too, so tool detection reports `claude`,
+`codex`, `gemini` and `opencode` as "not installed" even when they are (that is
+why **#6**'s message names `claude`, not the missing repo). Keep the real `PATH`
+when you want detection to behave like a real user's.
+
+The in-process suite is already guarded against the same class of leak —
+`tests/conftest.py:95` `_isolate_reflexd_runtime` pins `DEFAULT_RUNTIME_DIR` and
+`ROOM_BINDINGS_PATH` under `tmp_path` (added 2026-10-08 after a test overwrote a
+live agent's credentials). The remaining gap is *shelling out* to `quorus` from
+inside an agent, which no fixture covers. Mitigations now in place: daemons
+repair the agent identity before every wake (overseer, fix on `feat`), and
+`71ddf64` stops `quorus init` from flattening a profile pointer in the first
+place.
+
 ## What the README promises and what happened
 
 | README claim | Result |
