@@ -154,6 +154,13 @@ def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
 ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
 
 
+def _answer_only(triage: Any, envelope: dict[str, Any], me: str, lead: str | None) -> bool:
+    """A non-lead agent woken by a human's message to the whole room."""
+    if not lead or lead == me or triage is None or triage.kind != "question":
+        return False
+    return not is_agent_participant(envelope.get("from_name") or "")
+
+
 def lead_for(room: str, *, leads_path: Path | None = None) -> str | None:
     """The agent that leads *room* (`quorus agent add ... --lead`), or None."""
     try:
@@ -2224,6 +2231,13 @@ class Reflexd:
                 {"writable_roots": [ws]} if worktree is not None else {}
             )
             room_mode = mode_for(room)
+            if _answer_only(triage, envelope, self.config.participant_name,
+                            lead_for(room)):
+                # The room has a lead and this is a human message to everyone:
+                # answer, don't build. Enforced by the harness, not the
+                # prompt: a DeepSeek agent told "wait for the lead" did the
+                # whole task anyway, duplicating the lead's work (2026-10-17).
+                room_mode = "readonly"
             if room_mode != "default":
                 extra_kw["mode"] = room_mode
             if room_mode == "manual":

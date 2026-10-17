@@ -117,6 +117,8 @@ def claude_mode_flags(mode: str) -> list[str]:
         return ["--permission-mode", "default",
                 "--permission-prompt-tool", "mcp__quorus__approve",
                 "--allowedTools", "mcp__quorus"]
+    if mode == "readonly":  # answer, don't build (a lead assigns the work)
+        return ["--permission-mode", "plan"]
     if mode == "autonomous":
         return ["--permission-mode", "acceptEdits",
                 "--allowedTools", "Bash Edit Write MultiEdit mcp__quorus"]
@@ -146,8 +148,8 @@ def codex_wake_flags(
     flags: list[str] = []
     # Room mode wins over the daemon-wide default. Codex exec cannot ask a
     # human mid-run, so "manual" means read-only (it reviews and proposes).
-    sandbox = {"manual": "read-only", "autonomous": "workspace-write"}.get(
-        mode, CODEX_SANDBOX)
+    sandbox = {"manual": "read-only", "readonly": "read-only",
+               "autonomous": "workspace-write"}.get(mode, CODEX_SANDBOX)
     if sandbox in _CODEX_SANDBOXES:  # danger-full-access deliberately unsupported
         # As config, not `-s`: `codex exec resume` has no -s flag, so every
         # RESUMED wake silently fell back to read-only and agents couldn't

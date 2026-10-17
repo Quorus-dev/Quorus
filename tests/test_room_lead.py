@@ -65,3 +65,31 @@ def test_cli_sets_lead_and_remove_clears_it(tmp_path: Path, monkeypatch) -> None
     agent_cmd._drop_lead_everywhere("arav-claude")
     data = json.loads((tmp_path / ".quorus" / "room-leads.json").read_text())
     assert data == {"chat": "arav-codex"}
+
+
+class _T:
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+
+
+def test_non_lead_answers_human_room_messages_read_only() -> None:
+    # Live 2026-10-17: told to wait for the lead, a DeepSeek agent built the
+    # whole task anyway and duplicated the lead's work. Enforce it.
+    human = {"from_name": "arav"}
+    assert reflexd._answer_only(_T("question"), human, "a-codex", "a-claude")
+    assert not reflexd._answer_only(_T("question"), human, "a-claude", "a-claude")  # lead
+    assert not reflexd._answer_only(_T("question"), human, "a-codex", None)  # no lead
+    assert not reflexd._answer_only(_T("mention"), human, "a-codex", "a-claude")  # assigned
+    assert not reflexd._answer_only(_T("question"), {"from_name": "a-claude"},
+                                    "a-codex", "a-claude")  # the lead handing work
+
+
+def test_readonly_mode_blocks_edits_on_every_harness() -> None:
+    models = reflexd.reflexd_models
+    assert wake.claude_mode_flags("readonly") == ["--permission-mode", "plan"]
+    flags = wake.codex_wake_flags(None, None, "readonly")
+    assert 'sandbox_mode="read-only"' in flags
+    perms = models.opencode_config(None, mode="readonly")["permission"]
+    assert perms["edit"] == "deny" and perms["bash"] == "deny"
+    gem = models.gemini_flags(mode="readonly")
+    assert gem[gem.index("--approval-mode") + 1] == "plan"

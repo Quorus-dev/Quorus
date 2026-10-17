@@ -47,6 +47,7 @@ _OPENCODE_PERMS = {
     "manual": {"edit": "deny", "bash": "deny", "webfetch": "deny"},
     "autonomous": {"edit": "allow", "bash": "allow", "webfetch": "allow"},
 }
+_OPENCODE_PERMS["readonly"] = _OPENCODE_PERMS["manual"]
 # opencode 2.x ignores the old `permission` map (a "manual" room still wrote
 # files and ran shell, verified on 2.0.30) and reads an ordered `permissions`
 # ruleset; its tools are named write/shell as well as edit/bash.
@@ -155,7 +156,7 @@ def parse_opencode_stream(out: str) -> tuple[str, str | None, str | None]:
 
 # ── Gemini CLI ───────────────────────────────────────────────────────────
 
-_GEMINI_APPROVAL = {"manual": "plan", "autonomous": "yolo"}
+_GEMINI_APPROVAL = {"manual": "plan", "readonly": "plan", "autonomous": "yolo"}
 
 
 def gemini_api_key(env: dict[str, str]) -> str | None:
