@@ -143,3 +143,37 @@ def test_oversize_bundle_is_refused_before_upload(laptop2: Path, monkeypatch) ->
     monkeypatch.setattr(bundle_svc, "MAX_BUNDLE_BYTES", 10)
     with pytest.raises(BundleClientError, match="at most"):
         make_bundle(laptop2)
+
+
+async def test_mcp_tools_share_and_fetch_like_the_cli(
+        room: str, laptop1: Path, laptop2: Path, monkeypatch) -> None:
+    from quorus_mcp import bundle_tools, server
+
+    monkeypatch.setattr(server, "RELAY_URL", RELAY)
+    monkeypatch.setattr(server, "API_KEY", "quorus_sk_test")
+    who = ["bob"]
+
+    async def _token() -> str:
+        return _bearer(who[0])
+
+    monkeypatch.setattr(server, "_get_bearer_token", _token)
+    shared = await bundle_tools.share_branch_impl(room, str(laptop2))
+    assert shared.startswith("Shared fix/relay"), shared
+    bundle_id = shared.split(" as ")[1].split(" ")[0]
+
+    who[0] = "alice"
+    fetched = await bundle_tools.fetch_bundle_impl(room, bundle_id, str(laptop1))
+    assert "refs/quorus/bob/fix/relay" in fetched, fetched
+    assert _git(laptop1, "rev-parse", "refs/quorus/bob/fix/relay") == \
+        _git(laptop2, "rev-parse", "fix/relay")
+
+    names = {t.name for t in await server.mcp.list_tools()}
+    assert {"share_branch", "fetch_bundle"} <= names
+
+
+async def test_mcp_tools_refuse_a_shared_secret(laptop2: Path, monkeypatch) -> None:
+    from quorus_mcp import bundle_tools, server
+
+    monkeypatch.setattr(server, "API_KEY", "")
+    out = await bundle_tools.share_branch_impl("r", str(laptop2))
+    assert out.startswith("Error:") and "API key" in out
