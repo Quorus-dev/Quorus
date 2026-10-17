@@ -9691,6 +9691,9 @@ def main():
     p_phone.add_argument("--lan", action="store_true",
                          help="Share on this Wi-Fi instead of Tailscale (trusted networks only)")
     p_phone.add_argument("--port", type=int, default=None, help="Port to share on (default 8790)")
+    p_phone.add_argument("--with-secret", action="store_true",
+                         help="Put the relay's admin secret in the link instead of your own "
+                              "sign-in (shared-secret relays; anyone with it can act as anyone)")
 
     p_duel = sub.add_parser(
         "duel", help="Two agents solve the same task; tests gate, a blind judge picks the winner")
