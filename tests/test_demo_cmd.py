@@ -60,7 +60,7 @@ def test_picks_the_free_models_that_answer(monkeypatch, tmp_path: Path) -> None:
             pass
 
     up = {"opencode/longcat-2.5-preview-free"}
-    monkeypatch.setattr(demo_cmd, "model_answers", lambda m, cwd: m in up)
+    monkeypatch.setattr(demo_cmd, "model_answers", lambda m, cwd: 3.0 if m in up else None)
     assert demo_cmd.pick_models(tmp_path, _C()) == ["opencode/longcat-2.5-preview-free"] * 2
     up.add("opencode/mimo-v2.6-flash-free")
     assert demo_cmd.pick_models(tmp_path, _C()) == ["opencode/longcat-2.5-preview-free",
@@ -177,3 +177,32 @@ def test_the_task_and_verdict_follow_whoever_is_cast() -> None:
     verdict = _m("demo-review-codex", "Reviewed abc123: correct, test green.")
     assert demo_cmd.review_of([pub, verdict], "demo-review-codex").startswith("Reviewed")
     assert demo_cmd.review_of([pub, verdict]) is None  # not the opencode reviewer
+
+
+def test_the_fastest_free_model_builds_and_slow_ones_are_skipped(monkeypatch,
+                                                                tmp_path: Path) -> None:
+    """Release check: the nemotron reviewer sat 216s between its first steps."""
+    from quorus.runtime import opencode_free
+
+    class _Quiet:
+        def print(self, *_a, **_k) -> None:
+            pass
+
+    speed = {"opencode/deepseek-v4.1-flash-free": None,  # over 20s: skipped
+             "opencode/longcat-2.5-preview-free": 9.0,
+             "opencode/mimo-v2.6-flash-free": 1.2}
+    monkeypatch.setattr(demo_cmd, "model_answers", lambda m, cwd: speed.get(m))
+    assert demo_cmd.pick_models(tmp_path, _Quiet()) == ["opencode/mimo-v2.6-flash-free",
+                                                       "opencode/longcat-2.5-preview-free"]
+    assert opencode_free.is_slow("opencode/deepseek-v4.1-flash-free")
+
+
+def test_a_probe_slower_than_the_limit_counts_as_no_answer(monkeypatch, tmp_path: Path) -> None:
+    import subprocess as sp
+
+    def run(argv, **kw):
+        assert kw["timeout"] == demo_cmd.PROBE_MAX_S
+        raise sp.TimeoutExpired(argv, kw["timeout"])
+
+    monkeypatch.setattr(demo_cmd.subprocess, "run", run)
+    assert demo_cmd.model_answers("opencode/nemotron-3.5-lightning-free", tmp_path) is None
