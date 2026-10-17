@@ -136,6 +136,37 @@ def claude_wake_flags(config_path: Path | None, mode: str = "default") -> list[s
     return flags + claude_mode_flags(mode)
 
 
+# Owner settings a woken agent keeps: the guardrails. Everything else in the
+# owner's user settings is left out: on Arav's machine every Claude wake ran
+# his SessionStart hooks, a full graphify rebuild and a secret scan, many times
+# an hour, and the laptop slowed to a crawl (2026-10-17).
+_KEEP_HOOKS = ("PreToolUse",)
+_KEEP_SETTINGS = ("permissions", "model")
+
+
+def claude_agent_settings(user_settings: Path) -> dict[str, Any]:
+    """The owner's guardrail hooks and permission rules, nothing else."""
+    try:
+        data = json.loads(user_settings.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, Any] = {k: data[k] for k in _KEEP_SETTINGS if k in data}
+    hooks = data.get("hooks") if isinstance(data.get("hooks"), dict) else {}
+    kept = {k: v for k, v in hooks.items() if k in _KEEP_HOOKS}
+    if kept:
+        out["hooks"] = kept
+    return out
+
+
+def claude_isolation_flags(settings_path: Path) -> list[str]:
+    """Load project and local settings plus the owner's guardrails only."""
+    user = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+    write_private_json(settings_path, claude_agent_settings(user))
+    return ["--setting-sources", "project,local", "--settings", str(settings_path)]
+
+
 def _toml_str(value: str) -> str:
     # JSON string escaping is valid TOML basic-string escaping for our inputs.
     return json.dumps(value)

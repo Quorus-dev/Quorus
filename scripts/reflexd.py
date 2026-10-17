@@ -1412,6 +1412,12 @@ class HeadlessAdapter:
             except OSError as exc:
                 logger.warning("could not write wake MCP config: %s", exc)
         extra = reflexd_wake.claude_wake_flags(cfg, mode)
+        if cfg is not None:  # a daemon wake: skip the owner's heavy user hooks
+            try:
+                extra += reflexd_wake.claude_isolation_flags(
+                    cfg.with_name(cfg.stem + "-settings.json"))
+            except OSError as exc:
+                logger.warning("could not write agent settings: %s", exc)
         if self.model:
             extra += ["--model", self.model]
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
