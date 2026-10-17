@@ -12,9 +12,12 @@ two module names alias to the same object.
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 import httpx
+
+from quorus.observability.redaction import env_secret_values, redact_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,12 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import Context
 
 _AUDIT_TIMEOUT_SECONDS = 3.0
+
+
+def _redact_outgoing(content: str) -> str:
+    """Room text is persisted and fed to every member's prompt: never let an
+    agent (prompt-injected or careless) publish a credential it can see."""
+    return redact_secrets(content, env_secret_values(os.environ))
 
 
 def _srv():
@@ -93,6 +102,7 @@ async def send_message(
 ) -> str:
     s = _srv()
     await s._remember_session(context)
+    content = _redact_outgoing(content)
     try:
         await _audit_tool_call(
             "send_message",
@@ -160,6 +170,7 @@ async def send_room_message(
 ) -> str:
     s = _srv()
     await s._remember_session(context)
+    content = _redact_outgoing(content)
     try:
         await _audit_tool_call(
             "send_room_message",

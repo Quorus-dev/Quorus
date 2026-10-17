@@ -119,11 +119,6 @@ SSE_RECONNECT_S = 2  # backoff between dropped-stream reconnects
 CONFIG_DIR = resolve_config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
-# Fallback public relay for fresh-user signup. `quorus.dev` is the
-# marketing site (Vercel) — the actual relay is hosted on Fly at
-# `quorus-relay.fly.dev`. Update this if/when the relay gets its own
-# subdomain (e.g. `api.quorus.dev`).
-PUBLIC_RELAY = "https://quorus-relay.fly.dev"
 
 # Sender palette — the 3 semantic colors from ui.py, nothing else.
 # Names hash deterministically so the same sender is always the same
@@ -1407,6 +1402,11 @@ def _print_inline_message(
         line.append(f"  [{hhmm}] ", style="ts")
     else:
         line.append("  ", style="muted")
+    if msg.get("message_type") == "status":
+        # "@x read it, nothing to add" / "agents paused": quiet, one line.
+        line.append(f"· {content}", style="muted italic")
+        console.print(line)
+        return
     line.append(f"@{sender}", style=f"bold {sender_style}")
     line.append(": ", style="dim")
     # Themed 'bright' instead of literal 'white' — keeps the line
@@ -3267,7 +3267,8 @@ def _main_input_loop(
                         thread_collapsed=state.get_thread_collapsed(),
                     ):
                         console.print(feed_line)
-                    working_line = _working.render_working_line(state.working.snapshot())
+                    working_line = _working.render_working_line(
+                        state.working.snapshot(), activity=state.working.activity())
                     if working_line is not None:
                         console.print(working_line)
                     console.print()
@@ -3854,6 +3855,15 @@ def _run_session(
             console.print(
                 f"  [dim]Created starter room [room]#{starter}[/] — you can add more anytime.[/]"
             )
+            # Blank slate: offer the agent CLIs already installed, one keypress.
+            try:
+                from quorus_cli.quickstart import offer
+
+                offer(console, starter)
+            except (KeyboardInterrupt, EOFError):
+                console.print()
+            except Exception as exc:  # never block the hub on the offer
+                console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
             rooms = _fetch_rooms(relay_url, secret)
         elif status == "conflict":
             # Someone else made a room named `general` in the same tenant —

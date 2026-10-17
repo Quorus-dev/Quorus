@@ -23,24 +23,37 @@ class WorkingTracker:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._since: dict[str, float] = {}
+        self._activity: dict[str, str] = {}
 
-    def update(self, busy: set[str], now: float | None = None) -> list[str]:
+    def update(self, busy: set[str], now: float | None = None,
+               activity: dict[str, str] | None = None) -> list[str]:
         """Replace the busy set; return the names that just started."""
         now = time.time() if now is None else now
         with self._lock:
             started = sorted(busy - self._since.keys())
             self._since = {n: self._since.get(n, now) for n in busy}
+            self._activity = {n: a for n, a in (activity or {}).items() if n in busy and a}
         return started
 
     def snapshot(self) -> list[tuple[str, float]]:
         with self._lock:
             return sorted(self._since.items(), key=lambda kv: kv[1])
 
+    def activity(self) -> dict[str, str]:
+        """``name -> current step`` ("editing relay.py") for busy agents."""
+        with self._lock:
+            return dict(self._activity)
+
 
 def busy_in_room(presence: list[dict[str, Any]], room: str) -> set[str]:
     return {p.get("name", "") for p in presence
             if p.get("online") and p.get("status") == "busy" and p.get("room") == room
             and p.get("name")}
+
+
+def activity_in_room(presence: list[dict[str, Any]], room: str) -> dict[str, str]:
+    return {p["name"]: str(p.get("activity") or "") for p in presence
+            if p.get("name") in busy_in_room([p], room) and p.get("activity")}
 
 
 def fetch_presence(relay: str, headers: dict[str, str]) -> list[dict[str, Any]] | None:
@@ -57,8 +70,9 @@ def _elapsed(seconds: float) -> str:
     return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m {seconds % 60:02d}s"
 
 
-def render_working_line(snapshot: list[tuple[str, float]], now: float | None = None) -> Text | None:
-    """``  ⋯ @a-claude working 1m 20s · @a-codex working 12s``"""
+def render_working_line(snapshot: list[tuple[str, float]], now: float | None = None,
+                        activity: dict[str, str] | None = None) -> Text | None:
+    """``  ⋯ @a-claude editing relay.py 1m 20s · @a-codex working 12s``"""
     if not snapshot:
         return None
     now = time.time() if now is None else now
@@ -67,7 +81,8 @@ def render_working_line(snapshot: list[tuple[str, float]], now: float | None = N
         if i:
             line.append(" · ", style="dim")
         line.append(f"@{name}", style="bold accent")
-        line.append(f" working {_elapsed(now - since)}", style="muted italic")
+        step = (activity or {}).get(name) or "working"
+        line.append(f" {step} {_elapsed(now - since)}", style="muted italic")
     return line
 
 
@@ -85,11 +100,12 @@ def presence_loop(
             presence = fetch_presence(relay, headers) if room else []
             if presence is not None:
                 busy = busy_in_room(presence, room) if room else set()
+                steps = activity_in_room(presence, room) if room else {}
                 if room != last_room:  # switching rooms is not "started working"
-                    tracker.update(busy)
+                    tracker.update(busy, activity=steps)
                     last_room = room
                 else:
-                    for name in tracker.update(busy):
+                    for name in tracker.update(busy, activity=steps):
                         announce(name)
         except Exception:
             pass

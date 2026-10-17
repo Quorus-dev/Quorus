@@ -163,6 +163,9 @@ class HeartbeatRequest(BaseModel):
     instance_name: str
     status: str = "active"
     room: str = ""
+    # What a busy agent is doing right now ("editing relay.py"), shown on its
+    # working line. Display text only: control characters stripped, capped.
+    activity: str = ""
 
     @field_validator("instance_name")
     @classmethod
@@ -175,6 +178,11 @@ class HeartbeatRequest(BaseModel):
         if v not in {"active", "idle", "busy"}:
             raise ValueError("status must be one of: active, idle, busy")
         return v
+
+    @field_validator("activity")
+    @classmethod
+    def check_activity(cls, v: str) -> str:
+        return "".join(ch for ch in v if ch.isprintable())[:80].strip()
 
 
 class InviteJoinRequest(BaseModel):

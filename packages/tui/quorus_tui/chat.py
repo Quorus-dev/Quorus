@@ -56,7 +56,8 @@ _SENDER_PALETTE, _is_human_sender, _sender_color = (
 )
 
 GROUP_GAP_S = 60  # tighter rhythm — iMessage groups within ~1 minute
-_SYSTEM_TYPES = frozenset({"join", "leave", "lock", "decision", "system"})
+# "status": an agent's quiet "read it, nothing to add" / "agents paused" line.
+_SYSTEM_TYPES = frozenset({"join", "leave", "lock", "decision", "system", "status"})
 
 
 def parse_verb(content: str):

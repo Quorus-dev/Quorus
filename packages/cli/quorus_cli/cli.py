@@ -1062,6 +1062,42 @@ def _cmd_agent(args):
     cmd_agent(args, console)
 
 
+def _cmd_phone(args):
+    from quorus_cli.phone_cmd import cmd_phone
+
+    cmd_phone(args, console)
+
+
+def _cmd_duel(args):
+    from quorus_cli.duel_cmd import cmd_duel
+
+    cmd_duel(args, console)
+
+
+def _cmd_demo(args):
+    from quorus_cli.demo_cmd import cmd_demo
+
+    cmd_demo(args, console)
+
+
+def _cmd_replay(args):
+    from quorus_cli.replay_cmd import cmd_replay
+
+    cmd_replay(args, console)
+
+
+def _cmd_retro(args):
+    from quorus_cli.retro_cmd import cmd_retro
+
+    cmd_retro(args, console)
+
+
+def _cmd_scorecard(args):
+    from quorus_cli.scorecard_cmd import cmd_scorecard
+
+    cmd_scorecard(args, console)
+
+
 def _cmd_turnguard(args):
     """Mark the current agent busy/idle for the local Reflex daemon.
 
@@ -4271,13 +4307,8 @@ def _mint_init_agent_keys(
     return minted
 
 
-def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
-    """Resolve the parent's tenant UUID via ``GET /v1/usage``.
-
-    Required so we can ``signup --join_tenant_id=<uuid>`` for the human
-    profile and land it inside the same workspace as the agent identities.
-    Returns ``None`` on any failure — caller falls back to a fresh tenant.
-    """
+def _workspace_jwt(*, relay_url: str, api_key: str) -> str:
+    """Exchange an API key for a JWT; ``""`` on any failure."""
     try:
         token_resp = httpx.post(
             f"{relay_url}/v1/auth/token",
@@ -4286,8 +4317,22 @@ def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
             follow_redirects=True,
         )
         if token_resp.status_code != 200:
-            return None
-        jwt = (token_resp.json() or {}).get("token", "")
+            return ""
+        token = (token_resp.json() or {}).get("token", "")
+        return token if isinstance(token, str) else ""
+    except Exception:
+        return ""
+
+
+def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
+    """Resolve the parent's tenant UUID via ``GET /v1/usage``.
+
+    Required so we can ``signup --join_tenant_id=<uuid>`` for the human
+    profile and land it inside the same workspace as the agent identities.
+    Returns ``None`` on any failure — caller falls back to a fresh tenant.
+    """
+    try:
+        jwt = _workspace_jwt(relay_url=relay_url, api_key=api_key)
         if not jwt:
             return None
         usage_resp = httpx.get(
@@ -4378,7 +4423,10 @@ def _create_init_human_profile(
                 "workspace": "human-placeholder",  # ignored when join_tenant_id set
                 "join_tenant_id": tenant_id,
             },
-            headers={"X-Quorus-Setup-Local": "1"},
+            # The relay admits a joiner only with proof of membership: the
+            # parent's own workspace token.
+            headers={"X-Quorus-Setup-Local": "1", "Authorization":
+                     f"Bearer {_workspace_jwt(relay_url=relay_url, api_key=api_key)}"},
             timeout=15,
             follow_redirects=True,
         )
@@ -5046,11 +5094,21 @@ def _cmd_join(args):
 
         canonical = normalize_code(token_raw)
         if canonical is not None:
+            # No public relay exists: the old fly.dev default is dead, so a
+            # code with no relay "couldn't reach relay" every time (laptop-2
+            # agent, 2026-10-17). Codes only resolve on the relay that made them.
             relay_for_lookup = (
                 getattr(args, "relay_url", None)
                 or os.environ.get("QUORUS_PUBLIC_RELAY")
-                or "https://quorus-relay.fly.dev"
+                or (load_config().get("relay_url") or "")
             ).rstrip("/")
+            if not relay_for_lookup:
+                _ui.error(
+                    "This code needs its relay's address",
+                    hint="quorus join <code> --relay <url>  (the invite shows the "
+                         "URL, or paste the full install line your teammate sent)",
+                )
+                sys.exit(5)
             try:
                 resp = httpx.get(
                     f"{relay_for_lookup}/v1/join/resolve/{canonical}",
@@ -5588,6 +5646,8 @@ def _apply_join_payload(payload: dict, name: str) -> None:
             signup_payload = {"name": name, "workspace": workspace}
             if tenant_id:
                 signup_payload["join_tenant_id"] = tenant_id
+                # The relay admits a joiner only with proof of invitation.
+                signup_payload["invite_token"] = invite_token
                 console.print("[dim]Joining existing workspace...[/dim]")
 
             signup_resp = httpx.post(
@@ -6674,9 +6734,18 @@ def _cmd_doctor(args):
             ui.console.print(f"       [dim]{detail}[/]")
 
     ui.heading("Quorus Doctor")
+    from quorus_cli import quickstart
 
     # 1. Config file
     config_file = resolve_config_file()
+    if not config_file.exists() and not RELAY_SECRET:
+        # A fresh install isn't broken: five red checks (and "run init with a
+        # secret" the user doesn't have) was the old first impression.
+        ui.console.print("  Quorus isn't set up yet. Run [accent]quorus[/] (one question, "
+                         "about a minute), or [accent]quorus demo[/] to watch two agents "
+                         "fix a bug first (no keys needed).\n")
+        quickstart.doctor_agents(check)
+        return
     check(
         "Config file exists",
         config_file.exists(),
@@ -6886,6 +6955,9 @@ def _cmd_doctor(args):
                 )
         except Exception:
             pass
+
+    # 13. Agent CLIs: the tools `quorus agent add` drives
+    quickstart.doctor_agents(check)
 
     ui.console.print()
     pct = int(checks_passed * 100 / checks_total) if checks_total else 0
@@ -9180,6 +9252,54 @@ def main():
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")
 
+    p_phone = sub.add_parser("phone", help="Open your rooms on your phone (Tailscale by default)")
+    p_phone.add_argument("--lan", action="store_true",
+                         help="Share on this Wi-Fi instead of Tailscale (trusted networks only)")
+    p_phone.add_argument("--port", type=int, default=None, help="Port to share on (default 8790)")
+
+    p_duel = sub.add_parser(
+        "duel", help="Two agents solve the same task; tests gate, a blind judge picks the winner")
+    p_duel.add_argument("task", help="What to build or fix")
+    p_duel.add_argument("--agents", required=True,
+                        help="Two contenders, e.g. arav-claude,arav-codex")
+    p_duel.add_argument("--repo", help="Repo (default: current directory)")
+    p_duel.add_argument("--judge", choices=["claude", "codex", "gemini", "opencode"],
+                        help="Judge tool (default: one from a family neither contender is in)")
+    p_duel.add_argument("--judge-model", help="Model for the judge, e.g. gemini-3.5-flash-lite")
+    p_duel.add_argument("--test", help="Test command (default: detected pytest / npm test)")
+    p_duel.add_argument("--timeout", type=int, default=1800, help="Seconds per contender")
+    p_duel.add_argument("--no-merge", action="store_true", help="Pick a winner, merge nothing")
+    p_duel.add_argument("--room", help="Room to credit in the ledger")
+
+    p_demo = sub.add_parser("demo", help="Watch two free AI agents fix a bug together (no keys)")
+    p_demo.add_argument("--model", help="opencode model (default: a free open-source one)")
+    p_demo.add_argument("--timeout", type=int, default=300, help="Seconds to wait (default 300)")
+    p_demo.add_argument("--keep", action="store_true", help="Keep the demo folder afterwards")
+
+    p_retro = sub.add_parser("retro", help="What's going wrong in a room, ranked, with fixes")
+    p_retro.add_argument("room", help="Room to look at")
+    p_retro.add_argument("--since", type=float, default=6.0, help="Hours to look back (default 6)")
+    p_retro.add_argument("--top", type=int, default=5, help="How many findings to show")
+    p_retro.add_argument("--post", action="store_true",
+                         help="Post the summary to the room (for its lead to act on)")
+
+    p_replay = sub.add_parser(
+        "replay", help="Write a shareable page of how a room's agents did a task")
+    p_replay.add_argument("room", help="Room to replay")
+    p_replay.add_argument("--since", type=float, default=2.0,
+                          help="Hours to look back (default 2)")
+    p_replay.add_argument("--repo", help="Repo for the commits (default: the room's binding)")
+    p_replay.add_argument("--out", help="Output file (default quorus-replay-<room>.html)")
+
+    p_score = sub.add_parser(
+        "scorecard", help="Which agent and vendor's work holds up in this repo")
+    p_score.add_argument("--repo", help="Repo path (default: current directory)")
+    p_score.add_argument("--room", help="Room whose reviews to include")
+    p_score.add_argument("--since", default="7 days ago", help="git date, e.g. '2 days ago'")
+    p_score.add_argument("--range", help="Explicit git range instead of --since, e.g. main..HEAD")
+    p_score.add_argument("--by", choices=["agent", "vendor"], default="agent")
+    p_score.add_argument("--json", action="store_true", help="One JSON row per commit")
+
     p_agent = sub.add_parser("agent", **_help_block(
         synopsis="Add your AI agents (Claude, Codex, Gemini) to a room.",
         description=(
@@ -9205,6 +9325,10 @@ def main():
         "--name", help="Label for a second agent of the same tool, e.g. backend "
                        "-> <you>-backend-claude")
     p_agent_add.add_argument(
+        "--trust", choices=["owner", "members"], default=None,
+        help="Who may make this room's agents change code: owner (default; others "
+             "get read-only answers) or members (anyone in the room)")
+    p_agent_add.add_argument(
         "--lead", action="store_true",
         help="Make this agent the room's lead: it splits requests into tasks, "
              "assigns teammates, reviews, and reports back")
@@ -9212,6 +9336,10 @@ def main():
         "--model", help="Model to run, e.g. sonnet, gpt-5.5, gemini-2.5-pro, "
                         "ollama/qwen3:4b (opencode: any provider/model)")
     agent_sub.add_parser("list", help="Agents running on this machine")
+    p_agent_pace = agent_sub.add_parser(
+        "pace", help="Cap an agent's turns per hour to stay inside its plan")
+    p_agent_pace.add_argument("name", help="Agent name, e.g. arav-codex")
+    p_agent_pace.add_argument("per_hour", help="Turns per hour (1-120), or off")
     p_agent_rm = agent_sub.add_parser("remove", help="Stop an agent on this machine")
     p_agent_rm.add_argument("name", help="Agent name, e.g. arav-claude")
 
@@ -9507,6 +9635,12 @@ def main():
         "deny": _cmd_deny,
         "room": _cmd_room,
         "agent": _cmd_agent,
+        "scorecard": _cmd_scorecard,
+        "phone": _cmd_phone,
+        "retro": _cmd_retro,
+        "replay": _cmd_replay,
+        "demo": _cmd_demo,
+        "duel": _cmd_duel,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,

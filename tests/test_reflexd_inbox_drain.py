@@ -280,7 +280,8 @@ def test_d7_timeout_still_posted_when_no_self_reply(
     ])
     _run_wake(daemon, relay, monkeypatch, "[reflexd] harness timed out")
     assert len(relay.posted) == 1
-    assert relay.posted[0]["content"] == "[reflexd] harness timed out"
+    # A plain-language notice, never the raw sentinel (live 2026-10-17).
+    assert relay.posted[0]["content"].startswith("⚠ ran out of time before finishing")
 
 
 def test_d7_real_replies_never_suppressed(
@@ -415,10 +416,10 @@ def test_claude_resume_failure_retries_fresh(
 def test_claude_argv_max_turns_placement() -> None:
     """D5: chat wakes cap turns; flag sits before the -- separator."""
     argv = reflexd.build_claude_argv("ctx", max_turns=15)
-    assert argv == ["claude", "--print", "--output-format", "json",
+    assert argv == ["claude", "--print", "--output-format", "stream-json", "--verbose",
                     "--max-turns", "15", "--", "ctx"]
     assert reflexd.build_claude_argv("ctx") == [
-        "claude", "--print", "--output-format", "json", "--", "ctx"]
+        "claude", "--print", "--output-format", "stream-json", "--verbose", "--", "ctx"]
 
 
 def _budget_daemon_and_capture(monkeypatch, mission):

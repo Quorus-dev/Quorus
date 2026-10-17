@@ -28,8 +28,12 @@ def _first_line(text: str) -> str:
     return text.strip()
 
 
-_ASKS = re.compile(r"\?|\b(approve|approval|confirm|decide|decision|blocked|need you|"
-                   r"your call|which one|permission)\b", re.IGNORECASE)
+# Requests, not reports: "@arav: 7ebd213d is reviewed and approved" fired a
+# "needs you" banner (live 2026-10-17).
+_ASKS = re.compile(r"\?|\b(please (approve|confirm|decide)|need(s)? (your )?(approval|ok|"
+                   r"decision)|need you|your call|which one|permission|can you|could you|"
+                   r"should (i|we)|(i'?m|we'?re|i am|we are) blocked)\b", re.IGNORECASE)
+_PUBLISHED_TO = re.compile(r"\(quorus\) published \d+ commit\(s\) from \S+ to (\S+)")
 
 
 def asks_owner(text: str, owner: str | None) -> str | None:
@@ -77,5 +81,6 @@ def owner_alert(*, agent: str, owner: str | None, reply: str) -> tuple[str, str]
     if done:  # a lead's "@arav, both jobs are on main" (live 2026-10-17)
         return f"{agent}: done", done
     if any(line.startswith("(quorus) " + PUBLISHED_MARK) for line in reply.splitlines()):
-        return f"{agent} shipped to main", _first_line(reply)
+        m = _PUBLISHED_TO.search(reply)  # weekend agents ship to a branch, not main
+        return f"{agent} shipped to {m.group(1) if m else 'main'}", _first_line(reply)
     return None
