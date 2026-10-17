@@ -130,3 +130,16 @@ def test_notes_need_no_git_identity(tmp_path: Path, monkeypatch) -> None:
         monkeypatch.delenv(var, raising=False)
     assert ledger.record_provenance(repo, base, "HEAD", {"agent": "a-codex"}) == 1
     assert (ledger.read_provenance(repo, "HEAD") or {}).get("agent") == "a-codex"
+
+
+def test_quoting_a_review_is_not_reviewing() -> None:
+    """Gemini pasted retro evidence quoting Codex's block and was scored as a flagger."""
+    sha = "6a947e63aaaa"
+    history = [
+        {"from_name": "a-codex", "timestamp": "2026-10-17T12:06:00Z",
+         "content": "@a-claude /disagree blocking on `6a947e63`: legacy bypass"},
+        {"from_name": "a-gemini", "timestamp": "2026-10-17T13:26:00Z",
+         "content": "@a-claude top 3 from retro:\n   12:06 @a-codex: @a-claude /disagree "
+                    "blocking on `6a947e63`\n> rejected 6a947e63 too"},
+    ]
+    assert ledger._review(history, sha, "a-claude") == ("flagged", ["a-codex"])
