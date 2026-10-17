@@ -32,8 +32,21 @@ FREE_MODELS = ("opencode/deepseek-v4.1-flash-free", "opencode/longcat-2.5-previe
 BUILDER, REVIEWER, HUMAN, ROOM = "demo-opencode", "demo-review-opencode", "you", "demo"
 # The reviewer is named WITHOUT an @: mentioning it here woke it early to say
 # "nothing to review yet" (live run, 2026-10-17). The builder's hand-off wakes it.
-TASK = (f"@{BUILDER} add() in calc.py is broken: fix it, run the test, commit, then "
-        f"@-mention your reviewer ({REVIEWER}) to review your commit.")
+
+
+def task_for(builder: str, reviewer: str) -> str:
+    return (f"@{builder} add() in calc.py is broken: fix it, run the test, commit, then "
+            f"@-mention your reviewer ({reviewer}) to review your commit.")
+
+
+TASK = task_for(BUILDER, REVIEWER)
+# When every free model is busy (or opencode is missing), the demo runs on the
+# Claude Code / Codex the user already has, instead of failing (release check,
+# 2026-10-17). Both present: Claude builds and Codex reviews, across vendors.
+FALLBACK_ORDER = ("claude", "codex")
+# What each CLI needs from the real home to stay logged in; the demo's agents
+# run with a throwaway HOME, so these are linked into it (never copied).
+AUTH_PATHS = {"claude": (".claude", ".claude.json"), "codex": (".codex",)}
 _NOT_A_VERDICT = re.compile(r"nothing to review|standing by|will review|waiting for",
                             re.IGNORECASE)
 
@@ -69,23 +82,53 @@ def is_fixed(repo: Path) -> bool:
     return "a + b" in out
 
 
-def review_of(history: list[dict[str, Any]]) -> str | None:
+def review_of(history: list[dict[str, Any]], reviewer: str = REVIEWER) -> str | None:
     """The reviewer's verdict after the fix was published (a plan line isn't one)."""
     pub = [i for i, m in enumerate(history) if "(quorus) published" in (m.get("content") or "")]
     if not pub:
         return None
     for m in history[pub[0] + 1:]:
         body = (m.get("content") or "").strip()
-        if (m.get("from_name") == REVIEWER and m.get("message_type") != "status"
+        if (m.get("from_name") == reviewer and m.get("message_type") != "status"
                 and not body.lower().startswith("plan:") and not _NOT_A_VERDICT.search(body)):
             return body.splitlines()[0][:160]
     return None
 
 
-def all_out_of_quota(history: list[dict[str, Any]]) -> bool:
+def all_out_of_quota(history: list[dict[str, Any]],
+                     agents: tuple[str, str] = (BUILDER, REVIEWER)) -> bool:
     """Both agents posted 'out of quota': waiting longer won't help."""
     out = {m.get("from_name") for m in history if "is out of quota" in (m.get("content") or "")}
-    return {BUILDER, REVIEWER} <= out
+    return set(agents) <= out
+
+
+def fallback_cast(which: Any = shutil.which) -> list[tuple[str, None]]:
+    """``[(builder_harness, None), (reviewer_harness, None)]`` from the logged-in
+    Claude Code / Codex on this machine, or ``[]``. None = the CLI's own model."""
+    from quorus_cli.quickstart import detect
+
+    ready = [f.harness for f in detect(which) if f.ready and f.harness in FALLBACK_ORDER]
+    ready.sort(key=FALLBACK_ORDER.index)
+    if not ready:
+        return []
+    return [(ready[0], None), (ready[-1], None)]
+
+
+def link_auth(home: Path, harnesses: set[str], real_home: Path | None = None) -> None:
+    real_home = real_home or Path.home()
+    for h in harnesses:
+        for name in AUTH_PATHS.get(h, ()):
+            src, dst = real_home / name, home / name
+            if src.exists() and not dst.exists() and not dst.is_symlink():
+                dst.symlink_to(src)
+
+
+LABELS = {"claude": "Claude Code", "codex": "Codex", "opencode": "opencode"}
+
+
+def _label(member: tuple[str, str | None]) -> str:
+    harness, model = member
+    return model.split("/", 1)[-1] if model else LABELS.get(harness, harness)
 
 
 def _free_port() -> int:
@@ -144,7 +187,7 @@ def _show(console: Any, m: dict[str, Any], start: float) -> None:
 
 
 def _show_steps(console: Any, url: str, headers: dict[str, str], last: dict[str, str],
-                start: float) -> None:
+                start: float, agents: tuple[str, str] = (BUILDER, REVIEWER)) -> None:
     """Each agent's live step ("editing calc.py"), once per change."""
     try:
         presence = httpx.get(f"{url}/presence", headers=headers, timeout=5).json()
@@ -152,7 +195,7 @@ def _show_steps(console: Any, url: str, headers: dict[str, str], last: dict[str,
         return
     for p in presence if isinstance(presence, list) else []:
         name, step = p.get("name"), p.get("activity") or ""
-        if name in (BUILDER, REVIEWER) and step and last.get(name) != step:
+        if name in agents and step and last.get(name) != step:
             last[name] = step
             console.print(f"[dim]{time.time() - start:4.0f}s  ⋯ @{name} {step}[/]",
                           highlight=False)
@@ -160,7 +203,7 @@ def _show_steps(console: Any, url: str, headers: dict[str, str], last: dict[str,
 
 def cmd_demo(args: Any, console: Any) -> None:
     problem = _opencode_ok()
-    if problem:
+    if problem and not fallback_cast():
         raise SystemExit(f"demo: {problem}")
     root = Path(tempfile.mkdtemp(prefix="quorus-demo-"))
     home, secret, port = root / "home", secrets.token_hex(16), _free_port()
@@ -171,13 +214,22 @@ def cmd_demo(args: Any, console: Any) -> None:
     try:
         repo = make_sample_repo(root)
         write_binding(home, repo)
-        models = pick_models(root, console, args.model)
-        if not models:
+        models = [] if problem else pick_models(root, console, args.model)
+        cast = [("opencode", m) for m in models] or ([] if args.model else fallback_cast())
+        if not cast:
             console.print("[warning]![/] opencode's free models are all busy right now. Try "
                           "again in a few minutes, or use your own models with `quorus agent add`.")
             return
-        console.print(f"[dim]builder: {models[0].split('/', 1)[1]} · reviewer: "
-                      f"{models[1].split('/', 1)[1]}[/]\n")
+        builder, reviewer = (BUILDER, REVIEWER) if models else (
+            f"demo-{cast[0][0]}", f"demo-review-{cast[1][0]}")
+        if not models:
+            link_auth(home, {h for h, _ in cast})
+            tools = " and ".join(dict.fromkeys(LABELS[h] for h, _ in cast))
+            why = "opencode isn't usable here" if problem else "opencode's free models are busy"
+            console.print(f"{why}, so the demo runs on your own logged-in {tools} "
+                          "(their login and their usage).")
+        console.print("[dim]builder: " + _label(cast[0]) + " · reviewer: " + _label(cast[1])
+                      + "[/]\n")
         base_env = {k: v for k, v in os.environ.items()
                     if not k.startswith(("QUORUS_", "REFLEXD_")) and k not in ("API_KEY",)}
         procs.append(subprocess.Popen(
@@ -193,14 +245,14 @@ def cmd_demo(args: Any, console: Any) -> None:
             except httpx.HTTPError:
                 time.sleep(0.25)
         httpx.post(f"{url}/rooms", json={"name": ROOM, "created_by": HUMAN}, headers=H)
-        for who in (HUMAN, BUILDER, REVIEWER):
+        for who in (HUMAN, builder, reviewer):
             httpx.post(f"{url}/rooms/{ROOM}/join", json={"participant": who}, headers=H)
         from quorus.runtime.supervisor import _reflexd_script_path
 
-        for name, model in ((BUILDER, models[0]), (REVIEWER, models[1])):
+        for name, (_h, model) in ((builder, cast[0]), (reviewer, cast[1])):
             env = {**base_env, "HOME": str(home), "RELAY_URL": url, "API_KEY": secret,
                    "REFLEXD_PARTICIPANT": name, "REFLEXD_LEGACY_BEARER": "1",
-                   "REFLEXD_MODEL": model, "REFLEXD_OWNER": HUMAN,
+                   **({"REFLEXD_MODEL": model} if model else {}), "REFLEXD_OWNER": HUMAN,
                    "PYTHONUNBUFFERED": "1", "QUORUS_NOTIFY": "0",
                    "REFLEXD_LOG_PATH": str(root / f"{name}.log"), "PWD": str(root)}
             procs.append(subprocess.Popen(
@@ -209,7 +261,8 @@ def cmd_demo(args: Any, console: Any) -> None:
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         time.sleep(6)
         start = time.time()
-        httpx.post(f"{url}/rooms/{ROOM}/messages", json={"from_name": HUMAN, "content": TASK},
+        httpx.post(f"{url}/rooms/{ROOM}/messages", json={"from_name": HUMAN,
+                                                            "content": task_for(builder, reviewer)},
                    headers=H)
         seen, history, fixed_at, steps = 0, [], None, {}
         while time.time() - start < args.timeout:
@@ -218,18 +271,18 @@ def cmd_demo(args: Any, console: Any) -> None:
             for m in history[seen:]:
                 _show(console, m, start)
             seen = len(history)
-            _show_steps(console, url, H, steps, start)
+            _show_steps(console, url, H, steps, start, (builder, reviewer))
             if fixed_at is None and is_fixed(repo):
                 fixed_at = time.time() - start
-            if fixed_at is not None and review_of(history):
+            if fixed_at is not None and review_of(history, reviewer):
                 break
-            if all_out_of_quota(history):
+            if all_out_of_quota(history, (builder, reviewer)):
                 break
             time.sleep(2)
         if fixed_at is not None or is_fixed(repo):
             took = fixed_at if fixed_at is not None else time.time() - start
             console.print(f"\n[success]✓[/] The fix was on main {took:.0f}s after your message.")
-            verdict = review_of(history)
+            verdict = review_of(history, reviewer)
             console.print(f"  Second agent's review: {verdict}" if verdict else
                           "  [dim](the second agent's review was still running)[/]",
                           highlight=False)
