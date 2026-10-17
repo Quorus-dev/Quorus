@@ -462,3 +462,81 @@ def test_an_ollama_wake_stops_before_opencode_when_ollama_is_down(monkeypatch) -
     monkeypatch.setattr(reflexd, "ollama_problem", down)
     out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert out.startswith("⚠ opencode: Ollama isn't running") and tried == []
+
+
+# ── slow free models: first-output watchdog (fix 9, release check) ──────
+
+
+def _fake_harness(tmp_path: Path, body: str) -> list[str]:
+    script = tmp_path / "fake_opencode.py"
+    script.write_text("import sys, time\n" + body)
+    return [sys.executable, str(script)]
+
+
+def test_a_harness_silent_past_its_deadline_is_killed_fast(tmp_path: Path) -> None:
+    import time as _t
+
+    argv = _fake_harness(tmp_path, "time.sleep(30)\nprint('{\"type\":\"step_start\"}')\n")
+    started = _t.monotonic()
+    out = asyncio.run(reflexd.HeadlessAdapter(timeout_s=60)._run_subprocess(
+        argv, parser=lambda o: o, first_output_s=0.5))
+    assert isinstance(out, reflexd.SlowStart) and "sent nothing" in out
+    assert _t.monotonic() - started < 10  # not the 30s sleep, not the 60s turn
+
+
+def test_output_before_the_deadline_runs_to_the_end(tmp_path: Path) -> None:
+    argv = _fake_harness(tmp_path, "print('first', flush=True)\ntime.sleep(1.5)\nprint('done')\n")
+    out = asyncio.run(reflexd.HeadlessAdapter(timeout_s=30)._run_subprocess(
+        argv, parser=lambda o: o.strip(), first_output_s=0.5))
+    assert out == "first\ndone"
+
+
+def test_a_quick_silent_exit_is_a_failure_not_slowness(tmp_path: Path) -> None:
+    argv = _fake_harness(tmp_path, "sys.exit(3)\n")
+    out = asyncio.run(reflexd.HeadlessAdapter(timeout_s=30)._run_subprocess(
+        argv, parser=lambda o: o, first_output_s=5))
+    assert not isinstance(out, reflexd.SlowStart) and getattr(out, "exit_code", None) == 3
+
+
+def test_a_slow_free_model_hands_the_turn_to_the_next_and_goes_last(monkeypatch) -> None:
+    from quorus.runtime import opencode_free
+
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter = reflexd.HeadlessAdapter()
+    tried: list[str | None] = []
+    steps: list[str] = []
+    adapter.on_step = steps.append
+
+    async def once(*_a: Any, **_k: Any) -> str:
+        tried.append(adapter.model)
+        if adapter.model == free[0]:
+            return reflexd.SlowStart("opencode", 60)
+        return f"fixed it on {adapter.model}"
+
+    adapter._opencode_once = once  # type: ignore[method-assign]
+    adapter.model = free[0]
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out == f"fixed it on {free[1]}" and tried == [free[0], free[1]]
+    assert len(steps) == 1 and "slow to start" in steps[0]
+    assert opencode_free.is_slow(free[0])
+    assert opencode_free.free_models(free)[-1] == free[0]  # back of the rotation
+
+
+def test_paid_and_local_models_get_no_first_output_deadline(monkeypatch) -> None:
+    seen: list[Any] = []
+    adapter = reflexd.HeadlessAdapter()
+
+    async def capture(*_a: Any, first_output_s: Any = None, **_k: Any) -> str:
+        seen.append(first_output_s)
+        return "ok"
+
+    adapter._run_with_resume = capture  # type: ignore[method-assign]
+    adapter.wake_spec = None
+    monkeypatch.setattr(reflexd.reflexd_wake, "wake_env", lambda *a, **k: {})
+    monkeypatch.setattr(reflexd.reflexd_models, "opencode_config", lambda *a, **k: {})
+    for model in ("ollama/qwen3:4b", "openrouter/qwen/qwen3-coder", None,
+                  "opencode/beam-free"):
+        adapter.model = model
+        asyncio.run(adapter._opencode_once("ctx", cwd=None, resume=None, on_session=None,
+                                           timeout_s=None, mode="default"))
+    assert seen == [None, None, reflexd.FREE_FIRST_EVENT_S, reflexd.FREE_FIRST_EVENT_S]

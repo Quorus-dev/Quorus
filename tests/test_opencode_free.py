@@ -52,3 +52,13 @@ def test_falls_back_to_the_tuple_when_the_catalog_is_unavailable() -> None:
     def missing(argv, **_kw):
         raise FileNotFoundError("opencode")
     assert opencode_free.free_models(TUPLE, run=missing) == TUPLE
+
+
+def test_recently_slow_models_go_last_until_they_recover() -> None:
+    t = [5000.0]
+    models = opencode_free.free_models(TUPLE, run=_run(), now=lambda: t[0])
+    opencode_free.mark_slow(models[0], now=lambda: t[0])
+    again = opencode_free.free_models(TUPLE, run=_run(), now=lambda: t[0])
+    assert again[-1] == models[0] and again[:-1] == models[1:]
+    t[0] += opencode_free.SLOW_FOR_S + 1
+    assert opencode_free.free_models(TUPLE, run=_run(), now=lambda: t[0])[0] == models[0]

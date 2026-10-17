@@ -15,6 +15,10 @@ import time
 from collections.abc import Callable, Sequence
 
 CACHE_S = 60 * 60
+# A model that sat silent past the first-output deadline goes to the back of
+# the rotation for this long (nemotron: 111-300s to its first token).
+SLOW_FOR_S = 60 * 60
+_slow: dict[str, float] = {}  # model -> until (per process)
 _default_run = subprocess.run  # tests swap this so they never call a real opencode
 _cache: tuple[float, tuple[str, ...]] | None = None
 
@@ -34,20 +38,31 @@ def _live(run: Callable[..., subprocess.CompletedProcess]) -> list[str]:
 def free_models(fallback: Sequence[str], *,
                 run: Callable[..., subprocess.CompletedProcess] | None = None,
                 now: Callable[[], float] = time.time) -> tuple[str, ...]:
-    """The free models to rotate over, cached for an hour per process."""
+    """The free models to rotate over, cached for an hour per process.
+    Recently slow models come last, in their usual order."""
     global _cache
-    if _cache is not None and now() - _cache[0] < CACHE_S:
-        return _cache[1]
-    live = _live(run or _default_run)
-    if live:
-        known = [m for m in fallback if m in live]
-        models = tuple(known + [m for m in live if m not in known])
-    else:
-        models = tuple(fallback)
-    _cache = (now(), models)
-    return models
+    if _cache is None or now() - _cache[0] >= CACHE_S:
+        live = _live(run or _default_run)
+        if live:
+            known = [m for m in fallback if m in live]
+            models = tuple(known + [m for m in live if m not in known])
+        else:
+            models = tuple(fallback)
+        _cache = (now(), models)
+    t = now()
+    return tuple(sorted(_cache[1], key=lambda m: _slow.get(m, 0.0) > t))
+
+
+def mark_slow(model: str | None, *, now: Callable[[], float] = time.time) -> None:
+    if model:
+        _slow[model] = now() + SLOW_FOR_S
+
+
+def is_slow(model: str | None, *, now: Callable[[], float] = time.time) -> bool:
+    return bool(model) and _slow.get(model or "", 0.0) > now()
 
 
 def reset_cache() -> None:
     global _cache
     _cache = None
+    _slow.clear()
