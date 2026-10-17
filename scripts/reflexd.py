@@ -159,7 +159,10 @@ CHATTER_NOTICE = "(quorus) agents stopped answering unaddressed chatter"
 def _pause_announced(recent: list[dict[str, Any]], marker: str = PAUSE_NOTICE) -> bool:
     """Has this notice been posted since the last human message?"""
     for m in reversed(recent):
-        if marker in (m.get("content") or ""):
+        body = m.get("content") or ""
+        # A full-pause notice also covers chatter; any notice by a teammate on
+        # another machine counts (three agents posted one each, 2026-10-17).
+        if marker in body or (marker == CHATTER_NOTICE and PAUSE_NOTICE in body):
             return True
         if not is_agent_participant(m.get("from_name") or ""):
             return False
@@ -2505,7 +2508,7 @@ class Reflexd:
         re-read, and announce only if nobody has yet (one notice per pause)."""
         if _pause_announced(recent, marker):
             return False
-        await asyncio.sleep(random.uniform(0.0, 3.0))
+        await asyncio.sleep(random.uniform(0.0, 6.0))
         try:
             recent = await relay.fetch_recent(room=room, limit=30)
         except Exception:

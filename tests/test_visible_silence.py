@@ -97,3 +97,9 @@ def test_wake_repairs_an_identity_the_agent_broke(tmp_path, monkeypatch) -> None
     assert sorted(p.name for p in (agent_dir / "profiles").iterdir()) == ["a-opencode.json"]
     prof = json.loads((agent_dir / "profiles" / "a-opencode.json").read_text())
     assert prof["relay_secret"] == "sec" and prof["relay_url"] == "http://r"
+
+
+def test_full_pause_notice_covers_chatter() -> None:
+    human = {"from_name": "arav", "content": "go"}
+    full = {"from_name": "a-gemini", "content": f"{reflexd.PAUSE_NOTICE} after 7"}
+    assert reflexd._pause_announced([human, full], reflexd.CHATTER_NOTICE)
