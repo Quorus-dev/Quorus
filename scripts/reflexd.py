@@ -1574,7 +1574,11 @@ class HeadlessAdapter:
         if not reflexd_models.is_free_opencode(first):
             return reply
         tried = {first}
-        for alt in reflexd_models.OPENCODE_FREE_MODELS:
+        from quorus.runtime.opencode_free import free_models
+
+        # The live catalog, not just our tuple: it churns (release check, 2026-10-17).
+        rotation = await asyncio.to_thread(free_models, reflexd_models.OPENCODE_FREE_MODELS)
+        for alt in rotation:
             if self.limited_until <= time.time():
                 break  # answered (or failed for another reason): done
             if alt in tried:

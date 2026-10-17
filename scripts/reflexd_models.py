@@ -108,8 +108,10 @@ def opencode_flags(
     return flags
 
 
-# opencode's free models (no key). Each one's limit comes and goes on its own,
-# so a limited agent moves down this list. Keep in sync with `quorus demo`.
+# opencode's free models (no key), tried first and in this order. Each one's
+# limit comes and goes on its own, so a limited agent moves down the list, then
+# on to any other free model in the live `opencode models` catalog
+# (quorus/runtime/opencode_free.py). Keep in sync with `quorus demo`.
 # Not nemotron-3.5-lightning: it answers, but took 200s to its first step and
 # timed out two 30-minute turns running in a row (2026-10-17). Waiting out a
 # limit beats burning a turn on it.
