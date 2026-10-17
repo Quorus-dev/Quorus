@@ -89,3 +89,41 @@ async def test_relay_refuses_free_text_waiting(client: AsyncClient) -> None:
     r = await client.post("/heartbeat", headers=h, json={
         "instance_name": "a-codex", "waiting_on": "quota", "waiting_until": -5})
     assert r.status_code == 422
+
+
+async def test_presence_carries_the_model_so_agents_are_told_apart() -> None:
+    """Arav: recognise each agent by model, not by vendor logos (Quorum view)."""
+    _reset_state()
+    H = {"Authorization": "Bearer test-secret"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/heartbeat", headers=H, json={
+            "instance_name": "a-claude", "status": "busy", "room": "r",
+            "model": "claude-opus-5-5\x1b[31m" + "x" * 80})
+        assert r.status_code == 200, r.text
+        await c.post("/heartbeat", headers=H, json={"instance_name": "a-codex",
+                                                     "status": "active", "room": "r"})
+        pres = {p["name"]: p for p in (await c.get("/presence", headers=H)).json()}
+    model = pres["a-claude"]["model"]
+    assert model.startswith("claude-opus-5-5") and "\x1b" not in model and len(model) <= 48
+    assert pres["a-codex"]["model"] == ""
+    _reset_state()
+
+
+def test_daemon_sends_its_model_only_when_it_knows_it() -> None:
+    import asyncio
+
+    d = _daemon()
+    sent: list[dict] = []
+
+    class _Relay:
+        async def post_heartbeat(self, **kw):
+            sent.append(kw)
+            d._stop.set()
+
+    d.adapter.model = "gpt-5.5"
+    asyncio.run(d._heartbeat_loop(_Relay(), interval=0))
+    assert sent[-1]["model"] == "gpt-5.5"
+    d._stop.clear()
+    d.adapter.model = None
+    asyncio.run(d._heartbeat_loop(_Relay(), interval=0))
+    assert "model" not in sent[-1]  # older relays and fakes never see an empty field

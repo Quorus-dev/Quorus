@@ -35,7 +35,8 @@ async def heartbeat(
     svc = request.app.state.presence_service
     entry = await svc.heartbeat(_tid(auth), req.instance_name, req.status, req.room,
                                 reason=req.reason, activity=req.activity,
-                                waiting_on=req.waiting_on, waiting_until=req.waiting_until)
+                                waiting_on=req.waiting_on, waiting_until=req.waiting_until,
+                                model=req.model)
     await request.app.state.backends.participants.add(_tid(auth), req.instance_name)
     return {"status": "ok", "timestamp": entry.get("last_heartbeat", "")}
 
@@ -67,6 +68,7 @@ async def get_presence(
             "last_wake_at": e.get("last_wake_at", ""),
             "waiting_on": (e.get("waiting_on") or "") if online else "",
             "waiting_until": _float(e.get("waiting_until")) if online else 0.0,
+            "model": e.get("model") or "",
         })
     result.sort(key=lambda x: (not x["online"], x["name"]))
     return result

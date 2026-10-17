@@ -82,10 +82,27 @@ background:var(--chip);color:var(--ink);cursor:pointer}
 border-radius:999px;border:1px solid var(--rule);background:none;color:var(--muted);cursor:pointer}
 #boardModes button.on{background:var(--chip);color:var(--ink)}
 #quorum{position:relative;flex:1;min-height:420px;border-radius:12px;overflow:hidden;
-border:1px solid var(--rule)}#quorum canvas{display:block;width:100%;height:100%}
+border:1px solid var(--rule)}#quorum canvas{position:absolute;inset:0;display:block;width:100%;height:100%}
 #board{position:relative}
 #quorumCard{position:absolute;right:28px;top:110px;width:min(440px,calc(100% - 56px));z-index:2;
 box-shadow:0 12px 40px rgba(0,0,0,.35);border-radius:12px}
+.qtags{position:absolute;inset:0;pointer-events:none}
+.qtag{position:absolute;left:0;top:0;pointer-events:auto;display:grid;gap:1px;max-width:190px;
+padding:4px 9px;border-radius:9px;border:1px solid var(--rule);border-left:3px solid var(--seat);
+background:rgba(16,20,18,.86);color:#fff;font:inherit;font-size:12px;line-height:1.25;
+text-align:left;cursor:pointer}
+.qtag b{font-size:12px}.qtag .qm{color:#b9c4bf;font-size:11px}
+.qtag .qs{font-size:11px;color:#dfe7e3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qtag .qs:empty,.qtag .qm:empty{display:none}
+.qtag[data-state=needs]{border-color:#e8a63a;box-shadow:0 0 0 2px rgba(232,166,58,.45)}
+.qtag[data-state=needs] .qs{color:#f3c27a}.qtag[data-state=stuck] .qs{color:#f2776e}
+.qtag[data-state=offline]{opacity:.5}
+.qtag:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.qnote{position:absolute;left:12px;bottom:8px;margin:0}
+#quorum.flat{min-height:0;overflow:visible;border:0}
+#quorum.flat .qtags{position:static;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+#quorum.flat .qtag{position:static;max-width:none;transform:none!important}
+#quorum.flat .qnote{position:static;margin-top:8px}
 .chip{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--chip);color:var(--muted)}
 .chip.hot{background:var(--warn);color:#fff}
 .brow{background:var(--panel);border:1px solid var(--rule);border-left:4px solid var(--rule);
@@ -102,7 +119,7 @@ display:flex;flex-wrap:wrap;gap:8px;align-items:center;overflow-wrap:anywhere}
 .good{color:var(--accent)}.bad{color:var(--bad)}
 .bassign input{width:100%;font:inherit;font-size:13px;padding:6px 10px;border-radius:8px;
 border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
-@media (max-width:720px){#app{grid-template-columns:1fr}#app.inroom #rooms{display:none}
+@media (max-width:720px){#app{grid-template-columns:minmax(0,1fr)}#app.inroom #rooms{display:none}
 #app:not(.inroom) #chat{display:none}#back{display:block}}
 </style>
 </head>
@@ -207,7 +224,8 @@ function renderRooms(rooms) {
     const name = r.name || r.id;
     const b = el("button", "room" + (name === S.room ? " on" : ""));
     b.type = "button"; b.dataset.room = name;
-    b.append(el("span", "", "#" + name), el("small", "", (r.members || []).length + " members"));
+    b.append(el("span", "", "#" + name), el("small", "", (r.members || []).length
+      + ((r.members || []).length === 1 ? " member" : " members")));
     list.append(b);
   });
 }
