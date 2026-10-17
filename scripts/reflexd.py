@@ -1194,6 +1194,30 @@ def vendor_error(harness: str, stdout: str, stderr: str) -> str | None:
     return f"⚠ {harness}: {text.rstrip('.')}.{hint}"
 
 
+async def ollama_problem(model: str, *, timeout: float = 3.0,
+                         transport: httpx.AsyncBaseTransport | None = None) -> str | None:
+    """Why a local Ollama model can't answer right now, or None.
+
+    With Ollama stopped, opencode waited ~3 minutes and the room got "exited 1
+    with no known cause" (release check, 2026-10-17). One local GET first.
+    """
+    host = os.environ.get("OLLAMA_HOST") or "127.0.0.1:11434"
+    base = host if host.startswith("http") else f"http://{host}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+            resp = await client.get(f"{base.rstrip('/')}/api/tags")
+            resp.raise_for_status()
+            names = {m.get("name") for m in resp.json().get("models", [])
+                     if isinstance(m, dict)}
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return ("Ollama isn't running: start it with "
+                "`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`.")
+    want = model if ":" in model else f"{model}:latest"
+    if names and want not in names and model not in names:
+        return f"Ollama doesn't have {model}: `ollama pull {model}`."
+    return None
+
+
 def _parse_codex_stream(out: str) -> tuple[str, str | None]:
     """Parse codex ``--json`` NDJSON → ``(reply_text, thread_id)``.
 
@@ -1645,6 +1669,10 @@ class HeadlessAdapter:
         the wake. A model the user picked and pays for is never swapped."""
         if self._rotated_at and time.time() - self._rotated_at > reflexd_models.ROTATE_BACK_S:
             self.model, self._rotated_at = self._home_model, 0.0
+        if (self.model or "").startswith("ollama/"):
+            problem = await ollama_problem(self.model.split("/", 1)[1])
+            if problem:  # say so now, not "exited 1 with no known cause" 3 min later
+                return f"⚠ opencode: {problem}"
         first = self.model
         reply = await self._opencode_once(context, cwd=cwd, resume=resume,
                                           on_session=on_session, timeout_s=timeout_s,

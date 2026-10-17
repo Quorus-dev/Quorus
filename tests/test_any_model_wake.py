@@ -58,6 +58,10 @@ def adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     a.mcp_config_path = tmp_path / "wake-mcp-a-opencode.json"
     a.agent_config_dir = tmp_path / "cfg"
     monkeypatch.setattr(reflexd.shutil, "which", lambda b: f"/bin/{b}")
+
+    async def ollama_up(*_a: Any, **_k: Any) -> None:  # no real Ollama in tests
+        return None
+    monkeypatch.setattr(reflexd, "ollama_problem", ollama_up)
     return a
 
 
@@ -427,3 +431,34 @@ def test_errors_that_arent_about_the_model_stay_private() -> None:
     assert reflexd.vendor_error("gemini", "", "Error: private-token abc123 rejected") is None
     leak = '{"type":"error","error":{"message":"private-token: unexplained error"}}'
     assert reflexd.vendor_error("opencode", leak, "") is None
+
+
+# ── Ollama precheck (release check: 182s wait for "no known cause") ─────
+
+
+def test_ollama_not_running_is_said_at_once(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_HOST", "127.0.0.1:1")  # nothing listens there
+    msg = asyncio.run(reflexd.ollama_problem("qwen3:4b", timeout=1))
+    assert msg == "Ollama isn't running: start it with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`."
+
+
+def test_ollama_without_the_model_says_pull() -> None:
+    import httpx
+
+    def tags(_req):
+        return httpx.Response(200, json={"models": [{"name": "llama3:latest"}]})
+    t = httpx.MockTransport(tags)
+    assert asyncio.run(reflexd.ollama_problem("qwen3:4b", transport=t)) == \
+        "Ollama doesn't have qwen3:4b: `ollama pull qwen3:4b`."
+    assert asyncio.run(reflexd.ollama_problem("llama3", transport=t)) is None
+
+
+def test_an_ollama_wake_stops_before_opencode_when_ollama_is_down(monkeypatch) -> None:
+    adapter, tried = _rotating_adapter(set())
+    adapter.model = "ollama/qwen3:4b"
+
+    async def down(model, **_k):
+        return "Ollama isn't running: start it with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`."
+    monkeypatch.setattr(reflexd, "ollama_problem", down)
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out.startswith("⚠ opencode: Ollama isn't running") and tried == []
