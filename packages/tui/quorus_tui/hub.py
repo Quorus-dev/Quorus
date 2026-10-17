@@ -119,11 +119,6 @@ SSE_RECONNECT_S = 2  # backoff between dropped-stream reconnects
 CONFIG_DIR = resolve_config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
-# Fallback public relay for fresh-user signup. `quorus.dev` is the
-# marketing site (Vercel) — the actual relay is hosted on Fly at
-# `quorus-relay.fly.dev`. Update this if/when the relay gets its own
-# subdomain (e.g. `api.quorus.dev`).
-PUBLIC_RELAY = "https://quorus-relay.fly.dev"
 
 # Sender palette — the 3 semantic colors from ui.py, nothing else.
 # Names hash deterministically so the same sender is always the same

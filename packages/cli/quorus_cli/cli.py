@@ -5046,11 +5046,21 @@ def _cmd_join(args):
 
         canonical = normalize_code(token_raw)
         if canonical is not None:
+            # No public relay exists: the old fly.dev default is dead, so a
+            # code with no relay "couldn't reach relay" every time (laptop-2
+            # agent, 2026-10-17). Codes only resolve on the relay that made them.
             relay_for_lookup = (
                 getattr(args, "relay_url", None)
                 or os.environ.get("QUORUS_PUBLIC_RELAY")
-                or "https://quorus-relay.fly.dev"
+                or (load_config().get("relay_url") or "")
             ).rstrip("/")
+            if not relay_for_lookup:
+                _ui.error(
+                    "This code needs its relay's address",
+                    hint="quorus join <code> --relay <url>  (the invite shows the "
+                         "URL, or paste the full install line your teammate sent)",
+                )
+                sys.exit(5)
             try:
                 resp = httpx.get(
                     f"{relay_for_lookup}/v1/join/resolve/{canonical}",
