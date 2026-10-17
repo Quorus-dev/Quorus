@@ -31,14 +31,91 @@ INSTANCE_NAME = _config["instance_name"]
 _cached_jwt: str | None = None
 
 
-def _relay_unreachable(url: str = "") -> None:
-    """Print a helpful error when the relay is not reachable."""
+def _relay_error_reason(exc: BaseException | None, url: str = "") -> tuple[str, str]:
+    """Turn a failed relay connection into ``(reason, fix hint)``.
+
+    A blanket "is the relay running?" hint misleads on the first run: a
+    mistyped host, a port with nothing on it, a timeout and a URL with no
+    scheme each need a different next step, but before this they all got the
+    same advice. Unwrap httpx's exception chain to find the real cause.
+
+    Returns ``("", "")`` when ``exc`` isn't a connection-level failure, so a
+    caller can keep its own wording (an HTTP 500 is not an unreachable relay).
+    """
+    if not isinstance(exc, (httpx.TransportError, httpx.InvalidURL)):
+        return "", ""
+    host = urlparse(url or RELAY_URL).netloc or "the relay"
+    parts: list[str] = []
+    node: BaseException | None = exc
+    for _ in range(6):
+        if node is None:
+            break
+        parts.append(str(node))
+        node = node.__cause__ or node.__context__
+    blob = " ".join(parts).lower()
+
+    if "missing an 'http" in blob or "unsupported protocol" in blob:
+        return (
+            "the relay URL has no http:// or https:// scheme",
+            "set relay_url to e.g. http://localhost:8080",
+        )
+    if any(s in blob for s in (
+        "nodename nor servname", "name or service not known", "gaierror",
+        "temporary failure in name resolution", "name does not resolve",
+        "getaddrinfo",
+    )):
+        return (
+            f"could not resolve host '{host}'",
+            f"check relay_url for a typo — '{host}' does not resolve",
+        )
+    if "connection refused" in blob:
+        return (
+            f"nothing is listening at {host}",
+            "start the relay with: [accent]quorus relay[/] (or fix relay_url)",
+        )
+    # async httpx collapses a refused TCP connect into "All connection
+    # attempts failed" with the errno dropped, so match on the address too:
+    # for a loopback host a failed connect means the relay isn't running.
+    hostname = urlparse(url or RELAY_URL).hostname or ""
+    if isinstance(exc, httpx.ConnectError) and hostname in (
+        "localhost", "127.0.0.1", "0.0.0.0", "::1",
+    ):
+        return (
+            f"nothing is listening at {host}",
+            "start the relay with: [accent]quorus relay[/]",
+        )
+    if isinstance(exc, httpx.TimeoutException) or "timed out" in blob:
+        return (
+            f"timed out connecting to {host}",
+            f"check that {host} is reachable, then retry",
+        )
+    if any(s in blob for s in ("certificate", "ssl", "tls")):
+        return (
+            f"TLS handshake failed with {host}",
+            "use https:// with a valid certificate, or http:// for a local relay",
+        )
+    return (
+        f"could not reach {host}",
+        "start it with [accent]quorus relay[/] — or run [accent]quorus doctor[/]",
+    )
+
+
+def _relay_unreachable(url: str = "", *, exc: BaseException | None = None) -> None:
+    """Print a helpful error when the relay is not reachable.
+
+    Pass the caught exception as ``exc`` so the message names the actual
+    cause instead of always guessing "the relay isn't running".
+    """
     from quorus_cli import ui
 
     target = url or RELAY_URL
+    reason, fix = _relay_error_reason(exc, target)
+    message = f"Cannot connect to relay at [primary]{target}[/]"
+    if reason:
+        message += f" — {reason}"
     ui.error(
-        f"Cannot connect to relay at [primary]{target}[/]",
-        hint="start it with [accent]quorus relay[/] — or run [accent]quorus doctor[/]",
+        message,
+        hint=fix or "start it with [accent]quorus relay[/] — or run [accent]quorus doctor[/]",
     )
 
 
@@ -416,8 +493,8 @@ async def _status() -> None:
         else:
             console.print("[dim]No participants.[/dim]")
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     finally:
         await client.aclose()
 
@@ -584,8 +661,8 @@ def _cmd_rooms(args):
     try:
         with ui.spinner("Fetching rooms"):
             rooms = asyncio.run(_list_rooms())
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
     if not rooms:
@@ -650,8 +727,8 @@ def _cmd_create(args):
         else:
             ui.error("Could not create room", hint=f"server returned HTTP {e.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
 
@@ -666,8 +743,8 @@ def _cmd_invite(args):
     except httpx.HTTPStatusError as e:
         ui.error("Invite failed", hint=f"HTTP {e.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
 
@@ -696,8 +773,8 @@ def _cmd_say(args):
         else:
             ui.error("Send failed", hint=f"HTTP {e.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
 
@@ -710,8 +787,8 @@ def _cmd_dm(args):
     except httpx.HTTPStatusError as e:
         ui.error("DM failed", hint=f"HTTP {e.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
 
@@ -818,8 +895,8 @@ def _cmd_heartbeat(args):
     explicit_room = getattr(args, "room", None)
     try:
         room_name = explicit_room or asyncio.run(_resolve_primary_room())
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(2)
     except httpx.HTTPStatusError as exc:
         ui.error(
@@ -841,8 +918,8 @@ def _cmd_heartbeat(args):
     except httpx.HTTPStatusError as exc:
         ui.error("Heartbeat send failed", hint=f"HTTP {exc.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(2)
 
     _write_heartbeat_state({
@@ -2171,8 +2248,8 @@ async def _history(room_name: str, limit: int = 50):
         )
         for msg in messages:
             console.print(_format_chat_msg(msg))
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -2225,8 +2302,8 @@ async def _export(
             )
         else:
             console.print(body, highlight=False, markup=False)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -2332,8 +2409,8 @@ async def _ps() -> None:
             "\n  [dim]next:[/] [accent]quorus say <room> 'hi'[/]"
             " [dim]— send a test message[/]"
         )
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
@@ -2387,8 +2464,8 @@ async def _search(
         )
         for msg in messages:
             console.print(_format_chat_msg(msg))
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -2549,8 +2626,8 @@ async def _metrics(room_name: str) -> None:
             console.print(f"  Uptime:          {minutes}m {secs}s")
         console.print()
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -3240,8 +3317,8 @@ async def _kick(room_name: str, participant: str) -> None:
         )
         resp.raise_for_status()
         console.print(f"[green]Kicked '{participant}' from {room_name}[/green]")
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
         _ui.error(str(detail))
@@ -3266,8 +3343,8 @@ async def _destroy(room_name: str) -> None:
         )
         resp.raise_for_status()
         console.print(f"[green]Room '{room_name}' destroyed[/green]")
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
         _ui.error(str(detail))
@@ -3291,8 +3368,8 @@ async def _rename(room_name: str, new_name: str) -> None:
         )
         resp.raise_for_status()
         console.print(f"[green]Room renamed: {room_name} -> {new_name}[/green]")
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
         _ui.error(str(detail))
@@ -3604,8 +3681,8 @@ async def _room_state(room_name: str) -> None:
                 last_str = f" (last: {last_ts})"
         console.print(f"[bold]Messages:[/bold] {msg_count}{last_str}")
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -3672,8 +3749,8 @@ async def _room_locks(room_name: str) -> None:
 
         console.print(table)
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -3736,8 +3813,8 @@ async def _usage() -> None:
                 sent = data.get("sent", 0)
                 console.print(f"    [cyan]{name}[/cyan]: {sent:,} messages")
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
@@ -4774,6 +4851,7 @@ def _cmd_init(args):
     # secret used to get a green ✓ here and a 401 traceback on the next
     # command (review 2026-10-09).
     relay_status = "unknown"
+    relay_reason = ""
     try:
         resp = httpx.get(f"{relay_url}/health", timeout=3.0, follow_redirects=True)
         relay_status = "up" if resp.status_code == 200 else "bad"
@@ -4782,14 +4860,16 @@ def _cmd_init(args):
                              headers={"Authorization": f"Bearer {secret}"})
             if auth.status_code in (401, 403):
                 relay_status = "rejected"
-    except Exception:
+    except Exception as exc:  # the exception text is the useful part
         relay_status = "down"
+        relay_reason = _relay_error_reason(exc, relay_url)[0]
     if relay_status == "rejected":
         _ui.error(f"The relay at {relay_url} rejected that secret",
                   hint="use the secret the relay was started with "
                        "(`quorus relay` uses the one from `quorus init`)")
     elif relay_status == "down":
-        console.print(f"[yellow]Warning: relay not running at {relay_url} yet — start it "
+        detail = f" ({relay_reason})" if relay_reason else ""
+        console.print(f"[yellow]Warning: relay not reachable at {relay_url}{detail} — start it "
                       "with: quorus relay[/yellow]")
     elif relay_status == "bad":
         console.print(f"[yellow]Warning: {relay_url} answered but isn't healthy[/yellow]")
@@ -5393,8 +5473,8 @@ def _cmd_share(args):
             timeout=15,
             follow_redirects=True,
         )
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         return
     if resp.status_code == 404:
         _ui.error(
@@ -6709,20 +6789,23 @@ def _cmd_doctor(args):
 
     # 5. Relay reachable
     relay_ok = False
+    relay_reason = ""
+    relay_fix = "Is the relay running? Try: quorus relay"
     try:
         r = httpx.get(f"{RELAY_URL}/health", timeout=5, follow_redirects=True)
         relay_ok = r.status_code == 200
-    except Exception:
-        pass
+    except Exception as exc:  # any failure here is itself the diagnosis
+        relay_reason, relay_fix = _relay_error_reason(exc, RELAY_URL)
     check(
         "Relay reachable",
         relay_ok,
-        detail=f"{RELAY_URL}/health",
-        fix="Is the relay running? Try: quorus relay",
+        detail=f"{RELAY_URL}/health" + (f" — {relay_reason}" if relay_reason else ""),
+        fix=relay_fix or "Is the relay running? Try: quorus relay",
     )
 
     # 6. Auth works
     auth_ok = False
+    auth_detail = ""
     if relay_ok:
         try:
             r = httpx.get(
@@ -6732,12 +6815,16 @@ def _cmd_doctor(args):
                 follow_redirects=True,
             )
             auth_ok = r.status_code == 200
-        except Exception:
-            pass
+            if r.status_code in (401, 403):
+                auth_detail = f"the relay rejected these credentials (HTTP {r.status_code})"
+        except Exception as exc:  # surface the cause, not a traceback
+            auth_detail = _relay_error_reason(exc, RELAY_URL)[0]
     check(
         "Authentication valid",
         auth_ok,
-        fix="Check RELAY_SECRET or API_KEY matches the relay configuration",
+        detail=auth_detail,
+        fix="relay_secret (or api_key) must match the relay — "
+            "re-run: quorus init <name> --secret <secret>",
     )
 
     # 7. MCP config — optional: Quorus works without any AI app connected
@@ -7019,8 +7106,8 @@ def _cmd_logs(args):
                 bar = "[green]" + "#" * min(count, 50) + "[/green]"
                 console.print(f"  {hour}  {bar} {count}")
 
-    except httpx_mod.ConnectError:
-        _relay_unreachable()
+    except httpx_mod.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx_mod.HTTPStatusError as e:
         _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
 
@@ -7061,8 +7148,8 @@ def _cmd_brief(args):
             follow_redirects=True,
         )
         resp.raise_for_status()
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -7171,8 +7258,8 @@ async def _show_board(room_filter: str | None = None) -> None:
         resp = await client.get(f"{RELAY_URL}/rooms", headers=_auth_headers())
         resp.raise_for_status()
         rooms = resp.json()
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         await client.aclose()
         return
     except httpx.HTTPStatusError as e:
@@ -7809,9 +7896,9 @@ Be direct and actionable. No pleasantries. This will be injected into the agent'
         if block:
             print(block)
 
-    except httpx.ConnectError:
+    except httpx.ConnectError as exc:
         if not quiet:
-            _relay_unreachable()
+            _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if not quiet:
             if e.response.status_code == 404:
@@ -7861,8 +7948,8 @@ def _cmd_decision(args):
         )
         resp.raise_for_status()
         result = resp.json()
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         return
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -8169,10 +8256,10 @@ async def _approvals_list(room: str | None) -> None:
             f"{RELAY_URL}/v1/approvals", headers=_auth_headers(), params=params,
         )
         resp.raise_for_status()
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         # Every other command prints a one-line error here; approvals used
         # to dump a raw httpx traceback (runbook rehearsal, 2026-08-21).
-        _relay_unreachable()
+        _relay_unreachable(exc=exc)
         raise SystemExit(2) from None
     pending = resp.json().get("pending", [])
     if not pending:
@@ -8205,8 +8292,8 @@ async def _approval_decide(approval_id: str, approve: bool, reason: str) -> None
             "decided_by": INSTANCE_NAME or "",
         },
         )
-    except httpx.HTTPError:
-        _relay_unreachable()
+    except httpx.HTTPError as exc:
+        _relay_unreachable(exc=exc)
         raise SystemExit(2) from None
     if resp.status_code == 404:
         _ui.error(f"unknown approval {approval_id}",
@@ -9522,9 +9609,10 @@ def main():
         console.print("\n[dim]Cancelled.[/]")
         raise SystemExit(130) from None
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        reason, fix = _relay_error_reason(exc)
         _ui.error(
-            f"Can't reach the relay at {RELAY_URL}",
-            hint="start it with `quorus relay` (keep it running), or check your relay URL",
+            f"Can't reach the relay at {RELAY_URL}" + (f" — {reason}" if reason else ""),
+            hint=fix or "start it with `quorus relay` (keep it running), or check your relay URL",
         )
         raise SystemExit(2) from exc
     except httpx.HTTPStatusError as exc:
