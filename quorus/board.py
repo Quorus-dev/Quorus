@@ -181,7 +181,10 @@ function render(rows) {
 }
 
 function refresh() {
-  if (!B.on || !B.room) return Promise.resolve();
+  // A phone in a pocket keeps the tab open: don't poll the relay while hidden.
+  if (!B.on || !B.room || (typeof document !== "undefined" && document.hidden)) {
+    return Promise.resolve();
+  }
   const now = Date.now() / 1000;
   const members = now - B.membersAt > 30
     ? api("/rooms/" + enc(B.room)).then((r) => { B.members = r.members || []; B.membersAt = now; })
@@ -223,6 +226,7 @@ if (typeof module !== "undefined") {  // node tests only; browsers have no `modu
 }
 document.addEventListener("quorus:room", (e) => { B.room = e.detail; B.membersAt = 0; refresh(); });
 $("viewToggle").addEventListener("click", () => show(!B.on));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 })();
 """
 
