@@ -202,3 +202,38 @@ container, is still to be run.
 ## mallory claims bob's name: 409 "the name 'bob' is already claimed on this relay"
 ## key files: participant_keys.json, jwt-signing.key, participant_keys.db all -rw-------
 ```
+
+## Live proof across two machines (2026-10-17 ~15:55, weekend build 2b27078f)
+
+Laptop 1 is this Mac (`arav-claude`). Laptop 2 is the `quorus-laptop2`
+container (Debian aarch64, user `aarya`), which shares no disk with the Mac.
+The relay was a throwaway shared-secret relay running the weekend build
+(no Postgres, no API keys). The dogfood relay runs `feat` (beecbc83), which has
+no bundle routes yet.
+
+```text
+== laptop1 (Mac): quorus share-branch --room lan --full
+✓ shared fix/two-machines @7433aaa (562 bytes) in #lan
+  teammates run: quorus fetch b_3ZwKqUA4cFd0 --room lan
+== laptop2 (container): has 7433aaa… before fetch?   no
+== laptop2: quorus fetch b_3ZwKqUA4cFd0 --room lan
+✓ fetched @arav-claude's fix/two-machines into refs/quorus/arav-claude/fix/two-machines
+== laptop2: git show --stat 7433aaa
+7433aaa proof: code crosses machines (author arav-claude <claude@laptop1>)
+ proof.txt | 1 +
+== laptop2: git show refs/quorus/arav-claude/fix/two-machines:proof.txt
+verified across machines
+relay log: claim-name 200, token 200, POST bundles 200 (Mac);
+           claim-name 200, token 200, GET bundles/b_3ZwKqUA4cFd0 200 (container)
+```
+
+Two findings from the run:
+- The container's installed quorus is 0.5.0 and predates participant keys, so
+  it refuses a shared secret. The run used the weekend-tip source from a temp
+  dir; the installed package was not changed. Laptop 2 needs the weekend
+  build reinstalled before the feature ships to it.
+- `load_config` lets the unprefixed env vars `RELAY_URL`, `RELAY_SECRET`,
+  `API_KEY` and `INSTANCE_NAME` override the config file
+  (`quorus/config.py:270-276`). The container's env pointed at the dogfood
+  relay, so the first attempt silently went there and got 404. Document this
+  or warn when env and config disagree.
