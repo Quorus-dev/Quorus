@@ -1407,6 +1407,11 @@ def _print_inline_message(
         line.append(f"  [{hhmm}] ", style="ts")
     else:
         line.append("  ", style="muted")
+    if msg.get("message_type") == "status":
+        # "@x read it, nothing to add" / "agents paused": quiet, one line.
+        line.append(f"· {content}", style="muted italic")
+        console.print(line)
+        return
     line.append(f"@{sender}", style=f"bold {sender_style}")
     line.append(": ", style="dim")
     # Themed 'bright' instead of literal 'white' — keeps the line

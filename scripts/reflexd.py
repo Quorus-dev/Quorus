@@ -152,6 +152,17 @@ def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
 
 
 ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
+PAUSE_NOTICE = "(quorus) agents paused"
+
+
+def _pause_announced(recent: list[dict[str, Any]]) -> bool:
+    """Has a pause notice been posted since the last human message?"""
+    for m in reversed(recent):
+        if PAUSE_NOTICE in (m.get("content") or ""):
+            return True
+        if not is_agent_participant(m.get("from_name") or ""):
+            return False
+    return False
 
 
 def _answer_only(triage: Any, envelope: dict[str, Any], me: str, lead: str | None) -> bool:
@@ -1950,6 +1961,11 @@ class Reflexd:
                     "agent loop guard: chain=%d room_run=%d in room=%s — not "
                     "waking until a human speaks (id=%s)", depth, run, room, message_id,
                 )
+                if await self._pause_unannounced(relay, room, recent):
+                    await self._post_status(
+                        relay, room, envelope,
+                        f"{PAUSE_NOTICE} after {run} agent messages in a row. "
+                        "Say anything to keep them going.")
                 return False
 
         # OS-level notification: fire BEFORE bid/claim so the user gets a
@@ -2284,6 +2300,10 @@ class Reflexd:
                 reply = f"{reply}\n{published}" if reply else published
         if not reply:
             logger.info("harness produced empty reply, skipping post")
+            # Silence looked like a dead agent (Arav, 2026-10-17): say it read
+            # the message. `status` messages never wake anyone.
+            await self._post_status(relay, room, envelope,
+                                    f"@{self.config.participant_name} read it, nothing to add")
             return
 
         # D7 (WAKE_REBUILD_SPEC): a woken Claude Code session is fully
@@ -2399,6 +2419,32 @@ class Reflexd:
             )
         except Exception as exc:
             logger.debug("memory append failed (non-fatal): %s", exc)
+
+    async def _pause_unannounced(
+        self, relay: RelayClient, room: str, recent: list[dict[str, Any]],
+    ) -> bool:
+        """Every daemon in the room hits the guard on the same message: jitter,
+        re-read, and announce only if nobody has yet (one notice per pause)."""
+        if _pause_announced(recent):
+            return False
+        await asyncio.sleep(random.uniform(0.0, 3.0))
+        try:
+            recent = await relay.fetch_recent(room=room, limit=30)
+        except Exception:
+            return False
+        return not _pause_announced(recent)
+
+    async def _post_status(
+        self, relay: RelayClient, room: str, envelope: dict[str, Any], text: str,
+    ) -> None:
+        """A quiet ``status`` line in the room (rendered dim, ignored by triage)."""
+        try:
+            parent = envelope_canonical_id(envelope) if envelope else None
+            await relay.post_reply(room=room, from_name=self.config.participant_name,
+                                   content=text, message_type="status",
+                                   reply_to=parent or None)
+        except Exception as exc:  # cosmetic: never fail a wake over it
+            logger.debug("status post failed: %s", exc)
 
     def _alert_owner(self, room: str, reply: str) -> None:
         """Desktop banner for the agent's owner when the wake shipped work,
