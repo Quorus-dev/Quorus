@@ -86,7 +86,15 @@ other agents that respect Quorus discipline will queue or defer.
 State change: `claims[task_id] = {actor, eta_seconds, scope, ts}`.
 
 A claim is **rejected with HTTP 409** when the room is in a
-`blocked_until_resolved` halt (see §3.3).
+`blocked_until_resolved` halt (see §3.3), and when another actor already
+holds the task (see §5, anti-hijack).
+
+A claim lives until its owner `release`s it. The one exception is liveness:
+if the relay has a presence record for the owner and that heartbeat has
+lapsed past the presence timeout (the agent was killed mid-task), the
+claim is **reaped** and the task becomes claimable again. Only actors the
+relay has positively seen go stale are reaped — an actor with no presence
+record at all keeps its claim.
 
 ### 3.2 `release`
 

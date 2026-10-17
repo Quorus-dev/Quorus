@@ -19,6 +19,8 @@ Coverage:
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -850,3 +852,117 @@ async def test_dm_audit_trail_recorded(client: AsyncClient):
             )
     finally:
         app.state.audit_service = None
+
+
+# ---------------------------------------------------------------------------
+# Killed-mid-task recovery over the real route stack
+# ---------------------------------------------------------------------------
+
+
+async def _make_offline(client: AsyncClient, name: str, room_id: str) -> None:
+    """Heartbeat *name* then backdate the entry past the timeout.
+
+    Simulates an agent that was alive long enough to register presence and
+    was then killed mid-task: its heartbeat simply stops. This is the only
+    signal the relay has, so it is what the reap logic keys on.
+    """
+    hb = await client.post(
+        "/heartbeat",
+        json={"instance_name": name, "status": "busy", "room": room_id},
+        headers=_user_headers(name),
+    )
+    assert hb.status_code == 200, hb.text
+    entry = app.state.backends.presence._entries[(_TEST_TENANT_ID, name)]
+    entry["last_heartbeat"] = time.time() - 10_000
+
+
+async def test_claim_of_killed_agent_can_be_taken_over(
+    client: AsyncClient, room_id: str,
+):
+    """alice claims a task, alice is killed mid-task, bob takes it over.
+
+    Before the fix the room kept alice as the owner forever and answered
+    every takeover with 409 ``claim_race`` — the task was orphaned. Now a
+    claim owned by an offline participant is reaped, so bob gets it.
+    """
+    claim = {
+        "actor": "alice", "room_id": room_id,
+        "payload": {"task_id": "t-kill", "eta_seconds": 600, "scope": "ship"},
+    }
+    first = await client.post(
+        "/v1/social/claim", json=claim, headers=_user_headers("alice"),
+    )
+    assert first.status_code == 200, first.text
+
+    await _make_offline(client, "alice", room_id)
+
+    takeover = await client.post(
+        "/v1/social/claim",
+        json={
+            "actor": "bob", "room_id": room_id,
+            "payload": {"task_id": "t-kill", "eta_seconds": 60, "scope": "recover"},
+        },
+        headers=_user_headers("bob"),
+    )
+    assert takeover.status_code == 200, takeover.text
+
+    state = await client.get(
+        f"/v1/social/state/{room_id}", headers=_user_headers("bob"),
+    )
+    assert state.json()["claims"]["t-kill"]["actor"] == "bob"
+
+
+async def test_killed_agents_claim_is_not_in_room_state(
+    client: AsyncClient, room_id: str,
+):
+    """GET state must not report a dead agent as an active owner."""
+    await client.post(
+        "/v1/social/claim",
+        json={
+            "actor": "alice", "room_id": room_id,
+            "payload": {"task_id": "t-orphan", "eta_seconds": 60, "scope": "x"},
+        },
+        headers=_user_headers("alice"),
+    )
+    await _make_offline(client, "alice", room_id)
+
+    state = await client.get(
+        f"/v1/social/state/{room_id}", headers=_user_headers("bob"),
+    )
+    assert "t-orphan" not in state.json()["claims"]
+
+
+async def test_live_claim_still_blocks_hijack(
+    client: AsyncClient, room_id: str,
+):
+    """Regression: a *live* owner's claim is untouched — bob still 409s.
+
+    alice heartbeats (so she has a presence trail) but is still online, so
+    her claim survives reaping and the hijack guard holds.
+    """
+    await client.post(
+        "/v1/social/claim",
+        json={
+            "actor": "alice", "room_id": room_id,
+            "payload": {"task_id": "t-live", "eta_seconds": 600, "scope": "x"},
+        },
+        headers=_user_headers("alice"),
+    )
+    hb = await client.post(
+        "/heartbeat",
+        json={"instance_name": "alice", "status": "busy", "room": room_id},
+        headers=_user_headers("alice"),
+    )
+    assert hb.status_code == 200, hb.text
+
+    hijack = await client.post(
+        "/v1/social/claim",
+        json={
+            "actor": "bob", "room_id": room_id,
+            "payload": {"task_id": "t-live", "eta_seconds": 60, "scope": "steal"},
+        },
+        headers=_user_headers("bob"),
+    )
+    assert hijack.status_code == 409, hijack.text
+    assert "claim_race" in hijack.text
+

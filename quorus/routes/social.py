@@ -28,6 +28,7 @@ from quorus.auth.policy import (
     load_policy_for_tenant,
 )
 from quorus.protocol import VERBS, SocialVerb
+from quorus.routes.presence import HEARTBEAT_TIMEOUT
 from quorus.routes.room_auth import require_room_member
 from quorus.services.social_svc import (
     BlockedError,
@@ -93,6 +94,31 @@ def _room_members(room_data: dict[str, Any]) -> list[str]:
     if isinstance(raw, dict):
         return list(raw.keys())
     return list(raw)
+
+
+async def _offline_participants(request: Request, tid: str) -> set[str]:
+    """Participants the relay has seen whose heartbeat has lapsed.
+
+    Used to reap claims left behind by an agent that was killed mid-task.
+    Only positive evidence counts: an actor with **no** presence entry is
+    excluded, so a one-shot CLI claim (which never heartbeats) is never
+    treated as dead. Presence is best-effort — any backend failure yields
+    an empty set and reaping is skipped rather than risk dropping a claim
+    we can't justify.
+    """
+    backends = getattr(request.app.state, "backends", None)
+    presence = getattr(backends, "presence", None) if backends else None
+    if presence is None:
+        return set()
+    try:
+        entries = await presence.list_all(tid, HEARTBEAT_TIMEOUT)
+    except Exception:
+        return set()
+    return {
+        name
+        for e in entries
+        if (name := e.get("name")) and not e.get("_online")
+    }
 
 
 @router.post("/v1/social/{verb}")
@@ -246,6 +272,7 @@ async def post_social_verb(
     try:
         result = await svc.apply(
             tid, rid, sv, room_member_count=len(members),
+            offline_actors=await _offline_participants(request, tid),
         )
     except BlockedError as e:
         raise HTTPException(
@@ -379,7 +406,9 @@ async def get_social_state(
     """Return the social state matrix for ``room_id``."""
     tid = _tid(auth)
     rid, _ = await require_room_member(request, auth, tid, room_id)
-    state = await _social_svc(request).get_state(tid, rid)
+    state = await _social_svc(request).get_state(
+        tid, rid, offline_actors=await _offline_participants(request, tid),
+    )
     return {
         "room_id": rid,
         "blocked_until_resolved": bool(state.get("blocked_until_resolved")),

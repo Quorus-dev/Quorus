@@ -156,14 +156,22 @@ class SocialSvc:
             self._locks.popitem(last=False)
         return new_lock
 
-    async def get_state(self, tid: str, rid: str) -> dict[str, Any]:
-        """Return a defensive copy of the room's state dict."""
+    async def get_state(
+        self, tid: str, rid: str, *, offline_actors: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return a defensive copy of the room's state dict.
+
+        ``offline_actors`` (optional): participants the relay knows about but
+        who have stopped heartbeating. Their claims are reaped first so the
+        returned matrix never shows a dead agent as an active owner.
+        """
         lock = self._get_lock(tid, rid)
         async with lock:
             self._expire_defer_edges_locked(tid, rid)
             state = self._state.get((tid, rid))
             if state is None:
                 return _empty_state()
+            self._reap_claims_locked(state, offline_actors)
             return self._snapshot(state)
 
     async def reset(
@@ -197,6 +205,7 @@ class SocialSvc:
         self, tid: str, rid: str, sv: SocialVerb,
         *,
         room_member_count: int | None = None,
+        offline_actors: set[str] | None = None,
     ) -> dict[str, Any]:
         """Apply *sv* to the (tid, rid) state. Returns a small state-change
         summary the route uses as the response body's ``state_change`` field.
@@ -206,12 +215,19 @@ class SocialSvc:
         When ``None`` (legacy callers) we fall back to the strict-majority
         check only — the route layer should always pass it.
 
+        ``offline_actors`` (optional): participants known to have stopped
+        heartbeating (killed mid-task, host died). Their open claims are
+        dropped before the verb is evaluated so an orphaned task does not
+        pin the room to a dead owner. Never pass actors we have no presence
+        data for — absence of a heartbeat is not evidence of death.
+
         Raises one of the SocialProtocolError subclasses on rejection.
         """
         lock = self._get_lock(tid, rid)
         async with lock:
             self._expire_defer_edges_locked(tid, rid)
             state = self._state.setdefault((tid, rid), _empty_state())
+            self._reap_claims_locked(state, offline_actors)
             verb = sv.verb
             payload = (
                 sv.payload if isinstance(sv.payload, dict)
@@ -464,6 +480,35 @@ class SocialSvc:
                     edges.pop(tgt, None)
             if not edges:
                 graph.pop(src, None)
+
+    def _reap_claims_locked(
+        self, state: dict[str, Any], offline_actors: set[str] | None,
+    ) -> list[str]:
+        """Drop claims owned by *offline_actors*. Returns the reaped task_ids.
+
+        A claim has no TTL: it lives until the owner releases it. That is
+        correct for a live agent but wrong for an agent that was killed
+        mid-task — the room was left showing the dead actor as the owner and
+        rejecting every takeover with ``ClaimRaceError`` (HTTP 409) forever.
+        Reaping on the owner's known-offline signal lets the room recover.
+
+        Only actors the relay has positively seen go stale are eligible: an
+        actor with no presence entry at all keeps its claim, because no
+        heartbeat trail means we cannot tell "never reported" from "dead".
+        """
+        if not offline_actors:
+            return []
+        claims = state.get("claims")
+        if not claims:
+            return []
+        reaped = [
+            task_id
+            for task_id, claim in claims.items()
+            if claim.get("actor") in offline_actors
+        ]
+        for task_id in reaped:
+            claims.pop(task_id, None)
+        return reaped
 
     def _defer_creates_cycle(
         self, graph: dict[str, dict[str, float]], src: str, tgt: str,

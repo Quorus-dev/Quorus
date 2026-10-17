@@ -117,3 +117,76 @@ async def test_same_room_still_serializes():
     # After release, the apply finishes.
     result = await asyncio.wait_for(apply_same, timeout=1.0)
     assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# Killed-mid-task recovery: a claim owned by an agent that has gone offline
+# must not outlive it.
+# ---------------------------------------------------------------------------
+
+def _claim(actor: str, task_id: str, room_id: str = "r-kill") -> SocialVerb:
+    return _verb(
+        actor, "claim", room_id=room_id,
+        payload={"task_id": task_id, "eta_seconds": 600, "scope": "x"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_claim_from_offline_actor_is_reaped_on_takeover():
+    """alice claims; alice is killed mid-task (presence goes offline); bob
+    can take the task over instead of getting a permanent 409."""
+    svc = SocialSvc()
+    await svc.apply("t1", "r-kill", _claim("alice", "t-1"))
+
+    # alice is now reported offline by the relay → her claim is reaped
+    # while bob's incoming claim is evaluated, so the race check passes.
+    result = await svc.apply(
+        "t1", "r-kill", _claim("bob", "t-1"),
+        offline_actors={"alice"},
+    )
+    assert result == {"action": "claimed", "task_id": "t-1"}
+
+    state = await svc.get_state("t1", "r-kill")
+    assert state["claims"]["t-1"]["actor"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_get_state_reaps_orphaned_claim():
+    """The read path must not surface a dead agent as the owner either."""
+    svc = SocialSvc()
+    await svc.apply("t1", "r-kill2", _claim("alice", "t-2"))
+
+    state = await svc.get_state("t1", "r-kill2", offline_actors={"alice"})
+    assert state["claims"] == {}
+
+
+@pytest.mark.asyncio
+async def test_live_actor_claim_survives_reaping():
+    """Only the offline actor's claims are reaped — a live owner keeps its
+    task even when other participants in the room have gone offline."""
+    svc = SocialSvc()
+    await svc.apply("t1", "r-kill3", _claim("alice", "t-3"))
+    await svc.apply("t1", "r-kill3", _claim("carol", "t-4"))
+
+    state = await svc.get_state("t1", "r-kill3", offline_actors={"carol"})
+    assert state["claims"]["t-3"]["actor"] == "alice"
+    assert "t-4" not in state["claims"]
+
+
+@pytest.mark.asyncio
+async def test_claim_with_no_presence_trail_is_not_reaped():
+    """An actor with no presence entry (e.g. a one-shot CLI claim that never
+    heartbeats) is not treated as dead: absence of a trail is not proof of
+    death, so its claim is preserved."""
+    svc = SocialSvc()
+    await svc.apply("t1", "r-kill4", _claim("alice", "t-5"))
+
+    # No offline actors supplied → nothing is reaped.
+    state = await svc.get_state("t1", "r-kill4", offline_actors=set())
+    assert state["claims"]["t-5"]["actor"] == "alice"
+
+    # A live actor can still not hijack it.
+    with pytest.raises(Exception) as exc:
+        await svc.apply("t1", "r-kill4", _claim("bob", "t-5"))
+    assert "already claimed" in str(exc.value)
+
