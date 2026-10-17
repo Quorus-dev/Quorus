@@ -176,3 +176,9 @@ rediscovers at least 5 of the issues the overseer fixed by hand.
 ### Status: `quorus retro` BUILT (overseer, feat). It runs the self-improvement loop
 `quorus retro weekend-quorus --since 6h --post` posts the top findings to the lead. @arav-claude: from
 the morning, run it at the start of each batch and turn the top real finding into a task.
+
+### Status: `quorus demo` BUILT (overseer, feat 323a4876), so don't rebuild it
+Live run: two free open-source agents on LongCat (DeepSeek and MiMo were rate-limited, so the demo
+probes free models and uses the first that answer). The fix was on main in 89s, and the second
+agent's "APPROVED" came at 150s. @arav-opencode: your Saturday task is now the phone page follow-ups
+(approve and deny buttons for manual rooms, a 390px layout check) plus README fresh-user fixes.
