@@ -1,55 +1,42 @@
-# Communities and people worth reaching (draft)
+# Outreach candidates (draft)
 
-> Status: **draft only** — a target list, not a contact log. Nothing here has
-> been sent, DMed, emailed or posted. Outreach only happens if Arav reads this
-> and says go.
->
-> Rules for whoever works this list: one tailored post or message per target,
-> never a blast; lead with the demo, not the pitch; if someone says no, stop.
-> **Verify every handle before using it** — handles and subreddit rules rot,
-> and a wrong @ is worse than no @.
+Nothing has been sent, posted or scheduled. These are audience hypotheses,
+not verified claims about community demand, current channels or posting rules.
+Arav decides whether to do any outreach.
 
----
+## Possible audiences to validate
 
-## Where to post (ordered by fit, not reach)
-
-| Community | Where | Why it fits |
+| Candidate | Proposed angle | Check before using |
 | --- | --- | --- |
-| Hacker News | `Show HN` | The audience already runs Claude Code/Codex side by side and argues about exactly this. The honest "it's 0.5.0 and early" framing lands better here than anywhere. |
-| r/LocalLLaMA | Reddit | Cares about local models and Ollama; our opencode route (`--model ollama/qwen3:4b`) is the hook. Post the demo, not the launch copy. |
-| r/ChatGPTCoding | Reddit | The "I have three agent terminals open" pain is the daily topic there. |
-| r/ClaudeAI , r/ClaudeCode | Reddit | Claude Code is our most-used harness; these are where its users ask "how do I run more than one". |
-| Lobsters | lobste.rs | Small, high-signal, allergic to hype. Only post if the post is genuinely technical (the relay/locks design, not the launch). |
-| opencode Discord / GitHub Discussions | Discord + GitHub | Free, any-model harness; "run a free DeepSeek agent that talks to Claude" is a concrete, self-contained demo for them. |
-| MCP community | `modelcontextprotocol` Discussions / Discord | We ship an MCP server; the audience is building MCP clients and servers and will actually try it. |
-| Gemini CLI + Codex CLI discussions | GitHub | Their users already script them; our `agent add` is the missing coordination layer. |
-| Ollama Discord | Discord | Local-model users who want a second local agent reviewing the first. |
-| Product Hunt | producthunt.com | One-shot visibility; only after the install path is boring-clean on a fresh machine. |
-| dev.to / Hashnode | dev.to | Long-form "how I run a two-model review loop on my own repos" article repurposed from the demo script. |
+| Hacker News / Show HN | Show the recorded assignment → reply → commit → review loop. | Current submission rules and the final demo URL. |
+| r/LocalLLaMA | The weekend's DeepSeek agent and second-user run. | Community rules, interest, and the exact model/provider shown. No claim that every local model works. |
+| r/ChatGPTCoding, r/ClaudeAI, r/ClaudeCode | Ask whether a shared room helps people using multiple agent terminals. | Current availability, promotion rules and audience interest. |
+| Lobsters | A technical account of the relay, task claims and failure handling. | Eligibility and posting rules. |
+| opencode users | Show the opencode agent exchanging tasks and results with another harness. | Find an appropriate current public channel and check its rules. |
+| MCP implementers | Share a concrete coordination workload and what broke during the weekend. | Confirm a public channel accepts this kind of project report. |
+| Gemini CLI / Codex CLI users | Demonstrate the agents participating in one room. | Confirm where project demonstrations are welcome. |
+| Ollama users | A possible follow-up local-model demonstration. | Record the exact local configuration first; the proposed demo has not been recorded. |
+| Product Hunt | A possible launch destination after a verified fresh-install run. | Current submission process and whether the product is ready. |
+| dev.to / Hashnode | Write up the recorded two-model review workflow. | Editorial and promotion rules; do not describe an unrecorded run as observed. |
 
-## People and teams (by their public work, not by guesswork)
+## Possible public project contacts
 
-Ranked by how likely they are to care *and* to say something useful. These are
-public projects and organisations, not private individuals — the point is to
-reach people who already work on this problem, not to farm mentions.
+These are proposed conversations, not claims that the recipients lack our
+features, want contact, or endorse Quorus.
 
-| Who (public) | Why them | The angle that isn't a pitch |
+| Candidate | Reason to consider a conversation | Preparation |
 | --- | --- | --- |
-| Maintainers of adjacent agent runners — **claude-squad** (`smtg-ai/claude-squad`), **Vibe Kanban** (`BloopAI/vibe-kanban`), **codeg** (`spacering-net/codeg`), **Claude-Code-Workflow** (`catlog22/Claude-Code-Workflow`), **claude_codex_bridge** (`SeemSeam/claude_codex_bridge`) | They solved neighbouring halves: worktrees per task, review-before-apply, cross-CLI bridging. They know the exact pain. | "You do worktrees/review; we do the shared room and cross-vendor handoff. Want to compare notes on where the coordination layer should sit?" |
-| People building MCP servers/clients | They ship the transport our tools ride on; a real multi-agent workload is a good stress test for it. | "Here's a workload that hammers MCP with concurrent agents — happy to share what broke." |
-| Agent-framework maintainers (CrewAI, AutoGen, LangGraph, OpenAgents) | They have orchestration; they don't have a shared substrate across *different vendors' CLIs*. | "Your framework inside one vendor's runtime vs. agents from four vendors in one room — different problem, maybe complementary." |
-| Writers who cover agent tooling (e.g. Simon Willison, and the newsletters that picked up Cursor/Claude Code) | They test tools on camera and post the honest result; a 60-second real demo is what they actually want. | Send the demo clip plus the caveat, not a press kit. |
-| YC / accelerator partners working on dev tools | Fit, and the story is concrete. | Only when there's real usage to talk about; a launch-week cold pitch is noise. |
+| claude-squad, codeg, claude_codex_bridge maintainers | Compare approaches to coordinating work across agent sessions. | Use the lead-reviewed research from `weekend/laptop2`; confirm current maintainers and an appropriate public channel. |
+| Vibe Kanban / Claude-Code-Workflow contacts | Historical comparison discussed in the weekend research. | Verify current project status and whether contact is appropriate before treating these as active outreach targets. |
+| MCP client/server maintainers | Ask for feedback on the recorded multi-agent tool workload. | Choose a specific project and explain the relevance from its current public docs. |
+| Agent-framework maintainers | Ask whether CLI-to-CLI coordination is useful alongside their workflows. | Research each project first. Do not claim that it lacks cross-vendor coordination. |
+| Writers covering developer tools | Offer a reproducible demo and a factual account of the weekend findings. | Verify the writer's current coverage and contact preferences. No assumption that they want a video or will review it. |
 
-> The five repos above are the ones whose READMEs we actually read this weekend
-> (`docs/weekend/research/`); their URLs were checked link-by-link. Anyone added
-> later must be verified the same way before they go on the list.
+## Outreach constraints
 
-## Do-not-do list
-
-- No mass @-mentions, no DM templates, no "hey, check out my project" to
-  strangers.
-- No posting in a community whose rules forbid self-promo; read the rules first.
-- No paid promotion, no engagement bait, no fake "we hit 1k users" style posts.
-- No contacting anyone attached to a project we're comparing against in a way
-  that reads as a dunk. Cite their work, thank them, move on.
+- Get Arav's approval before any contact or publication.
+- Verify channels, identities and rules; tailor each proposed message.
+- No mass mentions, unsolicited templates, invented traction or competitive
+  claims unsupported by sources.
+- The five research rewrites were accepted by the lead in the room. They live
+  on `weekend/laptop2`; the older files in this checkout are not substitutes.

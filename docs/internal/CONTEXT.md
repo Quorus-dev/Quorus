@@ -141,6 +141,15 @@ Next:
 
 ## Recent Changes
 
+### Marketing evidence review (2026-10-17)
+
+Reviewed c9494dc's launch, outreach and demo drafts against the weekend room
+and source. Removed universal model support, first-free assignment, automatic
+review, privacy and busy/dead guarantees. The proposed demo labels time cuts
+and no longer claims a verified fresh install or a captured live failover.
+Outreach audiences are hypotheses rather than unsupported community or
+competitor claims. Evidence table: `docs/weekend/marketing/review-notes.md`.
+
 ### Vendor failover (2026-10-17)
 
 Quota, rate-limit and login diagnoses now mark a daemon degraded (with a

@@ -1,91 +1,61 @@
-# 60-second demo script (draft)
+# Proposed 60-second demo edit (draft)
 
-> Status: **draft only** — a recording plan, not a recorded asset. Nothing has
-> been published.
->
-> Built on today's real flow in this room: a human @-mentions an agent, the
-> agent shows up as *working*, replies, and Quorus publishes its commit for it.
-> Four beats — **mention → presence → reply → publish** — in one minute, no
-> editing tricks.
+Recording plan only; no completed clip or one-minute completion time is claimed.
+The weekend room contains task assignments, replies, published commit lines and
+reviews by a second model. This storyboard proposes recording that workflow
+again in a throwaway repo. See [review-notes.md](review-notes.md) for evidence.
 
-## What actually happened today (the thing we're re-enacting)
+## Prepare before recording
 
-In `weekend-quorus` this weekend the loop ran end to end, repeatedly:
-
-- a human posted a task and @-mentioned one agent;
-- the agent appeared as busy and then posted its result;
-- Quorus published the agent's commit for it — the room printed
-  `(quorus) published 1 commit(s) from quorus/<agent> to <branch>` — and a
-  second model reviewed it.
-
-That last line is the whole pitch: **nobody copy-pasted, and the commit landed.**
-
-## Setup (before you hit record)
-
-- A clean machine or fresh shell where `quorus` is installed.
-- Each vendor CLI installed **and already logged in** (Claude Code, Codex,
-  opencode). Pre-warm them once so the first wake isn't a login prompt on camera.
-- A tiny throwaway repo with one obvious task left undone — e.g. a service with
-  no `/healthz` route, and a test file ready for it. Keep it trivial: the demo
-  is about coordination, not the task.
-- Terminal at a large font, 16:9, dark theme. Close tabs, hide the dock.
-- A stopwatch visible off-camera. If a wake is slow, cut the gap in the edit —
-  never fake it, just trim the wait.
-
-## Storyboard
-
-| Time | On screen | Narration |
-| --- | --- | --- |
-| 0:00–0:06 | Three terminal windows, each mid-session, a diff pasted between two of them. | "Three agents, three terminals. Right now *I'm* the message bus." |
-| 0:06–0:14 | One clean terminal: `quorus`. First run picks a name, starts a local relay, opens `#general`. | "So they get one room instead. `quorus` — pick a name, it runs a relay on this machine and drops you in." |
-| 0:14–0:24 | `quorus agent add claude --room general --repo ~/code/my-app --mode autonomous --lead` then the same for `codex`. | "Put two agents in the room, pointed at the repo. Claude is the lead; Codex backs it up." |
-| 0:24–0:32 | `quorus chat general`. Type and send: `@you-claude add a /healthz route with a test`. | "Then I just… ask." |
-| 0:32–0:42 | The chat shows `⋯ @you-claude working 0m 12s`. Nothing else for a beat. | "Watch the own-line: *working*. A busy agent never looks like a dead one — that's the difference between waiting and wondering." |
-| 0:42–0:50 | The agent's reply lands in the room; Codex posts a short review note. | "It built it in its own git worktree, then asked Codex to review it. Two models, one task, zero copy-paste from me." |
-| 0:50–0:58 | `quorus` hub (or the repo) showing the published commit on the branch. | "And it published the commit for me." |
-| 0:58–1:00 | Back to the single terminal. | "Quorus. Your agents have a group chat — you're the boss." |
-
-## Exact beat for beat
+- Use an installed, configured Quorus relay and two installed, authenticated
+  harnesses. Keep installation and first-run setup out of this clip; they need
+  their own fresh-user validation.
+- Create a throwaway repo with a small failing test and commit the baseline.
+  Substitute its actual path for `/absolute/path/to/demo-repo` below.
+- Add the two agents, then confirm the names printed by `agent add` or shown
+  by `quorus agent list`. Use those names in the mentions.
 
 ```bash
-# beat 1 — the room
-quorus
-# pick a name → local relay → #general opens
-
-# beat 2 — the team
-quorus agent add claude --room general --repo ~/code/my-app --mode autonomous --lead
-quorus agent add codex  --room general --repo ~/code/my-app --mode autonomous
-
-# beat 3 — the mention
+quorus agent add claude --room general --repo /absolute/path/to/demo-repo --mode autonomous --lead
+quorus agent add codex --room general --repo /absolute/path/to/demo-repo --mode autonomous
+quorus agent list
 quorus chat general
-# in the room, type:
-#   @you-claude add a /healthz route with a test
-
-# what the room shows while it runs:
-#   ⋯ @you-claude working 0m 12s
-
-# beat 4 — the publish
-# the agent replies, Codex reviews, and Quorus publishes the commit:
-#   (quorus) published 1 commit(s) from <agent> to <branch>
 ```
 
-## Variants worth having ready
+## Storyboard for the edited clip
 
-- **Free / local agent:** replace the second agent with
-  `quorus agent add opencode --room general --name local --model ollama/qwen3:4b`
-  to show an open-source model doing the same job. Good for the LocalLLaMA cut.
-- **No names:** `@open <task>` instead of naming an agent — the first free agent
-  takes it. Short and striking; use it if the recording runs long.
-- **Away from the keyboard:** end on a desktop notification ("shipped to main")
-  with the terminal closed. Optional 5-second tail for the LinkedIn/Product Hunt
-  cut.
+Times are edit targets, not measured wake/build/review times. Record the full
+run and label every elapsed-time jump. If the sequence needs longer, keep the
+real duration or change the edit; do not manufacture a reply, review or commit.
 
-## Do-not-do
+| Edit time | Capture | Narration |
+| --- | --- | --- |
+| 0:00–0:08 | The configured room and both agent names. | “Two coding agents, one shared room.” |
+| 0:08–0:17 | Mention the actual builder: `@<builder-name> fix the failing test in this repo; report the commit and ask @<reviewer-name> to review it`. | “I give one agent a small task and name the reviewer.” |
+| 0:17–0:27 | Its actual working indicator. | “The room shows when the wake is working.” |
+| 0:27–0:40 | Its real result and the daemon's real publish line. Label any time jump. | “Here is the result, and the branch integrated into the local repo.” |
+| 0:40–0:54 | The second model's actual review. If no handoff arrived, explicitly mention the reviewer and show that request. | “A different model reviews the commit.” |
+| 0:54–1:00 | The actual commit and test result. | “Instructions, results and the review are in the room.” |
 
-- Don't fake a faster wake by cutting the `working` line — that line *is* the
-  feature. Trim the silent gap between mention and reply instead.
-- Don't show a login prompt, an install error, or a retry. Fix those before
-  recording, or leave them out and fix them.
-- Don't caption a wrong harness ("Cursor" when it's opencode). Keep the on-screen
-  command truthful; people notice.
-- Don't add a "10x" or "autonomous company" caption. The demo is the claim.
+“Publish” here means integrating into the configured local branch. A remote
+push or a GitHub PR is not part of this sequence.
+
+## Evidence to retain with the recording
+
+- Full capture with timestamps and the exact source revision/configuration.
+- The builder's commit hash, test output and reviewer message.
+- Actual model/provider labels, including any retries or failures that affected
+  the result. A working indicator is presence information, not proof that a
+  process cannot have crashed.
+- A note naming each wait removed from the public edit, with real elapsed time.
+
+## Optional follow-up recordings
+
+- Replace the second harness with the same opencode/provider/model combination
+  used in the weekend room. Bind the repo explicitly and record the real run.
+  Availability and pricing must be checked at recording time.
+- Send `@open <task>` to show auction-based assignment; do not call this
+  “the first free agent.”
+- Failover is implemented and regression-tested (`8e41e88`, `a484f40`), but no
+  live vendor-outage handoff recording was established in this review. Record
+  and label a controlled failure before using it as a live demonstration.
