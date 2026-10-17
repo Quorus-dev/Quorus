@@ -2236,6 +2236,22 @@ async def _export(
         await client.aclose()
 
 
+def _parse_presence_ts(value):
+    """Parse a presence timestamp into an aware UTC datetime.
+
+    The relay's presence backends disagree on the wire type: the Redis
+    backend stores ISO-8601 strings, the in-memory (file-mode) backend
+    stores float epoch seconds. ``quorus ps`` used ``fromisoformat`` for
+    both, so every LAST SEEN / UPTIME cell rendered as ``—`` on a
+    file-mode relay. Accept either shape.
+    """
+    from datetime import datetime, timezone
+
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    return datetime.fromisoformat(value)
+
+
 async def _ps() -> None:
     """Show all agents with online/offline status from heartbeat presence."""
     client = _get_client()
@@ -2291,7 +2307,7 @@ async def _ps() -> None:
 
             # Calculate uptime
             try:
-                start = datetime.fromisoformat(a["uptime_start"])
+                start = _parse_presence_ts(a["uptime_start"])
                 delta = now - start
                 hours = int(delta.total_seconds()) // 3600
                 minutes = (int(delta.total_seconds()) % 3600) // 60
@@ -2304,7 +2320,7 @@ async def _ps() -> None:
 
             # Format last heartbeat as relative time
             try:
-                hb = datetime.fromisoformat(a["last_heartbeat"])
+                hb = _parse_presence_ts(a["last_heartbeat"])
                 ago = now - hb
                 secs = int(ago.total_seconds())
                 if secs < 60:

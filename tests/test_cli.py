@@ -2630,3 +2630,53 @@ def test_join_accepts_bare_room_name_without_flags():
     assert "[--name NAME]" in usage, (
         "--name must be OPTIONAL (bracketed in usage); got:\n" + usage[:400]
     )
+
+
+def test_parse_presence_ts_accepts_epoch_floats():
+    """Regression: the file-mode relay serializes presence times as epoch
+    seconds (``time.time()``), but ``quorus ps`` parsed them with
+    ``datetime.fromisoformat``. Every LAST SEEN / UPTIME cell rendered as
+    ``—`` on a file-mode relay (the README quickstart, weekend relay).
+    """
+    from datetime import datetime, timezone
+
+    from quorus.cli import _parse_presence_ts
+
+    ts = _parse_presence_ts(1_700_000_000.0)
+    assert ts == datetime.fromtimestamp(1_700_000_000.0, tz=timezone.utc)
+
+
+def test_parse_presence_ts_accepts_iso_strings():
+    """The Redis presence backend stores ISO-8601 strings; keep those working."""
+    from datetime import datetime, timezone
+
+    from quorus.cli import _parse_presence_ts
+
+    ts = _parse_presence_ts("2026-01-01T00:00:00+00:00")
+    assert ts == datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+async def test_ps_renders_relative_times_for_epoch_presence(capsys):
+    """End-to-end: epoch-float presence must produce real LAST SEEN/UPTIME
+    cells, not blanks."""
+    import re
+    import time
+
+    from quorus.cli import _ps
+
+    now = time.time()
+    agents = [
+        {
+            "name": "aarya-sim-opencode",
+            "online": True,
+            "status": "active",
+            "room": "weekend-quorus",
+            "last_heartbeat": now - 30,
+            "uptime_start": now - 3600,
+        }
+    ]
+    with patch("quorus.cli._get_client", return_value=_mock_client(200, agents)):
+        await _ps()
+    out = capsys.readouterr().out
+    assert re.search(r"\d+s ago", out), out
+    assert re.search(r"\d+h \d+m", out), out
