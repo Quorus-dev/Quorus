@@ -26,7 +26,7 @@ the per-verb payload schema.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal, Union
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
@@ -70,6 +70,22 @@ class DisagreePayload(BaseModel):
     mode: Mode = "advisory"
 
 
+class VendorHandoff(BaseModel):
+    """Bounded continuation context carried by a vendor failover."""
+
+    model_config = {"extra": "forbid"}
+    original_message_id: str = Field(min_length=1, max_length=200)
+    task_id: str | None = Field(default=None, max_length=200)
+    task: str = Field(min_length=1, max_length=120)
+    reason: Literal["quota", "rate_limit", "login"]
+    branch: str = Field(max_length=200)
+    last_commit: str = Field(max_length=64)
+    failed_agents: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        min_length=1, max_length=2,
+    )
+    handoffs: int = Field(ge=1, le=2)
+
+
 class DeferPayload(BaseModel):
     """`/defer to=X` — explicit dependency edge with TTL."""
 
@@ -78,6 +94,7 @@ class DeferPayload(BaseModel):
     to: str = Field(min_length=1, max_length=200)
     ref_message_id: str | None = Field(default=None, max_length=200)
     ttl_seconds: int = Field(default=300, ge=10, le=3600)
+    failover: VendorHandoff | None = None
 
 
 class QueuePayload(BaseModel):

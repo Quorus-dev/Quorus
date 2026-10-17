@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid as _uuid
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from quorus.routes.helpers import _validate_name
 
@@ -163,6 +163,7 @@ class HeartbeatRequest(BaseModel):
     instance_name: str
     status: str = "active"
     room: str = ""
+    reason: str = Field(default="", max_length=500)
 
     @field_validator("instance_name")
     @classmethod
@@ -172,8 +173,8 @@ class HeartbeatRequest(BaseModel):
     @field_validator("status")
     @classmethod
     def check_status(cls, v: str) -> str:
-        if v not in {"active", "idle", "busy"}:
-            raise ValueError("status must be one of: active, idle, busy")
+        if v not in {"active", "idle", "busy", "degraded"}:
+            raise ValueError("status must be one of: active, idle, busy, degraded")
         return v
 
 

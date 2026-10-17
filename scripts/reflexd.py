@@ -80,6 +80,7 @@ from quorus.notifications import agent_events as _agent_events  # noqa: E402
 from quorus.notifications import notify as _notify  # noqa: E402
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
 from quorus.private_files import write_private_json  # noqa: E402
+from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
 from quorus.runtime.turnguard import is_busy as _tg_is_busy  # noqa: E402
@@ -918,7 +919,11 @@ def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
     low = (stderr or "").lower()
     for needle, message in _HARNESS_DIAGNOSTICS:
         if needle in low:
-            return f"⚠ {harness}: {message}"
+            text = f"⚠ {harness}: {message}"
+            category = {"quota": "quota", "rate limit": "rate_limit",
+                        "please run /login": "login", "not logged in": "login",
+                        "ineligibletiererror": "login"}.get(needle)
+            return _failover.VendorFailure(text, category) if category else text
     return None
 
 
@@ -1560,13 +1565,15 @@ class RelayClient:
 
     async def post_heartbeat(
         self, *, participant: str, status: str = "active", room: str = "",
+        reason: str = "",
     ) -> None:
         """Presence heartbeat (R2) — lets the relay show active/away + queued."""
         headers = await self._headers()
         resp = await self.client.post(
             "/heartbeat",
             headers=headers,
-            json={"instance_name": participant, "status": status, "room": room},
+            json={"instance_name": participant, "status": status, "room": room,
+                  **({"reason": reason} if reason else {})},
         )
         resp.raise_for_status()
 
@@ -1634,6 +1641,7 @@ class RelayClient:
     async def post_social_defer(
         self, *, room_id: str, actor: str, target: str,
         ref_message_id: str | None = None, ttl_seconds: int = 300,
+        failover: dict | None = None,
     ) -> dict[str, Any]:
         """Post a Stream-A `defer` social verb. Used by reflexd on bid-loss
         to broadcast "I deferred to @<winner>" through the social
@@ -1641,6 +1649,8 @@ class RelayClient:
         """
         headers = await self._headers()
         payload: dict[str, Any] = {"to": target, "ttl_seconds": ttl_seconds}
+        if failover is not None:
+            payload["failover"] = failover
         if ref_message_id:
             payload["ref_message_id"] = ref_message_id
         body: dict[str, Any] = {
@@ -1655,6 +1665,23 @@ class RelayClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    async def fetch_presence(self) -> list[dict]:
+        resp = await self.client.get("/presence", headers=await self._headers())
+        resp.raise_for_status()
+        return resp.json()
+
+    async def release_for_failover(self, *, room: str, actor: str, target: str,
+                                   task_id: str) -> None:
+        resp = await self.client.post(f"/v1/work_queue/{room}", headers=await self._headers(),
+                                      json={"op": "release", "actor": actor,
+                                            "task_id": task_id, "handoff_to": target})
+        resp.raise_for_status()
+        resp = await self.client.post("/v1/social/release", headers=await self._headers(),
+                                      json={"actor": actor, "room_id": room, "payload": {
+                                          "task_id": task_id, "reason": "vendor failure",
+                                          "handoff_to": target}})
+        resp.raise_for_status()
 
     async def post_agent_dm(
         self, *, sender: str, recipient: str, content: str,
@@ -1830,7 +1857,9 @@ class Reflexd:
                 config.runtime_dir / f"wake-mcp-{config.participant_name}.json"
             )
         self._stop = asyncio.Event()
-        self._presence: tuple[str, str] = ("active", "")  # (status, room)
+        self._degraded_reason = _failover.load_reason(config)
+        self._presence: tuple[str, str] = (
+            "degraded" if self._degraded_reason else "active", "")
         self._last_wake_at: float = 0.0
         # Bounded in-memory queue for messages that arrive while a busy-file
         # is set. Drained on stop, not replayed across restarts (PR-C1 scope).
@@ -1918,6 +1947,8 @@ class Reflexd:
         )
         if triage.action != "RESPOND":
             return False
+        if self._degraded_reason and triage.kind != "mention":
+            return False  # an explicit mention may retry/recover this vendor
 
         # Anti-loop guard: if this envelope is already deep in a reply
         # chain we ourselves spawned, refuse to bid. Without this, two
@@ -2121,7 +2152,9 @@ class Reflexd:
             await self._wake_and_reply_inner(
                 relay, envelope, triage=triage, reason=reason)
         finally:
-            await self._set_presence(relay, "active", "")
+            await self._set_presence(
+                relay, "degraded" if self._degraded_reason else "active",
+                envelope.get("room") or "" if self._degraded_reason else "")
 
     async def _set_presence(self, relay: RelayClient, status: str, room: str) -> None:
         self._presence = (status, room)
@@ -2129,7 +2162,8 @@ class Reflexd:
         if post is None:
             return
         try:
-            await post(participant=self.config.participant_name, status=status, room=room)
+            extra = {"reason": self._degraded_reason} if status == "degraded" else {}
+            await post(participant=self.config.participant_name, status=status, room=room, **extra)
         except Exception as exc:  # presence is cosmetic: never fail a wake on it
             logger.debug("presence update failed: %s", exc)
 
@@ -2267,7 +2301,18 @@ class Reflexd:
             )
             reply = "[reflexd] harness errored"
 
+        vendor_failure = reply if isinstance(reply, _failover.VendorFailure) else None
         reply = (reply or "").strip()
+        previous_degraded = self._degraded_reason
+        if vendor_failure:
+            self._degraded_reason = vendor_failure.reason
+        elif reply and not failure_reason and not reply.startswith(("[reflexd]", "⚠")):
+            self._degraded_reason = ""
+        if self._degraded_reason != previous_degraded:
+            try:
+                await _failover.save_reason(self.config, self._degraded_reason)
+            except OSError:
+                logger.warning("could not persist degraded vendor state")
         if reflexd_wake.is_no_reply(reply):
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
@@ -2293,6 +2338,17 @@ class Reflexd:
         if not reply:
             logger.info("harness produced empty reply, skipping post")
             return
+
+        if vendor_failure:
+            outcome = await _failover.attempt(
+                self, relay, envelope, reason=vendor_failure.reason, mission=mission,
+                worktree=worktree, mode=room_mode, detect=detect_harness,
+                capabilities=capabilities_for, score=compute_bid_v2,
+            )
+            if outcome == "sent":
+                return
+            if outcome:
+                reply += " " + outcome
 
         # D7 (WAKE_REBUILD_SPEC): a woken Claude Code session is fully
         # agentic — per QOD it often posts its reply ITSELF via quorus
@@ -2478,6 +2534,9 @@ class Reflexd:
         history_block = "\n".join(lines) if lines else "(no prior messages)"
         wake_sender = envelope.get("from_name") or "?"
         wake_content = envelope.get("content") or ""
+        continuation = _failover.continuation(envelope)
+        if continuation:
+            wake_content = _failover.handoff_line(self.config.participant_name, continuation)
         wake_room = envelope.get("room") or "?"
         wake_depth = envelope_reply_depth(envelope)
 
@@ -2886,6 +2945,7 @@ class Reflexd:
                 await relay.post_heartbeat(
                     participant=self.config.participant_name,
                     status=status, room=room,
+                    **({"reason": self._degraded_reason} if status == "degraded" else {}),
                 )
             except Exception as exc:
                 logger.debug("heartbeat failed: %s", exc)
@@ -2927,7 +2987,8 @@ class Reflexd:
             return
         if event_name != "message":
             return
-        if data.get("message_type") not in (None, "chat", "request", "question"):
+        handoff = _failover.continuation(data)
+        if data.get("message_type") not in (None, "chat", "request", "question") and not handoff:
             self._mark_handled(canonical)
         message_type = data.get("message_type") or "chat"
         if message_type == "wake_intent":
@@ -2935,7 +2996,7 @@ class Reflexd:
             logger.debug("saw wake_intent room=%s from=%s",
                          data.get("room"), data.get("from_name"))
             return
-        if message_type in {"chat", "request", "question"}:
+        if message_type in {"chat", "request", "question"} or handoff:
             if background:
                 # Live SSE: never block the reader on a bid window or a wake.
                 task = asyncio.create_task(self._handle_safely(relay, data))

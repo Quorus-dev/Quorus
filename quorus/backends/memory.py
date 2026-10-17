@@ -497,12 +497,13 @@ class InMemoryPresenceBackend:
         self._lock = asyncio.Lock()
 
     async def heartbeat(
-        self, tenant_id: str, name: str, status: str, room: str
+        self, tenant_id: str, name: str, status: str, room: str, reason: str = ""
     ) -> dict:
         now = time.time()
         async with self._lock:
             key = (tenant_id, name)
             entry = self._entries.get(key)
+            waking = status == "busy" and (entry is None or entry.get("status") != "busy")
             if entry is None:
                 entry = {
                     "name": name,
@@ -515,6 +516,9 @@ class InMemoryPresenceBackend:
                 entry["status"] = status
                 entry["room"] = room
                 entry["last_heartbeat"] = now
+            entry["reason"] = reason
+            if waking:
+                entry["last_wake_at"] = now
             self._entries[key] = entry
             return dict(entry)
 

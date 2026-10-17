@@ -26,7 +26,7 @@ async def heartbeat(
 ):
     require_identity(auth, req.instance_name)
     svc = request.app.state.presence_service
-    entry = await svc.heartbeat(_tid(auth), req.instance_name, req.status, req.room)
+    entry = await svc.heartbeat(_tid(auth), req.instance_name, req.status, req.room, req.reason)
     await request.app.state.backends.participants.add(_tid(auth), req.instance_name)
     return {"status": "ok", "timestamp": entry.get("last_heartbeat", "")}
 
@@ -53,6 +53,8 @@ async def get_presence(
             "room": e.get("room", ""),
             "last_heartbeat": e.get("last_heartbeat", ""),
             "uptime_start": e.get("uptime_start", ""),
+            "reason": e.get("reason", ""),
+            "last_wake_at": e.get("last_wake_at", ""),
         })
     result.sort(key=lambda x: (not x["online"], x["name"]))
     return result

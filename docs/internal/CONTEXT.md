@@ -141,6 +141,20 @@ Next:
 
 ## Recent Changes
 
+### Vendor failover (2026-10-17)
+
+Quota, rate-limit and login diagnoses now mark a daemon degraded (with a
+reason) until a successful explicit retry. It transfers a claimed queue
+task and posts a durable typed `/defer` with task, branch, last commit and
+continuation metadata to an active teammate on another harness. Capability
+fit ranks first, then oldest recorded wake. The payload and a private local
+ledger prevent return to failed agents and limit a task message to two
+handoffs across restarts. A partial transfer/post failure requests owner
+intervention rather than retrying a possibly delivered handoff. Manual/read-only
+rooms, crashes/timeouts and unmatched vendor errors do not fail over. Degraded status/reasons and
+last-wake timestamps are exposed by `/presence`; the TUI renders the handoff.
+Tests: `test_reflexd_failover.py` and `test_failover_routes.py`.
+
 ### Daemon commit hygiene (2026-10-17)
 
 Auto-commit subjects preserve conventional prefixes, add `chore:` to prose,
