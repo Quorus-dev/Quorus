@@ -4836,15 +4836,25 @@ def _cmd_init(args):
                              headers={"Authorization": f"Bearer {secret}"})
             if auth.status_code in (401, 403):
                 relay_status = "rejected"
+        elif relay_status == "up" and api_key:
+            # API-key auth gets the same guard: exchange the key for a JWT,
+            # the cheapest way to ask the relay whether it knows the key.
+            # Without this the profile was written with the bad key first and
+            # only failed later at mint time — the same data loss as a secret.
+            token = httpx.post(f"{relay_url}/v1/auth/token", json={"api_key": api_key},
+                               timeout=5.0, follow_redirects=True)
+            if token.status_code in (401, 403):
+                relay_status = "rejected"
     except Exception as exc:  # the exception text is the useful part
         relay_status = "down"
         relay_reason = _relay_error_reason(exc, relay_url)[0]
 
     if relay_status == "rejected":
+        what = "secret" if secret and not api_key else "API key"
         _ui.error(
-            f"The relay at {relay_url} rejected that secret",
+            f"The relay at {relay_url} rejected that {what}",
             hint="nothing was written — your existing config is untouched. "
-                 "Re-run with the secret the relay was started with "
+                 "Re-run with the one the relay was started with "
                  "(`quorus relay` uses the one from `quorus init`).",
         )
         sys.exit(3)

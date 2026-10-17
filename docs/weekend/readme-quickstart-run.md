@@ -126,7 +126,10 @@ below.
 `--secret` overwrote the last working copy with no way back. `_cmd_init` now
 checks the secret against the relay *before* touching the disk: `/health`, then
 `GET /rooms` with the secret, and a `401`/`403` exits `3` with `nothing was
-written — your existing config is untouched`. A relay that is simply down still
+written — your existing config is untouched`. API-key auth gets the same guard
+(`POST /v1/auth/token`, the cheapest way to ask the relay whether it knows the
+key) — without it the profile was written with the bad key first and only failed
+later at mint time. A relay that is simply down still
 warns and proceeds (it can't be asked). The profile write also **merges** the
 new values into the existing profile (dropping the superseded credential shape)
 instead of replacing it, so `agent_api_keys` and push settings survive. Proven

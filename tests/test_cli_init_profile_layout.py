@@ -162,6 +162,26 @@ def test_init_rejected_secret_leaves_the_profile_untouched(hub_home, monkeypatch
     assert not (hub_home / ".claude.json").exists()
 
 
+def test_init_rejected_api_key_leaves_the_profile_untouched(hub_home, monkeypatch) -> None:
+    """The API-key path had the same write-first data loss as the secret path."""
+    profile = _write_hub_layout(hub_home, "default")
+    before = profile.read_text()
+    monkeypatch.setattr("quorus.cli.httpx.get", _relay_get(health=200))
+    monkeypatch.setattr(
+        "quorus.cli.httpx.post",
+        lambda url, **_kw: MagicMock(status_code=401 if url.endswith("/v1/auth/token") else 200),
+    )
+    args = _make_init_args(secret=None)
+    args.api_key = "mct_TYPED_WRONG"
+
+    with pytest.raises(SystemExit) as caught:
+        _cmd_init(args)
+
+    assert caught.value.code == 3
+    assert profile.read_text() == before, "the rejected run rewrote the profile"
+    assert not (hub_home / ".mcp.json").exists()
+
+
 def test_init_rejected_secret_leaves_flat_config_untouched(hub_home, monkeypatch) -> None:
     config_dir = hub_home / ".quorus"
     config_dir.mkdir(parents=True)
