@@ -290,6 +290,16 @@ async def post_social_verb(
     envelope = sv.to_envelope()
     broadcast_id = _uuid.uuid4()
     broadcast_id_str = str(broadcast_id)
+    durable_failover = verb == "defer" and payload_dict.get("failover") is not None
+    if durable_failover:
+        # One durable fanout supplies canonical reply ids and restart delivery.
+        # Avoid the separate transient social push, which would wake twice.
+        rmsg = request.app.state.room_msg_service
+        sent = await rmsg.send(tid, rid, actor, json.dumps(envelope),
+                               message_type="social", reply_to=sv.ref_message_id)
+        broadcast_id = _uuid.UUID(sent["id"])
+        broadcast_id_str = str(broadcast_id)
+        members = []
     for recipient in members:
         sse_svc.push(tid, recipient, {
             "id": broadcast_id_str,
@@ -305,7 +315,7 @@ async def post_social_verb(
     # send() call may itself rate-limit or insist on membership; both are
     # acceptable here since we already verified above.
     rmsg = getattr(request.app.state, "room_msg_service", None)
-    if rmsg is not None:
+    if rmsg is not None and not durable_failover:
         try:
             await rmsg.send(
                 tid, rid, actor, json.dumps(envelope),

@@ -1,5 +1,6 @@
 """Tests for auth layer — JWT create/decode, API key generate/hash/verify, middleware."""
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -243,6 +244,36 @@ class TestAuthMiddleware:
         assert ctx.sub is None
         assert ctx.role == "admin"
         assert ctx.is_legacy
+
+    @pytest.mark.asyncio
+    async def test_legacy_secret_logs_no_jwt_warning(self, caplog):
+        """A shared secret is not a JWT.
+
+        Decoding it used to log a warning on every healthy request, so the
+        first thing a new user saw in `relay.log` was an error next to
+        `200 OK` (weekend brief, finding #7).
+        """
+        from quorus.auth.middleware import verify_auth
+
+        request = self._make_request("Bearer test-secret")
+        with caplog.at_level(logging.WARNING):
+            ctx = await verify_auth(request)
+        assert ctx.is_legacy
+        assert "JWT" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_jwt_shaped_garbage_still_warns(self, caplog):
+        """The quiet path must not hide a genuinely malformed JWT."""
+        from fastapi import HTTPException
+
+        from quorus.auth.middleware import verify_auth
+
+        request = self._make_request("Bearer aaa.bbb.ccc")
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(HTTPException) as exc_info:
+                await verify_auth(request)
+        assert exc_info.value.status_code == 401
+        assert "JWT" in caplog.text
 
     @pytest.mark.asyncio
     async def test_no_auth_fails(self):

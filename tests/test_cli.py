@@ -2630,3 +2630,27 @@ def test_join_accepts_bare_room_name_without_flags():
     assert "[--name NAME]" in usage, (
         "--name must be OPTIONAL (bracketed in usage); got:\n" + usage[:400]
     )
+
+
+def test_short_code_join_without_a_relay_says_so(monkeypatch, capsys):
+    """No public relay exists: a bare code fell back to the dead fly.dev relay
+    and failed "can't reach relay" (laptop-2 agent, 2026-10-17)."""
+    import quorus_cli.cli as cli
+
+    from quorus.cli import _cmd_join
+
+    monkeypatch.delenv("QUORUS_PUBLIC_RELAY", raising=False)
+    monkeypatch.setattr(cli, "load_config", lambda: {})
+
+    def no_network(*_a, **_k):
+        raise AssertionError("must not call any relay")
+
+    monkeypatch.setattr(cli.httpx, "get", no_network)
+    args = MagicMock()
+    args.token = "HX4K-M7ZP"
+    args.relay_url = None
+    with pytest.raises(SystemExit) as exc:
+        _cmd_join(args)
+    assert exc.value.code == 5
+    out = capsys.readouterr().out
+    assert "--relay" in out and "fly.dev" not in out

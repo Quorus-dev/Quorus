@@ -141,6 +141,65 @@ Next:
 
 ## Recent Changes
 
+### Unknown harness exits (2026-10-17)
+
+Unknown subprocess failures retain their exit status through adapter retries.
+After the D7 self-post check, the room receives the harness, exit code and a
+mention-to-retry hint instead of the bare error sentinel. Raw stderr stays
+private; structured error results with process exit zero use the same path.
+
+
+### Marketing evidence review (2026-10-17)
+
+Reviewed c9494dc's launch, outreach and demo drafts against the weekend room
+and source. Removed universal model support, first-free assignment, automatic
+review, privacy and busy/dead guarantees. The proposed demo labels time cuts
+and no longer claims a verified fresh install or a captured live failover.
+Outreach audiences are hypotheses rather than unsupported community or
+competitor claims. Evidence table: `docs/weekend/marketing/review-notes.md`.
+The 499f121c installer recap now distinguishes room reports and commit diffs
+from proposed reenactments, and drops unsupported timing, physical-laptop,
+model-identity and human-absence claims. Installer commit diffs were inspected;
+the shell payload was not re-executed for this review.
+
+### Vendor failover (2026-10-17)
+
+Quota, rate-limit and login diagnoses now mark a daemon degraded (with a
+reason) until a successful explicit retry. It transfers a claimed queue
+task and posts a durable typed `/defer` with task, branch, last commit and
+continuation metadata to an active teammate on another harness. Capability
+fit ranks first, then oldest recorded wake. The payload and a private local
+ledger prevent return to failed agents and limit a task message to two
+handoffs across restarts. A partial transfer/post failure requests owner
+intervention rather than retrying a possibly delivered handoff. Manual/read-only
+rooms, crashes/timeouts and unmatched vendor errors do not fail over. Degraded status/reasons and
+last-wake timestamps are exposed by `/presence`; the TUI renders the handoff.
+Tests: `test_reflexd_failover.py` and `test_failover_routes.py`.
+Claude JSON results with `is_error: true` are also diagnosed when the CLI
+exits 0, including usage-limit messages and errors arrays. Ordinary successful
+answers mentioning quotas keep their text and never trigger failover;
+unknown explicit errors use the generic error sentinel.
+
+### Daemon commit hygiene (2026-10-17)
+
+Auto-commit subjects preserve conventional prefixes, add `chore:` to prose,
+and stop at a whole word within 50 characters. Empty replies and oversized
+words get a short conventional fallback. Generated `graphify-out/**` files
+are excluded from staging and dirty checks, including tracked refreshes;
+regressions live in `tests/test_reflexd_commit_hygiene.py`.
+Follow-up: both pre-wake sync and publication restore committed graph files
+before rebasing; excluding them from dirty checks alone left Git refusing
+the rebase. Scratch-repo regressions cover upstream graph changes and verify
+that publication stays linear (`tests/test_reflexd_graph_rebase.py`).
+
+### Harness exception visibility (2026-10-17)
+
+Raised harness errors now post a short crash/timeout status on the wake's
+thread instead of silently returning. Only the exception type is exposed;
+the existing self-reply check suppresses false failures after an agent's
+own answer. Regression tests cover crashes, timeouts, self-replies and
+cancellation (`tests/test_reflexd_harness_failure.py`).
+
 ### Proactive + notified for every agent; lead; catch-up (2026-10-17)
 
 Verified live with claude + codex + gemini + opencode in one room (real

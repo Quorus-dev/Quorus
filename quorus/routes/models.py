@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid as _uuid
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from quorus.routes.helpers import _validate_name
 
@@ -24,7 +24,7 @@ def _validate_uuid_ref(value: str | None) -> str | None:
 
 VALID_MESSAGE_TYPES = {
     "chat", "claim", "status", "request", "alert", "sync", "brief", "subtask", "decision",
-    "social",
+    "social", "bundle",
 }
 VALID_ROLES = {"builder", "reviewer", "researcher", "pm", "qa", "member"}
 
@@ -159,10 +159,22 @@ class RoomWebhookRequest(BaseModel):
         return _validate_name(v)
 
 
+WAITING_ON = {"", "pacing", "quota", "stuck"}
+
+
 class HeartbeatRequest(BaseModel):
     instance_name: str
     status: str = "active"
     room: str = ""
+    reason: str = Field(default="", max_length=500)
+    # What a busy agent is doing right now ("editing relay.py"), shown on its
+    # working line. Display text only: control characters stripped, capped.
+    activity: str = ""
+    # What a not-working agent is waiting on, for the "needs you" board:
+    # "pacing" (its plan slot), "quota" (vendor limit) or "stuck" (its last
+    # turn failed), until epoch seconds (0 = unknown). Not free text.
+    waiting_on: str = ""
+    waiting_until: float = Field(default=0.0, ge=0.0, le=4102444800.0)
 
     @field_validator("instance_name")
     @classmethod
@@ -172,8 +184,20 @@ class HeartbeatRequest(BaseModel):
     @field_validator("status")
     @classmethod
     def check_status(cls, v: str) -> str:
-        if v not in {"active", "idle", "busy"}:
-            raise ValueError("status must be one of: active, idle, busy")
+        if v not in {"active", "idle", "busy", "degraded"}:
+            raise ValueError("status must be one of: active, idle, busy, degraded")
+        return v
+
+    @field_validator("activity")
+    @classmethod
+    def check_activity(cls, v: str) -> str:
+        return "".join(ch for ch in v if ch.isprintable())[:80].strip()
+
+    @field_validator("waiting_on")
+    @classmethod
+    def check_waiting_on(cls, v: str) -> str:
+        if v not in WAITING_ON:
+            raise ValueError("waiting_on must be one of: " + ", ".join(sorted(WAITING_ON)))
         return v
 
 

@@ -465,6 +465,8 @@ class WorkQueueSvc:
                 raise TaskNotFoundError(task_id)
             now = self._clock_iso()
             if handoff_to:
+                if task.get("claimed_by") == handoff_to and task.get("status") == "in_progress":
+                    return dict(task)  # a typed release may mirror an already-applied transfer
                 task["claimed_by"] = handoff_to
                 task["status"] = "in_progress"
                 meta = dict(task.get("metadata", {}))

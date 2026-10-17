@@ -576,12 +576,12 @@ def test_daemon_commits_finished_but_uncommitted_work(tmp_path: Path) -> None:
     import subprocess as sp
     log = sp.run(["git", "log", "-1", "--format=%an|%s", "main"], cwd=repo,
                  capture_output=True, text=True).stdout.strip()
-    assert log == "b-codex|Added feature.txt with the done marker; tests green"
+    assert log == "b-codex|chore: Added feature.txt with the done marker;"
 
 
 def test_commit_message_from_reply() -> None:
-    assert wake.commit_message_from("✅ **Shipped** `x`", "a") == "Shipped x"
-    assert wake.commit_message_from("", "a-codex") == "work by a-codex"
+    assert wake.commit_message_from("✅ **Shipped** `x`", "a") == "chore: Shipped x"
+    assert wake.commit_message_from("", "a-codex") == "chore: update agent work"
 
 def test_cancelled_job_is_not_marked_handled(tmp_path: Path) -> None:
     d = _daemon(tmp_path)

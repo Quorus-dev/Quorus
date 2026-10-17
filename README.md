@@ -24,6 +24,16 @@ Auto-wake is tested with **Claude Code, Codex, Gemini CLI and opencode** (openco
 pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git"
 ```
 
+**See it work in 2 minutes, with no accounts or keys:**
+
+```bash
+quorus demo
+```
+
+Two agents on a free open-source model fix a planted bug in a throwaway repo. One fixes and commits,
+the other reviews, and you watch it happen live. It needs [opencode](https://opencode.ai) 2.x
+(`brew install opencode`); nothing in your own setup is touched.
+
 Then just type `quorus` in any terminal:
 
 ```bash
@@ -51,11 +61,13 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 
 ```bash
 # 1. First run: pick a name, press Enter. Quorus starts a relay on this
-#    computer and puts you in #general.
+#    computer, puts you in #general and offers to add the agent tools it
+#    finds installed (one keypress).
 quorus
 
-# 2. Put your agents in the room, working in your project. --lead makes Claude
-#    the team lead: it splits your requests into tasks and assigns them.
+# 2. Put your agents in the room, working in your project. Point --repo at a
+#    repo you actually have; --lead makes Claude the team lead: it splits your
+#    requests into tasks and assigns them.
 quorus agent add claude --room general --repo ~/code/my-app --mode autonomous --lead
 quorus agent add codex  --room general --repo ~/code/my-app --mode autonomous
 
@@ -85,13 +97,25 @@ While you're away:
 - **You get a desktop notification** when an agent ships to main, asks you
   something, or gets stuck, even with Quorus closed. Plain chat stays quiet.
   `QUORUS_NOTIFY=0` turns these off.
-- **You see who is working.** The chat shows `⋯ @you-claude working 1m 20s`
-  while an agent is on a task, so a busy agent never looks like a dead one.
+- **You see what each agent is doing.** The chat shows `⋯ @you-claude editing
+  relay.py 1m 20s`, then `running tests`, then `committing`, for every tool, so a
+  busy agent never looks like a dead one.
 - **You can catch up at a glance.** Opening `quorus` shows what shipped, who
   needs you and who is stuck since you last looked.
 - **One agent can serve many rooms.** `quorus agent add claude --room ops --repo
   ~/code/infra` puts the same agent in `#ops` too; in each room it works in that
   room's repo.
+
+Measure and share the work:
+
+- `quorus scorecard`: which agent and vendor's commits hold up in this repo
+  (kept, reverted, flagged in review).
+- `quorus duel "<task>" --agents you-claude,you-codex`: both do the task, tests
+  decide, and a judge from a third model family picks the winner blind.
+- `quorus retro <room>`: what's going wrong in a room, ranked, with fixes.
+- `quorus replay <room>`: one local HTML page of the conversation and commits
+  for a task, to share if you want. Nothing is uploaded.
+- `quorus phone`: your rooms on your phone, over Tailscale by default.
 
 Permission modes per room (`--mode`): `default` uses each tool's own
 settings. `manual` forwards Claude Code permission requests to you
@@ -101,9 +125,40 @@ wakes are read-only.
 repo without asking. `quorus agent list` / `quorus agent remove <name>` manage
 them; `quorus` opens the full hub.
 
-Your already-open Claude Code / Codex sessions can join too: with the Quorus
-MCP server installed (done by `quorus init`), tell them "join the Quorus room
-dev-sprint".
+Your already-open Claude Code / Codex sessions can join too. They need the
+Quorus MCP server, which the bare `quorus` tour above does **not** install.
+Install it into every client it finds, pointing `init` at the relay and secret
+the tour already saved (see `~/.quorus/profiles/default.json`):
+
+```bash
+quorus init <your-name> --relay-url http://localhost:8080 --secret <your-secret>
+```
+
+then tell them "join the Quorus room dev-sprint". `init` updates your existing
+profile in place — your other profiles, agent keys and push settings survive.
+
+## Security model
+
+Quorus runs coding agents that can edit files and run commands, so be clear about who can make them act.
+
+- **Only you can make your agents change code.** In `autonomous` and `manual` rooms, a message from you
+  or from your own agents (`<you>-*`) gets a full turn. Anyone else, including text pasted into the
+  room, gets a read-only turn: the agent answers or reviews and asks you before changing anything. For
+  a room you share with trusted teammates, opt in with `quorus agent add ... --trust members`.
+- **Autonomous agents are not sandboxed by Quorus.** Claude Code (`acceptEdits` + Bash), Gemini (`yolo`)
+  and opencode run with your user's permissions in their own git worktree. Codex runs in its
+  `workspace-write` sandbox. Use `autonomous` only on repos and machines you're comfortable with.
+- **The local relay trusts its secret.** On the default shared-secret relay, everyone holding the
+  secret, every agent included, can post as anyone and approve requests. So `manual` approvals are
+  a speed bump there, not a security boundary, and an invite code from a shared-secret relay *is* the
+  secret: send it only to people you'd trust with every room. For separate identities per person and
+  per agent, use account mode (`quorus init --api-key ...`).
+- **Agents inherit your environment.** The wake daemon passes its environment to the agent CLIs
+  (minus Quorus's own secrets), so don't start agents from a shell holding keys they shouldn't see.
+- The relay binds to `127.0.0.1` by default. Room text is fenced as untrusted data in every agent
+  prompt, and credentials are masked before agents post.
+
+Found a vulnerability? Please open a private security advisory on GitHub rather than a public issue.
 
 ## MCP integration
 
