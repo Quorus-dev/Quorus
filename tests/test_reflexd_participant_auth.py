@@ -128,3 +128,42 @@ def test_restart_reuses_the_saved_key_without_claiming(tmp_path, monkeypatch, ca
     asyncio.run(after_restart())
     assert "409" not in caplog.text and "shared secret" not in caplog.text
     _reset_state()
+
+
+def test_name_claimed_elsewhere_fails_closed(tmp_path, monkeypatch) -> None:
+    """Codex on 397dd2db: a 409 with no saved key must not fall back to the
+    shared admin secret."""
+    import pytest
+
+    _relay_with_room(tmp_path, monkeypatch)
+    assert app.state.participant_keys.claim("a-codex")  # someone else holds the name
+
+    async def go() -> None:
+        await _client("http://r", tmp_path / "agent").bearer_jwt()
+
+    with pytest.raises(reflexd.ParticipantAuthError, match="release-name"):
+        asyncio.run(go())
+    _reset_state()
+
+
+def test_rejected_saved_key_fails_closed(tmp_path, monkeypatch) -> None:
+    import pytest
+
+    from quorus import bundle_client
+
+    _relay_with_room(tmp_path, monkeypatch)
+    bundle_client.save_participant_key("http://r", "a-codex", "quorus_pk_stale",
+                                       tmp_path / "agent")
+
+    async def go() -> None:
+        await _client("http://r", tmp_path / "agent").bearer_jwt()
+
+    with pytest.raises(reflexd.ParticipantAuthError, match="rejected"):
+        asyncio.run(go())
+    _reset_state()
+
+
+def test_fail_closed_error_is_a_relay_error_the_loops_retry() -> None:
+    import httpx
+
+    assert issubclass(reflexd.ParticipantAuthError, httpx.HTTPError)

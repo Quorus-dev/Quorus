@@ -1681,6 +1681,13 @@ class HeadlessAdapter:
 # ---------------------------------------------------------------------------
 
 
+class ParticipantAuthError(httpx.HTTPError):
+    """This agent can't sign in as itself; never fall back to the shared secret.
+
+    An ``httpx.HTTPError`` so the daemon's loops treat it like any relay
+    failure: log, back off, retry, without crashing and without the secret."""
+
+
 @dataclass
 class RelayClient:
     """Minimal HTTP surface: JWT exchange, stream-token mint, bid/claim/post."""
@@ -1733,11 +1740,14 @@ class RelayClient:
             async with self._sign_in:
                 now = time.time()
                 if self._bearer is None or now >= self._bearer_expires_at:
-                    token = await self._participant_jwt()
-                    # A fallback to the shared secret is retried in 30 s, not
-                    # held for the full 4 min a participant JWT is cached.
+                    try:
+                        token = await self._participant_jwt()
+                    except ParticipantAuthError as exc:
+                        self._bearer = None  # nothing cached: retry on the next call
+                        logger.error("cannot sign in as %s: %s", self.participant, exc)
+                        raise
                     self._bearer = token or self.api_key
-                    self._bearer_expires_at = now + (4 * 60 if token else 30)
+                    self._bearer_expires_at = now + 4 * 60
                 return self._bearer
         now = time.time()
         if self._bearer is None or now >= self._bearer_expires_at:
@@ -1750,43 +1760,53 @@ class RelayClient:
         return self._bearer or ""
 
     async def _participant_jwt(self) -> str | None:
-        """Claim (once) and use this agent's participant key; None on a relay
-        without claims (older build, or one with API keys), which keeps the
-        shared secret as before."""
+        """Claim (once) and use this agent's participant key.
+
+        Returns None only when the relay doesn't support claims (404/405 on
+        claim-name or token: an older build or a relay with API keys), which
+        keeps the shared secret as before. Anything else that stops us signing
+        in as ourselves (name claimed elsewhere, saved key rejected, network
+        error) fails closed with ``ParticipantAuthError``: falling back to the
+        shared admin secret would drop identity binding (review of 397dd2db).
+        """
         from quorus import bundle_client
 
+        unsupported = (404, 405)
         key = bundle_client.load_participant_key(self.relay_url, self.participant, self.key_dir)
         try:
             if not key:
                 resp = await self.client.post(
                     "/v1/auth/claim-name", json={"name": self.participant},
                     headers={"Authorization": f"Bearer {self.api_key}"})
-                if resp.status_code == 409:
-                    # Claimed already: by our own MCP server or an earlier run
-                    # that saved the key after we looked. Use it if it's there.
-                    key = bundle_client.load_participant_key(self.relay_url, self.participant,
-                                                             self.key_dir)
-                    if not key:
-                        logger.warning("name %s is claimed on this relay but no key is saved "
-                                       "here; using the shared secret", self.participant)
-                        return None
-                elif resp.status_code != 200:
-                    logger.warning("participant key unavailable (claim-name %s); "
-                                   "using the shared secret", resp.status_code)
+                if resp.status_code in unsupported:
+                    logger.info("relay has no participant keys; using the shared secret")
                     return None
+                if resp.status_code == 409:
+                    # Our own MCP server may have claimed and saved it meanwhile.
+                    key = bundle_client.load_participant_key(
+                        self.relay_url, self.participant, self.key_dir)
+                    if not key:
+                        raise ParticipantAuthError(
+                            f"name {self.participant} is claimed on this relay but its key "
+                            "isn't saved here; the relay owner can free it with "
+                            f"`quorus release-name {self.participant}`")
+                elif resp.status_code != 200:
+                    raise ParticipantAuthError(f"claim-name answered {resp.status_code}")
                 else:
                     key = resp.json()["participant_key"]
                     bundle_client.save_participant_key(self.relay_url, self.participant, key,
                                                        self.key_dir)
             resp = await self.client.post("/v1/auth/token", json={"api_key": key})
-            if resp.status_code != 200:
-                logger.warning("participant token refused (%s); using the shared secret",
-                               resp.status_code)
+            if resp.status_code in unsupported:
+                logger.info("relay has no participant keys; using the shared secret")
                 return None
+            if resp.status_code != 200:
+                raise ParticipantAuthError(
+                    f"the relay rejected {self.participant}'s saved key ({resp.status_code}); "
+                    "the name may have been released")
             return resp.json()["token"]
         except (httpx.HTTPError, ValueError, KeyError, OSError) as exc:
-            logger.warning("participant sign-in failed (%s); using the shared secret", exc)
-            return None
+            raise ParticipantAuthError(f"participant sign-in failed: {exc}") from exc
 
     async def _headers(self) -> dict[str, str]:
         # Cache JWT for 4 min (relay token lifetime is 5min).
