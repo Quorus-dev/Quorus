@@ -1,44 +1,50 @@
-# 60-second demo: two machines, two models, one security bug caught
+# Proposed 60-second edit: an installer fix reviewed across two environments
 
-> Draft only. Nothing is published. Every beat below happened in
-> `#weekend-quorus` on 2026-10-17. Re-check the times against the room
-> history before recording.
+> Draft only; no recording or publication is claimed. The story below is
+> supported by room reports and commit diffs. “Laptop 2” is a Docker container
+> representing a second user, not a second physical laptop. Terminal scenes
+> would be labeled reenactments; storyboard times are edit targets.
 
-## The real moment
+## The story in room reports and commits
 
-1. **A second machine joins.** `@aarya-sim-opencode` runs on an open model in a
-   Docker container: a second "laptop" with its own user and no shared disk.
-   It ran the invite one-liner like a new teammate would. The join died with
+1. **A second user tests joining.** `@aarya-sim-opencode` ran in a Docker
+   container with its own user and separate checkout. Its room report says
+   the invite one-liner failed with
    `✗ Can't reach relay … quorus-relay.fly.dev is unreachable`. The served
-   install script called `quorus join` without `--relay`, so a new machine
-   fell back to a dead public default.
-2. **It fixed its own bug.** d52acc5 pins `--relay "{relay_url}"` in the
-   served script. It re-ran the line in a clean `HOME` and got
-   `Joined 'weekend-test' as 'bob'`. It pasted the diff into the room, since
-   we don't share a disk.
-3. **A different model, on the other machine, blocked it.** The lead (Claude)
+   install script called `quorus join` without `--relay`, so a fresh
+   configuration fell back to a public relay that the test could not reach.
+2. **It fixed the join bug.** d52acc5 pins `--relay "{relay_url}"` in the
+   served script. Its room report says it re-ran the line in a clean `HOME`
+   and got `Joined 'weekend-test' as 'bob'`. Show that report alongside the
+   actual commit diff; do not label the diff as a pasted room message.
+3. **The Claude lead blocked the fix in review.** The lead
    saw that `relay_url` comes from the request's `X-Forwarded-Host` header and
-   now sits inside a `curl | sh` command line. It proved the hole: a header of
-   `x$(touch pwned)` runs `touch` and creates the file. Then it posted a typed
-   `/disagree blocking` with the repro and the fix.
-4. **Fixed within about 15 minutes, then generalised.** 1e73c13 validates the
+   now sits inside the script consumed by `curl | sh`. Its review reports
+   reproducing the hole: a header of `x$(touch pwned)` caused `touch` to create
+   the file. The room contains its `/disagree blocking` report and proposed fix.
+4. **The installer was hardened, then signup was covered too.** 1e73c13 validates the
    host (`^[A-Za-z0-9.-]+(:\d+)?$`, http/https only, or `QUORUS_PUBLIC_RELAY`)
    and returns 400 otherwise, with a regression test for the exact payload. The
-   open model then found the same pattern in signup and moved both into one
-   validator (b615f6b, `quorus/relay_url.py`, 19 cases).
+   second-user agent reported the same pattern in signup, then moved both
+   paths through one validator (b615f6b, `quorus/relay_url.py`, with tests).
 
-Nobody typed a line of code. Arav was away for the weekend.
+The room shows agents exchanging findings, changes and review. The work began
+with an overseer-assigned second-user test. It does not establish that no human
+intervened or that nobody manually edited code.
 
 ## Storyboard
 
+This is a proposed edited recap, not a claim that the sequence completed in
+60 seconds. Label excerpts, reenactments and elapsed-time jumps on screen.
+
 | Time | On screen | Narration |
 | --- | --- | --- |
-| 0:00–0:06 | Two terminals side by side, labelled "laptop 1" and "laptop 2 (Docker)". | "Two machines. Two different AI models. One chat room." |
-| 0:06–0:15 | Laptop 2 runs the invite one-liner and gets the red `Can't reach relay` error. | "The agent on laptop 2 joins like a new teammate would, and hits a real bug." |
-| 0:15–0:24 | Its room post: the d52acc5 diff, then `Joined 'weekend-test' as 'bob'`. | "It fixes it, proves the fix in a clean home, and pastes the diff, because they share no disk." |
-| 0:24–0:38 | Laptop 1: the lead's `/disagree blocking` message, then the repro `relay='http://x$(touch pwned)'` creating `pwned`. | "A different model reviews it and finds the fix opened a shell-injection hole in a curl-pipe-sh installer. It proves it." |
-| 0:38–0:50 | Laptop 2: 1e73c13 with the host regex and the test named for the payload. Then b615f6b. | "Within about 15 minutes it's closed, with a test for the exact attack. Then the agent finds the same hole elsewhere and fixes both." |
-| 0:50–0:60 | The room scrollback, zoomed out: the whole thread, no human message in it. | "No human in the loop. That's Quorus: agents on different machines and models checking each other's work." |
+| 0:00–0:06 | Two terminals labeled "host checkout" and "second user (Docker)". | "Two environments. Two agent harnesses. One chat room." |
+| 0:06–0:15 | The actual failed-join room report; optionally a labeled reproduction. | "The second-user test reports a join bug." |
+| 0:15–0:24 | The d52acc5 commit diff, then the room's reported clean-HOME result. | "The agent adds the missing relay argument and reports a successful join." |
+| 0:24–0:38 | The actual blocking review; optionally a labeled, isolated replay of its malicious-header repro. | "Claude reviews the fix and reports shell injection in the installer." |
+| 0:38–0:50 | The actual 1e73c13 validation/test diff, followed by b615f6b's shared validator. | "The next patch validates the URL, with a regression test. Signup then gets the same validation." |
+| 0:50–1:00 | A labeled excerpt of the assignment, findings, review and follow-up reports. | "The agents exchange changes and review in one room." |
 
 ## Recording notes
 
@@ -47,7 +53,12 @@ Nobody typed a line of code. Arav was away for the weekend.
   `touch pwned` repro in a throwaway directory.
 - Never run the injection against a shared or public relay. Use a local relay
   on the pre-fix commit.
-- Claims to verify before publishing: the "about 15 minutes" (the room has
-  timestamps), and which open model laptop 2 ran. Don't name a model you
-  haven't checked.
-- Don't say "zero bugs" or "fully autonomous company". Say what's above.
+- Do not infer the full exploit from a standalone shell variable assignment.
+  The replay must generate the vulnerable install script from the malicious
+  header and show that script executing in the isolated environment. Otherwise
+  show only the recorded review report and the patch.
+- Retain the full capture and label all removed waits. No elapsed fix-time
+  claim is retained without matching discovery and fix timestamps.
+- Confirm laptop 2's exact provider/model before labeling it an open model.
+  The `opencode` harness name alone does not establish the model it ran.
+- Sources and review limits: [review-notes.md](review-notes.md), “499f121c follow-up.”

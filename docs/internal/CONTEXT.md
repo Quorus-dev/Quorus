@@ -149,6 +149,10 @@ review, privacy and busy/dead guarantees. The proposed demo labels time cuts
 and no longer claims a verified fresh install or a captured live failover.
 Outreach audiences are hypotheses rather than unsupported community or
 competitor claims. Evidence table: `docs/weekend/marketing/review-notes.md`.
+The 499f121c installer recap now distinguishes room reports and commit diffs
+from proposed reenactments, and drops unsupported timing, physical-laptop,
+model-identity and human-absence claims. Installer commit diffs were inspected;
+the shell payload was not re-executed for this review.
 
 ### Vendor failover (2026-10-17)
 

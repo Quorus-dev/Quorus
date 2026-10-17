@@ -1,4 +1,4 @@
-# Evidence review of c9494dc
+# Evidence review of c9494dc and 499f121c
 
 Reviewed 2026-10-17 against this checkout and the supplied `weekend-quorus`
 transcript. Drafts remain unpublished. No fresh install, live vendor-limit
@@ -23,3 +23,21 @@ experiment or new demo recording was performed for this review.
 The accepted third-party teardown rewrites are on `weekend/laptop2`, according
 to the lead's room reviews. This checkout's older research files were not used
 as proof for competitor claims or current outreach availability.
+
+## 499f121c follow-up
+
+The installer commit objects are available for this follow-up. `git show`
+confirms the missing-relay fix in d52acc5, URL validation in 1e73c13, and the
+shared validator/signup change in b615f6b. The terminal results and exploit
+demonstration are supported by the supplied agents' room reports; this review
+did not rerun those commands or create a recording.
+
+| Demo claim | Action / evidence |
+| --- | --- |
+| “Two machines” | Label the actual setup: a host checkout and a second-user Docker container, per the weekend brief. No second physical laptop is established. |
+| “Open model” on laptop 2 / two different models | Mark the provider/model as unverified; opencode is a harness name, not model identity. Name the two harnesses and the Claude reviewer without asserting the second agent's backend. |
+| The d52acc5 diff was pasted into the room | The supplied post describes the fix and test rather than pasting a full diff. Show the real commit diff separately. |
+| “About 15 minutes” | Remove pending timestamped discovery/fix evidence. Commit timestamps are d52acc5 at 02:27:12Z, 1e73c13 at 03:01:06Z, b615f6b at 03:10:07Z on 2026-10-17; these alone do not measure discovery-to-fix time. |
+| Nobody typed code / no human in the loop | Remove. Room reports identify agent work but do not prove the absence of human intervention; the initial test was overseer-assigned. |
+| A standalone `relay='http://x$(touch pwned)'` assignment demonstrates execution | It does not: single quotes keep the substitution literal. Any replay must generate and run the vulnerable script; otherwise use the actual review report. |
+| The whole one-minute sequence happened as shown | Mark as a proposed edited recap, with real reports/diffs separated from labeled reenactments. |
