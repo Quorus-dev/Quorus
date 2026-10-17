@@ -1400,6 +1400,15 @@ class HeadlessAdapter:
             return "[reflexd] harness timed out"
         if proc.returncode != 0:
             raw = (stderr or b"").decode("utf-8", errors="replace")
+            # opencode reports failures as JSON error events on STDOUT with an
+            # empty stderr: its "Rate limit exceeded" reached the room as a bare
+            # "harness errored" and never started the quota cooldown (live
+            # 2026-10-17). Only error lines, so a reply mentioning "quota" can't
+            # trip the limit check.
+            out_errors = [ln for ln in (stdout or b"").decode("utf-8", errors="replace")
+                          .splitlines() if '"type":"error"' in ln or '"error":' in ln]
+            if out_errors:
+                raw = raw + "\n" + "\n".join(out_errors[-5:])
             # Harness stderr can echo credentials or tool inputs. Diagnose
             # it locally, but only persist the binary and exit status.
             logger.warning("harness %s exited %s", argv[0], proc.returncode)

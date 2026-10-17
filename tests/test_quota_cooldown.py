@@ -86,3 +86,46 @@ def test_limited_agent_is_not_woken_and_says_so_once(monkeypatch) -> None:
     assert woke == []
     assert len(relay.posted) == 1 and "out of quota until" in relay.posted[0]["content"]
     assert relay.posted[0]["message_type"] == "status"
+
+
+class _OpencodeRateLimited:
+    returncode = 1
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        out = ('{"type":"step_start","sessionID":"s"}\n'
+               '{"type":"error","error":{"name":"AI.Error","data":{"message":'
+               '"Rate limit exceeded. Please try again later."}}}\n')
+        return out.encode(), b""
+
+
+def test_opencode_rate_limit_on_stdout_is_diagnosed_and_cools_down(monkeypatch) -> None:
+    # Live 2026-10-17: two agents on opencode's free tier got "Rate limit
+    # exceeded" as a stdout JSON event (exit 1, empty stderr); the room saw a
+    # bare "harness errored" and the agents kept being woken.
+    async def fake_exec(*_a: Any, **_k: Any) -> _OpencodeRateLimited:
+        return _OpencodeRateLimited()
+
+    monkeypatch.setattr(reflexd.shutil, "which", lambda b: f"/bin/{b}")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    a = reflexd.HeadlessAdapter(timeout_s=5)
+    out = asyncio.run(a._run_subprocess(["opencode", "run"], parser=str))
+    assert "rate-limited" in out
+    assert a.limited_until > time.time() + 60
+
+
+class _ChattyFailure:
+    returncode = 1
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return b'{"type":"text","part":{"text":"we hit our quota last week"}}\n', b""
+
+
+def test_reply_text_mentioning_quota_is_not_a_limit(monkeypatch) -> None:
+    async def fake_exec(*_a: Any, **_k: Any) -> _ChattyFailure:
+        return _ChattyFailure()
+
+    monkeypatch.setattr(reflexd.shutil, "which", lambda b: f"/bin/{b}")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    a = reflexd.HeadlessAdapter(timeout_s=5)
+    asyncio.run(a._run_subprocess(["opencode", "run"], parser=str))
+    assert a.limited_until == 0.0
