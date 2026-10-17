@@ -193,3 +193,106 @@ class BundleService:
             return sorted((m for m in self._meta.values()
                            if m.tenant_id == tenant_id and m.room_id == room_id),
                           key=lambda m: m.created_at)
+
+
+class RedisBundleService(BundleService):
+    """Bundles shared by every relay instance through Redis.
+
+    Each bundle is one hash (metadata + base64 bytes) with a TTL, so a read
+    gets both atomically and Redis drops both at expiry. A sorted set per room
+    indexes live ids. Quota checks and inserts run under a short Redis lock so
+    two instances can't both squeeze past a quota. Concurrent-upload slots stay
+    per instance."""
+
+    _LOCK = "qb:lock"
+    _SIZES = "qb:sizes"  # member "tenant|uploader|id|size", score = expires_at
+
+    def __init__(self, redis, *, clock=time.time) -> None:
+        super().__init__(clock=clock)
+        self._r = redis
+
+    async def _locked(self) -> str:
+        token = secrets.token_hex(8)
+        for _ in range(100):
+            if await self._r.set(self._LOCK, token, nx=True, px=5000):
+                return token
+            await asyncio.sleep(0.05)
+        raise QuotaError("the relay is busy storing other bundles; try again")
+
+    async def _unlock(self, token: str) -> None:
+        if await self._r.get(self._LOCK) == token:
+            await self._r.delete(self._LOCK)
+
+    async def put(self, tenant_id: str, room_id: str, uploader: str, data: bytes) -> BundleMeta:
+        import base64
+        import json
+
+        if len(data) > MAX_BUNDLE_BYTES:
+            raise BundleError(f"bundle exceeds {MAX_BUNDLE_BYTES} bytes")
+        header = parse_header(data)
+        token = await self._locked()
+        try:
+            now = self._clock()
+            await self._r.zremrangebyscore(self._SIZES, "-inf", now)
+            mine = tenant = total = 0
+            for member in await self._r.zrange(self._SIZES, 0, -1):
+                tid, who, _bid, size = member.rsplit("|", 3)
+                total += int(size)
+                if tid == tenant_id:
+                    tenant += int(size)
+                    mine += int(size) if who == uploader else 0
+            if mine + len(data) > PARTICIPANT_QUOTA_BYTES:
+                raise QuotaError("your shared bundles exceed your quota; wait for them to expire")
+            if tenant + len(data) > TENANT_QUOTA_BYTES:
+                raise QuotaError("this workspace's shared bundles exceed its quota")
+            if total + len(data) > TOTAL_QUOTA_BYTES:
+                raise QuotaError("this relay is holding too many bundles; try again later")
+            meta = BundleMeta(
+                id="b_" + secrets.token_urlsafe(9), room_id=room_id, uploader=uploader,
+                branch=header.branch, head=header.head,
+                prerequisites=list(header.prerequisites), size=len(data),
+                sha256=hashlib.sha256(data).hexdigest(), created_at=now,
+                expires_at=now + BUNDLE_TTL_S, tenant_id=tenant_id,
+            )
+            key = f"qb:{tenant_id}:b:{meta.id}"
+            async with self._r.pipeline(transaction=True) as pipe:
+                pipe.hset(key, mapping={"meta": json.dumps(asdict(meta)),
+                                        "data": base64.b64encode(data).decode("ascii")})
+                pipe.expire(key, BUNDLE_TTL_S)
+                pipe.zadd(f"qb:{tenant_id}:room:{room_id}", {meta.id: meta.expires_at})
+                pipe.expire(f"qb:{tenant_id}:room:{room_id}", BUNDLE_TTL_S)
+                pipe.zadd(self._SIZES, {f"{tenant_id}|{uploader}|{meta.id}|{len(data)}":
+                                        meta.expires_at})
+                await pipe.execute()
+            return meta
+        finally:
+            await self._unlock(token)
+
+    async def _fields(self, tenant_id: str, bid: str, *fields: str) -> list:
+        return await self._r.hmget(f"qb:{tenant_id}:b:{bid}", *fields)
+
+    async def get(self, tenant_id: str, room_id: str, bid: str) -> tuple[BundleMeta, bytes] | None:
+        import base64
+        import json
+
+        raw_meta, raw_data = await self._fields(tenant_id, bid, "meta", "data")  # one atomic read
+        if raw_meta is None or raw_data is None:
+            return None
+        meta = BundleMeta(**json.loads(raw_meta))
+        if meta.room_id != room_id or meta.tenant_id != tenant_id or not self._live(meta):
+            return None
+        return meta, base64.b64decode(raw_data)
+
+    async def list(self, tenant_id: str, room_id: str) -> list[BundleMeta]:
+        import json
+
+        index = f"qb:{tenant_id}:room:{room_id}"
+        await self._r.zremrangebyscore(index, "-inf", self._clock())
+        out = []
+        for bid in await self._r.zrange(index, 0, -1):
+            raw = (await self._fields(tenant_id, bid, "meta"))[0]
+            if raw is not None:
+                meta = BundleMeta(**json.loads(raw))
+                if self._live(meta):
+                    out.append(meta)
+        return sorted(out, key=lambda m: m.created_at)

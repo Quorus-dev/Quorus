@@ -149,11 +149,48 @@ async def test_download_racing_an_expiry_sweep_never_errors(repo: Path) -> None:
     assert results == [[], None, [], None]
 
 
-def test_multi_instance_relay_gets_no_bundle_service() -> None:
+def test_relays_with_redis_share_bundles_through_it() -> None:
     from quorus.relay import _bundle_service
+    from quorus.services.bundle_svc import RedisBundleService
 
-    assert _bundle_service(redis_conn=object()) is None
-    assert isinstance(_bundle_service(redis_conn=None), BundleService)
+    assert isinstance(_bundle_service(redis_conn=object()), RedisBundleService)
+    assert type(_bundle_service(redis_conn=None)) is BundleService
+
+
+async def test_redis_store_is_shared_by_two_relay_instances(repo: Path) -> None:
+    import fakeredis.aioredis
+
+    from quorus.services.bundle_svc import RedisBundleService
+
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)  # like the relay's client
+    a, b = RedisBundleService(redis), RedisBundleService(redis)
+    data = _bundle(repo, "main..fix/relay")
+    meta = await a.put(_TID, "r1", "bob", data)
+    got = await b.get(_TID, "r1", meta.id)
+    assert got is not None and got[1] == data and got[0].uploader == "bob"
+    assert [m.id for m in await b.list(_TID, "r1")] == [meta.id]
+    assert await b.get(_TID, "r2", meta.id) is None
+
+
+async def test_redis_quota_holds_across_instances_and_expiry_frees_it(
+        repo: Path, monkeypatch) -> None:
+    import fakeredis.aioredis
+
+    from quorus.services.bundle_svc import RedisBundleService
+
+    data = _bundle(repo, "main..fix/relay")
+    monkeypatch.setattr(bundle_svc, "PARTICIPANT_QUOTA_BYTES", len(data))
+    now = [1000.0]
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    a = RedisBundleService(redis, clock=lambda: now[0])
+    b = RedisBundleService(redis, clock=lambda: now[0])
+    meta = await a.put(_TID, "r1", "bob", data)
+    with pytest.raises(QuotaError):
+        await b.put(_TID, "r1", "bob", data)
+    now[0] += bundle_svc.BUNDLE_TTL_S + 1
+    assert await b.get(_TID, "r1", meta.id) is None
+    assert await b.list(_TID, "r1") == []
+    await b.put(_TID, "r1", "bob", data)  # the expired one no longer counts
 
 
 def test_concurrent_upload_slots_are_bounded() -> None:

@@ -89,13 +89,16 @@ the same size cap.
 
 ### Storage
 
-Bundles and their metadata live in the relay process's memory, behind one lock.
-Reads happen under the same lock that expiry deletes under, so a download can't
-race a sweep. Byte quotas: 50 MB per participant, 200 MB per tenant, and
-512 MB per relay. A multi-instance relay (Redis) gets no bundle service and
-answers 501. Codex's review of ffe25d3b showed that a shared directory without
-shared metadata lets one instance delete another's live bundles. Shared storage
-(object store plus metadata in Postgres or Redis) is future work.
+- **Relay without Redis** (the local default): bundles stay in process memory,
+  behind one lock. Reads happen under the lock expiry deletes under.
+- **Relay with Redis**, which every API-key relay has (`relay.py:67`): each
+  bundle is one Redis hash (metadata plus base64 bytes) with a TTL. A single
+  `HMGET` reads both together, and Redis drops both at expiry. A sorted set per
+  room indexes the live ids. Quotas are checked under a short Redis lock, so
+  several instances share bundles and can't jointly overrun a quota.
+- **Quotas:** 50 MB per participant, 200 MB per tenant, 512 MB per relay.
+- **Known limit:** the lock release is GET then DEL, not atomic Lua (no `lupa`
+  in tests). The 5 s lock TTL bounds the damage.
 
 ## Build plan (each step its own commit with tests)
 

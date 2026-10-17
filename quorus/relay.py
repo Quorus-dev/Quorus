@@ -314,12 +314,11 @@ async def _run_migrations():
 
 
 def _bundle_service(redis_conn):
-    """Git bundle courier, held in this process's memory. Several relay
-    instances (Redis) can't share it, so there the routes answer 501 rather
-    than lose bundles between instances."""
-    from quorus.services.bundle_svc import BundleService
+    """Git bundle courier: in Redis when the relay has it (every API-key relay
+    does, and several instances then share bundles), else in process memory."""
+    from quorus.services.bundle_svc import BundleService, RedisBundleService
 
-    return None if redis_conn is not None else BundleService()
+    return RedisBundleService(redis_conn) if redis_conn is not None else BundleService()
 
 
 def _init_services(app_instance, redis_conn=None):
