@@ -108,6 +108,19 @@ def opencode_flags(
     return flags
 
 
+# opencode's free models (no key). Each one's limit comes and goes on its own,
+# so a limited agent moves down this list. Keep in sync with `quorus demo`.
+OPENCODE_FREE_MODELS = (
+    "opencode/deepseek-v4.1-flash-free", "opencode/longcat-2.5-preview-free",
+    "opencode/mimo-v2.6-flash-free", "opencode/nemotron-3.5-lightning-free",
+)
+
+
+def is_free_opencode(model: str | None) -> bool:
+    """No model (opencode's own free default) or one of its free models."""
+    return model is None or (model.startswith("opencode/") and model.endswith("-free"))
+
+
 def parse_opencode_stream(out: str) -> tuple[str, str | None, str | None]:
     """``opencode run --format json`` NDJSON → ``(reply, session_id, error)``.
 

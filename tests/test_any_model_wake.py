@@ -257,3 +257,47 @@ def test_retired_gemini_model_tells_the_room_to_update() -> None:
            "available to new users.")
     msg = reflexd.diagnose_harness_failure("gemini", err)
     assert msg and "npm i -g @google/gemini-cli@latest" in msg
+
+
+# ── opencode free-model failover (2026-10-17) ───────────────────────────
+
+
+def _rotating_adapter(limited: set[str | None]) -> tuple[Any, list[str | None]]:
+    import time as _time
+
+    adapter = reflexd.HeadlessAdapter()
+    tried: list[str | None] = []
+
+    async def once(*_a: Any, **_k: Any) -> str:
+        tried.append(adapter.model)
+        if adapter.model in limited:
+            adapter.limited_until = _time.time() + 1800
+            return "⚠ opencode: the vendor rate-limited this account; the wake was dropped."
+        return f"fixed it on {adapter.model}"
+
+    adapter._opencode_once = once  # type: ignore[method-assign]
+    return adapter, tried
+
+
+def test_a_limited_free_model_moves_to_the_next_free_one() -> None:
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter, tried = _rotating_adapter({free[0]})
+    adapter.model = free[0]
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out == f"fixed it on {free[1]}" and tried == [free[0], free[1]]
+    assert adapter.model == free[1] and adapter.limited_until == 0.0  # sticks with what works
+
+
+def test_every_free_model_limited_cools_down_on_the_original() -> None:
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter, tried = _rotating_adapter({None, *free})
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert "rate-limited" in out and tried == [None, *free]
+    assert adapter.model is None and adapter.limited_until > 0
+
+
+def test_a_paid_model_is_never_swapped() -> None:
+    adapter, tried = _rotating_adapter({"openrouter/qwen/qwen3-coder"})
+    adapter.model = "openrouter/qwen/qwen3-coder"
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert tried == ["openrouter/qwen/qwen3-coder"]

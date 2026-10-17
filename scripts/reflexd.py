@@ -1432,7 +1432,40 @@ class HeadlessAdapter:
         on_session: Callable[[str], None] | None, timeout_s: int | None = None,
         mode: str = "default",
     ) -> str:
-        """opencode wake: Quorus tools, room permissions, any provider/model."""
+        """opencode wake: Quorus tools, room permissions, any provider/model.
+
+        opencode's free models are rate-limited hour to hour, one at a time
+        (night 1: DeepSeek and MiMo limited while LongCat answered; a fresh
+        user's very first message hit it, 2026-10-17). On a free model, a limit
+        moves the agent to the next free model at once instead of dropping
+        the wake. A model the user picked and pays for is never swapped."""
+        first = self.model
+        reply = await self._opencode_once(context, cwd=cwd, resume=resume,
+                                          on_session=on_session, timeout_s=timeout_s,
+                                          mode=mode)
+        if not reflexd_models.is_free_opencode(first):
+            return reply
+        tried = {first}
+        for alt in reflexd_models.OPENCODE_FREE_MODELS:
+            if self.limited_until <= time.time():
+                break  # answered (or failed for another reason): done
+            if alt in tried:
+                continue
+            tried.add(alt)
+            logger.warning("opencode %s is rate-limited; trying %s", self.model or "default",
+                           alt)
+            self.model, self.limited_until = alt, 0.0
+            reply = await self._opencode_once(context, cwd=cwd, resume=resume,
+                                              on_session=on_session, timeout_s=timeout_s,
+                                              mode=mode)
+        if self.limited_until > time.time():
+            self.model = first  # every free model is busy: cool down as before
+        return reply
+
+    async def _opencode_once(
+        self, context: str, *, cwd: Path | None, resume: str | None,
+        on_session: Callable[[str], None] | None, timeout_s: int | None, mode: str,
+    ) -> str:
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         env["OPENCODE_CONFIG_CONTENT"] = json.dumps(reflexd_models.opencode_config(
             self.wake_spec, mode=mode, model=self.model))
