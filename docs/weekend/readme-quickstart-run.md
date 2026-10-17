@@ -82,6 +82,13 @@ pointer and `save()` into the current profile) instead of writing the flat file;
 and make the overwrite warning name what is being replaced
 ("replacing profile default — the previous secret and relay URL are lost").
 
+**Status: fixed in this branch.** `_cmd_init` now detects a pointer
+(`_config_is_profile_pointer`) and writes into the active profile, leaving the
+pointer and every other profile intact. The message reads `Updating profile
+'default' … its relay URL and credentials are replaced.` Regression tests:
+`tests/test_cli_init_profile_layout.py`. This also fixes the pointer case of #2
+below.
+
 ### 2. `quorus init` never warns it is replacing a *working* secret
 
 Same repro as #1: the warning is `config already exists at …/config.json —

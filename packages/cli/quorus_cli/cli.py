@@ -134,6 +134,28 @@ def _write_sensitive_json(path: Path, data: dict) -> None:
     ConfigManager(path).save(data)
 
 
+def _config_is_profile_pointer(path: Path) -> bool:
+    """True when *path* holds a ProfileManager pointer, not a flat config.
+
+    The first-run hub writes ``{"current": ..., "profiles": [...]}`` and keeps
+    the real values in ``profiles/*.json``. A legacy flat config instead
+    carries at least one of ``relay_url`` / ``api_key`` / ``instance_name`` —
+    the inverse of ``ProfileManager.migrate_legacy_if_needed``. Writers must
+    not drop the flat shape on top of a pointer: it orphans the real profile,
+    and the next load migrates the flat blob into a fresh ``default`` profile,
+    pointing auth at whatever credentials were just typed.
+    """
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    if not isinstance(raw, dict):
+        return False
+    if any(k in raw for k in ("relay_url", "api_key", "instance_name")):
+        return False
+    return "current" in raw or "profiles" in raw
+
+
 def _get_codex_runner_defaults() -> dict:
     """Return saved Codex runner defaults from the active workspace profile."""
     pm = ProfileManager()
@@ -4811,10 +4833,12 @@ def _cmd_init(args):
         config_dir = _config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "config.json"
-    if config_path.exists():
-        console.print(
-            f"[yellow]Warning: config already exists at {config_path} — overwriting.[/yellow]"
-        )
+    # A first-run hub install keeps its config behind a pointer
+    # (``config.json`` = {current, profiles}) with the real values in
+    # ``profiles/*.json``. Writing the flat shape over that pointer orphaned
+    # the profile and made the next load migrate the flat blob into a fresh
+    # ``default`` profile — silently switching auth to the secret just typed.
+    pointer_layout = config_path.exists() and _config_is_profile_pointer(config_path)
 
     config = {
         "relay_url": relay_url,
@@ -4826,9 +4850,29 @@ def _cmd_init(args):
         config["api_key"] = api_key
     else:
         config["relay_secret"] = secret
-    _write_sensitive_json(config_path, config)
-    # (atomic 0600 write via _write_sensitive_json)
-    console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
+
+    profile_slug = ""
+    if pointer_layout:
+        pm = ProfileManager(config_dir=config_dir)
+        profile_slug = pm.current() or "default"
+        profile_path = config_dir / "profiles" / f"{profile_slug}.json"
+        console.print(
+            f"[yellow]Updating profile '{profile_slug}' at {profile_path} — "
+            "its relay URL and credentials are replaced.[/yellow]"
+        )
+        pm.save(profile_slug, config)
+        pm.set_current(profile_slug)
+        console.print(
+            f"[green]Config written to {profile_path} (permissions: 0600)[/green]"
+        )
+    else:
+        if config_path.exists():
+            console.print(
+                f"[yellow]Warning: config already exists at {config_path} — overwriting.[/yellow]"
+            )
+        _write_sensitive_json(config_path, config)
+        # (atomic 0600 write via _write_sensitive_json)
+        console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
     # 2. Build MCP server command — prefer entry point, then uv, then python
     mcp_command, mcp_args = _mcp_server_command()
@@ -4905,10 +4949,15 @@ def _cmd_init(args):
     # like load_config() auto-migrate on next boot, so this is forward-
     # compatible.
     if minted_keys:
-        try:
-            existing = json.loads(config_path.read_text()) if config_path.exists() else {}
-        except (json.JSONDecodeError, ValueError, OSError):
-            existing = {}
+        if pointer_layout:
+            # The profile is the source of truth; read/merge there so we don't
+            # flatten the pointer above.
+            existing = dict(pm.get(profile_slug) or {})
+        else:
+            try:
+                existing = json.loads(config_path.read_text()) if config_path.exists() else {}
+            except (json.JSONDecodeError, ValueError, OSError):
+                existing = {}
         existing.update(config)
         # Preserve previously-saved agent keys for platforms we didn't touch.
         prior = existing.get("agent_api_keys") or {}
@@ -4916,17 +4965,20 @@ def _cmd_init(args):
             prior = {}
         prior.update(minted_keys)
         existing["agent_api_keys"] = prior
-        _write_sensitive_json(config_path, existing)
-        # Also stash a 'default' profile under profiles/ so the supervisor
-        # has a stable slug to read from regardless of legacy migration state.
-        try:
-            pm = ProfileManager(config_dir=config_dir)
-            default_profile = dict(existing)
-            pm.save("default", default_profile)
-        except (OSError, ValueError):
-            # Non-fatal: the flat config above is the primary store.
-            pm = ProfileManager(config_dir=config_dir)
-    else:
+        if pointer_layout:
+            pm.save(profile_slug, existing)
+        else:
+            _write_sensitive_json(config_path, existing)
+            # Also stash a 'default' profile under profiles/ so the supervisor
+            # has a stable slug to read from regardless of legacy migration state.
+            try:
+                pm = ProfileManager(config_dir=config_dir)
+                default_profile = dict(existing)
+                pm.save("default", default_profile)
+            except (OSError, ValueError):
+                # Non-fatal: the flat config above is the primary store.
+                pm = ProfileManager(config_dir=config_dir)
+    elif not pointer_layout:
         pm = ProfileManager(config_dir=config_dir)
 
     # 6. Auto-create the 'human' profile alongside the agent default.
