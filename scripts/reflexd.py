@@ -83,6 +83,7 @@ from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
 from quorus.private_files import write_private_json, write_private_text  # noqa: E402
 from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
+from quorus.runtime import review_share as _review_share  # noqa: E402
 from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
 from quorus.runtime.turnguard import is_busy as _tg_is_busy  # noqa: E402
 
@@ -204,6 +205,16 @@ def trust_for(room: str, *, bindings_path: Path | None = None) -> str:
     raw = data.get(room) if isinstance(data, dict) else None
     trust = raw.get("trust") if isinstance(raw, dict) else None
     return "members" if trust == "members" else "owner"
+
+
+def share_for(room: str, *, bindings_path: Path | None = None) -> bool:
+    """Owner opted *room* into attaching review bundles (``"share": true``)."""
+    try:
+        data = json.loads((bindings_path or ROOM_BINDINGS_PATH).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    raw = data.get(room) if isinstance(data, dict) else None
+    return isinstance(raw, dict) and raw.get("share") is True
 
 
 def agent_owner(participant: str) -> str:
@@ -2737,6 +2748,10 @@ class Reflexd:
                     await asyncio.to_thread(reflexd_wake.sync_worktree, worktree)
             except (OSError, subprocess.SubprocessError) as exc:
                 logger.warning("worktree setup failed, using %s: %s", ws, exc)
+        # Step 3 of code across machines: remember where the branch started
+        # so a review request can carry exactly this wake's commits.
+        pre_head = (await asyncio.to_thread(_review_share.head_of, worktree)
+                    if worktree is not None and share_for(room) else None)
         _members = getattr(relay, "fetch_members", None)
         teammates = await _members(room=room) if _members is not None else []
         prompt = self._build_prompt(
@@ -2883,6 +2898,18 @@ class Reflexd:
                     # Not a raw sentinel above real, published work.
                     reply = _timed_out_line(published=True)
                 reply = f"{reply}\n{published}" if reply else published
+        if pre_head and reply:
+            try:
+                bearer = await relay.bearer_jwt()
+                line = await _review_share.attach_bundle(
+                    relay_url=self.config.relay_url, bearer=bearer, room=room,
+                    worktree=worktree, pre_head=pre_head, reply=reply,
+                    me=self.config.participant_name)
+            except (httpx.HTTPError, AttributeError) as exc:
+                logger.warning("review bundle not shared: %s", exc)
+                line = None
+            if line:
+                reply = f"{reply}\n{line}"
         if not reply:
             logger.info("harness produced empty reply, skipping post")
             # Silence looked like a dead agent (Arav, 2026-10-17): say it read

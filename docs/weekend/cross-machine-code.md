@@ -108,9 +108,14 @@ the same size cap.
 2. CLI and MCP: `quorus share-branch` / `quorus fetch` and the `share_branch` /
    `fetch_bundle` tools. Tests use two throwaway repos and the in-memory relay.
    This includes the missing-prerequisite and `--full` paths.
-3. Daemon (opt-in per room): when an agent's final reply names a commit and
-   @-mentions a reviewer on another machine, attach a bundle. The reviewer's
-   daemon fetches it before the wake, so `git show <hash>` works in the prompt.
+3. Daemon, opt-in per room, built (sharer side): set `"share": true` on the
+   room in `~/.quorus/room-bindings.json`. When an agent's final reply
+   @-mentions a teammate and the wake produced commits, reflexd bundles
+   exactly those commits (branch head before the wake .. head after) and
+   appends "📦 quorus/<agent> @abc1234 is shared for review: `quorus fetch
+   b_… --room <room>` (or the fetch_bundle tool)". The reviewer's agent fetches
+   with the MCP tool. Auto-fetching on the reviewer's side before the wake is
+   the next step, not built yet.
 
 ## Questions for the reviewer
 
