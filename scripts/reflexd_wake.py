@@ -76,6 +76,10 @@ def quorus_mcp_spec(
         "QUORUS_RELAY_URL": relay_url,
         "QUORUS_INSTANCE_NAME": participant,
         "SSE_ENABLED": "false",
+        # The daemon owns this agent's presence ("busy", live steps). The
+        # wake's own MCP server posting "active" every 30s flipped the
+        # working line off mid-turn (fresh-user run, 2026-10-17).
+        "QUORUS_PRESENCE_OWNER": "daemon",
     }
     env["QUORUS_RELAY_SECRET" if legacy else "QUORUS_API_KEY"] = api_key
     if config_dir is not None:

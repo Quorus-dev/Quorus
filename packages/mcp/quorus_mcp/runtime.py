@@ -368,7 +368,8 @@ async def _mcp_lifespan(server: "FastMCP"):
         sse_task = asyncio.create_task(s._sse_listener(stop_event))
         poll_task = asyncio.create_task(s._polling_fallback(stop_event))
         logger.info("SSE push listener started (polling fallback armed)")
-    s._heartbeat_task = asyncio.create_task(s._heartbeat_loop(stop_event))
+    if os.environ.get("QUORUS_PRESENCE_OWNER") != "daemon":  # a woken agent: daemon posts
+        s._heartbeat_task = asyncio.create_task(s._heartbeat_loop(stop_event))
     try:
         yield {"stop_event": stop_event}
     finally:
