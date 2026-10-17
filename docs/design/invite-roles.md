@@ -1,6 +1,7 @@
 # Invites without the shared secret (step 1) and observer links (step 3)
 
-Status: design, waiting for codex's review. No code merges before codex's ✅.
+Status: design, revision 2 after codex's block on e1798ca0. No code merges
+before codex's ✅.
 
 ## The gap
 
@@ -27,79 +28,118 @@ What already exists and is reused:
   it at `/v1/auth/token`, use the JWT. A participant key goes through the same
   path, so clients need no new auth mode.
 
-## Step 1: redeem an invite into a participant key
+## Codex's block on revision 1, and what changed
 
-1. `POST /v1/join/mint` stops adding `"s"`. The payload carries the invite
-   token `"i"` (room, tenant, role, expiry) and a new `"v": 2`.
-2. New `POST /v1/join/redeem {invite_token, name}`. Unauthenticated: the
-   invite token is the proof, as with `/invite/{room}/join` today. It:
-   - verifies the token (signature, expiry, tenant `_legacy`, room exists);
-   - claims `name` (409 if taken, same message as claim-name);
-   - adds `name` to the room with the token's role;
-   - returns `{participant_key, room, role}` once.
-   Rate limit: 10 per hour per IP, like claim-name. Redirects are never followed
-   by the client (96b1cb76).
-3. `quorus join <code>`: with `"v": 2` it calls redeem and writes the key as the
-   config's `api_key` (0600). No secret ever lands on the joiner's disk.
-4. The joiner's agents: `claim-name` today needs the shared secret. It will also
-   accept a participant JWT, but only for names `<sub>-*` (for example
-   `alice-codex` for `alice`). The claim records its owner. The owner can add their own agents to
-   rooms they belong to, with a role no higher than their own.
-5. `quorus share` on a shared-secret relay calls mint instead of encoding the
-   secret. `quorus share --with-secret` keeps today's behaviour for the owner's
-   own second machine, and says plainly that it hands over admin.
-6. Old clients given a v2 code fail with "upgrade quorus to join this room".
-   That is fail-closed, not a silent fallback to signup. Codes minted before
-   the change still contain the secret until they expire (7 days at most).
-   Rotating `RELAY_SECRET` is how to revoke those.
-
-Revocation: kick the member from the room (immediate, membership is checked on
-every request), or `quorus release-name <name>` on the relay machine (retires
-every token for the name).
-
-## Step 3: observer links
-
-`quorus share --observer` mints with role `observer`. The relay is the source
-of truth for a role: the membership row, read on every request. The role is
-not baked into the JWT, so a downgrade or kick takes effect on the next call.
-
-| Observers can | Observers are refused (403) |
+| Codex | Revision 2 |
 |---|---|
-| read room history, presence, state, scorecard | `POST /v1/rooms/{room}/bundles` (upload) |
-| post chat messages | `POST /v1/approvals/{id}/decision` |
-| `GET` bundles and fetch them | social claim, defer, block (`/v1/social/*` writes) |
-| add their own agents as observers | work-queue claims, room settings, invites, kick |
+| Invite as bearer proof needs atomic expiry, revocation and bounded uses | Invites become server-side records; redeem is one SQLite transaction |
+| Invite signing falls back to the distributed shared secret (`relay.py:404`) | Shared-secret relays issue opaque random invite codes, stored hashed; no JWT, no signing secret |
+| Retire the old unauthenticated join path | `/invite/{room}` and `/invite/{room}/join` answer 410 on shared-secret relays |
+| A name prefix is not ownership | Claims record an immutable `owner` and `kind`; per-request parent checks; agent cap |
+| Agents must never gain approval authority | Approval decisions require `kind=human`, whatever the name |
+| Observer limits must cover every mutation | Default-deny: observers get an allowlist, not a refusal list |
+| Observer turns read-only even with `trust: members` | The daemon reads the sender's role from the relay, and `observer` forces read-only |
+| No silent re-claim after a saved-key 401 | Dropped. Re-enrolment is an explicit owner command; the store location is pinned |
 
-The daemon side: a message from an observer, or from an observer's agent, only
-ever gets a read-only turn. That reuses the existing non-owner downgrade
-(`trusted_sender`), and the role is checked on the relay member list so a name
-can't claim to be a member.
+## Step 1: invites that redeem into a participant key
 
-## Questions for codex
+Invites (shared-secret relays). A new `invites` table sits in the claims DB
+(`participant_keys.db`, 0600): `id, code_hash, room_id, role, issuer, created_at,
+expires_at, max_uses, uses, revoked`. The code is `secrets.token_urlsafe(24)`,
+shown once and stored only as sha256. `max_uses` defaults to 1 (`quorus share
+--uses N`, at most 20), and the TTL is at most 7 days. `quorus share --revoke <id>`
+and `quorus invites` list and revoke them. Nothing is signed, so no secret can
+leak through the invite path.
 
-1. Is an unauthenticated redeem, with the invite token as proof, acceptable? Or
-   should redeem also need something the joiner can't replay from a leaked
-   code, like a one-time use per token?
-2. The `<sub>-*` rule for agent names: is a prefix enough, or should agent
-   claims be listed per owner and capped (say 8)?
-3. Is the refusal list complete? I'd also refuse `POST /rooms` (creating rooms)
-   for observers.
-4. Membership row only, or also stamp the role in the JWT for defence in depth?
-   I lean towards row only, because a stamped role outlives a downgrade.
-5. The existing `POST /invite/{room}/join` adds any name it is given to the
-   room, with only the invite token as proof and no claim. Once redeem exists,
-   should it refuse names that are already claimed on shared-secret relays, or
-   be retired there entirely?
-6. Adding your own agents needs a change in `rooms.py:132`. Today a non-admin
-   JWT can only add members to a room it created. I'd allow `<sub>-*` names
-   when the caller is a member, with a role no higher than the caller's.
+Mint. `POST /v1/join/mint` (legacy admin) creates the record. The payload holds
+`{"r", "n", "c": code, "v": 2}`, with no `"s"` and no `"i"`.
 
-## Tests (per step, each fails on today's code)
+Redeem. `POST /v1/join/redeem {code, name}`, unauthenticated: the code is the
+bearer proof. Rate limit 10/h per IP. In one `BEGIN IMMEDIATE` transaction:
+look up the hash; refuse if revoked, expired or `uses >= max_uses`; increment
+`uses`; insert the claim (`kind=human`, `owner=NULL`, new claim generation).
+409 if the name is taken (the use is not counted). Then add the name to the
+room with the invite's role. If that fails, a compensating transaction deletes
+the claim and gives back the use. Response: `{participant_key, room, role}`, once.
 
-- A v2 code never contains `RELAY_SECRET` (mint response and resolve payload).
-- Redeem: a key works for its room and gets 403 for another room; a reused name
-  gets 409; an expired token gets 403.
-- The joiner's agent can claim `alice-codex` but not `bob-codex` or `alice`.
-- Each refused endpoint answers 403 for an observer and works for a member. A
-  kick takes effect on the observer's next request.
-- Daemon: an observer's @-mention gets a read-only turn in an autonomous room.
+Signing material. The `InviteService` fallback to `RELAY_SECRET` (and to
+`"dev-only-insecure-secret"`) goes away for shared-secret relays. They use
+opaque codes, and the JWT invite path (API-key relays) keeps requiring
+`INVITE_SECRET`/`JWT_SECRET` as today.
+
+Old paths. On shared-secret relays, `/invite/{room}` and `/invite/{room}/join`
+answer 410 "use `quorus join <code>`". Old clients given a v2 code fail closed
+with "upgrade quorus". Codes minted before the change still contain the secret
+until they expire (7 days at most); rotating `RELAY_SECRET` revokes them.
+
+Client. `quorus join <code>` redeems and stores the key as the config's
+`api_key` (0600). The CLI, MCP and daemon already exchange an api_key at
+`/v1/auth/token`. `quorus share` mints. `quorus share --with-secret` keeps
+today's behaviour for the owner's own machines and says it hands over admin.
+
+## Agents belong to a person, not to a prefix
+
+- Claims gain `owner` and `kind` (`human` | `agent`). Both are set at insert and
+  never updated. Existing rows migrate to `kind=human, owner=NULL`.
+- `POST /v1/auth/claim-name` with a participant JWT of `kind=human` claims an
+  agent: `kind=agent, owner=<sub>`. At most 8 agents per owner. The name is
+  validated as usual. `<owner>-<suffix>` is required as a readability
+  convention, not as proof: proof is the `owner` column.
+- An agent's JWT is honoured only while its owner's claim is current and the
+  owner is a member of the room being touched. The agent's room role is the
+  lower of its own and its owner's (`observer` < `member`). Kicking or
+  downgrading the owner covers their agents on the next request.
+- Owners add their own agents (`owner == caller`) to rooms they belong to
+  (change at `rooms.py:132`). They can't add anyone else.
+- Approval decisions (`POST /v1/approvals/{id}/decision`) require `kind=human`
+  and the server-side approval authority for that approval. That rules out
+  agents, daemon credentials and a decider named in the request body.
+
+## Step 3: observers, default-deny
+
+The membership row's role is read on every request. An `observer` (or an agent
+whose effective role is `observer`) can only:
+
+- `GET` anything room-scoped they're a member of: history, presence, state,
+  members, scorecard, bundles list and download;
+- post `chat` messages to the room (no other message types, so no claim,
+  status, approval or decision messages).
+
+Everything else room-scoped answers 403. That covers bundles upload, approvals,
+every `/v1/social/*` write, all work-queue mutations, locks and releases,
+goals, decisions and room state, membership, settings, invites, tool and
+webhook registration, and memory writes. This is one dependency
+(`require_room_writer`) on every non-GET room route, plus a test that walks
+the app's route table and asserts that every mutating room-scoped route has it
+(or is on the explicit chat allowlist). A new route can't skip it silently.
+
+Daemon. Before a wake, reflexd reads the sender's role from the relay's member
+list. A sender whose effective role is `observer` gets a read-only turn, even
+in `trust: members` rooms, and the session isn't saved or resumed. A sender
+missing from the member list is also read-only.
+
+## Re-enrolment after a key store moves (no silent re-claim)
+
+The store's location is pinned once: 32c97a6e's rule, plus `QUORUS_DATA_DIR`.
+At startup the relay logs the full store path at INFO. If a saved key gets 401,
+the daemon still fails closed. Its error now names the fix: `quorus agent
+reenroll <name>`, run by the owner. That deletes the saved key so the next
+start claims again, and it refuses (409) if someone else holds the name. It is
+never automatic.
+
+## Tests (each fails on today's code)
+
+- No v2 mint response, resolve payload or install script contains `RELAY_SECRET`.
+- Redeem: a single-use code works once, then 403. Revoked and expired codes get
+  403. Two redeems racing for the last use: exactly one wins. 409 on a taken name
+  doesn't spend the use.
+- `/invite/{room}/join` answers 410 on a shared-secret relay.
+- Agents: `alice` claims `alice-codex`; a 9th agent is refused; `bob` can't add
+  `alice-codex` to a room. Kicking `alice` makes `alice-codex` 403 on the next
+  request.
+- An agent named like a human (`kind=agent`) gets 403 on an approval decision.
+- The route-table walk: every mutating room-scoped route refuses an observer.
+- Daemon: an observer's @-mention in a `trust: members` autonomous room gets a
+  read-only turn.
+- `reenroll` is the only path back after a 401. The daemon never claims again by
+  itself.
