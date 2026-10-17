@@ -8678,19 +8678,23 @@ async def _approvals_list(room: str | None, *, as_json: bool = False) -> None:
 
 
 async def _approval_decide(approval_id: str, approve: bool, reason: str) -> None:
+    from quorus.bundle_client import BundleClientError, bearer
+
     client = _get_client()
     try:
+        # Decide as yourself: the relay won't take a shared-secret caller's
+        # word for who it is, so trade the secret for your own JWT first.
+        token = await asyncio.to_thread(
+            bearer, RELAY_URL, api_key=API_KEY, secret=RELAY_SECRET,
+            name=INSTANCE_NAME or "")
         resp = await client.post(
             f"{RELAY_URL}/v1/approvals/{approval_id}/decision",
-            headers=_auth_headers(),
-            # Name ourselves: the relay refuses anonymous decisions, and with
-        # legacy (shared-secret) auth the request carries no identity.
-        json={
-            "approve": approve,
-            "reason": reason or "",
-            "decided_by": INSTANCE_NAME or "",
-        },
+            headers={"Authorization": f"Bearer {token}"},
+            json={"approve": approve, "reason": reason or ""},
         )
+    except BundleClientError as exc:
+        _ui.error(f"can't sign in as {INSTANCE_NAME or 'you'}: {exc}")
+        raise SystemExit(3) from None
     except httpx.HTTPError as exc:
         _relay_unreachable(exc=exc)
         raise SystemExit(2) from None
@@ -8699,7 +8703,7 @@ async def _approval_decide(approval_id: str, approve: bool, reason: str) -> None
                   hint="list what's pending with [accent]quorus approvals[/]")
         raise SystemExit(4)
     if resp.status_code == 403:
-        _ui.error("an agent cannot decide its own approval",
+        _ui.error(resp.json().get("detail") or "not allowed to decide this",
                   hint="decide from your human profile (quorus whoami)")
         raise SystemExit(3)
     resp.raise_for_status()
