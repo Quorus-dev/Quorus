@@ -39,6 +39,11 @@ def test_approve_buttons_need_the_viewers_own_key() -> None:
     assert "decided_by" not in BOARD_JS  # the relay names the decider from the JWT
 
 
+def test_board_stops_polling_while_the_tab_is_hidden() -> None:
+    # A phone in a pocket kept 3 requests every 3s going (review of 9cb91702).
+    assert "document.hidden" in BOARD_JS and '"visibilitychange"' in BOARD_JS
+
+
 NODE = shutil.which("node")
 
 
