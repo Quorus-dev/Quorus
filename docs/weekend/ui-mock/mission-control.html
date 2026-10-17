@@ -8,30 +8,41 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
 :root{
-  --canvas:#0a0a0f;--pane:#14141c;--raised:#1d1d27;--hover:#2a2a32;
-  --text:#f5f1ea;--text-2:#a8a8b0;--muted:#7a7a82;
-  --accent:#5eb3a8;--amber:#d97706;--amber-soft:rgba(217,119,6,.14);--red:#dc2626;
-  --line:rgba(255,255,255,.08);--line-2:rgba(255,255,255,.12);
+  /* Radix Colors v3 (MIT): sage neutrals (tinted, not grey), teal accent,
+     amber = needs you, tomato = stuck. Step roles are Radix's own:
+     1-2 backgrounds, 3-5 components, 6-8 borders, 9-10 solids, 11-12 text. */
+  --canvas:#101211;--pane:#171918;--raised:#202221;--hover:#272a29;--well:#101211;
+  --line:#272a29;--line-2:#373b39;--text:#eceeed;--text-2:#adb5b2;--muted:#adb5b2;
+  --accent:#0bd8b6;--accent-solid:#12a594;--on-solid:#101211;--glow:rgba(18,165,148,.28);
+  --amber:#ffc53d;--amber-text:#ffca16;--amber-bg:#302008;--amber-line:#714f19;
+  --red:#ff977d;--red-line:#853a2d;--chat:#101211;
   --sans:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,sans-serif;
   --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+:root.light{
+  --canvas:#fbfdfc;--pane:#ffffff;--raised:#eef1f0;--hover:#e6e9e8;--well:#f7f9f8;
+  --line:#dfe2e0;--line-2:#cbcfcd;--text:#1a211e;--text-2:#5f6563;--muted:#5f6563;
+  --accent:#0d3d38;--accent-solid:#12a594;--on-solid:#101211;--glow:rgba(18,165,148,.22);
+  --amber:#ffc53d;--amber-text:#4f3422;--amber-bg:#fff7c2;--amber-line:#e9c162;
+  --red:#d13415;--red-line:#f5a898;--chat:#f7f9f8;
 }
 *{box-sizing:border-box;margin:0}
 html,body{height:100%}
 body{background:var(--canvas);color:var(--text);font:14px/1.5 var(--sans);
   -webkit-font-smoothing:antialiased;font-feature-settings:"ss01","cv11","tnum"}
-::selection{background:rgba(94,179,168,.3)}
+::selection{background:var(--glow)}
 button{font:inherit;color:inherit;cursor:pointer}
 .app{display:grid;grid-template-columns:232px minmax(0,1fr) 380px;height:100vh}
 
 /* rail */
 .rail{border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 12px}
 .brand{display:flex;align-items:center;gap:10px;padding:2px 10px 22px;font-weight:700;font-size:16px;letter-spacing:-.02em}
-.brand svg{color:var(--accent)}
+.brand svg{color:var(--accent-solid)}
 .rooms{display:grid;gap:2px}
 .room{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;color:var(--text-2);border:0;background:none;text-align:left}
 .room.on{background:var(--pane);color:var(--text)}
 .room small{font-size:12px;color:var(--muted)}
-.count{min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--amber);color:var(--canvas);font-size:12px;font-weight:700;display:grid;place-items:center}
+.count{min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--amber);color:#101211;font-size:12px;font-weight:700;display:grid;place-items:center}
 .me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px;border-top:1px solid var(--line)}
 .avatar{width:28px;height:28px;border-radius:50%;background:var(--hover);display:grid;place-items:center;font-size:12px;font-weight:600}
 .me span{font-size:13px}.me small{display:block;font-size:12px;color:var(--muted)}
@@ -51,51 +62,52 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
 
 /* needs-you rail */
 .asks{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
-.ask{background:var(--amber-soft);border:1px solid rgba(217,119,6,.45);border-radius:12px;padding:14px 16px;display:grid;gap:10px}
+.ask{background:var(--amber-bg);border:1px solid var(--amber-line);border-radius:12px;padding:14px 16px;display:grid;gap:10px}
 .ask-top{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2)}
 .ask-top b{color:var(--text);font-weight:600}
-.ask-top .tag{margin-left:auto;font-size:12px;font-weight:600;color:#f3b366}
+.ask-top .tag{margin-left:auto;font-size:12px;font-weight:600;color:var(--amber-text)}
 .ask p{font-size:14px;color:var(--text)}
-.ask code{font:12.5px var(--mono);color:#f3d3a8}
+.ask code{font:12.5px var(--mono);color:var(--amber-text)}
 .acts{display:flex;gap:8px;align-items:center}
 .btn{height:34px;padding:0 14px;border-radius:8px;border:1px solid var(--line-2);background:var(--raised);font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px}
-.btn.primary{background:var(--amber);border-color:var(--amber);color:var(--canvas)}
+.btn.primary{background:var(--amber);border-color:var(--amber);color:#101211}
 .btn.ghost{background:none}
-.reply{flex:1;height:34px;border-radius:8px;border:1px solid var(--line-2);background:rgba(10,10,15,.5);padding:0 12px;color:var(--muted);font-size:13px;display:flex;align-items:center}
+.reply{flex:1;height:34px;border-radius:8px;border:1px solid var(--line-2);background:var(--pane);padding:0 12px;color:var(--muted);font-size:13px;display:flex;align-items:center}
 
 /* grid */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
 .panel{background:var(--pane);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;min-height:258px}
-.panel.needs{border-color:rgba(217,119,6,.55)}
-.panel.stuck{border-color:rgba(220,38,38,.5)}
+.panel.needs{border-color:var(--amber-line)}
+.panel.busy{border-color:var(--accent-solid);box-shadow:0 0 0 1px var(--glow),0 8px 32px -8px var(--glow)}
+.panel.stuck{border-color:var(--red-line)}
 .ph{display:flex;align-items:center;gap:8px;padding:12px 14px 0}
 .dot{width:6px;height:6px;border-radius:50%;flex:none}
 .ph b{font-weight:600;font-size:14px}
 .model{font:12px var(--mono);color:var(--muted)}
 .state{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text-2)}
 .state i{width:6px;height:6px;border-radius:50%;background:currentColor}
-.state.busy{color:var(--accent)}.state.needs{color:#f3b366}.state.stuck{color:#f2776e}.state.pacing{color:var(--text-2)}
+.state.busy{color:var(--accent)}.state.needs{color:var(--amber-text)}.state.stuck{color:var(--red)}.state.pacing{color:var(--text-2)}
 .state small{font-weight:400;color:var(--muted)}
 .step{padding:10px 14px 8px;font-size:14px;font-weight:500;color:var(--text);line-height:1.4}
-.trail{flex:1;margin:0 10px;padding:8px 10px;border-radius:8px;background:rgba(10,10,15,.55);font:12px/1.65 var(--mono);color:var(--text-2);display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden}
+.trail{flex:1;margin:0 10px;padding:8px 10px;border-radius:8px;background:var(--well);font:12px/1.65 var(--mono);color:var(--text-2);display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden}
 .trail span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .trail span.old{color:var(--muted)}
 .trail time{color:var(--muted);margin-right:10px}
 .trail .now{color:var(--text)}
-.caret{display:inline-block;width:7px;height:13px;background:var(--accent);vertical-align:-2px;margin-left:4px}
+.caret{display:inline-block;width:7px;height:13px;background:var(--accent-solid);vertical-align:-2px;margin-left:4px}
 .pf{display:flex;align-items:center;gap:10px;padding:10px 14px 12px;font-size:12px;color:var(--muted)}
 .pf .rec b{color:var(--text-2);font-weight:600}
-.pf .flag{color:#f2776e}
+.pf .flag{color:var(--red)}
 .askit{margin-left:auto;height:28px;min-width:150px;border:1px solid var(--line);border-radius:7px;display:flex;align-items:center;padding:0 10px;color:var(--muted)}
 .offline{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;padding:2px 2px}
 .offline .names{color:var(--text-2)}
 
 /* chat */
-aside{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:#0d0d13}
+aside{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--chat)}
 .ch{display:flex;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line);gap:8px}
 .ch h2{font-size:14px;font-weight:600}
 .live{margin-left:auto;font-size:12px;color:var(--accent);display:flex;align-items:center;gap:6px}
-.live i{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.live i{width:6px;height:6px;border-radius:50%;background:var(--accent-solid)}
 .msgs{flex:1;overflow:auto;padding:14px 18px;display:flex;flex-direction:column;gap:14px;justify-content:flex-end}
 .m{display:grid;gap:3px}
 .m header{display:flex;align-items:baseline;gap:8px;font-size:13px}
@@ -108,7 +120,7 @@ aside{border-left:1px solid var(--line);display:flex;flex-direction:column;min-h
 .verb b{font-family:var(--mono);font-weight:500;color:var(--text)}
 .composer{margin:0 14px 14px;border:1px solid var(--line-2);border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;background:var(--pane)}
 .composer span{flex:1;color:var(--muted);font-size:13.5px}
-.send{width:32px;height:32px;border-radius:8px;border:0;background:var(--accent);color:var(--canvas);display:grid;place-items:center}
+.send{width:32px;height:32px;border-radius:8px;border:0;background:var(--accent-solid);color:var(--on-solid);display:grid;place-items:center}
 </style>
 </head>
 <body>
@@ -150,7 +162,7 @@ aside{border-left:1px solid var(--line);display:flex;flex-direction:column;min-h
       </section>
 
       <section class="grid" aria-label="Agents">
-        <article class="panel">
+        <article class="panel busy">
           <div class="ph"><span class="dot" style="background:#d97757"></span><b>@arav-claude</b><span class="model">claude-opus-5-5</span><span class="state busy"><i></i>working <small>6m</small></span></div>
           <div class="step">Building the needs-you rail: approvals reorder above the grid</div>
           <div class="trail">
@@ -243,5 +255,6 @@ aside{border-left:1px solid var(--line);display:flex;flex-direction:column;min-h
     </div>
   </aside>
 </div>
+<script>if(location.hash==="#light")document.documentElement.classList.add("light")</script>
 </body>
 </html>

@@ -1,7 +1,26 @@
-# Quorus app UI overhaul — design brief (rev 1, 2026-10-17)
+# Quorus app UI overhaul — design brief (rev 2, 2026-10-17)
 
-Mock: `docs/weekend/ui-mock/mission-control.html` (static, fake data) and its
-screenshot `mission-control.png`. No app code until this brief is approved.
+Mock: `docs/weekend/ui-mock/mission-control.html` (static, fake data; `#light`
+for the light theme) and its screenshots `mission-control.png` and
+`mission-control-light.png`. No app code until this brief is approved.
+
+## How we compare (what the UI must make obvious at a glance)
+
+As we read them on 2026-10-17. Verify the cells before any of this goes on
+website/.
+
+| | Vendors | People | Machines | Measured outcomes | Live control |
+|---|---|---|---|---|---|
+| ECC (everything-claude-code) | 1 (Claude Code) | 1 | 1 | no | yes, inside one session |
+| Mission-control terminal grids | usually 1, a few mix CLIs | 1 | 1 | no | yes, one terminal at a time |
+| Pixel Agents / Claw3D offices | mostly 1 | 1 | 1 | no | mostly watch-only |
+| Paperclip | several (bring your own) | 1 operator | 1 host | budgets and cost, not code kept | via tickets and approvals |
+| **Quorus** | **any (Claude, Codex, Gemini, opencode…)** | **many, invited by role** | **many** | **kept %, flags, survival per agent** | **approve, deny, @-ask, verbs, from any device** |
+
+Each column maps to the screen: a model on every panel (vendors), people in the
+rail and chat (people), each panel's machine in its tooltip (machines), a track
+record on every panel (measured), and the needs-you rail plus "ask @x"
+(control).
 
 ## What the screen is for
 
@@ -58,21 +77,50 @@ them while they do. Every pixel serves four questions, in this order:
 - Scale: 12 / 13 / 14 (body) / 16 / 20. Tabular numerals for counts and timers.
   Nothing under 12px.
 
-## Colour (from website/src/styles/tokens.css, the dark "ink" side)
+## Colour: one proven palette, dark and light
 
-| Role | Token | Value |
+Radix Colors v3 (MIT): 12-step scales whose steps have fixed jobs (1-2 app
+backgrounds, 3-5 components, 6-8 borders, 9-10 solids, 11-12 text). The values are
+copied as CSS variables and need no dependency. The neutral is **sage**, Radix's
+pairing for teal: a grey with a green tint, so nothing on the page is a dead grey.
+Brand continuity: website/'s teal stays the accent, and website/ moves to the same
+scales.
+
+| Role | Dark | Light |
 |---|---|---|
-| canvas | ink-300 | #0a0a0f |
-| panes | ink-200 | #14141c |
-| raised / hover | ink-100 | #2a2a32 |
-| text / secondary / muted | cream-100 / slate-300 / slate-500 | #f5f1ea / #a8a8b0 / #6a6a72 |
-| accent (live, focus, links) | teal-300 | #5eb3a8, used sparingly |
-| needs you | amber-500 | #d97706 (text on it: ink-300) |
-| stuck / deny | red-500 | #dc2626 |
-| hairlines | border-dark | rgba(255,255,255,.08) |
+| app background / pane | sage-1 #101211 / sage-2 #171918 | sage-1 #fbfdfc / white |
+| raised / hover | sage-3 #202221 / sage-4 #272a29 | sage-3 #eef1f0 / sage-4 #e6e9e8 |
+| hairline / strong border | sage-4 / sage-6 #373b39 | sage-5 #dfe2e0 / sage-7 #cbcfcd |
+| text / secondary | sage-12 #eceeed / sage-11 #adb5b2 | sage-12 #1a211e / sage-11 #5f6563 |
+| accent text / solid | teal-11 #0bd8b6 / teal-9 #12a594 | teal-12 #0d3d38 / teal-9 |
+| needs you: bg / border / text / solid | amber-3 / amber-7 / amber-11 #ffca16 / amber-9 #ffc53d | amber-3 / amber-7 / amber-12 #4f3422 / amber-9 |
+| stuck: text / border | tomato-11 #ff977d / tomato-7 | tomato-11 #d13415 / tomato-7 |
 
-Status colour is semantic only and always paired with a word ("needs you",
-"stuck"), never colour alone. Vendor colours appear only as the 6px seat dot.
+Measured WCAG contrast on the pane: dark text 15.2, secondary 8.4, accent 9.7,
+amber 11.5, tomato 8.4. Light text 15.5, secondary 5.6, tomato 4.7, amber-12 on
+amber-3 about 10. Two light-mode traps are already avoided: teal-11 text (4.3) and
+amber-11 on amber-3 (4.2) both fail, so light mode uses step 12 for small text.
+Solids (teal-9, amber-9) take dark text (6.1 and 11.9); white on teal-9 is 3.1
+and is banned.
+
+The single neon accent is **the agent that is working**: its panel gets a teal-9
+border and a soft teal glow. Nothing else glows, so your eye finds activity
+first, and amber needs-you still beats it. Status colour is always paired with a
+word; vendor colour appears only as a 6px dot. The theme follows
+`prefers-color-scheme`, with a toggle.
+
+## Cinematic, where it belongs
+
+Arav's bar is premium, not a dev tool. Split by surface:
+- **website/ (Persuade):** the cinematic hero, built as one lit stage with a
+  product-render object (the Quorum table as a glowing core ring, built in
+  three.js and lazy-loaded), a large serif display face over Plus Jakarta Sans,
+  and scroll-driven reveals.
+- **App (Operate):** the same palette and type with calm motion. Panels feel
+  alive through the step stream, the working glow, and a sharp amber for needs
+  you. No scroll theatre.
+- **Quorum view:** the product-render treatment. One stage, soft three-point
+  light, a few well-made figures and no pills, and only present members seated.
 
 ## Motion (framer-motion, website rules: out-expo, no bounce)
 
@@ -96,6 +144,33 @@ Lines come only from the already-sanitised activity field. **Not raw terminal
 output**: that would stream secrets and env dumps into every member's browser. The
 "last lines" in the mock are steps, not stdout.
 
+## Before launch (the "20 things before you publish" list, applied)
+
+website/:
+- prerender every route to static HTML (it's a Vite SPA, so crawlers and link
+  unfurlers see an empty `<div id=root>` today);
+- per-route `<title>`, description and canonical;
+- OG and Twitter cards with a 1200×630 image per key page;
+- re-check `public/sitemap.xml` and `robots.txt` against the real routes;
+- a favicon set plus apple-touch-icon and a manifest;
+- a real 404 page;
+- SoftwareApplication JSON-LD;
+- self-hosted fonts with `font-display: swap` (it uses Google Fonts today);
+- Lighthouse ≥90 on mobile, with LCP <2.5s and CLS <0.1, and images in AVIF/WebP;
+- alt text everywhere;
+- privacy and terms pages, and privacy-friendly analytics.
+
+App shell (`/`):
+- `noindex, nofollow` (it's a private, token-gated app);
+- no OG tags, because a pasted link must not unfurl room names;
+- `Referrer-Policy: no-referrer` (the token rides in the fragment);
+- hashed, immutable assets with an uncached `index.html`;
+- a bundle budget of ≤180 KB gzipped, excluding the lazy three.js chunk;
+- every state designed: loading, empty, offline, error, and token expired;
+- a per-room `<title>` with the needs-you count.
+
+Security items: @arav-codex.
+
 ## Build and security constraints (for @arav-codex's plan)
 
 - React + Vite + framer-motion, built to `quorus/web/app/`, served same-origin at
@@ -107,8 +182,14 @@ output**: that would stream secrets and env dumps into every member's browser. T
 
 ## Skills used
 
-impeccable (craft floor: no eyebrows, no thick coloured side borders, no emoji
-icons, mono only for data), ui-ux-pro-max priorities (contrast ≥4.5:1, 44px
-targets, reduced motion), web-design-guidelines for the build review. These
-three are installed in `~/.claude/skills` but aren't loadable as Skills in this
+One skill per job, not one for everything:
+- **impeccable:** mode and craft floor (no eyebrows, no thick coloured side
+  borders, no emoji icons, mono only for data).
+- **ui-ux-pro-max:** its `--design-system` search (it suggested a generic slate
+  and green; rejected in favour of Radix, which ships tested light and dark pairs)
+  and its priority list (contrast, 44px targets, reduced motion).
+- **frontend-patterns:** the React build.
+- **web-design-guidelines:** the build review.
+
+These are installed in `~/.claude/skills` but aren't loadable as Skills in this
 agent session, so I read them directly.
