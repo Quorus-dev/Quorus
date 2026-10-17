@@ -178,15 +178,23 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
-def _no_live_opencode_catalog(monkeypatch):
+def _no_live_opencode_catalog():
     """Tests never shell out to a real `opencode models`: unless a test passes
-    its own `run`, the catalog looks unavailable and the pinned tuple is used."""
+    its own `run`, the catalog looks unavailable and the pinned tuple is used.
+
+    Deliberately not the `monkeypatch` fixture: a conftest autouse fixture that
+    requests it creates the test's `monkeypatch` first, so its undo runs AFTER
+    every module's own autouse teardown. test_triage_redis's clean_state then
+    tore down with the test's sentinel Redis still patched in (overseer, full
+    suite on 0c2cbaf7). A private MonkeyPatch keeps the tests' one untouched.
+    """
     import subprocess
 
     from quorus.runtime import opencode_free
 
     opencode_free.reset_cache()
-    monkeypatch.setattr(opencode_free, "_default_run", lambda argv, **_kw:
-                        subprocess.CompletedProcess(argv, 1, stdout="", stderr=""))
-    yield
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(opencode_free, "_default_run", lambda argv, **_kw:
+                   subprocess.CompletedProcess(argv, 1, stdout="", stderr=""))
+        yield
     opencode_free.reset_cache()
