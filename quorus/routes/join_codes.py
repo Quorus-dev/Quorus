@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -47,15 +48,50 @@ class MintResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _request_relay_url(request: Request) -> str:
-    """Reconstruct the public relay URL from the request headers.
+# Host charset we accept when reconstructing the public relay URL from
+# request headers. Deliberately strict: anything else (quotes, ``$()``,
+# semicolons, spaces, slashes) must never reach the generated installer,
+# which interpolates the URL into a shell command line.
+_ALLOWED_RELAY_SCHEMES = ("http", "https")
+_HOST_RE = re.compile(r"^[A-Za-z0-9.-]+(:\d+)?$")
 
-    Prefers forwarded headers so Fly's edge proxy doesn't give us the
-    internal scheme/host.
+
+def _validate_relay_url(value: str) -> str:
+    """Return ``value`` if it is a bare ``http(s)://host[:port]`` URL.
+
+    Raises 400 otherwise. This is the single choke point that keeps a
+    client-controlled ``X-Forwarded-Host`` from injecting shell
+    metacharacters into the join installer (see ``_request_relay_url``).
     """
-    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.url.netloc)
+    scheme, sep, host = value.partition("://")
+    scheme = scheme.lower()
+    if (
+        not sep
+        or scheme not in _ALLOWED_RELAY_SCHEMES
+        or not _HOST_RE.match(host)
+    ):
+        raise HTTPException(status_code=400, detail="invalid relay host")
     return f"{scheme}://{host}"
+
+
+def _request_relay_url(request: Request) -> str:
+    """Reconstruct the public relay URL from the request, safely.
+
+    ``X-Forwarded-Host`` / ``X-Forwarded-Proto`` are attacker-controlled
+    unless every hop is trusted; a poisoned value would otherwise be baked
+    into the ``curl | sh`` installer and executed by whoever installs from
+    it. So: prefer the operator-configured ``QUORUS_PUBLIC_RELAY`` when
+    set, and otherwise only accept a strict ``http(s)://host[:port]``
+    shape, returning 400 on anything else.
+    """
+    configured = (os.environ.get("QUORUS_PUBLIC_RELAY") or "").strip().rstrip("/")
+    if configured:
+        return _validate_relay_url(configured)
+
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme).strip()
+    # Proxies append, so the left-most entry is the client-facing host.
+    host = request.headers.get("x-forwarded-host", request.url.netloc).split(",")[0].strip()
+    return _validate_relay_url(f"{scheme}://{host}")
 
 
 def _legacy_admin_secret() -> str:

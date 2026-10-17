@@ -220,3 +220,85 @@ class TestInstallScript:
     async def test_400_on_bad_format(self, client: AsyncClient):
         resp = await client.get("/v1/join/install/nope.sh")
         assert resp.status_code == 400
+
+    async def test_rejects_command_substitution_in_forwarded_host(
+        self, client: AsyncClient
+    ):
+        # Regression: `relay_url` is interpolated into a shell line, so a
+        # client-controlled X-Forwarded-Host must never carry `$()` or
+        # quotes. Before the fix this returned a script that, piped to
+        # `sh`, ran the injected command.
+        await _create_room(client)
+        mint = await client.post(
+            "/v1/join/mint", headers=ADMIN_HEADERS, json={"room": "general"},
+        )
+        code = mint.json()["code"]
+
+        resp = await client.get(
+            f"/v1/join/install/{code}.sh",
+            headers={"x-forwarded-host": "x$(touch pwned)"},
+        )
+        assert resp.status_code == 400
+        assert "pwned" not in resp.text
+
+    async def test_rejects_non_http_scheme(self, client: AsyncClient):
+        await _create_room(client)
+        mint = await client.post(
+            "/v1/join/mint", headers=ADMIN_HEADERS, json={"room": "general"},
+        )
+        code = mint.json()["code"]
+
+        resp = await client.get(
+            f"/v1/join/install/{code}.sh",
+            headers={
+                "x-forwarded-proto": "javascript",
+                "x-forwarded-host": "relay.example.com",
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_rejects_host_with_path_or_space(self, client: AsyncClient):
+        await _create_room(client)
+        mint = await client.post(
+            "/v1/join/mint", headers=ADMIN_HEADERS, json={"room": "general"},
+        )
+        code = mint.json()["code"]
+
+        for bad in ("evil.com/x", "evil.com y", "evil.com;rm -rf /"):
+            resp = await client.get(
+                f"/v1/join/install/{code}.sh",
+                headers={"x-forwarded-host": bad},
+            )
+            assert resp.status_code == 400, bad
+
+    async def test_public_relay_env_wins_over_headers(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        await _create_room(client)
+        monkeypatch.setenv("QUORUS_PUBLIC_RELAY", "https://relay.example.com")
+        mint = await client.post(
+            "/v1/join/mint", headers=ADMIN_HEADERS, json={"room": "general"},
+        )
+        code = mint.json()["code"]
+
+        resp = await client.get(
+            f"/v1/join/install/{code}.sh",
+            headers={"x-forwarded-host": "attacker.invalid"},
+        )
+        assert resp.status_code == 200
+        assert '--relay "https://relay.example.com"' in resp.text
+        assert "attacker.invalid" not in resp.text
+
+    async def test_accepts_host_with_port(self, client: AsyncClient):
+        await _create_room(client)
+        mint = await client.post(
+            "/v1/join/mint", headers=ADMIN_HEADERS, json={"room": "general"},
+        )
+        code = mint.json()["code"]
+
+        resp = await client.get(
+            f"/v1/join/install/{code}.sh",
+            headers={"x-forwarded-host": "relay.example.com:8080"},
+        )
+        assert resp.status_code == 200
+        assert '--relay "http://relay.example.com:8080"' in resp.text
