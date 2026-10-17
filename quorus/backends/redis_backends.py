@@ -803,7 +803,7 @@ class RedisPresenceBackend:
 
     async def heartbeat(
         self, tenant_id: str, name: str, status: str, room: str, reason: str = "",
-        activity: str = "",
+        activity: str = "", waiting_on: str = "", waiting_until: float = 0.0,
     ) -> dict:
         now = datetime.now(timezone.utc)
         now_iso, now_ts = now.isoformat(), now.timestamp()
@@ -813,6 +813,7 @@ class RedisPresenceBackend:
         last_wake = await _with_timeout(self._r.hget(entry_key, "last_wake_at"))
         entry = {
             "name": name, "status": status, "room": room, "activity": activity,
+            "waiting_on": waiting_on, "waiting_until": str(waiting_until),
             "last_heartbeat": now_iso,
             "uptime_start": existing_start or now_iso,
             "tenant_id": tenant_id,
