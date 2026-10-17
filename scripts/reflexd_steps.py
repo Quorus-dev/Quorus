@@ -36,7 +36,8 @@ _CAPABILITIES = {
     "get_capability", "list_capabilities",
 }
 _TOOL_CATALOG = {"register_tool", "list_room_tools", "unregister_tool", "list_tools"}
-_APPROVALS = {"request_approval", "approve", "deny_approval"}
+_ASK_APPROVAL = {"request_approval"}
+_DECIDE_APPROVAL = {"approve", "deny_approval", "deny"}
 _SKILLS = {"activate_skill", "list_skills", "skill"}
 
 _TESTS = re.compile(r"\b(pytest|vitest|jest|mocha|go test|cargo test|rspec|phpunit|unittest|"
@@ -124,28 +125,18 @@ def tool_step(name: str, args: dict[str, Any]) -> str | None:
         return "writing to the room"
     if low in ("claim_task", "release_task", "check_messages", "room_history", "who_is_here"):
         return "checking the room"
-    if low in _MEMORY:
+    if low in _MEMORY or "memory" in low:
         return "accessing memory"
-    if low in _CAPABILITIES:
+    if low in _CAPABILITIES or "capabilit" in low:
         return "checking capabilities"
     if low in _TOOL_CATALOG:
         return "managing tools"
-    if low in _APPROVALS:
+    if low in _ASK_APPROVAL:
         return "requesting approval"
-    if low in _SKILLS:
-        return "activating a skill"
-    if low in _MEMORY or "memory" in low:
-        return "accessing memory"
-    if low in _CAPABILITIES or "capability" in low or "capabilities" in low:
-        return "checking capabilities"
-    if low in _TOOL_CATALOG or "tool" in low.split("_"):
-        return "managing tools"
-    if low in _APPROVALS or "approval" in low:
-        return "requesting approval"
+    if low in _DECIDE_APPROVAL:
+        return "deciding an approval"
     if low in _SKILLS or "skill" in low:
         return "activating a skill"
-    if "agent" in low:
-        return "running a subagent"
     cleaned = low.replace("_", " ")
     return f"using {cleaned[:30]}" if cleaned else None
 

@@ -222,7 +222,9 @@ def test_unknown_and_phase1_tool_steps() -> None:
     assert steps.tool_step("mcp__quorus__memory_get", {}) == "accessing memory"
     assert steps.tool_step("publish_capability", {}) == "checking capabilities"
     assert steps.tool_step("register_tool", {}) == "managing tools"
-    assert steps.tool_step("approve", {}) == "requesting approval"
+    assert steps.tool_step("request_approval", {}) == "requesting approval"
+    assert steps.tool_step("approve", {}) == "deciding an approval"  # approving isn't asking
+    assert steps.tool_step("agent_status", {}) == "using agent status"  # not a subagent
     assert steps.tool_step("activate_skill", {}) == "activating a skill"
     assert steps.tool_step("custom_unknown_action", {}) == "using custom unknown action"
 
