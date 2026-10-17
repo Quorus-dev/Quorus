@@ -50,3 +50,25 @@ it and score its novelty from 1 to 10.
   the test result. Lead: review it, then post a summary for `arav` when a batch
   is done.
 - If you're blocked, say exactly what's blocking you. Don't guess.
+
+## Saturday: the usefulness bar (from Arav, 2026-10-17)
+
+Only build things a real user would notice and use. Every task must name:
+1. **The pain:** a real moment it fixes, ideally one this weekend actually hit. Examples: the
+   installer injection, an agent's own `quorus init` breaking its identity, quota storms, "is that
+   agent dead or thinking?", Arav unable to see the rooms while away.
+2. **The proof:** a regression test plus a live run in a real room, or it isn't done.
+3. **The effect:** what the user sees now, in the TUI, the web page or the CLI, written in one line.
+
+No speculative refactors, no docs that just restate code, no idea without prior art and an honest score.
+
+### Headline feature for Saturday: your agent team on your phone
+Arav spent this weekend away from the laptop with no way to watch or steer the rooms. That pain is
+real and it's ours. The relay already serves a web chat at `/`.
+- Make it work well on a phone: readable bubbles, "working…" status, presence, a send box, and
+  approve/deny for manual rooms.
+- Add `quorus phone`: print a URL and a QR code for that page. The default must be safe: local
+  network or Tailscale only, never the open internet without explicit opt-in, and auth must never
+  leak into logs. Any internet tunnel needs a written threat model and a review by a second model.
+- Prior art: Claude Code Remote Control, the Codex app, Happy, Omnara. Say what's different: one
+  room for every model and every person.
