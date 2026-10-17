@@ -68,3 +68,11 @@ def test_status_renders_as_a_quiet_system_line() -> None:
     rows = [r.plain for r in render_bubble_feed([msg], "build", "arav", console_width=100)]
     assert any("read it, nothing to add" in r for r in rows)
     assert not any(r.strip().startswith("╭") for r in rows)  # not a chat bubble
+
+
+def test_chatter_stop_and_full_pause_are_told_apart() -> None:
+    human = {"from_name": "arav", "content": "go"}
+    chatter = {"from_name": "a-codex", "content": f"{reflexd.CHATTER_NOTICE} after 6"}
+    assert reflexd._pause_announced([human, chatter], reflexd.CHATTER_NOTICE)
+    # A chatter notice doesn't suppress the later full-pause notice.
+    assert not reflexd._pause_announced([human, chatter], reflexd.PAUSE_NOTICE)

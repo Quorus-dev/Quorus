@@ -153,12 +153,13 @@ def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
 
 ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
 PAUSE_NOTICE = "(quorus) agents paused"
+CHATTER_NOTICE = "(quorus) agents stopped answering unaddressed chatter"
 
 
-def _pause_announced(recent: list[dict[str, Any]]) -> bool:
-    """Has a pause notice been posted since the last human message?"""
+def _pause_announced(recent: list[dict[str, Any]], marker: str = PAUSE_NOTICE) -> bool:
+    """Has this notice been posted since the last human message?"""
     for m in reversed(recent):
-        if PAUSE_NOTICE in (m.get("content") or ""):
+        if marker in (m.get("content") or ""):
             return True
         if not is_agent_participant(m.get("from_name") or ""):
             return False
@@ -1993,11 +1994,16 @@ class Reflexd:
                     "agent loop guard: chain=%d room_run=%d in room=%s — not "
                     "waking until a human speaks (id=%s)", depth, run, room, message_id,
                 )
-                if await self._pause_unannounced(relay, room, recent):
-                    await self._post_status(
-                        relay, room, envelope,
-                        f"{PAUSE_NOTICE} after {run} agent messages in a row. "
-                        "Say anything to keep them going.")
+                full = (depth >= reflexd_wake.MAX_AGENT_CHAIN
+                        or run >= reflexd_wake.MAX_ROOM_AGENT_RUN)
+                # Only the full stop is a pause: past the chatter limit,
+                # @-mentions still wake agents, so "paused" overstated it.
+                marker, text = ((PAUSE_NOTICE, f"{PAUSE_NOTICE} after {run} agent messages "
+                                 "in a row. Say anything to keep them going.") if full else
+                                (CHATTER_NOTICE, f"{CHATTER_NOTICE} after {run} in a row; "
+                                 "@-mentions still wake them. Say anything to reset."))
+                if await self._pause_unannounced(relay, room, recent, marker):
+                    await self._post_status(relay, room, envelope, text)
                 return False
 
         # OS-level notification: fire BEFORE bid/claim so the user gets a
@@ -2473,17 +2479,18 @@ class Reflexd:
 
     async def _pause_unannounced(
         self, relay: RelayClient, room: str, recent: list[dict[str, Any]],
+        marker: str = PAUSE_NOTICE,
     ) -> bool:
         """Every daemon in the room hits the guard on the same message: jitter,
         re-read, and announce only if nobody has yet (one notice per pause)."""
-        if _pause_announced(recent):
+        if _pause_announced(recent, marker):
             return False
         await asyncio.sleep(random.uniform(0.0, 3.0))
         try:
             recent = await relay.fetch_recent(room=room, limit=30)
         except Exception:
             return False
-        return not _pause_announced(recent)
+        return not _pause_announced(recent, marker)
 
     async def _post_status(
         self, relay: RelayClient, room: str, envelope: dict[str, Any], text: str,
