@@ -358,6 +358,13 @@ STUCK_ALERT_EVERY_S = 3600.0
 # Retrying on every stream reconnect burned the relay's per-IP claim budget and
 # locked every agent on the machine out for an hour (release check, 2026-10-17).
 CLAIM_BACKOFF_S = 600.0
+# A free opencode model that prints nothing for this long is dropped for the
+# turn and the next free model takes it (release check: nemotron sat 111-300s
+# before its first token while beam answered in 1.2s). Paid and local models
+# never get this deadline: a local Ollama model can rightly take minutes.
+FREE_FIRST_EVENT_S = 60.0
+# All free models slow at once: pause wakes this long, like a rate limit.
+SLOW_COOLDOWN_S = 15 * 60.0
 # Live steps: at most one presence post this often while a wake runs.
 STEP_POST_MIN_S = 3.0
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
@@ -1247,6 +1254,16 @@ def _same_result(posted: str, reply: str) -> bool:
     return reply.lstrip().startswith("✅") and posted.lstrip().startswith("✅")
 
 
+class SlowStart(str):
+    """The harness printed nothing before its first-output deadline (a free
+    model whose provider takes minutes to its first token)."""
+
+    def __new__(cls, harness: str, seconds: float):
+        obj = super().__new__(cls, f"⚠ {harness}: the model sent nothing for {seconds:.0f}s "
+                                   "(its free provider is slow right now).")
+        return obj
+
+
 class HarnessExitFailure(str):
     """Keep exit metadata while preserving legacy sentinel/retry comparisons."""
 
@@ -1287,17 +1304,24 @@ async def _reap(proc: Any, timeout: float = 10.0) -> None:
 
 async def _collect(
     proc: Any, on_line: Callable[[bytes], None] | None,
+    first_out: asyncio.Event | None = None,
 ) -> tuple[bytes, bytes]:
     """``proc.communicate()``, but each stdout line also goes to *on_line* as it
-    arrives, so the room sees the agent's steps live instead of after the turn."""
-    if on_line is None or not isinstance(proc.stdout, asyncio.StreamReader):
+    arrives, so the room sees the agent's steps live instead of after the turn.
+    *first_out* is set when the first stdout bytes arrive."""
+    if (on_line is None and first_out is None) or not isinstance(
+            getattr(proc, "stdout", None), asyncio.StreamReader):
         return await proc.communicate()
     out, err = bytearray(), bytearray()
 
     async def drain_out() -> None:
         pending, skip = b"", False
         while chunk := await proc.stdout.read(65536):
+            if first_out is not None:
+                first_out.set()
             out.extend(chunk)
+            if on_line is None:
+                continue
             pending += chunk
             *lines, pending = pending.split(b"\n")
             for raw in lines:
@@ -1587,7 +1611,7 @@ class HeadlessAdapter:
         self, build: Callable[[str | None], list[str]], parse: Callable[[str], tuple],
         *, harness: str, cwd: Path | None, resume: str | None,
         on_session: Callable[[str], None] | None, timeout_s: int | None,
-        env: dict[str, str],
+        env: dict[str, str], first_output_s: float | None = None,
     ) -> str:
         """Shared wake for JSON-speaking harnesses: run, read (reply, session,
         error), retry once fresh if a stored session can't be resumed."""
@@ -1600,6 +1624,7 @@ class HeadlessAdapter:
 
         reply = await self._run_subprocess(
             build(resume), parser=parser, cwd=cwd, timeout_s=timeout_s, env=env,
+            first_output_s=first_output_s,
         )
         failed = reply == "[reflexd] harness errored"
         if failed or (resume and captured["err"] and reply == "[reflexd] (no reply)"):
@@ -1613,6 +1638,7 @@ class HeadlessAdapter:
             captured["sid"] = captured["err"] = None
             reply = await self._run_subprocess(
                 build(None), parser=parser, cwd=cwd, timeout_s=timeout_s, env=env,
+                first_output_s=first_output_s,
             )
         if captured["err"] and reply == "[reflexd] (no reply)":
             # The vendor's own words beat a generic sentinel (e.g. "model not
@@ -1648,6 +1674,7 @@ class HeadlessAdapter:
                                           mode=mode)
         if not reflexd_models.is_free_opencode(first):
             return reply
+        self._note_slow(reply)
         tried = {first}
         from quorus.runtime.opencode_free import free_models
 
@@ -1667,11 +1694,25 @@ class HeadlessAdapter:
             reply = await self._opencode_once(context, cwd=cwd, resume=resume,
                                               on_session=on_session, timeout_s=timeout_s,
                                               mode=mode)
+            self._note_slow(reply)
         if self.limited_until > time.time():
             self.model = first  # every free model is busy: cool down as before
             if first == self._home_model:
                 self._rotated_at = 0.0
         return reply
+
+    def _note_slow(self, reply: str) -> None:
+        """A free model that never started answering: send it to the back of
+        the rotation and let the loop move on, as it does for a rate limit."""
+        if not isinstance(reply, SlowStart):
+            return
+        from quorus.runtime.opencode_free import mark_slow
+
+        mark_slow(self.model)
+        self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S)
+        if self.on_step is not None:  # one live line, not a room post per model
+            self.on_step(f"{(self.model or 'default').split('/')[-1]} is slow to start; "
+                         "trying another free model")
 
     async def _opencode_once(
         self, context: str, *, cwd: Path | None, resume: str | None,
@@ -1685,6 +1726,8 @@ class HeadlessAdapter:
                 model=self.model, resume=sid, standalone=not self.opencode_v1)),
             reflexd_models.parse_opencode_stream, harness="opencode", cwd=cwd,
             resume=resume, on_session=on_session, timeout_s=timeout_s, env=env,
+            first_output_s=(FREE_FIRST_EVENT_S
+                            if reflexd_models.is_free_opencode(self.model) else None),
         )
 
     async def _run_gemini(
@@ -1744,6 +1787,7 @@ class HeadlessAdapter:
         cwd: Path | None = None,
         timeout_s: int | None = None,
         env: dict[str, str] | None = None,
+        first_output_s: float | None = None,
     ) -> str:
         # Pre-flight: if the binary truly isn't on PATH, surface the same
         # sentinel string regardless of platform. ``shutil.which`` returning
@@ -1781,13 +1825,31 @@ class HeadlessAdapter:
         except OSError as exc:  # E2BIG etc.: never drop the wake silently
             logger.warning("harness %s failed to start: %s", argv[0], exc.strerror)
             return f"[reflexd] {argv[0]} could not start ({exc.strerror})"
+        budget = timeout_s or self.timeout_s
+        first = asyncio.Event() if first_output_s else None
+        collecting = asyncio.ensure_future(_collect(proc, self._step_handler(), first))
         try:
-            stdout, stderr = await asyncio.wait_for(
-                _collect(proc, self._step_handler()), timeout=timeout_s or self.timeout_s
-            )
+            if first is not None:
+                # A free model can sit minutes before its first token (nemotron:
+                # 111-300s, release check 2026-10-17). Waiting a whole turn on it
+                # beats nothing; moving to the next free model beats waiting.
+                started = time.monotonic()
+                waiter = asyncio.ensure_future(first.wait())
+                await asyncio.wait({waiter, collecting}, timeout=first_output_s,
+                                   return_when=asyncio.FIRST_COMPLETED)
+                waiter.cancel()
+                if not first.is_set() and not collecting.done():
+                    _kill_group(proc)
+                    collecting.cancel()
+                    await _reap(proc)
+                    logger.warning("harness %s sent nothing in %ss", argv[0], first_output_s)
+                    return SlowStart(Path(argv[0]).name, first_output_s)
+                budget = max(1, budget - (time.monotonic() - started))
+            stdout, stderr = await asyncio.wait_for(collecting, timeout=budget)
         except asyncio.CancelledError:
             # Daemon stopping: never orphan a running agent.
             _kill_group(proc)
+            collecting.cancel()
             raise
         except (TimeoutError, asyncio.TimeoutError):  # distinct classes on 3.10
             # L4: Python 3.11+ aliases ``asyncio.TimeoutError`` to the
