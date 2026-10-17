@@ -154,6 +154,10 @@ intervention rather than retrying a possibly delivered handoff. Manual/read-only
 rooms, crashes/timeouts and unmatched vendor errors do not fail over. Degraded status/reasons and
 last-wake timestamps are exposed by `/presence`; the TUI renders the handoff.
 Tests: `test_reflexd_failover.py` and `test_failover_routes.py`.
+Claude JSON results with `is_error: true` are also diagnosed when the CLI
+exits 0, including usage-limit messages and errors arrays. Ordinary successful
+answers mentioning quotas keep their text and never trigger failover;
+unknown explicit errors use the generic error sentinel.
 
 ### Daemon commit hygiene (2026-10-17)
 

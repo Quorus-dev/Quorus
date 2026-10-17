@@ -558,6 +558,15 @@ def _parse_claude_json(out: str) -> tuple[str, str | None]:
     if isinstance(data, dict):
         text = data.get("result")
         sid = data.get("session_id")
+        if data.get("is_error") is True:
+            # Claude's result envelope can carry an API error even with
+            # exit status 0. Only explicit errors are diagnosed: an ordinary
+            # model answer discussing quota must never trigger failover.
+            errors = [text] if isinstance(text, str) else []
+            if isinstance(data.get("errors"), list):
+                errors.extend(e for e in data["errors"] if isinstance(e, str))
+            diagnosis = diagnose_harness_failure("claude", "\n".join(errors))
+            return diagnosis or "[reflexd] harness errored", sid if isinstance(sid, str) else None
         if isinstance(text, str):
             return text.strip(), sid if isinstance(sid, str) else None
     return out.strip(), None
@@ -906,6 +915,7 @@ _HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
     ("please run /login", "not logged in — run `claude /login` on this host."),
     ("not logged in", "not logged in — run the harness's login command on this host."),
     ("rate limit", "the vendor rate-limited this account; the wake was dropped."),
+    ("usage limit", "the vendor reports the account's usage limit has been reached."),
     ("quota", "the vendor reports the account is out of quota."),
 )
 
@@ -920,7 +930,7 @@ def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
     for needle, message in _HARNESS_DIAGNOSTICS:
         if needle in low:
             text = f"⚠ {harness}: {message}"
-            category = {"quota": "quota", "rate limit": "rate_limit",
+            category = {"quota": "quota", "usage limit": "quota", "rate limit": "rate_limit",
                         "please run /login": "login", "not logged in": "login",
                         "ineligibletiererror": "login"}.get(needle)
             return _failover.VendorFailure(text, category) if category else text
