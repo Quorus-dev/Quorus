@@ -2559,9 +2559,13 @@ class Reflexd:
                     f"@{self.config.participant_name} is pacing itself ({cap} turns/hour to "
                     f"stay inside its plan); next turn in about {_human_wait(wait)}")
             logger.info("pacing: waiting %.0fs (cap %d/h)", wait, cap)
+            # Waiting for a plan slot isn't working: it showed as "⋯ @a-codex
+            # working 57m" for most of every hour (2026-10-17).
+            await self._set_presence(relay, "active", "")
             await self._sleep_or_stop(wait)
             if self._stop.is_set():
                 return False
+            await self._set_presence(relay, "busy", room)
         self._turns = [t for t in self._turns if time.time() - t < PACE_WINDOW_S]
         self._turns.append(time.time())
         return True

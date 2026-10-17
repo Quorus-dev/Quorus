@@ -80,3 +80,26 @@ def test_over_cap_waits_and_says_so_once_but_humans_go_first(monkeypatch) -> Non
     human = {"room": "build", "from_name": "arav", "message_id": "h"}
     slept.clear()
     assert asyncio.run(d._paced(relay, human)) and slept == []  # boss never waits
+
+
+def test_waiting_for_a_slot_shows_available_not_working(monkeypatch) -> None:
+    """Codex showed '⋯ working 57m' for most of every hour while it waited."""
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+    monkeypatch.setattr(reflexd, "pace_for", lambda name: 1)
+    seen: list[tuple[str, str]] = []
+
+    async def fake_sleep(s: float) -> None:
+        seen.append(d._presence)  # what the room sees during the wait
+
+    async def fake_presence(relay: Any, status: str, room: str) -> None:
+        d._presence = (status, room)
+
+    monkeypatch.setattr(d, "_sleep_or_stop", fake_sleep)
+    monkeypatch.setattr(d, "_set_presence", fake_presence)
+    d._presence = ("busy", "build")
+    msg = {"room": "build", "from_name": "a-claude", "message_id": "m"}
+    asyncio.run(d._paced(_Relay(), msg))
+    asyncio.run(d._paced(_Relay(), msg))  # over the cap: waits
+    assert seen == [("active", "")]
+    assert d._presence == ("busy", "build")  # working again once the turn starts
