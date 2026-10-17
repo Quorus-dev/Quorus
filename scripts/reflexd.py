@@ -1688,6 +1688,13 @@ class RelayClient:
     relay_url: str
     api_key: str
     legacy_bearer: bool = False  # if True, send api_key directly as Bearer (skip /v1/auth/token)
+    # On a shared-secret relay the daemon claims its own name and signs in
+    # with a participant JWT, so identity-bound endpoints (social verbs like
+    # /v1/social/defer, which refuse legacy auth) work and stay bound to this
+    # agent. The key lives in the agent's private config dir, where its MCP
+    # server finds the same key instead of claiming again (409).
+    participant: str = ""
+    key_dir: Path | None = None
     _bearer: str | None = None
     _bearer_expires_at: float = 0.0
     _client: httpx.AsyncClient | None = None
@@ -1718,7 +1725,13 @@ class RelayClient:
         rather than parsing the Authorization header out of ``_headers()``.
         """
         if self.legacy_bearer:
-            return self.api_key
+            if not self.participant:
+                return self.api_key
+            now = time.time()
+            if self._bearer is None or now >= self._bearer_expires_at:
+                self._bearer = await self._participant_jwt() or self.api_key
+                self._bearer_expires_at = now + 4 * 60
+            return self._bearer
         now = time.time()
         if self._bearer is None or now >= self._bearer_expires_at:
             resp = await self.client.post(
@@ -1728,6 +1741,35 @@ class RelayClient:
             self._bearer = resp.json()["token"]
             self._bearer_expires_at = now + 4 * 60
         return self._bearer or ""
+
+    async def _participant_jwt(self) -> str | None:
+        """Claim (once) and use this agent's participant key; None on a relay
+        without claims (older build, or one with API keys), which keeps the
+        shared secret as before."""
+        from quorus import bundle_client
+
+        key = bundle_client.load_participant_key(self.relay_url, self.participant, self.key_dir)
+        try:
+            if not key:
+                resp = await self.client.post(
+                    "/v1/auth/claim-name", json={"name": self.participant},
+                    headers={"Authorization": f"Bearer {self.api_key}"})
+                if resp.status_code != 200:
+                    logger.warning("participant key unavailable (claim-name %s); "
+                                   "using the shared secret", resp.status_code)
+                    return None
+                key = resp.json()["participant_key"]
+                bundle_client.save_participant_key(self.relay_url, self.participant, key,
+                                                   self.key_dir)
+            resp = await self.client.post("/v1/auth/token", json={"api_key": key})
+            if resp.status_code != 200:
+                logger.warning("participant token refused (%s); using the shared secret",
+                               resp.status_code)
+                return None
+            return resp.json()["token"]
+        except (httpx.HTTPError, ValueError, KeyError, OSError) as exc:
+            logger.warning("participant sign-in failed (%s); using the shared secret", exc)
+            return None
 
     async def _headers(self) -> dict[str, str]:
         # Cache JWT for 4 min (relay token lifetime is 5min).
@@ -3147,6 +3189,8 @@ class Reflexd:
             relay_url=self.config.relay_url,
             api_key=self.config.api_key,
             legacy_bearer=self.config.legacy_bearer,
+            participant=self.config.participant_name,
+            key_dir=self.config.runtime_dir / "agents" / self.config.participant_name,
         ) as relay:
             logger.info(
                 "reflexd starting participant=%s relay=%s",

@@ -109,6 +109,16 @@ def test_no_candidate_or_permission_mode_posts_diagnosis(setup, monkeypatch, mod
     assert "quota" in relay.posted[0]["content"]
 
 
+def test_autonomous_rooms_fail_over_too(setup, monkeypatch):
+    """Live proof 2026-10-17: our rooms run "autonomous", and attempt() returned
+    early for anything but "default", so failover never fired there."""
+    d, relay = setup(), Relay()
+    monkeypatch.setattr(reflexd, "mode_for", lambda room: "autonomous")
+    monkeypatch.setattr(reflexd, "trust_for", lambda room: "members")  # a trusted sender
+    run(d, relay)
+    assert len(relay.handoffs) == 1 and relay.handoffs[0]["target"] == "c-gemini"
+
+
 def as_envelope(handoff, actor, message_id):
     sv = SocialVerb(verb="defer", actor=actor, room_id="r",
                     ref_message_id=handoff["ref_message_id"],

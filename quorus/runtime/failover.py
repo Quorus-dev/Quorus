@@ -104,7 +104,7 @@ def _last_commit(worktree) -> str:
 async def attempt(daemon, relay, envelope, *, reason, mission, worktree, mode,
                   detect, capabilities, score) -> str | None:
     """Transfer a claim, then send one typed wake. Return a fallback diagnosis suffix."""
-    if mode != "default":
+    if mode in ("manual", "readonly"):  # read-only rooms post the diagnosis only (spec)
         return None
     actor = daemon.config.participant_name
     room = envelope.get("room") or ""

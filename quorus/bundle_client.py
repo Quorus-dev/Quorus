@@ -89,7 +89,42 @@ def make_bundle(repo: Path, *, branch: str | None = None, base: str | None = Non
     return data, branch
 
 
-def bearer(relay_url: str, *, api_key: str = "", secret: str = "", name: str = "") -> str:
+KEYS_FILE = "participant_keys.json"
+
+
+def _keys_path(store_dir: Path | None) -> Path:
+    if store_dir is None:
+        from quorus.config import resolve_config_dir
+
+        store_dir = resolve_config_dir()
+    return Path(store_dir) / KEYS_FILE
+
+
+def load_participant_key(relay_url: str, name: str, store_dir: Path | None = None) -> str:
+    """The saved ``quorus_pk_`` key for *name* on *relay_url*, or ""."""
+    path = _keys_path(store_dir)
+    try:
+        keys = json.loads(path.read_text()) if path.exists() else {}
+    except ValueError:
+        keys = {}
+    return keys.get(f"{relay_url.rstrip('/')}|{name}", "") if isinstance(keys, dict) else ""
+
+
+def save_participant_key(relay_url: str, name: str, key: str,
+                         store_dir: Path | None = None) -> None:
+    from quorus.private_files import write_private_json
+
+    path = _keys_path(store_dir)
+    try:
+        keys = json.loads(path.read_text()) if path.exists() else {}
+    except ValueError:
+        keys = {}
+    keys[f"{relay_url.rstrip('/')}|{name}"] = key
+    write_private_json(path, keys)
+
+
+def bearer(relay_url: str, *, api_key: str = "", secret: str = "", name: str = "",
+           store_dir: Path | None = None) -> str:
     """A participant JWT for this relay.
 
     With an API key, exchange it. On a shared-secret relay, claim *name* once
@@ -99,16 +134,8 @@ def bearer(relay_url: str, *, api_key: str = "", secret: str = "", name: str = "
         return _token(relay_url, api_key)
     if not (secret and name):
         raise BundleClientError("no credentials for this relay; run `quorus init` first")
-    from quorus.config import resolve_config_dir
-    from quorus.private_files import write_private_json
-
-    store = resolve_config_dir() / "participant_keys.json"
-    try:
-        keys = json.loads(store.read_text()) if store.exists() else {}
-    except ValueError:
-        keys = {}
-    slot = f"{relay_url.rstrip('/')}|{name}"
-    if slot not in keys:
+    key = load_participant_key(relay_url, name, store_dir)
+    if not key:
         resp = _http.post(f"{relay_url.rstrip('/')}/v1/auth/claim-name", json={"name": name},
                           headers={"Authorization": f"Bearer {secret}"}, timeout=15)
         if resp.status_code == 409:
@@ -116,9 +143,9 @@ def bearer(relay_url: str, *, api_key: str = "", secret: str = "", name: str = "
                 f"the name {name!r} is already claimed on this relay from another machine "
                 "or config; the relay owner can free it with `quorus release-name`")
         _check(resp, "claiming your name")
-        keys[slot] = resp.json()["participant_key"]
-        write_private_json(store, keys)
-    return _token(relay_url, keys[slot])
+        key = resp.json()["participant_key"]
+        save_participant_key(relay_url, name, key, store_dir)
+    return _token(relay_url, key)
 
 
 def _token(relay_url: str, key: str) -> str:

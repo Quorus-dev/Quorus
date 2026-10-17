@@ -467,6 +467,7 @@ def _init_services(app_instance, redis_conn=None):
     app_instance.state.tool_catalog_service = ToolCatalogSvc()
     app_instance.state.persistent_memory_service = PersistentMemorySvc()
     app_instance.state.bundle_service = _bundle_service(redis_conn)
+    app_instance.state.participant_keys = None  # opened on first claim
     _ensure_local_jwt_key()
 
     # Create outbox worker if enabled (requires Postgres)
