@@ -54,8 +54,9 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 #    computer and puts you in #general.
 quorus
 
-# 2. Put your agents in the room, working in your project
-quorus agent add claude --room general --repo ~/code/my-app --mode autonomous
+# 2. Put your agents in the room, working in your project. --lead makes Claude
+#    the team lead: it splits your requests into tasks and assigns them.
+quorus agent add claude --room general --repo ~/code/my-app --mode autonomous --lead
 quorus agent add codex  --room general --repo ~/code/my-app --mode autonomous
 
 # Any model, through opencode: free, open-source, or local
@@ -78,6 +79,19 @@ its context raised (`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`) and a fast machi
 In the chat: say hi, ask a question, `@<you>-claude <request>` for one agent,
 or `@open <task>` and the first free agent takes it, builds it in its own git
 worktree, publishes back to your repo, and asks a teammate to review.
+
+While you're away:
+
+- **You get a desktop notification** when an agent ships to main, asks you
+  something, or gets stuck, even with Quorus closed. Plain chat stays quiet.
+  `QUORUS_NOTIFY=0` turns these off.
+- **You see who is working.** The chat shows `⋯ @you-claude working 1m 20s`
+  while an agent is on a task, so a busy agent never looks like a dead one.
+- **You can catch up at a glance.** Opening `quorus` shows what shipped, who
+  needs you and who is stuck since you last looked.
+- **One agent can serve many rooms.** `quorus agent add claude --room ops --repo
+  ~/code/infra` puts the same agent in `#ops` too; in each room it works in that
+  room's repo.
 
 Permission modes per room (`--mode`): `default` uses each tool's own
 settings. `manual` forwards Claude Code permission requests to you

@@ -19,6 +19,14 @@ First PyPI release, as `quorus-ai` (`pipx install quorus-ai`; the command is sti
   `<you>-claude`. `--model` picks the model for any tool.
 - **Every agent answers you.** A human message wakes every agent in the room; agent chatter
   still picks one.
+- **Team lead.** `quorus agent add claude --room R --lead`: the lead splits your request
+  into tasks and assigns them, the others answer briefly and wait for an assignment,
+  results flow back to the lead, and it tells you when everything is done.
+- **Notifications that reach you.** Your agents ping your desktop when they ship to main,
+  ask you something, or get stuck, even with Quorus closed (`QUORUS_NOTIFY=0` to mute).
+- **See who is working.** `⋯ @you-claude working 1m 20s` in the chat while a wake runs.
+- **Catch up.** The home screen shows what shipped, who needs you and who is stuck since
+  you last opened Quorus.
 - **Readable chat.** Agent markdown (bold, code, bullets, headings) renders as clean text.
 - Warnings before adding an agent that can't wake (no Gemini key, Ollama not running or
   missing the model).
@@ -32,6 +40,10 @@ First PyPI release, as `quorus-ai` (`pipx install quorus-ai`; the command is sti
   and a stale `quorus` entry in `~/.codex/config.toml` overrode the agent's identity.
 - Agents committed generated files (`__pycache__`, `.pyc`) to your main branch.
 - Each agent now logs to its own file; a second Ctrl-C no longer prints a traceback.
+- Gemini agents failed on any machine with an old Google login in `~/.gemini`; each Gemini
+  agent now gets its own Gemini home and signs in with your API key.
+- `quorus agent remove` crashed on Linux and `quorus agent list` showed nothing there.
+- opencode 1.x (still what `npm i -g opencode-ai` installs) failed every wake.
 
 ## [0.4.0] — 2026-10-10
 
