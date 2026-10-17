@@ -1,79 +1,79 @@
 # Graph Report - arav-claude  (2026-10-17)
 
 ## Corpus Check
-- 517 files · ~540,836 words
+- 555 files · ~575,791 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 10292 nodes · 18476 edges · 631 communities (461 shown, 170 thin omitted)
-- Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 982 edges (avg confidence: 0.89)
+- 10923 nodes · 19763 edges · 641 communities (493 shown, 148 thin omitted)
+- Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 980 edges (avg confidence: 0.89)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `62ff89e5`
+- Built from commit: `96f23a1b`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- Protocol
+- test_triage_redis.py
 - test_cli.py
-- InMemoryWebhookQueueBackend
-- _redact_participant
+- replay_cmd.py
+- MessageService
 - hub.py
 - chat.py
 - PolicyContext
 - McpEnv
-- Tenant
+- Participant
 - codex_agent.py
-- main
+- quorus_cli/cli.py
 - test_reflexd_wake_contract.py
-- Any
-- _auth_headers
+- WorkQueueError
+- test_bundles.py
 - collect_state
 - triage_redis.py
 - notify
-- AuditService
+- _load_from_file
 - AsyncClient
 - test_webhook_logging.py
 - hooks.py
-- test_sse_endpoint_registers_and_cleans_up_queue
+- PersistentMemorySvc
 - approvals.py
 - Room
 - reflexd_wake.py
-- generate_api_key
+- test_supervisor.py
 - WebhookService
 - normalize_code
 - rooms.py
 - reflexd.py
 - test_reflexd.py
-- WebhookQueueBackend
+- MessageBackend
 - scenarios.py
 - test_reflexd_real_claude.py
-- tool_catalog.py
+- ToolCatalogSvc
 - Quorus Launch Readiness Checklist
 - _user_headers
-- Decision
-- tool
+- get_db_session
+- RedisWebhookQueueBackend
 - gemini_agent.py
-- ._key
-- config.py
+- _with_timeout
+- load_config
 - create_jwt
 - SocialVerb
 - test_operating_discipline.py
-- test_identity.py
+- AuditService
 - VendorLogos.tsx
 - ProfileManager
-- PersistentMemorySvc
+- tool
 - test_cli_init_productized.py
 - _create_room
 - Pricing.tsx
-- test_postgres_integration.py
-- test_approvals.py
+- test_identity.py
+- _create
 - agent_dm.py
 - .create
 - _scrub_event
 - test_turnguard.py
-- _init_services
+- Protocol
 - triage.py
 - Path
 - Production Architecture Design — Murmur
@@ -85,16 +85,16 @@
 - agent_cmd.py
 - _cmd_heartbeat
 - _send_message
-- RedisWebhookQueueBackend
+- verify_api_key
 - stall_demo_local.sh
 - _mock_client
-- RoomBackend
+- test_reflexd_adapters.py
 - _cmd_doctor
 - _first_launch_setup
 - phase1_tools.py
-- RoomService
+- phase1_registry.py
 - CapabilitySvc
-- ToolCatalogSvc
+- relay.py
 - test_usage.py
 - test_runtime_memory.py
 - test_agent_dm.py
@@ -102,28 +102,28 @@
 - routes/audit.py
 - RelayClient
 - anyio
-- admin/models.py
+- 3. Differentiator ideas
 - server.py
 - ReceiveResult
 - welcome.py
 - test_redis_integration.py
-- _with_timeout
+- RedisRoomBackend
 - AsyncClient
 - _FakeHome
 - FakeRelay
 - claude_agent.py
 - RoomStateBackend
 - test_tui_hub.py
-- AuthContext
+- verify_auth
 - App.tsx
 - test_install_topology.py
-- require_room_member
+- room_state.py
 - AsyncClient
-- test_supervisor.py
-- SocialSvc
+- AuthContext
+- test_bundle_client.py
 - Claude Tunnel v2 Improvements — Design Spec
 - Murmur Rooms & Group Chat — Design Spec
-- test_codex_agent.py
+- _pid_is_alive
 - render_approvals_panel
 - ApprovalSvc
 - e2e_live.py
@@ -132,7 +132,7 @@
 - ._wake_and_reply_inner
 - Reflexd
 - test_reflexd_inbox_drain.py
-- reflexd_triage.py
+- .handle_room_message
 - test_reflexd_defer_announce.py
 - test_reflexd_failover.py
 - Quickstart.tsx
@@ -140,14 +140,14 @@
 - ControlCenterPanels.tsx
 - CrossHarnessBand.tsx
 - Design: B2C API Keys for Murmur Managed Service
-- phase1_registry.py
+- WorkQueueSvc
 - test_working_and_alerts.py
-- InMemoryRateLimitBackend
+- plain_markdown
 - test_triage.py
 - test_any_model_wake.py
 - test_cli_reflexd.py
 - test_cli_workspaces.py
-- get_db_session
+- UUID
 - account.py
 - compilerOptions
 - test_agent_cmd.py
@@ -157,37 +157,37 @@
 - test_security.py
 - HeroRoom.tsx
 - Moonshot Feature Ideas
-- ui.py
-- test_tui_dm_inbox.py
-- ValueError
+- test_postgres_integration.py
+- quorus_tui/__init__.py
+- test_wake_log_secrets.py
 - ConfigManager
-- _load_from_file
-- _chat
-- WorkQueueSvc
-- _reflexd_script_path
+- InMemoryWebhookQueueBackend
+- test_cli_swarm.py
+- BundleService
+- _init_services
 - _setup_lock_room
 - cross_harness_copy.ts
 - test_claude_agent.py
 - AutocompletePopover
 - test_agent_linux.py
-- profiles.py
+- test_persistent_memory.py
 - anyio
 - test_sdk.py
 - BentoLight.tsx
 - _howStepsParts.tsx
 - quorus_sdk/http_agent.py
 - Agent
-- plain_markdown
-- relay.py
-- AsyncClient
-- test_reflexd_adapters.py
+- social.py
+- test_live_steps.py
+- load_policy_for_tenant
+- tool_catalog.py
 - test_threading.py
 - Home.tsx
 - Design: murmur resolve (Conflict Resolution Agent)
 - run_claude_agent
 - QuorusClient
 - InMemoryMessageBackend
-- resolve_config_dir
+- ui.py
 - test_notification_dispatch.py
 - parametrize
 - test_tui_chat.py
@@ -195,16 +195,16 @@
 - YC S26 Application — Quorus (v8)
 - get_redis_or_none
 - check_redis
-- capabilities.py
+- backends/memory.py
 - reflexd_models.py
 - test_decorators.py
 - devDependencies
 - Integration Guides
-- backends/memory.py
+- get_real_ip
 - runtime.py
 - slash.py
 - redis_backends.py
-- PresenceService
+- quickstart.py
 - runtime/memory.py
 - append_sync
 - test_real_harness_e2e.py
@@ -215,7 +215,7 @@
 - Quorus — Launch Finalization Plan (v9)
 - Watcher
 - working.py
-- _cmd_share
+- bundles.py
 - compilerOptions
 - quorus_codex_loop.py
 - HookAuthResolutionTests
@@ -230,24 +230,24 @@
 - Multi-Workspace Support (Client-Side)
 - Multi-Workspace Support (Client-Side)
 - Build Your First Multi-Agent Project in 5 Minutes
-- .register_queue
+- _decode_join_token
 - _strip_agent_suffix
 - InMemoryRoomStateBackend
 - RedisPresenceBackend
 - tests/conftest.py
-- _cmd_init
+- test_cli_init_profile_layout.py
 - DocsLayout.tsx
 - Quorus Launch Tweet Kit (v8 — agent-native OS)
 - Quorus Rebuild Research — Notifications, Competition, MVP
 - HubState
-- APIKey
+- test_outbox_replay_resilience.py
 - test_mcp_auth_fallback.py
 - test_outbox_retry_storm.py
 - test_rooms_integration.py
 - TestAuthRequired
 - _msg
 - native.py
-- test_wave2_hardening.py
+- TestRedisMessageBackpressure
 - Cross-Harness Notifications
 - Hackathon Cold-Install Regression — April 23, 2026
 - Recent Changes
@@ -256,37 +256,37 @@
 - test_jwt_url_leak.py
 - test_mcp.py
 - test_mcp_runtime.py
-- test_outbox_replay_resilience.py
+- social_verbs.py
 - TestRoomLock
 - Launch-day tweet kit
 - Quorus OS Spec v1.0
 - test_cold_install.py
-- _decode_join_token
-- write_private_json
-- SSEListener
 - render_work_queue_panel
-- _git
-- test_triage_redis.py
+- failover.py
+- Code across machines: design (slate item 4)
+- routes/__init__.py
+- admin/models.py
+- _audit_tool_call
 - test_init_wake_smoke.py
 - dogfood.sh
 - test_entry_point_bootstrap.py
 - TestRedisMessageBackend
 - test_reflexd_self_assign.py
 - test_security_headers.py
-- _audit_tool_call
-- quorus_tui/__init__.py
-- room_messages.py
+- Monday memo: Quorus weekend (2026-10-17)
+- test_wave2_hardening.py
+- SocialSvc
 - QuorusConsole.tsx
 - Shot List
 - Quorus — Post-launch 30-day plan
 - Procedure
 - File Structure
 - _name_has_agent_keyword
-- test_claude_json_errors.py
-- webhooks.py
+- test_prompt_injection_guard.py
+- Supervisor
 - test_cold_install_isolation.py
 - test_dm_rate_limit_and_dashboard_robots.py
-- social.py
+- RoomService
 - test_room_member_presence.py
 - TestRoomConvenience
 - test_sse_legacy_auth.py
@@ -296,7 +296,7 @@
 - File Map
 - Redis Cost Tightening Implementation Plan
 - Wake Rebuild — Implementation Spec v1.0
-- middleware.py
+- test_quota_cooldown.py
 - demo_reflex.sh
 - test_chat_widgets_verbs.py
 - _FakeProc
@@ -307,13 +307,13 @@
 - The Six Rules
 - Failure modes
 - dependencies
-- live_pid
+- test_tui_first_run_messages.py
 - render_dm_inbox_panel
-- _render_header
-- _run
-- get_real_ip
-- load_runtime_config
-- install_launchd
+- RedisAnalyticsBackend
+- InMemoryRateLimitBackend
+- Saturday: the usefulness bar (from Arav, 2026-10-17)
+- BundleError
+- test_reflexd_commit_hygiene.py
 - deploy
 - Quorus
 - demo_wake.sh
@@ -326,22 +326,22 @@
 - Murmur API Reference
 - Endpoints
 - Multi-Workspace Support Implementation Plan
-- InviteService
+- mcp_writers.py
 - quorus_mcp/__init__.py
-- quorus_cli/cli.py
+- persistent_memory.py
 - RedisWebhookBackend
 - Quorus — Shared Context
 - QuorusClient
-- social_verbs.py
+- test_tui_slash.py
 - _truncate_utf8
-- TestPendingInputBuf
-- routes/__init__.py
+- config.py
+- test_visible_silence.py
 - test_mcp_channel_push.py
 - _Relay
 - test_open_broadcast_only_matches_at_message_start
 - _setup_state_room
-- ._selected_name_locked
-- test_reflexd_commit_hygiene.py
+- register_codex
+- live_pid
 - test_tui_paste_and_echo.py
 - test_tui_workspace_switch.py
 - Rooms — Lifecycle
@@ -353,16 +353,16 @@
 - Teardown: Agent Mail
 - record_demo_cast.sh
 - Teardown: Claude-Code-Workflow
-- _qod_prompt
+- _render_header
 - TestHugePayloads
-- test_catchup.py
+- _cmd_share
 - BrainHero.tsx
 - join_room
 - Admin
 - Harness Tiers — Cross-Vendor Coverage
 - Multi-User Test Runbook — Arav + Aarya
 - Publishing to PyPI
-- test_tool_catalog.py
+- cmd_demo
 - cmd_reflex_status
 - channel.py
 - autocomplete.py
@@ -380,7 +380,7 @@
 - send_heartbeat
 - _security_notes
 - record_kliment_cast.sh
-- .mark_inline_rule_if_fresh
+- test_admin.py
 - test_editable_pth_fix.py
 - test_e2e_open_todo_no_capability_match_bids_low
 - Path
@@ -392,12 +392,12 @@
 - Stall Talk Track - Quorus Builders' Showcase
 - Stall Waitlist - pick today, run before doors open
 - review-notes.md
-- live_sessions.py
-- ._dedup_key
-- HydrationClock
+- test_quickstart.py
+- load_runtime_config
+- WebhookQueueBackend
 - stall_setup_aarya.sh
 - TestLongPollSecurity
-- .request_workspace_switch
+- SSEListener
 - ConsoleTeaserBand.tsx
 - BrainSynapses.tsx
 - NeuralSphere.tsx
@@ -408,11 +408,11 @@
 - .render
 - detect_open_trigger
 - Findings
-- Launch post (draft)
+- redaction.py
 - launch_smoke.sh
 - quorus-autosync.sh
 - parametrize
-- test_cursor_adapter_handles_missing_binary_falls_back_to_inbox
+- test_catchup.py
 - .test_invite_page_does_not_leak_relay_secret
 - TestPublicEndpoints
 - TestWebhookSecurity
@@ -444,27 +444,27 @@
 - Usage
 - test_fly_deploy_config.py
 - configure_mcp
-- _make_mock_client
+- bundle_tools.py
 - test_readme_support.py
-- test_log_adapter_versions_warns_on_unknown_version
-- test_adapter_dry_run_records_argv_without_spawning
-- _cmd_hook
+- duel_cmd.py
+- ._coerce_payload
+- _cmd_init
 - base_dir
 - test_memory_concurrent_purge_and_append_no_torn_writes
-- _cmd_inbox
+- test_wake_attempts.py
 - Nav.tsx
 - conftest.py
 - globals
 - mcp/README.md
-- AsyncClient
-- _cmd_memory
-- _sanitize
+- test_room_history_returns_messages
+- test_owner_trust.py
+- client
 - postcss
 - admin/__init__.py
 - auth/__init__.py
 - backends/__init__.py
 - observability/__init__.py
-- test_invite_join_with_scoped_token
+- TestPendingInputBuf
 - services/__init__.py
 - storage/__init__.py
 - autopull.sh
@@ -482,29 +482,29 @@
 - @testing-library/react
 - e2e/__init__.py
 - Outreach candidates (draft)
-- test_unicode_emoji_message
-- _render_welcome_to_string
-- test_claude_argv_max_turns_placement
-- load_policy_for_tenant
-- test_relay.py
-- test_codex_argv_has_trust_flag_and_resume
+- ledger.py
+- auth/routes.py
+- .request_workspace_switch
+- test_capabilities.py
+- test_sse_endpoint_registers_and_cleans_up_queue
+- test_demo_cmd.py
 - _fallback_read_inbox
-- _FakeHTTPError
+- _qod_prompt
 - Weekend ideas
 - test_conftest_env_isolation.py
-- test_rate_limit_per_sender
-- test_manual_ack_token_acknowledges
-- test_codex_stream_parser_extracts_thread_id
-- test_probe_harness_version_returns_string_for_known_binary
-- test_cline_adapter_invokes_correct_binary
-- test_bridge_denies_when_nobody_answers
-- test_invite_page_404_for_missing_room
-- RedisAnalyticsBackend
-- test_register_webhook_allows_http_ip_callback
-- test_agent_quotes_are_not_fresh_triggers
-- UUID
-- test_tui_work_queue_panel.py
-- test_dm_still_works_after_rooms_added
+- Any
+- ._dedup_key
+- envelope_reply_depth
+- ._selected_name_locked
+- SignupResponse
+- test_approvals.py
+- _make_mock_client
+- install_launchd
+- test_duel.py
+- Path
+- test_claude_argv_max_turns_placement
+- test_codex_argv_has_trust_flag_and_resume
+- reflexd_steps.py
 - test_capabilities_for_each_harness
 - test_capabilities_default_unknown_to_claude
 - test_bid_score_role_match_is_seven_tenths
@@ -514,71 +514,71 @@
 - test_role_request_routes_to_matching_harness
 - test_at_open_routes_to_claude_for_react_work
 - test_triage_mention_still_wins_outright
-- test_stub_reply_neutralizes_every_mention
-- ._listen
-- test_diagnose_known_harness_failures
+- quorus/cli.py
+- analyze
+- Launch go/no-go (overseer, Sat 2026-10-17)
 - work_queue.py
-- WorkQueueRequest
+- test_cursor_adapter_handles_missing_binary_falls_back_to_inbox
 - Proposed 60-second edit: an installer fix reviewed across two environments
-- test_ack_endpoint_requires_payload
-- test_sse_endpoint_rejects_bad_token
-- test_contractions_do_not_swallow_mentions
-- test_invite_join_rejects_wrong_room_token
-- ._send_with_outbox
+- HydrationClock
+- test_log_adapter_versions_warns_on_unknown_version
+- test_mcp_session_race.py
+- test_adapter_dry_run_records_argv_without_spawning
+- test_mcp_writers.py
+- record_provenance
+- quorus/analytics.py
+- test_auth_middleware_timing.py
+- test_relay.py
+- cmd_scorecard
+- test_stub_reply_neutralizes_every_mention
+- test_rate_limit_dm
 - test_rate_limit_room_message
-- test_cli_first_run_hints.py
-- TestRoomAuth
-- test_invite_join_rejects_expired_token
-- _FakeProc
-- .subscribe
-- test_large_message_in_room
-- test_health_detailed_returns_metrics
-- SocialVerbBody
-- test_agent_profile_not_found
-- test_analytics_after_send_and_receive
-- agent_worktree
-- .expand_thread
-- test_get_thread_not_found
-- test_get_thread_requires_auth
-- test_room_state_404_for_unknown_room
-- test_set_goal_rejects_oversized_goal
-- test_room_history_limit_param
-- .selected_room_name
-- test_chunked_message_too_large_for_storage_cap_returns_413
-- test_room_history_resolve_by_name
+- TestSortRoomsByActivity
+- _maybe_configure_codex_autonomy_defaults
+- test_dashboard_has_connection_status
 - test_invite_page_returns_html
-- test_manual_ack_returns_token_and_delivery_ids
-- test_message_cap_does_not_split_chunk_groups
-- test_long_poll_returns_immediately_with_messages
-- test_analytics_empty
-- .set_rooms
-- .snapshot_render_state
-- test_list_participants_optional_audit_timeout_does_not_block
-- test_check_messages_always_uses_nonblocking_fetch
-- test_check_messages_always_fetches_from_durable_queue
-- test_dashboard_mobile_responsive
-- test_send_push_notification_uses_configured_method
-- test_sse_listener_is_only_delivery_mode
-- test_send_message_calls_relay
-- test_claim_task_already_locked
-- test_agent_profile_shows_rooms
-- test_claim_task_relay_error
-- test_register_webhook_rejects_localhost
-- test_delete_nonexistent_webhook
-- test_release_task_success
-- test_release_task_relay_error
-- test_get_room_state_formats_output
-- test_send_message_audit_timeout_blocks_mutation
-- test_room_message_nonmember_rejected
-- test_sse_queue_receives_dm
-- test_room_message_nonexistent_room_returns_404
-- test_send_rejects_empty_name
-- test_room_history_requires_auth
 - test_invite_page_requires_auth
+- test_daemon_git_no_hooks.py
+- _relay_unreachable
+- _OkClient
+- test_invite_join_with_scoped_token
+- test_replay.py
+- test_sse_queue_receives_dm
+- Weekend brief: make Quorus better, using Quorus (2026-10-17 → 10-19)
+- register_opencode
+- TestRoomListener
+- test_unicode_emoji_message
+- test_failover_routes.py
+- test_invite_join_rejects_expired_token
 - test_kicked_agent_cannot_send
-- test_dashboard_has_create_room_button
-- test_agent_profile_basic
-- test_dashboard_has_modal_support
+- FakeProc
+- test_message_cap_does_not_split_chunk_groups
+- configure_mcp
+- test_dashboard_css_variables
+- test_agent_profile_requires_auth
+- test_claim_task_unknown_room_404
+- test_send_rejects_overly_long_name
+- test_v1_usage_room_detail
+- .mark_inline_rule_if_fresh
+- .append_dm_message
+- _sanitize
+- test_clear_room_goal
+- test_add_room_decision
+- test_add_decision_rejects_empty_decision
+- test_dm_still_works_after_rooms_added
+- test_room_history_limit_param
+- test_manual_ack_returns_token_and_delivery_ids
+- test_probe_harness_version_returns_string_for_known_binary
+- test_cline_adapter_invokes_correct_binary
+- test_ack_endpoint_requires_payload
+- test_v1_usage_basic
+- test_large_unicode_message_is_chunked_without_corruption
+- test_analytics_empty
+- test_v1_usage_no_auth
+- test_large_message_in_room
+- test_v1_usage_room_not_found
+- test_set_room_goal
+- test_404_rate_limit_blocks_after_threshold
 - test_bubble_feed_one_blank_between_distinct_senders
 - test_read_receipt_only_on_most_recent_own_message
 - test_highlight_inline_ignores_email_local_part
@@ -598,54 +598,64 @@
 - quorus-mcp
 - quorus-sdk
 - quorus-tui
-- test_agent_profile_shows_message_count
-- test_idempotency_key_deduplicates_dm
-- test_add_room_decision
-- test_claim_task_unknown_room_404
-- test_v1_usage_basic
-- test_agent_profile_shows_online_status
-- test_agent_profile_requires_auth
-- test_analytics_requires_auth
-- test_v1_usage_no_auth
-- test_long_poll_clamps_max_wait
-- test_v1_usage_room_detail
-- test_analytics_excludes_expired_messages
-- test_v1_usage_room_not_found
-- test_set_room_goal
-- test_clear_room_goal
-- test_message_cap_trims_oldest
-- test_404_rate_limit_blocks_after_threshold
-- test_concurrent_sends_no_data_loss
+- test_analytics_hourly_volume
 - test_message_event_is_rearmed_by_consumer
-- test_long_poll_wakes_on_new_message
-- test_send_accepts_valid_names
-- test_message_ttl_expires_old_messages
-- test_send_room_message_fans_out
+- test_idempotency_key_different_keys_allow_duplicates
+- test_room_history_not_cleared_on_read
+- test_room_history_nonexistent_room
+- test_room_history_requires_auth
+- test_send_rejects_special_characters_in_name
 - test_room_message_with_type
+- test_list_participants_optional_audit_timeout_does_not_block
+- test_small_message_has_no_chunk_fields
+- test_check_messages_always_uses_nonblocking_fetch
+- test_large_message_is_chunked_and_reassembled
+- test_oversized_room_message_rejected
+- test_agent_profile_basic
+- test_agent_profile_not_found
+- test_check_messages_always_fetches_from_durable_queue
+- test_send_push_notification_uses_configured_method
+- test_analytics_after_send_and_receive
+- test_room_state_404_for_unknown_room
+- test_message_ttl_expires_old_messages
+- test_sse_listener_is_only_delivery_mode
+- test_message_ttl_is_enforced_on_read_without_new_send
+- test_idempotency_key_deduplicates_dm
+- test_send_room_message_fans_out
+- test_long_poll_returns_immediately_with_messages
+- test_register_webhook_allows_http_ip_callback
+- test_send_message_calls_relay
+- test_analytics_excludes_expired_messages
+- test_claim_task_already_locked
+- test_claim_task_relay_error
+- test_release_task_success
+- test_release_task_relay_error
+- test_get_room_state_formats_output
+- test_send_message_audit_timeout_blocks_mutation
 
 ## God Nodes (most connected - your core abstractions)
-1. `AuthContext` - 152 edges
+1. `AuthContext` - 159 edges
 2. `HubState` - 96 edges
-3. `_with_timeout()` - 84 edges
-4. `ProfileManager` - 81 edges
-5. `main()` - 76 edges
+3. `main()` - 84 edges
+4. `_with_timeout()` - 84 edges
+5. `ProfileManager` - 81 edges
 6. `PolicyContext` - 66 edges
-7. `error()` - 57 edges
-8. `create_jwt()` - 53 edges
+7. `create_jwt()` - 59 edges
+8. `error()` - 57 edges
 9. `_create_room()` - 53 edges
 10. `_cmd_init()` - 52 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `test_cli_version()` --calls--> `_cmd_version()`  [INFERRED]
-  tests/test_cli.py → packages/cli/quorus_cli/cli.py
 - `main()` --uses--> `Room`  [INFERRED]
   examples/demo_swarm.py → packages/sdk/quorus_sdk/sdk.py
 - `fake_popen()` --indirect_call--> `_alive()`  [INFERRED]
   tests/test_supervisor.py → packages/cli/quorus_cli/agent_proc.py
-- `test_cli_list_rooms()` --calls--> `_list_rooms()`  [INFERRED]
-  tests/test_cli.py → packages/cli/quorus_cli/cli.py
 - `test_cli_say()` --calls--> `_say()`  [INFERRED]
   tests/test_cli.py → packages/cli/quorus_cli/cli.py
+- `test_run_share_flow_copy_failure_shows_code()` --indirect_call--> `_chat()`  [INFERRED]
+  tests/test_tui_slash.py → packages/cli/quorus_cli/cli.py
+- `test_run_share_flow_copy_path()` --indirect_call--> `_chat()`  [INFERRED]
+  tests/test_tui_slash.py → packages/cli/quorus_cli/cli.py
 
 ## Import Cycles
 - 3-file cycle: `packages/tui/quorus_tui/__init__.py -> packages/tui/quorus_tui/hub.py -> packages/tui/quorus_tui/slash.py -> packages/tui/quorus_tui/__init__.py`
@@ -653,63 +663,63 @@
 - 3-file cycle: `packages/mcp/quorus_mcp/phase1_registry.py -> packages/mcp/quorus_mcp/phase1_tools.py -> packages/mcp/quorus_mcp/server.py -> packages/mcp/quorus_mcp/phase1_registry.py`
 - 4-file cycle: `packages/tui/quorus_tui/__init__.py -> packages/tui/quorus_tui/hub.py -> packages/tui/quorus_tui/slash.py -> packages/tui/quorus_tui/chat.py -> packages/tui/quorus_tui/__init__.py`
 
-## Communities (631 total, 170 thin omitted)
+## Communities (641 total, 148 thin omitted)
 
-### Community 0 - "Protocol"
-Cohesion: 0.07
-Nodes (14): Protocol, AnalyticsBackend, IdempotencyBackend, ParticipantBackend, Append-only room message history (not cleared on read)., Delete history for a room., Update room name in all history messages., Track known participant names. (+6 more)
+### Community 0 - "test_triage_redis.py"
+Cohesion: 0.09
+Nodes (26): clean_state(), client(), fake_redis(), AsyncClient, fixture, MonkeyPatch, R3 (WAKE_REBUILD_SPEC): Redis-shared triage auction. The process-local auction…, R4: memory/capabilities/tool-catalog hydrate from Redis after a process restart… (+18 more)
 
 ### Community 1 - "test_cli.py"
-Cohesion: 0.03
-Nodes (105): _cmd_connect(), _cmd_context(), _cmd_decision(), _cmd_search(), _cmd_usage(), _context(), _export(), Export room history as JSON or Markdown. (+97 more)
+Cohesion: 0.02
+Nodes (131): _cmd_connect(), _cmd_decision(), _cmd_export(), _cmd_inbox(), _cmd_memory(), _cmd_room_state(), _cmd_search(), _connect_http() (+123 more)
 
-### Community 2 - "InMemoryWebhookQueueBackend"
-Cohesion: 0.10
-Nodes (11): InMemoryWebhookQueueBackend, Mark job as failed. Returns True if job will be retried., Return recent dead letter queue entries., Return queue statistics., In-memory webhook delivery queue with retry and DLQ support., Add a webhook job to the queue. Returns job ID., Fetch pending jobs for delivery., Block up to ``block_ms`` ms waiting for at least one job. Fast path: if work is… (+3 more)
+### Community 2 - "replay_cmd.py"
+Cohesion: 0.19
+Nodes (20): bound_repo(), _clean(), _clock(), cmd_replay(), Commit, commits_in(), Any, Path (+12 more)
 
-### Community 3 - "_redact_participant"
-Cohesion: 0.09
-Nodes (21): _chunk_content(), Split *content* into UTF-8 safe chunks of at most *max_size* bytes each., Reassemble chunked messages into complete messages. Returns ``(ready,…, _reassemble_chunks(), Drop oldest keys if the events dict exceeds the cap., Signal that a new message is available for long-poll wakeup. Sets the local…, Subscribe to cross-replica notifications for long-poll wakeup., Unsubscribe cross-replica notification handler. (+13 more)
+### Community 3 - "MessageService"
+Cohesion: 0.06
+Nodes (30): _chunk_content(), Split *content* into UTF-8 safe chunks of at most *max_size* bytes each., Reassemble chunked messages into complete messages. Returns ``(ready,…, _reassemble_chunks(), FetchResult, MessageService, Drop oldest keys if the events dict exceeds the cap., Signal that a new message is available for long-poll wakeup. Sets the local… (+22 more)
 
 ### Community 4 - "hub.py"
-Cohesion: 0.03
-Nodes (98): _auth_headers(), _create_error_msg(), _create_room(), _decide_approval(), _destroy_room(), _dispatch_slash(), _dm_sse_loop(), _exchange_api_key_for_jwt() (+90 more)
+Cohesion: 0.04
+Nodes (94): _auth_headers(), _create_error_msg(), _create_room(), _decide_approval(), _destroy_room(), _dispatch_slash(), _dm_sse_loop(), _exchange_api_key_for_jwt() (+86 more)
 
 ### Community 5 - "chat.py"
 Cohesion: 0.03
 Nodes (96): _bubble_position(), _bubble_width(), _code_block(), _delivery_receipt(), _empty_card(), _filter_thread_children(), group_by_thread(), _has_threads() (+88 more)
 
 ### Community 6 - "PolicyContext"
-Cohesion: 0.07
-Nodes (30): _check_disagree_blocking_rate(), _check_dm_tenant(), _check_room_membership(), evaluate(), evaluate_scoped(), _matches(), PolicyContext, Any (+22 more)
+Cohesion: 0.04
+Nodes (60): _check_disagree_blocking_rate(), _check_dm_tenant(), _check_room_membership(), Decision, evaluate(), evaluate_scoped(), is_destructive(), is_dm_action() (+52 more)
 
 ### Community 7 - "McpEnv"
-Cohesion: 0.05
-Nodes (59): _atomic_write_json(), _format_toml_value(), McpEnv, Any, Path, Per-client MCP config writers. One writer per supported agent. Each…, Merge ``{container: {key: entry}}`` into an existing JSON file. Returns…, Writer for every client using the standard ``mcpServers`` JSON shape. When… (+51 more)
+Cohesion: 0.15
+Nodes (11): McpEnv, Continue uses ``~/.continue/config.json`` with a nested…, Everything a writer needs to produce a working MCP entry.…, Run every writer in auto-detect mode. Returns one result per platform., Force-write a specific client's config, regardless of install detection., register_all(), register_continue(), register_one() (+3 more)
 
-### Community 8 - "Tenant"
-Cohesion: 0.07
-Nodes (65): Get the Shared State Matrix for this room (Primitive A). Returns goal,…, ApiKey, Participant, Tenant, exchange_api_key(), BaseModel, post, Request (+57 more)
+### Community 8 - "Participant"
+Cohesion: 0.09
+Nodes (48): ApiKey, Participant, Tenant, Returned once on agent registration. The raw API key is only included when the…, Create a new agent identity under an existing account. Requires the parent…, Register an agent identity under an existing account., register_agent(), RegisterAgentRequest (+40 more)
 
 ### Community 9 - "codex_agent.py"
-Cohesion: 0.09
-Nodes (48): _append_lines(), _auth_headers(), _autonomous_prompt(), _cached_child_api_key(), _codex_inbox_root(), codex_notification_prompt_path(), _current_profile_manager(), _effective_notification_poll_seconds() (+40 more)
-
-### Community 10 - "main"
 Cohesion: 0.06
-Nodes (71): _apply_join_payload(), _cmd_add_agent(), _cmd_claude_agent(), _cmd_codex_agent(), _cmd_create(), _cmd_dm(), _cmd_gemini_agent(), _cmd_hackathon() (+63 more)
+Nodes (82): _append_lines(), _auth_headers(), _autonomous_prompt(), build_codex_command(), build_codex_exec_command(), build_prompt(), _cached_child_api_key(), _codex_base_command() (+74 more)
+
+### Community 10 - "quorus_cli/cli.py"
+Cohesion: 0.03
+Nodes (128): _approval_decide(), _approvals_list(), _ascii_sparkline(), _auth_headers(), _chat(), _cmd_agent(), _cmd_approvals(), _cmd_approve() (+120 more)
 
 ### Community 11 - "test_reflexd_wake_contract.py"
 Cohesion: 0.06
 Nodes (54): _bid_for(), _conflicting_pair(), _daemon(), _git_repo(), Any, MonkeyPatch, parametrize, Path (+46 more)
 
-### Community 12 - "Any"
-Cohesion: 0.17
-Nodes (12): Any, Lock, Mirror one task. Terminal tasks are DROPPED, not written. The mirror exists to…, Load the mirrored room queue on first touch after process start. Without this…, Register a new task. Returns the persisted task dict., Atomically transition a task to ``in_progress`` for *actor*. Race semantics:…, Patch a task's mutable fields. Caller-actor must already own it (or be the…, Mark a task done (success=True ⇒ ``done``; else ``failed``). (+4 more)
+### Community 12 - "WorkQueueError"
+Cohesion: 0.14
+Nodes (18): _normalise_status(), Any, Exception, Lock, Mirror one task. Terminal tasks are DROPPED, not written. The mirror exists to…, Load the mirrored room queue on first touch after process start. Without this…, Register a new task. Returns the persisted task dict., Atomically transition a task to ``in_progress`` for *actor*. Race semantics:… (+10 more)
 
-### Community 13 - "_auth_headers"
-Cohesion: 0.04
-Nodes (91): _approvals_list(), _auth_headers(), _cmd_approvals(), _cmd_board(), _cmd_brief(), _cmd_destroy(), _cmd_kick(), _cmd_logs() (+83 more)
+### Community 13 - "test_bundles.py"
+Cohesion: 0.23
+Nodes (24): _bundle(), _clean_state(), client(), _git(), _headers(), AsyncClient, fixture, Path (+16 more)
 
 ### Community 14 - "collect_state"
 Cohesion: 0.05
@@ -723,129 +733,133 @@ Nodes (28): _bids_key(), claim_exists(), _claim_key(), _credit_key(), get_credit
 Cohesion: 0.09
 Nodes (39): notify(), Surface ``title`` / ``body`` on the host's native notification UI. Parameters…, fixture, Path, Tests for :mod:`quorus.notifications.native`. Pin the safety-critical…, Linux dispatch must shell out to notify-send via argv list., On unsupported platforms, write a content-free line to a log file., Two notifications for the same (sender, room) within 5s → second is dropped. (+31 more)
 
-### Community 17 - "AuditService"
-Cohesion: 0.06
-Nodes (46): PolicyResult, Outcome of a single evaluation. `decision` always set; `reason` is human text., AuditEvent, AuditLedger, Enum, str, Audit ledger model for message lifecycle tracking., Audit event types for message lifecycle. (+38 more)
+### Community 17 - "_load_from_file"
+Cohesion: 0.13
+Nodes (23): _apply_loaded_state(), _load_from_file(), Snapshot in-memory backend state for JSON persistence. Only used in dev/test…, Load persisted state into backends., _save_to_file(), _snapshot_state(), Room history should survive save/load cycle., Rooms and history survive save/load (simulated restart). (+15 more)
 
 ### Community 18 - "AsyncClient"
 Cohesion: 0.05
 Nodes (30): clean_state(), client(), AsyncClient, fixture, Tests for Primitive A (GET /rooms/{room}/state) and Primitive B (POST/DELETE…, POST /rooms/{room}/lock — acquire an optimistic file lock., Two agents can each lock different files without conflict., DELETE /rooms/{room}/lock/{path} — release a file lock. (+22 more)
 
 ### Community 19 - "test_webhook_logging.py"
-Cohesion: 0.07
-Nodes (24): InMemoryWebhookBackend, DM and room webhook registrations with per-webhook secrets., A webhook delivery job with retry tracking., Re-add a job to the queue after backoff delay., WebhookJob, _CaptureLogger, asyncio, Tests that webhook delivery failures log structured, secret-free fields. The… (+16 more)
+Cohesion: 0.06
+Nodes (26): InMemoryWebhookBackend, DM and room webhook registrations with per-webhook secrets., A webhook delivery job with retry tracking., Re-add a job to the queue after backoff delay., WebhookJob, _CaptureLogger, _FakeHTTPError, asyncio (+18 more)
 
 ### Community 20 - "hooks.py"
-Cohesion: 0.09
-Nodes (38): _cursors_path(), dispatch(), _exchange_api_key_for_jwt(), _fetch_unread(), _filter_unseen(), _format_for_context(), handle_claude_session_end(), handle_claude_session_start() (+30 more)
+Cohesion: 0.07
+Nodes (52): _config(), _cursors_path(), dispatch(), _exchange_api_key_for_jwt(), _fetch_unread(), _filter_unseen(), _format_for_context(), handle_claude_session_end() (+44 more)
+
+### Community 21 - "PersistentMemorySvc"
+Cohesion: 0.13
+Nodes (15): EntryCapError, MemoryError_, PersistentMemorySvc, Any, Exception, Lock, Persistent memory service — Plan v8 Phase 1 OS primitive C. Each agent gets a…, Wipe state, including hydration marks and the Redis mirror. Leaving either… (+7 more)
 
 ### Community 22 - "approvals.py"
-Cohesion: 0.17
-Nodes (23): create_approval(), CreateApprovalRequest, decide_approval(), DecisionRequest, get_approval(), list_approvals(), _notify_room(), BaseModel (+15 more)
+Cohesion: 0.21
+Nodes (20): create_approval(), CreateApprovalRequest, decide_approval(), DecisionRequest, get_approval(), list_approvals(), _notify_room(), BaseModel (+12 more)
 
 ### Community 23 - "Room"
 Cohesion: 0.05
-Nodes (25): Send a message to the room., Get pending messages. Returns a ReceiveResult — call .ack() after processing.…, Get room message history., Check how many messages are waiting., Send a direct message to a specific agent., Claim a task in the room., Post a status update., Post a git sync message. (+17 more)
+Nodes (24): Send a message to the room., Get pending messages. Returns a ReceiveResult — call .ack() after processing.…, Get room message history., Check how many messages are waiting., Send a direct message to a specific agent., Claim a task in the room., Post a status update., Post a git sync message. (+16 more)
 
 ### Community 24 - "reflexd_wake.py"
-Cohesion: 0.09
-Nodes (32): claude_mode_flags(), claude_wake_flags(), codex_wake_flags(), commit_message_from(), _has_identity(), is_no_reply(), parse_codex_stream(), Any (+24 more)
+Cohesion: 0.07
+Nodes (61): abort_merge(), agent_worktree(), claude_mode_flags(), claude_wake_flags(), codex_wake_flags(), commit_all(), commit_message_from(), _discard_graph_refresh() (+53 more)
 
-### Community 25 - "generate_api_key"
-Cohesion: 0.16
-Nodes (10): extract_key_prefix(), generate_api_key(), hash_api_key(), Hash an API key for storage: bcrypt(sha256(raw_key))., Verify a raw API key against a stored hash., Extract the prefix portion from a raw API key (mct_{prefix}_{secret}). The…, Generate a new API key. Returns (raw_key, prefix, key_hash) where: - raw_key:…, verify_api_key() (+2 more)
+### Community 25 - "test_supervisor.py"
+Cohesion: 0.10
+Nodes (35): fake_kill(), fake_popen(), FakePopenFactory, fixture, MonkeyPatch, Path, Tests for ``quorus.runtime.supervisor`` and the launchd plist generator. The…, Every participant gets one Popen call with its env wired up. (+27 more)
 
 ### Community 26 - "WebhookService"
-Cohesion: 0.04
-Nodes (30): IPv4Address, IPv6Address, Register a DM webhook. Optional per-webhook secret for signing., Return ``{"url": ..., "secret": ...}`` or None., Register a room webhook. Optional per-webhook secret for signing., Return list of ``{"url": ..., "secret": ..., "registered_by": ...}``., WebhookBackend, AsyncClient (+22 more)
+Cohesion: 0.05
+Nodes (25): IPv4Address, IPv6Address, AsyncClient, Compute HMAC-SHA256 signature for a webhook payload. Signature covers:…, Verify webhook signature and timestamp. Returns True if signature is valid and…, Synchronous structural validation of a webhook URL., Full async validation including DNS resolution check., Re-validate URL at delivery time to prevent DNS TOCTOU attacks. Returns True if… (+17 more)
 
 ### Community 27 - "normalize_code"
 Cohesion: 0.07
-Nodes (25): JoinCode, _fmt_display(), _generate_code(), JoinCodeService, normalize_code(), Any, datetime, Short-code invite service — mint, resolve, normalize. A short join code is 8… (+17 more)
+Nodes (24): _fmt_display(), _generate_code(), JoinCodeService, normalize_code(), Any, datetime, Short-code invite service — mint, resolve, normalize. A short join code is 8…, Store a new code and return ``(display_code, expires_at)``. (+16 more)
 
 ### Community 28 - "rooms.py"
-Cohesion: 0.08
-Nodes (39): _coerce_bool(), Pure helper functions used by relay route handlers. These are stateless…, Parse bool-ish values from JSON/Redis room metadata., _validate_name(), invite_join(), invite_page(), get, post (+31 more)
+Cohesion: 0.06
+Nodes (48): _coerce_bool(), Pure helper functions used by relay route handlers. These are stateless…, Parse bool-ish values from JSON/Redis room metadata., _validate_name(), invite_join(), invite_page(), get, post (+40 more)
 
 ### Community 29 - "reflexd.py"
 Cohesion: 0.06
-Nodes (52): build_argparser(), busy_path(), cmd_start(), cmd_status(), cmd_stop(), compute_bid(), _config_from_args(), configure_logging() (+44 more)
+Nodes (47): build_argparser(), cmd_start(), cmd_status(), cmd_stop(), compute_bid(), _config_from_args(), detect_harness(), forget_session() (+39 more)
 
 ### Community 30 - "test_reflexd.py"
 Cohesion: 0.05
 Nodes (43): _mk_cfg(), CaptureFixture, Tests for ``scripts/reflexd.py`` — PR-C1 client-side daemon., A wire envelope JSON body counts as a verb hit., A `/release ...` chat must IGNORE — relay state-machine handles it., CRIT-5: ``safe_log_summary`` MUST never return the raw body. The default mode…, Two summaries for the same body emit the same hash — correlation key., Debug mode adds a redacted preview — no raw email / phone / @-mention. (+35 more)
 
-### Community 31 - "WebhookQueueBackend"
-Cohesion: 0.11
-Nodes (10): Durable webhook delivery queue with retry and DLQ support. Uses Redis Streams…, Add a webhook job to the queue. Returns job ID., Fetch pending jobs for delivery. Returns list of (job_id, job_data) tuples.…, Fetch jobs, blocking up to ``block_ms`` ms when none are pending. Backends…, Acknowledge successful delivery, removing the job., Mark job as failed. Returns True if job will be retried. If attempts >=…, Move due delayed jobs back to the main queue. Called automatically by fetch(),…, Return recent dead letter queue entries for monitoring. (+2 more)
+### Community 31 - "MessageBackend"
+Cohesion: 0.05
+Nodes (26): MessageBackend, Count messages that have been delivered but not yet acknowledged., Return the number of pending messages without consuming them., Count total pending messages across all recipients for a tenant., Count total pending messages globally (for health checks)., Return total stream length for a recipient (queued + pending). Used for quota…, Per-recipient message queue (DM inbox)., Append one message to a recipient's inbox. (+18 more)
 
 ### Community 32 - "scenarios.py"
-Cohesion: 0.16
-Nodes (50): _agent_log_since(), agent_msgs_since(), api(), commits(), _connected(), git(), _harness_running(), _healthy() (+42 more)
+Cohesion: 0.11
+Nodes (56): _agent_log_since(), agent_msgs_since(), api(), commits(), _connected(), git(), _harness_running(), _healthy() (+48 more)
 
 ### Community 33 - "test_reflexd_real_claude.py"
 Cohesion: 0.06
-Nodes (46): _install_fake_claude_cli(), _isolate_claude_env(), _OkClient, _OkResp, Any, CaptureFixture, fixture, LogCaptureFixture (+38 more)
+Nodes (44): _FakeProc, _install_fake_claude_cli(), _isolate_claude_env(), CaptureFixture, fixture, LogCaptureFixture, MonkeyPatch, Path (+36 more)
 
-### Community 34 - "tool_catalog.py"
-Cohesion: 0.13
-Nodes (29): _is_room_admin(), list_tools(), _members_list(), _policy_check(), BaseModel, delete, get, post (+21 more)
+### Community 34 - "ToolCatalogSvc"
+Cohesion: 0.10
+Nodes (17): Any, Lock, Register a new tool. Raises :class:`DuplicateToolError` on name collision in…, In-memory MCP server registry, scoped per (tenant, room)., R4: first touch of a room catalog after start loads the Redis mirror. Caller…, ToolCatalogSvc, _clean_state(), client() (+9 more)
 
 ### Community 35 - "Quorus Launch Readiness Checklist"
 Cohesion: 0.04
 Nodes (48): 10.1 Sentry receives a live test event, 10.2 /metrics returns Prometheus counters, 10.3 Fly health-check alerts wired to email/Slack, 10. Monitoring, 11.1 Upstash quota exhausted, 11.2 Postgres down, 11.3 OAuth on a harness expires, 11. Incident-response runbooks (+40 more)
 
 ### Community 36 - "_user_headers"
+Cohesion: 0.09
+Nodes (39): clean_state(), client(), AsyncClient, fixture, Integration tests for the Quorus Social Protocol v1 routes. Mirrors the auth +…, Return a Bearer-JWT header for ``name`` in the test tenant., Alias name for the spec's named regression test (CRIT-6). Same intent as…, CRIT-1: a second actor cannot silently overwrite an active claim. Alice claims… (+31 more)
+
+### Community 37 - "get_db_session"
 Cohesion: 0.07
-Nodes (44): data(), Real relay contracts for durable typed handoffs and degraded presence., test_degraded_reason_and_last_wake_survive_heartbeats(), test_failover_is_one_durable_threaded_message(), test_release_moves_real_queue_claim_before_defer(), clean_state(), client(), AsyncClient (+36 more)
+Nodes (47): create_participant(), create_tenant(), CreateKeyRequest, CreateParticipantRequest, CreateTenantRequest, _enforce_tenant_isolation(), get_tenant(), issue_api_key() (+39 more)
 
-### Community 37 - "Decision"
+### Community 38 - "RedisWebhookQueueBackend"
 Cohesion: 0.08
-Nodes (25): Decision, is_destructive(), is_dm_action(), is_reflex_action(), is_social_action(), Mode, Enum, str (+17 more)
-
-### Community 38 - "tool"
-Cohesion: 0.10
-Nodes (26): Context, check_messages(), claim_task(), get_room_state(), join_room(), list_participants(), list_rooms(), tool (+18 more)
+Nodes (26): Durable webhook delivery queue using Redis Streams. Provides at-least-once…, Acknowledge successful delivery, removing the job., Mark job as failed. Returns True if job will be retried. Uses exponential…, Return recent dead letter queue entries., Return queue statistics., RedisWebhookQueueBackend, Test durable webhook queue with Redis Streams., Basic enqueue and fetch should work. (+18 more)
 
 ### Community 39 - "gemini_agent.py"
 Cohesion: 0.09
 Nodes (45): _append_lines(), _auth_headers(), _autonomous_prompt(), build_gemini_command(), build_gemini_exec_command(), build_prompt(), _cached_child_api_key(), _current_profile_manager() (+37 more)
 
-### Community 40 - "._key"
-Cohesion: 0.06
-Nodes (20): Create consumer group if it doesn't exist., Per-recipient DM inbox backed by Redis Streams. Uses XADD/XREADGROUP/XACK for…, Create consumer group if it doesn't exist., Fan-out: enqueue one message per recipient in a single pipeline. This batches…, Read and acknowledge all messages (destructive read)., Atomically ACK+DEL old entries and XADD new entries via Lua., Count total messages across all recipient streams for a tenant., Count total messages globally across all streams. (+12 more)
+### Community 40 - "_with_timeout"
+Cohesion: 0.07
+Nodes (24): Create consumer group if it doesn't exist., Add a webhook job to the queue. Returns job ID., Cached ZCARD on the delay set — avoid EVAL when there's nothing to promote., Fetch pending jobs for delivery. Housekeeping (XAUTOCLAIM, promote_delayed)…, Block on XREADGROUP up to ``block_ms`` ms. Fast path: runs the throttled fetch…, Move due jobs from delay set to main queue. Should be called periodically by…, Set (or clear) the active goal for a room., Per-recipient DM inbox backed by Redis Streams. Uses XADD/XREADGROUP/XACK for… (+16 more)
 
-### Community 41 - "config.py"
-Cohesion: 0.08
-Nodes (36): fetch_analytics(), main(), CLI tool for viewing MCP Tunnel analytics in the terminal., Fetch analytics data from the relay server., Render analytics data as terminal tables and charts., render(), as_bool(), _is_legacy_dir() (+28 more)
+### Community 41 - "load_config"
+Cohesion: 0.07
+Nodes (40): _bearer(), _leave_all_rooms(), A stopped agent must not stay in rooms: teammates would keep handing it work…, cmd_phone(), forward(), lan_ip(), phone_url(), _pipe() (+32 more)
 
 ### Community 42 - "create_jwt"
 Cohesion: 0.11
-Nodes (17): create_jwt(), decode_jwt(), _get_jwt_secret(), Any, JWT creation/decoding and API key generation/hashing/verification., Create a signed JWT with standard claims (iss, aud, jti). Args: sub:…, Decode and verify a JWT (signature, exp, iss, aud)., Admin JWT can be created and decoded with correct claims. (+9 more)
+Nodes (16): create_jwt(), decode_jwt(), _get_jwt_secret(), Any, JWT creation/decoding and API key generation/hashing/verification., Create a signed JWT with standard claims (iss, aud, jti). Args: sub:…, Decode and verify a JWT (signature, exp, iss, aud)., Admin JWT can be created and decoded with correct claims. (+8 more)
 
 ### Community 43 - "SocialVerb"
-Cohesion: 0.11
-Nodes (30): parse_envelope(), field_validator, `/vote <option> [weight]`. Default weight=1.0., Wire envelope. Pydantic v2 — fields validated in declaration order. The…, Wire-format JSON-safe dict. Stable key order matches the spec doc., Parse a wire envelope into a typed :class:`SocialVerb`. Raises on invalid input…, SocialVerb, VotePayload (+22 more)
+Cohesion: 0.14
+Nodes (26): parse_envelope(), Wire envelope. Pydantic v2 — fields validated in declaration order. The…, Wire-format JSON-safe dict. Stable key order matches the spec doc., Parse a wire envelope into a typed :class:`SocialVerb`. Raises on invalid input…, SocialVerb, Tests for the Quorus Social Protocol v1 wire types. Schema-only — no relay, no…, test_claim_rejects_negative_eta(), test_claim_rejects_oversize_scope() (+18 more)
 
 ### Community 44 - "test_operating_discipline.py"
 Cohesion: 0.07
 Nodes (42): Quorus Operating Discipline (QOD) — the cross-harness operating constitution.…, Render the QOD for agent-loop sysprompt prepends. Identical to ``render_qod()``…, Return the canonical voice block as a single string. Kept separate from…, Return the canonical QOD block as a single string. This is the exact text…, Render the QOD with MCP-specific framing. Adds a one-line tail pointing the…, render_qod(), render_qod_for_agent_loop(), render_qod_for_mcp() (+34 more)
 
-### Community 45 - "test_identity.py"
+### Community 45 - "AuditService"
 Cohesion: 0.07
-Nodes (23): Backward-compat shim — routes have moved to quorus/routes/. Re-exports symbols…, Reset all service state — called by tests. Re-initializes backends and services…, reset_state(), Reset the uptime clock — called by reset_state()., reset_analytics(), Wipe the per-room thread index. Called from reset_state for tests., reset_thread_index(), alice_headers() (+15 more)
+Nodes (40): AuditEvent, AuditLedger, Enum, str, Audit ledger model for message lifecycle tracking., Audit event types for message lifecycle., Audit ledger entry for message tracing. Records every significant event in a…, Convert to API response dict. (+32 more)
 
 ### Community 46 - "VendorLogos.tsx"
 Cohesion: 0.07
 Nodes (34): AnimatedBeam(), AnimatedBeamProps, BorderBeam(), BorderBeamProps, BlurFadeIn(), BlurFadeInProps, EASE_OUT_EXPO, AiderMark() (+26 more)
 
 ### Community 47 - "ProfileManager"
-Cohesion: 0.13
-Nodes (26): _config(), Legacy shim — preserved so older test fixtures still patch this name.…, ProfileManager, Path, If config.json is the old flat shape, move it to profiles/default.json. Returns…, Single source of truth for profile files + current-pointer., fixture, Path (+18 more)
+Cohesion: 0.11
+Nodes (27): _atomic_write_json(), ProfileManager, Any, Path, If config.json is the old flat shape, move it to profiles/default.json. Returns…, Single source of truth for profile files + current-pointer., _validate_slug(), fixture (+19 more)
 
-### Community 48 - "PersistentMemorySvc"
-Cohesion: 0.05
-Nodes (53): put, _can_read(), delete_memory(), get_memory(), list_memory(), _members_list(), _memory_svc(), MemorySetBody (+45 more)
+### Community 48 - "tool"
+Cohesion: 0.10
+Nodes (26): Context, check_messages(), claim_task(), get_room_state(), join_room(), list_participants(), list_rooms(), tool (+18 more)
 
 ### Community 49 - "test_cli_init_productized.py"
 Cohesion: 0.11
@@ -859,41 +873,41 @@ Nodes (6): _create_room(), _join_room(), Re-joining with a different role should
 Cohesion: 0.05
 Nodes (21): COLORS, CTADark(), EASE, SECONDARY_LINKS, SecondaryLink, COLORS, EASE, FAQ (+13 more)
 
-### Community 52 - "test_postgres_integration.py"
+### Community 52 - "test_identity.py"
 Cohesion: 0.07
-Nodes (39): do_run_migrations(), _filter_connect_args(), get_url(), Alembic environment configuration for async Postgres migrations., Run migrations in 'offline' mode — generates SQL without a live connection., Remove unsupported connect args that SQLAlchemy's asyncpg dialect adds., Run migrations in 'online' mode with an async engine., run_async_migrations() (+31 more)
+Nodes (18): alice_headers(), alice_jwt(), bob_headers(), bob_jwt(), clean_state(), client(), legacy_headers(), fixture (+10 more)
 
-### Community 53 - "test_approvals.py"
-Cohesion: 0.09
-Nodes (38): clean_state(), client(), _create(), AsyncClient, fixture, L3 (WAKE_REBUILD_SPEC): human-in-the-loop tool approvals. A headless agent…, The request must be visible in the room, not just over SSE., The gate is only real if the agent can't wave itself through. (+30 more)
+### Community 53 - "_create"
+Cohesion: 0.11
+Nodes (29): _create(), The request must be visible in the room, not just over SSE., The gate is only real if the agent can't wave itself through., H1/H2: any second agent in the tenant used to approve the first one's tool call…, A shared secret is not an identity. Legacy auth carries no participant, so an…, H3: the human approves a 200-char preview while the harness runs the FULL…, M2: an unfiltered tool_name injected a second, forged 'approve with <other-id>'…, M1: the preview is broadcast to the room AND written into persistent history,… (+21 more)
 
 ### Community 54 - "agent_dm.py"
-Cohesion: 0.07
-Nodes (37): Deque, AgentDMRequest, delete_agent_dms(), _get_dm_queues(), _get_inbox(), _inbox_get_or_create(), list_agent_dms(), Any (+29 more)
+Cohesion: 0.09
+Nodes (31): Deque, AgentDMRequest, delete_agent_dms(), _get_dm_queues(), _get_inbox(), _inbox_get_or_create(), list_agent_dms(), Any (+23 more)
 
 ### Community 55 - ".create"
-Cohesion: 0.07
-Nodes (10): Redis, Track known participant names in Redis Sets., Factory that instantiates every backend against *r*., Sliding-window rate limiter using a Lua script for atomicity., Return True if count >= max_count (read-only)., Increment counter without checking limit., Short-lived SSE auth tokens stored as Redis Strings., RedisParticipantBackend (+2 more)
+Cohesion: 0.08
+Nodes (8): Redis, Track known participant names in Redis Sets., Factory that instantiates every backend against *r*., Sliding-window rate limiter using a Lua script for atomicity., Short-lived SSE auth tokens stored as Redis Strings., RedisParticipantBackend, RedisRateLimitBackend, RedisSSETokenBackend
 
 ### Community 56 - "_scrub_event"
-Cohesion: 0.07
-Nodes (35): protect_access_log(), LogRecord, QueryTokenFilter, Credential-safe relay access logging., Install before uvicorn configures handlers; logger filters survive it., Keep request context while removing bearer tokens carried in URLs., redact_query_tokens(), init_sentry() (+27 more)
+Cohesion: 0.09
+Nodes (30): Keep request context while removing bearer tokens carried in URLs., redact_query_tokens(), init_sentry(), Any, Sentry initialization with PHI scrubbing for the Quorus relay. This module is a…, Scrub PHI/PII before sending to Sentry. Returns None to drop entirely. Drops: -…, Initialize Sentry if SENTRY_DSN is set. Returns True if active. Safe to call…, _scrub_event() (+22 more)
 
 ### Community 57 - "test_turnguard.py"
 Cohesion: 0.11
 Nodes (36): _load_reflexd(), CaptureFixture, fixture, MonkeyPatch, parametrize, Path, Tests for ``quorus/runtime/turnguard.py`` and the ``quorus turnguard`` CLI.…, PII guard: the spec says tool NAME only, never tool arguments. (+28 more)
 
-### Community 58 - "_init_services"
-Cohesion: 0.03
-Nodes (72): MessageBackend, RateLimitBackend, Protocol definitions for Quorus relay backends. Each protocol describes one…, Count messages that have been delivered but not yet acknowledged., Return the number of pending messages without consuming them., Count total pending messages across all recipients for a tenant., Count total pending messages globally (for health checks)., Return total stream length for a recipient (queued + pending). Used for quota… (+64 more)
+### Community 58 - "Protocol"
+Cohesion: 0.05
+Nodes (21): Protocol, IdempotencyBackend, ParticipantBackend, PresenceBackend, Append-only room message history (not cleared on read)., Delete history for a room., Update room name in all history messages., Record a heartbeat and return the stored presence entry. (+13 more)
 
 ### Community 59 - "triage.py"
 Cohesion: 0.11
 Nodes (37): _Bid, BidRequest, BidResponse, _BidWindow, _broadcast_wake_intent(), _candidate_members(), _claim_via_redis(), claim_winner() (+29 more)
 
 ### Community 60 - "Path"
-Cohesion: 0.09
-Nodes (26): build_claude_argv(), build_cline_argv(), build_codex_argv(), build_cursor_argv(), build_gemini_argv(), build_opencode_argv(), diagnose_harness_failure(), HeadlessAdapter (+18 more)
+Cohesion: 0.06
+Nodes (39): build_claude_argv(), build_cline_argv(), build_codex_argv(), build_cursor_argv(), build_gemini_argv(), build_opencode_argv(), busy_path(), _collect() (+31 more)
 
 ### Community 61 - "Production Architecture Design — Murmur"
 Cohesion: 0.05
@@ -909,7 +923,7 @@ Nodes (37): Quorus client-side runtime helpers. Holds the file formats and helpe
 
 ### Community 64 - "RedisRoomStateBackend"
 Cohesion: 0.06
-Nodes (20): Redis-backed room coordination state for distributed mutex. Key schema: -…, Lazily register the acquire lock Lua script., Lazily register the release lock Lua script., Lazily register the task expiry Lua script., Set (or clear) the active goal for a room., Record a newly acquired file lock as a claimed task., Remove a claimed task (on release or manual clear)., Directly set a lock entry. (+12 more)
+Nodes (20): Redis-backed room coordination state for distributed mutex. Key schema: -…, Lazily register the acquire lock Lua script., Lazily register the release lock Lua script., Lazily register the task expiry Lua script., Return a snapshot of the room's coordination state., Record a newly acquired file lock as a claimed task., Remove a claimed task (on release or manual clear)., Directly set a lock entry. (+12 more)
 
 ### Community 65 - "admin_dashboard.py"
 Cohesion: 0.10
@@ -920,36 +934,36 @@ Cohesion: 0.18
 Nodes (36): api_call(), api_status(), cmd_audit(), cmd_cleanup(), cmd_kill_aarya(), cmd_post_tasks(), cmd_propose_destructive(), cmd_resume_aarya() (+28 more)
 
 ### Community 67 - "agent_cmd.py"
-Cohesion: 0.14
-Nodes (35): _add(), _agents_dir(), _bearer(), _bind(), cmd_agent(), _credentials(), _drop_lead_everywhere(), _gemini_has_key() (+27 more)
+Cohesion: 0.15
+Nodes (32): _add(), _agents_dir(), _bind(), cmd_agent(), _credentials(), _drop_lead_everywhere(), _harness_path(), _join() (+24 more)
 
 ### Community 68 - "_cmd_heartbeat"
-Cohesion: 0.08
-Nodes (36): _cmd_heartbeat(), _heartbeat_state_path(), Where we cache last-heartbeat metadata for de-dupe. Lives under the active…, Return the most recently active room name for the current identity. Strategy:…, Post a heartbeat to the primary room (QOD rule #4). Flags: --status TEXT…, _read_heartbeat_state(), _resolve_primary_room(), _write_heartbeat_state() (+28 more)
+Cohesion: 0.09
+Nodes (35): _cmd_heartbeat(), _heartbeat_state_path(), Where we cache last-heartbeat metadata for de-dupe. Lives under the active…, Return the most recently active room name for the current identity. Strategy:…, Post a heartbeat to the primary room (QOD rule #4). Flags: --status TEXT…, _read_heartbeat_state(), _resolve_primary_room(), _write_heartbeat_state() (+27 more)
 
 ### Community 69 - "_send_message"
 Cohesion: 0.09
 Nodes (21): Send a chat message. Returns the server-assigned message ID on success, else…, _send_message(), _FakeResponse, Regression tests for the user-visible status bar after a failed send. Bug…, A successful send must clear stale error from a prior 4xx., A new send clears the prior call's error before evaluating its own., Pin the call site so the fix doesn't get reverted., The main input loop must read _LAST_SEND_ERROR before falling back. (+13 more)
 
-### Community 70 - "RedisWebhookQueueBackend"
-Cohesion: 0.06
-Nodes (31): Durable webhook delivery queue using Redis Streams. Provides at-least-once…, Add a webhook job to the queue. Returns job ID., Cached ZCARD on the delay set — avoid EVAL when there's nothing to promote., Fetch pending jobs for delivery. Housekeeping (XAUTOCLAIM, promote_delayed)…, Block on XREADGROUP up to ``block_ms`` ms. Fast path: runs the throttled fetch…, Acknowledge successful delivery, removing the job., Mark job as failed. Returns True if job will be retried. Uses exponential…, Move due jobs from delay set to main queue. Should be called periodically by… (+23 more)
+### Community 70 - "verify_api_key"
+Cohesion: 0.17
+Nodes (7): extract_key_prefix(), hash_api_key(), Hash an API key for storage: bcrypt(sha256(raw_key))., Verify a raw API key against a stored hash., Extract the prefix portion from a raw API key (mct_{prefix}_{secret}). The…, verify_api_key(), TestAPIKey
 
 ### Community 71 - "stall_demo_local.sh"
 Cohesion: 0.18
 Nodes (35): agent_log(), api_call(), api_status(), cmd_reset(), cmd_start(), cmd_start_local(), cmd_start_remote(), cmd_status() (+27 more)
 
 ### Community 72 - "_mock_client"
-Cohesion: 0.10
-Nodes (18): configure_mcp(), _mock_client(), _mock_response(), fixture, Tests for the Phase 1 MCP tool wrappers — capability discovery, tool catalog,…, Patch module-level constants for every test., Build a mock httpx client whose ``request`` returns ``request_response``., TestJwtRefreshOn401 (+10 more)
+Cohesion: 0.11
+Nodes (15): _mock_client(), _mock_response(), Tests for the Phase 1 MCP tool wrappers — capability discovery, tool catalog,…, Build a mock httpx client whose ``request`` returns ``request_response``., TestJwtRefreshOn401, TestListRoomTools, TestLookupCapability, TestMemoryDelete (+7 more)
 
-### Community 73 - "RoomBackend"
-Cohesion: 0.08
-Nodes (11): Room CRUD and membership management., Look up a room by its human-readable name. Returns (room_id, data)., Return all rooms for a tenant as (room_id, data) pairs., Return rooms where *member_name* is a member, as (room_id, data) pairs., Atomically create a room only if the name is not taken. Returns True if…, Atomically rename a room only if the new name is not taken. Returns True if…, Atomically add a member only if the room is under capacity. Returns True if…, Return ``{name: role}`` for all members of a room. (+3 more)
+### Community 73 - "test_reflexd_adapters.py"
+Cohesion: 0.09
+Nodes (21): Contract tests for the four headless harness adapters in…, Cline CLI contract: ``cline -- <ctx>``. Wave-7 added Cline to tier-A. The…, Claude CLI contract: ``claude --print --output-format json [--resume <sid>] --…, A hanging --version probe must NOT block daemon startup., log_adapter_versions probes claude/codex/gemini/cursor exactly once each., Codex contract: ``codex exec --json --skip-git-repo-check -- <ctx>``. The trust…, Wave-7: ``arav-opencode`` → opencode, ``arav-cline`` → cline. Without this…, Wave-7: reflexd must accept opencode/cline participants at startup. Without… (+13 more)
 
 ### Community 74 - "_cmd_doctor"
-Cohesion: 0.14
-Nodes (20): ConnectError, _cmd_doctor(), Diagnose common setup issues., _doctor_args(), _flat(), _gaierror_connect_error(), First-run error-message regressions (weekend brief, 2026-10-17). A user who…, Collapse the console's hard line wraps so substrings survive. (+12 more)
+Cohesion: 0.11
+Nodes (24): ConnectError, _cmd_doctor(), Diagnose common setup issues., _doctor_args(), _flat(), _gaierror_connect_error(), parametrize, First-run error-message regressions (weekend brief, 2026-10-17). A user who… (+16 more)
 
 ### Community 75 - "_first_launch_setup"
 Cohesion: 0.07
@@ -959,49 +973,49 @@ Nodes (31): HTTPStatusError, _decode_invite_token(), _first_launch_setup(), _pro
 Cohesion: 0.12
 Nodes (31): approve(), list_room_tools(), lookup_capability(), memory_delete(), memory_get(), memory_list(), memory_set(), publish_capability() (+23 more)
 
-### Community 77 - "RoomService"
-Cohesion: 0.10
-Nodes (14): _looks_like_uuid(), Return all rooms for a tenant., Return rooms where member_name is a member (backend-optimized)., Return {name: role} for all members of a room., Add *participant* to a room. Raises 400 if at capacity (atomic)., Remove *participant* from a room., True if ``s`` has UUID shape (36 chars with hyphens at 8/13/18/23). Cheap shape…, Kick *participant* from a room. Only the room creator or an admin can kick.… (+6 more)
+### Community 77 - "phase1_registry.py"
+Cohesion: 0.11
+Nodes (25): approve(), list_room_tools(), lookup_capability(), memory_delete(), memory_get(), memory_list(), memory_set(), publish_capability() (+17 more)
 
 ### Community 78 - "CapabilitySvc"
-Cohesion: 0.10
-Nodes (17): CapabilityError, CapabilitySvc, Any, Exception, Lock, Capability discovery service — Plan v8 Phase 1 OS primitive A. Each agent in a…, Return manifests where every token in ``has`` matches a capability (case-…, Wipe state. No tid → full wipe; with tid → that tenant only. Clears the… (+9 more)
+Cohesion: 0.15
+Nodes (9): CapabilitySvc, Any, Lock, Return manifests where every token in ``has`` matches a capability (case-…, Wipe state. No tid → full wipe; with tid → that tenant only. Clears the…, In-memory capability registry, lock-serialised per tenant., R4: first touch of a tenant after start loads Redis-mirrored manifests. Caller…, Set or replace the manifest for ``participant`` in ``tid``. (+1 more)
 
-### Community 79 - "ToolCatalogSvc"
-Cohesion: 0.16
-Nodes (9): Any, Lock, Register a new tool. Raises :class:`DuplicateToolError` on name collision in…, In-memory MCP server registry, scoped per (tenant, room)., R4: first touch of a room catalog after start loads the Redis mirror. Caller…, ToolCatalogSvc, TestToolCatalogSvc, Uniqueness was decided against a local cache, so a second replica accepted a… (+1 more)
+### Community 79 - "relay.py"
+Cohesion: 0.04
+Nodes (56): BaseHTTPMiddleware, Holds all Redis backend instances for easy wiring., RedisBackends, close_redis(), init_redis(), Create (or return the existing) async Redis connection., Gracefully close the Redis connection pool., _get_client_ip() (+48 more)
 
 ### Community 80 - "test_usage.py"
 Cohesion: 0.08
 Nodes (33): clean_state(), client(), AsyncClient, fixture, Tests for /v1/usage endpoints — per-tenant usage statistics. GET /v1/usage —…, Rooms list is sorted by message_count descending., totals.active_rooms matches the number of rooms created., GET /v1/usage/rooms/{id} returns the expected schema. (+25 more)
 
 ### Community 81 - "test_runtime_memory.py"
-Cohesion: 0.13
-Nodes (34): append(), memory_path(), Append a 1-sentence summary to the participant's room memory. *ts* defaults to…, Return the most recent *n* entries (newest last). Empty list if file…, Return the JSONL path for ``(participant, room)``. Does NOT create., read_recent(), Path, skipif (+26 more)
+Cohesion: 0.15
+Nodes (32): append(), memory_path(), Append a 1-sentence summary to the participant's room memory. *ts* defaults to…, Return the most recent *n* entries (newest last). Empty list if file…, Return the JSONL path for ``(participant, room)``. Does NOT create., read_recent(), Path, skipif (+24 more)
 
 ### Community 82 - "test_agent_dm.py"
-Cohesion: 0.11
-Nodes (32): _clean_state(), client(), AsyncClient, fixture, Tests for the Stream B agent-DM channel. Coverage: * send via POST /v1/dm…, An agent-DM must NOT show up in the human ``/messages/{recipient}`` queue., A real JWT authenticated as bob must not be able to read alice's inbox., 30 sends within the window pass; the 31st must 429. (+24 more)
+Cohesion: 0.09
+Nodes (38): _clean_state(), client(), AsyncClient, fixture, Tests for the Stream B agent-DM channel. Coverage: * send via POST /v1/dm…, An agent-DM must NOT show up in the human ``/messages/{recipient}`` queue., A real JWT authenticated as bob must not be able to read alice's inbox., 30 sends within the window pass; the 31st must 429. (+30 more)
 
 ### Community 83 - "test_analytics_scope.py"
 Cohesion: 0.10
 Nodes (23): get_analytics(), get, Request, Tenant analytics dashboard. S2 — scope guard: per-participant {sent,received}…, _Auth, Any, asyncio, S2 regression — /analytics per_participant must be scoped to caller. Previously… (+15 more)
 
 ### Community 84 - "routes/audit.py"
-Cohesion: 0.13
-Nodes (29): _audit_service(), get_failed_deliveries(), get_message_timeline(), get_recent_events(), McpToolAuditRequest, BaseModel, get, post (+21 more)
+Cohesion: 0.10
+Nodes (35): _admin_audit_service(), _audit_service(), get_failed_deliveries(), get_message_timeline(), get_recent_events(), McpToolAuditRequest, BaseModel, get (+27 more)
 
 ### Community 85 - "RelayClient"
-Cohesion: 0.09
-Nodes (16): envelope_reply_depth(), Any, Minimal HTTP surface: JWT exchange, stream-token mint, bid/claim/post., Return the current bearer token (minting/refreshing as needed). Public…, Drain the durable per-participant inbox (R1). Returns ``(messages,…, Presence heartbeat (R2) — lets the relay show active/away + queued., Room member names, or [] on any failure (prompt context only)., Return the first active work-queue task claimed by *participant* in *room*, or… (+8 more)
+Cohesion: 0.08
+Nodes (18): _human_wait(), _pause_announced(), Any, Minimal HTTP surface: JWT exchange, stream-token mint, bid/claim/post., Return the current bearer token (minting/refreshing as needed). Public…, Drain the durable per-participant inbox (R1). Returns ``(messages,…, Presence heartbeat (R2) — lets the relay show active/away + queued., Room member names, or [] on any failure (prompt context only). (+10 more)
 
 ### Community 86 - "anyio"
 Cohesion: 0.11
 Nodes (4): anyio, TestInputValidation, TestMethodEnforcement, TestRoomSecurity
 
-### Community 87 - "admin/models.py"
-Cohesion: 0.17
-Nodes (14): DeclarativeBase, Message, _new_uuid(), Presence, datetime, SQLAlchemy ORM models for Quorus's Postgres schema., Room, RoomMember (+6 more)
+### Community 87 - "3. Differentiator ideas"
+Cohesion: 0.08
+Nodes (23): 10. Structured handoff contracts, 11. Room autoresearch mode, 12. Opt-in outcome network ("real-world leaderboard"), 13. Ratification digest, 14. Learned pacing, 1. Outcome Ledger + Repo Scorecard, 1. The uncomfortable headline, 2.1 Commercial agents and control surfaces (+15 more)
 
 ### Community 88 - "server.py"
 Cohesion: 0.08
@@ -1019,9 +1033,9 @@ Nodes (29): join_inline(), datetime, Text, quiet_rule_chars(), Shared rendering 
 Cohesion: 0.08
 Nodes (20): Idempotency key storage using Redis strings with TTL. Supports atomic…, Atomically reserve a key for processing. Args: tenant_id: Tenant identifier…, Store the completed result with body fingerprint., RedisIdempotencyBackend, _docker_unavailable(), message_backend(), Exception, fixture (+12 more)
 
-### Community 92 - "_with_timeout"
+### Community 92 - "RedisRoomBackend"
 Cohesion: 0.18
-Nodes (9): Return a snapshot of the room's coordination state., Wrap *coro* with REDIS_OP_TIMEOUT_SECONDS; raise RedisOperationTimeout on…, Room CRUD with Redis Hashes and a room index Set., Fetch meta + members for each room_id in a single pipelined round-trip. Reduces…, Return rooms where member_name is a member via reverse index., Count rooms in a tenant., Count all rooms across all tenants., RedisRoomBackend (+1 more)
+Nodes (6): Room CRUD with Redis Hashes and a room index Set., Fetch meta + members for each room_id in a single pipelined round-trip. Reduces…, Return rooms where member_name is a member via reverse index., Count rooms in a tenant., Count all rooms across all tenants., RedisRoomBackend
 
 ### Community 93 - "AsyncClient"
 Cohesion: 0.12
@@ -1044,12 +1058,12 @@ Cohesion: 0.09
 Nodes (12): Shared State Matrix — goal, claimed tasks, file locks, decisions. Provides the…, Return a snapshot of the room's coordination state., Set (or clear) the active goal for a room., Record a newly acquired file lock as a claimed task., Remove a claimed task (on release or manual clear)., Directly set a lock entry (used internally by add_claimed_task)., Remove a file lock entry., Atomically try to acquire a lock. Prevents TOCTOU race conditions where two… (+4 more)
 
 ### Community 98 - "test_tui_hub.py"
-Cohesion: 0.08
-Nodes (17): Persist the TUI's instance config through the shared ConfigManager., _save_instance_config(), Tests for quorus/tui_hub.py — HubState, config helpers, API helpers., _save_instance_config writes config through ConfigManager., Trailing slash on relay URL is stripped before saving., Same sender always gets the same color., Different senders typically get different colors (palette is large enough)., Unread keys are stored verbatim — must not be lower-cased. (+9 more)
+Cohesion: 0.09
+Nodes (19): Persist the TUI's instance config through the shared ConfigManager., _save_instance_config(), Tests for quorus/tui_hub.py — HubState, config helpers, API helpers., _save_instance_config writes config through ConfigManager., Trailing slash on relay URL is stripped before saving., Same sender always gets the same color., Different senders typically get different colors (palette is large enough)., Render the welcome view to a string for assertion-friendly checks. (+11 more)
 
-### Community 99 - "AuthContext"
+### Community 99 - "verify_auth"
 Cohesion: 0.08
-Nodes (40): AuthContext, Enforce that the authenticated user matches the expected identity. Legacy…, Require the authenticated user has one of the given roles., Verified identity from the request., require_identity(), require_role(), health(), health_detailed() (+32 more)
+Nodes (28): _client_ip_for_log(), _looks_like_jwt(), _needs_revocation_refresh(), Request, Auth middleware — JWT-first verification with legacy RELAY_SECRET fallback., FastAPI dependency — verify JWT or legacy Bearer token. Returns an AuthContext…, Return the *real* client identifier for logging. S4: previously returned…, Enforce that the authenticated user has a valid participant_id. Legacy… (+20 more)
 
 ### Community 100 - "App.tsx"
 Cohesion: 0.08
@@ -1059,21 +1073,21 @@ Nodes (16): App(), DocsIndex, Quickstart, WhyCrossVendor, CursorFollower(), COLO
 Cohesion: 0.08
 Nodes (27): main(), Console-script wrapper for ``quorus-relay``. ``quorus/relay.py`` validates its…, main(), Run the relay server as a CLI entrypoint., MonkeyPatch, parametrize, Regression tests for the Quorus monorepo install topology. Background: at the…, Each `packages/*/` directory we ship must be a self-contained hatchling project… (+19 more)
 
-### Community 102 - "require_room_member"
-Cohesion: 0.08
-Nodes (41): Request, Shared room authorization helpers. Provides membership and permission checks…, Verify caller is a member of the room. Returns (room_id, room_data). Raises:…, Verify caller is a member or admin of the room. Returns (room_id, room_data).…, require_room_member(), require_room_member_or_admin(), add_room_decision(), AddDecisionRequest (+33 more)
+### Community 102 - "room_state.py"
+Cohesion: 0.13
+Nodes (27): add_room_decision(), AddDecisionRequest, _broadcast_lock_event(), _broadcast_state_event(), claim_task(), ClaimTaskRequest, get_room_state(), BaseModel (+19 more)
 
 ### Community 103 - "AsyncClient"
 Cohesion: 0.15
 Nodes (8): clean_state(), client(), AsyncClient, fixture, Tests for the admin metrics endpoint and HTML dashboard. Covers: - Auth: admin-…, TestAdminDashboard, TestAdminMetricsAuth, TestAdminMetricsShape
 
-### Community 104 - "test_supervisor.py"
-Cohesion: 0.08
-Nodes (37): fake_kill(), fake_popen(), FakePopenFactory, FakeProc, fixture, MonkeyPatch, Path, Tests for ``quorus.runtime.supervisor`` and the launchd plist generator. The… (+29 more)
+### Community 104 - "AuthContext"
+Cohesion: 0.06
+Nodes (63): AuthContext, Enforce that the authenticated user matches the expected identity. Legacy…, Verified identity from the request., require_identity(), ack_messages(), _body_fingerprint(), get_messages(), list_participants_endpoint() (+55 more)
 
-### Community 105 - "SocialSvc"
-Cohesion: 0.11
-Nodes (14): _empty_state(), Any, Lock, In-memory social-protocol state machine. Public surface: * :meth:`apply` — main…, Return the per-(tid, rid) asyncio.Lock, creating + LRU-evicting as needed.…, Return a defensive copy of the room's state dict., Wipe state. No args → full wipe. Only tid → wipe that tenant. Both tid+rid →…, Apply *sv* to the (tid, rid) state. Returns a small state-change summary the… (+6 more)
+### Community 105 - "test_bundle_client.py"
+Cohesion: 0.12
+Nodes (44): cmd_fetch(), cmd_share(), Any, Path, `quorus share-branch` and `quorus fetch`: hand a branch to teammates on other…, _relay(), _repo(), BundleClientError (+36 more)
 
 ### Community 106 - "Claude Tunnel v2 Improvements — Design Spec"
 Cohesion: 0.07
@@ -1083,17 +1097,17 @@ Nodes (27): 1. Structured Logging, 2. Message Chunking, 3. Analytics, 4. MCP Cha
 Cohesion: 0.07
 Nodes (27): 10. Out of Scope (Post-Hackathon), 11. 4-Day Build Schedule, 1. Room Model, 2. Message Schema, 3.1 Autonomous Operation, 3.2 Claim Before You Build, 3.3 Test After Every Change, 3.4 Git Discipline Across Machines (+19 more)
 
-### Community 108 - "test_codex_agent.py"
-Cohesion: 0.10
-Nodes (34): build_codex_command(), build_codex_exec_command(), build_prompt(), _codex_base_command(), CodexAgentError, RuntimeError, Resolve the participant identity and API key for the Codex run., Keep the Codex runner visible in room presence. (+26 more)
+### Community 108 - "_pid_is_alive"
+Cohesion: 0.06
+Nodes (47): _cmd_reflexd(), _cmd_reflexd_manager(), _init_autostart_supervisor(), _manager_start(), _manager_status(), _manager_stop(), _parse_join_token(), _pid_is_alive() (+39 more)
 
 ### Community 109 - "render_approvals_panel"
 Cohesion: 0.13
 Nodes (26): _fmt_remaining(), Any, Text, Pending-approval panel for the Quorus TUI (WAKE_REBUILD L3). An agent blocked…, Whole seconds until this request expires, or None if unknown., Return ``(text, style)`` for the countdown., Rows for every approval waiting on a human. Empty list when none., _remaining() (+18 more)
 
 ### Community 110 - "ApprovalSvc"
-Cohesion: 0.12
-Nodes (20): ApprovalError, ApprovalSvc, input_digest(), _now(), _preview(), Any, Exception, Human-in-the-loop approvals for agent tool calls (WAKE_REBUILD L3). A headless… (+12 more)
+Cohesion: 0.15
+Nodes (16): ApprovalError, ApprovalSvc, input_digest(), _now(), _preview(), Any, Exception, Human-in-the-loop approvals for agent tool calls (WAKE_REBUILD L3). A headless… (+8 more)
 
 ### Community 111 - "e2e_live.py"
 Cohesion: 0.17
@@ -1108,20 +1122,20 @@ Cohesion: 0.13
 Nodes (21): _clean_state(), client(), AsyncClient, fixture, Tests for the Stream B work-queue — service unit tests + route integration. 12…, Return a Bearer-JWT header for ``name`` in the test tenant., H6 — POST /v1/work_queue/{room_id} must reject ``Bearer test-secret``., M13 — the HTTP route maps QuotaExceededError to 429. Asserts the integration… (+13 more)
 
 ### Community 114 - "._wake_and_reply_inner"
-Cohesion: 0.08
-Nodes (25): _answer_only(), is_agent_participant(), lead_for(), live_session_for_workspace(), mode_for(), Resolve the bound workspace directory for *room*, or None. Accepts bindings…, Permission mode the owner chose for *room* (default | manual | autonomous)., A non-lead agent woken by a human's message to the whole room. (+17 more)
+Cohesion: 0.06
+Nodes (32): agent_owner(), _answer_only(), is_agent_participant(), lead_for(), live_session_for_workspace(), mode_for(), Lines of *reply* the room hasn't seen that matter for the loop: ones…, What the room sees instead of the raw "[reflexd] harness timed out". (+24 more)
 
 ### Community 115 - "Reflexd"
-Cohesion: 0.12
-Nodes (12): is_busy(), SSE loop → triage → bid → claim → spawn → post., Process one chat/question/request envelope. Phase-2 flow: 1. v2 triage →…, One wake, shown to the room as presence ``busy`` while it runs: before this,…, Subscribe to ``/stream/dm/{participant}``. Body lives in :mod:`reflexd_streamb`…, Connect, subscribe, and dispatch until ``stop()`` is called., Replay wakes deferred while the agent was mid-tool-call. The queue was append-…, R1: fetch + dispatch + ack every message queued while offline. Loops until the… (+4 more)
+Cohesion: 0.07
+Nodes (20): iter_sse_events(), pace_for(), pace_wait_s(), AsyncClient, Turns per hour this agent may take (`quorus agent pace`), or None., Seconds until another turn fits under *cap* per rolling hour., Yield ``(event_name, data_dict|None)`` tuples. Mirrors the TUI parser, async., SSE loop → triage → bid → claim → spawn → post. (+12 more)
 
 ### Community 116 - "test_reflexd_inbox_drain.py"
-Cohesion: 0.06
-Nodes (68): fake_run(), A subprocess.run mock that always returns rc=0., parametrize, Raised adapter failures must leave a visible, safely worded room status., test_cancelled_wake_does_not_post_failure(), test_raised_failure_is_suppressed_after_agent_reply(), test_raised_harness_failure_posts_status(), _budget_daemon_and_capture() (+60 more)
+Cohesion: 0.05
+Nodes (74): fake_run(), A subprocess.run mock that always returns rc=0., parametrize, Raised adapter failures must leave a visible, safely worded room status., Exercise the subprocess, adapter and room paths without exposing stderr., test_cancelled_wake_does_not_post_failure(), test_raised_failure_is_suppressed_after_agent_reply(), test_raised_harness_failure_posts_status() (+66 more)
 
-### Community 117 - "reflexd_triage.py"
-Cohesion: 0.09
-Nodes (29): continuation(), Only validated, explicitly addressed typed failovers wake a teammate., Phase-1-compatible 2-tuple wrapper around :func:`classify_message`. Returns…, _addressed_by_bare_name(), _base_bid(), classify_message(), compute_bid_v2(), _description_capabilities() (+21 more)
+### Community 117 - ".handle_room_message"
+Cohesion: 0.08
+Nodes (31): is_busy(), Process one chat/question/request envelope. Phase-2 flow: 1. v2 triage →…, Phase-1-compatible 2-tuple wrapper around :func:`classify_message`. Returns…, Return True iff TurnGuard says the agent is mid-tool-call. Same single-source-…, _addressed_by_bare_name(), _base_bid(), capabilities_for(), classify_message() (+23 more)
 
 ### Community 118 - "test_reflexd_defer_announce.py"
 Cohesion: 0.09
@@ -1151,25 +1165,25 @@ Nodes (18): AsciinemaCreatePlayerOptions, AsciinemaModule, AsciinemaPlayer(), As
 Cohesion: 0.08
 Nodes (25): 10. Open Questions for the Team, 1. Problem, 2. Goals, 3. Non-Goals (v1), 4.1 Account, 4.2 API Key, 4. Data Model, 5. Key Generation (+17 more)
 
-### Community 125 - "phase1_registry.py"
-Cohesion: 0.11
-Nodes (25): approve(), list_room_tools(), lookup_capability(), memory_delete(), memory_get(), memory_list(), memory_set(), publish_capability() (+17 more)
+### Community 125 - "WorkQueueSvc"
+Cohesion: 0.13
+Nodes (10): In-memory + optional Redis-backed work-queue state machine. Mirror of…, Wipe queue state. Called from ``relay_routes.reset_state``., WorkQueueSvc, M13 — the 51st distinct active claim by the same actor raises…, M13 — completing a task frees a slot under the quota. Without this, an agent…, M13 — re-claiming an existing in-flight task by the same actor is idempotent…, test_work_queue_per_actor_quota_50(), test_work_queue_quota_idempotent_reclaim() (+2 more)
 
 ### Community 126 - "test_working_and_alerts.py"
 Cohesion: 0.07
 Nodes (27): load_last_seen(), Path, Text, While you were away": what your agents did since you last opened Quorus. Agents…, Rows for the home screen; [] when nothing notable happened., render(), room_digest(), RoomDigest (+19 more)
 
-### Community 127 - "InMemoryRateLimitBackend"
-Cohesion: 0.09
-Nodes (18): InMemoryRateLimitBackend, Sliding-window rate limiter using timestamp lists., Return ``True`` if the request is allowed., Return True if count >= max_count (read-only)., Increment counter without checking limit., _FailingRateLimitBackend, asyncio, fixture (+10 more)
+### Community 127 - "plain_markdown"
+Cohesion: 0.10
+Nodes (25): plain_markdown(), Agent replies are markdown; a terminal showed `**bold**`, `## Heads` and `-…, _empty_card(), _format_continuation_line(), _format_header_line(), _print_inline_message(), _print_workspace_menu(), Text (+17 more)
 
 ### Community 128 - "test_triage.py"
 Cohesion: 0.31
 Nodes (13): clean_state(), client(), AsyncClient, fixture, Wave-5 Fix 8 — only an actual bidder may /v1/claim a window. Without the bidder…, _setup_room(), test_bid_and_claim_select_highest_bid_idempotently(), test_claim_broadcasts_wake_intent_to_bidders() (+5 more)
 
 ### Community 129 - "test_any_model_wake.py"
-Cohesion: 0.16
-Nodes (17): adapter(), _capture(), _Proc, Any, fixture, MonkeyPatch, Path, Any-model agents (gemini, opencode) get the same wake as Claude and Codex.… (+9 more)
+Cohesion: 0.12
+Nodes (23): adapter(), _capture(), _Proc, Any, fixture, MonkeyPatch, Path, Any-model agents (gemini, opencode) get the same wake as Claude and Codex.… (+15 more)
 
 ### Community 130 - "test_cli_reflexd.py"
 Cohesion: 0.22
@@ -1179,9 +1193,9 @@ Nodes (25): _kill_quietly(), _process_alive(), CaptureFixture, fixture, MonkeyPa
 Cohesion: 0.15
 Nodes (24): fixture, MonkeyPatch, Path, CLI workspace subcommands., --workspace flag selects the profile for one command., Loading quorus_mcp.server with QUORUS_PROFILE set should resolve identity from…, Invoke quorus_cli.cli.main() with a fake argv. Returns exit code., _run_cli() (+16 more)
 
-### Community 132 - "get_db_session"
-Cohesion: 0.06
-Nodes (44): create_participant(), create_tenant(), CreateKeyRequest, CreateParticipantRequest, CreateTenantRequest, _enforce_tenant_isolation(), get_tenant(), issue_api_key() (+36 more)
+### Community 132 - "UUID"
+Cohesion: 0.07
+Nodes (26): APIKey, _new_uuid(), datetime, APIKey domain model for the Quorus managed service. No ORM dependency — pure…, Hash a raw key for storage. Use only at key creation time., Return True if ``raw_key`` matches this key's stored hash. This is a bcrypt…, Extract the 8-char lookup prefix from a raw key. Accepts both ``quorus_sk_``…, Construct an APIKey from a raw asyncpg row dict. Expected keys: id, account_id,… (+18 more)
 
 ### Community 133 - "account.py"
 Cohesion: 0.10
@@ -1219,37 +1233,37 @@ Nodes (20): AGENT, AgentId, BottomStrip(), C, EASE, fmtTs(), GLYPH, GLYPH_STYLE 
 Cohesion: 0.08
 Nodes (23): 1. Agent Reputation & Trust Network, 2. Autonomous Swarm Spawning, 3. Temporal Coordination (Time-Travel Debugging), 4. Semantic Conflict Detection, 5. Cross-Swarm Federation, 6. Human-in-the-Loop Orchestration, 7. Predictive Task Routing, 8. Fault-Tolerant Task Execution (+15 more)
 
-### Community 142 - "ui.py"
+### Community 142 - "test_postgres_integration.py"
+Cohesion: 0.06
+Nodes (32): PostgresRoomHistoryBackend, Get recent messages for a room., Search messages in a room., Get a specific message by ID., Append-only room history backed by Postgres messages table. Room messages are…, Get a message thread (parent + replies)., Delete all messages for a room., Update denormalized room_name in all messages for this room. (+24 more)
+
+### Community 143 - "quorus_tui/__init__.py"
 Cohesion: 0.10
-Nodes (22): _print_grouped_help(), Custom help output with commands grouped by category., banner(), code(), fmt_agent(), fmt_room(), fmt_status_bar(), footer() (+14 more)
+Nodes (20): Quorus TUI — full-screen terminal hub for managing rooms, agents, and chat., Backward-compat shim for the Quorus TUI hub. The implementation has moved to…, Tests for the wave-9 wiring of dm_inbox into hub.py. Covers the new HubState…, HubState exposes the toggle for the inbox-panel binding. Wave-9 used Ctrl-N…, append_dm_message is the contract _dm_sse_loop calls per agent_dm event. The…, Smoke render — proves the orphan module is reachable from a hub call site once…, Replay an SSE-shaped script through _dm_sse_loop and confirm it appends…, _render_to_str() (+12 more)
 
-### Community 143 - "test_tui_dm_inbox.py"
-Cohesion: 0.20
-Nodes (10): Tests for the wave-9 wiring of dm_inbox into hub.py. Covers the new HubState…, HubState exposes the toggle for the inbox-panel binding. Wave-9 used Ctrl-N…, append_dm_message is the contract _dm_sse_loop calls per agent_dm event. The…, Smoke render — proves the orphan module is reachable from a hub call site once…, Replay an SSE-shaped script through _dm_sse_loop and confirm it appends…, _render_to_str(), test_ctrl_d_toggles_inbox(), test_dm_messages_appended_from_sse() (+2 more)
-
-### Community 144 - "ValueError"
-Cohesion: 0.08
-Nodes (14): field_validator, _validate_name(), _validate_slug(), field_validator, Self-service signup request., SignupRequest, field_validator, Tests for admin routes — tenant/participant/key CRUD via HTTP. These tests use… (+6 more)
+### Community 144 - "test_wake_log_secrets.py"
+Cohesion: 0.40
+Nodes (3): parametrize, Prove wake logs never persist stream credentials or raw harness stderr., test_stream_tokens_are_redacted_at_log_sink()
 
 ### Community 145 - "ConfigManager"
-Cohesion: 0.14
+Cohesion: 0.13
 Nodes (22): ConfigManager, Load/save config with a single source of truth for the path. Behavior: - When…, fixture, MonkeyPatch, Path, ConfigManager stays backward-compatible when profiles exist., test_load_auto_migrates_legacy_flat_config(), test_load_returns_current_profile_when_profiles_exist() (+14 more)
 
-### Community 146 - "_load_from_file"
+### Community 146 - "InMemoryWebhookQueueBackend"
+Cohesion: 0.10
+Nodes (11): InMemoryWebhookQueueBackend, Mark job as failed. Returns True if job will be retried., Return recent dead letter queue entries., Return queue statistics., In-memory webhook delivery queue with retry and DLQ support., Add a webhook job to the queue. Returns job ID., Fetch pending jobs for delivery., Block up to ``block_ms`` ms waiting for at least one job. Fast path: if work is… (+3 more)
+
+### Community 147 - "test_cli_swarm.py"
+Cohesion: 0.10
+Nodes (29): _cmd_brief(), _cmd_resolve(), _decompose_brief(), Drop a task brief into a room for agents to claim subtasks from., Call Claude to break a brief into subtasks. Returns [] on any failure., Resolve git merge conflicts using room history as context., resolve should exit cleanly when no conflicts are found., resolve should error gracefully when ANTHROPIC_API_KEY is not set. (+21 more)
+
+### Community 148 - "BundleService"
 Cohesion: 0.17
-Nodes (19): _load_from_file(), _save_to_file(), Room history should survive save/load cycle., Rooms and history survive save/load (simulated restart)., test_delivered_messages_do_not_reappear_after_reload(), test_file_persistence_save_and_load(), test_persistence_survives_restart(), test_room_history_persists() (+11 more)
+Nodes (9): _bundle_service(), Git bundle courier, held in this process's memory. Several relay instances…, BundleMeta, BundleService, Bundles and their metadata, in memory, behind one lock., Reserve one of the uploader's concurrent upload slots., The bundle, or None when unknown, expired, or from another room. Metadata and…, test_concurrent_upload_slots_are_bounded() (+1 more)
 
-### Community 147 - "_chat"
-Cohesion: 0.09
-Nodes (22): _chat(), _cmd_chat(), _cmd_history(), _cmd_members(), _cmd_watch(), _cmd_watch_daemon(), _format_chat_msg(), _get_sse_token() (+14 more)
-
-### Community 148 - "WorkQueueSvc"
-Cohesion: 0.11
-Nodes (12): In-memory + optional Redis-backed work-queue state machine. Mirror of…, Wipe queue state. Called from ``relay_routes.reset_state``., WorkQueueSvc, Completed work has nothing to restore; keeping it grew the hash forever…, test_terminal_tasks_leave_the_mirror(), M13 — the 51st distinct active claim by the same actor raises…, M13 — completing a task frees a slot under the quota. Without this, an agent…, M13 — re-claiming an existing in-flight task by the same actor is idempotent… (+4 more)
-
-### Community 149 - "_reflexd_script_path"
-Cohesion: 0.12
-Nodes (11): ChildRecord, _pid_alive(), Supervisor — multi-agent reflexd process manager. Owns N reflexd subprocesses,…, Locate the reflexd daemon script. Installed wheels carry it at…, Launch one reflexd subprocess. Returns the record or None on failure., Spawn one reflexd subprocess per participant. Returns ``{name: pid}``., SIGTERM each child, escalate SIGKILL after ``grace_s``., Return ``{participant: alive|dead|unknown}`` for each child. (+3 more)
+### Community 149 - "_init_services"
+Cohesion: 0.03
+Nodes (62): Handler, AnalyticsBackend, RateLimitBackend, Protocol definitions for Quorus relay backends. Each protocol describes one…, Return ``True`` if the request is allowed, ``False`` if rate-limited., Return ``True`` if count >= max_count (read-only, does not increment)., Increment the counter without checking the limit., Create a short-lived token for SSE connections. (+54 more)
 
 ### Community 150 - "_setup_lock_room"
 Cohesion: 0.08
@@ -1271,17 +1285,17 @@ Nodes (12): AutocompletePopover, Reset to HIDDEN. Idempotent., Grow the prefix b
 Cohesion: 0.16
 Nodes (18): posix_only, _Args, _Console, _fake_daemon(), linux(), Any, fixture, MonkeyPatch (+10 more)
 
-### Community 155 - "profiles.py"
-Cohesion: 0.17
-Nodes (8): _atomic_write_json(), Any, Per-workspace profile storage. Layout under ``~/.quorus/``: config.json #…, _validate_slug(), parametrize, Credential writers must not follow symlinks or reuse public temp files., test_private_writes_replace_unsafe_files(), _write()
+### Community 155 - "test_persistent_memory.py"
+Cohesion: 0.26
+Nodes (8): _clean_state(), client(), AsyncClient, fixture, Tests for the persistent-memory primitive — Plan v8 Phase 1 C. Service unit…, room_id(), TestPersistentMemoryRoutes, _user_headers()
 
 ### Community 156 - "anyio"
 Cohesion: 0.09
 Nodes (23): anyio, Create a room, join alice + agent-1, return the room UUID., message_type='brief' must be accepted by the relay (regression: was 422)., message_type='subtask' must be accepted by the relay (regression: was 422)., Unknown message_type values must be rejected with 422., POST /rooms returns 429 when create_room rate limit is exceeded., POST /rooms/{id}/join returns 429 when join rate limit is exceeded., POST /rooms/{id}/messages returns 429 when room_msg rate limit is exceeded. (+15 more)
 
 ### Community 157 - "test_sdk.py"
-Cohesion: 0.10
-Nodes (16): auth_headers(), clean_state(), client(), fixture, Tests for quorus/sdk.py — high-level Room SDK., Create a room and join an agent for SDK tests., Room should work as sync context manager., Room should expose room name. (+8 more)
+Cohesion: 0.13
+Nodes (13): Backward-compat shim for the Quorus HTTP client. The implementation has moved…, auth_headers(), clean_state(), client(), fixture, Tests for quorus/sdk.py — high-level Room SDK., Create a room and join an agent for SDK tests., Room should work as sync context manager. (+5 more)
 
 ### Community 158 - "BentoLight.tsx"
 Cohesion: 0.11
@@ -1292,28 +1306,28 @@ Cohesion: 0.09
 Nodes (18): CELL_H, CELL_W, COLS, CREAM, EASE, FAINT, GAP, GRID_W (+10 more)
 
 ### Community 160 - "quorus_sdk/http_agent.py"
-Cohesion: 0.10
-Nodes (13): main(), Run the full swarm demo., Decorator-based API for building Quorus-connected agents. Usage: from…, AckError, Exception, Universal Quorus client — works with any agent platform via HTTP. Usage: from…, Raised when message acknowledgement fails., Acknowledge receipt — call after successful processing. Raises… (+5 more)
+Cohesion: 0.12
+Nodes (12): main(), Run the full swarm demo., Decorator-based API for building Quorus-connected agents. Usage: from…, AckError, Exception, Universal Quorus client — works with any agent platform via HTTP. Usage: from…, Raised when message acknowledgement fails., Acknowledge receipt — call after successful processing. Raises… (+4 more)
 
 ### Community 161 - "Agent"
 Cohesion: 0.10
 Nodes (11): Agent, Join all rooms referenced by handlers., Main poll loop — fetch and dispatch messages., Route a message to matching handlers., Send periodic heartbeat with status from fn., Start the agent — joins rooms, polls, heartbeats. Blocks., Decorator-based agent that auto-polls and dispatches messages., Send a message to a room. (+3 more)
 
-### Community 162 - "plain_markdown"
-Cohesion: 0.12
-Nodes (21): plain_markdown(), Agent replies are markdown; a terminal showed `**bold**`, `## Heads` and `-…, _empty_card(), _format_continuation_line(), _format_header_line(), _print_inline_message(), Text, Deterministic sender → theme-token color. Same input always yields the same… (+13 more)
+### Community 162 - "social.py"
+Cohesion: 0.10
+Nodes (30): get_social_state(), post_social_verb(), Any, BaseModel, field_validator, get, post, Request (+22 more)
 
-### Community 163 - "relay.py"
+### Community 163 - "test_live_steps.py"
 Cohesion: 0.06
-Nodes (36): BaseHTTPMiddleware, close_redis(), init_redis(), Create (or return the existing) async Redis connection., Gracefully close the Redis connection pool., dashboard(), get, Web dashboard — rooms, live messages, send box. Extracted from relay.py to keep… (+28 more)
+Nodes (21): dashboard(), dashboard_js(), get, Response, Quorus web: your rooms on a phone or laptop browser, served by the relay at…, Quorus web: rooms, live messages, the working line, a send box., The page's only script, same-origin so the CSP stays ``script-src 'self'``., client() (+13 more)
 
-### Community 164 - "AsyncClient"
-Cohesion: 0.44
-Nodes (3): AsyncClient, TestCapabilityRoutes, _user_headers()
+### Community 164 - "load_policy_for_tenant"
+Cohesion: 0.11
+Nodes (27): load_policy_for_tenant(), Path, Load a tenant's policy from `<policy_dir>/<tenant_id>.json`. Falls back to…, _capability_svc(), CapabilityManifest, get_capability(), _policy_check(), publish_capability() (+19 more)
 
-### Community 165 - "test_reflexd_adapters.py"
-Cohesion: 0.09
-Nodes (21): Contract tests for the four headless harness adapters in…, Cline CLI contract: ``cline -- <ctx>``. Wave-7 added Cline to tier-A. The…, Claude CLI contract: ``claude --print --output-format json [--resume <sid>] --…, A hanging --version probe must NOT block daemon startup., log_adapter_versions probes claude/codex/gemini/cursor exactly once each., Codex contract: ``codex exec --json --skip-git-repo-check -- <ctx>``. The trust…, Wave-7: ``arav-opencode`` → opencode, ``arav-cline`` → cline. Without this…, Wave-7: reflexd must accept opencode/cline participants at startup. Without… (+13 more)
+### Community 165 - "tool_catalog.py"
+Cohesion: 0.12
+Nodes (30): _is_room_admin(), list_tools(), _members_list(), _policy_check(), BaseModel, delete, field_validator, get (+22 more)
 
 ### Community 166 - "test_threading.py"
 Cohesion: 0.16
@@ -1332,16 +1346,16 @@ Cohesion: 0.17
 Nodes (21): _append_lines(), _fallback_read_context(), fetch_room_history(), fetch_room_state(), heartbeat_loop(), _message_id(), poll_inbox_loop(), Event (+13 more)
 
 ### Community 170 - "QuorusClient"
-Cohesion: 0.14
+Cohesion: 0.15
 Nodes (10): QuorusClient, Return JWT if using api_key auth, otherwise secret., Make HTTP request with retry on transient errors., Send a message to a room., Fetch pending messages. Caller MUST call result.ack() after processing.…, Check pending message count without consuming them., Get room message history., Send a direct message. (+2 more)
 
 ### Community 171 - "InMemoryMessageBackend"
 Cohesion: 0.10
 Nodes (5): InMemoryMessageBackend, Atomically ACK old entries and re-enqueue as new (under one lock)., Per-recipient DM inbox with at-least-once delivery semantics. Messages move…, Move timed-out pending messages back to the queue (call under lock)., Fan-out: enqueue one message per recipient. Returns set of recipients rejected…
 
-### Community 172 - "resolve_config_dir"
-Cohesion: 0.16
-Nodes (20): Return the active config directory following the documented precedence. This…, resolve_config_dir(), isolated_env(), fixture, Path, Tests for config path resolution priority., Regression (F1.4): ``migrate_legacy_if_needed`` must land the migrated profile…, Point $HOME at a tmp dir and clear the override env vars so each test starts… (+12 more)
+### Community 172 - "ui.py"
+Cohesion: 0.09
+Nodes (24): _cmd_version(), _print_grouped_help(), Custom help output with commands grouped by category., banner(), code(), fmt_agent(), fmt_room(), fmt_status_bar() (+16 more)
 
 ### Community 173 - "test_notification_dispatch.py"
 Cohesion: 0.13
@@ -1364,24 +1378,24 @@ Cohesion: 0.10
 Nodes (19): anything else we should know?, ask, company, describe in more detail what your company does, describe what your company does, describe what your company does in 50 characters or less, founder video (1 minute) — script outline, have any of the founders worked together before? (+11 more)
 
 ### Community 178 - "get_redis_or_none"
-Cohesion: 0.20
-Nodes (16): get_redis(), get_redis_or_none(), Redis, Redis connection management for Quorus relay backends. Usage:: from…, Return the initialised Redis connection, or None when the relay is running…, Return the current Redis connection or raise if not initialised., hydrate(), mirror_delete() (+8 more)
+Cohesion: 0.17
+Nodes (18): get_redis(), get_redis_or_none(), Redis, Redis connection management for Quorus relay backends. Usage:: from…, Return the initialised Redis connection, or None when the relay is running…, Return the current Redis connection or raise if not initialised., hydrate(), mirror_delete() (+10 more)
 
 ### Community 179 - "check_redis"
 Cohesion: 0.14
 Nodes (19): check_redis(), Return ``True`` if the Redis connection is healthy AND accepting commands.…, asyncio, fixture, Regression test for the 2026-05-16 prod incident. Symptom: Upstash Redis hit…, Make every test see a cold cache., The fix REQUIRES a real round-trip — SET — not PING. If a future PR ever swaps…, When SET raises (quota exhausted, network blip, auth fail), the health check… (+11 more)
 
-### Community 180 - "capabilities.py"
-Cohesion: 0.20
-Nodes (18): _capability_svc(), CapabilityManifest, get_capability(), _policy_check(), publish_capability(), BaseModel, field_validator, get (+10 more)
+### Community 180 - "backends/memory.py"
+Cohesion: 0.03
+Nodes (19): InMemoryAnalyticsBackend, InMemoryBackends, InMemoryIdempotencyBackend, InMemoryParticipantBackend, InMemoryRoomBackend, InMemoryRoomHistoryBackend, InMemorySSETokenBackend, In-memory implementations of all Quorus backend protocols. All state is tenant-… (+11 more)
 
 ### Community 181 - "reflexd_models.py"
-Cohesion: 0.13
-Nodes (17): gemini_api_key(), gemini_settings(), is_opencode_v1(), _mcp_env(), _mcp_env_no_secrets(), opencode_config(), parse_gemini_json(), parse_opencode_stream() (+9 more)
+Cohesion: 0.11
+Nodes (21): gemini_api_key(), gemini_settings(), is_free_opencode(), is_opencode_v1(), _mcp_env(), _mcp_env_no_secrets(), opencode_config(), parse_gemini_json() (+13 more)
 
 ### Community 182 - "test_decorators.py"
-Cohesion: 0.09
-Nodes (9): Backward-compat shim for the Quorus decorator-based agent API. The…, agent(), fixture, Tests for quorus.decorators — decorator-based agent API., Create an Agent with mocked HTTP client., Agent.run blocks; agent.stop terminates it., A handler that raises shouldn't kill dispatch., test_dispatch_handler_exception_doesnt_crash() (+1 more)
+Cohesion: 0.10
+Nodes (8): agent(), fixture, Tests for quorus.decorators — decorator-based agent API., Create an Agent with mocked HTTP client., Agent.run blocks; agent.stop terminates it., A handler that raises shouldn't kill dispatch., test_dispatch_handler_exception_doesnt_crash(), test_run_and_stop()
 
 ### Community 183 - "devDependencies"
 Cohesion: 0.11
@@ -1391,9 +1405,9 @@ Nodes (19): autoprefixer, eslint, eslint-plugin-react-hooks, eslint-plugin-react
 Cohesion: 0.11
 Nodes (18): Agent script, Any HTTP Client, Cursor, Endpoints, Full API docs, Google Gemini, In a Codex agent loop, Integration Guides (+10 more)
 
-### Community 185 - "backends/memory.py"
-Cohesion: 0.03
-Nodes (19): InMemoryAnalyticsBackend, InMemoryBackends, InMemoryIdempotencyBackend, InMemoryParticipantBackend, InMemoryRoomBackend, InMemoryRoomHistoryBackend, InMemorySSETokenBackend, In-memory implementations of all Quorus backend protocols. All state is tenant-… (+11 more)
+### Community 185 - "get_real_ip"
+Cohesion: 0.09
+Nodes (33): get_real_ip(), Extract caller IP from a Starlette/FastAPI request, walking only the rightmost…, install_script(), _legacy_admin_secret(), _legacy_secret_matches(), mint_code(), MintRequest, MintResponse (+25 more)
 
 ### Community 186 - "runtime.py"
 Cohesion: 0.18
@@ -1404,28 +1418,28 @@ Cohesion: 0.11
 Nodes (18): _slash_info(), _slash_leave(), _slash_me(), _slash_mute(), _default_one_key(), Console, Slash-command additions for the chat surface. Lives outside ``hub.py`` so the…, `/leave` — return to the welcome view from the current room. Distinct from… (+10 more)
 
 ### Community 188 - "redis_backends.py"
-Cohesion: 0.14
-Nodes (17): BackendError, Exception, Redis-backed implementations of all Quorus backend protocols. Each class wraps…, Holds all Redis backend instances for easy wiring., Base class for backend errors., Raised when a Redis operation exceeds REDIS_OP_TIMEOUT_SECONDS., RedisBackends, RedisOperationTimeout (+9 more)
-
-### Community 189 - "PresenceService"
 Cohesion: 0.16
-Nodes (8): PresenceBackend, Record a heartbeat and return the stored presence entry., Return all participants whose last heartbeat is within *timeout_seconds*., PresenceService, Presence / heartbeat service wrapping a PresenceBackend., Record a heartbeat for *name* and return the stored entry., Return all participants whose last heartbeat is within *timeout* seconds., Agent presence tracking via periodic heartbeats.
+Nodes (15): BackendError, Exception, Redis-backed implementations of all Quorus backend protocols. Each class wraps…, Base class for backend errors., Raised when a Redis operation exceeds REDIS_OP_TIMEOUT_SECONDS., RedisOperationTimeout, _fast(), asyncio (+7 more)
+
+### Community 189 - "quickstart.py"
+Cohesion: 0.17
+Nodes (17): _gemini_has_key(), _opencode_version(), _codex_logged_in(), detect(), doctor_agents(), Found, git_root(), offer() (+9 more)
 
 ### Community 190 - "runtime/memory.py"
 Cohesion: 0.16
 Nodes (18): _atomic_replace(), _atomic_unlink(), cap_to_5kb(), _ensure_parent(), _lock_for(), memory_size_bytes(), Lock, Path (+10 more)
 
 ### Community 191 - "append_sync"
-Cohesion: 0.16
-Nodes (15): append_sync(), _assert_no_running_loop(), purge_sync(), Any, Drop oldest entries until the encoded payload fits MAX_BYTES., L7 fix: raise a *clear* error when a sync wrapper is invoked from inside a…, Sync version of :func:`append` for tests + non-async callers., Sync version of :func:`read_recent`. (+7 more)
+Cohesion: 0.12
+Nodes (19): append_sync(), _assert_no_running_loop(), purge_sync(), Any, Drop oldest entries until the encoded payload fits MAX_BYTES., L7 fix: raise a *clear* error when a sync wrapper is invoked from inside a…, Sync version of :func:`append` for tests + non-async callers., Sync version of :func:`read_recent`. (+11 more)
 
 ### Community 192 - "test_real_harness_e2e.py"
 Cohesion: 0.18
 Nodes (18): real_harness, Real-harness end-to-end smoke tests (opt-in). # Why this exists #…, Run a CLI with a fixed prompt; return stdout or skip on transient ENV. Skips…, `claude --print "say hi briefly"` → non-empty reply within 60s. Quorus uses…, `codex exec "say hi briefly"` → non-empty reply within 60s. OpenAI's codex CLI…, `gemini -p "say hi briefly"` → non-empty reply within 60s. Google's gemini CLI…, `cursor-agent -p "say hi briefly"` → non-empty reply within 60s. Cursor's…, `opencode run -- "say hi briefly"` → non-empty reply within 60s. The opencode… (+10 more)
 
 ### Community 193 - "reflexd_streamb.py"
-Cohesion: 0.11
-Nodes (20): iter_sse_events(), AsyncClient, Yield ``(event_name, data_dict|None)`` tuples. Mirrors the TUI parser, async., envelope_canonical_id(), envelope_thread_root(), Any, LogRecord, Stream B helpers for reflexd — pulled out of reflexd.py to keep it under its… (+12 more)
+Cohesion: 0.13
+Nodes (17): envelope_canonical_id(), envelope_thread_root(), Any, LogRecord, Stream B helpers for reflexd — pulled out of reflexd.py to keep it under its…, Return the thread_root_id of *envelope*, or None. Resolution rules — same as…, Background coroutine: subscribe to ``/stream/dm/{participant}``. Mirrors…, Redact stream credentials after formatting, including exception traces. httpx… (+9 more)
 
 ### Community 194 - "_now_iso"
 Cohesion: 0.11
@@ -1448,12 +1462,12 @@ Cohesion: 0.07
 Nodes (28): AsyncClient, Path, Quorus Watcher — background daemon that writes room context to…, Touch ~/.quorus/pending-<agent>.flag so cross-harness `stop` hooks (Cursor in…, Fetch room state and message history., Write context to .quorus/context.md atomically., Format context dict as Markdown., Event-driven background task that updates .quorus/context.md via SSE. (+20 more)
 
 ### Community 199 - "working.py"
-Cohesion: 0.14
-Nodes (14): busy_in_room(), _elapsed(), fetch_presence(), presence_loop(), Any, Event, Text, Who is working right now: agents show presence ``busy`` for the room while a… (+6 more)
+Cohesion: 0.13
+Nodes (16): activity_in_room(), busy_in_room(), _elapsed(), fetch_presence(), presence_loop(), Any, Event, Text (+8 more)
 
-### Community 200 - "_cmd_share"
-Cohesion: 0.10
-Nodes (21): _cmd_share(), _connect_aider(), _connect_antigravity(), _connect_cline(), _connect_continue(), _connect_opencode(), _connect_windsurf(), _copy_to_clipboard() (+13 more)
+### Community 200 - "bundles.py"
+Cohesion: 0.29
+Nodes (13): download_bundle(), _human(), list_bundles(), _member(), get, post, Request, Response (+5 more)
 
 ### Community 201 - "compilerOptions"
 Cohesion: 0.11
@@ -1511,9 +1525,9 @@ Nodes (16): Architecture, Build sequence, CLI changes (`packages/cli/quorus_cli/
 Cohesion: 0.12
 Nodes (16): Build Your First Multi-Agent Project in 5 Minutes, Coordination Primitives, Export for documentation, Next Steps, Prerequisites, Primitive A — Shared State Matrix, Primitive B — Distributed File Lock, Read the full conversation (+8 more)
 
-### Community 215 - ".register_queue"
-Cohesion: 0.22
-Nodes (5): Queue, Push to process-local SSE queues only (called on Pub/Sub receive)., Create and register a new SSE queue for a connection. If a NotificationService…, Remove a queue when the SSE connection closes., Push *message* to all local SSE connections for *recipient*. Always delivers…
+### Community 215 - "_decode_join_token"
+Cohesion: 0.11
+Nodes (20): _cmd_quickjoin(), _decode_join_token(), _encode_join_token(), Create a portable join token (base64-encoded JSON)., Decode a join token. Returns None if invalid., Join a room using a portable `quorus://` token (zero config)., Token encodes relay URL, room, expiry, and secret., Token uses api_key field when provided. (+12 more)
 
 ### Community 216 - "_strip_agent_suffix"
 Cohesion: 0.15
@@ -1531,9 +1545,9 @@ Nodes (16): InMemoryPresenceBackend, Agent heartbeat tracking., Agent heartbeat 
 Cohesion: 0.15
 Nodes (16): _clean_process_global_state(), _isolate_reflexd_runtime(), _marker_explicitly_selected(), _os_environ_snapshot(), _preimport_patch_targets(), fixture, pytest_collection_modifyitems(), Set required environment variables before any test module imports. (+8 more)
 
-### Community 220 - "_cmd_init"
-Cohesion: 0.06
-Nodes (58): _backup_before_overwrite(), _cmd_init(), _config_is_profile_pointer(), _create_init_human_profile(), _discover_tenant_id(), _mint_init_agent_keys(), Copy *path* to ``<path>.bak`` before init overwrites it. When the relay is…, True when *path* holds a ProfileManager pointer, not a flat config. The first-… (+50 more)
+### Community 220 - "test_cli_init_profile_layout.py"
+Cohesion: 0.13
+Nodes (30): hub_home(), _make_init_args(), fixture, MonkeyPatch, Path, ``quorus init`` must not flatten a hub-created profile layout. A first-run…, Finding #5: the old line just said "overwriting" — name what is gone., Back-compat: a fresh install keeps the legacy flat shape. (+22 more)
 
 ### Community 221 - "DocsLayout.tsx"
 Cohesion: 0.12
@@ -1549,11 +1563,11 @@ Nodes (15): 10. Three ways this fails + watch list, 1. TL;DR, 2. Why notificatio
 
 ### Community 224 - "HubState"
 Cohesion: 0.04
-Nodes (16): HubState, Flip the work-queue panel open/closed. Returns the new state., Append a DM envelope from the /stream/dm SSE listener., Call after input() returns so the next incoming SSE message will get a fresh…, L3: approvals are time-critical (the agent gives up), so the panel refreshes…, All mutable state shared between the polling thread and render loop., Regression: render must see (rooms, idx, name) from one snapshot. The bug:…, No room selected → idx=-1, sel=None, name='', but rooms list intact. (+8 more)
+Nodes (13): HubState, Return the currently-selected room name, or empty string. Returns empty when no…, All mutable state shared between the polling thread and render loop., Regression: render must see (rooms, idx, name) from one snapshot. The bug:…, No room selected → idx=-1, sel=None, name='', but rooms list intact., Mutating the returned rooms list must not corrupt internal state., Regression for 'TUI keeps switching me in and out of rooms.' The relay's GET…, A 5xx blip that returns no rooms must NOT kick the user out. (+5 more)
 
-### Community 225 - "APIKey"
-Cohesion: 0.12
-Nodes (12): APIKey, _new_uuid(), datetime, APIKey domain model for the Quorus managed service. No ORM dependency — pure…, Hash a raw key for storage. Use only at key creation time., Return True if ``raw_key`` matches this key's stored hash. This is a bcrypt…, Extract the 8-char lookup prefix from a raw key. Accepts both ``quorus_sk_``…, Construct an APIKey from a raw asyncpg row dict. Expected keys: id, account_id,… (+4 more)
+### Community 225 - "test_outbox_replay_resilience.py"
+Cohesion: 0.24
+Nodes (14): clean_state(), client(), _drain(), _make_room(), AsyncClient, fixture, Queue, skipif (+6 more)
 
 ### Community 226 - "test_mcp_auth_fallback.py"
 Cohesion: 0.25
@@ -1568,16 +1582,16 @@ Cohesion: 0.17
 Nodes (15): clean_state(), client(), AsyncClient, fixture, End-to-end test: multi-agent room conversation with fan-out., SSE subscribers should receive room fan-out messages., Messages in one room should not leak to another room's members., Multiple concurrent messages to same room should not lose data. (+7 more)
 
 ### Community 230 - "_msg"
-Cohesion: 0.06
-Nodes (21): Connection, _connect(), _msg_extra(), SQLite-backed room history backend. Provides durable, zero-dependency room…, Serialize any non-standard fields to JSON for the extra column., Append-only room history backed by SQLite. Thread-safe: all DB I/O runs in a…, _row_to_msg(), SQLiteRoomHistoryBackend (+13 more)
+Cohesion: 0.05
+Nodes (24): Connection, _connect(), _msg_extra(), SQLite-backed room history backend. Provides durable, zero-dependency room…, Serialize any non-standard fields to JSON for the extra column., Append-only room history backed by SQLite. Thread-safe: all DB I/O runs in a…, _row_to_msg(), SQLiteRoomHistoryBackend (+16 more)
 
 ### Community 231 - "native.py"
 Cohesion: 0.13
 Nodes (22): OS-level notification dispatch for Quorus. The…, _check_and_update_rate_limit(), _dispatch_fallback(), _dispatch_linux(), _dispatch_macos(), _linux_argv(), _load_state(), _log_path() (+14 more)
 
-### Community 232 - "test_wave2_hardening.py"
-Cohesion: 0.14
-Nodes (15): _cors_guard(), Wave-2 regression tests — HIGH security/correctness fixes. This file collects…, Re-implement the relay's CORS startup guard so the regression test doesn't have…, H6 (security) — ``CORS_ORIGINS=*`` without opt-in must raise., H6 (security) — operator can opt-in via QUORUS_ALLOW_WILDCARD_CORS., H6 (security) — sanity check the relay still ships the guard. A pure regex…, H11 — relay returning 401 inside the bid window must break the polling loop,…, H11 sanity — 404 from /v1/claim is the "no bids yet" path and must continue to… (+7 more)
+### Community 232 - "TestRedisMessageBackpressure"
+Cohesion: 0.20
+Nodes (6): Test atomic backpressure via quota-check + reject (no message loss)., enqueue_fanout should accept maxlen parameter without error., Without maxlen, all messages should be kept., When queue is at capacity, new messages should be rejected (not trimmed)., Fanout to multiple recipients: some accepted, some rejected., TestRedisMessageBackpressure
 
 ### Community 233 - "Cross-Harness Notifications"
 Cohesion: 0.13
@@ -1588,8 +1602,8 @@ Cohesion: 0.13
 Nodes (14): 1. Document the supported install path (this commit), 1. The repo is a hatchling monorepo, 2. Python 3.14 added "skip hidden .pth files", 2. Verify topology in CI (this commit), 3. uv marks every file in its venvs as macOS-hidden, 3. Wheel builds are unaffected, 4. Python 3.14 support, Aftermath / future-proofing (+6 more)
 
 ### Community 235 - "Recent Changes"
-Cohesion: 0.18
-Nodes (11): Any-model agents: opencode, Gemini, Ollama (2026-10-16), Daemon commit hygiene (2026-10-17), Every agent answers the human (2026-10-16), Fresh-user run + launch prep (2026-10-16), Harness exception visibility (2026-10-17), Linux verified in Docker (2026-10-16), Marketing evidence review (2026-10-17), Proactive + notified for every agent; lead; catch-up (2026-10-17) (+3 more)
+Cohesion: 0.17
+Nodes (12): Any-model agents: opencode, Gemini, Ollama (2026-10-16), Daemon commit hygiene (2026-10-17), Every agent answers the human (2026-10-16), Fresh-user run + launch prep (2026-10-16), Harness exception visibility (2026-10-17), Linux verified in Docker (2026-10-16), Marketing evidence review (2026-10-17), Proactive + notified for every agent; lead; catch-up (2026-10-17) (+4 more)
 
 ### Community 236 - "Quorus → Autonomous Engineering Team"
 Cohesion: 0.13
@@ -1600,20 +1614,20 @@ Cohesion: 0.28
 Nodes (14): _fail(), _http_get(), _http_post(), main(), _ok(), Path, Popen, Read every known host config; return path -> original bytes (or None). (+6 more)
 
 ### Community 238 - "test_jwt_url_leak.py"
-Cohesion: 0.14
-Nodes (14): clean(), client(), fixture, Regression tests for the JWT-in-URL audit finding (2026-05-16). Two leak…, Source-level check: the SSE handler must read from cookies when the query-…, Absent both query token and cookie, /stream/* must 401., The dashboard JS must read its credentials from ``location.hash``. Reading from…, EventSource must use ``withCredentials:true`` and must NOT pass ``?token=``.… (+6 more)
+Cohesion: 0.20
+Nodes (10): clean(), client(), fixture, Regression tests for the JWT-in-URL audit finding (2026-05-16). Two leak…, POST /stream/token must Set-Cookie: quorus_sse with HttpOnly, Secure,…, Source-level check: the SSE handler must read from cookies when the query-…, Absent both query token and cookie, /stream/* must 401., test_stream_get_handler_reads_cookie_when_query_empty() (+2 more)
 
 ### Community 239 - "test_mcp.py"
 Cohesion: 0.13
 Nodes (8): send_message should return error when relay is down., SSE listener should parse SSE format and buffer messages. Mocks the httpx…, SSE listener should reconnect after a connection error., get_room_state returns error message when relay is unreachable., test_get_room_state_relay_error(), test_send_message_relay_unreachable(), test_sse_listener_parses_and_buffers(), test_sse_listener_reconnects_on_error()
 
 ### Community 240 - "test_mcp_runtime.py"
-Cohesion: 0.16
-Nodes (13): asyncio, Tests for the 2026-08 MCP server file split (``quorus_mcp.runtime``). Covers: *…, The resolved settings must not carry the removed polling toggles., Moved names must stay importable from the server module, unchanged., quorus.mcp_server must alias quorus_mcp.server (existing contract). Note: we…, The locked reset must serialize behind _active_session_lock., Patching quorus.mcp_server helpers must be seen by runtime loops., test_load_runtime_config_has_no_polling_keys() (+5 more)
+Cohesion: 0.12
+Nodes (16): asyncio, parametrize, Tests for the 2026-08 MCP server file split (``quorus_mcp.runtime``). Covers: *…, The resolved settings must not carry the removed polling toggles., A wake's MCP server posting "active" flipped the daemon's busy presence (and…, Moved names must stay importable from the server module, unchanged., quorus.mcp_server must alias quorus_mcp.server (existing contract). Note: we…, The locked reset must serialize behind _active_session_lock. (+8 more)
 
-### Community 241 - "test_outbox_replay_resilience.py"
-Cohesion: 0.24
-Nodes (14): clean_state(), client(), _drain(), _make_room(), AsyncClient, fixture, Queue, skipif (+6 more)
+### Community 241 - "social_verbs.py"
+Cohesion: 0.16
+Nodes (19): Public API for the Quorus Social Protocol v1. Apache-2.0 licensed. See…, ClaimPayload, DeferPayload, DisagreePayload, InterruptPayload, BaseModel, QueuePayload, Quorus Social Protocol v1 — wire types. Apache-2.0 licensed. The canonical… (+11 more)
 
 ### Community 242 - "TestRoomLock"
 Cohesion: 0.13
@@ -1631,29 +1645,29 @@ Nodes (13): composition, get involved, primitive 1 — coordination (LIVE), prim
 Cohesion: 0.16
 Nodes (11): integration, _free_port(), parametrize, Path, skipif, Cold-install regression test — the "demo won't open" gate. Locks in the April…, Full cold install inside a fresh container — the strongest possible gate. This…, Pick a free localhost port to avoid clobbering 18080 in dev. (+3 more)
 
-### Community 246 - "_decode_join_token"
-Cohesion: 0.15
-Nodes (14): _decode_join_token(), _encode_join_token(), Create a portable join token (base64-encoded JSON)., Decode a join token. Returns None if invalid., Token encodes relay URL, room, expiry, and secret., Token uses api_key field when provided., Tokens without quorus:// prefix are rejected., Expired tokens are rejected. (+6 more)
-
-### Community 247 - "write_private_json"
-Cohesion: 0.14
-Nodes (18): Any, Path, Atomic, owner-only writes for local credentials., Replace a file using a fresh 0600 inode, never truncating a symlink. A fixed…, Atomically write private text without following a destination symlink., Stream JSON into a fresh private file, replacing only after success., _replace_private(), write_private_json() (+10 more)
-
-### Community 248 - "SSEListener"
-Cohesion: 0.21
-Nodes (8): Any, AsyncClient, Event, Persistent SSE listener with circuit breaker., Return circuit breaker state (non-blocking snapshot)., Main loop. Runs until stop_event is set., Try one SSE connection. Return True if a probe connects successfully. On any…, SSEListener
-
-### Community 249 - "render_work_queue_panel"
+### Community 246 - "render_work_queue_panel"
 Cohesion: 0.21
 Nodes (13): _eta_str(), panel_summary(), _pluralise(), Any, Text, Stream B work-queue panel for the Quorus TUI. A fold-up panel rendered above…, Return the rendered panel rows. *tasks* is the list as returned by the relay.…, One-line text summary used by Hub status-bar / OS notifications. (+5 more)
 
-### Community 250 - "_git"
-Cohesion: 0.20
-Nodes (21): abort_merge(), commit_all(), _discard_graph_refresh(), finish_merge(), _git(), merge_in_progress(), publish_worktree(), CompletedProcess (+13 more)
-
-### Community 251 - "test_triage_redis.py"
+### Community 247 - "failover.py"
 Cohesion: 0.12
-Nodes (20): clean_state(), client(), fake_redis(), AsyncClient, fixture, MonkeyPatch, R3 (WAKE_REBUILD_SPEC): Redis-shared triage auction. The process-local auction…, R4: memory/capabilities/tool-catalog hydrate from Redis after a process restart… (+12 more)
+Nodes (21): attempt(), choose_candidate(), continuation(), _last_commit(), str, Vendor-only failover policy and typed continuation context for reflexd., Transfer a claim, then send one typed wake. Return a fallback diagnosis suffix., An actionable diagnosis from harness stderr, never from model prose. (+13 more)
+
+### Community 248 - "Code across machines: design (slate item 4)"
+Cohesion: 0.12
+Nodes (15): Base selection (the main correctness problem), Build plan (each step its own commit with tests), Code across machines: design (slate item 4), Flow, Identity on shared-secret relays (plan for review), Limits we accept (honest), Options, Pain (+7 more)
+
+### Community 249 - "routes/__init__.py"
+Cohesion: 0.14
+Nodes (21): Route sub-package — combines all domain route files into a single router., RegisterWebhookRequest, RoomWebhookRequest, create_sse_token(), get, post, Request, SSE (Server-Sent Events) route handlers — token creation and streaming. (+13 more)
+
+### Community 250 - "admin/models.py"
+Cohesion: 0.09
+Nodes (29): DeclarativeBase, Message, _new_uuid(), Presence, datetime, SQLAlchemy ORM models for Quorus's Postgres schema., Room, RoomMember (+21 more)
+
+### Community 251 - "_audit_tool_call"
+Cohesion: 0.22
+Nodes (20): _audit_tool_call(), check_messages(), claim_task(), get_room_state(), join_room(), list_participants(), list_rooms(), MCP tool implementations for the Quorus relay. Extracted from ``server.py`` to… (+12 more)
 
 ### Community 252 - "test_init_wake_smoke.py"
 Cohesion: 0.21
@@ -1679,17 +1693,17 @@ Nodes (13): Reflexd Phase 2 — Self-Assignment tests. Covers v2 triage classifi
 Cohesion: 0.20
 Nodes (13): _assert_security_headers(), clean(), client(), fixture, Regression tests for HTTP security headers (2026-05-16 audit). Every relay…, 404 responses must still carry the security headers — attackers shouldn't learn…, Auth failures must also carry the headers (defense in depth)., HTML responses (dashboard, invite pages) need a CSP on top of the baseline… (+5 more)
 
-### Community 258 - "_audit_tool_call"
-Cohesion: 0.25
-Nodes (18): _audit_tool_call(), check_messages(), claim_task(), get_room_state(), join_room(), list_participants(), list_rooms(), MCP tool implementations for the Quorus relay. Extracted from ``server.py`` to… (+10 more)
+### Community 258 - "Monday memo: Quorus weekend (2026-10-17)"
+Cohesion: 0.33
+Nodes (5): Decide first, Fix on `feat` (only you can; the code isn't on this branch), Monday memo: Quorus weekend (2026-10-17), Not done or not proven, What landed on `weekend/quorus`
 
-### Community 259 - "quorus_tui/__init__.py"
-Cohesion: 0.19
-Nodes (15): Quorus TUI — full-screen terminal hub for managing rooms, agents, and chat., Backward-compat shim for the Quorus TUI hub. The implementation has moved to…, _console(), Tests for the new slash-command surface (packages/tui/quorus_tui/slash.py)., test_run_share_flow_copy_failure_shows_code(), test_run_share_flow_copy_path(), test_run_share_flow_renders_card_and_returns_dismiss_status(), test_slash_info_handles_no_room() (+7 more)
+### Community 259 - "test_wave2_hardening.py"
+Cohesion: 0.14
+Nodes (15): _cors_guard(), Wave-2 regression tests — HIGH security/correctness fixes. This file collects…, Re-implement the relay's CORS startup guard so the regression test doesn't have…, H6 (security) — ``CORS_ORIGINS=*`` without opt-in must raise., H6 (security) — operator can opt-in via QUORUS_ALLOW_WILDCARD_CORS., H6 (security) — sanity check the relay still ships the guard. A pure regex…, H11 — relay returning 401 inside the bid window must break the polling loop,…, H11 sanity — 404 from /v1/claim is the "no bids yet" path and must continue to… (+7 more)
 
-### Community 260 - "room_messages.py"
-Cohesion: 0.10
-Nodes (30): RoomMessageRequest, _body_fingerprint(), get_message_thread(), get_room_history(), get_thread_by_root(), get, post, Request (+22 more)
+### Community 260 - "SocialSvc"
+Cohesion: 0.11
+Nodes (14): _empty_state(), Any, Lock, In-memory social-protocol state machine. Public surface: * :meth:`apply` — main…, Return the per-(tid, rid) asyncio.Lock, creating + LRU-evicting as needed.…, Return a defensive copy of the room's state dict., Wipe state. No args → full wipe. Only tid → wipe that tenant. Both tid+rid →…, Apply *sv* to the (tid, rid) state. Returns a small state-change summary the… (+6 more)
 
 ### Community 261 - "QuorusConsole.tsx"
 Cohesion: 0.20
@@ -1715,13 +1729,13 @@ Nodes (12): Claude Tunnel Implementation Plan, File Structure, Task 10: Final Li
 Cohesion: 0.24
 Nodes (5): _name_has_agent_keyword(), True iff any dash-segment after the first contains an agent keyword. `arav-…, `_name_has_agent_keyword` distinguishes humans from agents., `-pm`, `-test`, `-auto` are role labels, not agents., TestAgentKeywordDetection
 
-### Community 267 - "test_claude_json_errors.py"
-Cohesion: 0.29
-Nodes (10): str, An actionable diagnosis from harness stderr, never from model prose., VendorFailure, parametrize, Claude can report a vendor error as a JSON result with process exit 0., result(), test_error_result_is_a_typed_vendor_diagnosis(), test_errors_array_is_diagnosed_without_result_text() (+2 more)
+### Community 267 - "test_prompt_injection_guard.py"
+Cohesion: 0.24
+Nodes (12): _daemon(), _prompt(), Any, parametrize, Path, Prompt-injection hardening (pre-launch audit, 2026-10-16). A room message lands…, test_every_wake_carries_guard_rails(), test_max_size_room_fits_one_linux_argv_string() (+4 more)
 
-### Community 268 - "webhooks.py"
-Cohesion: 0.30
-Nodes (13): RegisterWebhookRequest, RoomWebhookRequest, delete_room_webhook(), delete_webhook(), list_room_webhooks(), delete, get, post (+5 more)
+### Community 268 - "Supervisor"
+Cohesion: 0.11
+Nodes (15): ChildRecord, _pid_alive(), Path, Supervisor — multi-agent reflexd process manager. Owns N reflexd subprocesses,…, Locate the reflexd daemon script. Installed wheels carry it at…, Manages reflexd children for ``participants``., Launch one reflexd subprocess. Returns the record or None on failure., Spawn one reflexd subprocess per participant. Returns ``{name: pid}``. (+7 more)
 
 ### Community 269 - "test_cold_install_isolation.py"
 Cohesion: 0.18
@@ -1731,9 +1745,9 @@ Nodes (11): _free_port(), Path, skipif, Regression test: cold-install smoke must
 Cohesion: 0.17
 Nodes (12): clean(), client(), fixture, Regression tests for two Gate B items (2026-05-16 audit). B4 — ``POST…, End-to-end: the rendered dashboard must contain the meta tags (not just the…, After 60 sends, the 61st must 429., Two distinct senders should not share a budget., Dashboard HTML must declare noindex, nofollow, noarchive. (+4 more)
 
-### Community 271 - "social.py"
-Cohesion: 0.13
-Nodes (26): get_social_state(), post_social_verb(), Any, get, post, Request, Quorus Social Protocol v1 — relay routes. Two endpoints: * ``POST…, Submit a social verb to a room. See ``docs/SOCIAL_PROTOCOL_v1.md``. (+18 more)
+### Community 271 - "RoomService"
+Cohesion: 0.04
+Nodes (25): Room CRUD and membership management., Look up a room by its human-readable name. Returns (room_id, data)., Return all rooms for a tenant as (room_id, data) pairs., Return rooms where *member_name* is a member, as (room_id, data) pairs., Atomically create a room only if the name is not taken. Returns True if…, Atomically rename a room only if the new name is not taken. Returns True if…, Atomically add a member only if the room is under capacity. Returns True if…, Return ``{name: role}`` for all members of a room. (+17 more)
 
 ### Community 272 - "test_room_member_presence.py"
 Cohesion: 0.28
@@ -1771,9 +1785,9 @@ Nodes (11): File Structure, Redis Cost Tightening Implementation Plan, Self-Revi
 Cohesion: 0.17
 Nodes (11): F1. Security & correctness stragglers, F2. Test-order pollution, F3. MCP server file split, Judge checklist, Sequencing, Stream D — Daemon (reflexd v2), Stream F — Foundation (Phase 0), Stream L — Live-session injection + approval relay (Claude first) (+3 more)
 
-### Community 281 - "middleware.py"
-Cohesion: 0.09
-Nodes (26): AST, _client_ip_for_log(), _looks_like_jwt(), _needs_revocation_refresh(), Request, Auth middleware — JWT-first verification with legacy RELAY_SECRET fallback., FastAPI dependency — verify JWT or legacy Bearer token. Returns an AuthContext…, Return the *real* client identifier for logging. S4: previously returned… (+18 more)
+### Community 281 - "test_quota_cooldown.py"
+Cohesion: 0.11
+Nodes (6): _ChattyFailure, _OpencodeRateLimited, _Proc, Out of quota → stop waking that agent until it resets (gemini, 2026-10-17).…, _Relay, test_limited_agent_is_not_woken_and_says_so_once()
 
 ### Community 282 - "demo_reflex.sh"
 Cohesion: 0.32
@@ -1815,41 +1829,37 @@ Nodes (10): 1. Production relay 5xx-degrades, 2. Demo crashes mid-beat (TUI free
 Cohesion: 0.18
 Nodes (11): framer-motion, react, react-dom, react-router-dom, dependencies, asciinema-player, framer-motion, react (+3 more)
 
-### Community 292 - "live_pid"
-Cohesion: 0.38
-Nodes (10): _alive(), _is_daemon_for(), live_pid(), pidfile(), Path, Wake daemons without launchd (Linux, WSL, BSD): a detached process that leads…, A live reflexd for *name*, not whatever reused the pid after a reboot…, Stop *name*'s daemon and everything it started. True if one was running.… (+2 more)
+### Community 292 - "test_tui_first_run_messages.py"
+Cohesion: 0.21
+Nodes (13): fixture, MonkeyPatch, Path, First-run message order + hygiene (weekend brief, findings #3 and #4). The…, Run `_run_session` far enough to reach the announce line, then exit., rich renders `default=""` as `()`, which reads like a missing value., `You're in as @alice` must come from the session, after the relay answered —…, _run() (+5 more)
 
 ### Community 293 - "render_dm_inbox_panel"
 Cohesion: 0.24
 Nodes (10): panel_summary(), _preview(), Any, Text, Stream B agent-DM inbox panel for the Quorus TUI. Renders the per-participant…, One-line summary for the status bar / OS-level toast., Render ``2m ago``-style. Returns ``""`` when unparseable., Render the inbox panel rows. *messages* is the list returned by ``GET… (+2 more)
 
-### Community 294 - "_render_header"
-Cohesion: 0.25
-Nodes (7): Premium one-line header. Layout — left-aligned identity, right-aligned status:…, _render_header(), Render a Rich Text to plain string for assertion., No chat_identity kwarg → default empty string → use agent_name., Pin the wiring so the kwarg actually flows through., _render_to_str(), TestHeaderUsesChatIdentity
+### Community 295 - "InMemoryRateLimitBackend"
+Cohesion: 0.10
+Nodes (16): InMemoryRateLimitBackend, Sliding-window rate limiter using timestamp lists., Return ``True`` if the request is allowed., Return True if count >= max_count (read-only)., Increment counter without checking limit., _FailingRateLimitBackend, asyncio, Tests for the per-IP signup rate limit (5 requests / 60 seconds). Drives… (+8 more)
 
-### Community 295 - "_run"
-Cohesion: 0.09
-Nodes (28): NotFoundRateLimitMiddleware, Block clients that repeatedly hit non-existent resources (404 spam). Uses…, Tests for the 404 spam rate limiter (relay.py). Asserts that: 1. The Redis-…, Health and metrics endpoints must not be rate limited, otherwise a misbehaving…, If Redis raises (quota exhausted, network blip, anything) the middleware MUST…, The 404-record path also runs Redis. If that errors, the response must still be…, The middleware must check ``rate_limit_service`` and the Redis URL before…, Direct unit test on the in-memory helpers. (+20 more)
+### Community 296 - "Saturday: the usefulness bar (from Arav, 2026-10-17)"
+Cohesion: 0.13
+Nodes (15): Added: `quorus demo` (zero-key trial), rank 2b after the duel, Added: `quorus retro`, the self-improvement loop, From the pre-launch security audit (fixes are on feat/wake-rebuild-aug26: 9d0fc0e5, 430cb716, c5740e80, b8473f6c, 51cf8f59), Headline feature for Saturday: your agent team on your phone, How the weekend runs: a continuous loop with a stop rule (Arav, 2026-10-17), Roles from Saturday (overseer's call, per Arav), Saturday PRIORITY ORDER (overrides the slate order above), Saturday: the usefulness bar (from Arav, 2026-10-17) (+7 more)
 
-### Community 296 - "get_real_ip"
-Cohesion: 0.09
-Nodes (35): get_real_ip(), Number of proxies in front of the relay we trust to set X-Forwarded-For. Wave-5…, Extract caller IP from a Starlette/FastAPI request, walking only the rightmost…, _trusted_proxy_count(), install_script(), _legacy_admin_secret(), _legacy_secret_matches(), mint_code() (+27 more)
-
-### Community 297 - "load_runtime_config"
+### Community 297 - "BundleError"
 Cohesion: 0.22
-Nodes (10): _clean_env(), load_runtime_config(), Any, Fail closed if ``value`` contains chars that produce an illegal header. Empty…, Resolve the MCP server's runtime settings and run the startup guards.…, Read an env var, treating empty/whitespace-only values as UNSET. Codex audit…, Resolve an auth field with empty-env fallback + one-time stderr note., _resolve_auth() (+2 more)
+Nodes (12): BundleError, BundleHeader, parse_header(), ValueError, Room-scoped git bundles carried by the relay (docs/weekend/cross-machine-…, A bundle the relay refuses; the message is safe to show the client., Branch names git itself accepts (git check-ref-format), on a safe charset., Strictly parse a git bundle header: exactly one ``refs/heads/<branch>``. (+4 more)
 
-### Community 298 - "install_launchd"
-Cohesion: 0.28
-Nodes (8): install_launchd(), Path, Launchd plist generator — auto-start reflexd-manager on macOS login. We DO NOT…, Build the launchd plist as XML bytes. ``quorus_bin`` should be the absolute…, Write the plist to ``plist_path``. Caller must confirm beforehand. The CLI…, render_plist(), ProgramArguments should be exactly ``[<bin>, 'reflexd-manager', 'start']``., test_launchd_plist_runs_correct_command()
+### Community 298 - "test_reflexd_commit_hygiene.py"
+Cohesion: 0.22
+Nodes (8): parametrize, Daemon commits keep short subjects and leave generated graphs alone., test_graph_refresh_is_not_work_or_committed(), test_short_conventional_subject(), git(), parametrize, Generated tracked graphs must not obstruct sync or publication rebases., test_graph_refresh_does_not_block_rebase()
 
 ### Community 299 - "deploy"
 Cohesion: 0.18
 Nodes (10): build, builder, dockerfilePath, deploy, healthcheckPath, healthcheckTimeout, numReplicas, restartPolicyMaxRetries (+2 more)
 
 ### Community 300 - "Quorus"
-Cohesion: 0.18
-Nodes (10): 30-second tour, Architecture, Deploy, HTTP API, Install, License, MCP integration, Quorus (+2 more)
+Cohesion: 0.17
+Nodes (11): 30-second tour, Architecture, Deploy, HTTP API, Install, License, MCP integration, Quorus (+3 more)
 
 ### Community 301 - "demo_wake.sh"
 Cohesion: 0.35
@@ -1891,37 +1901,37 @@ Nodes (10): Agents, Analytics, Authentication, `DELETE /rooms/{room_id}/lock/{fi
 Cohesion: 0.20
 Nodes (9): Execution Handoff, File Structure, Multi-Workspace Support Implementation Plan, Self-Review (done before user sees this plan), Task 1: ProfileManager module, Task 2: ConfigManager facade wiring, Task 3: CLI — workspaces, login, whoami, -w flag, Task 4: TUI live workspace switching (+1 more)
 
-### Community 311 - "InviteService"
-Cohesion: 0.22
-Nodes (5): InviteService, JWT-based room invite service. Replaces the legacy HMAC invite tokens with…, Create and verify JWT invite tokens for room joins., Return a signed JWT invite token., Decode and validate an invite token. Returns the decoded claims dict on…
+### Community 311 - "mcp_writers.py"
+Cohesion: 0.21
+Nodes (16): _format_toml_value(), Per-client MCP config writers. One writer per supported agent. Each…, Writer for every client using the standard ``mcpServers`` JSON shape. When…, Tier-B writer (MCP-only, manual-trigger). Windsurf has no canonical headless…, Tier-A writer (fully proactive after wave-7). Cline ships a standalone CLI…, Outcome of registering the Quorus MCP server with one client., Minimal TOML-safe string escape: double quotes + backslash., register_claude_desktop() (+8 more)
 
 ### Community 312 - "quorus_mcp/__init__.py"
-Cohesion: 0.12
-Nodes (15): __getattr__(), Any, Quorus MCP server — exposes messaging tools to MCP clients. ``mcp`` is loaded…, Backward-compat shim for the Quorus MCP server. The implementation has moved to…, parametrize, Console help must not start stdio transport or contact the relay., test_mcp_help_does_not_start_transport(), asyncio (+7 more)
+Cohesion: 0.20
+Nodes (7): __getattr__(), Any, Quorus MCP server — exposes messaging tools to MCP clients. ``mcp`` is loaded…, Backward-compat shim for the Quorus MCP server. The implementation has moved to…, parametrize, Console help must not start stdio transport or contact the relay., test_mcp_help_does_not_start_transport()
 
-### Community 313 - "quorus_cli/cli.py"
-Cohesion: 0.02
-Nodes (118): _approval_decide(), _ascii_sparkline(), _cmd_agent(), _cmd_approve(), _cmd_begin(), _cmd_deny(), _cmd_export(), _cmd_invite_link() (+110 more)
+### Community 313 - "persistent_memory.py"
+Cohesion: 0.17
+Nodes (24): put, _can_read(), delete_memory(), get_memory(), list_memory(), _members_list(), _memory_svc(), MemorySetBody (+16 more)
 
 ### Community 315 - "Quorus — Shared Context"
 Cohesion: 0.29
 Nodes (7): Architecture, Contributors, Current State, In Progress, Key Decisions, Quorus — Shared Context, Security Posture (post-audit 2026-04-15)
 
-### Community 317 - "social_verbs.py"
-Cohesion: 0.18
-Nodes (17): Public API for the Quorus Social Protocol v1. Apache-2.0 licensed. See…, ClaimPayload, DeferPayload, DisagreePayload, InterruptPayload, BaseModel, QueuePayload, Quorus Social Protocol v1 — wire types. Apache-2.0 licensed. The canonical… (+9 more)
+### Community 317 - "test_tui_slash.py"
+Cohesion: 0.26
+Nodes (13): _console(), Tests for the new slash-command surface (packages/tui/quorus_tui/slash.py)., test_run_share_flow_copy_failure_shows_code(), test_run_share_flow_copy_path(), test_run_share_flow_renders_card_and_returns_dismiss_status(), test_slash_info_handles_no_room(), test_slash_info_prints_member_roster(), test_slash_leave_no_room_selected_is_a_noop() (+5 more)
 
 ### Community 318 - "_truncate_utf8"
 Cohesion: 0.20
 Nodes (10): Truncate *s* so the UTF-8 encoding is at most *max_bytes* bytes. L30 fix: a…, _truncate_utf8(), ASCII strings under cap return unchanged., Pure-ASCII string longer than cap truncates exactly to cap bytes., Multi-byte chars at the boundary must NOT produce torn UTF-8. Each ``é`` is 2…, 4-byte UTF-8 emojis must clip cleanly, never half-emoji., test_truncate_utf8_ascii_at_boundary(), test_truncate_utf8_below_cap_passthrough() (+2 more)
 
-### Community 319 - "TestPendingInputBuf"
-Cohesion: 0.22
-Nodes (5): Verify the in-progress input buffer survives a render-tick timeout and is…, Type contract: assigning a non-list-of-str must not corrupt the runtime. We…, Simulate the timeout-then-resume cycle: writer stashes a partial line into the…, The session entry into _main_input_loop must clear any leftover buffer from a…, TestPendingInputBuf
+### Community 319 - "config.py"
+Cohesion: 0.07
+Nodes (41): _is_legacy_dir(), Any, Path, Config loading for Quorus. Single source of truth for where config lives on…, Return the active config directory following the documented precedence. This…, Number of proxies in front of the relay we trust to set X-Forwarded-For. Wave-5…, _read_json_or_empty(), resolve_config_dir() (+33 more)
 
-### Community 320 - "routes/__init__.py"
-Cohesion: 0.14
-Nodes (14): get_agent_profile(), get, Request, Agent identity and profile route handlers., Get public profile for an agent (rooms, last seen, message count). Wave-5 Fix 5…, _tid(), Route sub-package — combines all domain route files into a single router., create_sse_token() (+6 more)
+### Community 320 - "test_visible_silence.py"
+Cohesion: 0.15
+Nodes (7): _HistRelay, Silence must be visible (Arav, 2026-10-17): a user can't tell an agent that…, _Relay, test_no_reply_leaves_a_quiet_status_line(), test_queued_mention_already_seen_and_answered_is_skipped(), test_silence_line_at_most_once_per_ten_minutes(), test_status_renders_as_a_quiet_system_line()
 
 ### Community 321 - "test_mcp_channel_push.py"
 Cohesion: 0.27
@@ -1935,9 +1945,13 @@ Nodes (5): BaseHTTPRequestHandler, Path, ``python -m quorus_mcp.server`` must de
 Cohesion: 0.20
 Nodes (10): Helper: create a room with two members, return room_id., GET /rooms/{id}/state returns correct schema for an empty room., GET /rooms/{name}/state resolves by name, not just UUID., message_count reflects actual messages posted to the room., active_agents falls back to room members when no presence data., _setup_state_room(), test_room_state_active_agents_from_members(), test_room_state_basic() (+2 more)
 
-### Community 326 - "test_reflexd_commit_hygiene.py"
-Cohesion: 0.22
-Nodes (8): parametrize, Daemon commits keep short subjects and leave generated graphs alone., test_graph_refresh_is_not_work_or_committed(), test_short_conventional_subject(), git(), parametrize, Generated tracked graphs must not obstruct sync or publication rebases., test_graph_refresh_does_not_block_rebase()
+### Community 325 - "register_codex"
+Cohesion: 0.17
+Nodes (9): Repair the known invalid path-table form emitted by older Codex configs.…, Return a TOML-safe key segment — bare if safe, quoted otherwise., Round-trip what we know about Codex config + our additions to TOML. Not a…, Write an ``[mcp_servers.quorus]`` entry to ``~/.codex/config.toml``., register_codex(), _render_codex_toml(), _repair_codex_toml(), _toml_key() (+1 more)
+
+### Community 326 - "live_pid"
+Cohesion: 0.38
+Nodes (10): _alive(), _is_daemon_for(), live_pid(), pidfile(), Path, Wake daemons without launchd (Linux, WSL, BSD): a detached process that leads…, A live reflexd for *name*, not whatever reused the pid after a reboot…, Stop *name*'s daemon and everything it started. True if one was running.… (+2 more)
 
 ### Community 327 - "test_tui_paste_and_echo.py"
 Cohesion: 0.24
@@ -1983,17 +1997,17 @@ Nodes (8): api(), cleanup(), fail(), hint(), ok(), record_demo_cast.sh script, s
 Cohesion: 0.33
 Nodes (5): Core Architecture & Mechanism, Takeaways for Quorus, Teardown: Claude-Code-Workflow, What It Does Better Than Quorus, What Nobody Else Does (Unique Innovations)
 
-### Community 338 - "_qod_prompt"
-Cohesion: 0.22
-Nodes (9): _qod_prompt(), Build the same prompt the daemon would, including the QOD., The prompt argument to claude must START with the rendered QOD., The prompt argument to codex must START with the rendered QOD., Cursor adapter must include the QOD in the prompt argv., test_claude_adapter_passes_qod_constitution(), test_codex_adapter_passes_qod_constitution(), test_cursor_adapter_passes_qod_constitution() (+1 more)
+### Community 338 - "_render_header"
+Cohesion: 0.25
+Nodes (7): Premium one-line header. Layout — left-aligned identity, right-aligned status:…, _render_header(), Render a Rich Text to plain string for assertion., No chat_identity kwarg → default empty string → use agent_name., Pin the wiring so the kwarg actually flows through., _render_to_str(), TestHeaderUsesChatIdentity
 
 ### Community 339 - "TestHugePayloads"
 Cohesion: 0.22
 Nodes (3): Sending a very deeply nested JSON should not crash., Pydantic should ignore extra fields, not crash., TestHugePayloads
 
-### Community 340 - "test_catchup.py"
-Cohesion: 0.33
-Nodes (5): _m(), Path, While you were away" on the home screen (2026-10-17)., test_last_seen_round_trips(), test_render_shows_notable_rooms_only()
+### Community 340 - "_cmd_share"
+Cohesion: 0.10
+Nodes (21): _cmd_share(), _connect_aider(), _connect_antigravity(), _connect_cline(), _connect_continue(), _connect_opencode(), _connect_windsurf(), _copy_to_clipboard() (+13 more)
 
 ### Community 341 - "BrainHero.tsx"
 Cohesion: 0.25
@@ -2019,9 +2033,9 @@ Nodes (7): Known limits going into this test, Multi-User Test Runbook — Arav +
 Cohesion: 0.25
 Nodes (7): Post-publish Verification, Pre-publish Checklist, Prerequisites, Publish, Publishing to PyPI, TestPyPI (dry run), Version Bump
 
-### Community 347 - "test_tool_catalog.py"
-Cohesion: 0.28
-Nodes (8): _clean_state(), client(), AsyncClient, fixture, Tests for the tool catalog primitive — Plan v8 Phase 1 B. Service unit tests +…, room_id(), TestToolCatalogRoutes, _user_headers()
+### Community 347 - "cmd_demo"
+Cohesion: 0.21
+Nodes (19): all_out_of_quota(), cmd_demo(), _free_port(), is_fixed(), make_sample_repo(), model_answers(), _opencode_ok(), pick_models() (+11 more)
 
 ### Community 348 - "cmd_reflex_status"
 Cohesion: 0.32
@@ -2041,7 +2055,7 @@ Nodes (8): memory_dir(), purge(), GDPR Article 17 erasure — drop a participant
 
 ### Community 352 - "test_cli_consumer_path.py"
 Cohesion: 0.29
-Nodes (7): MonkeyPatch, Path, Regular-consumer path regressions found by the 2026-10-09 review. * `quorus…, test_agent_add_sees_a_plain_daemon_process(), test_init_does_not_start_agents_by_default(), test_relay_uses_profile_secret_installed_entrypoint_and_safe_defaults(), test_relay_without_secret_explains_the_order()
+Nodes (6): MonkeyPatch, Path, Regular-consumer path regressions found by the 2026-10-09 review. * `quorus…, test_agent_add_sees_a_plain_daemon_process(), test_init_does_not_start_agents_by_default(), test_relay_uses_profile_secret_installed_entrypoint_and_safe_defaults()
 
 ### Community 353 - "test_phase1_audit_invariant.py"
 Cohesion: 0.25
@@ -2091,6 +2105,10 @@ Nodes (7): downgrade @vercel/node to v4 (breaking change). Track for next, Remai
 Cohesion: 0.48
 Nodes (5): fail(), ok(), record_kliment_cast.sh script, step(), warn()
 
+### Community 365 - "test_admin.py"
+Cohesion: 0.33
+Nodes (4): _validate_name(), _validate_slug(), Tests for admin routes — tenant/participant/key CRUD via HTTP. These tests use…, TestAdminValidation
+
 ### Community 366 - "test_editable_pth_fix.py"
 Cohesion: 0.33
 Nodes (5): Path, _quorus_pth_files(), Regression test for the macOS Sequoia/Tahoe + Python 3.14 editable-install .pth…, Set UF_HIDDEN, confirm import breaks, run fix, confirm import works., test_fix_script_unsticks_hidden_pth_files()
@@ -2133,19 +2151,27 @@ Nodes (5): A. Where the waitlist lives, B. The 5 fields the form asks, C. QR cod
 
 ### Community 376 - "review-notes.md"
 Cohesion: 0.20
-Nodes (7): Goal, Rules (non-negotiable), Team, Weekend brief: make Quorus better, using Quorus (2026-10-17 → 10-19), Work, in priority order, 499f121c follow-up, Evidence review of c9494dc and 499f121c
+Nodes (6): Launch post (draft), Reusable pieces, Short form, Show HN / blog copy, 499f121c follow-up, Evidence review of c9494dc and 499f121c
 
-### Community 377 - "live_sessions.py"
-Cohesion: 0.36
-Nodes (12): find_for_cwd(), list_live(), _load(), _pid_alive(), _prune(), Any, Live Claude Code session registry (WAKE_REBUILD_SPEC L1). Records the inbox-…, Record a live session. Deliberately stores NO socket path and NO messaging… (+4 more)
+### Community 377 - "test_quickstart.py"
+Cohesion: 0.17
+Nodes (11): _C, Any, fixture, Path, First value in under 2 minutes (2026-10-17): after setup, the agent CLIs…, claude, codex (logged in), gemini (no key) and opencode 2 are installed., test_doctor_on_a_fresh_install_points_at_quorus(), test_no_repo_means_chat_only_and_one_agent_has_no_lead() (+3 more)
 
-### Community 379 - "HydrationClock"
-Cohesion: 0.21
-Nodes (5): HydrationClock, Any, Bounded staleness tracker for mirrored buckets. Replaces a plain ``set`` of…, The old set grew one permanent entry per bucket, defeating the LRU bound it sat…, test_hydration_clock_is_bounded()
+### Community 378 - "load_runtime_config"
+Cohesion: 0.22
+Nodes (10): _clean_env(), load_runtime_config(), Any, Fail closed if ``value`` contains chars that produce an illegal header. Empty…, Resolve the MCP server's runtime settings and run the startup guards.…, Read an env var, treating empty/whitespace-only values as UNSET. Codex audit…, Resolve an auth field with empty-env fallback + one-time stderr note., _resolve_auth() (+2 more)
+
+### Community 379 - "WebhookQueueBackend"
+Cohesion: 0.07
+Nodes (15): Register a DM webhook. Optional per-webhook secret for signing., Return ``{"url": ..., "secret": ...}`` or None., Register a room webhook. Optional per-webhook secret for signing., Return list of ``{"url": ..., "secret": ..., "registered_by": ...}``., Durable webhook delivery queue with retry and DLQ support. Uses Redis Streams…, Add a webhook job to the queue. Returns job ID., Fetch pending jobs for delivery. Returns list of (job_id, job_data) tuples.…, Fetch jobs, blocking up to ``block_ms`` ms when none are pending. Backends… (+7 more)
 
 ### Community 380 - "stall_setup_aarya.sh"
 Cohesion: 0.60
 Nodes (5): fail(), ok(), say(), stall_setup_aarya.sh script, warn()
+
+### Community 382 - "SSEListener"
+Cohesion: 0.21
+Nodes (8): Any, AsyncClient, Event, Persistent SSE listener with circuit breaker., Return circuit breaker state (non-blocking snapshot)., Main loop. Runs until stop_event is set., Try one SSE connection. Return True if a probe connects successfully. On any…, SSEListener
 
 ### Community 384 - "BrainSynapses.tsx"
 Cohesion: 0.40
@@ -2179,9 +2205,9 @@ Nodes (5): detect_open_trigger(), Decide whether ``typed_char`` should open the 
 Cohesion: 0.22
 Nodes (9): 1. Following the README breaks the working local config (data loss) — `quorus init` over a hub-created setup, 2. `quorus init` never warns it is replacing a *working* secret, 3. First prompt prints empty parentheses: `Invite or Enter ():`, 4. First-run success prints before the connection it describes, 5. The hub's config is a profile, but `quorus init`'s warning talks about `config.json`, 6. `quorus agent add` error doesn't mention the missing `--repo`, 7. `relay.log` prints a scary line on healthy requests, 8. `ps` suggests `quorus spawn <room> <name>` without saying it launches a CLI (+1 more)
 
-### Community 393 - "Launch post (draft)"
-Cohesion: 0.40
-Nodes (4): Launch post (draft), Reusable pieces, Short form, Show HN / blog copy
+### Community 393 - "redaction.py"
+Cohesion: 0.33
+Nodes (5): protect_access_log(), LogRecord, QueryTokenFilter, Credential redaction: relay access logs and agent-written room posts., Install before uvicorn configures handlers; logger filters survive it.
 
 ### Community 394 - "launch_smoke.sh"
 Cohesion: 0.70
@@ -2195,9 +2221,9 @@ Nodes (4): do_commit(), do_pull(), do_push(), quorus-autosync.sh script
 Cohesion: 0.40
 Nodes (5): parametrize, Mutating tools proceed on an explicit 501 (relay has no ledger — the file-mode…, test_required_audit_only_skips_when_relay_has_no_ledger(), test_validate_relay_url_accepts_http_urls(), test_validate_relay_url_rejects_invalid_values()
 
-### Community 397 - "test_cursor_adapter_handles_missing_binary_falls_back_to_inbox"
-Cohesion: 0.40
-Nodes (5): Path, When cursor-agent is absent, write…, Path-traversal in participant name must be sanitised away., test_cursor_adapter_handles_missing_binary_falls_back_to_inbox(), test_cursor_inbox_sanitises_participant_name()
+### Community 397 - "test_catchup.py"
+Cohesion: 0.33
+Nodes (5): _m(), Path, While you were away" on the home screen (2026-10-17)., test_last_seen_round_trips(), test_render_shows_notable_rooms_only()
 
 ### Community 398 - ".test_invite_page_does_not_leak_relay_secret"
 Cohesion: 0.40
@@ -2299,21 +2325,17 @@ Nodes (3): `GET /v1/usage`, `GET /v1/usage/rooms/{room_id}`, Usage
 Cohesion: 0.67
 Nodes (3): configure_mcp(), fixture, Patch module-level constants for all tests.
 
-### Community 441 - "_make_mock_client"
-Cohesion: 0.15
-Nodes (13): _make_mock_client(), list_participants should GET /participants from relay., Auto-poll should fetch and buffer messages., Helper to create a mock httpx.AsyncClient., claim_task returns GRANTED message when lock is available., check_messages should GET from relay for this instance., test_auto_poll_delivers_messages(), test_check_messages_calls_relay() (+5 more)
+### Community 441 - "bundle_tools.py"
+Cohesion: 0.27
+Nodes (11): _bearer(), fetch_bundle(), fetch_bundle_impl(), Path, tool, MCP tools to hand a git branch to teammates on other machines. Thin wrappers…, Share a git branch with teammates on other machines, through the room. Sends…, Fetch a branch a teammate shared (📦 ... quorus fetch b_...) into a read-only… (+3 more)
 
-### Community 443 - "test_log_adapter_versions_warns_on_unknown_version"
-Cohesion: 0.67
-Nodes (3): LogCaptureFixture, Versions outside KNOWN_GOOD_VERSIONS prefixes WARN but don't refuse to run., test_log_adapter_versions_warns_on_unknown_version()
+### Community 443 - "duel_cmd.py"
+Cohesion: 0.22
+Nodes (19): choose_judge(), cmd_duel(), detect_tests(), eligible(), Entry, _finish_entry(), _git(), harness_of() (+11 more)
 
-### Community 444 - "test_adapter_dry_run_records_argv_without_spawning"
-Cohesion: 0.67
-Nodes (3): parametrize, In dry-run, the adapter must record argv and never call create_subprocess_exec.…, test_adapter_dry_run_records_argv_without_spawning()
-
-### Community 445 - "_cmd_hook"
-Cohesion: 0.17
-Nodes (12): _cmd_hook(), Manage Claude Code message hook OR run a per-harness hook entrypoint. Per-…, Hook status should show not configured when no hook exists., Hook enable should create the settings file with hook config., Hook enable when already enabled should show warning., Hook disable should remove the quorus hook from settings., Hook status should show enabled when hook exists., test_cmd_hook_disable_removes_hook() (+4 more)
+### Community 445 - "_cmd_init"
+Cohesion: 0.04
+Nodes (85): _apply_join_payload(), _backup_before_overwrite(), _cmd_add_agent(), _cmd_hackathon(), _cmd_hook(), _cmd_init(), _cmd_join(), _cmd_quickstart() (+77 more)
 
 ### Community 446 - "base_dir"
 Cohesion: 0.67
@@ -2323,105 +2345,221 @@ Nodes (3): base_dir(), fixture, Isolated memory dir per test — never touches t
 Cohesion: 0.67
 Nodes (3): MonkeyPatch, While coroutine A holds a path's lock and B is waiting on it, the LRU must not…, test_memory_concurrent_purge_and_append_no_torn_writes()
 
-### Community 448 - "_cmd_inbox"
-Cohesion: 0.20
-Nodes (10): _cmd_inbox(), Check for pending messages (for hooks or manual use)., When no messages, inbox should exit silently., When messages exist, inbox should print them., --json flag should output raw JSON., Should exit silently when relay is unreachable., test_cmd_inbox_json_output(), test_cmd_inbox_no_messages() (+2 more)
+### Community 448 - "test_wake_attempts.py"
+Cohesion: 0.23
+Nodes (7): _daemon(), Any, Path, A wake that never finishes isn't replayed forever (2026-10-17). Each daemon…, _Relay, test_finished_wake_clears_its_attempts(), test_hung_task_is_dropped_after_two_unfinished_attempts()
 
-### Community 454 - "AsyncClient"
-Cohesion: 0.04
-Nodes (52): AsyncClient, History endpoint should return messages sent to a room., DM endpoint should return 429 when rate limit exceeded., ACK specific messages by their _delivery_id., GET / should return the web dashboard without auth., Create a room with varied messages for search testing., When recipient queue reaches MAX_RECIPIENT_DEPTH, sends should be rejected., Dashboard should auto-scroll messages. (+44 more)
+### Community 455 - "test_owner_trust.py"
+Cohesion: 0.29
+Nodes (8): Path, Write-capable turns only for the owner (pre-launch security audit, 2026-10-17).…, _Relay, _run(), test_cursor_inbox_prompt_is_owner_only(), test_owner_and_owners_agents_keep_write_turns(), test_stranger_gets_a_read_only_turn(), test_trust_members_opts_a_shared_room_in()
 
-### Community 455 - "_cmd_memory"
-Cohesion: 0.20
-Nodes (10): _cmd_memory(), Dispatcher for ``quorus memory <subcommand>``. Currently exposes ``purge`` for…, M3 — ``quorus memory purge --participant alice --room sprint`` exits 0 after…, M3 — without --room and without --all, the CLI must refuse rather than silently…, M3 — --room R + --all together is ambiguous; CLI exits 2., M3 — --participant is required., test_quorus_memory_purge_cli_exits_zero_with_purged_count(), test_quorus_memory_purge_cli_rejects_missing_participant() (+2 more)
+### Community 456 - "client"
+Cohesion: 0.50
+Nodes (4): clean_state(), client(), AsyncClient, fixture
+
+### Community 462 - "TestPendingInputBuf"
+Cohesion: 0.22
+Nodes (5): Verify the in-progress input buffer survives a render-tick timeout and is…, Type contract: assigning a non-list-of-str must not corrupt the runtime. We…, Simulate the timeout-then-resume cycle: writer stashes a partial line into the…, The session entry into _main_input_loop must clear any leftover buffer from a…, TestPendingInputBuf
 
 ### Community 479 - "Outreach candidates (draft)"
 Cohesion: 0.40
 Nodes (4): Outreach candidates (draft), Outreach constraints, Possible audiences to validate, Possible public project contacts
 
-### Community 481 - "_render_welcome_to_string"
-Cohesion: 0.31
-Nodes (4): Render the welcome view to a string for assertion-friendly checks., _render_welcome_to_string(), test_welcome_tells_a_lone_user_how_to_add_an_agent(), TestRenderWelcome
+### Community 480 - "ledger.py"
+Cohesion: 0.28
+Nodes (16): _commits(), _files_and_added(), _git(), infer_from_room(), Outcome, outcomes(), Any, Path (+8 more)
 
-### Community 483 - "load_policy_for_tenant"
-Cohesion: 0.36
-Nodes (5): load_policy_for_tenant(), Path, Load a tenant's policy from `<policy_dir>/<tenant_id>.json`. Falls back to…, Path, TestLoadPolicyForTenant
+### Community 481 - "auth/routes.py"
+Cohesion: 0.08
+Nodes (32): Post a request for help., Get the Shared State Matrix for this room (Primitive A). Returns goal,…, exchange_api_key(), _join_authority(), BaseModel, field_validator, post, Request (+24 more)
 
-### Community 484 - "test_relay.py"
-Cohesion: 0.04
-Nodes (54): auth_headers(), clean_state(), client(), fixture, SSE queue should receive room fan-out messages., Different idempotency keys should allow multiple sends., History should persist even after members read their inboxes., History for a nonexistent room should return 404. (+46 more)
+### Community 483 - "test_capabilities.py"
+Cohesion: 0.27
+Nodes (7): _clean_state(), client(), AsyncClient, fixture, Tests for the capability discovery primitive — Plan v8 Phase 1 A. Service unit…, TestCapabilityRoutes, _user_headers()
+
+### Community 485 - "test_demo_cmd.py"
+Cohesion: 0.25
+Nodes (8): _m(), Path, `quorus demo`: two free agents fix a planted bug, no keys (2026-10-17)., test_a_plan_line_is_not_a_review(), test_binding_lets_the_human_in_the_room_drive_the_agents(), test_picks_the_free_models_that_answer(), test_sample_repo_starts_broken_and_detects_the_fix(), test_stops_early_when_every_agent_is_out_of_quota()
 
 ### Community 486 - "_fallback_read_inbox"
 Cohesion: 0.33
 Nodes (6): _fallback_post_message(), _fallback_read_inbox(), _quorus_cli_path(), Return path to the installed quorus CLI, or None., Post a message via quorus CLI when MCP is unavailable., Read new inbox messages via quorus CLI as fallback.
 
+### Community 487 - "_qod_prompt"
+Cohesion: 0.22
+Nodes (9): _qod_prompt(), Build the same prompt the daemon would, including the QOD., The prompt argument to claude must START with the rendered QOD., The prompt argument to codex must START with the rendered QOD., Cursor adapter must include the QOD in the prompt argv., test_claude_adapter_passes_qod_constitution(), test_codex_adapter_passes_qod_constitution(), test_cursor_adapter_passes_qod_constitution() (+1 more)
+
 ### Community 488 - "Weekend ideas"
 Cohesion: 0.33
 Nodes (5): 1. Task failover when an agent's vendor goes down, 2. Read receipts with outcome: seen, working, chose silence, failed, 3. Grounding gate for research and claims, Lead's pick, Weekend ideas
 
-### Community 500 - "UUID"
-Cohesion: 0.09
-Nodes (24): Quorus B2C domain models. Pure Python dataclasses and enums — no ORM…, MessageOutbox, OutboxStatus, Enum, str, Message outbox model for transactional fan-out., Outbox entry for transactional message fan-out. The outbox pattern: 1. Room…, Build a fan-out message dict for a recipient. ``id`` is the per-delivery UUID… (+16 more)
+### Community 490 - "Any"
+Cohesion: 0.36
+Nodes (10): _atomic_write_json(), Any, Path, Merge ``{container: {key: entry}}`` into an existing JSON file. Returns…, Read Codex TOML with a targeted repair path for older invalid headers., _read_codex_toml(), _read_json(), _read_toml() (+2 more)
 
-### Community 501 - "test_tui_work_queue_panel.py"
-Cohesion: 0.25
-Nodes (8): Tests for the wave-9 wiring of work_queue_panel into hub.py. The pure-render…, HubState exposes the Ctrl-W binding's underlying toggle/getter., Panel renders 3 in-flight rows + a header — proves the orphan module is…, set/get round-trip preserves room + task ordering and returns a copy (mutating…, _render_to_str(), test_ctrl_w_toggles_panel(), test_hub_state_caches_work_queue_tasks(), test_panel_renders_three_active_tasks()
+### Community 492 - "envelope_reply_depth"
+Cohesion: 0.50
+Nodes (4): envelope_reply_depth(), Pull the parent-chain reply depth from an envelope, default 0. Wire format: an…, Return True iff replying to ``envelope`` would extend a chain past max_depth. A…, should_break_reply_chain()
 
-### Community 513 - "._listen"
+### Community 493 - "._selected_name_locked"
+Cohesion: 0.07
+Nodes (7): Flip the work-queue panel open/closed. Returns the new state., Flip a thread root from collapsed to expanded., Call after input() returns so the next incoming SSE message will get a fresh…, Refresh the room list while preserving the user's current selection. Why…, Current room's name. Must be called inside the lock., L3: approvals are time-critical (the agent gives up), so the panel refreshes…, Atomically snapshot (rooms, selected_idx, selected_room, name). Why: the render…
+
+### Community 494 - "SignupResponse"
 Cohesion: 0.29
-Nodes (3): Background coroutine that reads Redis Pub/Sub messages., Publish *message* to *channel*. If Redis is available the message is published…, Start the background Redis Pub/Sub listener (if Redis available).
+Nodes (7): Returned once on signup. The raw API key is only included when the request sets…, SignupResponse, Regression guard: if a future refactor drops these required fields, responses…, test_signup_response_json_has_no_raw_key_by_default(), test_signup_response_requires_key_prefix_and_id_and_next_steps(), test_signup_response_schema_defaults_api_key_to_none(), test_signup_response_schema_populates_when_requested()
+
+### Community 495 - "test_approvals.py"
+Cohesion: 0.12
+Nodes (14): agent_owner(), The human an agent belongs to, by the naming convention every Quorus agent…, L3 (WAKE_REBUILD_SPEC): human-in-the-loop tool approvals. A headless agent…, L3 e2e: the MCP permission bridge blocks, a human approves, and the bridge…, A broken relay must DENY, never silently widen permissions., M3: a global LRU let a busy tenant silently delete another tenant's live…, The default outcome when no human is watching: expiry must deny. This is the…, A human approving one second late used to get a success-shaped 200 while the… (+6 more)
+
+### Community 496 - "_make_mock_client"
+Cohesion: 0.15
+Nodes (13): _make_mock_client(), list_participants should GET /participants from relay., Auto-poll should fetch and buffer messages., Helper to create a mock httpx.AsyncClient., claim_task returns GRANTED message when lock is available., check_messages should GET from relay for this instance., test_auto_poll_delivers_messages(), test_check_messages_calls_relay() (+5 more)
+
+### Community 497 - "install_launchd"
+Cohesion: 0.28
+Nodes (8): install_launchd(), Path, Launchd plist generator — auto-start reflexd-manager on macOS login. We DO NOT…, Build the launchd plist as XML bytes. ``quorus_bin`` should be the absolute…, Write the plist to ``plist_path``. Caller must confirm beforehand. The CLI…, render_plist(), The plist round-trips through plistlib without raising., test_launchd_plist_is_valid_xml()
+
+### Community 498 - "test_duel.py"
+Cohesion: 0.29
+Nodes (12): _args(), _C, _fake_reflexd(), Any, Path, SimpleNamespace, `quorus duel`: tests gate, a blind cross-family judge picks, the ledger learns., _repo() (+4 more)
+
+### Community 499 - "Path"
+Cohesion: 0.36
+Nodes (4): register_claude_code(), parametrize, Path, TestAutoDetect
+
+### Community 500 - "test_claude_argv_max_turns_placement"
+Cohesion: 0.20
+Nodes (6): D5: chat wakes cap turns; flag sits before the -- separator., Shape captured from a real `codex exec --json` run (2026-08-21)., The quote guard treated any two apostrophes as a citation, so "we shouldn't…, test_claude_argv_max_turns_placement(), test_codex_stream_parser_extracts_thread_id(), test_contractions_do_not_swallow_mentions()
+
+### Community 502 - "reflexd_steps.py"
+Cohesion: 0.38
+Nodes (9): _base(), Any, What is the agent doing right now? One short phrase per harness event. Weekend…, The step a single stream line announces, or None., codex runs ``/bin/zsh -lc '<cmd>'``: the real command is inside., shell_step(), step_of(), tool_step() (+1 more)
+
+### Community 512 - "quorus/cli.py"
+Cohesion: 0.17
+Nodes (7): Backward-compat shim for the Quorus CLI. The implementation has moved to the…, Backward-compat shim for the Quorus decorator-based agent API. The…, Path, `quorus agent pace`: keep an agent inside its owner's plan (2026-10-17). Night…, _Relay, test_over_cap_waits_and_says_so_once_but_humans_go_first(), test_pace_config_round_trip()
+
+### Community 513 - "analyze"
+Cohesion: 0.23
+Nodes (14): analyze(), _by_agent(), Finding, Any, `quorus retro`: find what's going wrong in a room, so the team can fix it. On…, One room message with the top findings, addressed to the lead if any., _short(), summary() (+6 more)
+
+### Community 514 - "Launch go/no-go (overseer, Sat 2026-10-17)"
+Cohesion: 0.50
+Nodes (3): Launch go/no-go (overseer, Sat 2026-10-17), Order of operations once Arav says go, The pitch that survives the competition
 
 ### Community 515 - "work_queue.py"
-Cohesion: 0.14
-Nodes (23): list_work_queue(), post_work_queue(), get, post, Request, Work-queue routes — Stream B. Surfaces the durable counterpart to the Stream A…, Return the active task list for a room. Query params: * ``status`` — comma-…, Lazy-attach a :class:`WorkQueueSvc` to ``app.state``. Mirrors ``_social_svc``… (+15 more)
+Cohesion: 0.11
+Nodes (22): list_work_queue(), post_work_queue(), Any, BaseModel, field_validator, get, post, Request (+14 more)
 
-### Community 516 - "WorkQueueRequest"
-Cohesion: 0.33
-Nodes (5): Any, BaseModel, field_validator, One body shape per endpoint — dispatched server-side on ``op``. Keeping the…, WorkQueueRequest
+### Community 516 - "test_cursor_adapter_handles_missing_binary_falls_back_to_inbox"
+Cohesion: 0.40
+Nodes (5): Path, When cursor-agent is absent, write…, Path-traversal in participant name must be sanitised away., test_cursor_adapter_handles_missing_binary_falls_back_to_inbox(), test_cursor_inbox_sanitises_participant_name()
 
 ### Community 517 - "Proposed 60-second edit: an installer fix reviewed across two environments"
 Cohesion: 0.40
 Nodes (4): Proposed 60-second edit: an installer fix reviewed across two environments, Recording notes, Storyboard, The story in room reports and commits
 
-### Community 522 - "._send_with_outbox"
+### Community 518 - "HydrationClock"
+Cohesion: 0.21
+Nodes (5): HydrationClock, Any, Bounded staleness tracker for mirrored buckets. Replaces a plain ``set`` of…, The old set grew one permanent entry per bucket, defeating the LRU bound it sat…, test_hydration_clock_is_bounded()
+
+### Community 519 - "test_log_adapter_versions_warns_on_unknown_version"
+Cohesion: 0.67
+Nodes (3): LogCaptureFixture, Versions outside KNOWN_GOOD_VERSIONS prefixes WARN but don't refuse to run., test_log_adapter_versions_warns_on_unknown_version()
+
+### Community 520 - "test_mcp_session_race.py"
+Cohesion: 0.31
+Nodes (8): asyncio, Tests for thread-safe active session access., N concurrent coroutines calling get/set must not raise or produce torn state., Setting session to None clears it cleanly., Fresh state must return None., test_concurrent_set_get_no_torn_reads(), test_get_active_session_initially_none(), test_set_active_session_none_resets()
+
+### Community 521 - "test_adapter_dry_run_records_argv_without_spawning"
+Cohesion: 0.67
+Nodes (3): parametrize, In dry-run, the adapter must record argv and never call create_subprocess_exec.…, test_adapter_dry_run_records_argv_without_spawning()
+
+### Community 522 - "test_mcp_writers.py"
 Cohesion: 0.33
-Nodes (3): Send using the outbox pattern — transactional fan-out guarantee., Send with inline fan-out (legacy mode, best-effort delivery)., Send a message to a room, fan-out to all members. **Delivery model:** When…
+Nodes (6): env(), fake_home(), fixture, MonkeyPatch, Unit tests for packages/cli/quorus_cli/mcp_writers.py. Each writer gets two…, Redirect Path.home() to a scratch dir so writers are sandboxed.
 
-### Community 524 - "test_cli_first_run_hints.py"
+### Community 523 - "record_provenance"
+Cohesion: 0.40
+Nodes (14): Attach a provenance note to every commit in ``old..new``. Best effort., record_provenance(), _commit(), _git(), Path, Outcome ledger + `quorus scorecard` (2026-10-17). Which agent and vendor's work…, Fresh machines and CI have no user.name: notes used to fail silently., _repo() (+6 more)
+
+### Community 524 - "quorus/analytics.py"
+Cohesion: 0.38
+Nodes (6): fetch_analytics(), main(), CLI tool for viewing MCP Tunnel analytics in the terminal., Fetch analytics data from the relay server., Render analytics data as terminal tables and charts., render()
+
+### Community 525 - "test_auth_middleware_timing.py"
 Cohesion: 0.47
-Nodes (5): _flat(), _mock_client(), asyncio, First-run hint wording (weekend brief, findings #5 and #8). - #8 `quorus ps` on…, test_ps_empty_state_says_what_spawn_does()
+Nodes (4): AST, _name_of(), Smoke test that JWT / HMAC verification uses constant-time compare. AST-walks…, test_no_non_constant_time_secret_comparisons()
 
-### Community 528 - ".subscribe"
-Cohesion: 0.40
-Nodes (3): Handler, Register a local handler for *channel*., Remove a previously registered handler.
+### Community 526 - "test_relay.py"
+Cohesion: 0.03
+Nodes (116): auth_headers(), clean_state(), client(), AsyncClient, fixture, Non-members should be rejected with 403., Sending to a nonexistent room should return 404., SSE queue should receive room fan-out messages. (+108 more)
 
-### Community 531 - "SocialVerbBody"
-Cohesion: 0.40
-Nodes (4): BaseModel, field_validator, Strict body model for ``POST /v1/social/{verb}``. H8 fix: replaces the loose…, SocialVerbBody
+### Community 527 - "cmd_scorecard"
+Cohesion: 0.31
+Nodes (9): cmd_retro(), Any, `quorus retro <room>`: what's going wrong in this room, ranked, with fixes., _since(), cmd_scorecard(), _history(), _pct(), Any (+1 more)
 
-### Community 534 - "agent_worktree"
+### Community 532 - "_maybe_configure_codex_autonomy_defaults"
 Cohesion: 0.50
-Nodes (4): agent_worktree(), existing_worktree(), Return (creating if needed) *participant*'s worktree of *repo*. None when…, Like :func:`agent_worktree` but never creates one (startup sweep).
+Nodes (4): _maybe_configure_codex_autonomy_defaults(), Persist Codex runner defaults for future Quorus-managed launches., Offer a one-time Codex autonomy opt-in and persist the choice., _save_codex_runner_defaults()
+
+### Community 536 - "test_daemon_git_no_hooks.py"
+Cohesion: 0.60
+Nodes (5): _g(), _hook(), Path, The daemon's own git never runs repo hooks (pre-launch audit, 2026-10-16). A…, test_agent_edited_hooks_never_run_in_daemon_git()
+
+### Community 537 - "_relay_unreachable"
+Cohesion: 0.06
+Nodes (43): _cmd_board(), _cmd_logs(), _cmd_metrics(), _cmd_ps(), _cmd_room_locks(), _cmd_status(), _cmd_usage(), _metrics() (+35 more)
+
+### Community 538 - "_OkClient"
+Cohesion: 0.29
+Nodes (4): _OkClient, _OkResp, Any, httpx.Client stub that always returns 200 — used by doctor tests.
+
+### Community 540 - "test_replay.py"
+Cohesion: 0.36
+Nodes (7): _msgs(), Any, Path, `quorus replay` (2026-10-17): a local, self-contained page of a room's work. It…, test_cmd_writes_the_file_locally(), test_commits_in_the_window_carry_their_agent(), test_page_escapes_html_masks_secrets_and_counts_the_work()
+
+### Community 542 - "Weekend brief: make Quorus better, using Quorus (2026-10-17 → 10-19)"
+Cohesion: 0.40
+Nodes (5): Goal, Rules (non-negotiable), Team, Weekend brief: make Quorus better, using Quorus (2026-10-17 → 10-19), Work, in priority order
+
+### Community 543 - "register_opencode"
+Cohesion: 0.50
+Nodes (3): Tier-A writer (fully proactive after wave-7). Opencode ships a real headless…, register_opencode(), TestOpencode
+
+### Community 544 - "TestRoomListener"
+Cohesion: 0.29
+Nodes (4): on_message should add callback to listeners., listen_async should start a daemon thread., stop should terminate the polling thread., TestRoomListener
+
+### Community 546 - "test_failover_routes.py"
+Cohesion: 0.40
+Nodes (5): data(), Real relay contracts for durable typed handoffs and degraded presence., test_degraded_reason_and_last_wake_survive_heartbeats(), test_failover_is_one_durable_threaded_message(), test_release_moves_real_queue_claim_before_defer()
+
+### Community 551 - "configure_mcp"
+Cohesion: 0.67
+Nodes (3): configure_mcp(), fixture, Patch module-level constants for every test.
 
 ## Knowledge Gaps
-- **1033 isolated node(s):** `quorus-cli`, `quorus-mcp`, `quorus-sdk`, `quorus-tui`, `quorus-ai` (+1028 more)
+- **1087 isolated node(s):** `quorus-cli`, `quorus-mcp`, `quorus-sdk`, `quorus-tui`, `quorus-ai` (+1082 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **170 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **148 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `get_real_ip()` connect `get_real_ip` to `reflexd_streamb.py`, `admin_dashboard.py`, `relay.py`, `Tenant`, `config.py`, `middleware.py`, `rooms.py`?**
-  _High betweenness centrality (0.041) - this node is a cross-community bridge._
-- **Why does `ProfileManager` connect `ProfileManager` to `claude_agent.py`, `test_cli_workspaces.py`, `hub.py`, `gemini_agent.py`, `test_tui_workspace_switch.py`, `codex_agent.py`, `main`, `_first_launch_setup`, `config.py`, `resolve_config_dir`, `ConfigManager`, `hooks.py`, `quorus_cli/cli.py`, `profiles.py`, `_cmd_init`?**
-  _High betweenness centrality (0.041) - this node is a cross-community bridge._
-- **Why does `SocialVerb` connect `SocialVerb` to `test_wave2_hardening.py`, `SocialSvc`, `social.py`, `test_social_svc.py`, `test_reflexd_failover.py`, `reflexd_triage.py`, `write_private_json`, `social_verbs.py`?**
-  _High betweenness centrality (0.035) - this node is a cross-community bridge._
-- **Are the 108 inferred relationships involving `AuthContext` (e.g. with `create_participant()` and `_enforce_tenant_isolation()`) actually correct?**
-  _`AuthContext` has 108 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `ProfileManager` connect `ProfileManager` to `claude_agent.py`, `test_cli_workspaces.py`, `hub.py`, `config.py`, `gemini_agent.py`, `test_tui_workspace_switch.py`, `codex_agent.py`, `quorus_cli/cli.py`, `_first_launch_setup`, `_pid_is_alive`, `ConfigManager`, `_maybe_configure_codex_autonomy_defaults`, `hooks.py`, `test_cli_init_profile_layout.py`, `_cmd_init`, `plain_markdown`?**
+  _High betweenness centrality (0.036) - this node is a cross-community bridge._
+- **Why does `HubState` connect `HubState` to `.request_workspace_switch`, `test_tui_hub.py`, `hub.py`, `test_tui_first_run_messages.py`, `test_tui_workspace_switch.py`, `._dedup_key`, `.mark_inline_rule_if_fresh`, `._selected_name_locked`, `.append_dm_message`, `quorus_tui/__init__.py`, `test_tui_slash.py`?**
+  _High betweenness centrality (0.023) - this node is a cross-community bridge._
+- **Why does `Room` connect `Room` to `quorus_sdk/http_agent.py`, `auth/routes.py`, `TestRoomListener`, `QuorusClient`, `asyncio`, `TestRoomConvenience`, `TestRoomLock`, `ReceiveResult`, `test_sdk.py`?**
+  _High betweenness centrality (0.023) - this node is a cross-community bridge._
+- **Are the 113 inferred relationships involving `AuthContext` (e.g. with `create_participant()` and `_enforce_tenant_isolation()`) actually correct?**
+  _`AuthContext` has 113 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 43 inferred relationships involving `HubState` (e.g. with `test_ctrl_d_toggles_inbox()` and `test_dm_messages_appended_from_sse()`) actually correct?**
   _`HubState` has 43 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 74 inferred relationships involving `main()` (e.g. with `_cmd_add_agent()` and `_cmd_agent()`) actually correct?**
+  _`main()` has 74 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `quorus-cli`, `quorus-mcp`, `quorus-sdk` to the rest of the system?**
-  _1033 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Protocol` be split into smaller, more focused modules?**
-  _Cohesion score 0.06666666666666667 - nodes in this community are weakly interconnected._
+  _1087 weakly-connected nodes found - possible documentation gaps or missing edges._
