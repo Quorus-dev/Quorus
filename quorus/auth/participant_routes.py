@@ -48,15 +48,21 @@ async def claim_name(req: ClaimNameRequest, request: Request,
     store = _store(request)
     if not auth.is_legacy:
         raise HTTPException(status_code=403, detail="only the relay's shared secret can claim")
-    allowed = await request.app.state.rate_limit_service.check_with_limit(
-        "global", f"claim-name:{get_real_ip(request)}", CLAIMS_PER_HOUR, window=3600)
-    if not allowed:
+    # Only claims that succeed count. A daemon whose name is already claimed
+    # (its key lost to a reinstall or a localhost/127.0.0.1 alias) retried every
+    # stream, and its 409s used up the hour's budget for every agent behind the
+    # same IP: one stuck daemon locked the whole machine out (release check,
+    # 2026-10-17). The caller already holds the admin secret; the cap is only a
+    # guard against a runaway loop minting names.
+    limits, bucket = request.app.state.rate_limit_service, f"claim-name:{get_real_ip(request)}"
+    if await limits.is_rate_limited("global", bucket, CLAIMS_PER_HOUR, window=3600):
         raise HTTPException(status_code=429, detail="too many name claims; retry in an hour")
     key = await asyncio.to_thread(store.claim, req.name)
     if key is None:
         raise HTTPException(status_code=409, detail=(
             f"the name {req.name!r} is already claimed on this relay; "
             "its owner can release it with `quorus release-name`"))
+    await limits.record("global", bucket, window=3600)
     return {"name": req.name, "participant_key": key}
 
 

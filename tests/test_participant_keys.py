@@ -201,3 +201,18 @@ def test_participant_jwt_without_a_generation_is_refused(client: TestClient) -> 
     resp = client.get(f"/v1/rooms/{rid}/bundles",
                       headers={"Authorization": f"Bearer {pre_generation}"})
     assert resp.status_code == 401
+
+
+def test_refused_claims_dont_lock_the_machine_out(client: TestClient) -> None:
+    """Release check: a daemon retrying a taken name got ten 409s in 30s, then
+    every agent on 127.0.0.1 got 429 for an hour. Only successful claims count."""
+    from quorus.auth.participant_routes import CLAIMS_PER_HOUR
+
+    _claim(client, "stuck-codex")
+    for _ in range(CLAIMS_PER_HOUR + 5):
+        r = client.post("/v1/auth/claim-name", json={"name": "stuck-codex"}, headers=LEGACY)
+        assert r.status_code == 409
+    for i in range(CLAIMS_PER_HOUR - 1):  # the first claim above used one
+        _claim(client, f"agent{i}")
+    over = client.post("/v1/auth/claim-name", json={"name": "one-too-many"}, headers=LEGACY)
+    assert over.status_code == 429  # the cap still stops a runaway loop

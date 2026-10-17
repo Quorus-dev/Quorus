@@ -220,3 +220,44 @@ def test_cli_credential_exchange_never_follows_a_redirect(tmp_path, monkeypatch)
         with pytest.raises(bundle_client.BundleClientError, match="redirected"):
             bundle_client.bearer("http://r", store_dir=tmp_path, **kw)
     assert seen and not any(s.startswith("evil") for s in seen), seen
+
+
+def test_a_taken_name_is_not_retried_on_every_reconnect(tmp_path, monkeypatch) -> None:
+    """Release check: reflexd re-claimed on every stream (~30s) and its 409s
+    locked the machine out. Now: one claim, one owner alert, then a 10-minute
+    pause, unless the key turns up meanwhile."""
+    import pytest
+
+    from quorus import bundle_client
+
+    _relay_with_room(tmp_path, monkeypatch)
+    real_key = app.state.participant_keys.claim("a-codex")  # claimed from elsewhere
+    told: list[str] = []
+    calls: list[str] = []
+    clock = [1_000_000.0]
+    monkeypatch.setattr(reflexd.time, "time", lambda: clock[0])
+
+    async def go() -> str:
+        relay = _client("http://r", tmp_path / "agent")
+        relay.on_name_taken = told.append
+        orig = relay._client.post
+
+        async def spy(url, *a, **kw):
+            calls.append(url)
+            return await orig(url, *a, **kw)
+
+        relay._client.post = spy
+        for _ in range(5):  # five reconnects in a row
+            with pytest.raises(reflexd.ParticipantAuthError, match="release-name"):
+                await relay._participant_jwt()
+        assert calls.count("/v1/auth/claim-name") == 1 and len(told) == 1
+        clock[0] += reflexd.CLAIM_BACKOFF_S + 1
+        with pytest.raises(reflexd.ParticipantAuthError):
+            await relay._participant_jwt()
+        assert calls.count("/v1/auth/claim-name") == 2 and len(told) == 1  # asked again, quietly
+        # the owner copies the key over: it's used at once, backoff or not
+        bundle_client.save_participant_key("http://r", "a-codex", real_key, tmp_path / "agent")
+        return await relay._participant_jwt()
+
+    assert asyncio.run(go()).count(".") == 2
+    _reset_state()

@@ -353,6 +353,11 @@ MISSION_TIMEOUT_S = int(os.environ.get("REFLEXD_MISSION_TIMEOUT_S", "3600"))
 HEARTBEAT_HISTORY_LIMIT = 10
 # At most one "is stuck" desktop banner per agent this often.
 STUCK_ALERT_EVERY_S = 3600.0
+# After the relay says our name is claimed but this machine has no key for it,
+# don't ask again for this long (a key that appears meanwhile is used at once).
+# Retrying on every stream reconnect burned the relay's per-IP claim budget and
+# locked every agent on the machine out for an hour (release check, 2026-10-17).
+CLAIM_BACKOFF_S = 600.0
 # Live steps: at most one presence post this often while a wake runs.
 STEP_POST_MIN_S = 3.0
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
@@ -1787,6 +1792,11 @@ class RelayClient:
     _sign_in: asyncio.Lock = field(default_factory=asyncio.Lock)
     _bearer_expires_at: float = 0.0
     _client: httpx.AsyncClient | None = None
+    # Name claimed elsewhere and no key here: until this time, fail without
+    # asking the relay again. The callback tells the owner once per episode.
+    on_name_taken: Callable[[str], None] | None = None
+    _claim_blocked_until: float = 0.0
+    _claim_blocked_reason: str = ""
 
     async def __aenter__(self) -> "RelayClient":
         self._client = httpx.AsyncClient(
@@ -1854,6 +1864,8 @@ class RelayClient:
 
         unsupported = (404, 405)
         key = bundle_client.load_participant_key(self.relay_url, self.participant, self.key_dir)
+        if not key and time.time() < self._claim_blocked_until:
+            raise ParticipantAuthError(self._claim_blocked_reason)
         try:
             if not key:
                 resp = await self.client.post(
@@ -1868,10 +1880,14 @@ class RelayClient:
                     key = bundle_client.load_participant_key(
                         self.relay_url, self.participant, self.key_dir)
                     if not key:
-                        raise ParticipantAuthError(
-                            f"name {self.participant} is claimed on this relay but its key "
-                            "isn't saved here; the relay owner can free it with "
-                            f"`quorus release-name {self.participant}`")
+                        reason = (f"name {self.participant} is claimed on this relay but its "
+                                  "key isn't saved here; the relay owner can free it with "
+                                  f"`quorus release-name {self.participant}`")
+                        if self._claim_blocked_until == 0.0 and self.on_name_taken:
+                            self.on_name_taken(reason)  # once, not once per retry
+                        self._claim_blocked_until = time.time() + CLAIM_BACKOFF_S
+                        self._claim_blocked_reason = reason
+                        raise ParticipantAuthError(reason)
                 elif resp.status_code != 200:
                     raise ParticipantAuthError(f"claim-name answered {resp.status_code}")
                 else:
@@ -3217,6 +3233,20 @@ class Reflexd:
         except Exception as exc:  # cosmetic: never fail a wake over it
             logger.debug("status post failed: %s", exc)
 
+    def _name_taken(self, reason: str) -> None:
+        """The relay won't let this agent sign in as itself until its owner frees
+        the name. It can't say so in the room (that needs a sign-in, and falling
+        back to the shared secret is refused), so: one desktop banner and the log."""
+        logger.error("cannot sign in: %s", reason)
+        if not _agent_events.enabled():
+            return
+        try:
+            asyncio.get_running_loop().run_in_executor(None, lambda: _notify(
+                f"{self.config.participant_name} can't sign in", reason,
+                sender=self.config.participant_name))
+        except RuntimeError:
+            pass
+
     def _alert_owner(self, room: str, reply: str) -> None:
         """Desktop banner for the agent's owner when the wake shipped work,
         needs them, or got stuck. Fire-and-forget; never blocks the reply."""
@@ -3392,6 +3422,7 @@ class Reflexd:
             legacy_bearer=self.config.legacy_bearer,
             participant=self.config.participant_name,
             key_dir=self.config.runtime_dir / "agents" / self.config.participant_name,
+            on_name_taken=self._name_taken,
         ) as relay:
             logger.info(
                 "reflexd starting participant=%s relay=%s",
