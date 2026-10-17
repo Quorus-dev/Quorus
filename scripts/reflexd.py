@@ -1396,15 +1396,18 @@ class HeadlessAdapter:
         key = reflexd_models.gemini_api_key(env)
         if key:
             env["GEMINI_API_KEY"] = key  # env, never argv
-        if self.agent_config_dir is not None:
-            home = self.agent_config_dir / "gemini-home"
-            try:
-                write_private_json(home / ".gemini" / "settings.json",
-                                   reflexd_models.gemini_settings(
-                                       self.wake_spec, api_key=bool(key)))
-                env["GEMINI_CLI_HOME"] = str(home)
-            except OSError as exc:
-                logger.warning("could not write gemini settings: %s", exc)
+        # Outside a daemon (e.g. `quorus duel`'s judge) there's no agent dir: still
+        # isolate from ~/.gemini, whose retired Google login fails every call.
+        from quorus.config import resolve_config_dir
+        home = (self.agent_config_dir / "gemini-home" if self.agent_config_dir is not None
+                else resolve_config_dir() / "gemini-home")
+        try:
+            write_private_json(home / ".gemini" / "settings.json",
+                               reflexd_models.gemini_settings(
+                                   self.wake_spec, api_key=bool(key)))
+            env["GEMINI_CLI_HOME"] = str(home)
+        except OSError as exc:
+            logger.warning("could not write gemini settings: %s", exc)
         flags = reflexd_models.gemini_flags(mode=mode, model=self.model)
         timeout_s = min(timeout_s or self.timeout_s, GEMINI_TIMEOUT_S)
         return await self._run_with_resume(
