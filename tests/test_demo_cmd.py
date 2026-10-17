@@ -91,3 +91,47 @@ def test_demo_shows_each_agents_step_once(monkeypatch) -> None:
     demo_cmd._show_steps(c, "http://r", {}, last, 0.0)
     demo_cmd._show_steps(c, "http://r", {}, last, 0.0)
     assert len(c.out) == 1 and f"@{demo_cmd.BUILDER} editing calc.py" in c.out[0]
+
+
+def test_busy_free_models_fall_back_to_your_logged_in_claude_and_codex(monkeypatch,
+                                                                      tmp_path: Path) -> None:
+    """Release check: with every free model rate-limited the demo just failed."""
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    have = {"claude", "codex", "opencode"}
+    which = lambda b: f"/bin/{b}" if b in have else None  # noqa: E731
+    # codex isn't logged in yet: claude does both jobs
+    assert demo_cmd.fallback_cast(which) == [("claude", None), ("claude", None)]
+    (codex_home / "auth.json").write_text("{}")
+    # both: Claude builds, Codex reviews (two vendors, as in the real product)
+    assert demo_cmd.fallback_cast(which) == [("claude", None), ("codex", None)]
+    have = {"opencode"}
+    assert demo_cmd.fallback_cast(which) == []  # nothing to fall back to: the old message
+
+
+def test_fallback_agents_keep_their_login_through_links(tmp_path: Path) -> None:
+    real, demo_home = tmp_path / "real", tmp_path / "demo"
+    (real / ".claude").mkdir(parents=True)
+    (real / ".claude.json").write_text("{}")
+    (real / ".codex").mkdir()
+    demo_home.mkdir()
+    demo_cmd.link_auth(demo_home, {"claude"}, real_home=real)
+    assert (demo_home / ".claude").resolve() == (real / ".claude").resolve()
+    assert (demo_home / ".claude.json").is_symlink() and not (demo_home / ".codex").exists()
+    demo_cmd.link_auth(demo_home, {"claude", "codex"}, real_home=real)  # idempotent
+    assert (demo_home / ".codex").is_symlink()
+    import shutil
+
+    shutil.rmtree(demo_home)  # cleanup removes the links, never what they point to
+    assert (real / ".claude").is_dir() and (real / ".claude.json").exists()
+
+
+def test_the_task_and_verdict_follow_whoever_is_cast() -> None:
+    task = demo_cmd.task_for("demo-claude", "demo-review-codex")
+    assert task.startswith("@demo-claude ") and "@demo-review-codex" not in task
+    pub = _m("demo-claude", "(quorus) published 1 commit(s) from quorus/demo-claude to main")
+    verdict = _m("demo-review-codex", "Reviewed abc123: correct, test green.")
+    assert demo_cmd.review_of([pub, verdict], "demo-review-codex").startswith("Reviewed")
+    assert demo_cmd.review_of([pub, verdict]) is None  # not the opencode reviewer
