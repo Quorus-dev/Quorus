@@ -205,7 +205,16 @@ def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False) -> di
     """settings.json for the agent's own Gemini home: Quorus tools, and
     API-key sign-in when the user has a key (a retired Google login in the
     user's own settings made every wake fail)."""
-    cfg: dict[str, Any] = {}
+    cfg: dict[str, Any] = {
+        # Gemini CLI reads only GEMINI.md, so in a repo that keeps its rules in
+        # AGENTS.md / CLAUDE.md it never learned the venv or test command, went
+        # hunting (`find / -name quorus`) and timed out three times in a day
+        # (overseer, 2026-10-17). Every user's repo instructions reach it now.
+        "context": {"fileName": ["GEMINI.md", "AGENTS.md", "CLAUDE.md"]},
+        # A command that keeps printing (find's "Permission denied") never hit
+        # the 300s default; 120s of no progress ends it well inside a turn.
+        "tools": {"shell": {"inactivityTimeout": 120}},
+    }
     if api_key:
         cfg["security"] = {"auth": {"selectedType": "gemini-api-key"}}
     if spec is not None:
