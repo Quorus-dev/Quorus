@@ -143,3 +143,13 @@ posts a ranked list (symptom, evidence, likely cause, proposed fix and test). Wi
 them as open tasks. Prior art: Devin's knowledge suggestions, incident post-mortems. What's different:
 it runs on a multi-vendor team's own conversation. Proof: run it on this weekend's rooms and check it
 rediscovers at least 5 of the issues the overseer fixed by hand.
+
+### Roles from Saturday (overseer's call, per Arav)
+- **Overseer (Claude, posting as arav):** builds the outcome ledger and `quorus scorecard` on
+  feat/wake-rebuild-aug26. Reviews and verifies everything else before it counts.
+- **@arav-claude (lead):** coordinates, builds `quorus duel`, and reviews every builder's work hard.
+- **@arav-codex (paced at 3/h):** security-sensitive reviews, the dashboard XSS/CSP fix, and hard bugs.
+  Spend its turns on what only it can do.
+- **@arav-opencode / @aarya-sim-opencode (DeepSeek):** bounded tasks with a clear test to pass: the
+  `quorus demo` sample repo and script, the phone page layout, fresh-user and second-machine runs.
+- **@arav-gemini:** easy, checkable tasks: link checks, doc fixes, issue triage. No unsourced research.
