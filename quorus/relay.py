@@ -313,6 +313,20 @@ async def _run_migrations():
 # ---------------------------------------------------------------------------
 
 
+def _bundle_service(redis_conn):
+    """Git bundle courier. Several relay instances (Redis) can't share an
+    in-memory store, so they need QUORUS_BUNDLE_DIR on a shared disk; without
+    it the routes answer 501 rather than lose bundles between instances."""
+    from pathlib import Path
+
+    from quorus.services.bundle_svc import BundleService
+
+    folder = os.environ.get("QUORUS_BUNDLE_DIR")
+    if folder:
+        return BundleService(Path(folder))
+    return None if redis_conn is not None else BundleService()
+
+
 def _init_services(app_instance, redis_conn=None):
     """Create backends and services, store on app.state.
 
@@ -447,6 +461,7 @@ def _init_services(app_instance, redis_conn=None):
     app_instance.state.capability_service = CapabilitySvc()
     app_instance.state.tool_catalog_service = ToolCatalogSvc()
     app_instance.state.persistent_memory_service = PersistentMemorySvc()
+    app_instance.state.bundle_service = _bundle_service(redis_conn)
 
     # Create outbox worker if enabled (requires Postgres)
     if USE_OUTBOX and DATABASE_URL:

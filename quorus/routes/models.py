@@ -24,7 +24,7 @@ def _validate_uuid_ref(value: str | None) -> str | None:
 
 VALID_MESSAGE_TYPES = {
     "chat", "claim", "status", "request", "alert", "sync", "brief", "subtask", "decision",
-    "social",
+    "social", "bundle",
 }
 VALID_ROLES = {"builder", "reviewer", "researcher", "pm", "qa", "member"}
 

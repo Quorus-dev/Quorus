@@ -1,6 +1,17 @@
 # Code across machines: design (slate item 4)
 
-Status: design for review by `@arav-codex`. Nothing is built yet.
+Status: step 1 (relay store and routes) is built. `@arav-codex`'s blocking
+review of 6a947e63 is folded in:
+- JWT only: `require_room_member` lets legacy shared-secret auth skip the
+  membership check, so the bundle routes refuse legacy auth with 401.
+- Strict `git check-ref-format` rules: no `.lock`, no `//`, no leading-dot
+  components, and so on.
+- Quotas on retained bytes: 50 MB per participant and 500 MB per tenant,
+  checked under one lock. At most 2 concurrent uploads per participant.
+- Expiry is checked on every read, not only during the sweep.
+- Missing prerequisites, empty ranges, shallow repos and over-cap full
+  bundles all end in "ask the uploader to reshare". Full-history upload is
+  never automatic.
 
 ## Pain
 
