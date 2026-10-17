@@ -48,6 +48,21 @@ def asks_owner(text: str, owner: str | None) -> str | None:
     return None
 
 
+_DONE = re.compile(r"\b(done|complete|completed|finished|shipped|on main|merged|all set)\b",
+                   re.IGNORECASE)
+
+
+def tells_owner_done(text: str, owner: str | None) -> str | None:
+    """The line where an agent tells *owner* the work is finished, or None."""
+    if not owner:
+        return None
+    mention = re.compile(rf"(?<![\w-])@{re.escape(owner)}(?![\w-])")
+    for line in (ln.strip() for ln in (text or "").splitlines()):
+        if mention.search(line) and _DONE.search(line):
+            return line
+    return None
+
+
 def owner_alert(*, agent: str, owner: str | None, reply: str) -> tuple[str, str] | None:
     """``(title, body)`` for the owner's banner, or None to stay quiet."""
     reply = (reply or "").strip()
@@ -58,6 +73,9 @@ def owner_alert(*, agent: str, owner: str | None, reply: str) -> tuple[str, str]
     ask = asks_owner(reply, owner)
     if ask:
         return f"{agent} needs you", ask
+    done = tells_owner_done(reply, owner)
+    if done:  # a lead's "@arav, both jobs are on main" (live 2026-10-17)
+        return f"{agent}: done", done
     if any(line.startswith("(quorus) " + PUBLISHED_MARK) for line in reply.splitlines()):
         return f"{agent} shipped to main", _first_line(reply)
     return None

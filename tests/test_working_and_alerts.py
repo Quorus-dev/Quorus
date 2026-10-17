@@ -146,3 +146,10 @@ def test_asks_owner_needs_a_real_ask() -> None:
     assert ask("@arav I'm blocked on the API key", "arav")
     assert ask("@arav here, ready", "arav") is None
     assert ask("@arav-claude any blockers?", "arav") is None
+
+
+def test_lead_telling_owner_its_done_pings() -> None:
+    reply = "@arav, both jobs are on main and all 4 tests pass."
+    assert agent_events.owner_alert(agent="a-claude", owner="arav", reply=reply) == (
+        "a-claude: done", reply)
+    assert agent_events.tells_owner_done("@arav-codex done with review", "arav") is None
