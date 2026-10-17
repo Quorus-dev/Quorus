@@ -339,6 +339,8 @@ _HANDLED_ID_CAP = 2000
 CHAT_MAX_TURNS = int(os.environ.get("REFLEXD_CHAT_MAX_TURNS", "60"))
 MISSION_TIMEOUT_S = int(os.environ.get("REFLEXD_MISSION_TIMEOUT_S", "3600"))
 HEARTBEAT_HISTORY_LIMIT = 10
+# At most one "is stuck" desktop banner per agent this often.
+STUCK_ALERT_EVERY_S = 3600.0
 # Live steps: at most one presence post this often while a wake runs.
 STEP_POST_MIN_S = 3.0
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
@@ -2091,6 +2093,7 @@ class Reflexd:
         # The live step of the running wake ("editing relay.py"), sent with
         # the busy presence at most every STEP_POST_MIN_S.
         self._activity = ""
+        self._stuck_alerted_at = 0.0
         self._presence_relay: Any = None
         self._step_task: asyncio.Task[None] | None = None
         if hasattr(self.adapter, "on_step"):
@@ -2904,6 +2907,14 @@ class Reflexd:
         if alert is None:
             return
         title, body = alert
+        if title.endswith(" is stuck"):
+            # One banner per agent per hour: rate limits fired one per failed
+            # wake, 15 "opencode is stuck" in a day (2026-10-17). The room
+            # still shows each one.
+            if time.time() - self._stuck_alerted_at < STUCK_ALERT_EVERY_S:
+                logger.info("owner alert suppressed room=%s: %s (sent recently)", room, title)
+                return
+            self._stuck_alerted_at = time.time()
         logger.info("owner alert room=%s: %s", room, title)  # never the body
         try:
             asyncio.get_running_loop().run_in_executor(
