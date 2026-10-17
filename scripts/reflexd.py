@@ -1119,6 +1119,34 @@ def _same_result(posted: str, reply: str) -> bool:
     return reply.lstrip().startswith("✅") and posted.lstrip().startswith("✅")
 
 
+# After the harness exits, how long whatever it left running may hold our
+# pipes before it is killed (a background server it started, a relaunched child).
+LINGER_S = 5.0
+
+
+def _kill_group(proc: Any) -> None:
+    """SIGKILL the harness and everything in its process group."""
+    if getattr(proc, "pid", None) is None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+
+
+async def _reap(proc: Any, timeout: float = 10.0) -> None:
+    """``proc.wait()`` with a limit: on Python 3.12+ it doesn't return until
+    every pipe closes, so one surviving grandchild blocked it forever."""
+    try:
+        await asyncio.wait_for(proc.wait(), timeout)
+    except (TimeoutError, asyncio.TimeoutError):
+        logger.warning("harness pid %s didn't finish closing; moving on", proc.pid)
+
+
 async def _collect(
     proc: Any, on_line: Callable[[bytes], None] | None,
 ) -> tuple[bytes, bytes]:
@@ -1149,8 +1177,21 @@ async def _collect(
         while chunk := await proc.stderr.read(65536):
             err.extend(chunk)
 
-    await asyncio.gather(drain_out(), drain_err())
-    await proc.wait()
+    drains = asyncio.gather(drain_out(), drain_err())
+    while not drains.done():
+        await asyncio.wait({drains}, timeout=1.0)
+        if proc.returncode is not None and not drains.done():
+            # The harness exited but something it started still holds the
+            # pipes: give it a moment, then kill its process group.
+            await asyncio.wait({drains}, timeout=LINGER_S)
+            if not drains.done():
+                logger.warning("harness exited; killing what it left running")
+                _kill_group(proc)
+                await asyncio.wait({drains}, timeout=LINGER_S)
+            break
+    if not drains.done():
+        drains.cancel()
+    await _reap(proc)
     return bytes(out), bytes(err)
 
 
@@ -1576,6 +1617,11 @@ class HeadlessAdapter:
                 # real repo work; None = inherit the daemon's cwd (unbound).
                 cwd=str(cwd) if cwd else None,
                 env=env,
+                # Its own process group, so a timeout can kill everything it
+                # started: the Gemini CLI relaunches itself as a child node
+                # process, and killing only the parent left that child
+                # working and the wake hung for hours (2026-10-17).
+                start_new_session=True,
             )
         except FileNotFoundError:
             logger.warning("harness binary missing: %s", argv[0])
@@ -1589,14 +1635,13 @@ class HeadlessAdapter:
             )
         except asyncio.CancelledError:
             # Daemon stopping: never orphan a running agent.
-            if proc.returncode is None:
-                proc.kill()
+            _kill_group(proc)
             raise
         except (TimeoutError, asyncio.TimeoutError):  # distinct classes on 3.10
             # L4: Python 3.11+ aliases ``asyncio.TimeoutError`` to the
             # builtin ``TimeoutError``; the asyncio prefix is deprecated.
-            proc.kill()
-            await proc.wait()
+            _kill_group(proc)
+            await _reap(proc)
             logger.warning("harness %s timed out", argv[0])
             return "[reflexd] harness timed out"
         if proc.returncode != 0:
