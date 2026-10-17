@@ -290,6 +290,15 @@ def _parse_gemini_stream(out: str) -> tuple[str, str | None, str | None]:
             reply.append(ev["content"])
         elif kind == "error" or (kind == "result" and ev.get("status") not in (None, "success")):
             err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
-            error = str(err.get("message") or ev.get("message") or ev.get("status")
-                        or "error")[:300]
+            error = trim_gemini_error(str(err.get("message") or ev.get("message")
+                                          or ev.get("status") or "error"))[:300]
     return "".join(reply).strip(), sid, error
+
+
+def trim_gemini_error(message: str) -> str:
+    """Gemini's API errors run on into a "Call ModelService.ListModels to see
+    the list of available models..." tail and come wrapped in "[API Error: ]"."""
+    text = message.split("Call ModelService")[0].strip().rstrip(" .,;")
+    if text.startswith("[API Error:"):
+        text = text[len("[API Error:"):].strip().rstrip("]").strip()
+    return text

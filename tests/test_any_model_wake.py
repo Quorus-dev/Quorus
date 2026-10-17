@@ -540,3 +540,25 @@ def test_paid_and_local_models_get_no_first_output_deadline(monkeypatch) -> None
         asyncio.run(adapter._opencode_once("ctx", cwd=None, resume=None, on_session=None,
                                            timeout_s=None, mode="default"))
     assert seen == [None, None, reflexd.FREE_FIRST_EVENT_S, reflexd.FREE_FIRST_EVENT_S]
+
+
+GEMINI_BAD_MODEL = (  # gemini-cli 0.64 stream-json, rc 1 (overseer's live check)
+    '{"type":"result","status":"error","error":{"type":"unknown","message":"[API Error: '
+    'models/gemini-9-ultra is not found for API version v1beta, or is not supported for '
+    'generateContent. Call ModelService.ListModels to see the list of available models '
+    'and their supported methods.]"}}')
+
+
+def test_gemini_bad_model_says_so_without_the_tail() -> None:
+    line = reflexd.vendor_error("gemini", GEMINI_BAD_MODEL, "")
+    assert line.startswith("⚠ gemini: models/gemini-9-ultra is not found for API version")
+    assert "ModelService" not in line and "[API Error" not in line
+    assert "Check the model name" in line
+    _r, _sid, err = reflexd.reflexd_models.parse_gemini_json(GEMINI_BAD_MODEL)
+    assert err.startswith("models/gemini-9-ultra is not found") and "ModelService" not in err
+
+
+def test_an_opencode_typo_is_pointed_at_the_model_list() -> None:
+    typo = ('{"type":"error","error":{"type":"provider.no-route",'
+            '"message":"Model unavailable: opencode/beem-free"}}')
+    assert "`opencode models`" in reflexd.vendor_error("opencode", typo, "")
