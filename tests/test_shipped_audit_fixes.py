@@ -158,3 +158,18 @@ async def test_mcp_success_is_not_flagged(monkeypatch):
     result = await _call_tool(monkeypatch, post_result={"id": "m1"})
     assert result.isError is False
     assert "Message sent" in result.content[0].text
+
+
+# S4 ------------------------------------------------------------------------
+
+
+def test_replay_masks_known_credentials_in_commit_metadata():
+    from quorus_cli.replay_cmd import Commit, render
+
+    dummy = "audit-dummy-credential"
+    commit = Commit(
+        "1234abcd", 1, "done", dummy, "human", f"1 file changed: {dummy}.txt"
+    )
+    msg = {"timestamp": "2026-10-18T00:00:00Z", "from_name": dummy, "content": "hi"}
+    page = render(dummy, [msg], [commit], [dummy])
+    assert dummy not in page
