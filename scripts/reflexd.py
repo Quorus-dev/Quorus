@@ -2441,7 +2441,7 @@ class ReflexdConfig:
 
     @classmethod
     def from_env(cls) -> "ReflexdConfig":
-        data = ConfigManager().load() or {}
+        data = ConfigManager().load(migrate=False) or {}  # read-only at startup
         relay_url = (
             os.environ.get("REFLEXD_RELAY_URL")
             or os.environ.get("RELAY_URL")

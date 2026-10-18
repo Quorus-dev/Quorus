@@ -194,3 +194,46 @@ def test_reflexd_never_takes_the_saved_key_to_another_relay(saved, monkeypatch, 
     monkeypatch.delenv("REFLEXD_API_KEY")
     monkeypatch.setenv(override, RELAY_A + "/")
     assert reflexd.ReflexdConfig.from_env().api_key == KEY_A
+
+
+# ── servers a client starts read config without writing it (codex) ───────
+
+
+def _legacy_flat(tmp_path, monkeypatch):
+    for name in _ENV:
+        monkeypatch.delenv(name, raising=False)
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"relay_url": RELAY_A, "api_key": KEY_A,
+                                "instance_name": "alice"}))
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path))
+    return path
+
+
+def _snapshot(root):
+    return sorted((str(p.relative_to(root)), p.read_bytes()) for p in root.rglob("*")
+                  if p.is_file())
+
+
+def test_mcp_startup_never_migrates_or_writes_config(tmp_path, monkeypatch):
+    from quorus_mcp import runtime
+
+    _legacy_flat(tmp_path, monkeypatch)
+    before = _snapshot(tmp_path)
+    assert runtime.load_runtime_config()["api_key"] == KEY_A
+    assert _snapshot(tmp_path) == before
+    assert not (tmp_path / "profiles").exists()
+
+
+def test_reflexd_startup_never_migrates_or_writes_config(tmp_path, monkeypatch):
+    reflexd = _reflexd()
+    _legacy_flat(tmp_path, monkeypatch)
+    before = _snapshot(tmp_path)
+    assert reflexd.ReflexdConfig.from_env().api_key == KEY_A
+    assert _snapshot(tmp_path) == before
+
+
+def test_cli_load_still_migrates(tmp_path, monkeypatch):
+    path = _legacy_flat(tmp_path, monkeypatch)
+    assert load_config()["api_key"] == KEY_A  # explicit `quorus` commands migrate
+    assert (tmp_path / "profiles" / "default.json").exists()
+    assert "relay_url" not in json.loads(path.read_text())

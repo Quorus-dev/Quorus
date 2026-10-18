@@ -1037,7 +1037,7 @@ def test_prompt_marks_agent_senders(tmp_path: Path) -> None:
 def test_daemon_reads_log_path_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # `quorus agent add` gives each agent its own log via REFLEXD_LOG_PATH.
     monkeypatch.setattr(reflexd, "ConfigManager",
-                        lambda: type("C", (), {"load": lambda s: {}})())
+                        lambda: type("C", (), {"load": lambda s, **kw: {}})())
     for k, v in {"REFLEXD_PARTICIPANT": "a-claude", "API_KEY": "k",
                  "REFLEXD_LOG_PATH": "/tmp/q/a-claude.log"}.items():
         monkeypatch.setenv(k, v)

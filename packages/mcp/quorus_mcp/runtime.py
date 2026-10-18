@@ -138,7 +138,9 @@ def load_runtime_config() -> dict[str, Any]:
     """
     # QUORUS_PROFILE picks one saved profile without touching "current"; env
     # vars still beat it. load_config binds saved credentials to their relay.
-    config = load_config(profile=_clean_env("QUORUS_PROFILE"))
+    # Read-only: a server a client starts never rewrites the user's config
+    # (legacy migration is left to an explicit `quorus` command).
+    config = load_config(profile=_clean_env("QUORUS_PROFILE"), migrate=False)
 
     env_relay = _clean_env("QUORUS_RELAY_URL")
     relay_url = env_relay or config["relay_url"]

@@ -137,6 +137,22 @@ class ProfileManager:
 
     # ── legacy migration ─────────────────────────────────────────────────
 
+    def legacy_flat(self) -> dict[str, Any] | None:
+        """The old flat ``config.json`` contents, if that's what is on disk.
+
+        Read-only: what :meth:`migrate_legacy_if_needed` would move, without
+        moving it. Servers started by a client (quorus-mcp, reflexd) read
+        config this way so they never rewrite a user's files on startup.
+        """
+        try:
+            raw = json.loads(self.pointer_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return None
+        if isinstance(raw, dict) and ("relay_url" in raw or "api_key" in raw
+                                      or "instance_name" in raw):
+            return raw
+        return None
+
     def migrate_legacy_if_needed(self) -> str | None:
         """If config.json is the old flat shape, move it to profiles/default.json.
 
