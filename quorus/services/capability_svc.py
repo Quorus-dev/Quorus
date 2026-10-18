@@ -51,6 +51,7 @@ class CapabilitySvc:
         self._manifests: dict[tuple[str, str], dict[str, Any]] = {}
         # R4: tenants whose manifests were lazily hydrated from Redis.
         self._hydrated = _p1.HydrationClock()
+        self._pending = _p1.PendingWrites()
         # Per-tenant lock so concurrent publishes serialise without
         # touching unrelated tenants. LRU-bounded to cap memory.
         self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
@@ -82,8 +83,13 @@ class CapabilitySvc:
         if not ok:
             return  # transient failure — retry on the next read
         self._hydrated.mark(tid)
-        for participant, manifest in stored.items():
-            self._manifests.setdefault((tid, participant), manifest)
+        # Authoritative for this tenant (codex, 2844ce20): replace, don't merge.
+        cached = {p: m for (t, p), m in self._manifests.items() if t == tid}
+        merged = await self._pending.reconcile(tid, self._ns(tid), cached, stored)
+        for participant in cached:
+            self._manifests.pop((tid, participant), None)
+        for participant, manifest in merged.items():
+            self._manifests[(tid, participant)] = manifest
 
     async def publish(
         self,
@@ -112,7 +118,8 @@ class CapabilitySvc:
             stored["participant"] = participant
             stored["updated_at"] = time.time()
             self._manifests[(tid, participant)] = stored
-            await _p1.mirror_set(self._ns(tid), participant, stored)
+            self._pending.note(tid, participant, "set",
+                               await _p1.mirror_set(self._ns(tid), participant, stored))
             return dict(stored)
 
     async def get(
@@ -163,12 +170,14 @@ class CapabilitySvc:
                 self._manifests.clear()
                 self._locks.clear()
                 self._hydrated.clear()
+                self._pending.forget()
             else:
                 self._manifests = {
                     k: v for k, v in self._manifests.items() if k[0] != tid
                 }
                 self._locks.pop(tid, None)
                 self._hydrated.invalidate(tid)
+                self._pending.forget(lambda k: k == tid)
         for t in tenants:
             await _p1.mirror_drop(self._ns(t))
 

@@ -62,7 +62,10 @@ All notable changes to Quorus are documented here. This project follows
   restart only with Redis; a local relay forgot them all. Without Redis they now live in
   `p1_state.db` next to the relay's other state (owner-only, 0600), deletes and resets
   included. A corrupt file is logged once and the relay runs in memory; a locked one is
-  retried. `PersistentMemorySvc.reset()` also stopped raising a TypeError.
+  retried. A refresh now takes the store's copy as the truth, so a delete or a visibility
+  change made by another relay process (or replica, with Redis) reaches this one; writes
+  the store missed are kept and mirrored later. `PersistentMemorySvc.reset()` also
+  stopped raising a TypeError.
 - Esc on the / menu closed it but left the half-typed command, so typing `/help` next sent
   `/h/help`. Esc now drops it.
 - Pasting into the hub sent nothing until you pressed another key, and a pasted

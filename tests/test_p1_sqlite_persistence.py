@@ -90,7 +90,9 @@ async def test_a_corrupt_file_degrades_to_memory():
     svc = PersistentMemorySvc()
     await svc.set(T, "alice", R, "k", 1)  # no exception reaches the caller
     assert (await svc.get(T, "alice", R, "k"))["value"] == 1
-    assert await p1_persistence.hydrate("p1mem:x") == ({}, True)
+    # "Could not read": callers keep serving what they hold rather than
+    # replacing it with an empty bucket.
+    assert await p1_persistence.hydrate("p1mem:x") == ({}, False)
     assert path.read_bytes().startswith(b"this is not")  # left alone for a human
 
 
@@ -175,3 +177,62 @@ async def test_route_acls_hold_after_a_restart():
             assert mine.status_code == 200 and mine.json()["entry"]["value"] == "secret"
     finally:
         _reset_state()
+
+
+# --- Two relay processes on one store (codex, blocking review of 2844ce20) ---
+
+
+@pytest.fixture
+def always_refresh(monkeypatch):
+    monkeypatch.setattr(p1_persistence, "HYDRATE_TTL_S", 0.0)
+
+
+async def test_a_visibility_change_elsewhere_reaches_this_cache(always_refresh):
+    a, b = PersistentMemorySvc(), PersistentMemorySvc()
+    await a.set(T, "alice", R, "notes", "x", visibility="room")
+    assert (await b.get(T, "alice", R, "notes"))["visibility"] == "room"
+    await a.set(T, "alice", R, "notes", "x", visibility="private")
+    assert (await b.get(T, "alice", R, "notes"))["visibility"] == "private"
+
+
+async def test_a_delete_elsewhere_reaches_this_cache(always_refresh):
+    a, b = PersistentMemorySvc(), PersistentMemorySvc()
+    await a.set(T, "alice", R, "gone", 1)
+    assert await b.get(T, "alice", R, "gone") is not None
+    assert await a.delete(T, "alice", R, "gone")
+    assert await b.get(T, "alice", R, "gone") is None
+    assert await b.list(T, "alice", R) == []
+
+
+async def test_tools_and_capabilities_follow_the_store_too(always_refresh):
+    ta, tb = ToolCatalogSvc(), ToolCatalogSvc()
+    await ta.register(T, R, name="lint", url="https://t.example/l", registered_by="alice")
+    assert await tb.get(T, R, "lint") is not None
+    assert await ta.remove(T, R, "lint")
+    assert await tb.get(T, R, "lint") is None
+
+    ca, cb = CapabilitySvc(), CapabilitySvc()
+    await ca.publish(T, "alice-claude", {"capabilities": ["python"]})
+    assert (await cb.get(T, "alice-claude"))["capabilities"] == ["python"]
+    await ca.publish(T, "alice-claude", {"capabilities": ["go"]})
+    assert (await cb.get(T, "alice-claude"))["capabilities"] == ["go"]
+
+
+async def test_writes_the_store_missed_are_kept_and_mirrored_later(always_refresh, monkeypatch):
+    monkeypatch.setattr(p1_sqlite, "_BUSY_S", 0.05)
+    svc = PersistentMemorySvc()
+    await svc.set(T, "alice", R, "old", 1)
+    holder = sqlite3.connect(str(p1_sqlite.db_path()))
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        await svc.set(T, "alice", R, "new", 2)  # the store missed this one
+        assert await svc.delete(T, "alice", R, "old")  # and this one
+    finally:
+        holder.rollback()
+        holder.close()
+    # The next successful refresh keeps both local changes and mirrors them.
+    assert (await svc.get(T, "alice", R, "new"))["value"] == 2
+    assert await svc.get(T, "alice", R, "old") is None
+    other = PersistentMemorySvc()
+    assert (await other.get(T, "alice", R, "new"))["value"] == 2
+    assert await other.get(T, "alice", R, "old") is None

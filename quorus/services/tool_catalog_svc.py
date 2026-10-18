@@ -60,6 +60,7 @@ class ToolCatalogSvc:
 
     def __init__(self) -> None:
         self._hydrated = _p1.HydrationClock()
+        self._pending = _p1.PendingWrites()
         # { (tid, rid) -> { tool_name -> record } }
         self._tools: dict[
             tuple[str, str], dict[str, dict[str, Any]]
@@ -101,10 +102,9 @@ class ToolCatalogSvc:
         if not ok:
             return  # transient failure — retry on the next read
         self._hydrated.mark(key)
-        if stored:
-            bucket = self._tools.setdefault(key, {})
-            for name, record in stored.items():
-                bucket.setdefault(name, record)
+        # Authoritative: a tool another relay process removed is gone here too.
+        self._tools[key] = await self._pending.reconcile(
+            key, self._ns(tid, rid), self._tools.get(key, {}), stored)
 
     async def register(
         self,
@@ -153,7 +153,8 @@ class ToolCatalogSvc:
                 "registered_at": time.time(),
             }
             bucket[name] = record
-            await _p1.mirror_set(self._ns(tid, rid), name, record)
+            self._pending.note((tid, rid), name, "set",
+                               await _p1.mirror_set(self._ns(tid, rid), name, record))
             return dict(record)
 
     async def list(
@@ -183,7 +184,8 @@ class ToolCatalogSvc:
             await self._hydrate_once(tid, rid)
             removed = self._bucket(tid, rid).pop(name, None)
             if removed is not None:
-                await _p1.mirror_delete(self._ns(tid, rid), name)
+                self._pending.note((tid, rid), name, "delete",
+                                   await _p1.mirror_delete(self._ns(tid, rid), name))
             return removed is not None
 
     async def reset(
@@ -201,6 +203,7 @@ class ToolCatalogSvc:
                 self._tools.clear()
                 self._locks.clear()
                 self._hydrated.clear()
+                self._pending.forget()
             elif rid is None:
                 self._tools = {
                     k: v for k, v in self._tools.items() if k[0] != tid
@@ -209,10 +212,12 @@ class ToolCatalogSvc:
                     (k, lk) for k, lk in self._locks.items() if k[0] != tid
                 )
                 self._hydrated.invalidate_where(lambda k: k[0] == tid)
+                self._pending.forget(lambda k: k[0] == tid)
             else:
                 self._tools.pop((tid, rid), None)
                 self._locks.pop((tid, rid), None)
                 self._hydrated.invalidate((tid, rid))
+                self._pending.forget(lambda k: k == (tid, rid))
         # Drop the mirror too — otherwise reset data returns on restart.
         for t, r in doomed:
             await _p1.mirror_drop(self._ns(t, r))

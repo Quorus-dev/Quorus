@@ -89,22 +89,22 @@ def _note_failure(op: str, ns_key: str, exc: BaseException) -> None:
 
 async def _local(op: str, ns_key: str, fn, *args) -> tuple[Any, bool]:
     """Run a blocking ``p1_sqlite`` call off the event loop. Returns
-    ``(result, ok)``: a corrupt store reads as empty and ok (the services run
-    in memory; it was logged once), a locked or failing one as not ok."""
+    ``(result, ok)``. A corrupt store is not ok but isn't counted again (it
+    was logged once): the services keep serving what they hold in memory."""
     try:
         return await asyncio.to_thread(fn, ns_key, *args), True
     except p1_sqlite.Unavailable:
-        return None, True
+        return None, False
     except Exception as exc:  # sqlite3 errors, a full disk, a bad mode
         _note_failure(op, ns_key, exc)
         return None, False
 
 
-async def mirror_set(ns_key: str, field: str, entry: dict[str, Any]) -> None:
+async def mirror_set(ns_key: str, field: str, entry: dict[str, Any]) -> bool:
+    """Mirror one entry. False when the store didn't take it."""
     r = get_redis_or_none()
     if r is None:
-        await _local("set", ns_key, p1_sqlite.set_entry, field, entry)
-        return
+        return (await _local("set", ns_key, p1_sqlite.set_entry, field, entry))[1]
     try:
         async with _timeout(_OP_TIMEOUT_S):
             pipe = r.pipeline()
@@ -113,27 +113,33 @@ async def mirror_set(ns_key: str, field: str, entry: dict[str, Any]) -> None:
             await pipe.execute()
     except Exception as exc:
         _note_failure("set", ns_key, exc)
+        return False
+    return True
 
 
-async def mirror_delete(ns_key: str, field: str) -> None:
+async def mirror_delete(ns_key: str, field: str) -> bool:
+    """Delete one mirrored entry. False when the store didn't take it."""
     r = get_redis_or_none()
     if r is None:
-        await _local("delete", ns_key, p1_sqlite.delete_entry, field)
-        return
+        return (await _local("delete", ns_key, p1_sqlite.delete_entry, field))[1]
     try:
         async with _timeout(_OP_TIMEOUT_S):
             await r.hdel(ns_key, field)
     except Exception as exc:
         _note_failure("delete", ns_key, exc)
+        return False
+    return True
 
 
 async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
     """Load a mirrored bucket.
 
-    Returns ``(entries, ok)``. ``ok`` distinguishes "there is nothing to
-    load" (an empty bucket, or an unreadable SQLite file — both fine, cache it)
-    from "we could not read" (transient error — the caller must NOT mark
-    the bucket hydrated, or one blip serves empty state forever).
+    Returns ``(entries, ok)``. When ``ok`` the entries are the whole bucket
+    as the store has it (an empty dict means empty): callers replace their
+    cache with it via :meth:`PendingWrites.reconcile`. Not ``ok`` means "we
+    could not read" (a blip, a locked or corrupt file): the caller keeps what
+    it holds and must NOT mark the bucket hydrated, or one blip serves empty
+    state forever.
     """
     r = get_redis_or_none()
     if r is None:
@@ -173,6 +179,51 @@ async def mirror_drop(ns_key: str) -> None:
             await r.delete(ns_key)
     except Exception as exc:
         _note_failure("drop", ns_key, exc)
+
+
+class PendingWrites:
+    """Writes this process made that the store didn't take (a locked file, a
+    Redis blip), per bucket.
+
+    A successful hydrate is the authoritative bucket: merging it into the
+    cache with ``setdefault`` kept entries another relay process had deleted
+    and kept an entry's old visibility after it changed (codex, 2844ce20). So
+    a refresh replaces the cache, except for these writes, which are kept and
+    re-mirrored until the store has them.
+    """
+
+    def __init__(self) -> None:
+        self._ops: dict[Any, dict[str, str]] = {}
+
+    def note(self, bucket: Any, field: str, op: str, mirrored: bool) -> None:
+        ops = self._ops.setdefault(bucket, {})
+        if mirrored:
+            ops.pop(field, None)
+        else:
+            ops[field] = op
+        if not ops:
+            self._ops.pop(bucket, None)
+
+    async def reconcile(self, bucket: Any, ns_key: str,
+                        cached: dict[str, dict[str, Any]],
+                        stored: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """The bucket to serve after a successful hydrate of *ns_key*."""
+        merged = dict(stored)
+        for field, op in list(self._ops.get(bucket, {}).items()):
+            if op == "set" and field in cached:
+                merged[field] = cached[field]
+                self.note(bucket, field, op, await mirror_set(ns_key, field, cached[field]))
+            elif op == "delete":
+                merged.pop(field, None)
+                self.note(bucket, field, op, await mirror_delete(ns_key, field))
+            else:
+                self.note(bucket, field, op, True)
+        return merged
+
+    def forget(self, predicate=None) -> None:
+        """Drop pending writes for buckets matching *predicate* (all if None)."""
+        for bucket in [b for b in self._ops if predicate is None or predicate(b)]:
+            self._ops.pop(bucket, None)
 
 
 class HydrationClock:
