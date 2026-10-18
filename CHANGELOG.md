@@ -27,6 +27,11 @@ All notable changes to Quorus are documented here. This project follows
 - `memory_set` / `memory_get` answered 403 "legacy auth" on shared-secret relays, the
   default local setup. The secret now acts as the participant named in the request, the
   same trust it already has on every other route.
+- `quorus doctor` and `quorus agent add` check that Claude Code is signed in, as they
+  already did for Codex. A signed-out Claude passed both, then every wake answered
+  "not logged in".
+- `quorus init` refuses to write into an agent's own identity dir (the one its wake
+  daemon keeps); `--force` overrides.
 - Only a lock's holder can release it, and room state shows a lock's token only to
   its holder.
 - A client can no longer dodge rate limits by rotating `X-Forwarded-For`.
