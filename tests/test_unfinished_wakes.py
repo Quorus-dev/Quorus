@@ -139,3 +139,51 @@ def test_a_cut_off_turn_that_changed_nothing_says_so_as_before(monkeypatch,
     assert UNFINISHED not in _branches(repo)
     assert any(c["content"].startswith("⚠ ran out of time") and "Mention me" in c["content"]
                for c in relay.posted)
+
+
+def test_a_failed_park_still_holds_the_work_back(monkeypatch, tmp_path: Path) -> None:
+    """Codex on 87d7c3a5: the hold is written before parking, so a parking
+    failure can't leave the cut-off commit for the startup sweep to publish."""
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+
+    def fail_park(*_a: Any, **_k: Any) -> None:
+        raise OSError("simulated branch failure")
+
+    monkeypatch.setattr(reflexd.reflexd_unfinished, "park", fail_park)
+    _wake(monkeypatch, d, reply=TIMED_OUT, edit="half\n")
+    asyncio.run(d._publish_sweep(_Relay()))
+    assert (repo / "CHANGELOG.md").read_text().count("\n") == 90
+
+
+def test_even_an_unwritable_hold_blocks_this_process(monkeypatch, tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+
+    def fail(*_a: Any, **_k: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(reflexd.reflexd_unfinished, "hold", fail)
+    _wake(monkeypatch, d, reply=TIMED_OUT, edit="half\n")
+    asyncio.run(d._publish_sweep(_Relay()))
+    assert (repo / "CHANGELOG.md").read_text().count("\n") == 90
+
+
+def test_a_failed_retry_keeps_the_hold(monkeypatch, tmp_path: Path) -> None:
+    """Codex on 87d7c3a5: a retry that errors is not a finish."""
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+    _wake(monkeypatch, d, reply=TIMED_OUT, edit="half\n")
+    _wake(monkeypatch, d, reply="[reflexd] harness errored", msg="retry")
+    asyncio.run(d._publish_sweep(_Relay()))
+    assert (repo / "CHANGELOG.md").read_text().count("\n") == 90
+    assert UNFINISHED in _branches(repo)
+
+
+def test_an_errored_turn_with_new_commits_is_parked_too(monkeypatch, tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+    relay = _wake(monkeypatch, d, reply="[reflexd] harness errored", edit="half\n")
+    assert (repo / "CHANGELOG.md").read_text().count("\n") == 90
+    assert _git(repo, "show", f"{UNFINISHED}:CHANGELOG.md") == "half"
+    assert any(UNFINISHED in p["content"] for p in relay.posted)

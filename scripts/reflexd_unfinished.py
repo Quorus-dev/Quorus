@@ -2,14 +2,16 @@
 
 A wake cut off by its time limit used to publish whatever it had committed to
 the room's branch. Gemini's half-written CHANGELOG went to main that way and
-deleted 86 lines (c36101ec). Now :func:`park` copies the branch to
-``quorus/<agent>-unfinished`` for review and leaves a marker, and nothing
-publishes that worktree (neither later wakes nor the startup sweep) until a
-turn finishes cleanly and :func:`clear` removes it. That turn is the agent
-finishing its work ("mention me to finish"), so it publishes everything.
+deleted 86 lines (c36101ec). Now a turn that doesn't finish cleanly (timed
+out, errored, a vendor failure) first takes a :func:`hold`, a marker that
+stops every publish of that worktree, later wakes and the startup sweep alike.
+Then :func:`park` copies the branch to ``quorus/<agent>-unfinished`` for
+review. Only a turn that finishes cleanly runs :func:`clear`; that turn is the
+agent finishing its work ("mention me to finish"), so it publishes everything.
 
-The marker survives a crash, like the read-only marker, so a restart never
-publishes the cut-off work either. Git runs with hooks disabled.
+It fails closed (codex, review of 87d7c3a5): the hold is written before
+parking, so a parking failure leaves it in place, and a failed retry never
+clears it. The marker survives a crash. Git runs with hooks disabled.
 """
 
 from __future__ import annotations
@@ -42,25 +44,43 @@ def pending(marker_dir: Path, path: Path) -> bool:
     return _marker(marker_dir, path).exists()
 
 
+def hold(marker_dir: Path, wt) -> None:
+    """Block publishing *wt* until a turn finishes cleanly. Written first, so
+    nothing that fails afterwards can leave the worktree publishable."""
+    marker = _marker(marker_dir, wt.path)
+    if marker.exists():
+        return  # an earlier unfinished turn's hold: keep it
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=marker_dir, prefix=".unfinished-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"path": str(Path(wt.path).resolve()),
+                       "branch": branch_for(wt.branch)}, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, marker)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def park(marker_dir: Path, wt, participant: str, message: str) -> str | None:
-    """After a cut-off turn: commit what it left uncommitted, copy the branch
-    to ``<branch>-unfinished`` and block publishing. Returns that branch, or
-    None when the turn left nothing new (then nothing is blocked)."""
+    """Under a :func:`hold`: commit what the turn left uncommitted and copy the
+    branch to ``<branch>-unfinished``. Returns that branch, or None when there
+    is nothing unpublished (then the hold is lifted: nothing to protect)."""
     from reflexd_wake import commit_all, merge_in_progress
 
     if not merge_in_progress(wt):
         commit_all(wt, participant, message)
     ahead = _git(wt.repo, "rev-list", "--count", f"{wt.main}..{wt.branch}")
-    if ahead.returncode != 0 or ahead.stdout.strip() in ("", "0"):
+    if ahead.returncode != 0:
+        raise OSError(f"couldn't compare {wt.branch} with {wt.main}")
+    if ahead.stdout.strip() in ("", "0"):
+        _marker(marker_dir, wt.path).unlink(missing_ok=True)
         return None
     unfinished = branch_for(wt.branch)
     if _git(wt.repo, "branch", "-f", unfinished, wt.branch).returncode != 0:
         raise OSError(f"couldn't create {unfinished}")
-    marker_dir.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=marker_dir, prefix=".unfinished-")
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump({"path": str(Path(wt.path).resolve()), "branch": unfinished}, fh)
-    os.replace(tmp, _marker(marker_dir, wt.path))
     return unfinished
 
 
