@@ -2448,12 +2448,19 @@ class ReflexdConfig:
         # endpoint enforces recipient == JWT.sub and 403s on the mismatch.
         # Concrete prod incident this prevents: 2026-05-03 00:33-00:34 UTC
         # reflexd loop emitting 403 every retry, never subscribing to SSE.
+        # A saved key only goes to the relay it was saved for: with the relay
+        # overridden to another one, only an env key may be used.
+        from quorus.config import DEFAULT_RELAY_URL, same_relay, withheld_credential_message
+        saved_key = data.get("api_key") or ""
+        bound = same_relay(relay_url, data.get("relay_url") or DEFAULT_RELAY_URL)
         api_key = (
             os.environ.get("REFLEXD_API_KEY")
             or os.environ.get("API_KEY")
-            or data.get("api_key")
-            or ""
+            or (saved_key if bound else "")
         )
+        if not api_key and saved_key and not bound:
+            raise SystemExit(f"reflexd: {withheld_credential_message(relay_url.rstrip('/'))}. "
+                             "Or set REFLEXD_API_KEY for that relay.")
         participant = (
             os.environ.get("REFLEXD_PARTICIPANT") or data.get("instance_name") or ""
         )

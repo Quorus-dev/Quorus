@@ -308,9 +308,17 @@ def _mcp_server_command() -> tuple[str, list[str]]:
     return sys.executable, ["-m", "quorus.mcp_server"]
 
 
+_WITHHELD_WARNED = False
+
+
 def _auth_headers() -> dict[str, str]:
     """Get auth headers — JWT from API key, or legacy secret for local dev."""
-    global _cached_jwt
+    global _cached_jwt, _WITHHELD_WARNED
+    if _config.get("credentials_withheld") and not (API_KEY or RELAY_SECRET) \
+            and not _WITHHELD_WARNED:
+        from quorus.config import withheld_credential_message
+        _WITHHELD_WARNED = True
+        print(f"quorus: {withheld_credential_message(RELAY_URL)}", file=sys.stderr)
     if API_KEY:
         if not _cached_jwt:
             resp = httpx.post(
@@ -5450,9 +5458,18 @@ def _cmd_join(args):
         arg_room = getattr(args, "room", None)
 
         relay_url = arg_relay if arg_relay else RELAY_URL
-        secret = arg_secret if arg_secret else RELAY_SECRET
-        api_key = arg_api_key if arg_api_key else API_KEY
+        # Saved credentials only go to the relay they were saved for: --relay
+        # pointing elsewhere without --secret/--api-key must not send them.
+        from quorus.config import same_relay, withheld_credential_message
+        # (RELAY_SECRET/API_KEY are already bound to RELAY_URL by load_config.)
+        inherit = not arg_relay or same_relay(arg_relay, RELAY_URL)
+        secret = arg_secret or (RELAY_SECRET if inherit else "")
+        api_key = arg_api_key or (API_KEY if inherit else "")
         room = arg_room if arg_room else ""
+        if not (secret or api_key) and (RELAY_SECRET or API_KEY) and not inherit:
+            _ui.error(withheld_credential_message(relay_url),
+                      hint="pass --secret or --api-key for that relay, or use its invite code")
+            sys.exit(3)
 
         # Only rewrite config if explicit flags were provided
         rewrite_config = bool(arg_relay or arg_secret or arg_api_key)
