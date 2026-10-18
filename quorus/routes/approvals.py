@@ -169,7 +169,9 @@ async def _visible(request: Request, auth: AuthContext, records: list[dict]) -> 
             )
         except Exception:
             continue
-        if auth.sub in (members or {}):
+        # Previews carry command lines and file contents: an observer may read the
+        # room, not these (codex's threat model).
+        if (members or {}).get(auth.sub) in WRITER_ROLES:
             visible.append(rec)
     return visible
 
