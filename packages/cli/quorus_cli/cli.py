@@ -814,7 +814,8 @@ def _cmd_create(args):
         if e.response.status_code == 409:
             ui.error(f"Room '{args.name}' already exists", hint="pick a different name")
         elif e.response.status_code == 401:
-            ui.error("Not authenticated", hint="run: quorus init <name> --secret <s>")
+            ui.error("Not authenticated",
+                     hint="run: quorus init <name> --secret -  (then paste the secret)")
         else:
             ui.error("Could not create room", hint=_http_hint(e.response))
         sys.exit(1)
@@ -4955,7 +4956,7 @@ def _cmd_init(args):
     secret = getattr(args, "secret", None) or ""
     api_key = getattr(args, "api_key", None) or ""
     # `--secret -` / `--api-key -` read it from stdin, so it never sits in argv
-    # (shell history, ps) the way `--secret <value>` does.
+    # (shell history, ps) the way a literal secret after `--secret` does.
     if secret == "-":
         secret = sys.stdin.readline().strip()
     elif api_key == "-":

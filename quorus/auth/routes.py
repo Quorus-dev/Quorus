@@ -319,7 +319,8 @@ async def signup(
             key_prefix=prefix,
             key_id=str(api_key.id) if hasattr(api_key, "id") and api_key.id else prefix,
             next_steps=(
-                f"Run: quorus init {req.name} --relay-url {relay_url} --api-key <your-key>"
+                f"Run: quorus init {req.name} --relay-url {relay_url} --api-key - "
+                "(then paste your key)"
             ),
             relay_url=relay_url,
             setup_command=(
