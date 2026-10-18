@@ -2559,6 +2559,9 @@ class Reflexd:
         self._pace_parked: dict[str, tuple[dict[str, Any], Any]] = {}
         self._pace_task: asyncio.Task | None = None
         self._readonly_warned: set[str] = set()  # worktrees told "stuck marker"
+        # Unfinished-turn holds whose marker couldn't be written: still honoured
+        # by this process (the marker is what survives a restart).
+        self._unfinished_held: set[str] = set()
         self._last_spoke: dict[str, float] = {}
         self._last_wake_at: float = 0.0
         # Bounded in-memory queue for messages that arrive while a busy-file
@@ -3362,6 +3365,9 @@ class Reflexd:
             model=str(getattr(self.adapter, "model", None) or ""),
             message_id=(envelope.get("message_id") or envelope.get("id") or "")
             if kind == "open_todo" else "")
+        # Didn't finish cleanly: its commits are held back, not published.
+        turn_failed = bool(vendor_failure or failure_reason or exit_code != "unknown"
+                           or reply.startswith(("[reflexd]", "⚠")))
         previous_degraded = self._degraded_reason
         if vendor_failure:
             self._degraded_reason = vendor_failure.reason
@@ -3379,23 +3385,36 @@ class Reflexd:
         if worktree is not None and (await self._settle_readonly(
                 relay, room, worktree, readonly_snap, envelope) or readonly_turn):
             pass  # a read-only turn never publishes, whatever its harness wrote
-        elif worktree is not None and reply == "[reflexd] harness timed out":
-            # Cut off mid-work: its commits go to <branch>-unfinished for
-            # review, never to the room's branch (c36101ec: a half-written
-            # CHANGELOG reached main this way).
+        elif worktree is not None and turn_failed:
+            # Cut off or failed mid-work: hold first (fail closed), then copy
+            # its commits to <branch>-unfinished for review. Never to the
+            # room's branch (c36101ec: a half-written CHANGELOG reached main).
+            parked = None
+            self._unfinished_held.add(str(worktree.path))
             try:
+                await asyncio.to_thread(reflexd_unfinished.hold, self._unfinished_dir,
+                                        worktree)
                 parked = await asyncio.to_thread(
                     reflexd_unfinished.park, self._unfinished_dir, worktree,
                     self.config.participant_name,
                     f"wip: unfinished turn by {self.config.participant_name}")
             except (OSError, subprocess.SubprocessError) as exc:
-                logger.exception("couldn't park a cut-off turn: %s", exc)
-                parked = None
-            if parked:
+                logger.exception("couldn't park an unfinished turn: %s", exc)
+            else:
+                if not parked:  # nothing unpublished: park lifted the hold
+                    self._unfinished_held.discard(str(worktree.path))
+            if parked and reply == "[reflexd] harness timed out":
                 reply = reflexd_unfinished.notice(parked, self._activity)
+            elif parked:
+                await self._post_status(relay, room, envelope,
+                                        reflexd_unfinished.notice(parked))
         elif worktree is not None:
-            await asyncio.to_thread(reflexd_unfinished.clear, self._unfinished_dir, worktree)
             try:
+                # A clean finish lifts an unfinished turn's hold. If that fails,
+                # the except below keeps the work on its branch, unpublished.
+                await asyncio.to_thread(reflexd_unfinished.clear, self._unfinished_dir,
+                                        worktree)
+                self._unfinished_held.discard(str(worktree.path))
                 published = await self._publish_with_resolution(
                     worktree, harness=harness, resume=prior_session,
                     on_session=_persist_session, timeout_s=wake_timeout,
@@ -4064,7 +4083,8 @@ class Reflexd:
                 )
                 if wt is not None and await self._settle_readonly(relay, room, wt, None):
                     continue  # a read-only turn's leftovers are never published
-                if wt is not None and reflexd_unfinished.pending(self._unfinished_dir, wt.path):
+                if wt is not None and (str(wt.path) in self._unfinished_held or
+                                       reflexd_unfinished.pending(self._unfinished_dir, wt.path)):
                     continue  # a cut-off turn waits for review or its finishing turn
                 status = await asyncio.to_thread(
                     reflexd_wake.publish_worktree, wt, self.config.participant_name,
