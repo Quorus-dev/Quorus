@@ -138,7 +138,14 @@ def test_quorum_degrades_instead_of_going_blank() -> None:
     stage = _src("quorum-stage.js")
     assert "function budget(S, dt, t)" in stage and 'S.quality = "no-bloom"' in stage
     assert "if (dpr > 1.5) { S.renderer.setPixelRatio(1.5);" in stage
-    assert "const under30 = S.ema > 1 / 30" in stage and "if (dpr > 1 && under30)" in stage
+    assert "const under30 = S.ema > Math.max(1 / 30, S.period * 2.2)" in stage
+    assert "if (dpr > 1 && under30)" in stage
+    # "Slow" is relative to the display's own frame period, measured by the first 20
+    # ticks before anything is drawn: a 30 Hz monitor or headless Chrome pacing rAF at
+    # 20 Hz must not shed bloom and DPR on a fast GPU (it did, on the M4 Pro).
+    assert "if ((S.warm || []).length >= 20) S.period = S.warm.sort((a, b) => a - b)[10];" in stage
+    assert stage.index("if (S.period === undefined)") < stage.index("budget(S, dt, t);")
+    assert "const slow = Math.max(0.024, S.period * 1.5);" in stage
     # The fps / DPR / quality readout (`quorus web --fps`) is DOM text, once a second.
     assert 'sessionStorage.getItem("qfps") === "1"' in stage and 'className = "qfps"' in stage
     assert "stats() { return stats(S); }" in stage
