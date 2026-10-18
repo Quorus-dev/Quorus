@@ -11,8 +11,11 @@ Cursor, Windsurf and Cline connect over MCP only; never call them supported.
 `/llms.txt` and `/agents.md` are copied from the repo root's `llms.txt` at build
 time (`npm run build`), so there is one copy.
 
-Visuals: `public/media/*.webp` are real screenshots of the shipped UI (the Quorum
-view and board rows) taken on a seeded test relay at 2x; every caption says so. The
+Visuals: only the shipped product appears. The hero is the demo recording
+(`public/media/demo.{webm,mp4}` with its poster), a real run of the released
+package. Captures of the Quorum view and the board rows come back with the
+release that ships them (0.6.0), from a seeded test relay at 2x, captioned as
+demo scenes. The
 one web font is Plus Jakarta Sans (OFL, `public/fonts/`), preloaded and self-hosted.
 The footer's version is read from `../pyproject.toml` at build time. Motion is
 transform/opacity only and stops under `prefers-reduced-motion`.
