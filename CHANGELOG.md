@@ -5,6 +5,17 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- `quorus tune`: what your Quorus learned about you, kept private in
+  `~/.quorus/tuning.json`. `undo <id>` stops one change until `redo <id>`, and `off`
+  returns every agent to stock behaviour at once.
+- Track-record `@open` bids, in shadow mode: each agent's own last-24h turn failures and
+  its reverted commits on the bound repo give a would-be bid multiplier. It's logged and
+  posted once, as counts ("would set @open bids x0.75 for @x-gemini · 2 errors, 0
+  clean/24h"), but bids stay raw. `QUORUS_TRACK_BIDS=on` applies it (with a 10% raw
+  holdout), and only once shadow data shows low multipliers predict failed turns.
+
 ### Changed
 
 - The Quorum view is a lit stage: only present members are seated (offline ones are a
