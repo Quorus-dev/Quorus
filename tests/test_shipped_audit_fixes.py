@@ -110,3 +110,51 @@ def test_forwarded_ip_used_only_behind_a_configured_proxy(monkeypatch):
     assert get_real_ip(req) == "10.0.0.5"
     monkeypatch.setenv("TRUSTED_PROXY_COUNT", "1")
     assert get_real_ip(req) == "203.0.113.9"
+
+
+# S3 ------------------------------------------------------------------------
+
+
+async def _call_tool(monkeypatch, post_side_effect=None, post_result=None):
+    from unittest.mock import AsyncMock, MagicMock
+
+    import httpx
+    from mcp import types
+    from quorus_mcp import server, tools
+
+    monkeypatch.setattr(server, "API_KEY", "")
+    monkeypatch.setattr(server, "RELAY_SECRET", "audit-dummy")
+    monkeypatch.setattr(server, "_remember_session", AsyncMock())
+    monkeypatch.setattr(tools, "_audit_tool_call", AsyncMock())
+    mock_client = AsyncMock()
+    if post_side_effect is not None:
+        mock_client.post.side_effect = post_side_effect
+    else:
+        resp = MagicMock(spec=httpx.Response)
+        resp.json.return_value = post_result
+        resp.raise_for_status.return_value = None
+        mock_client.post.return_value = resp
+    monkeypatch.setattr(server, "_get_http_client", lambda: mock_client)
+    request = types.CallToolRequest(
+        params=types.CallToolRequestParams(
+            name="send_message", arguments={"to": "bob", "content": "test"}
+        )
+    )
+    handler = server.mcp._mcp_server.request_handlers[types.CallToolRequest]
+    return (await handler(request)).root
+
+
+async def test_mcp_relay_failure_sets_error_flag(monkeypatch):
+    import httpx
+
+    result = await _call_tool(
+        monkeypatch, post_side_effect=httpx.ConnectError("relay offline")
+    )
+    assert result.isError is True
+    assert result.content[0].text.startswith("Error: Cannot reach relay")
+
+
+async def test_mcp_success_is_not_flagged(monkeypatch):
+    result = await _call_tool(monkeypatch, post_result={"id": "m1"})
+    assert result.isError is False
+    assert "Message sent" in result.content[0].text

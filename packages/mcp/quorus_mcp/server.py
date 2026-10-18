@@ -278,6 +278,19 @@ async def _list_tools_wrapped(req: types.ListToolsRequest):
     return await _orig_list_tools(req)
 mcp._mcp_server.request_handlers[types.ListToolsRequest] = _list_tools_wrapped
 
+# Tools report relay failures as "Error: ..." text (see _relay_error_message).
+# Flag those isError so an agent can't mistake a failed send for a success.
+_orig_call_tool = mcp._mcp_server.request_handlers[types.CallToolRequest]
+async def _call_tool_wrapped(req: types.CallToolRequest):
+    result = await _orig_call_tool(req)
+    res = result.root
+    if isinstance(res, types.CallToolResult) and not res.isError and res.content:
+        first = res.content[0]
+        if isinstance(first, types.TextContent) and first.text.startswith("Error:"):
+            res.isError = True
+    return result
+mcp._mcp_server.request_handlers[types.CallToolRequest] = _call_tool_wrapped
+
 
 def _install_session_capture() -> None:
     """Placeholder — session capture is installed via the list_tools wrap above."""
