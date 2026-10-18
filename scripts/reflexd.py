@@ -1726,6 +1726,7 @@ class HeadlessAdapter:
         if not reflexd_models.is_free_opencode(first):
             return reply
         self._note_slow(reply)
+        self._note_no_route(reply)
         tried = {first}
         from quorus.runtime.opencode_free import free_models
 
@@ -1746,6 +1747,7 @@ class HeadlessAdapter:
                                               on_session=on_session, timeout_s=timeout_s,
                                               mode=mode)
             self._note_slow(reply)
+            self._note_no_route(reply)
         if self.limited_until > time.time():
             self.model = first  # every free model is busy: cool down as before
             if first == self._home_model:
@@ -1763,6 +1765,20 @@ class HeadlessAdapter:
         self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S)
         if self.on_step is not None:  # one live line, not a room post per model
             self.on_step(f"{(self.model or 'default').split('/')[-1]} is slow to start; "
+                         "trying another free model")
+
+    def _note_no_route(self, reply: str) -> None:
+        """A free model the catalog lists but the provider won't serve ("Model
+        unavailable", provider.no-route; opencode/beam-free, 2026-10-18): cool it
+        down and move on, as for a rate limit, instead of reporting it."""
+        if not _NO_ROUTE_RE.search(str(reply or "")):
+            return
+        from quorus.runtime.opencode_free import mark_slow
+
+        mark_slow(self.model)
+        self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S)
+        if self.on_step is not None:
+            self.on_step(f"{(self.model or 'default').split('/')[-1]} is unavailable; "
                          "trying another free model")
 
     async def _opencode_once(

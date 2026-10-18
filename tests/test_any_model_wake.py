@@ -618,3 +618,36 @@ def test_the_gemini_wake_writes_its_mode_into_the_settings(tmp_path: Path,
     written = _json.loads((tmp_path / "cfg" / "gemini-home" / ".gemini" /
                            "settings.json").read_text())
     assert written["tools"]["exclude"] == ["exit_plan_mode"]
+
+
+def test_an_unavailable_free_model_rotates_like_a_rate_limit() -> None:
+    """opencode/beam-free was listed by `opencode models` but the provider said
+    'Model unavailable' (no-route); the wake reported it instead of moving on."""
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter = reflexd.HeadlessAdapter()
+    tried: list[str | None] = []
+
+    async def once(*_a: Any, **_k: Any) -> str:
+        tried.append(adapter.model)
+        if adapter.model == free[0]:
+            return "⚠ opencode: Model unavailable: opencode/beam-free."
+        return f"fixed it on {adapter.model}"
+
+    adapter._opencode_once = once  # type: ignore[method-assign]
+    adapter.model = free[0]
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out == f"fixed it on {free[1]}" and tried == [free[0], free[1]]
+    assert reflexd.reflexd_models.is_free_opencode(free[0])
+
+
+def test_an_unavailable_paid_model_is_still_reported() -> None:
+    adapter = reflexd.HeadlessAdapter()
+
+    async def once(*_a: Any, **_k: Any) -> str:
+        return "⚠ opencode: Model unavailable: xai/grok-code-fast-1."
+
+    adapter._opencode_once = once  # type: ignore[method-assign]
+    adapter.model = "xai/grok-code-fast-1"
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out.startswith("⚠ opencode: Model unavailable")
+    assert adapter.model == "xai/grok-code-fast-1"  # a paid pick is never swapped
