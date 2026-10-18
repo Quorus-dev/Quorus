@@ -49,6 +49,10 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- Pasting into the hub sent nothing until you pressed another key, and a pasted
+  `@name ...` never got past the mention picker: the composer read stdin through Python's
+  buffer, which swallowed the paste. It now reads the terminal directly.
+- The @ picker labelled opencode agents "(human)".
 - `quorus relay --host 0.0.0.0` started a second relay next to the one your first `quorus` run
   started on 127.0.0.1:8080: on macOS both bound the port and wrote the same state file, and on
   Linux it failed to start. It now refuses while a relay answers on that port, and `--replace`
