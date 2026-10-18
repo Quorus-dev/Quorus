@@ -90,3 +90,30 @@ def test_quorum_degrades_instead_of_going_blank() -> None:
     from quorus.dashboard import DASHBOARD_HTML
 
     assert "#quorum canvas{position:absolute" in DASHBOARD_HTML  # can't grow its own host
+
+
+def test_quorum_v2_is_a_lit_stage_with_only_present_members_seated() -> None:
+    """Arav (2026-10-18): depth-scaled colliding labels, a stray orange pillar,
+    months-old offline members as white blobs on empty chairs, a toy look."""
+    src = (WEB / "quorum.js").read_text()
+    assert "Q.pillar" not in src and '"cube"' not in src  # a publish ripples across the table
+    assert "function ripple(" in src and 'PUBLISHED.test(body)) ripple(' in src
+    # Only present members get a seat: online agents, people who spoke or the viewer.
+    assert "rank.get(n) !== 6" in src and "spoke.has(n) || n === Q.me" in src
+    assert "offline or away: see List" in src
+    # The camera frames the whole ring for the host's aspect, so no seat is cropped.
+    assert "function frame()" in src and "Q.cam.aspect = w / h" in src
+    # Product-render treatment: tone mapping, soft shadows, three-point light, fog edge.
+    for needle in ("ACESFilmicToneMapping", "PCFSoftShadowMap", "castShadow = true",
+                   "new THREE.Fog(", "MeshPhysicalMaterial", "function palette()"):
+        assert needle in src, needle
+    assert "CapsuleGeometry" not in src  # no pills (UI brief)
+    # Narrow hosts and phones get the flat grid before any WebGL work.
+    assert "host.clientWidth > 0 && host.clientWidth < NARROW" in src
+    assert "if (phone.matches || narrow)" in src
+    from quorus.dashboard import DASHBOARD_HTML
+
+    # Plaques: fixed 12px type, the vendor as a 6px dot, never a logo or a thick bar.
+    assert ".qtag::before{" in DASHBOARD_HTML and "width:6px;height:6px" in DASHBOARD_HTML
+    assert "border-left:3px solid var(--seat)" not in DASHBOARD_HTML
+    assert "font-size:12px;line-height:1.25" in DASHBOARD_HTML

@@ -5,6 +5,19 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+
+- The Quorum view is a lit stage: only present members are seated (offline ones are a
+  count), the publish pillar is gone, plaques keep one type size at any depth and never
+  overlap, and the camera frames the whole table. List stays the default view.
+
+### Fixed
+
+- A step older than ten minutes clears from the board, the Quorum view and the chat's
+  working line instead of showing "running tests · 7h 26m" for a stuck daemon.
+- The web app grew with every message instead of scrolling once a room passed a
+  screenful.
+
 ## [0.5.1] — 2026-10-18
 
 ### Added

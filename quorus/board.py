@@ -58,6 +58,14 @@ function clock(epoch) {
   return new Date(epoch * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 const ts = (m) => Date.parse(m.timestamp || "") / 1000 || 0;
+const STALE_S = 600;  // a busy step older than this is a stuck daemon, not work
+// When this wake started: the relay's last_wake_at (epoch seconds from the file
+// backend, ISO text from Redis), else when this page first saw the agent busy.
+function busySince(p, name, now) {
+  const w = p.last_wake_at;
+  const t = typeof w === "number" ? w : Date.parse(w || "") / 1000;
+  return t > 0 ? t : (B.since[name] || now);
+}
 const PUBLISHED = /\(quorus\) published (\d+) commit\(s\) from quorus\/([\w-]+) to ([\w./-]+)/;
 const OK = /✅|\bapproved?\b|\bLGTM\b|lifting my block/i;
 const BLOCK = /\/disagree|\bblocking\b|\brejected\b|\bnot approved\b/i;
@@ -80,10 +88,13 @@ function rowState(name, presence, history, approvals, now) {
   const answered = ask && history.some((m) => m.from_name === myName && ts(m) > ts(ask));
   if (ask && !answered) r.asks.push((ask.content || "").split("\n")[0].slice(0, 160));
   if (!p.online) { r.rank = 6; r.line = "offline"; }
-  else if (p.status === "busy") {
+  else if (p.status === "busy" && now - busySince(p, name, now) > STALE_S) {
+    // A daemon stuck in a wake kept "running tests · 7h 26m" on the board for
+    // hours (Arav, 2026-10-18). A step clears after 10 minutes: idle, no trail.
+    r.rank = 5; r.line = "idle"; r.trail = [];
+  } else if (p.status === "busy") {
     r.rank = 4;
-    const since = B.since[name] || now;
-    r.line = (p.activity || "working") + " · " + ago(now - since);
+    r.line = (p.activity || "working") + " · " + ago(now - busySince(p, name, now));
   } else if (p.waiting_on === "stuck") {
     r.rank = 2;
     const last = mine.slice().reverse().find((m) => /^⚠/.test(m.content || ""));
