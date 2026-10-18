@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -6225,6 +6226,18 @@ def _cmd_quickjoin(args):
     _apply_join_payload(payload, args.name)
 
 
+def _open_in_terminal(cmd: str) -> None:
+    """Run *cmd* (already shell-quoted) in a new macOS Terminal tab.
+
+    The command is embedded in an AppleScript string literal, so its
+    backslashes and double quotes are escaped for that layer too.
+    """
+    escaped = cmd.replace("\\", "\\\\").replace('"', '\\"')
+    subprocess.run(
+        ["osascript", "-e", f'tell application "Terminal" to do script "{escaped}"']
+    )
+
+
 def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
     """Create agent workspace and launch Claude Code in a new terminal tab."""
     # Validate name: letters, digits, hyphen, underscore — defense against
@@ -6344,11 +6357,7 @@ You communicate ONLY through the room — never reply in terminal.
 
     # Open a new terminal tab (macOS)
     if sys.platform == "darwin":
-        cmd = f"cd {workspace} && claude"
-        applescript = (
-            f'tell application "Terminal" to do script "{cmd}"'
-        )
-        subprocess.run(["osascript", "-e", applescript])
+        _open_in_terminal(f"cd {shlex.quote(str(workspace))} && claude")
         console.print(f"[green]Launched {name} in new Terminal tab[/green]")
     else:
         _ui.info(f"Run manually: cd {workspace} && claude")
@@ -6407,20 +6416,16 @@ def _spawn_codex_agent(
 
     console.print(f"[green]Workspace created: {workspace}[/green]")
 
+    ws = shlex.quote(str(workspace))
+    cmd = (
+        f"cd {ws} && quorus codex-agent {room} "
+        f"--name {name}{flag_suffix} --cwd {ws}"
+    )
     if sys.platform == "darwin":
-        cmd = (
-            f"cd {workspace} && quorus codex-agent {room} "
-            f"--name {name}{flag_suffix} --cwd {workspace}"
-        )
-        applescript = f'tell application "Terminal" to do script "{cmd}"'
-        subprocess.run(["osascript", "-e", applescript])
+        _open_in_terminal(cmd)
         console.print(f"[green]Launched Codex agent {name} in new Terminal tab[/green]")
     else:
-        _ui.info(
-            "Run manually: "
-            f"cd {workspace} && quorus codex-agent {room} "
-            f"--name {name}{flag_suffix} --cwd {workspace}"
-        )
+        _ui.info(f"Run manually: {cmd}")
 
 
 def _cmd_register_agents(args):
@@ -6782,15 +6787,12 @@ You are {name} in the {room} group chat. ALL communication goes through the room
         console.print(f"\n[green]Workspace ready: {workspace}[/green]")
 
         # Build claude launch command with model flag
-        model_flag = f"--model {model}" if model != "sonnet" else ""
-        claude_cmd = f"cd {workspace} && claude {model_flag}".strip()
+        model_flag = f"--model {shlex.quote(model)}" if model != "sonnet" else ""
+        claude_cmd = f"cd {shlex.quote(str(workspace))} && claude {model_flag}".strip()
 
         # Launch in new terminal tab (macOS)
         if sys.platform == "darwin":
-            applescript = (
-                f'tell application "Terminal" to do script "{claude_cmd}"'
-            )
-            subprocess.run(["osascript", "-e", applescript])
+            _open_in_terminal(claude_cmd)
             console.print(f"[bold green]{name} launched in new Terminal tab![/bold green]")
         else:
             _ui.info(f"Run manually: {claude_cmd}")

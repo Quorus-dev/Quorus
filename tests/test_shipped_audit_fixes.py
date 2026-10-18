@@ -173,3 +173,37 @@ def test_replay_masks_known_credentials_in_commit_metadata():
     msg = {"timestamp": "2026-10-18T00:00:00Z", "from_name": dummy, "content": "hi"}
     page = render(dummy, [msg], [commit], [dummy])
     assert dummy not in page
+
+
+# S5 ------------------------------------------------------------------------
+
+
+def _applescript_literal(script: str) -> str:
+    """Decode the string literal from `tell ... to do script "<literal>"`."""
+    import re
+
+    body = re.fullmatch(r'tell application "Terminal" to do script "(.*)"', script)
+    assert body, script
+    return re.sub(r"\\(.)", r"\1", body.group(1))
+
+
+@pytest.mark.parametrize(
+    "dirname", ["repo; touch AUDIT_MARKER; #", 'say "hi" \\ $(id) `x`']
+)
+def test_spawn_codex_quotes_workspace_for_shell_and_applescript(
+    tmp_path, monkeypatch, dirname
+):
+    import shlex
+
+    from quorus_cli import cli
+
+    workspace = tmp_path / dirname
+    calls = []
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    monkeypatch.setattr(cli, "_get_codex_runner_defaults", lambda: {})
+    monkeypatch.setattr(cli.subprocess, "run", lambda argv, **kw: calls.append(argv))
+    cli._spawn_codex_agent("build", "alice-codex", workspace=workspace)
+    assert calls[0][:2] == ["osascript", "-e"]
+    argv = shlex.split(_applescript_literal(calls[0][2]))
+    assert argv[:3] == ["cd", str(workspace), "&&"]
+    assert argv[-2:] == ["--cwd", str(workspace)]
