@@ -190,7 +190,11 @@ def _relay_error_message(exc: Exception) -> str:
     if isinstance(exc, httpx.TimeoutException):
         return f"Error: Relay request timed out at {RELAY_URL}"
     if isinstance(exc, httpx.HTTPStatusError):
-        return f"Error: Relay returned {exc.response.status_code}: {exc.response.text}"
+        # Why, not the raw body: agents got "Relay returned 429: {...}" with no
+        # retry time (0.5.1 live check). Same wording as the CLI.
+        from quorus.http_hints import hint
+
+        return f"Error: {hint(exc.response)}"
     return f"Error: {exc}"
 
 
