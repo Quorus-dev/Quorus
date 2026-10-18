@@ -41,6 +41,24 @@ if (!reduce && "IntersectionObserver" in window) {
     { rootMargin: "0px 0px -8% 0px" },
   );
   for (const el of document.querySelectorAll(".reveal")) seen.observe(el);
+
+  // The hero's second beat, the Quorum stage (three.js, ~700 KB): desktop widths only,
+  // never on a data-saver connection, and only once the page has loaded, gone idle and
+  // the band itself is scrolled into view. Until then (and on phones) its still shows.
+  const stageHost = document.getElementById("stageHost");
+  const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+  if (stageHost && matchMedia("(min-width: 960px)").matches && !saveData) {
+    window.addEventListener("load", () => {
+      const near = new IntersectionObserver((entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        near.disconnect();
+        const go = () => void import("./stage-demo.ts").then((m) => m.mountStage(stageHost)).catch(() => undefined);
+        if ("requestIdleCallback" in window) requestIdleCallback(go, { timeout: 3000 });
+        else setTimeout(go, 400);
+      }, { threshold: 0.3 });
+      near.observe(stageHost);
+    });
+  }
 }
 
 // Card images (crops of the demo run) load once the page has loaded and gone idle,

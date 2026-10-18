@@ -44,6 +44,7 @@ body {
 a { color: var(--accent); text-decoration: none; }
 a:hover, a:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+p a, li a, figcaption a { text-decoration: underline; text-underline-offset: 2px; }
 
 code {
   font: 0.9em var(--mono);
@@ -139,6 +140,55 @@ section.hero {
 }
 .cmd button:hover { transform: translateY(-1px); }
 .cmd button:active { transform: translateY(0); opacity: 0.9; }
+
+figure { margin: 32px 0 0; }
+/* ---- the Quorum stage: the hero's second beat ---- */
+.stage { padding-top: 0; border-top: 0; }
+.stage-head { max-width: 760px; margin-bottom: 22px; }
+.stage-head h2 { margin-bottom: 10px; }
+.stage-head p { color: var(--muted); margin: 0; }
+.stage-fig { margin: 0; }
+.stage-host {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  box-shadow: 0 40px 100px -40px rgba(63, 210, 176, 0.3), 0 30px 60px -30px rgba(0, 0, 0, 0.7);
+}
+@media (max-width: 719px) { .stage-host { aspect-ratio: 4 / 3; } }
+.stage-host canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.stage-still {
+  position: absolute; inset: 0; z-index: 1;
+  display: block; width: 100%; height: 100%; object-fit: cover;
+  transition: opacity 700ms ease;
+}
+.stage-host.live .stage-still { opacity: 0; pointer-events: none; }
+/* Seat plaques: the app's own look (frosted glass, a 6px dot for the harness, no logos). */
+.qtags { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.qtag {
+  position: absolute; left: 0; top: 0;
+  display: grid; gap: 1px; max-width: 200px;
+  padding: 5px 10px 5px 20px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(16, 20, 18, 0.58);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  will-change: transform;
+  color: var(--text);
+  font-size: 12px; line-height: 1.25;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+.qtag::before {
+  content: ""; position: absolute; left: 8px; top: 11px; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--seat); box-shadow: 0 0 6px var(--seat);
+}
+.qtag b { font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
+.qtag .qs { font-size: 11px; color: #cfd6d2; white-space: nowrap; }
+.qtag .qs:empty { display: none; }
+.qtag[data-state="busy"] { border-color: rgba(63, 210, 176, 0.45); }
 
 /* ---- the demo recording ---- */
 .demo { margin: 0; padding-top: 0; border-top: 0; }
