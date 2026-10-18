@@ -271,16 +271,21 @@ async def test_dms_still_reach_an_existing_invitee(client) -> None:
 def _cli_against_relay(monkeypatch, tmp_path):
     """Route the CLI's httpx calls into this relay app, and keep its config and
     MCP registrations in tmp_path (never the developer's real HOME)."""
+    from urllib.parse import urlsplit
+
     from fastapi.testclient import TestClient
     from quorus_cli import cli
 
     tc = TestClient(app)
 
-    def post(url, **kw):
-        kw.pop("timeout", None)
-        kw.pop("follow_redirects", None)
-        return tc.post(url.replace("http://t", ""), **kw)
-    monkeypatch.setattr(cli.httpx, "post", post)
+    def route(method):
+        def call(url, **kw):
+            kw.pop("timeout", None)
+            kw.pop("follow_redirects", None)
+            return getattr(tc, method)(urlsplit(url).path, **kw)
+        return call
+    monkeypatch.setattr(cli.httpx, "post", route("post"))
+    monkeypatch.setattr(cli.httpx, "get", route("get"))
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "joiner"))
     monkeypatch.setattr(cli, "_register_mcp_everywhere", lambda **_k: ([], {}))
     return cli
@@ -302,6 +307,23 @@ async def test_quorus_join_redeems_a_v2_code_into_its_own_key(client, monkeypatc
     assert "test-secret" not in (tmp_path / "joiner" / "config.json").read_text()
     members = (await client.get("/rooms/build", headers=ADMIN)).json()["members"]
     assert "erin" in members
+
+
+async def test_quorus_share_code_joins_end_to_end(client, monkeypatch, tmp_path) -> None:
+    """The short code `quorus share` prints resolves to a v2 payload, and
+    `quorus join CODE` turns it into the joiner's own key."""
+    import argparse
+    import asyncio as _asyncio
+    import json as _json
+
+    r = await client.post("/v1/join/mint", json={"room": "build"}, headers=ADMIN)
+    cli = _cli_against_relay(monkeypatch, tmp_path)
+    args = argparse.Namespace(token=r.json()["code"], name="frank", relay_url="http://t")
+    await _asyncio.to_thread(cli._cmd_join, args)
+    config = _json.loads((tmp_path / "joiner" / "config.json").read_text())
+    assert config["api_key"].startswith("quorus_pk_") and "relay_secret" not in config
+    members = (await client.get("/rooms/build", headers=ADMIN)).json()["members"]
+    assert "frank" in members
 
 
 async def test_quorus_join_explains_a_taken_name(client, monkeypatch, tmp_path, capsys) -> None:
