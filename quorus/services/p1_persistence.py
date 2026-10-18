@@ -28,6 +28,8 @@ import sys
 import time
 from typing import Any
 
+from redis.exceptions import WatchError
+
 from quorus.backends.redis_client import get_redis_or_none
 from quorus.services import p1_sqlite
 
@@ -100,21 +102,64 @@ async def _local(op: str, ns_key: str, fn, *args) -> tuple[Any, bool]:
         return None, False
 
 
-async def mirror_set(ns_key: str, field: str, entry: dict[str, Any]) -> bool:
-    """Mirror one entry. False when the store didn't take it."""
+_CAS_TRIES = 8
+
+
+async def _redis_put(r, ns_key: str, field: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """Compare-and-set on the Redis hash: write *entry* unless the field holds
+    a newer write, as a WATCH/MULTI transaction (no Lua, so it runs anywhere,
+    fakeredis included). Returns what the hash holds afterwards."""
+    mine = p1_sqlite.written_at(entry)
+    for _ in range(_CAS_TRIES):
+        async with r.pipeline(transaction=True) as pipe:
+            try:
+                await pipe.watch(ns_key)
+                raw = await pipe.hget(ns_key, field)
+                theirs = _parse(raw)
+                if theirs is not None and p1_sqlite.written_at(theirs) > mine:
+                    await pipe.unwatch()
+                    return theirs
+                pipe.multi()
+                pipe.hset(ns_key, field, json.dumps(entry))
+                pipe.expire(ns_key, _TTL_S)
+                await pipe.execute()
+                return entry
+            except WatchError:
+                continue  # someone wrote the hash between our read and write
+    raise RuntimeError(f"p1 mirror: {field!r} kept changing under us")
+
+
+def _parse(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def _put(ns_key: str, field: str, entry: dict[str, Any],
+               op: str = "set") -> tuple[bool, dict[str, Any] | None]:
+    """Write *entry* unless the store holds a newer write to the field.
+    Returns ``(ok, winner)``: what the store holds afterwards (ours or the
+    newer one), or ``(False, None)`` when the store couldn't be reached."""
     r = get_redis_or_none()
     if r is None:
-        return (await _local("set", ns_key, p1_sqlite.set_entry, field, entry))[1]
+        winner, ok = await _local(op, ns_key, p1_sqlite.set_entry, field, entry)
+        return ok, winner
     try:
         async with _timeout(_OP_TIMEOUT_S):
-            pipe = r.pipeline()
-            pipe.hset(ns_key, field, json.dumps(entry))
-            pipe.expire(ns_key, _TTL_S)
-            await pipe.execute()
+            return True, await _redis_put(r, ns_key, field, entry)
     except Exception as exc:
-        _note_failure("set", ns_key, exc)
-        return False
-    return True
+        _note_failure(op, ns_key, exc)
+        return False, None
+
+
+async def mirror_set(ns_key: str, field: str, entry: dict[str, Any]) -> bool:
+    """Mirror one entry (never over a newer one). False when the store
+    didn't take it."""
+    return (await _put(ns_key, field, entry))[0]
 
 
 def tombstone(at: float | None = None) -> dict[str, Any]:
@@ -129,9 +174,9 @@ def is_tombstone(entry: dict[str, Any] | None) -> bool:
 
 
 async def mirror_delete(ns_key: str, field: str, at: float | None = None) -> bool:
-    """Replace one mirrored entry with a tombstone (its content is gone).
-    False when the store didn't take it."""
-    return await mirror_set(ns_key, field, tombstone(at))
+    """Replace one mirrored entry with a tombstone (its content is gone),
+    unless the store holds a newer write. False when the store didn't take it."""
+    return (await _put(ns_key, field, tombstone(at), "delete"))[0]
 
 
 async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
@@ -204,8 +249,9 @@ class PendingWrites:
     cache with ``setdefault`` kept entries another relay process had deleted
     and kept an entry's old visibility after it changed (codex, 2844ce20). So
     a refresh replaces the cache, except for these writes, which are kept and
-    re-mirrored until the store has them, unless the store already holds a
-    newer write to the same field from another process (claude, 8bfb268d).
+    replayed until the store has them. The replay is the store's own
+    compare-and-set, so a newer write or delete from another process wins even
+    if it lands after the snapshot was read (claude 8bfb268d, codex 6d825f38).
     """
 
     def __init__(self) -> None:
@@ -222,39 +268,34 @@ class PendingWrites:
         if not ops:
             self._ops.pop(bucket, None)
 
-    @staticmethod
-    def _written_at(entry: dict[str, Any] | None) -> float:
-        """When an entry was written: memory and capabilities stamp
-        ``updated_at``, tool records ``registered_at``."""
-        if not entry:
-            return 0.0
-        stamp = entry.get("updated_at", entry.get("registered_at", 0.0))
-        return float(stamp) if isinstance(stamp, (int, float)) else 0.0
-
     async def reconcile(self, bucket: Any, ns_key: str,
                         cached: dict[str, dict[str, Any]],
                         stored: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """The bucket to serve after a successful hydrate of *ns_key*:
-        the live stored entries, plus missed local writes newer than what the
-        store holds for that field (a live entry or a delete's tombstone)."""
+        """The bucket to serve after a successful hydrate of *ns_key*: the live
+        stored entries, with each missed local write replayed through the
+        store's compare-and-set. Whatever wins there (ours, or a newer write or
+        delete that landed after the snapshot) is what gets served."""
         merged = {f: e for f, e in stored.items() if not is_tombstone(e)}
         for field, (op, at) in list(self._ops.get(bucket, {}).items()):
-            theirs = stored.get(field)
             if op == "set" and field in cached:
-                mine = cached[field]
-                if theirs is not None and self._written_at(theirs) > self._written_at(mine):
-                    self.note(bucket, field, op, True)  # a newer set or delete landed elsewhere
-                    continue
-                merged[field] = mine
-                self.note(bucket, field, op, await mirror_set(ns_key, field, mine), at)
+                ok, winner = await _put(ns_key, field, cached[field])
             elif op == "delete":
-                if theirs is not None and self._written_at(theirs) > at:
-                    self.note(bucket, field, op, True)  # set again after our delete
-                    continue
-                merged.pop(field, None)
-                self.note(bucket, field, op, await mirror_delete(ns_key, field, at), at)
+                ok, winner = await _put(ns_key, field, tombstone(at), "delete")
             else:
                 self.note(bucket, field, op, True)
+                continue
+            if not ok:  # still unreachable: serve our write, retry next time
+                if op == "set":
+                    merged[field] = cached[field]
+                else:
+                    merged.pop(field, None)
+                self.note(bucket, field, op, False, at)
+                continue
+            self.note(bucket, field, op, True)
+            if winner is None or is_tombstone(winner):
+                merged.pop(field, None)
+            else:
+                merged[field] = winner
         return merged
 
     def forget(self, predicate=None) -> None:

@@ -64,7 +64,8 @@ All notable changes to Quorus are documented here. This project follows
   included. A corrupt file is logged once and the relay runs in memory; a locked one is
   retried. A refresh now takes the store's copy as the truth, so a delete or a visibility
   change made by another relay process (or replica, with Redis) reaches this one; writes
-  the store missed are mirrored later unless the store already has something newer. A
+  the store missed are mirrored later unless the store already has something newer; every
+  write is a compare-and-set in the store, so an older write never replaces a newer one. A
   delete removes the content and leaves a tombstone (just the time of the delete, kept 30
   days), so no other process can bring the entry back. `PersistentMemorySvc.reset()` also
   stopped raising a TypeError.

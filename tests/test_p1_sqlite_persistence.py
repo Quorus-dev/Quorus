@@ -127,25 +127,12 @@ async def test_a_locked_file_degrades_to_memory_and_retries(monkeypatch):
 
 
 async def test_redis_stays_first_when_configured(monkeypatch):
-    calls: list[str] = []
+    import fakeredis
 
-    class FakePipe:
-        def hset(self, *a):
-            calls.append("hset")
-
-        def expire(self, *a):
-            pass
-
-        async def execute(self):
-            return []
-
-    class FakeRedis:
-        def pipeline(self):
-            return FakePipe()
-
-    monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: FakeRedis())
-    await p1_persistence.mirror_set("p1mem:x", "k", {"v": 1})
-    assert calls == ["hset"]
+    r = fakeredis.aioredis.FakeRedis()
+    monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: r)
+    assert await p1_persistence.mirror_set("p1mem:x", "k", {"v": 1, "updated_at": 1.0})
+    assert json.loads(await r.hget("p1mem:x", "k")) == {"v": 1, "updated_at": 1.0}
     assert not p1_sqlite.db_path().exists()
 
 
@@ -309,3 +296,65 @@ async def test_old_tombstones_are_pruned(monkeypatch):
     stored, ok = await p1_persistence.hydrate("p1mem:x")
     assert ok and set(stored) == {"fresh"}
     assert [r[1] for r in _rows()] == ["fresh"]
+
+
+# --- Codex, review of 6d825f38: a newer write landing between hydrate and replay ---
+
+
+_NOW = time.time()
+
+
+def _entry(vis: str, at: float) -> dict:
+    """An entry written *at* seconds into this test run (real-time stamps, so
+    nothing looks old enough to prune)."""
+    return {"key": "k", "value": "x", "visibility": vis, "updated_at": _NOW + at}
+
+
+@pytest.fixture(params=["sqlite", "redis"])
+def store(request, monkeypatch):
+    if request.param == "redis":
+        import fakeredis
+
+        r = fakeredis.aioredis.FakeRedis()
+        monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: r)
+    return request.param
+
+
+async def test_replay_loses_to_a_newer_write_after_the_snapshot(store):
+    pending = p1_persistence.PendingWrites()
+    pending.note("b", "k", "set", False, at=_NOW + 100.0)  # A's room write missed the store
+    snapshot = {}  # A's hydrate ran before B's write
+    assert await p1_persistence.mirror_set("p1mem:x", "k", _entry("private", 200.0))  # B
+    merged = await pending.reconcile("b", "p1mem:x", {"k": _entry("room", 100.0)}, snapshot)
+    assert merged["k"]["visibility"] == "private"
+    assert (await p1_persistence.hydrate("p1mem:x"))[0]["k"]["visibility"] == "private"
+
+
+async def test_replay_loses_to_a_newer_delete_after_the_snapshot(store):
+    pending = p1_persistence.PendingWrites()
+    pending.note("b", "k", "set", False, at=_NOW + 100.0)
+    snapshot = {"k": _entry("room", 50.0)}
+    assert await p1_persistence.mirror_delete("p1mem:x", "k", at=_NOW + 200.0)  # B deletes, lands
+    merged = await pending.reconcile("b", "p1mem:x", {"k": _entry("room", 100.0)}, snapshot)
+    assert "k" not in merged
+    stored, _ = await p1_persistence.hydrate("p1mem:x")
+    assert p1_persistence.is_tombstone(stored["k"])
+
+
+async def test_an_older_write_never_replaces_a_newer_one_in_the_store(store):
+    assert await p1_persistence.mirror_set("p1mem:x", "k", _entry("private", 200.0))
+    assert await p1_persistence.mirror_set("p1mem:x", "k", _entry("room", 100.0))
+    assert (await p1_persistence.hydrate("p1mem:x"))[0]["k"]["visibility"] == "private"
+
+
+async def test_a_file_from_before_the_stamp_column_is_upgraded():
+    path = p1_sqlite.db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(path)) as conn:
+        conn.execute("CREATE TABLE p1_entries (ns_key TEXT NOT NULL, field TEXT NOT NULL,"
+                     " value TEXT NOT NULL, touched REAL NOT NULL, PRIMARY KEY (ns_key, field))")
+        conn.execute("INSERT INTO p1_entries VALUES (?, ?, ?, ?)",
+                     ("p1mem:x", "old", json.dumps(_entry("room", 5.0)), time.time()))
+    assert await p1_persistence.mirror_set("p1mem:x", "k", _entry("room", 10.0))
+    stored, ok = await p1_persistence.hydrate("p1mem:x")
+    assert ok and set(stored) == {"old", "k"}

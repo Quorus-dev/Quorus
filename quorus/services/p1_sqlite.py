@@ -33,8 +33,18 @@ _BUSY_S = 1.0  # wait this long for a lock, then give up (the caller logs it)
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS p1_entries ("
     " ns_key TEXT NOT NULL, field TEXT NOT NULL, value TEXT NOT NULL,"
-    " touched REAL NOT NULL, PRIMARY KEY (ns_key, field))"
+    " touched REAL NOT NULL, stamp REAL NOT NULL DEFAULT 0,"
+    " PRIMARY KEY (ns_key, field))"
 )
+
+
+def written_at(entry: dict[str, Any] | None) -> float:
+    """When an entry was written: memory and capabilities stamp
+    ``updated_at``, tool records ``registered_at``, tombstones ``updated_at``."""
+    if not entry:
+        return 0.0
+    stamp = entry.get("updated_at", entry.get("registered_at", 0.0))
+    return float(stamp) if isinstance(stamp, (int, float)) else 0.0
 
 _broken: set[str] = set()
 _broken_lock = threading.Lock()
@@ -62,6 +72,10 @@ def _connect(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(key, timeout=_BUSY_S)
     try:
         conn.execute(_SCHEMA)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(p1_entries)")}
+        if "stamp" not in columns:  # a file from before the stamp column
+            conn.execute("ALTER TABLE p1_entries ADD COLUMN stamp REAL NOT NULL DEFAULT 0")
+            conn.commit()
     except sqlite3.OperationalError:
         conn.close()
         raise  # locked: transient
@@ -77,16 +91,31 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def set_entry(ns_key: str, field: str, entry: dict[str, Any]) -> None:
+def set_entry(ns_key: str, field: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """Write *entry* unless the store already holds a newer write to this
+    field, in one statement, and return what the store holds afterwards.
+
+    Comparing in the store, not in the caller, closes the window where
+    another relay process writes between a caller's read and its write
+    (codex, review of 6d825f38)."""
     conn = _connect(db_path())
     try:
         with conn:
             conn.execute(
-                "INSERT INTO p1_entries (ns_key, field, value, touched) VALUES (?, ?, ?, ?) "
+                "INSERT INTO p1_entries (ns_key, field, value, touched, stamp) "
+                "VALUES (?, ?, ?, ?, ?) "
                 "ON CONFLICT (ns_key, field) DO UPDATE SET value = excluded.value, "
-                "touched = excluded.touched",
-                (ns_key, field, json.dumps(entry), time.time()),
+                "touched = excluded.touched, stamp = excluded.stamp "
+                "WHERE excluded.stamp >= p1_entries.stamp",
+                (ns_key, field, json.dumps(entry), time.time(), written_at(entry)),
             )
+            row = conn.execute("SELECT value FROM p1_entries WHERE ns_key = ? AND field = ?",
+                               (ns_key, field)).fetchone()
+        try:
+            winner = json.loads(row[0]) if row else entry
+        except (json.JSONDecodeError, TypeError):
+            winner = entry
+        return winner if isinstance(winner, dict) else entry
     finally:
         conn.close()
 
