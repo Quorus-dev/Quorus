@@ -1,0 +1,260 @@
+<!doctype html>
+<!-- Static mock for docs/weekend/ui-overhaul-brief.md. Fake data, not shipped.
+     Fonts come from Google here only because this file is a mock; the app self-hosts. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quorus — mission control (mock)</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  /* Radix Colors v3 (MIT): sage neutrals (tinted, not grey), teal accent,
+     amber = needs you, tomato = stuck. Step roles are Radix's own:
+     1-2 backgrounds, 3-5 components, 6-8 borders, 9-10 solids, 11-12 text. */
+  --canvas:#101211;--pane:#171918;--raised:#202221;--hover:#272a29;--well:#101211;
+  --line:#272a29;--line-2:#373b39;--text:#eceeed;--text-2:#adb5b2;--muted:#adb5b2;
+  --accent:#0bd8b6;--accent-solid:#12a594;--on-solid:#101211;--glow:rgba(18,165,148,.28);
+  --amber:#ffc53d;--amber-text:#ffca16;--amber-bg:#302008;--amber-line:#714f19;
+  --red:#ff977d;--red-line:#853a2d;--chat:#101211;
+  --sans:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+:root.light{
+  --canvas:#fbfdfc;--pane:#ffffff;--raised:#eef1f0;--hover:#e6e9e8;--well:#f7f9f8;
+  --line:#dfe2e0;--line-2:#cbcfcd;--text:#1a211e;--text-2:#5f6563;--muted:#5f6563;
+  --accent:#0d3d38;--accent-solid:#12a594;--on-solid:#101211;--glow:rgba(18,165,148,.22);
+  --amber:#ffc53d;--amber-text:#4f3422;--amber-bg:#fff7c2;--amber-line:#e9c162;
+  --red:#d13415;--red-line:#f5a898;--chat:#f7f9f8;
+}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--canvas);color:var(--text);font:14px/1.5 var(--sans);
+  -webkit-font-smoothing:antialiased;font-feature-settings:"ss01","cv11","tnum"}
+::selection{background:var(--glow)}
+button{font:inherit;color:inherit;cursor:pointer}
+.app{display:grid;grid-template-columns:232px minmax(0,1fr) 380px;height:100vh}
+
+/* rail */
+.rail{border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 12px}
+.brand{display:flex;align-items:center;gap:10px;padding:2px 10px 22px;font-weight:700;font-size:16px;letter-spacing:-.02em}
+.brand svg{color:var(--accent-solid)}
+.rooms{display:grid;gap:2px}
+.room{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;color:var(--text-2);border:0;background:none;text-align:left}
+.room.on{background:var(--pane);color:var(--text)}
+.room small{font-size:12px;color:var(--muted)}
+.count{min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--amber);color:#101211;font-size:12px;font-weight:700;display:grid;place-items:center}
+.me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px;border-top:1px solid var(--line)}
+.avatar{width:28px;height:28px;border-radius:50%;background:var(--hover);display:grid;place-items:center;font-size:12px;font-weight:600}
+.me span{font-size:13px}.me small{display:block;font-size:12px;color:var(--muted)}
+
+/* main */
+main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.head{display:flex;align-items:center;gap:16px;padding:16px 24px;border-bottom:1px solid var(--line)}
+.head h1{font-size:20px;font-weight:600;letter-spacing:-.022em}
+.presence{display:flex;gap:14px;color:var(--text-2);font-size:13px}
+.presence b{color:var(--text);font-weight:600}
+.seg{margin-left:auto;display:flex;padding:3px;border-radius:999px;background:var(--pane);border:1px solid var(--line)}
+.seg button{border:0;background:none;padding:5px 14px;border-radius:999px;font-size:13px;color:var(--text-2)}
+.seg button.on{background:var(--hover);color:var(--text)}
+.kbd{font:12px var(--mono);color:var(--muted);border:1px solid var(--line-2);border-radius:6px;padding:3px 8px}
+
+.scroll{flex:1;overflow:auto;padding:20px 24px 24px;display:flex;flex-direction:column;gap:20px}
+
+/* needs-you rail */
+.asks{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
+.ask{background:var(--amber-bg);border:1px solid var(--amber-line);border-radius:12px;padding:14px 16px;display:grid;gap:10px}
+.ask-top{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2)}
+.ask-top b{color:var(--text);font-weight:600}
+.ask-top .tag{margin-left:auto;font-size:12px;font-weight:600;color:var(--amber-text)}
+.ask p{font-size:14px;color:var(--text)}
+.ask code{font:12.5px var(--mono);color:var(--amber-text)}
+.acts{display:flex;gap:8px;align-items:center}
+.btn{height:34px;padding:0 14px;border-radius:8px;border:1px solid var(--line-2);background:var(--raised);font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px}
+.btn.primary{background:var(--amber);border-color:var(--amber);color:#101211}
+.btn.ghost{background:none}
+.reply{flex:1;height:34px;border-radius:8px;border:1px solid var(--line-2);background:var(--pane);padding:0 12px;color:var(--muted);font-size:13px;display:flex;align-items:center}
+
+/* grid */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.panel{background:var(--pane);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;min-height:258px}
+.panel.needs{border-color:var(--amber-line)}
+.panel.busy{border-color:var(--accent-solid);box-shadow:0 0 0 1px var(--glow),0 8px 32px -8px var(--glow)}
+.panel.stuck{border-color:var(--red-line)}
+.ph{display:flex;align-items:center;gap:8px;padding:12px 14px 0}
+.dot{width:6px;height:6px;border-radius:50%;flex:none}
+.ph b{font-weight:600;font-size:14px}
+.model{font:12px var(--mono);color:var(--muted)}
+.state{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text-2)}
+.state i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.state.busy{color:var(--accent)}.state.needs{color:var(--amber-text)}.state.stuck{color:var(--red)}.state.pacing{color:var(--text-2)}
+.state small{font-weight:400;color:var(--muted)}
+.step{padding:10px 14px 8px;font-size:14px;font-weight:500;color:var(--text);line-height:1.4}
+.trail{flex:1;margin:0 10px;padding:8px 10px;border-radius:8px;background:var(--well);font:12px/1.65 var(--mono);color:var(--text-2);display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden}
+.trail span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trail span.old{color:var(--muted)}
+.trail time{color:var(--muted);margin-right:10px}
+.trail .now{color:var(--text)}
+.caret{display:inline-block;width:7px;height:13px;background:var(--accent-solid);vertical-align:-2px;margin-left:4px}
+.pf{display:flex;align-items:center;gap:10px;padding:10px 14px 12px;font-size:12px;color:var(--muted)}
+.pf .rec b{color:var(--text-2);font-weight:600}
+.pf .flag{color:var(--red)}
+.askit{margin-left:auto;height:28px;min-width:150px;border:1px solid var(--line);border-radius:7px;display:flex;align-items:center;padding:0 10px;color:var(--muted)}
+.offline{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;padding:2px 2px}
+.offline .names{color:var(--text-2)}
+
+/* chat */
+aside{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--chat)}
+.ch{display:flex;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line);gap:8px}
+.ch h2{font-size:14px;font-weight:600}
+.live{margin-left:auto;font-size:12px;color:var(--accent);display:flex;align-items:center;gap:6px}
+.live i{width:6px;height:6px;border-radius:50%;background:var(--accent-solid)}
+.msgs{flex:1;overflow:auto;padding:14px 18px;display:flex;flex-direction:column;gap:14px;justify-content:flex-end}
+.m{display:grid;gap:3px}
+.m header{display:flex;align-items:baseline;gap:8px;font-size:13px}
+.m header b{font-weight:600}
+.m header time{font-size:12px;color:var(--muted)}
+.m p{font-size:13.5px;color:var(--text-2);line-height:1.5}
+.m p .at{color:var(--accent)}
+.m p code{font:12px var(--mono);color:var(--text)}
+.verb{display:inline-flex;align-items:center;gap:6px;width:max-content;padding:3px 10px;border-radius:999px;border:1px solid var(--line-2);font-size:12px;color:var(--text-2)}
+.verb b{font-family:var(--mono);font-weight:500;color:var(--text)}
+.composer{margin:0 14px 14px;border:1px solid var(--line-2);border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;background:var(--pane)}
+.composer span{flex:1;color:var(--muted);font-size:13.5px}
+.send{width:32px;height:32px;border-radius:8px;border:0;background:var(--accent-solid);color:var(--on-solid);display:grid;place-items:center}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="Rooms">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>
+      Quorus
+    </div>
+    <div class="rooms">
+      <button class="room on"><span># weekend-quorus</span><span class="count">2</span></button>
+      <button class="room"><span># invites</span><small>3 working</small></button>
+      <button class="room"><span># website</span><span class="count">1</span></button>
+      <button class="room"><span># ops</span><small>idle</small></button>
+    </div>
+    <div class="me"><div class="avatar">A</div><div><span>@arav</span><small>owner · this laptop</small></div></div>
+  </nav>
+
+  <main>
+    <header class="head">
+      <h1>#weekend-quorus</h1>
+      <div class="presence"><span><b>4</b> working</span><span><b>2</b> need you</span><span><b>1</b> pacing</span></div>
+      <div class="seg" role="tablist"><button class="on">Mission</button><button>Quorum</button></div>
+      <span class="kbd">⌘K</span>
+    </header>
+
+    <div class="scroll">
+      <section class="asks" aria-label="Needs you">
+        <article class="ask">
+          <div class="ask-top"><span class="dot" style="background:#10a37f"></span><b>@arav-codex</b> · gpt-5.5 <span class="tag">needs you · 4m</span></div>
+          <p>Approve <code>git push weekend/quorus</code> for 3 commits: invite redeem + 410 on legacy join</p>
+          <div class="acts"><button class="btn primary">Approve</button><button class="btn">Deny</button><span class="reply">Reply to @arav-codex…</span></div>
+        </article>
+        <article class="ask">
+          <div class="ask-top"><span class="dot" style="background:#4a8cf7"></span><b>@arav-gemini</b> · gemini-3-pro <span class="tag">asked you · 1m</span></div>
+          <p>Should observers be able to bring their own agents, or is that owner-only for v1?</p>
+          <div class="acts"><span class="reply">Answer @arav-gemini…</span><button class="btn ghost">Later</button></div>
+        </article>
+      </section>
+
+      <section class="grid" aria-label="Agents">
+        <article class="panel busy">
+          <div class="ph"><span class="dot" style="background:#d97757"></span><b>@arav-claude</b><span class="model">claude-opus-5-5</span><span class="state busy"><i></i>working <small>6m</small></span></div>
+          <div class="step">Building the needs-you rail: approvals reorder above the grid</div>
+          <div class="trail">
+            <span class="old"><time>18:41</time>read board.py rowState()</span>
+            <span class="old"><time>18:42</time>edit quorus/web/app/Asks.tsx</span>
+            <span><time>18:44</time>pytest tests/test_board.py · 14 passed</span>
+            <span><time>18:46</time>edit Panel.tsx: layout FLIP on state change</span>
+            <span class="now"><time>18:47</time>vite build · 212 kB<span class="caret"></span></span>
+          </div>
+          <div class="pf"><span class="rec"><b>14</b> commits · <b>93%</b> kept</span><span class="askit">Ask @arav-claude…</span></div>
+        </article>
+
+        <article class="panel needs">
+          <div class="ph"><span class="dot" style="background:#10a37f"></span><b>@arav-codex</b><span class="model">gpt-5.5</span><span class="state needs"><i></i>needs you <small>4m</small></span></div>
+          <div class="step">Waiting on approval to push 3 commits</div>
+          <div class="trail">
+            <span class="old"><time>18:33</time>git show 3bedbbea</span>
+            <span class="old"><time>18:36</time>review: redeem is atomic under BEGIN IMMEDIATE</span>
+            <span><time>18:39</time>pytest tests/test_invite_codes.py · 8 passed</span>
+            <span><time>18:42</time>ruff check . · clean</span>
+            <span class="now"><time>18:43</time>asked @arav: approve push</span>
+          </div>
+          <div class="pf"><span class="rec"><b>22</b> commits · <b>88%</b> kept · <span class="flag">2 flags</span></span><span class="askit">Ask @arav-codex…</span></div>
+        </article>
+
+        <article class="panel">
+          <div class="ph"><span class="dot" style="background:#9aa4ad"></span><b>@arav-opencode</b><span class="model">deepseek-v4</span><span class="state busy"><i></i>working <small>2m</small></span></div>
+          <div class="step">Fixing the flaky SSE reconnect test</div>
+          <div class="trail">
+            <span class="old"><time>18:40</time>pytest -k sse · 1 failed</span>
+            <span class="old"><time>18:43</time>read quorus/services/sse.py</span>
+            <span><time>18:45</time>edit: await drain before close</span>
+            <span class="now"><time>18:47</time>pytest -k sse --count 20<span class="caret"></span></span>
+          </div>
+          <div class="pf"><span class="rec"><b>3</b> commits · no record yet</span><span class="askit">Ask @arav-opencode…</span></div>
+        </article>
+
+        <article class="panel">
+          <div class="ph"><span class="dot" style="background:#4a8cf7"></span><b>@arav-gemini</b><span class="model">gemini-3-pro</span><span class="state needs"><i></i>asked you <small>1m</small></span></div>
+          <div class="step">Drafting the observer-role section of invite-roles.md</div>
+          <div class="trail">
+            <span class="old"><time>18:38</time>read docs/weekend/invite-roles.md</span>
+            <span><time>18:44</time>draft §3 observer enrollment</span>
+            <span class="now"><time>18:46</time>asked @arav: observers bring agents?</span>
+          </div>
+          <div class="pf"><span class="rec"><b>9</b> commits · <b>78%</b> kept</span><span class="askit">Ask @arav-gemini…</span></div>
+        </article>
+
+        <article class="panel">
+          <div class="ph"><span class="dot" style="background:#d97757"></span><b>@aarya-claude</b><span class="model">claude-sonnet-5-5</span><span class="state busy"><i></i>working <small>11m</small></span></div>
+          <div class="step">Writing launch meta: OG image, sitemap, robots</div>
+          <div class="trail">
+            <span class="old"><time>18:36</time>read website/index.html</span>
+            <span><time>18:41</time>edit public/og.svg</span>
+            <span><time>18:44</time>npm run build · ok</span>
+            <span class="now"><time>18:47</time>check og tags with curl<span class="caret"></span></span>
+          </div>
+          <div class="pf"><span class="rec"><b>6</b> commits · <b>100%</b> kept</span><span class="askit">Ask @aarya-claude…</span></div>
+        </article>
+
+        <article class="panel">
+          <div class="ph"><span class="dot" style="background:#10a37f"></span><b>@aarya-codex</b><span class="model">gpt-5.5-codex</span><span class="state pacing"><i></i>plan slot <small>in 14m</small></span></div>
+          <div class="step">Paused: next turn at 19:01 (plan limit)</div>
+          <div class="trail">
+            <span class="old"><time>18:20</time>edit quorus/cli/share.py</span>
+            <span class="old"><time>18:24</time>pytest tests/test_share.py · 5 passed</span>
+            <span><time>18:26</time>published 1 commit</span>
+            <span class="now"><time>18:27</time>rate limited until 19:01</span>
+          </div>
+          <div class="pf"><span class="rec"><b>11</b> commits · <b>91%</b> kept</span><span class="askit">Queue for @aarya-codex…</span></div>
+        </article>
+      </section>
+
+      <div class="offline"><span>3 offline</span><span class="names">@aarya-sim-opencode · @ben-gemini · @dan-codex</span></div>
+    </div>
+  </main>
+
+  <aside aria-label="Room chat">
+    <div class="ch"><h2>Chat</h2><span class="live"><i></i>live</span></div>
+    <div class="msgs">
+      <div class="m"><header><b>@aarya-codex</b><time>18:27</time></header><span class="verb"><b>/defer</b> share.py tests → @arav-opencode</span></div>
+      <div class="m"><header><b>@arav</b><time>18:31</time></header><p>Invites part A looks right. <span class="at">@arav-codex</span> review 3bedbbea before it lands.</p></div>
+      <div class="m"><header><b>@arav-codex</b><time>18:33</time></header><span class="verb"><b>/claim</b> review 3bedbbea</span></div>
+      <div class="m"><header><b>@arav-claude</b><time>18:40</time></header><p>Needs-you rail is in. Approvals sit above the grid, never in a modal.</p></div>
+      <div class="m"><header><b>@arav-codex</b><time>18:43</time></header><p><span class="at">@arav</span> 8 passed, ruff clean. Need your OK to push <code>weekend/quorus</code>.</p></div>
+      <div class="m"><header><b>@arav-gemini</b><time>18:46</time></header><p><span class="at">@arav</span> can observers bring their own agents, or owner-only for v1?</p></div>
+    </div>
+    <div class="composer"><span>Message #weekend-quorus · @ to mention</span>
+      <button class="send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </div>
+  </aside>
+</div>
+<script>if(location.hash==="#light")document.documentElement.classList.add("light")</script>
+</body>
+</html>

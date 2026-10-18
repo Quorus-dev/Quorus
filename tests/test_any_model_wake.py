@@ -58,6 +58,10 @@ def adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     a.mcp_config_path = tmp_path / "wake-mcp-a-opencode.json"
     a.agent_config_dir = tmp_path / "cfg"
     monkeypatch.setattr(reflexd.shutil, "which", lambda b: f"/bin/{b}")
+
+    async def ollama_up(*_a: Any, **_k: Any) -> None:  # no real Ollama in tests
+        return None
+    monkeypatch.setattr(reflexd, "ollama_problem", ollama_up)
     return a
 
 
@@ -257,3 +261,371 @@ def test_retired_gemini_model_tells_the_room_to_update() -> None:
            "available to new users.")
     msg = reflexd.diagnose_harness_failure("gemini", err)
     assert msg and "npm i -g @google/gemini-cli@latest" in msg
+
+
+# ── opencode free-model failover (2026-10-17) ───────────────────────────
+
+
+def _rotating_adapter(limited: set[str | None]) -> tuple[Any, list[str | None]]:
+    import time as _time
+
+    adapter = reflexd.HeadlessAdapter()
+    tried: list[str | None] = []
+
+    async def once(*_a: Any, **_k: Any) -> str:
+        tried.append(adapter.model)
+        if adapter.model in limited:
+            adapter.limited_until = _time.time() + 1800
+            return "⚠ opencode: the vendor rate-limited this account; the wake was dropped."
+        return f"fixed it on {adapter.model}"
+
+    adapter._opencode_once = once  # type: ignore[method-assign]
+    return adapter, tried
+
+
+def test_a_limited_free_model_moves_to_the_next_free_one() -> None:
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter, tried = _rotating_adapter({free[0]})
+    adapter.model = free[0]
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out == f"fixed it on {free[1]}" and tried == [free[0], free[1]]
+    assert adapter.model == free[1] and adapter.limited_until == 0.0  # sticks with what works
+
+
+def test_every_free_model_limited_cools_down_on_the_original() -> None:
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter, tried = _rotating_adapter({None, *free})
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert "rate-limited" in out and tried == [None, *free]
+    assert adapter.model is None and adapter.limited_until > 0
+
+
+def test_rotation_reaches_a_live_free_model_the_tuple_never_had(monkeypatch) -> None:
+    """Release check: every tuple model was limited while nemotron-3.5-lightning
+    answered. The rotation now walks the live `opencode models` catalog."""
+    import subprocess
+
+    from quorus.runtime import opencode_free
+
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    catalog = "\n".join([*free, "opencode/nemotron-3.5-lightning-free"])
+    monkeypatch.setattr(opencode_free, "_default_run", lambda argv, **_k:
+                        subprocess.CompletedProcess(argv, 0, stdout=catalog, stderr=""))
+    adapter, tried = _rotating_adapter({None, *free})
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out == "fixed it on opencode/nemotron-3.5-lightning-free"
+    assert tried == [None, *free, "opencode/nemotron-3.5-lightning-free"]
+
+
+def test_a_paid_model_is_never_swapped() -> None:
+    adapter, tried = _rotating_adapter({"openrouter/qwen/qwen3-coder"})
+    adapter.model = "openrouter/qwen/qwen3-coder"
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert tried == ["openrouter/qwen/qwen3-coder"]
+
+
+def test_a_failed_turns_leftover_work_gets_a_real_commit_message() -> None:
+    """Gemini's timed-out work was committed as "[reflexd] harness timed out"."""
+    msg = reflexd.reflexd_wake.commit_message_from
+    assert msg("[reflexd] harness timed out", "a-gemini") == \
+        "chore: unfinished work from a cut-off turn"
+    assert msg("⚠ opencode: rate-limited", "a-opencode").startswith("chore: unfinished")
+    assert msg("✅ fix: add() in calc.py", "a-codex") == "fix: add() in calc.py"
+    # A chat-style reply ("@arav-claude I have created...") still gets a
+    # conventional subject (BetU commits, 2026-10-17).
+    assert msg("@arav-claude I have created docs/x.md", "a-gemini").startswith("chore: ")
+
+
+def test_timeout_notice_says_what_happened() -> None:
+    assert reflexd._timed_out_line().startswith("⚠ ran out of time")
+    assert "published below" in reflexd._timed_out_line(published=True)
+
+
+def test_failover_goes_back_to_the_agents_own_model(monkeypatch) -> None:
+    """It moved to the slowest free model at 09:29 and stayed there, timing
+    out two 30-minute turns (2026-10-17)."""
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter, tried = _rotating_adapter({free[0]})
+    adapter.model = free[0]
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert adapter.model == free[1]
+    import time as _time
+
+    real = _time.time
+    monkeypatch.setattr(reflexd.time, "time",
+                        lambda: real() + reflexd.reflexd_models.ROTATE_BACK_S + 1)
+    tried.clear()
+
+    async def ok(*_a: Any, **_k: Any) -> str:  # the limit has cleared
+        tried.append(adapter.model)
+        return "done"
+
+    adapter._opencode_once = ok  # type: ignore[method-assign]
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert tried == [free[0]] and adapter.model == free[0]  # back on its own model
+
+
+def test_nemotron_is_not_a_fallback() -> None:
+    assert not any("nemotron" in m for m in reflexd.reflexd_models.OPENCODE_FREE_MODELS)
+
+
+def test_woken_claude_keeps_the_owners_guardrails_but_not_their_heavy_hooks(tmp_path) -> None:
+    """Every Claude wake ran Arav's SessionStart hooks (a graphify rebuild and a
+    secret scan), many times an hour, and slowed his laptop (2026-10-17)."""
+    w = reflexd.reflexd_wake
+    user = tmp_path / "settings.json"
+    user.write_text(json.dumps({
+        "model": "opus", "permissions": {"deny": ["Read(./.env)"]},
+        "hooks": {"SessionStart": [{"hooks": [{"command": "graphify.sh"}]}],
+                  "PreToolUse": [{"hooks": [{"command": "protect-files.sh"}]}],
+                  "Stop": [{"hooks": [{"command": "summary.sh"}]}]},
+        "enabledPlugins": {"x": True}}))
+    kept = w.claude_agent_settings(user)
+    assert set(kept) == {"model", "permissions", "hooks"}
+    assert set(kept["hooks"]) == {"PreToolUse"}  # guardrails stay, startup hooks go
+    assert w.claude_agent_settings(tmp_path / "missing.json") == {}
+
+
+def test_daemon_claude_wakes_load_only_project_settings(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    flags = reflexd.reflexd_wake.claude_isolation_flags(tmp_path / "agent-settings.json")
+    assert flags[:2] == ["--setting-sources", "project,local"]
+    assert flags[2] == "--settings" and (tmp_path / "agent-settings.json").exists()
+
+
+# ── the vendor's own error instead of "exited 1 with no known cause" ────
+# Real output captured 2026-10-17 (opencode 2.0.30, codex, claude).
+
+OPENCODE_NO_ROUTE = ('{"type":"error","timestamp":1792278500185,"sessionID":"ses_x",'
+                     '"error":{"type":"provider.no-route",'
+                     '"message":"Model unavailable: xai/grok-code-fast-1"}}')
+CODEX_BAD_MODEL = "\n".join([
+    '{"type":"thread.started","thread_id":"01a1"}',
+    '{"type":"turn.started"}',
+    '{"type":"turn.failed","error":{"message":"{\\"type\\":\\"error\\",\\"status\\":400,'
+    '\\"error\\":{\\"type\\":\\"invalid_request_error\\",\\"message\\":\\"The '
+    '\'no-such-model-xyz\' model is not supported when using Codex with a ChatGPT '
+    'account.\\"}}"}}'])
+CLAUDE_BAD_MODEL = ('{"type":"result","is_error":true,"terminal_reason":"api_error",'
+                    '"result":"There\'s an issue with the selected model (no-such-model-xyz). '
+                    'It may not exist or you may not have access to it."}')
+
+
+def test_opencode_no_route_names_the_missing_key() -> None:
+    line = reflexd.vendor_error("opencode", OPENCODE_NO_ROUTE, "")
+    assert line.startswith("⚠ opencode: Model unavailable: xai/grok-code-fast-1.")
+    assert "opencode auth login" in line and "XAI_API_KEY" in line
+    _reply, _sid, err = reflexd.reflexd_models.parse_opencode_stream(OPENCODE_NO_ROUTE)
+    assert err == "Model unavailable: xai/grok-code-fast-1"  # exit-0 path too, not "error"
+
+
+def test_codex_and_claude_bad_models_say_so() -> None:
+    codex = reflexd.vendor_error("codex", CODEX_BAD_MODEL, "Reading additional input")
+    assert "model is not supported when using Codex with a ChatGPT account" in codex
+    assert "Check the model name" in codex and "{" not in codex  # unwrapped, not raw JSON
+    claude = reflexd.vendor_error("claude", CLAUDE_BAD_MODEL, "")
+    assert claude.startswith("⚠ claude: There's an issue with the selected model")
+    reply, _sid = reflexd._parse_claude_json(CLAUDE_BAD_MODEL)
+    assert reply.startswith("⚠ claude: There's an issue")  # exit 0 + is_error
+
+
+def test_stderr_fallback_is_short_and_clean() -> None:
+    stderr = "loading…\n\x1b[31mError: model gemini-9 not found\x1b[0m\n"
+    line = reflexd.vendor_error("gemini", "", stderr)
+    assert line == ("⚠ gemini: Error: model gemini-9 not found. Check the model name and "
+                    "that this CLI can use it.")
+    long = reflexd.vendor_error("gemini", "", "Error: model " + "y" * 30 + " not found" + "z" * 400)
+    assert len(long) < 320
+
+
+def test_errors_that_arent_about_the_model_stay_private() -> None:
+    """Harness output can echo secrets or tool inputs: only bad-model errors are quoted."""
+    assert reflexd.vendor_error("gemini", "", "Error: private-token abc123 rejected") is None
+    leak = '{"type":"error","error":{"message":"private-token: unexplained error"}}'
+    assert reflexd.vendor_error("opencode", leak, "") is None
+
+
+# ── Ollama precheck (release check: 182s wait for "no known cause") ─────
+
+
+def test_ollama_not_running_is_said_at_once(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_HOST", "127.0.0.1:1")  # nothing listens there
+    msg = asyncio.run(reflexd.ollama_problem("qwen3:4b", timeout=1))
+    assert msg == "Ollama isn't running: start it with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`."
+
+
+def test_ollama_without_the_model_says_pull() -> None:
+    import httpx
+
+    def tags(_req):
+        return httpx.Response(200, json={"models": [{"name": "llama3:latest"}]})
+    t = httpx.MockTransport(tags)
+    assert asyncio.run(reflexd.ollama_problem("qwen3:4b", transport=t)) == \
+        "Ollama doesn't have qwen3:4b: `ollama pull qwen3:4b`."
+    assert asyncio.run(reflexd.ollama_problem("llama3", transport=t)) is None
+    # A fresh Ollama with no models pulled still needs the pull hint (codex).
+    empty = httpx.MockTransport(lambda _r: httpx.Response(200, json={"models": []}))
+    assert asyncio.run(reflexd.ollama_problem("qwen3:4b", transport=empty)) == \
+        "Ollama doesn't have qwen3:4b: `ollama pull qwen3:4b`."
+
+
+def test_an_ollama_wake_stops_before_opencode_when_ollama_is_down(monkeypatch) -> None:
+    adapter, tried = _rotating_adapter(set())
+    adapter.model = "ollama/qwen3:4b"
+
+    async def down(model, **_k):
+        return "Ollama isn't running: start it with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`."
+    monkeypatch.setattr(reflexd, "ollama_problem", down)
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out.startswith("⚠ opencode: Ollama isn't running") and tried == []
+
+
+# ── slow free models: first-output watchdog (fix 9, release check) ──────
+
+
+def _fake_harness(tmp_path: Path, body: str) -> list[str]:
+    script = tmp_path / "fake_opencode.py"
+    script.write_text("import sys, time\n" + body)
+    return [sys.executable, str(script)]
+
+
+def test_a_harness_silent_past_its_deadline_is_killed_fast(tmp_path: Path) -> None:
+    import time as _t
+
+    argv = _fake_harness(tmp_path, "time.sleep(30)\nprint('{\"type\":\"step_start\"}')\n")
+    started = _t.monotonic()
+    out = asyncio.run(reflexd.HeadlessAdapter(timeout_s=60)._run_subprocess(
+        argv, parser=lambda o: o, first_output_s=0.5))
+    assert isinstance(out, reflexd.SlowStart) and "sent nothing" in out
+    assert _t.monotonic() - started < 10  # not the 30s sleep, not the 60s turn
+
+
+def test_output_before_the_deadline_runs_to_the_end(tmp_path: Path) -> None:
+    argv = _fake_harness(tmp_path, "print('first', flush=True)\ntime.sleep(1.5)\nprint('done')\n")
+    out = asyncio.run(reflexd.HeadlessAdapter(timeout_s=30)._run_subprocess(
+        argv, parser=lambda o: o.strip(), first_output_s=0.5))
+    assert out == "first\ndone"
+
+
+def test_a_quick_silent_exit_is_a_failure_not_slowness(tmp_path: Path) -> None:
+    argv = _fake_harness(tmp_path, "sys.exit(3)\n")
+    out = asyncio.run(reflexd.HeadlessAdapter(timeout_s=30)._run_subprocess(
+        argv, parser=lambda o: o, first_output_s=5))
+    assert not isinstance(out, reflexd.SlowStart) and getattr(out, "exit_code", None) == 3
+
+
+def test_a_slow_free_model_hands_the_turn_to_the_next_and_goes_last(monkeypatch) -> None:
+    from quorus.runtime import opencode_free
+
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter = reflexd.HeadlessAdapter()
+    tried: list[str | None] = []
+    steps: list[str] = []
+    adapter.on_step = steps.append
+
+    async def once(*_a: Any, **_k: Any) -> str:
+        tried.append(adapter.model)
+        if adapter.model == free[0]:
+            return reflexd.SlowStart("opencode", 60)
+        return f"fixed it on {adapter.model}"
+
+    adapter._opencode_once = once  # type: ignore[method-assign]
+    adapter.model = free[0]
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert out == f"fixed it on {free[1]}" and tried == [free[0], free[1]]
+    assert len(steps) == 1 and "slow to start" in steps[0]
+    assert opencode_free.is_slow(free[0])
+    assert opencode_free.free_models(free)[-1] == free[0]  # back of the rotation
+
+
+def test_paid_and_local_models_get_no_first_output_deadline(monkeypatch) -> None:
+    seen: list[Any] = []
+    adapter = reflexd.HeadlessAdapter()
+
+    async def capture(*_a: Any, first_output_s: Any = None, **_k: Any) -> str:
+        seen.append(first_output_s)
+        return "ok"
+
+    adapter._run_with_resume = capture  # type: ignore[method-assign]
+    adapter.wake_spec = None
+    monkeypatch.setattr(reflexd.reflexd_wake, "wake_env", lambda *a, **k: {})
+    monkeypatch.setattr(reflexd.reflexd_models, "opencode_config", lambda *a, **k: {})
+    for model in ("ollama/qwen3:4b", "openrouter/qwen/qwen3-coder", None,
+                  "opencode/beam-free"):
+        adapter.model = model
+        asyncio.run(adapter._opencode_once("ctx", cwd=None, resume=None, on_session=None,
+                                           timeout_s=None, mode="default"))
+    assert seen == [None, None, reflexd.FREE_FIRST_EVENT_S, reflexd.FREE_FIRST_EVENT_S]
+
+
+GEMINI_BAD_MODEL = (  # gemini-cli 0.64 stream-json, rc 1 (overseer's live check)
+    '{"type":"result","status":"error","error":{"type":"unknown","message":"[API Error: '
+    'models/gemini-9-ultra is not found for API version v1beta, or is not supported for '
+    'generateContent. Call ModelService.ListModels to see the list of available models '
+    'and their supported methods.]"}}')
+
+
+def test_gemini_bad_model_says_so_without_the_tail() -> None:
+    line = reflexd.vendor_error("gemini", GEMINI_BAD_MODEL, "")
+    assert line.startswith("⚠ gemini: models/gemini-9-ultra is not found for API version")
+    assert "ModelService" not in line and "[API Error" not in line
+    assert "Check the model name" in line
+    _r, _sid, err = reflexd.reflexd_models.parse_gemini_json(GEMINI_BAD_MODEL)
+    assert err.startswith("models/gemini-9-ultra is not found") and "ModelService" not in err
+
+
+def test_an_opencode_typo_is_pointed_at_the_model_list() -> None:
+    typo = ('{"type":"error","error":{"type":"provider.no-route",'
+            '"message":"Model unavailable: opencode/beem-free"}}')
+    assert "`opencode models`" in reflexd.vendor_error("opencode", typo, "")
+
+
+def test_gemini_reads_the_repos_agents_and_claude_files() -> None:
+    """Overseer's replay: Gemini read only GEMINI.md, never learned the venv, ran
+    `find /` and timed out three times. And find's steady 'Permission denied'
+    output kept the 300s shell inactivity timeout from ever firing."""
+    cfg = models.gemini_settings(None)
+    assert cfg["context"]["fileName"] == ["GEMINI.md", "AGENTS.md", "CLAUDE.md"]
+    assert cfg["tools"]["shell"]["inactivityTimeout"] == 120
+    keyed = models.gemini_settings(None, api_key=True)  # the other settings stay
+    assert keyed["security"]["auth"]["selectedType"] == "gemini-api-key"
+    assert keyed["context"] == cfg["context"]
+
+
+def test_a_timeout_says_what_the_agent_was_doing() -> None:
+    line = reflexd._timed_out_line(last_step="searching the code")
+    assert line == ("⚠ ran out of time while searching the code, before finishing its "
+                    "reply. Mention me to continue.")
+    assert reflexd._timed_out_line() == ("⚠ ran out of time before finishing its reply. "
+                                         "Mention me to continue.")
+
+
+def test_a_manual_or_readonly_gemini_cannot_leave_plan_mode() -> None:
+    """Release sweep: in a manual room Gemini 0.64 called exit_plan_mode (it
+    approves itself headless), wrote gm.txt, and Quorus published it to main."""
+    for mode in ("manual", "readonly"):
+        cfg = models.gemini_settings(None, mode=mode)
+        assert cfg["tools"]["exclude"] == ["exit_plan_mode"]
+        assert "--approval-mode" in models.gemini_flags(mode=mode)
+        assert models.gemini_flags(mode=mode)[-1] == "plan"
+    for mode in ("default", "autonomous"):
+        assert "exclude" not in models.gemini_settings(None, mode=mode)["tools"]
+
+
+def test_the_gemini_wake_writes_its_mode_into_the_settings(tmp_path: Path,
+                                                           monkeypatch) -> None:
+    import json as _json
+
+    adapter = reflexd.HeadlessAdapter()
+    adapter.agent_config_dir = tmp_path / "cfg"
+    adapter.wake_spec = None
+
+    async def capture(*_a: Any, **_k: Any) -> str:
+        return "ok"
+    adapter._run_with_resume = capture  # type: ignore[method-assign]
+    monkeypatch.setattr(reflexd.reflexd_wake, "wake_env", lambda *a, **k: {})
+    asyncio.run(adapter._run_gemini("ctx", cwd=None, resume=None, on_session=None,
+                                    mode="manual"))
+    written = _json.loads((tmp_path / "cfg" / "gemini-home" / ".gemini" /
+                           "settings.json").read_text())
+    assert written["tools"]["exclude"] == ["exit_plan_mode"]

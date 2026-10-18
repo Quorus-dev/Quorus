@@ -77,3 +77,47 @@ async def test_just_under_cap_accepted():
     )
     result = await record_mcp_tool_call(body, request, auth)
     assert result["tool_name"] == "claim_task"
+
+
+class _FakeReadAudit:
+    async def get_recent_events(self, tid, **kw):
+        return [{"tenant": tid, "arguments": {"content": "private DM"}}]
+
+    async def get_message_timeline(self, tid, mid):
+        return []
+
+    async def get_failed_deliveries(self, tid, **kw):
+        return []
+
+    async def verify_chain(self, tid, **kw):
+        return {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_ledger_reads_are_admin_only():
+    """Audit 2026-10-16: any tenant member (agents included) read the whole
+    ledger, i.e. other rooms' and other people's DM text."""
+    from fastapi import HTTPException
+
+    from quorus.routes.audit import (
+        get_failed_deliveries,
+        get_message_timeline,
+        get_recent_events,
+        verify_audit_chain,
+    )
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(audit_service=_FakeReadAudit())))
+    member = AuthContext(sub="mallory", tenant_id="t1", role="member")
+    admin = AuthContext(sub="arav", tenant_id="t1", role="admin")
+    calls = [
+        lambda a: get_recent_events(request, None, 10, a),
+        lambda a: get_failed_deliveries(request, 24, 10, a),
+        lambda a: get_message_timeline(request, "00000000-0000-0000-0000-000000000001", a),
+        lambda a: verify_audit_chain(request, 10, a),
+    ]
+    for call in calls:
+        with pytest.raises(HTTPException) as exc:
+            await call(member)
+        assert exc.value.status_code == 403
+        await call(admin)  # admins still can

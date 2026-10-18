@@ -39,6 +39,14 @@ class _FakeRelay(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if self.path == "/v1/auth/claim-name":
+            # Like a real relay without participant keys: the daemon keeps the
+            # shared secret. (A 200 with no key is a malformed answer, and
+            # reflexd now fails closed on those.)
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         self._json({"token": "t"} if self.path == "/stream/token" else {"ok": True})
 
     def do_GET(self) -> None:

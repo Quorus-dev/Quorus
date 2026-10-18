@@ -56,7 +56,8 @@ _SENDER_PALETTE, _is_human_sender, _sender_color = (
 )
 
 GROUP_GAP_S = 60  # tighter rhythm — iMessage groups within ~1 minute
-_SYSTEM_TYPES = frozenset({"join", "leave", "lock", "decision", "system"})
+# "status": an agent's quiet "read it, nothing to add" / "agents paused" line.
+_SYSTEM_TYPES = frozenset({"join", "leave", "lock", "decision", "system", "status"})
 
 
 def parse_verb(content: str):
@@ -449,6 +450,10 @@ def _verb_summary_body(verb: str, payload: dict) -> str:
     if verb == "disagree":
         return str(payload.get("reason", "disagree"))
     if verb == "defer":
+        if payload.get("failover"):
+            from quorus.runtime.failover import handoff_line
+
+            return handoff_line(str(payload.get("to", "?")), payload["failover"])
         return f"deferring to @{payload.get('to', '?')}"
     if verb == "queue":
         return str(

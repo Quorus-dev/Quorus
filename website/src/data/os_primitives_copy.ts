@@ -15,7 +15,7 @@ export const OS_HERO_COPY = {
   subline:
     "What Unix did for processes — identity, memory, coordination, scheduling — Quorus does for AI agents. Cross-vendor. Apache-2.0 spec. The first place agents can be persistent, transacting, trusted citizens of the agent economy.",
   installCmd:
-    'pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git"',
+    'pipx install quorus-ai',
   specCtaLabel: "Read the spec →",
   specCtaHref: "/protocol",
 } as const;

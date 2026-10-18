@@ -280,7 +280,8 @@ def test_d7_timeout_still_posted_when_no_self_reply(
     ])
     _run_wake(daemon, relay, monkeypatch, "[reflexd] harness timed out")
     assert len(relay.posted) == 1
-    assert relay.posted[0]["content"] == "[reflexd] harness timed out"
+    # A plain-language notice, never the raw sentinel (live 2026-10-17).
+    assert relay.posted[0]["content"].startswith("⚠ ran out of time before finishing")
 
 
 def test_d7_real_replies_never_suppressed(
@@ -415,10 +416,10 @@ def test_claude_resume_failure_retries_fresh(
 def test_claude_argv_max_turns_placement() -> None:
     """D5: chat wakes cap turns; flag sits before the -- separator."""
     argv = reflexd.build_claude_argv("ctx", max_turns=15)
-    assert argv == ["claude", "--print", "--output-format", "json",
+    assert argv == ["claude", "--print", "--output-format", "stream-json", "--verbose",
                     "--max-turns", "15", "--", "ctx"]
     assert reflexd.build_claude_argv("ctx") == [
-        "claude", "--print", "--output-format", "json", "--", "ctx"]
+        "claude", "--print", "--output-format", "stream-json", "--verbose", "--", "ctx"]
 
 
 def _budget_daemon_and_capture(monkeypatch, mission):
@@ -874,3 +875,19 @@ def test_run_actually_wires_drain_and_heartbeat(
     # The drain has to happen BEFORE we go live, or a reconnect answers
     # the backlog only after new traffic arrives.
     assert events.index("drain") < events.index("sse")
+
+
+def test_a_timed_out_wake_names_its_last_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Overseer: three 'ran out of time' posts said nothing about why (it was a
+    `find /`). The room line now carries the last live step."""
+    daemon = _make_daemon()
+    relay = _D7Relay(history=[])
+
+    async def fake_run(harness, *, context, cwd=None, resume=None,
+                       on_session=None, timeout_s=None, max_turns=None):
+        daemon._on_step("searching the code")
+        return "[reflexd] harness timed out"
+    monkeypatch.setattr(daemon.adapter, "run", fake_run)
+    asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
+    assert relay.posted[0]["content"].startswith(
+        "⚠ ran out of time while searching the code, before finishing")

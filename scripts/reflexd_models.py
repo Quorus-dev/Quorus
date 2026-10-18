@@ -108,6 +108,27 @@ def opencode_flags(
     return flags
 
 
+# opencode's free models (no key), tried first and in this order. Each one's
+# limit comes and goes on its own, so a limited agent moves down the list, then
+# on to any other free model in the live `opencode models` catalog
+# (quorus/runtime/opencode_free.py). Keep in sync with `quorus demo`.
+# Not nemotron-3.5-lightning: it answers, but took 200s to its first step and
+# timed out two 30-minute turns running in a row (2026-10-17). Waiting out a
+# limit beats burning a turn on it.
+OPENCODE_FREE_MODELS = (
+    "opencode/deepseek-v4.1-flash-free", "opencode/longcat-2.5-preview-free",
+    "opencode/mimo-v2.6-flash-free",
+)
+# A free model's limit clears on its own: go back to the agent's own model
+# after this long instead of staying on the fallback all day.
+ROTATE_BACK_S = 30 * 60
+
+
+def is_free_opencode(model: str | None) -> bool:
+    """No model (opencode's own free default) or one of its free models."""
+    return model is None or (model.startswith("opencode/") and model.endswith("-free"))
+
+
 def parse_opencode_stream(out: str) -> tuple[str, str | None, str | None]:
     """``opencode run --format json`` NDJSON → ``(reply, session_id, error)``.
 
@@ -147,7 +168,10 @@ def parse_opencode_stream(out: str) -> tuple[str, str | None, str | None]:
         elif ev.get("type") == "error":
             err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
             data = err.get("data") if isinstance(err.get("data"), dict) else {}
-            error = str(data.get("message") or err.get("name") or "error")[:300]
+            # Two shapes: {"name":"APIError","data":{"message":..}} and
+            # {"type":"provider.no-route","message":"Model unavailable: .."}.
+            error = str(data.get("message") or err.get("message") or err.get("name")
+                        or err.get("type") or "error")[:300]
     if not events:  # plain-text output (no --format json): the text is the reply
         return out.strip(), None, None
     reply = "".join(texts[order[-1]]).strip() if order else ""
@@ -177,11 +201,28 @@ def gemini_api_key(env: dict[str, str]) -> str | None:
     return None
 
 
-def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False) -> dict[str, Any]:
+def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False,
+                    mode: str = "default") -> dict[str, Any]:
     """settings.json for the agent's own Gemini home: Quorus tools, and
     API-key sign-in when the user has a key (a retired Google login in the
     user's own settings made every wake fail)."""
-    cfg: dict[str, Any] = {}
+    cfg: dict[str, Any] = {
+        # Gemini CLI reads only GEMINI.md, so in a repo that keeps its rules in
+        # AGENTS.md / CLAUDE.md it never learned the venv or test command, went
+        # hunting (`find / -name quorus`) and timed out three times in a day
+        # (overseer, 2026-10-17). Every user's repo instructions reach it now.
+        "context": {"fileName": ["GEMINI.md", "AGENTS.md", "CLAUDE.md"]},
+        # A command that keeps printing (find's "Permission denied") never hit
+        # the 300s default; 120s of no progress ends it well inside a turn.
+        "tools": {"shell": {"inactivityTimeout": 120}},
+    }
+    if _GEMINI_APPROVAL.get(mode) == "plan":
+        # Plan mode isn't read-only headless: the model calls exit_plan_mode,
+        # which approves itself with no human to ask, then writes. A manual
+        # room's Gemini committed a file and Quorus published it to main
+        # (release sweep, gemini-cli 0.64, 2026-10-17). Without the tool it
+        # stays in plan mode and writes nothing.
+        cfg["tools"]["exclude"] = ["exit_plan_mode"]
     if api_key:
         cfg["security"] = {"auth": {"selectedType": "gemini-api-key"}}
     if spec is not None:
@@ -197,7 +238,8 @@ def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False) -> di
 def gemini_flags(*, mode: str = "default", model: str | None = None) -> list[str]:
     # --skip-trust: every agent worktree is a folder Gemini has never seen,
     # and headless runs fail its "trust this folder?" check.
-    flags = ["--skip-trust", "--output-format", "json"]
+    # stream-json: tool calls arrive while it works (the live step line).
+    flags = ["--skip-trust", "--output-format", "stream-json"]
     if mode in _GEMINI_APPROVAL:
         flags += ["--approval-mode", _GEMINI_APPROVAL[mode]]
     if model:
@@ -210,8 +252,11 @@ def parse_gemini_json(out: str) -> tuple[str, str | None, str | None]:
 
     Shape: ``{"response": "..", "session_id": "..", "stats": {..}}`` or
     ``{"error": {"type": "..", "message": ".."}}``. Banner lines (e.g. "MCP
-    issues detected") may precede the JSON object.
+    issues detected") may precede the JSON object. ``stream-json`` output is
+    one event per line; see :func:`_parse_gemini_stream`.
     """
+    if '"type":"init"' in out.replace(" ", "") or '"type":"result"' in out.replace(" ", ""):
+        return _parse_gemini_stream(out)
     start = out.find("{")
     try:
         data = json.loads(out[start:]) if start >= 0 else None
@@ -226,3 +271,51 @@ def parse_gemini_json(out: str) -> tuple[str, str | None, str | None]:
         error = str(err.get("message") or err.get("type") or "error")[:300]
     reply = data.get("response") if isinstance(data.get("response"), str) else ""
     return reply.strip(), sid, error
+
+
+def _parse_gemini_stream(out: str) -> tuple[str, str | None, str | None]:
+    """``gemini --output-format stream-json`` (verified 0.64)::
+
+        {"type":"init","session_id":"..","model":".."}
+        {"type":"tool_use","tool_name":"read_file","parameters":{..}}
+        {"type":"message","role":"assistant","content":"..","delta":true}
+        {"type":"result","status":"success","stats":{..}}
+
+    The reply is the assistant text after the last tool call: earlier text is
+    narration between tools.
+    """
+    sid: str | None = None
+    error: str | None = None
+    reply: list[str] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        kind = ev.get("type")
+        if kind == "init" and isinstance(ev.get("session_id"), str):
+            sid = ev["session_id"]
+        elif kind == "tool_use":
+            reply = []
+        elif (kind == "message" and ev.get("role") == "assistant"
+              and isinstance(ev.get("content"), str)):
+            reply.append(ev["content"])
+        elif kind == "error" or (kind == "result" and ev.get("status") not in (None, "success")):
+            err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
+            error = trim_gemini_error(str(err.get("message") or ev.get("message")
+                                          or ev.get("status") or "error"))[:300]
+    return "".join(reply).strip(), sid, error
+
+
+def trim_gemini_error(message: str) -> str:
+    """Gemini's API errors run on into a "Call ModelService.ListModels to see
+    the list of available models..." tail and come wrapped in "[API Error: ]"."""
+    text = message.split("Call ModelService")[0].strip().rstrip(" .,;")
+    if text.startswith("[API Error:"):
+        text = text[len("[API Error:"):].strip().rstrip("]").strip()
+    return text

@@ -31,14 +31,91 @@ INSTANCE_NAME = _config["instance_name"]
 _cached_jwt: str | None = None
 
 
-def _relay_unreachable(url: str = "") -> None:
-    """Print a helpful error when the relay is not reachable."""
+def _relay_error_reason(exc: BaseException | None, url: str = "") -> tuple[str, str]:
+    """Turn a failed relay connection into ``(reason, fix hint)``.
+
+    A blanket "is the relay running?" hint misleads on the first run: a
+    mistyped host, a port with nothing on it, a timeout and a URL with no
+    scheme each need a different next step, but before this they all got the
+    same advice. Unwrap httpx's exception chain to find the real cause.
+
+    Returns ``("", "")`` when ``exc`` isn't a connection-level failure, so a
+    caller can keep its own wording (an HTTP 500 is not an unreachable relay).
+    """
+    if not isinstance(exc, (httpx.TransportError, httpx.InvalidURL)):
+        return "", ""
+    host = urlparse(url or RELAY_URL).netloc or "the relay"
+    parts: list[str] = []
+    node: BaseException | None = exc
+    for _ in range(6):
+        if node is None:
+            break
+        parts.append(str(node))
+        node = node.__cause__ or node.__context__
+    blob = " ".join(parts).lower()
+
+    if "missing an 'http" in blob or "unsupported protocol" in blob:
+        return (
+            "the relay URL has no http:// or https:// scheme",
+            "set relay_url to e.g. http://localhost:8080",
+        )
+    if any(s in blob for s in (
+        "nodename nor servname", "name or service not known", "gaierror",
+        "temporary failure in name resolution", "name does not resolve",
+        "getaddrinfo",
+    )):
+        return (
+            f"could not resolve host '{host}'",
+            f"check relay_url for a typo — '{host}' does not resolve",
+        )
+    if "connection refused" in blob:
+        return (
+            f"nothing is listening at {host}",
+            "start the relay with: [accent]quorus relay[/] (or fix relay_url)",
+        )
+    # async httpx collapses a refused TCP connect into "All connection
+    # attempts failed" with the errno dropped, so match on the address too:
+    # for a loopback host a failed connect means the relay isn't running.
+    hostname = urlparse(url or RELAY_URL).hostname or ""
+    if isinstance(exc, httpx.ConnectError) and hostname in (
+        "localhost", "127.0.0.1", "0.0.0.0", "::1",
+    ):
+        return (
+            f"nothing is listening at {host}",
+            "start the relay with: [accent]quorus relay[/]",
+        )
+    if isinstance(exc, httpx.TimeoutException) or "timed out" in blob:
+        return (
+            f"timed out connecting to {host}",
+            f"check that {host} is reachable, then retry",
+        )
+    if any(s in blob for s in ("certificate", "ssl", "tls")):
+        return (
+            f"TLS handshake failed with {host}",
+            "use https:// with a valid certificate, or http:// for a local relay",
+        )
+    return (
+        f"could not reach {host}",
+        "start it with [accent]quorus relay[/] — or run [accent]quorus doctor[/]",
+    )
+
+
+def _relay_unreachable(url: str = "", *, exc: BaseException | None = None) -> None:
+    """Print a helpful error when the relay is not reachable.
+
+    Pass the caught exception as ``exc`` so the message names the actual
+    cause instead of always guessing "the relay isn't running".
+    """
     from quorus_cli import ui
 
     target = url or RELAY_URL
+    reason, fix = _relay_error_reason(exc, target)
+    message = f"Cannot connect to relay at [primary]{target}[/]"
+    if reason:
+        message += f" — {reason}"
     ui.error(
-        f"Cannot connect to relay at [primary]{target}[/]",
-        hint="start it with [accent]quorus relay[/] — or run [accent]quorus doctor[/]",
+        message,
+        hint=fix or "start it with [accent]quorus relay[/] — or run [accent]quorus doctor[/]",
     )
 
 
@@ -55,6 +132,47 @@ def _write_sensitive_json(path: Path, data: dict) -> None:
     ``quorus.config.ConfigManager`` so CLI and TUI share one code path."""
     from quorus.config import ConfigManager
     ConfigManager(path).save(data)
+
+
+def _backup_before_overwrite(path: Path) -> Path | None:
+    """Copy *path* to ``<path>.bak`` before init overwrites it.
+
+    When the relay is down, init cannot check the credential, so it warns and
+    writes anyway. Without a copy on disk, a typo made while offline destroyed
+    the last working secret with nothing to recover it from (review
+    2026-10-17). Best-effort: a failed backup must never block init.
+    """
+    if not path.exists():
+        return None
+    backup = path.with_suffix(path.suffix + ".bak")
+    try:
+        shutil.copyfile(path, backup)
+        os.chmod(backup, 0o600)
+    except OSError:
+        return None
+    return backup
+
+
+def _config_is_profile_pointer(path: Path) -> bool:
+    """True when *path* holds a ProfileManager pointer, not a flat config.
+
+    The first-run hub writes ``{"current": ..., "profiles": [...]}`` and keeps
+    the real values in ``profiles/*.json``. A legacy flat config instead
+    carries at least one of ``relay_url`` / ``api_key`` / ``instance_name`` —
+    the inverse of ``ProfileManager.migrate_legacy_if_needed``. Writers must
+    not drop the flat shape on top of a pointer: it orphans the real profile,
+    and the next load migrates the flat blob into a fresh ``default`` profile,
+    pointing auth at whatever credentials were just typed.
+    """
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    if not isinstance(raw, dict):
+        return False
+    if any(k in raw for k in ("relay_url", "api_key", "instance_name")):
+        return False
+    return "current" in raw or "profiles" in raw
 
 
 def _get_codex_runner_defaults() -> dict:
@@ -148,14 +266,30 @@ def _get_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(follow_redirects=True)
 
 
+def _sibling_quorus_mcp() -> str | None:
+    """The `quorus-mcp` installed beside the running interpreter, if any.
+
+    Not resolved through symlinks: a venv's bin/python is a link to the base
+    interpreter, but its entry points live in the venv's own bin/.
+    """
+    folder = Path(sys.executable).parent
+    for name in ("quorus-mcp", "quorus-mcp.exe"):
+        candidate = folder / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
 def _mcp_server_command() -> tuple[str, list[str]]:
     """Return the best (command, args) for launching the Quorus MCP server.
 
     Prefers the installed `quorus-mcp` entry point (instant startup) over
     `uv run` (which recreates a venv) over plain `python -m` (slower deps).
     """
-    # 1. Prefer installed entry point — instant startup, no venv overhead
-    quorus_mcp = shutil.which("quorus-mcp")
+    # 1. Prefer installed entry point — instant startup, no venv overhead.
+    # The one next to this Python first: with two installs (pipx and an older
+    # ~/.local/bin copy) PATH can hand back the other one's server.
+    quorus_mcp = _sibling_quorus_mcp() or shutil.which("quorus-mcp")
     if quorus_mcp:
         return quorus_mcp, []
     # 2. Fall back to uv if available
@@ -416,8 +550,8 @@ async def _status() -> None:
         else:
             console.print("[dim]No participants.[/dim]")
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     finally:
         await client.aclose()
 
@@ -584,8 +718,8 @@ def _cmd_rooms(args):
     try:
         with ui.spinner("Fetching rooms"):
             rooms = asyncio.run(_list_rooms())
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
     if not rooms:
@@ -650,8 +784,8 @@ def _cmd_create(args):
         else:
             ui.error("Could not create room", hint=f"server returned HTTP {e.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
 
@@ -666,8 +800,8 @@ def _cmd_invite(args):
     except httpx.HTTPStatusError as e:
         ui.error("Invite failed", hint=f"HTTP {e.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
 
@@ -696,8 +830,8 @@ def _cmd_say(args):
         else:
             ui.error("Send failed", hint=f"HTTP {e.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
 
@@ -710,8 +844,8 @@ def _cmd_dm(args):
     except httpx.HTTPStatusError as e:
         ui.error("DM failed", hint=f"HTTP {e.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
 
 
@@ -818,8 +952,8 @@ def _cmd_heartbeat(args):
     explicit_room = getattr(args, "room", None)
     try:
         room_name = explicit_room or asyncio.run(_resolve_primary_room())
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(2)
     except httpx.HTTPStatusError as exc:
         ui.error(
@@ -841,8 +975,8 @@ def _cmd_heartbeat(args):
     except httpx.HTTPStatusError as exc:
         ui.error("Heartbeat send failed", hint=f"HTTP {exc.response.status_code}")
         sys.exit(1)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(2)
 
     _write_heartbeat_state({
@@ -1060,6 +1194,66 @@ def _cmd_agent(args):
     from quorus_cli.agent_cmd import cmd_agent
 
     cmd_agent(args, console)
+
+
+def _cmd_web(args):
+    from quorus_cli.web_cmd import cmd_web
+
+    cmd_web(args, console)
+
+
+def _cmd_phone(args):
+    from quorus_cli.phone_cmd import cmd_phone
+
+    cmd_phone(args, console)
+
+
+def _cmd_duel(args):
+    from quorus_cli.duel_cmd import cmd_duel
+
+    cmd_duel(args, console)
+
+
+def _cmd_demo(args):
+    from quorus_cli.demo_cmd import cmd_demo
+
+    cmd_demo(args, console)
+
+
+def _cmd_share_branch(args):
+    from quorus_cli.bundle_cmd import cmd_share
+
+    cmd_share(args, console)
+
+
+def _cmd_fetch(args):
+    from quorus_cli.bundle_cmd import cmd_fetch
+
+    cmd_fetch(args, console)
+
+
+def _cmd_release_name(args):
+    from quorus_cli.bundle_cmd import cmd_release_name
+
+    cmd_release_name(args, console)
+
+
+def _cmd_replay(args):
+    from quorus_cli.replay_cmd import cmd_replay
+
+    cmd_replay(args, console)
+
+
+def _cmd_retro(args):
+    from quorus_cli.retro_cmd import cmd_retro
+
+    cmd_retro(args, console)
+
+
+def _cmd_scorecard(args):
+    from quorus_cli.scorecard_cmd import cmd_scorecard
+
+    cmd_scorecard(args, console)
 
 
 def _cmd_turnguard(args):
@@ -2171,8 +2365,8 @@ async def _history(room_name: str, limit: int = 50):
         )
         for msg in messages:
             console.print(_format_chat_msg(msg))
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -2225,8 +2419,8 @@ async def _export(
             )
         else:
             console.print(body, highlight=False, markup=False)
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -2250,7 +2444,10 @@ async def _ps() -> None:
             console.print()
             console.print("  [muted]— no agents reporting presence yet —[/]")
             console.print(
-                "  [dim]spawn one with[/] [accent]quorus spawn <room> <name>[/]"
+                "  [dim]add one with[/] [accent]quorus agent add <tool> --room <room>"
+                "[/][dim] — it runs in the background and answers while you're away,[/]"
+                " [dim]or drive a CLI in this terminal with[/] "
+                "[accent]quorus spawn <room> <name>[/]"
             )
             return
 
@@ -2332,8 +2529,8 @@ async def _ps() -> None:
             "\n  [dim]next:[/] [accent]quorus say <room> 'hi'[/]"
             " [dim]— send a test message[/]"
         )
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
@@ -2387,8 +2584,8 @@ async def _search(
         )
         for msg in messages:
             console.print(_format_chat_msg(msg))
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -2549,8 +2746,8 @@ async def _metrics(room_name: str) -> None:
             console.print(f"  Uptime:          {minutes}m {secs}s")
         console.print()
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -3240,8 +3437,8 @@ async def _kick(room_name: str, participant: str) -> None:
         )
         resp.raise_for_status()
         console.print(f"[green]Kicked '{participant}' from {room_name}[/green]")
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
         _ui.error(str(detail))
@@ -3266,8 +3463,8 @@ async def _destroy(room_name: str) -> None:
         )
         resp.raise_for_status()
         console.print(f"[green]Room '{room_name}' destroyed[/green]")
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
         _ui.error(str(detail))
@@ -3291,8 +3488,8 @@ async def _rename(room_name: str, new_name: str) -> None:
         )
         resp.raise_for_status()
         console.print(f"[green]Room renamed: {room_name} -> {new_name}[/green]")
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         detail = e.response.json().get("detail", str(e.response.status_code))
         _ui.error(str(detail))
@@ -3604,8 +3801,8 @@ async def _room_state(room_name: str) -> None:
                 last_str = f" (last: {last_ts})"
         console.print(f"[bold]Messages:[/bold] {msg_count}{last_str}")
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -3672,8 +3869,8 @@ async def _room_locks(room_name: str) -> None:
 
         console.print(table)
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
@@ -3736,8 +3933,8 @@ async def _usage() -> None:
                 sent = data.get("sent", 0)
                 console.print(f"    [cyan]{name}[/cyan]: {sent:,} messages")
 
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
@@ -4271,6 +4468,24 @@ def _mint_init_agent_keys(
     return minted
 
 
+def _workspace_jwt(*, relay_url: str, api_key: str) -> str:
+    """Exchange an API key for a JWT; ``""`` on any failure."""
+    try:
+        # No follow_redirects: a 307/308 re-sends the body, so the API key
+        # would go to whatever host the redirect names (review 2026-10-17).
+        token_resp = httpx.post(
+            f"{relay_url}/v1/auth/token",
+            json={"api_key": api_key},
+            timeout=10,
+        )
+        if token_resp.status_code != 200:
+            return ""
+        token = (token_resp.json() or {}).get("token", "")
+        return token if isinstance(token, str) else ""
+    except Exception:
+        return ""
+
+
 def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
     """Resolve the parent's tenant UUID via ``GET /v1/usage``.
 
@@ -4279,15 +4494,7 @@ def _discover_tenant_id(*, relay_url: str, api_key: str) -> str | None:
     Returns ``None`` on any failure — caller falls back to a fresh tenant.
     """
     try:
-        token_resp = httpx.post(
-            f"{relay_url}/v1/auth/token",
-            json={"api_key": api_key},
-            timeout=10,
-            follow_redirects=True,
-        )
-        if token_resp.status_code != 200:
-            return None
-        jwt = (token_resp.json() or {}).get("token", "")
+        jwt = _workspace_jwt(relay_url=relay_url, api_key=api_key)
         if not jwt:
             return None
         usage_resp = httpx.get(
@@ -4378,7 +4585,10 @@ def _create_init_human_profile(
                 "workspace": "human-placeholder",  # ignored when join_tenant_id set
                 "join_tenant_id": tenant_id,
             },
-            headers={"X-Quorus-Setup-Local": "1"},
+            # The relay admits a joiner only with proof of membership: the
+            # parent's own workspace token.
+            headers={"X-Quorus-Setup-Local": "1", "Authorization":
+                     f"Bearer {_workspace_jwt(relay_url=relay_url, api_key=api_key)}"},
             timeout=15,
             follow_redirects=True,
         )
@@ -4723,7 +4933,52 @@ def _cmd_init(args):
         )
         sys.exit(1)
 
-    # 1. Write config (warn if overwriting). Prefer explicit --config-dir arg
+    # 1. Verify the relay is reachable AND accepts these credentials BEFORE
+    # anything is written. Writing first meant a mistyped --secret destroyed
+    # the previous (working) one: the profile no longer held a copy to
+    # recover from (review 2026-10-17).
+    relay_status = "unknown"
+    relay_reason = ""
+    try:
+        resp = httpx.get(f"{relay_url}/health", timeout=3.0, follow_redirects=True)
+        relay_status = "up" if resp.status_code == 200 else "bad"
+        if relay_status == "up" and secret and not api_key:
+            auth = httpx.get(f"{relay_url}/rooms", timeout=5.0, follow_redirects=True,
+                             headers={"Authorization": f"Bearer {secret}"})
+            if auth.status_code in (401, 403):
+                relay_status = "rejected"
+        elif relay_status == "up" and api_key:
+            # API-key auth gets the same guard: exchange the key for a JWT,
+            # the cheapest way to ask the relay whether it knows the key.
+            # Without this the profile was written with the bad key first and
+            # only failed later at mint time — the same data loss as a secret.
+            # No follow_redirects: a 307/308 re-sends the body, so the API key
+            # would go to whatever host the redirect names (review 2026-10-17).
+            token = httpx.post(f"{relay_url}/v1/auth/token", json={"api_key": api_key},
+                               timeout=5.0)
+            if token.status_code in (401, 403):
+                relay_status = "rejected"
+    except Exception as exc:  # the exception text is the useful part
+        relay_status = "down"
+        relay_reason = _relay_error_reason(exc, relay_url)[0]
+
+    if relay_status == "rejected":
+        what = "secret" if secret and not api_key else "API key"
+        _ui.error(
+            f"The relay at {relay_url} rejected that {what}",
+            hint="nothing was written — your existing config is untouched. "
+                 "Re-run with the one the relay was started with "
+                 "(`quorus relay` uses the one from `quorus init`).",
+        )
+        sys.exit(3)
+    if relay_status == "down":
+        detail = f" ({relay_reason})" if relay_reason else ""
+        console.print(f"[yellow]Warning: relay not reachable at {relay_url}{detail} — start it "
+                      "with: quorus relay[/yellow]")
+    elif relay_status == "bad":
+        console.print(f"[yellow]Warning: {relay_url} answered but isn't healthy[/yellow]")
+
+    # 2. Write config (warn if overwriting). Prefer explicit --config-dir arg
     # over env var, which in turn beats the default ~/.quorus location.
     cli_override = getattr(args, "config_dir", None)
     # isinstance check: MagicMock-based tests set args.config_dir to a mock
@@ -4734,10 +4989,12 @@ def _cmd_init(args):
         config_dir = _config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "config.json"
-    if config_path.exists():
-        console.print(
-            f"[yellow]Warning: config already exists at {config_path} — overwriting.[/yellow]"
-        )
+    # A first-run hub install keeps its config behind a pointer
+    # (``config.json`` = {current, profiles}) with the real values in
+    # ``profiles/*.json``. Writing the flat shape over that pointer orphaned
+    # the profile and made the next load migrate the flat blob into a fresh
+    # ``default`` profile — silently switching auth to the secret just typed.
+    pointer_layout = config_path.exists() and _config_is_profile_pointer(config_path)
 
     config = {
         "relay_url": relay_url,
@@ -4749,14 +5006,48 @@ def _cmd_init(args):
         config["api_key"] = api_key
     else:
         config["relay_secret"] = secret
-    _write_sensitive_json(config_path, config)
-    # (atomic 0600 write via _write_sensitive_json)
-    console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
 
-    # 2. Build MCP server command — prefer entry point, then uv, then python
+    profile_slug = ""
+    if pointer_layout:
+        pm = ProfileManager(config_dir=config_dir)
+        profile_slug = pm.current() or "default"
+        profile_path = config_dir / "profiles" / f"{profile_slug}.json"
+        console.print(
+            f"[yellow]Updating profile '{profile_slug}' at {profile_path} — "
+            "its relay URL and credentials are replaced.[/yellow]"
+        )
+        # Merge into the profile we found rather than replacing it, so keys
+        # this run doesn't set (agent_api_keys, push settings, ...) survive.
+        # Drop the superseded credential shape: a lingering api_key would
+        # keep winning over the relay_secret we are writing.
+        merged = dict(pm.get(profile_slug) or {})
+        merged.pop("api_key" if not api_key else "relay_secret", None)
+        merged.update(config)
+        backup_path = _backup_before_overwrite(profile_path)
+        if backup_path:
+            console.print(f"[dim]Previous profile saved to {backup_path}[/dim]")
+        pm.save(profile_slug, merged)
+        pm.set_current(profile_slug)
+        console.print(
+            f"[green]Config written to {profile_path} (permissions: 0600)[/green]"
+        )
+    else:
+        if config_path.exists():
+            console.print(
+                f"[yellow]Warning: config already exists at {config_path} — "
+                "overwriting; the relay URL and credentials are replaced.[/yellow]"
+            )
+        backup_path = _backup_before_overwrite(config_path)
+        if backup_path:
+            console.print(f"[dim]Previous config saved to {backup_path}[/dim]")
+        _write_sensitive_json(config_path, config)
+        # (atomic 0600 write via _write_sensitive_json)
+        console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
+
+    # 3. Build MCP server command — prefer entry point, then uv, then python
     mcp_command, mcp_args = _mcp_server_command()
 
-    # 3. Register MCP server with every detected MCP-compatible client
+    # 4. Register MCP server with every detected MCP-compatible client
     # via the shared multi-platform helper. ``per_platform_keys`` is keyed
     # by platform suffix (claude/codex/...) and is reused by the agent-mint
     # step below so we never double-mint and revoke in-flight credentials.
@@ -4769,30 +5060,6 @@ def _cmd_init(args):
         mcp_args=mcp_args,
         ui=ui,
     )
-
-    # 4. Verify the relay is reachable AND accepts these credentials. A wrong
-    # secret used to get a green ✓ here and a 401 traceback on the next
-    # command (review 2026-10-09).
-    relay_status = "unknown"
-    try:
-        resp = httpx.get(f"{relay_url}/health", timeout=3.0, follow_redirects=True)
-        relay_status = "up" if resp.status_code == 200 else "bad"
-        if relay_status == "up" and secret and not api_key:
-            auth = httpx.get(f"{relay_url}/rooms", timeout=5.0, follow_redirects=True,
-                             headers={"Authorization": f"Bearer {secret}"})
-            if auth.status_code in (401, 403):
-                relay_status = "rejected"
-    except Exception:
-        relay_status = "down"
-    if relay_status == "rejected":
-        _ui.error(f"The relay at {relay_url} rejected that secret",
-                  hint="use the secret the relay was started with "
-                       "(`quorus relay` uses the one from `quorus init`)")
-    elif relay_status == "down":
-        console.print(f"[yellow]Warning: relay not running at {relay_url} yet — start it "
-                      "with: quorus relay[/yellow]")
-    elif relay_status == "bad":
-        console.print(f"[yellow]Warning: {relay_url} answered but isn't healthy[/yellow]")
 
     # ── Productized init steps (mint, profile, daemon, smoke) ──────────────
     # Agents are added explicitly with `quorus agent add` (one launchd daemon
@@ -4825,10 +5092,15 @@ def _cmd_init(args):
     # like load_config() auto-migrate on next boot, so this is forward-
     # compatible.
     if minted_keys:
-        try:
-            existing = json.loads(config_path.read_text()) if config_path.exists() else {}
-        except (json.JSONDecodeError, ValueError, OSError):
-            existing = {}
+        if pointer_layout:
+            # The profile is the source of truth; read/merge there so we don't
+            # flatten the pointer above.
+            existing = dict(pm.get(profile_slug) or {})
+        else:
+            try:
+                existing = json.loads(config_path.read_text()) if config_path.exists() else {}
+            except (json.JSONDecodeError, ValueError, OSError):
+                existing = {}
         existing.update(config)
         # Preserve previously-saved agent keys for platforms we didn't touch.
         prior = existing.get("agent_api_keys") or {}
@@ -4836,17 +5108,20 @@ def _cmd_init(args):
             prior = {}
         prior.update(minted_keys)
         existing["agent_api_keys"] = prior
-        _write_sensitive_json(config_path, existing)
-        # Also stash a 'default' profile under profiles/ so the supervisor
-        # has a stable slug to read from regardless of legacy migration state.
-        try:
-            pm = ProfileManager(config_dir=config_dir)
-            default_profile = dict(existing)
-            pm.save("default", default_profile)
-        except (OSError, ValueError):
-            # Non-fatal: the flat config above is the primary store.
-            pm = ProfileManager(config_dir=config_dir)
-    else:
+        if pointer_layout:
+            pm.save(profile_slug, existing)
+        else:
+            _write_sensitive_json(config_path, existing)
+            # Also stash a 'default' profile under profiles/ so the supervisor
+            # has a stable slug to read from regardless of legacy migration state.
+            try:
+                pm = ProfileManager(config_dir=config_dir)
+                default_profile = dict(existing)
+                pm.save("default", default_profile)
+            except (OSError, ValueError):
+                # Non-fatal: the flat config above is the primary store.
+                pm = ProfileManager(config_dir=config_dir)
+    elif not pointer_layout:
         pm = ProfileManager(config_dir=config_dir)
 
     # 6. Auto-create the 'human' profile alongside the agent default.
@@ -4967,8 +5242,6 @@ def _cmd_init(args):
         "  [accent]quorus agent add claude --room myroom --repo <path-to-repo>[/]\n"
         "  [accent]quorus chat myroom[/]   then say hi, or [accent]@open <task>[/]"
     )
-    if relay_status == "rejected":
-        raise SystemExit(3)
 
 
 def _cmd_invite_link(args):
@@ -5046,11 +5319,21 @@ def _cmd_join(args):
 
         canonical = normalize_code(token_raw)
         if canonical is not None:
+            # No public relay exists: the old fly.dev default is dead, so a
+            # code with no relay "couldn't reach relay" every time (laptop-2
+            # agent, 2026-10-17). Codes only resolve on the relay that made them.
             relay_for_lookup = (
                 getattr(args, "relay_url", None)
                 or os.environ.get("QUORUS_PUBLIC_RELAY")
-                or "https://quorus-relay.fly.dev"
+                or (load_config().get("relay_url") or "")
             ).rstrip("/")
+            if not relay_for_lookup:
+                _ui.error(
+                    "This code needs its relay's address",
+                    hint="quorus join <code> --relay <url>  (the invite shows the "
+                         "URL, or paste the full install line your teammate sent)",
+                )
+                sys.exit(5)
             try:
                 resp = httpx.get(
                     f"{relay_for_lookup}/v1/join/resolve/{canonical}",
@@ -5393,8 +5676,8 @@ def _cmd_share(args):
             timeout=15,
             follow_redirects=True,
         )
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         return
     if resp.status_code == 404:
         _ui.error(
@@ -5588,6 +5871,8 @@ def _apply_join_payload(payload: dict, name: str) -> None:
             signup_payload = {"name": name, "workspace": workspace}
             if tenant_id:
                 signup_payload["join_tenant_id"] = tenant_id
+                # The relay admits a joiner only with proof of invitation.
+                signup_payload["invite_token"] = invite_token
                 console.print("[dim]Joining existing workspace...[/dim]")
 
             signup_resp = httpx.post(
@@ -6674,14 +6959,37 @@ def _cmd_doctor(args):
             ui.console.print(f"       [dim]{detail}[/]")
 
     ui.heading("Quorus Doctor")
+    from quorus_cli import quickstart
 
     # 1. Config file
     config_file = resolve_config_file()
+    if not config_file.exists() and not RELAY_SECRET:
+        # A fresh install isn't broken: five red checks (and "run init with a
+        # secret" the user doesn't have) was the old first impression.
+        ui.console.print("  Quorus isn't set up yet. Run [accent]quorus[/] (one question, "
+                         "about a minute), or [accent]quorus demo[/] to watch two agents "
+                         "fix a bug first (no keys needed).\n")
+        quickstart.doctor_agents(check)
+        return
     check(
         "Config file exists",
         config_file.exists(),
         detail=str(config_file),
         fix="Run: quorus init <name> --secret <secret>",
+    )
+
+    # 1b. Env vars that silently override the file (a stray RELAY_URL sent a
+    # live fetch to the wrong relay, 2026-10-17).
+    from quorus.config import env_overrides
+
+    overridden = env_overrides()
+    check(
+        "Config file isn't overridden by env vars",
+        not overridden,
+        detail=(", ".join(overridden) + " in your environment overrides a different value "
+                "in the config file") if overridden else "",
+        fix="unset " + " ".join(overridden) + " (or update the config)" if overridden else "",
+        optional=True,
     )
 
     # 2. Relay URL configured
@@ -6709,20 +7017,23 @@ def _cmd_doctor(args):
 
     # 5. Relay reachable
     relay_ok = False
+    relay_reason = ""
+    relay_fix = "Is the relay running? Try: quorus relay"
     try:
         r = httpx.get(f"{RELAY_URL}/health", timeout=5, follow_redirects=True)
         relay_ok = r.status_code == 200
-    except Exception:
-        pass
+    except Exception as exc:  # any failure here is itself the diagnosis
+        relay_reason, relay_fix = _relay_error_reason(exc, RELAY_URL)
     check(
         "Relay reachable",
         relay_ok,
-        detail=f"{RELAY_URL}/health",
-        fix="Is the relay running? Try: quorus relay",
+        detail=f"{RELAY_URL}/health" + (f" — {relay_reason}" if relay_reason else ""),
+        fix=relay_fix or "Is the relay running? Try: quorus relay",
     )
 
     # 6. Auth works
     auth_ok = False
+    auth_detail = ""
     if relay_ok:
         try:
             r = httpx.get(
@@ -6732,12 +7043,16 @@ def _cmd_doctor(args):
                 follow_redirects=True,
             )
             auth_ok = r.status_code == 200
-        except Exception:
-            pass
+            if r.status_code in (401, 403):
+                auth_detail = f"the relay rejected these credentials (HTTP {r.status_code})"
+        except Exception as exc:  # surface the cause, not a traceback
+            auth_detail = _relay_error_reason(exc, RELAY_URL)[0]
     check(
         "Authentication valid",
         auth_ok,
-        fix="Check RELAY_SECRET or API_KEY matches the relay configuration",
+        detail=auth_detail,
+        fix="relay_secret (or api_key) must match the relay — "
+            "re-run: quorus init <name> --secret <secret>",
     )
 
     # 7. MCP config — optional: Quorus works without any AI app connected
@@ -6887,6 +7202,9 @@ def _cmd_doctor(args):
         except Exception:
             pass
 
+    # 13. Agent CLIs: the tools `quorus agent add` drives
+    quickstart.doctor_agents(check)
+
     ui.console.print()
     pct = int(checks_passed * 100 / checks_total) if checks_total else 0
     color = "success" if pct == 100 else ("warning" if pct >= 70 else "error")
@@ -7019,8 +7337,8 @@ def _cmd_logs(args):
                 bar = "[green]" + "#" * min(count, 50) + "[/green]"
                 console.print(f"  {hour}  {bar} {count}")
 
-    except httpx_mod.ConnectError:
-        _relay_unreachable()
+    except httpx_mod.ConnectError as exc:
+        _relay_unreachable(exc=exc)
     except httpx_mod.HTTPStatusError as e:
         _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
 
@@ -7061,8 +7379,8 @@ def _cmd_brief(args):
             follow_redirects=True,
         )
         resp.raise_for_status()
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         sys.exit(1)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -7171,8 +7489,8 @@ async def _show_board(room_filter: str | None = None) -> None:
         resp = await client.get(f"{RELAY_URL}/rooms", headers=_auth_headers())
         resp.raise_for_status()
         rooms = resp.json()
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         await client.aclose()
         return
     except httpx.HTTPStatusError as e:
@@ -7809,9 +8127,9 @@ Be direct and actionable. No pleasantries. This will be injected into the agent'
         if block:
             print(block)
 
-    except httpx.ConnectError:
+    except httpx.ConnectError as exc:
         if not quiet:
-            _relay_unreachable()
+            _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
         if not quiet:
             if e.response.status_code == 404:
@@ -7861,8 +8179,8 @@ def _cmd_decision(args):
         )
         resp.raise_for_status()
         result = resp.json()
-    except httpx.ConnectError:
-        _relay_unreachable()
+    except httpx.ConnectError as exc:
+        _relay_unreachable(exc=exc)
         return
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -7921,11 +8239,20 @@ def _print_grouped_help():
             ("begin",              "Open the interactive hub (default if no command)"),
             ("doctor",             "Diagnose setup issues"),
             ("version",            "Show version, relay, and config"),
+            ("demo",               "Watch two free agents fix a bug (no keys)"),
+            ("phone",              "Open your rooms on your phone"),
+        ]),
+        ("MEASURE", [
+            ("scorecard",          "Whose work holds up in this repo, by agent/vendor"),
+            ("duel",               "Two agents, one task; tests gate, blind judge picks"),
+            ("retro <room>",       "What's going wrong in a room, ranked, with fixes"),
+            ("replay <room>",      "Write a shareable page of how a room did a task"),
         ]),
         ("ROOMS & MESSAGING", [
             ("rooms",              "List all rooms"),
             ("create <name>",      "Create a room"),
             ("join <room>",        "Join a room"),
+            ("invite <room> <who>","Add participants to a room"),
             ("chat <room>",        "Interactive chat in a room"),
             ("say <room> <msg>",   "Send a message to a room"),
             ("dm <name> <msg>",    "Direct message another agent"),
@@ -7946,8 +8273,9 @@ def _print_grouped_help():
             ("deny <id>",          "Refuse an agent's blocked tool call"),
         ]),
         ("AGENTS & SWARMS", [
-            ("agent add <tool>",   "Add your Claude/Codex/Gemini to a room"),
+            ("agent add <tool>",   "Add Claude, Codex, Gemini or opencode to a room"),
             ("agent list",         "Your agents running on this machine"),
+            ("connect <platform>", "Setup for Cursor, Codex, Ollama and others"),
             ("ps",                 "Show agent presence (online/offline)"),
             ("spawn <name>",       "Create agent workspace + launch Claude Code"),
             ("add-agent",          "Interactive wizard to add an agent"),
@@ -8169,10 +8497,10 @@ async def _approvals_list(room: str | None) -> None:
             f"{RELAY_URL}/v1/approvals", headers=_auth_headers(), params=params,
         )
         resp.raise_for_status()
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         # Every other command prints a one-line error here; approvals used
         # to dump a raw httpx traceback (runbook rehearsal, 2026-08-21).
-        _relay_unreachable()
+        _relay_unreachable(exc=exc)
         raise SystemExit(2) from None
     pending = resp.json().get("pending", [])
     if not pending:
@@ -8205,8 +8533,8 @@ async def _approval_decide(approval_id: str, approve: bool, reason: str) -> None
             "decided_by": INSTANCE_NAME or "",
         },
         )
-    except httpx.HTTPError:
-        _relay_unreachable()
+    except httpx.HTTPError as exc:
+        _relay_unreachable(exc=exc)
         raise SystemExit(2) from None
     if resp.status_code == 404:
         _ui.error(f"unknown approval {approval_id}",
@@ -9180,6 +9508,82 @@ def main():
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")
 
+    p_web = sub.add_parser("web", help="Open your rooms and the needs-you board in this browser")
+    p_web.add_argument("room", nargs="?", help="Room to open (default: the room list)")
+    p_web.add_argument("--chat", action="store_true", help="Open the chat, not the board")
+    p_web.add_argument("--print-url", action="store_true", dest="print_url",
+                       help="Print the sign-in link instead of opening a browser")
+
+    p_phone = sub.add_parser("phone", help="Open your rooms on your phone (Tailscale by default)")
+    p_phone.add_argument("--lan", action="store_true",
+                         help="Share on this Wi-Fi instead of Tailscale (trusted networks only)")
+    p_phone.add_argument("--port", type=int, default=None, help="Port to share on (default 8790)")
+    p_phone.add_argument("--with-secret", action="store_true",
+                         help="Put the relay's admin secret in the link instead of your own "
+                              "sign-in (shared-secret relays; anyone with it can act as anyone)")
+
+    p_duel = sub.add_parser(
+        "duel", help="Two agents solve the same task; tests gate, a blind judge picks the winner")
+    p_duel.add_argument("task", help="What to build or fix")
+    p_duel.add_argument("--agents", required=True,
+                        help="Two contenders, e.g. arav-claude,arav-codex")
+    p_duel.add_argument("--repo", help="Repo (default: current directory)")
+    p_duel.add_argument("--judge", choices=["claude", "codex", "gemini", "opencode"],
+                        help="Judge tool (default: one from a family neither contender is in)")
+    p_duel.add_argument("--judge-model", help="Model for the judge, e.g. gemini-3.5-flash-lite")
+    p_duel.add_argument("--test", help="Test command (default: detected pytest / npm test)")
+    p_duel.add_argument("--timeout", type=int, default=1800, help="Seconds per contender")
+    p_duel.add_argument("--no-merge", action="store_true", help="Pick a winner, merge nothing")
+    p_duel.add_argument("--room", help="Room to credit in the ledger")
+
+    p_demo = sub.add_parser("demo", help="Watch two free AI agents fix a bug together (no keys)")
+    p_demo.add_argument("--model", help="opencode model (default: a free open-source one)")
+    p_demo.add_argument("--timeout", type=int, default=300, help="Seconds to wait (default 300)")
+    p_demo.add_argument("--keep", action="store_true", help="Keep the demo folder afterwards")
+
+    p_sbranch = sub.add_parser("share-branch",
+                               help="Share a branch with teammates on other machines")
+    p_sbranch.add_argument("--room", required=True, help="Room to share it in")
+    p_sbranch.add_argument("--branch", help="Branch to share (default: the current one)")
+    p_sbranch.add_argument("--base", help="Send only commits not on this ref (default: main)")
+    p_sbranch.add_argument("--full", action="store_true",
+                           help="Send the branch's whole history (when a teammate lacks the base)")
+    p_sbranch.add_argument("--repo", help="Repo path (default: current directory)")
+
+    p_fetch = sub.add_parser("fetch", help="Fetch a teammate's shared branch (read-only ref)")
+    p_fetch.add_argument("bundle_id", nargs="?", help="Bundle id from the room (omit to list)")
+    p_fetch.add_argument("--room", required=True, help="Room it was shared in")
+    p_fetch.add_argument("--repo", help="Repo path (default: current directory)")
+
+    p_rel = sub.add_parser("release-name",
+                           help="Relay owner: free a name claimed on this shared-secret relay")
+    p_rel.add_argument("name", help="Participant name to free")
+    p_rel.add_argument("--data-dir", help="Relay data dir (default: next to its history DB)")
+
+    p_retro = sub.add_parser("retro", help="What's going wrong in a room, ranked, with fixes")
+    p_retro.add_argument("room", help="Room to look at")
+    p_retro.add_argument("--since", type=float, default=6.0, help="Hours to look back (default 6)")
+    p_retro.add_argument("--top", type=int, default=5, help="How many findings to show")
+    p_retro.add_argument("--post", action="store_true",
+                         help="Post the summary to the room (for its lead to act on)")
+
+    p_replay = sub.add_parser(
+        "replay", help="Write a shareable page of how a room's agents did a task")
+    p_replay.add_argument("room", help="Room to replay")
+    p_replay.add_argument("--since", type=float, default=2.0,
+                          help="Hours to look back (default 2)")
+    p_replay.add_argument("--repo", help="Repo for the commits (default: the room's binding)")
+    p_replay.add_argument("--out", help="Output file (default quorus-replay-<room>.html)")
+
+    p_score = sub.add_parser(
+        "scorecard", help="Which agent and vendor's work holds up in this repo")
+    p_score.add_argument("--repo", help="Repo path (default: current directory)")
+    p_score.add_argument("--room", help="Room whose reviews to include")
+    p_score.add_argument("--since", default="7 days ago", help="git date, e.g. '2 days ago'")
+    p_score.add_argument("--range", help="Explicit git range instead of --since, e.g. main..HEAD")
+    p_score.add_argument("--by", choices=["agent", "vendor"], default="agent")
+    p_score.add_argument("--json", action="store_true", help="One JSON row per commit")
+
     p_agent = sub.add_parser("agent", **_help_block(
         synopsis="Add your AI agents (Claude, Codex, Gemini) to a room.",
         description=(
@@ -9205,6 +9609,10 @@ def main():
         "--name", help="Label for a second agent of the same tool, e.g. backend "
                        "-> <you>-backend-claude")
     p_agent_add.add_argument(
+        "--trust", choices=["owner", "members"], default=None,
+        help="Who may make this room's agents change code: owner (default; others "
+             "get read-only answers) or members (anyone in the room)")
+    p_agent_add.add_argument(
         "--lead", action="store_true",
         help="Make this agent the room's lead: it splits requests into tasks, "
              "assigns teammates, reviews, and reports back")
@@ -9212,6 +9620,10 @@ def main():
         "--model", help="Model to run, e.g. sonnet, gpt-5.5, gemini-2.5-pro, "
                         "ollama/qwen3:4b (opencode: any provider/model)")
     agent_sub.add_parser("list", help="Agents running on this machine")
+    p_agent_pace = agent_sub.add_parser(
+        "pace", help="Cap an agent's turns per hour to stay inside its plan")
+    p_agent_pace.add_argument("name", help="Agent name, e.g. arav-codex")
+    p_agent_pace.add_argument("per_hour", help="Turns per hour (1-120), or off")
     p_agent_rm = agent_sub.add_parser("remove", help="Stop an agent on this machine")
     p_agent_rm.add_argument("name", help="Agent name, e.g. arav-claude")
 
@@ -9507,6 +9919,16 @@ def main():
         "deny": _cmd_deny,
         "room": _cmd_room,
         "agent": _cmd_agent,
+        "scorecard": _cmd_scorecard,
+        "phone": _cmd_phone,
+        "web": _cmd_web,
+        "retro": _cmd_retro,
+        "share-branch": _cmd_share_branch,
+        "fetch": _cmd_fetch,
+        "release-name": _cmd_release_name,
+        "replay": _cmd_replay,
+        "demo": _cmd_demo,
+        "duel": _cmd_duel,
         "turnguard": _cmd_turnguard,
         "reflexd": _cmd_reflexd,
         "reflexd-manager": _cmd_reflexd_manager,
@@ -9521,10 +9943,11 @@ def main():
     except KeyboardInterrupt:
         console.print("\n[dim]Cancelled.[/]")
         raise SystemExit(130) from None
-    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+    except (httpx.TransportError, httpx.InvalidURL) as exc:
+        reason, fix = _relay_error_reason(exc)
         _ui.error(
-            f"Can't reach the relay at {RELAY_URL}",
-            hint="start it with `quorus relay` (keep it running), or check your relay URL",
+            f"Can't reach the relay at {RELAY_URL}" + (f" — {reason}" if reason else ""),
+            hint=fix or "start it with `quorus relay` (keep it running), or check your relay URL",
         )
         raise SystemExit(2) from exc
     except httpx.HTTPStatusError as exc:

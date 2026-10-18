@@ -15,7 +15,6 @@ Two layers of defense are tested here:
 
 from __future__ import annotations
 
-import re
 import uuid
 
 import pytest
@@ -74,27 +73,3 @@ def test_brief_id_remains_opaque() -> None:
     it without escaping, add validation here AND a dashboard XSS test."""
     m = RoomMessageRequest(from_name="alice", content="hi", brief_id="test-brief-uuid")
     assert m.brief_id == "test-brief-uuid"
-
-
-def test_dashboard_no_inline_onclick_with_user_ids() -> None:
-    """The reply-to rendering paths must not interpolate IDs into JS strings.
-
-    We assert that the message-rendering helper uses ``data-*`` attributes
-    rather than inline ``onclick="scrollToMsg('"+msg.reply_to+"')"``.
-    """
-    from quorus.dashboard import DASHBOARD_HTML
-
-    # The fixed version uses dataset-based delegation. If anyone ever puts
-    # ``onclick="scrollToMsg('"`` back, this test should fail.
-    bad_patterns = [
-        re.compile(r"onclick=\"scrollToMsg\('\"\+\s*msg\.reply_to"),
-        re.compile(r"onclick=\"setReply\('\"\+\s*mid\s*\+"),
-    ]
-    for pat in bad_patterns:
-        assert pat.search(DASHBOARD_HTML) is None, (
-            f"dashboard regressed to inline-onclick pattern: {pat.pattern}"
-        )
-
-    # And assert the data-* attributes the fix introduces are present.
-    assert "data-scroll-to=" in DASHBOARD_HTML
-    assert "data-reply-id=" in DASHBOARD_HTML

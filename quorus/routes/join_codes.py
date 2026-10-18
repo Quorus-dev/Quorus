@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -55,7 +56,17 @@ def _request_relay_url(request: Request) -> str:
     """
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("x-forwarded-host", request.url.netloc)
+    # These values land inside the `curl | sh` installer and the join payload,
+    # so a header that isn't a plain scheme and host://port is ignored:
+    # `x-forwarded-host: x"; rm -rf ~ #` must never reach a shell.
+    if scheme not in ("http", "https"):
+        scheme = request.url.scheme
+    if not _HOST_RE.fullmatch(host or ""):
+        host = request.url.netloc
     return f"{scheme}://{host}"
+
+
+_HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?|\[[0-9A-Fa-f:.]{2,45}\](:[0-9]{1,5})?")
 
 
 def _legacy_admin_secret() -> str:
@@ -260,7 +271,7 @@ if ! need_cmd pipx; then
 fi
 
 # 2. Install (or upgrade) Quorus from the repo.
-pipx install --force "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git" >/dev/null
+pipx install --force quorus-ai >/dev/null
 
 # 3. Figure out a reasonable default name — can be overridden interactively.
 DEFAULT_NAME="${{USER:-user}}"
@@ -272,7 +283,9 @@ else
 fi
 
 # 4. Join the room using the short code embedded in this script.
-quorus join "{code}" --name "$NAME"
+#    --relay is required: the code lives on *this* relay, and a fresh
+#    install otherwise falls back to the public default and can't resolve it.
+quorus join "{code}" --relay "{relay_url}" --name "$NAME"
 
 # 5. Open the hub.
 exec quorus
@@ -325,6 +338,7 @@ async def install_script(
     )
     script = _INSTALL_SCRIPT_TMPL.format(
         code=display,
+        relay_url=relay_url,
         install_url=f"{relay_url}/v1/join/install/{display}.sh",
     )
     return PlainTextResponse(script, media_type="application/x-sh")

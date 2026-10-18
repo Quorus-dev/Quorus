@@ -119,11 +119,6 @@ SSE_RECONNECT_S = 2  # backoff between dropped-stream reconnects
 CONFIG_DIR = resolve_config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_RELAY = "http://localhost:8080"
-# Fallback public relay for fresh-user signup. `quorus.dev` is the
-# marketing site (Vercel) — the actual relay is hosted on Fly at
-# `quorus-relay.fly.dev`. Update this if/when the relay gets its own
-# subdomain (e.g. `api.quorus.dev`).
-PUBLIC_RELAY = "https://quorus-relay.fly.dev"
 
 # Sender palette — the 3 semantic colors from ui.py, nothing else.
 # Names hash deterministically so the same sender is always the same
@@ -381,7 +376,10 @@ def _first_launch_setup(console: Console) -> dict:
         Your name > arav
 
         Looking for a relay... ✓ local relay at localhost:8080
-        You're in as @arav.
+
+    The session then prints "Connecting to …" and, on success, "You're in as
+    @arav." — in that order, so the success never precedes the connection it
+    describes.
 
     Fast-path requires exactly one prompt. No-local-relay path adds one
     more ("Token or Enter to sign up"). No other prompts, ever.
@@ -421,7 +419,9 @@ def _first_launch_setup(console: Console) -> dict:
         "teammate's invite ([/][accent]quorus://…[/][muted] link or [/]"
         "[accent]ABCD-EFGH[/][muted] code) to join their relay.[/]"
     )
-    raw = Prompt.ask("\n  Invite or Enter", default="").strip()
+    raw = Prompt.ask(
+        "\n  Invite, or Enter to run it here", default="", show_default=False
+    ).strip()
 
     decoded = _decode_invite_token(raw) if raw else None
     if raw and decoded:
@@ -494,10 +494,9 @@ def _first_launch_setup(console: Console) -> dict:
     # Save config — even partial configs so the next run starts warm.
     _save_instance_config(name, relay_url, secret=secret, api_key=api_key)
 
-    if relay_ok:
-        console.print(f"\n  [success]✓[/] [muted]You're in as[/] [agent]@{name}[/].")
-        time.sleep(0.15)
-
+    # "You're in as @name" is printed by the session once the relay has
+    # actually answered — printing it here landed *before* "Connecting to …"
+    # and made the happy path read like a race (finding #4).
     return {
         "relay_url": relay_url,
         "instance_name": name,
@@ -1407,6 +1406,11 @@ def _print_inline_message(
         line.append(f"  [{hhmm}] ", style="ts")
     else:
         line.append("  ", style="muted")
+    if msg.get("message_type") == "status":
+        # "@x read it, nothing to add" / "agents paused": quiet, one line.
+        line.append(f"· {content}", style="muted italic")
+        console.print(line)
+        return
     line.append(f"@{sender}", style=f"bold {sender_style}")
     line.append(": ", style="dim")
     # Themed 'bright' instead of literal 'white' — keeps the line
@@ -3267,7 +3271,8 @@ def _main_input_loop(
                         thread_collapsed=state.get_thread_collapsed(),
                     ):
                         console.print(feed_line)
-                    working_line = _working.render_working_line(state.working.snapshot())
+                    working_line = _working.render_working_line(
+                        state.working.snapshot(), activity=state.working.activity())
                     if working_line is not None:
                         console.print(working_line)
                     console.print()
@@ -3782,12 +3787,17 @@ def _run_session(
     profile: dict,
     *,
     state: "HubState | None" = None,
+    announce_ready: bool = False,
 ) -> "str | tuple[str, str]":
     """Run one workspace session. Returns 'quit' or ('switch', slug).
 
     The *state* parameter exists so tests can pre-seed a HubState with
     a pending switch and observe the early-exit path without running
     the full interactive loop.
+
+    *announce_ready* is set for a first run: once the relay has answered and
+    the rooms are loaded we print "You're in as @name", which is the line the
+    first-run wizard used to print *before* connecting (finding #4).
     """
     console = _ui.console
 
@@ -3854,6 +3864,15 @@ def _run_session(
             console.print(
                 f"  [dim]Created starter room [room]#{starter}[/] — you can add more anytime.[/]"
             )
+            # Blank slate: offer the agent CLIs already installed, one keypress.
+            try:
+                from quorus_cli.quickstart import offer
+
+                offer(console, starter)
+            except (KeyboardInterrupt, EOFError):
+                console.print()
+            except Exception as exc:  # never block the hub on the offer
+                console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
             rooms = _fetch_rooms(relay_url, secret)
         elif status == "conflict":
             # Someone else made a room named `general` in the same tenant —
@@ -3870,6 +3889,10 @@ def _run_session(
                 "[dim]Is it running? Try: quorus relay[/]"
             )
         # Any other failure → render the empty-state hint from the panel.
+
+    if announce_ready and rooms:
+        console.print(f"  [success]✓[/] [muted]You're in as[/] [agent]@{agent_name}[/].")
+        time.sleep(0.15)
 
     if state is None:
         state = HubState()
@@ -3980,6 +4003,7 @@ def run_hub() -> None:
 
     try:
         while True:
+            first_run = False
             profile = pm.current_profile()
             if profile is None:
                 # Fresh install — fall through to wizard, save as default.
@@ -3991,6 +4015,7 @@ def run_hub() -> None:
                     return
                 pm.save("default", profile)
                 pm.set_current("default")
+                first_run = True
 
             relay = (profile.get("relay_url") or "").rstrip("/")
             if relay and profile.get("relay_secret") and not _try_connect(relay, timeout=2):
@@ -3999,7 +4024,7 @@ def run_hub() -> None:
                 if is_local(relay):
                     ok, note = ensure_local_relay(relay, profile["relay_secret"])
                     console.print(f"  [dim]{note}[/]" if note else "", end="\n" if note else "")
-            result = _run_session(profile)
+            result = _run_session(profile, announce_ready=first_run)
             if result == "quit":
                 return
             if isinstance(result, tuple) and result[0] == "switch":

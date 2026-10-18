@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.auth.middleware import AuthContext, require_role, verify_auth
 
 # Wave-5 Fix 7 — cap on the size of the ``arguments`` payload.
 # A compromised MCP agent could otherwise post arbitrarily large dicts to
@@ -43,6 +43,13 @@ def _audit_service(request: Request):
     return audit_svc
 
 
+def _admin_audit_service(request: Request, auth: AuthContext):
+    """The ledger holds every room's and DM's tool arguments, message text
+    included: reading it is admin-only (any member could, audit 2026-10-16)."""
+    require_role(auth, "admin")
+    return _audit_service(request)
+
+
 @router.get("/messages/{message_id}")
 async def get_message_timeline(
     request: Request,
@@ -60,7 +67,7 @@ async def get_message_timeline(
     - sse_pushed: Pushed via Server-Sent Events
     - webhook_sent: Webhook notification delivered
     """
-    audit_svc = _audit_service(request)
+    audit_svc = _admin_audit_service(request, auth)
 
     try:
         msg_uuid = uuid.UUID(message_id)
@@ -82,7 +89,7 @@ async def get_recent_events(
 
     Optionally filter by event_type (can specify multiple).
     """
-    audit_svc = _audit_service(request)
+    audit_svc = _admin_audit_service(request, auth)
 
     events = await audit_svc.get_recent_events(
         _tid(auth), event_types=event_type, limit=limit
@@ -102,7 +109,7 @@ async def get_failed_deliveries(
     Returns fanout_failed, fanout_partial, delivery_rejected,
     and webhook_failed events from the last N hours.
     """
-    audit_svc = _audit_service(request)
+    audit_svc = _admin_audit_service(request, auth)
 
     events = await audit_svc.get_failed_deliveries(
         _tid(auth), since_hours=hours, limit=limit
@@ -158,5 +165,5 @@ async def verify_audit_chain(
     auth: AuthContext = Depends(verify_auth),
 ):
     """Verify the tenant's append-only audit hash chain."""
-    audit_svc = _audit_service(request)
+    audit_svc = _admin_audit_service(request, auth)
     return await audit_svc.verify_chain(_tid(auth), limit=limit)

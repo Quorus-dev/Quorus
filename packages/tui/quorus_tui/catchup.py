@@ -53,7 +53,8 @@ def room_digest(room: str, history: list[dict], *, me: str, since: float) -> Roo
     d = RoomDigest(room)
     for m in history:
         sender = m.get("from_name") or ""
-        if sender == me or _ts(m.get("timestamp")) <= since:
+        if (sender == me or m.get("message_type") == "status"
+                or _ts(m.get("timestamp")) <= since):
             continue
         body = m.get("content") or ""
         d.messages += 1

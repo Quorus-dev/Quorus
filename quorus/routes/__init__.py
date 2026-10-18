@@ -7,6 +7,7 @@ from quorus.routes.agents import router as agents_router
 from quorus.routes.analytics import router as analytics_router
 from quorus.routes.approvals import router as approvals_router
 from quorus.routes.audit import router as audit_router
+from quorus.routes.bundles import router as bundles_router
 from quorus.routes.capabilities import router as capabilities_router
 from quorus.routes.health import router as health_router
 from quorus.routes.invites import router as invites_router
@@ -46,3 +47,4 @@ router.include_router(capabilities_router)
 router.include_router(tool_catalog_router)
 router.include_router(persistent_memory_router)
 router.include_router(approvals_router)
+router.include_router(bundles_router)

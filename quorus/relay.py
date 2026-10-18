@@ -313,6 +313,25 @@ async def _run_migrations():
 # ---------------------------------------------------------------------------
 
 
+def _ensure_local_jwt_key() -> None:
+    """A shared-secret relay with no JWT_SECRET signs participant JWTs with its
+    own random key (0600, next to the claims), never one derived from
+    RELAY_SECRET, which every invitee holds."""
+    from quorus.auth import tokens
+    from quorus.auth.participant_keys import data_dir, load_or_create_signing_key
+
+    if not DATABASE_URL and not tokens.JWT_SECRET:
+        tokens.JWT_SECRET = load_or_create_signing_key(data_dir())
+
+
+def _bundle_service(redis_conn):
+    """Git bundle courier: in Redis when the relay has it (every API-key relay
+    does, and several instances then share bundles), else in process memory."""
+    from quorus.services.bundle_svc import BundleService, RedisBundleService
+
+    return RedisBundleService(redis_conn) if redis_conn is not None else BundleService()
+
+
 def _init_services(app_instance, redis_conn=None):
     """Create backends and services, store on app.state.
 
@@ -447,6 +466,9 @@ def _init_services(app_instance, redis_conn=None):
     app_instance.state.capability_service = CapabilitySvc()
     app_instance.state.tool_catalog_service = ToolCatalogSvc()
     app_instance.state.persistent_memory_service = PersistentMemorySvc()
+    app_instance.state.bundle_service = _bundle_service(redis_conn)
+    app_instance.state.participant_keys = None  # opened on first claim
+    _ensure_local_jwt_key()
 
     # Create outbox worker if enabled (requires Postgres)
     if USE_OUTBOX and DATABASE_URL:
@@ -862,17 +884,25 @@ if _cors_origins:
 # ---------------------------------------------------------------------------
 
 from quorus.admin.routes import router as admin_router  # noqa: E402
+from quorus.auth.participant_routes import router as participant_router  # noqa: E402
 from quorus.auth.routes import router as auth_router  # noqa: E402
+from quorus.board import router as board_router  # noqa: E402
 from quorus.dashboard import router as dashboard_router  # noqa: E402
+from quorus.quorum_view import router as quorum_router  # noqa: E402
 from quorus.routes import router as relay_router  # noqa: E402
 from quorus.routes.admin_dashboard import router as admin_dashboard_router  # noqa: E402
 from quorus.routes.admin_metrics import router as admin_metrics_router  # noqa: E402
 from quorus.routes.join_codes import router as join_codes_router  # noqa: E402
+from quorus.routes.room_scorecard import router as room_scorecard_router  # noqa: E402
 
 app.include_router(relay_router)
 app.include_router(auth_router)
+app.include_router(participant_router)
 app.include_router(admin_router)
 app.include_router(dashboard_router)
+app.include_router(board_router)
+app.include_router(quorum_router)
+app.include_router(room_scorecard_router)
 app.include_router(admin_metrics_router)
 app.include_router(admin_dashboard_router)
 app.include_router(join_codes_router)

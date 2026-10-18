@@ -51,10 +51,10 @@ def test_build_claude_argv_pins_exact_shape() -> None:
     dash chat body is not re-interpreted as a flag (CRIT-7).
     """
     out = reflexd.build_claude_argv("hello world")
-    assert out == ["claude", "--print", "--output-format", "json",
+    assert out == ["claude", "--print", "--output-format", "stream-json", "--verbose",
                    "--", "hello world"]
     resumed = reflexd.build_claude_argv("hello world", resume="sid-123")
-    assert resumed == ["claude", "--print", "--output-format", "json",
+    assert resumed == ["claude", "--print", "--output-format", "stream-json", "--verbose",
                        "--resume", "sid-123", "--", "hello world"]
 
 
@@ -200,7 +200,7 @@ def test_claude_adapter_invokes_correct_binary(monkeypatch: pytest.MonkeyPatch) 
     out = _run_adapter("claude", context="hello-claude")
     assert out == "hello-from-claude-cli"
     assert seen_argv == reflexd.build_claude_argv("hello-claude")
-    assert seen_argv == ["claude", "--print", "--output-format", "json",
+    assert seen_argv == ["claude", "--print", "--output-format", "stream-json", "--verbose",
                          "--", "hello-claude"]
 
 
@@ -620,7 +620,7 @@ def test_log_adapter_versions_warns_on_unknown_version(
         #   from the positional prompt
         # - gemini uses ``--prompt=<ctx>`` because its parser rejects
         #   ``-- <ctx>`` after ``--prompt``
-        ("claude", ["claude", "--print", "--output-format", "json",
+        ("claude", ["claude", "--print", "--output-format", "stream-json", "--verbose",
                     "--", "ctx"]),
         ("codex", ["codex", "exec", "--json", "--skip-git-repo-check",
                    "--", "ctx"]),
