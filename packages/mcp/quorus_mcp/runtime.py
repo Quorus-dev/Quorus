@@ -124,6 +124,18 @@ def _validate_relay_url(value: str) -> str:
     return value
 
 
+def _same_relay(a: str, b: str) -> bool:
+    """Do two relay URLs name the same relay (scheme, host, port, base path)?"""
+    def key(url: str) -> tuple[str, str, int | None, str]:
+        p = urlparse(url.strip())
+        port = p.port or {"http": 80, "https": 443}.get(p.scheme)
+        return p.scheme, (p.hostname or "").lower(), port, p.path.rstrip("/")
+    try:
+        return key(a) == key(b)
+    except ValueError:  # a malformed port: not provably the same relay
+        return False
+
+
 def load_runtime_config() -> dict[str, Any]:
     """Resolve the MCP server's runtime settings and run the startup guards.
 
@@ -172,11 +184,28 @@ def load_runtime_config() -> dict[str, Any]:
     else:
         config = load_config()
 
-    relay_url = _clean_env("QUORUS_RELAY_URL") or config["relay_url"]
+    env_relay = _clean_env("QUORUS_RELAY_URL")
+    relay_url = env_relay or config["relay_url"]
+    # Saved credentials belong to the saved relay. When QUORUS_RELAY_URL points
+    # somewhere else (a plugin's relay field, a hand-written MCP entry), a blank
+    # secret or key must not fall back to the profile's: that would hand this
+    # user's credential to another relay's token endpoint (codex, 59a2077e).
+    profile_relay = bool(env_relay is None or _same_relay(env_relay, config["relay_url"]))
     relay_secret = _resolve_auth(
-        "QUORUS_RELAY_SECRET", config["relay_secret"], label="Relay secret",
+        "QUORUS_RELAY_SECRET", config["relay_secret"] if profile_relay else "",
+        label="Relay secret",
     )
-    api_key = _resolve_auth("QUORUS_API_KEY", config["api_key"], label="API key")
+    api_key = _resolve_auth(
+        "QUORUS_API_KEY", config["api_key"] if profile_relay else "", label="API key",
+    )
+    if not profile_relay and not relay_secret and not api_key \
+            and (config["relay_secret"] or config["api_key"]):
+        raise SystemExit(
+            f"QUORUS_RELAY_URL ({relay_url}) is not the relay your saved profile is for, "
+            "so its saved credentials are not sent there.\n"
+            "  - Set QUORUS_RELAY_SECRET or QUORUS_API_KEY for that relay, OR\n"
+            "  - Leave QUORUS_RELAY_URL empty to use the saved profile's relay."
+        )
     instance_name = _clean_env("QUORUS_INSTANCE_NAME") or config["instance_name"]
     sse_enabled = os.environ.get("SSE_ENABLED", "true").strip().lower() not in {
         "0", "false", "no", "off",
