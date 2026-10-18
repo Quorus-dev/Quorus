@@ -80,7 +80,9 @@ function form(vendor, mat) {
 }
 
 function pillar(color) {
-  const mat = physical(color, { emissiveIntensity: 0.55, roughness: 0.35, clearcoat: 0.4 });
+  // Half the glow it had: a person is the one lit figure, not the brightest thing on
+  // stage, or the eye never reaches the agents (review of 3083def4).
+  const mat = physical(color, { emissiveIntensity: 0.28, roughness: 0.35, clearcoat: 0.4 });
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.12, 0.95, 40), mat);
   const cap = new THREE.Mesh(new THREE.SphereGeometry(0.085, 32, 20), mat);
@@ -116,7 +118,7 @@ export function makeTotem(name, vendor, color, P) {
   seat.add(pedestal, mark, ring, beam, spark);
   seat.traverse((o) => { o.userData.seat = name; });
   const u = { name, vendor, mark, mat: mat || pmat, ring, beam, spark, state: "", angle: 0, spin,
-              particles: null, base: vendor ? 0.12 : 0.55, color: new THREE.Color(color) };
+              particles: null, base: vendor ? 0.12 : 0.28, color: new THREE.Color(color) };
   seat.userData = u;
   return seat;
 }

@@ -144,7 +144,7 @@ function placeTags() {
   const w = Q.host.clientWidth, h = Q.host.clientHeight;
   const spots = Q.names.filter((n) => Q.seats.has(n)).map((name) => {
     const s = Q.seats.get(name), t = Q.tags.get(name);
-    const p = Q.stage.project(s.position.clone().setY(1.95));
+    const p = Q.stage.project(s.position.clone().setY(2.25));  // clear of the tallest mark
     return { t, x: p.x, y: p.y, tw: t.offsetWidth, th: t.offsetHeight, behind: p.behind };
   }).sort((a, b) => b.y - a.y);
   const placed = [];
