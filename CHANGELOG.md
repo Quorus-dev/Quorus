@@ -5,6 +5,29 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-18
+
+### Upgrading
+
+- **Behind a reverse proxy? Set `TRUSTED_PROXY_COUNT`** (e.g. `1`). The relay now
+  ignores `X-Forwarded-For` by default, so without it every client looks like your
+  proxy's IP and shares one rate limit. Direct (`127.0.0.1`) setups need nothing.
+
+### Fixed
+
+- Only a lock's holder can release it, and room state shows a lock's token only to
+  its holder.
+- A client can no longer dodge rate limits by rotating `X-Forwarded-For`.
+- MCP tool failures are reported as errors (`isError: true`), not as successes.
+- `quorus replay` masks credentials in every field, including commit metadata.
+- Workspace paths are quoted when Quorus opens a Terminal for an agent.
+- A turn that runs out of time no longer publishes: its commits go to
+  `quorus/<agent>-unfinished` for review, or the agent finishes them when mentioned.
+- Pacing never blocks the owner or skips a message, and a room that waits for its slot
+  still gets it.
+- Ollama: a pull hint when the model catalog is empty.
+- A broken agent worktree is rebuilt, and Quorus says why.
+
 ## [0.5.0] — 2026-10-17
 
 First PyPI release, as `quorus-ai` (`pipx install quorus-ai`; the command is still `quorus`).
