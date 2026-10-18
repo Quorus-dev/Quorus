@@ -87,6 +87,8 @@ def test_wake_repairs_an_identity_the_agent_broke(tmp_path, monkeypatch) -> None
     cfg = reflexd.ReflexdConfig(relay_url="http://r", api_key="sec", legacy_bearer=True,
                                 participant_name="a-opencode", spawn_enabled=False)
     d = reflexd.Reflexd(cfg)
+    # Sign-in found a relay without participant keys, so the agent runs on the secret.
+    d._relay = type("R", (), {"keys_supported": False})()
     agent_dir = tmp_path / "agent"
     d.adapter.agent_config_dir = agent_dir
     (agent_dir / "profiles").mkdir(parents=True)
