@@ -426,8 +426,10 @@ async def social_verb(
 # ---------------------------------------------------------------------------
 
 from quorus_mcp import bundle_tools as _bundle_tools  # noqa: E402,F401
-from quorus_mcp import docs_resource as _docs_resource  # noqa: E402,F401
+from quorus_mcp import docs_resource as _docs_resource  # noqa: E402
 from quorus_mcp import phase1_registry as _phase1_registry  # noqa: E402,F401
+
+_docs_resource.register(mcp)
 
 
 def main_cli() -> None:
