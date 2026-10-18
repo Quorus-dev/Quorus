@@ -11,8 +11,8 @@ everyone who needs it.
 Each path is labeled with how far we've tested it:
 
 - **Verified on 0.5.2**: we ran these commands against the published `quorus-ai` 0.5.2 and they
-  worked. `--secret -` (read the secret from stdin) and `quorus relay --replace` arrive in
-  0.5.3; on 0.5.2, pass the secret as `--secret <value>` and stop the first-run relay yourself.
+  worked. `quorus relay --replace` arrives in 0.5.3; on 0.5.2, stop the relay your first
+  `quorus` run started before running `quorus relay` on the same port.
 - **Config included, not re-verified**: the config is in the repo, but we haven't deployed it
   again for this release. Expect to adjust things.
 
