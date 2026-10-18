@@ -2740,3 +2740,26 @@ def test_spawned_agent_mcp_config_runs_the_real_server(tmp_path, monkeypatch):
     entry = server["mcpServers"]["quorus"]
     assert entry["command"] == "/opt/q/bin/quorus-mcp" and entry["args"] == []
     assert "mcp_server.py" not in json.dumps(server)
+
+
+@pytest.mark.parametrize("command", ["_cmd_invite_link", "_cmd_invite_token"])
+def test_secret_invites_need_with_secret(command, capsys, monkeypatch):
+    """invite-link / invite-token print the relay secret (admin). Without
+    --with-secret they refuse and point at `quorus share`; with it they warn."""
+    from quorus import cli
+
+    monkeypatch.setattr(cli, "RELAY_URL", "http://127.0.0.1:8080")
+    monkeypatch.setattr(cli, "RELAY_SECRET", "s3cret-value-123")
+    with pytest.raises(SystemExit) as exc:
+        getattr(cli, command)(MagicMock(room="dev", with_secret=False))
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert exc.value.code == 2
+    assert "s3cret-value-123" not in text and "quorus share dev" in text
+    if command == "_cmd_invite_token":
+        assert "quorus_join_" not in text
+
+    getattr(cli, command)(MagicMock(room="dev", with_secret=True))
+    out = capsys.readouterr()
+    text = " ".join((out.out + out.err).split())
+    assert "admin" in text and "own machines" in text

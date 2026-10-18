@@ -42,6 +42,11 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- The hub's share fell back to an invite holding the relay secret (admin) whenever the
+  relay couldn't mint a code, a timeout or a 500 included. It now says the invite
+  couldn't be made. `quorus invite-link` and `quorus invite-token`, which print the
+  secret, need `--with-secret` and say it's for your own machines; for anyone else, use
+  `quorus share`.
 - `quorus invites --revoke <id>` only stopped new joins; the people who had already
   joined with that invite stayed in its room. Revoking now also removes them from the room,
   effective on their next request.
