@@ -91,9 +91,13 @@ def test_turns_keep_24h_only(tmp_path):
 SCOPE = "relay.test|a|/repo"
 
 
+def _turn(runtime, outcome, scope=SCOPE):
+    tr.record_turn(runtime, "a-gemini", outcome, scope=scope)
+
+
 def _two_failures(tmp_path):
-    tr.record_turn(tmp_path, "a-gemini", "vendor_failure")
-    tr.record_turn(tmp_path, "a-gemini", "timed_out")
+    _turn(tmp_path, "vendor_failure")
+    _turn(tmp_path, "timed_out")
     return dict(runtime_dir=tmp_path, participant="a-gemini", repo=None, harness="gemini",
                 scope=SCOPE)
 
@@ -137,19 +141,19 @@ def test_hysteresis_and_cooldown_stop_flapping(tmp_path, monkeypatch):
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
     kw = _two_failures(tmp_path)
     for _ in range(2):
-        tr.record_turn(tmp_path, "a-gemini", "errored")  # 0✓ 4✗: x0.67
+        _turn(tmp_path, "errored")  # 0✓ 4✗: x0.67
     assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw).announce
     for _ in range(2):
-        tr.record_turn(tmp_path, "a-gemini", "clean")  # 2✓ 4✗: x0.88, not past x0.9
+        _turn(tmp_path, "clean")  # 2✓ 4✗: x0.88, not past x0.9
     d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
-    assert 0.8 < tr.track_for(tmp_path, "a-gemini", None).multiplier < 0.9
+    assert 0.8 < tr.track_for(tmp_path, "a-gemini", None, scope=SCOPE).multiplier < 0.9
     assert d.bid < 0.5 and d.announce is None
     for _ in range(2):
-        tr.record_turn(tmp_path, "a-gemini", "clean")  # 4✓ 4✗: x1.0, it ends
+        _turn(tmp_path, "clean")  # 4✓ 4✗: x1.0, it ends
     d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
     assert d.bid == 0.5 and tuning.adaptations()[0].state == "retired"
     for _ in range(8):
-        tr.record_turn(tmp_path, "a-gemini", "errored")  # past x0.8 again, inside 1h
+        _turn(tmp_path, "errored")  # past x0.8 again, inside 1h
     d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
     assert d.bid == 0.5 and d.announce is None and len(tuning.adaptations()) == 1
 
@@ -162,7 +166,7 @@ def test_undo_holds_until_redo_and_tune_off_is_immediate(tmp_path, monkeypatch):
     tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
     assert tuning.undo("t1") is not None
     for _ in range(5):
-        tr.record_turn(tmp_path, "a-gemini", "errored")
+        _turn(tmp_path, "errored")
     d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
     assert d.bid == 0.5 and d.announce is None and len(tuning.adaptations()) == 1
     assert tuning.redo("t1") is not None
@@ -180,6 +184,8 @@ def test_scope_keeps_adaptations_apart(tmp_path, monkeypatch):
     tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
     tuning.undo("t1")
     other = {**kw, "scope": "other-relay|a|/repo"}
+    _turn(tmp_path, "vendor_failure", scope=other["scope"])
+    _turn(tmp_path, "timed_out", scope=other["scope"])
     assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **other).announce
     assert [a.scope for a in tuning.adaptations()] == [SCOPE, "other-relay|a|/repo"]
 
@@ -188,7 +194,7 @@ def test_off_computes_and_logs_nothing(tmp_path, monkeypatch):
     kw = _two_failures(tmp_path)
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "off")
     assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw) == tr.BidDecision(0.5, "r")
-    tr.record_turn(tmp_path, "a-gemini", "errored")
+    _turn(tmp_path, "errored")
     assert tr.load_bids(tmp_path, "a-gemini") == []
     assert len(tr.load_turns(tmp_path, "a-gemini")) == 2
 
@@ -264,8 +270,8 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
                                 api_key="k", runtime_dir=tmp_path)
     daemon = reflexd.Reflexd(cfg)
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
-    tr.record_turn(tmp_path, "a-gemini", "vendor_failure")
-    tr.record_turn(tmp_path, "a-gemini", "vendor_failure")
+    _turn(tmp_path, "vendor_failure", scope="relay.test|a|")
+    _turn(tmp_path, "vendor_failure", scope="relay.test|a|")
     bids: list[dict[str, Any]] = []
     posts: list[dict[str, Any]] = []
 
@@ -324,3 +330,42 @@ def test_later_bid_cannot_relabel_an_earlier_outcome(tmp_path):
     out = tr.report(tmp_path, "a", NOW)
     assert out["predictive"]["low"] == {"turns": 1, "failed": 1}
     assert out["predictive"]["high"] == {"turns": 1, "failed": 0}
+
+
+
+def test_unreadable_tuning_state_leaves_bids_raw(tmp_path, monkeypatch):
+    # Codex's repro: a damaged file after `tune off` must not mean "on".
+    from quorus import tuning
+
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
+    tuning.set_enabled(False)
+    assert tr.mode() == "off"
+    tuning.path().write_text("{invalid")
+    assert tr.mode() == "off" and tuning.is_invalid()
+    kw = _two_failures(tmp_path)
+    assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw) == tr.BidDecision(0.5, "r")
+    assert tuning.path().read_text() == "{invalid"  # nothing written over it
+    tuning.set_enabled(True)  # the user's explicit `tune on` starts a fresh file
+    assert not tuning.is_invalid() and tr.mode() == "on"
+
+
+def test_other_scope_does_not_inherit_failure_evidence(tmp_path, monkeypatch):
+    # Codex's repro: evidence from one relay|owner|repo stays there.
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
+    _turn(tmp_path, "vendor_failure")
+    _turn(tmp_path, "vendor_failure")
+    fresh = dict(runtime_dir=tmp_path, participant="a-gemini", repo=None,
+                 scope="fresh-relay|a|/fresh-repo")
+    d = tr.decide_bid(0.5, "open", message_id=_not_holdout(), **fresh)
+    assert d.bid == 0.5 and d.announce is None
+    assert tr.track_for(tmp_path, "a-gemini", None, scope=SCOPE).failed == 2
+
+
+def test_report_joins_only_within_a_scope(tmp_path):
+    for scope, mult in (("A", 0.6), ("B", 1.3)):
+        tr._append(tmp_path, "a", "bids", {"ts": NOW - 5, "message_id": "m", "arm": "shadow",
+                                           "multiplier": mult, "scope": scope}, NOW)
+    tr.record_turn(tmp_path, "a", "errored", kind="open_todo", message_id="m", scope="A",
+                   now=NOW)
+    assert tr.report(tmp_path, "a", NOW)["predictive"]["low"] == {"turns": 1, "failed": 1}
+    assert tr.report(tmp_path, "a", NOW, scope="B")["predictive"]["low"]["turns"] == 0

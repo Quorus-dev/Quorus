@@ -65,20 +65,32 @@ def _empty() -> dict[str, Any]:
     return {"enabled": True, "next": 1, "adaptations": []}
 
 
+def _invalid() -> dict[str, Any]:
+    # Unreadable state must fail closed: stock behaviour, and nothing is
+    # written over it, so a damaged `tune off` can't turn adapting back on.
+    return {"enabled": False, "next": 1, "adaptations": [], "invalid": True}
+
+
 def _read(p: Path) -> dict[str, Any]:
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return _empty()  # missing or corrupt: stock behaviour, never a crash
-    if not isinstance(data, dict) or not isinstance(data.get("adaptations"), list):
+    except FileNotFoundError:
         return _empty()
+    except (OSError, ValueError):
+        return _invalid()
+    if not isinstance(data, dict) or not isinstance(data.get("adaptations"), list) \
+            or not isinstance(data.get("enabled", True), bool):
+        return _invalid()
     data.setdefault("enabled", True)
     data.setdefault("next", len(data["adaptations"]) + 1)
     return data
 
 
 @contextlib.contextmanager
-def _locked() -> Iterator[dict[str, Any]]:
+def _locked(repair: bool = False) -> Iterator[dict[str, Any]]:
+    """Read-modify-write under the lock. An unreadable file is only replaced
+    when the user asks (``repair``: ``tune on``/``off``); otherwise changes to
+    it are dropped."""
     p = path()
     p.parent.mkdir(parents=True, exist_ok=True)
     with open(p.with_suffix(".lock"), "a", encoding="utf-8") as lock:
@@ -86,8 +98,12 @@ def _locked() -> Iterator[dict[str, Any]]:
             fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             data = _read(p)
+            invalid = data.pop("invalid", False)
+            if invalid and repair:
+                data = _empty()
             yield data
-            write_private_json(p, data, indent=2)
+            if not invalid or repair:
+                write_private_json(p, data, indent=2)
         finally:
             if fcntl is not None:
                 fcntl.flock(lock, fcntl.LOCK_UN)
@@ -116,8 +132,12 @@ def enabled() -> bool:
     return bool(_read(path()).get("enabled", True))
 
 
+def is_invalid() -> bool:
+    return bool(_read(path()).get("invalid"))
+
+
 def set_enabled(on: bool) -> None:
-    with _locked() as data:
+    with _locked(repair=True) as data:
         data["enabled"] = bool(on)
 
 
@@ -184,4 +204,5 @@ def retire(adaptation_id: str) -> Adaptation | None:
 def to_json() -> str:
     data = _read(path())
     return json.dumps({"enabled": bool(data.get("enabled", True)),
+                       "invalid": bool(data.get("invalid")),
                        "adaptations": [asdict(a) for a in _all(data)]}, indent=2)

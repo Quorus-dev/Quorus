@@ -117,23 +117,30 @@ def _append(runtime_dir: Path, participant: str, log: str, row: dict, now: float
         pass  # best effort: bidding must never break a wake
 
 
-def load_turns(runtime_dir: Path, participant: str, now: float | None = None) -> list[dict]:
+def load_turns(runtime_dir: Path, participant: str, now: float | None = None, *,
+               scope: str | None = None) -> list[dict]:
+    """Turns in the window; with *scope*, only those recorded in that
+    relay|owner|repo (rows from before scoping match only the empty scope)."""
     now = time.time() if now is None else now
     return [r for r in _load(runtime_dir, participant, "turns", now)
-            if r.get("outcome") in OUTCOMES]
+            if r.get("outcome") in OUTCOMES
+            and (scope is None or r.get("scope", "") == scope)]
 
 
-def load_bids(runtime_dir: Path, participant: str, now: float | None = None) -> list[dict]:
-    return _load(runtime_dir, participant, "bids", time.time() if now is None else now)
+def load_bids(runtime_dir: Path, participant: str, now: float | None = None, *,
+              scope: str | None = None) -> list[dict]:
+    rows = _load(runtime_dir, participant, "bids", time.time() if now is None else now)
+    return [r for r in rows if scope is None or r.get("scope", "") == scope]
 
 
 def record_turn(runtime_dir: Path, participant: str, outcome: str, *,
-                kind: str = "", message_id: str = "", now: float | None = None) -> None:
+                kind: str = "", message_id: str = "", scope: str = "",
+                now: float | None = None) -> None:
     """Append one finished turn; ``message_id`` links an ``@open`` win to its bid."""
     if outcome not in OUTCOMES or mode() == "off":
         return
     now = time.time() if now is None else now
-    row: dict[str, Any] = {"ts": now, "outcome": outcome, "kind": kind}
+    row: dict[str, Any] = {"ts": now, "outcome": outcome, "kind": kind, "scope": scope}
     if message_id:
         row["message_id"] = message_id
     _append(runtime_dir, participant, "turns", row, now)
@@ -241,8 +248,8 @@ class Track:
 
 
 def track_for(runtime_dir: Path, participant: str, repo: Path | None,
-              now: float | None = None) -> Track:
-    turns = load_turns(runtime_dir, participant, now)
+              now: float | None = None, *, scope: str = "") -> Track:
+    turns = load_turns(runtime_dir, participant, now, scope=scope)
     published, reverted = ledger_counts(repo, participant, now)
 
     def n(outcome: str) -> int:
@@ -306,7 +313,7 @@ def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
     current = mode()
     if current == "off":
         return BidDecision(bid, reason)
-    track = track_for(runtime_dir, participant, repo)
+    track = track_for(runtime_dir, participant, repo, scope=scope)
     if not track.has_evidence:
         return BidDecision(bid, reason)  # no evidence yet: bid exactly as before
     now = time.time()
@@ -331,7 +338,8 @@ def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
     return BidDecision(bid, f"{reason}+track({arm}) {track.reason()}", announce)
 
 
-def report(runtime_dir: Path, participant: str, now: float | None = None) -> dict[str, Any]:
+def report(runtime_dir: Path, participant: str, now: float | None = None, *,
+           scope: str | None = None) -> dict[str, Any]:
     """The L2 metrics for this agent's ``@open`` wins in the last 24h.
 
     * ``arms``: failed-turn rate by arm (routed vs holdout; shadow is stock).
@@ -340,19 +348,21 @@ def report(runtime_dir: Path, participant: str, now: float | None = None) -> dic
       multiplier must not be switched on.
     """
     by_message: dict[Any, list[dict]] = {}
-    for b in sorted(load_bids(runtime_dir, participant, now), key=lambda b: b["ts"]):
-        by_message.setdefault(b.get("message_id"), []).append(b)
+    for b in sorted(load_bids(runtime_dir, participant, now, scope=scope),
+                    key=lambda b: b["ts"]):
+        by_message.setdefault((b.get("scope", ""), b.get("message_id")), []).append(b)
 
     def bid_before(turn: dict) -> dict | None:
         # The prediction made before this outcome existed; a later bid on the
         # same message (a retry) must never relabel it.
-        earlier = [b for b in by_message.get(turn.get("message_id"), [])
+        earlier = [b for b in by_message.get((turn.get("scope", ""), turn.get("message_id")),
+                                             [])
                    if b["ts"] <= turn["ts"]]
         return earlier[-1] if earlier else None
 
     arms = {a: {"turns": 0, "failed": 0} for a in ("routed", "holdout", "shadow")}
     predictive = {"low": {"turns": 0, "failed": 0}, "high": {"turns": 0, "failed": 0}}
-    for t in load_turns(runtime_dir, participant, now):
+    for t in load_turns(runtime_dir, participant, now, scope=scope):
         bid = bid_before(t) if t.get("kind") == "open_todo" else None
         if not bid or bid.get("arm") not in arms:
             continue

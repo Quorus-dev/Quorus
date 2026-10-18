@@ -37,7 +37,10 @@ def cmd_tune(args: Any, console: Any) -> None:
         console.print(tuning.to_json(), markup=False, highlight=False)
         return
     rows = tuning.adaptations()
-    if not tuning.enabled():
+    if tuning.is_invalid():
+        console.print(f"[warning]{tuning.path()} can't be read[/], so every agent is on "
+                      "stock behaviour. quorus tune off (or on) starts a fresh file.")
+    elif not tuning.enabled():
         console.print("[warning]tuning is off[/] (quorus tune on to resume)")
     if not rows:
         console.print("[dim]nothing learned yet. When an agent's own turns keep failing "

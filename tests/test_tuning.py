@@ -73,11 +73,16 @@ def test_off_stops_new_adaptations(store):
     assert _adapt() is not None
 
 
-def test_corrupt_file_reads_as_empty(store):
+def test_unreadable_file_fails_closed_and_is_not_overwritten(store):
     store.write_text("{not json")
-    assert tuning.adaptations() == [] and tuning.enabled()
+    assert tuning.is_invalid() and not tuning.enabled() and tuning.adaptations() == []
+    assert _adapt() is None and tuning.undo("t1") is None
+    assert store.read_text() == "{not json"
+    assert "can't be read" in _run()
+    tuning.set_enabled(True)  # an explicit tune on/off starts a fresh file
+    assert tuning.enabled() and not tuning.is_invalid()
     store.write_text(json.dumps({"adaptations": [{"id": "x", "kind": "evil"}]}))
-    assert tuning.adaptations() == []
+    assert tuning.adaptations() == [] and tuning.enabled()
 
 
 def test_concurrent_daemons_never_lose_a_write(store):

@@ -2731,9 +2731,7 @@ class Reflexd:
                     bid, bid_reason, message_id=message_id,
                     runtime_dir=self.config.runtime_dir,
                     participant=self.config.participant_name, repo=repo,
-                    scope="|".join((urlparse(self.config.relay_url).netloc,
-                                    agent_owner(self.config.participant_name),
-                                    str(repo or ""))),
+                    scope=self._track_scope(repo),
                     harness=detect_harness(self.config.participant_name) or "")
                 bid, bid_reason = decision.bid, decision.reason
                 if decision.announce:
@@ -3285,7 +3283,7 @@ class Reflexd:
         kind = triage.kind if triage is not None else ""
         _track.record_turn(
             self.config.runtime_dir, self.config.participant_name, turn_outcome,
-            kind=kind,
+            kind=kind, scope=self._track_scope(workspace_for(room) if room else None),
             message_id=(envelope.get("message_id") or envelope.get("id") or "")
             if kind == "open_todo" else "")
         previous_degraded = self._degraded_reason
@@ -3507,6 +3505,11 @@ class Reflexd:
         except Exception:
             return False
         return not _pause_announced(recent, marker)
+
+    def _track_scope(self, repo: Path | None) -> str:
+        """relay|owner|repo: L2 evidence learned in one context stays there."""
+        return "|".join((urlparse(self.config.relay_url).netloc,
+                         agent_owner(self.config.participant_name), str(repo or "")))
 
     async def _post_status(
         self, relay: RelayClient, room: str, envelope: dict[str, Any], text: str,
