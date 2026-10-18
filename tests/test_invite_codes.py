@@ -244,3 +244,25 @@ async def test_an_invitees_name_cant_be_granted_to_the_secret_holder(client) -> 
 class _Req:
     def __init__(self, application) -> None:
         self.app = application
+
+
+async def test_a_dm_to_a_new_name_reserves_it_before_delivery(client) -> None:
+    """Codex on 6f87fb51: only the sender was reserved, so a DM to a name
+    nobody held yet could be claimed by an invitee who then read it."""
+    payload = await _mint(client)
+    stale = await join_redeem._known_names(_Req(app))
+    r = await client.post("/messages", headers=ADMIN,
+                          json={"from_name": "arav", "to": "erin", "content": "private"})
+    assert r.status_code == 200, r.text
+    with pytest.raises(invite_codes.InviteError) as exc:
+        invite_codes.redeem(app.state.participant_keys, payload["c"], "erin", stale)
+    assert exc.value.status == 409
+
+
+async def test_dms_still_reach_an_existing_invitee(client) -> None:
+    payload = await _mint(client)
+    assert (await client.post("/v1/join/redeem", json={"code": payload["c"],
+                                                       "name": "dana"})).status_code == 200
+    r = await client.post("/messages", headers=ADMIN,
+                          json={"from_name": "arav", "to": "dana", "content": "welcome"})
+    assert r.status_code == 200, r.text

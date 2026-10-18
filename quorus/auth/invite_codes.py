@@ -86,7 +86,7 @@ def mint(store, *, room_id: str, room_name: str, role: str, issuer: str,
     return code, inv
 
 
-def reserve(store, names: Iterable[str]) -> str | None:
+def reserve(store, names: Iterable[str], *, deliver_to_claimed: bool = False) -> str | None:
     """Reserve *names* before the shared-secret holder acts as them. Returns
     the first name an invitee already holds (refuse the grant), else None.
 
@@ -94,6 +94,11 @@ def reserve(store, names: Iterable[str]) -> str | None:
     "arav" and an invite redeemed as "arav" can't both win: whichever commits
     second sees the other (codex, review of 8e6fa5c2: the known-names
     snapshot was stale by the time the claim was inserted).
+
+    With *deliver_to_claimed* (a DM's recipients) an invitee's name is not a
+    refusal: delivering to an existing member is fine. Only names nobody holds
+    yet get reserved, so a DM to a new name can't be claimed and read later
+    (codex, review of 6f87fb51).
     """
     wanted = [n for n in dict.fromkeys(names) if n]
     if not wanted:
@@ -110,6 +115,8 @@ def reserve(store, names: Iterable[str]) -> str | None:
                 invited = db.execute(
                     "SELECT 1 FROM claims WHERE lower(name) = ? AND kind = 'human'",
                     (folded,)).fetchone()
+                if invited and deliver_to_claimed:
+                    continue
                 if invited:
                     db.execute("ROLLBACK")
                     return name
