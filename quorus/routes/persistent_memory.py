@@ -78,14 +78,21 @@ def _memory_svc(request: Request) -> PersistentMemorySvc:
     return svc
 
 
-def _require_jwt(auth: AuthContext) -> None:
+def _actor(auth: AuthContext, participant: str) -> str:
+    """Who is acting: a JWT caller is its ``sub``.
+
+    The shared secret has no identity of its own, but it is the relay's admin
+    on every other route (rooms, locks, messages skip membership for it), so
+    here it acts as the ``participant`` in the URL. On the default local
+    setup (``quorus init --secret``) the MCP server sends that secret, and
+    memory_set/memory_get answered 403 "legacy auth" while every other tool
+    worked (0.5.0 published-package sweep, A3).
+    """
     if auth.is_legacy:
-        raise HTTPException(
-            status_code=403,
-            detail="legacy auth not permitted on this endpoint",
-        )
+        return participant
     if not auth.sub:
         raise HTTPException(status_code=401, detail="auth.sub required")
+    return auth.sub
 
 
 def _members_list(room_data: dict) -> list[str]:
@@ -118,11 +125,12 @@ def _policy_check(
     action: str,
     resource: str,
     members: list[str],
+    actor: str,
 ) -> None:
     policy_dir = getattr(request.app.state, "policy_dir", None)
     policy = load_policy_for_tenant(_tid(auth), policy_dir=policy_dir)
     ctx = PolicyContext(
-        actor=auth.sub or "",
+        actor=actor,
         action=action,
         resource=resource,
         role=auth.role or "agent",
@@ -146,8 +154,8 @@ async def set_memory(
     auth: AuthContext = Depends(verify_auth),
 ):
     """Set a value. Owner-only writes (or admin)."""
-    _require_jwt(auth)
-    if participant != auth.sub and auth.role != "admin":
+    actor = _actor(auth, participant)
+    if participant != actor and auth.role != "admin":
         raise HTTPException(
             status_code=403,
             detail="cannot write memory for another participant",
@@ -155,11 +163,11 @@ async def set_memory(
     tid = _tid(auth)
     rid, room_data = await require_room_member(request, auth, tid, room_id)
     members = _members_list(room_data)
-    _policy_check(request, auth, "memory:write", rid, members)
+    _policy_check(request, auth, "memory:write", rid, members, actor)
 
     rate_limit_svc = request.app.state.rate_limit_service
     if not await rate_limit_svc.check_with_limit(
-        tid, f"memory:write:{auth.sub}", 60,
+        tid, f"memory:write:{actor}", 60,
     ):
         raise HTTPException(
             status_code=429, detail="memory write rate limit",
@@ -176,7 +184,7 @@ async def set_memory(
                 tenant_id=tid,
                 message_id=_uuid.uuid4(),
                 event_type="memory:write",
-                actor=auth.sub,
+                actor=actor,
                 target=key,
                 room_id=rid,
                 room_name=room_data.get("name"),
@@ -222,11 +230,11 @@ async def get_memory(
     auth: AuthContext = Depends(verify_auth),
 ):
     """Read a value if visibility allows."""
-    _require_jwt(auth)
+    actor = _actor(auth, participant)
     tid = _tid(auth)
     rid, room_data = await require_room_member(request, auth, tid, room_id)
     members = _members_list(room_data)
-    _policy_check(request, auth, "memory:read", rid, members)
+    _policy_check(request, auth, "memory:read", rid, members, actor)
 
     svc = _memory_svc(request)
     entry = await svc.get(tid, participant, rid, key)
@@ -235,7 +243,7 @@ async def get_memory(
             status_code=404, detail=f"no entry for key {key!r}",
         )
     entry["owner"] = participant
-    if not _can_read(entry, auth.sub or "", members, auth.role or ""):
+    if not _can_read(entry, actor, members, auth.role or ""):
         # Don't leak existence — same shape as 404 to prevent oracle.
         raise HTTPException(
             status_code=404, detail=f"no entry for key {key!r}",
@@ -251,17 +259,17 @@ async def list_memory(
     auth: AuthContext = Depends(verify_auth),
 ):
     """List entries readable by the caller (visibility-filtered)."""
-    _require_jwt(auth)
+    actor = _actor(auth, participant)
     tid = _tid(auth)
     rid, room_data = await require_room_member(request, auth, tid, room_id)
     members = _members_list(room_data)
-    _policy_check(request, auth, "memory:read", rid, members)
+    _policy_check(request, auth, "memory:read", rid, members, actor)
     svc = _memory_svc(request)
     entries = await svc.list(tid, participant, rid)
     visible = []
     for e in entries:
         e["owner"] = participant
-        if _can_read(e, auth.sub or "", members, auth.role or ""):
+        if _can_read(e, actor, members, auth.role or ""):
             visible.append(e)
     return {
         "participant": participant,
@@ -280,8 +288,8 @@ async def delete_memory(
     auth: AuthContext = Depends(verify_auth),
 ):
     """GDPR-compliant delete. Owner or admin only."""
-    _require_jwt(auth)
-    if participant != auth.sub and auth.role != "admin":
+    actor = _actor(auth, participant)
+    if participant != actor and auth.role != "admin":
         raise HTTPException(
             status_code=403,
             detail="cannot delete memory for another participant",
@@ -289,7 +297,7 @@ async def delete_memory(
     tid = _tid(auth)
     rid, room_data = await require_room_member(request, auth, tid, room_id)
     members = _members_list(room_data)
-    _policy_check(request, auth, "memory:delete", rid, members)
+    _policy_check(request, auth, "memory:delete", rid, members, actor)
 
     # 2026-05-16 audit fix: record intent before the mutation. For deletes
     # this is especially important — GDPR/HIPAA require that even the
@@ -302,7 +310,7 @@ async def delete_memory(
                 tenant_id=tid,
                 message_id=_uuid.uuid4(),
                 event_type="memory:delete",
-                actor=auth.sub,
+                actor=actor,
                 target=key,
                 room_id=rid,
                 room_name=room_data.get("name"),

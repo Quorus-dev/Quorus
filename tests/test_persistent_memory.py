@@ -254,3 +254,105 @@ class TestPersistentMemoryRoutes:
         body = resp.json()
         assert body["count"] == 1
         assert body["entries"][0]["key"] == "room-k"
+
+
+# ---------------------------------------------------------------------------
+# Shared-secret relays (the default local setup) — 0.5.0 sweep, A3
+# ---------------------------------------------------------------------------
+
+_LEGACY_HEADERS = {"Authorization": "Bearer test-secret"}
+
+
+class TestSharedSecretRelay:
+    """``quorus init --secret`` gives the MCP server the shared secret and no
+    JWT. memory_set/memory_get answered 403 "legacy auth not permitted" while
+    every other tool worked. The secret is the relay's admin everywhere else,
+    so here it acts as the participant named in the URL."""
+
+    @pytest.fixture
+    async def legacy_room(self, client: AsyncClient) -> str:
+        resp = await client.post(
+            "/rooms", json={"name": "local-room", "created_by": "arav"},
+            headers=_LEGACY_HEADERS,
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["id"]
+
+    async def test_set_get_list_delete_round_trip(
+        self, client: AsyncClient, legacy_room: str,
+    ):
+        put = await client.put(
+            f"/v1/memory/arav-claude/{legacy_room}/plan",
+            json={"value": {"step": 1}, "visibility": "private"},
+            headers=_LEGACY_HEADERS,
+        )
+        assert put.status_code == 200, put.text
+        assert put.json()["entry"]["owner"] == "arav-claude"
+
+        got = await client.get(
+            f"/v1/memory/arav-claude/{legacy_room}/plan", headers=_LEGACY_HEADERS,
+        )
+        assert got.status_code == 200, got.text
+        assert got.json()["entry"]["value"] == {"step": 1}
+
+        listed = await client.get(
+            f"/v1/memory/arav-claude/{legacy_room}", headers=_LEGACY_HEADERS,
+        )
+        assert listed.status_code == 200
+        assert [e["key"] for e in listed.json()["entries"]] == ["plan"]
+
+        gone = await client.delete(
+            f"/v1/memory/arav-claude/{legacy_room}/plan", headers=_LEGACY_HEADERS,
+        )
+        assert gone.status_code == 200
+        assert (await client.get(
+            f"/v1/memory/arav-claude/{legacy_room}/plan", headers=_LEGACY_HEADERS,
+        )).status_code == 404
+
+    async def test_writes_are_rate_limited_per_participant(
+        self, client: AsyncClient, legacy_room: str,
+    ):
+        """The bucket used to be keyed on ``auth.sub`` (None for the secret),
+        which would have pooled every agent on the relay into one limit."""
+        for name in ("arav-claude", "arav-codex"):
+            for i in range(60):
+                resp = await client.put(
+                    f"/v1/memory/{name}/{legacy_room}/k{i}",
+                    json={"value": i}, headers=_LEGACY_HEADERS,
+                )
+                assert resp.status_code == 200, (name, i, resp.text)
+        resp = await client.put(
+            f"/v1/memory/arav-claude/{legacy_room}/one-more",
+            json={"value": 1}, headers=_LEGACY_HEADERS,
+        )
+        assert resp.status_code == 429
+
+    async def test_jwt_without_subject_is_still_refused(
+        self, client: AsyncClient, legacy_room: str,
+    ):
+        token = create_jwt(sub="", tenant_id="_legacy", tenant_slug="_legacy")
+        resp = await client.put(
+            f"/v1/memory/arav-claude/{legacy_room}/k",
+            json={"value": 1}, headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code in (401, 403)
+
+    async def test_mcp_memory_tools_work_over_the_shared_secret(
+        self, client: AsyncClient, legacy_room: str, monkeypatch,
+    ):
+        """End to end: the MCP tools exactly as a `quorus init --secret` agent
+        sends them (shared secret as bearer, no API key) against the relay app."""
+        import quorus_mcp.server as srv
+        from quorus_mcp import phase1_tools
+
+        monkeypatch.setattr(srv, "RELAY_URL", "http://test")
+        monkeypatch.setattr(srv, "RELAY_SECRET", "test-secret")
+        monkeypatch.setattr(srv, "API_KEY", "")
+        monkeypatch.setattr(srv, "INSTANCE_NAME", "arav-claude")
+        monkeypatch.setattr(srv, "_cached_jwt", None)
+        monkeypatch.setattr(srv, "_get_http_client", lambda: client)
+
+        set_out = await phase1_tools.memory_set(legacy_room, "focus", "ship 0.5.1")
+        assert set_out.startswith("OK: stored 'focus'"), set_out
+        get_out = await phase1_tools.memory_get(legacy_room, "focus")
+        assert "ship 0.5.1" in get_out and "Error" not in get_out, get_out
