@@ -2977,17 +2977,27 @@ class Reflexd:
         self._turns = [t for t in self._turns if now - t < PACE_WINDOW_S] + [now]
 
     async def _release_paced(self, relay: RelayClient, wait: float) -> None:
-        """When the slot opens, wake once per room for the parked messages."""
-        await self._sleep_or_stop(wait)
-        parked, self._pace_parked = self._pace_parked, {}
-        for envelope, triage in parked.values():
+        """When the slot opens, wake once per room for the parked messages.
+        Keep going while anything is parked: a room whose wake re-parked it
+        (the slot went to the room before it) waits for the next slot rather
+        than being stranded with no worker left (codex, review of 10d8a8e0)."""
+        while True:
+            await self._sleep_or_stop(wait)
             if self._stop.is_set():
                 return
-            try:
-                async with self._wake_lock:
-                    await self._wake_and_reply(relay, envelope, triage=triage)
-            except Exception as exc:  # one bad wake mustn't strand the rest
-                logger.exception("paced wake failed: %s", exc)
+            parked, self._pace_parked = self._pace_parked, {}
+            for envelope, triage in parked.values():
+                if self._stop.is_set():
+                    return
+                try:
+                    async with self._wake_lock:
+                        await self._wake_and_reply(relay, envelope, triage=triage)
+                except Exception as exc:  # one bad wake mustn't strand the rest
+                    logger.exception("paced wake failed: %s", exc)
+            if not self._pace_parked:
+                return
+            cap = pace_for(self.config.participant_name)
+            wait = 0.0 if cap is None else max(1.0, pace_wait_s(self._turns, cap, time.time()))
 
     def _agent_credential(self) -> tuple[str, bool]:
         """``(credential, legacy)`` for the woken agent.
