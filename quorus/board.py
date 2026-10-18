@@ -122,6 +122,21 @@ function rowState(name, presence, history, approvals, now) {
       r.reviewBad = BLOCK.test(verdict.content);
     }
   }
+  // The newest self-tuning line about this agent (quorus/runtime/track_record.py
+  // posts "(quorus) t1 (shadow, not applied): would set @open bids x0.75 for @x ·
+  // 2 errors, 0 clean/24h · undo: quorus tune undo t1", or "(quorus) adapted t1: …").
+  // One row line per decision, with its undo: the same affordance every slice shares.
+  const TUNE = /^\(quorus\) (adapted )?t\d+\b/, UNDO = / undo: quorus tune undo t\d+/;
+  const tune = history.slice().reverse().find((m) => TUNE.test(m.content || "")
+    && UNDO.test(m.content) && mention(name).test(m.content));
+  if (tune) {
+    const text = tune.content, id = (text.match(/\b(t\d+)\b/) || [])[1] || "";
+    const shadow = /shadow, not applied/.test(text);
+    const what = text.slice(text.indexOf(": ") + 2, text.indexOf(" · undo:"))
+      .replace(/^would set /, "");
+    r.tuning = { id, shadow, undo: "quorus tune undo " + id,
+                 text: (shadow ? "shadow, not applied: would set " : "adapted: ") + what };
+  }
   const c = B.card[name];  // the outcome ledger for this agent's work here
   if (c && c.survival !== null && c.survival !== undefined) r.keptPct = c.survival;
   if (c && c.commits) {
@@ -204,6 +219,11 @@ function rowEl(r) {
       row.append(box);
     });
     if (r.card) row.append(el("div", "bship", "track record: " + r.card));
+    if (r.tuning) {
+      const t = el("div", "btune", r.tuning.text + " · undo: ");
+      t.append(el("code", "", r.tuning.undo));
+      row.append(t);
+    }
     if (r.shipped) {
       const s = el("div", "bship", r.shipped);
       if (r.review) s.append(el("span", r.reviewBad ? "bad" : "good", " · " + r.review));

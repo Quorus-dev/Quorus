@@ -141,6 +141,8 @@ font:12px/1.6 var(--mono);color:var(--muted);display:grid}
 .bhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
 .bhead .tag{font:11px var(--mono);color:var(--muted)}.bline{color:var(--ink)}
 .bdetail,.bship{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.btune{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.btune code{font:12px var(--mono);color:var(--ink);background:var(--chip);padding:1px 6px;border-radius:6px}
 .bask,.bapproval{font-size:13px;background:var(--chip);border-radius:8px;padding:6px 8px;
 display:flex;flex-wrap:wrap;gap:8px;align-items:center;overflow-wrap:anywhere}
 .bapproval button{font:inherit;font-size:13px;padding:4px 12px;border-radius:8px;border:0;cursor:pointer}

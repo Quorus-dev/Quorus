@@ -186,3 +186,45 @@ def test_a_step_older_than_ten_minutes_clears(tmp_path: Path) -> None:
 
     # The chat's working line applies the same ten minutes.
     assert "last_wake_at" in DASHBOARD_JS and "< 600000" in DASHBOARD_JS
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_the_newest_tuning_line_becomes_a_board_row(tmp_path: Path) -> None:
+    """L2 (0.5.3): the daemon's adaptation line is a row on the agent it names,
+    shadow or applied, with its undo command. Every self-tuning slice shares
+    this one affordance instead of adding screens."""
+    now = 1792260000
+    presence = {"x-gemini": {"name": "x-gemini", "online": True, "status": "active"},
+                "x-gemini-2": {"name": "x-gemini-2", "online": True, "status": "active"}}
+    shadow = {"from_name": "x-gemini", "message_type": "status",
+              "timestamp": "2026-10-18T08:00:00Z",
+              "content": "(quorus) t1 (shadow, not applied): would set @open bids x0.75 for "
+                         "@x-gemini · x0.75 · 2 errors, 0 clean/24h · undo: quorus tune undo t1"}
+    applied = {"from_name": "x-gemini", "message_type": "status",
+               "timestamp": "2026-10-18T08:05:00Z",
+               "content": "(quorus) adapted t2: @open bids x0.60 for @x-gemini · 3 errors, "
+                          "0 clean/24h · undo: quorus tune undo t2"}
+    script = tmp_path / "run.js"
+    (tmp_path / "board.js").write_text(BOARD_JS)
+    script.write_text(
+        "globalThis.sessionStorage = { getItem: () => null };\n"
+        "const b = require('./board.js');\n"
+        f"const pres = {json.dumps(presence)}, shadow = {json.dumps(shadow)};\n"
+        f"const applied = {json.dumps(applied)}, now = {now};\n"
+        "const run = (hist) => Object.fromEntries(Object.keys(pres)"
+        ".map((n) => [n, b.rowState(n, pres, hist, [], now).tuning || null]));\n"
+        "console.log(JSON.stringify({ both: run([shadow, applied]), one: run([shadow]) }));\n")
+    out = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=30,
+                         cwd=tmp_path)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout)
+    assert got["both"]["x-gemini"] == {  # the newest line wins
+        "id": "t2", "shadow": False, "undo": "quorus tune undo t2",
+        "text": "adapted: @open bids x0.60 for @x-gemini · 3 errors, 0 clean/24h"}
+    assert got["one"]["x-gemini"] == {
+        "id": "t1", "shadow": True, "undo": "quorus tune undo t1",
+        "text": "shadow, not applied: would set @open bids x0.75 for @x-gemini · x0.75 · "
+                "2 errors, 0 clean/24h"}
+    assert got["both"]["x-gemini-2"] is None  # "@x-gemini" is not "@x-gemini-2"
+    assert 'el("div", "btune", r.tuning.text + " · undo: ")' in BOARD_JS
+    assert ".btune code{" in DASHBOARD_HTML
