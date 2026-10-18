@@ -216,6 +216,19 @@ def revoke(store, invite_id: str) -> bool:
                           (invite_id,)).rowcount > 0
 
 
+def invited_as(store, name: str) -> str | None:
+    """The role of the invite this name's current claim was redeemed with, if any.
+
+    An observer who leaves its last room is still an observer (codex, review of
+    910e2f69): without this, a caller in no rooms looked like a fresh member."""
+    with store._lock, store._connect() as db:
+        row = db.execute(
+            "SELECT i.role FROM invite_redemptions r JOIN invites i ON i.id = r.invite_id "
+            "JOIN claims c ON c.name = r.name AND c.claim_id = r.claim_id "
+            "WHERE r.name = ? ORDER BY r.redeemed_at DESC LIMIT 1", (name,)).fetchone()
+    return row[0] if row else None
+
+
 def is_revoked(store, invite_id: str) -> bool:
     with store._lock, store._connect() as db:
         row = db.execute("SELECT revoked FROM invites WHERE id = ?", (invite_id,)).fetchone()

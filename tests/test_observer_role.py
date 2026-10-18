@@ -248,3 +248,41 @@ async def test_quorus_share_observer_mints_an_observer_invite(client, monkeypatc
     assert "as an observer" in " ".join(capsys.readouterr().out.split())
     listed = (await client.get("/v1/join/invites", headers=ADMIN)).json()
     assert listed[0]["role"] == "observer"
+
+
+# ---------------------------------------------------------------------------
+# Codex's review of 910e2f69: three boundary gaps.
+# ---------------------------------------------------------------------------
+
+
+async def test_an_observer_who_leaves_every_room_is_still_an_observer(client) -> None:
+    olive = await _join(client, "build", "olive", "observer")
+    r = await client.post("/rooms/build/leave", json={"participant": "olive"}, headers=olive)
+    assert r.status_code == 200, r.text
+    made = await client.post("/rooms", json={"name": "olives", "created_by": "olive"},
+                             headers=olive)
+    assert made.status_code == 403 and made.json()["detail"] == OBSERVER_DENIED
+    dm = await client.post("/v1/dm", json={"from": "olive", "to": "arav", "content": "hi"},
+                           headers=olive)
+    assert dm.status_code == 403
+
+
+async def test_an_observer_cannot_read_approval_previews(client: AsyncClient) -> None:
+    olive = await _join(client, "build", "olive", "observer")
+    mark = await _join(client, "build", "mark", "member")
+    asked = await client.post("/v1/approvals", json={
+        "room_id": "build", "agent": "mark", "tool_name": "Bash",
+        "input": {"command": "cat secrets.txt"}}, headers=mark)
+    approval_id = asked.json().get("id") or asked.json().get("approval_id")
+    assert (await client.get(f"/v1/approvals/{approval_id}", headers=olive)).status_code == 404
+    listed = (await client.get("/v1/approvals", headers=olive)).json()["pending"]
+    assert listed == []
+    assert (await client.get(f"/v1/approvals/{approval_id}", headers=mark)).status_code == 200
+
+
+async def test_an_observer_cannot_download_bundles(client: AsyncClient, monkeypatch) -> None:
+    olive = await _join(client, "build", "olive", "observer")
+    r = await client.get("/v1/rooms/build/bundles/b1", headers=olive)
+    # The role check runs before anything else, so even a relay without bundle
+    # storage answers an observer with the observer refusal.
+    assert r.status_code == 403 and r.json()["detail"] == OBSERVER_DENIED

@@ -106,7 +106,7 @@ async def list_bundles(room_id: str, request: Request,
 @router.get("/v1/rooms/{room_id}/bundles/{bundle_id}")
 async def download_bundle(room_id: str, bundle_id: str, request: Request,
                           auth: AuthContext = Depends(verify_auth)) -> Response:
-    tid, rid = await _member(request, auth, room_id)
+    tid, rid = await _writer(request, auth, room_id)  # code: not for observers
     found = await _service(request).get(tid, rid, bundle_id)
     if found is None:
         raise HTTPException(status_code=404, detail="bundle not found or expired")

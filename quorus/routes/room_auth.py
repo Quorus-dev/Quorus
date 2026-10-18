@@ -107,7 +107,20 @@ async def require_not_observer_only(request: Request, auth: AuthContext, tid: st
     svc = request.app.state.room_service
     rooms = await svc.list_for_member(tid, auth.sub)
     if not rooms:
+        if await _invited_as(request, auth.sub) == OBSERVER:
+            raise HTTPException(status_code=403, detail=OBSERVER_DENIED)
         return
     if any((room.get("member_roles") or {}).get(auth.sub) in WRITER_ROLES for room in rooms):
         return
     raise HTTPException(status_code=403, detail=OBSERVER_DENIED)
+
+
+async def _invited_as(request: Request, name: str) -> str | None:
+    store = getattr(request.app.state, "participant_keys", None)
+    if store is None:  # API-key relays keep no invite records here
+        return None
+    import asyncio
+
+    from quorus.auth import invite_codes
+
+    return await asyncio.to_thread(invite_codes.invited_as, store, name)
