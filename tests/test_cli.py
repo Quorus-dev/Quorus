@@ -2740,3 +2740,12 @@ def test_spawned_agent_mcp_config_runs_the_real_server(tmp_path, monkeypatch):
     entry = server["mcpServers"]["quorus"]
     assert entry["command"] == "/opt/q/bin/quorus-mcp" and entry["args"] == []
     assert "mcp_server.py" not in json.dumps(server)
+
+
+def test_the_banner_shows_the_installed_version(capsys):
+    """F2 (new-user pass 1): the first-run banner said v0.5.0 on 0.5.2."""
+    import quorus
+    from quorus_cli import ui
+
+    ui.banner()
+    assert f"v{quorus.__version__}" in capsys.readouterr().out
