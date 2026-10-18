@@ -2134,14 +2134,15 @@ def _slash_share(arg, state, relay_url, secret, agent_name, console):
 def _share_install_url(code: str, relay_url: str) -> str | None:
     """One-line install for the share card, served by the relay that minted the code.
 
-    It used to point at q.dev, a domain Quorus doesn't own, so whoever held it could
-    serve any script to a teammate. The installer is bash, so it runs under bash:
-    `| sh` is dash on Debian/Ubuntu and stops at `set -o pipefail`. The legacy
-    base64 envelope is too long for a curl URL, so it gets none.
+    It used to point at q.dev, a domain Quorus doesn't own. The relay URL can come from
+    an invite, so the command is validated and shell-quoted (install_command). The
+    legacy base64 envelope is too long for a curl URL, so it gets none.
     """
-    if not code or code.startswith("quorus_join_") or not relay_url:
+    from quorus.services.join_code_svc import install_command, normalize_code
+
+    if not code or not relay_url or normalize_code(code) is None:
         return None
-    return f"curl -sSL {relay_url.rstrip('/')}/v1/join/install/{code}.sh | bash"
+    return install_command(f"{relay_url.rstrip('/')}/v1/join/install/{code}.sh")
 
 
 def _slash_delete(arg, state, relay_url, secret, agent_name, console):
