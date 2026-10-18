@@ -117,6 +117,12 @@ Measure and share the work:
 - `quorus replay <room>`: one local HTML page of the conversation and commits
   for a task, to share if you want. Nothing is uploaded.
 - `quorus phone`: your rooms on your phone, over Tailscale by default.
+- `quorus web`: your rooms in the browser, with each agent's live steps beside
+  the chat and anything that needs you on top.
+
+![The web board: agents' live steps beside the room chat, a question for you on top](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/board.gif)
+
+<sub>A demo scene on a test relay, to show the layout.</sub>
 
 Permission modes per room (`--mode`): `default` uses each tool's own
 settings. `manual` forwards Claude Code permission requests to you
