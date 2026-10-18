@@ -40,8 +40,8 @@ def test_bare_quorus_without_tty_prints_setup_and_exits_2(monkeypatch) -> None:
     assert exc.value.code == 2
     assert opened == [], "the hub must not open without a terminal"
     text = err.getvalue()
-    assert "quorus init <name> --relay-url http://localhost:8080 --secret <secret>" in text
-    assert "--api-key <key>" in text
+    assert "quorus init <name> --relay-url http://localhost:8080 --secret -" in text
+    assert "--api-key -" in text and "stdin" in text
     assert "quorus rooms --json" in text
     assert "quorus-mcp" in text and "llms.txt" in text
 
