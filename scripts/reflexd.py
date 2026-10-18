@@ -3079,6 +3079,7 @@ class Reflexd:
         # inherit daemon cwd and the wake instructions say so.
         ws = workspace_for(room)
         worktree = None
+        worktree_problem = ""
         if ws is not None and reflexd_wake.WORKTREES_ENABLED:
             try:
                 worktree = await asyncio.to_thread(
@@ -3086,8 +3087,11 @@ class Reflexd:
                 )
                 if worktree is not None:
                     await asyncio.to_thread(reflexd_wake.sync_worktree, worktree)
+                else:
+                    worktree_problem = "git couldn't create one in the bound repo"
             except (OSError, subprocess.SubprocessError) as exc:
                 logger.warning("worktree setup failed, using %s: %s", ws, exc)
+                worktree, worktree_problem = None, type(exc).__name__
         # Step 3 of code across machines: remember where the branch started
         # so a review request can carry exactly this wake's commits.
         pre_head = (await asyncio.to_thread(_review_share.head_of, worktree)
@@ -3187,6 +3191,16 @@ class Reflexd:
                 prior_session, _persist_session = None, None
             if room_mode != "default":
                 extra_kw["mode"] = room_mode
+            if (worktree is None and ws is not None and reflexd_wake.WORKTREES_ENABLED
+                    and reflexd_readonly.is_read_only(harness, room_mode)):
+                # Without its worktree the turn would run in the shared checkout,
+                # where the read-only guard can't see its writes (codex, review
+                # of 8805dc00). Fail closed: don't run it, say why.
+                logger.error("read-only turn skipped: no safe worktree (%s)", worktree_problem)
+                await self._post_status(
+                    relay, room, envelope, "⚠ read-only turn skipped: couldn't set up a "
+                    f"safe worktree: {worktree_problem or 'unknown reason'}")
+                return
             if worktree is not None:
                 # Settle anything a crashed read-only turn left first, then
                 # snapshot this one if it is read-only (security fix 15).

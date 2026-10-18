@@ -221,3 +221,35 @@ def test_a_corrupt_marker_blocks_publishing_and_is_never_overwritten(tmp_path: P
     for _ in range(2):
         assert asyncio.run(d._settle_readonly(_Relay(), "build", _WT(), None)) is True
     assert len(posted) == 1 and "nothing from quorus/arav-gemini will be published" in posted[0]
+
+
+def _setup_fails(monkeypatch, how: str) -> None:
+    def none(*_a, **_k):
+        return None
+
+    def boom(*_a, **_k):
+        raise subprocess.CalledProcessError(128, ["git", "worktree", "add"])
+    monkeypatch.setattr(reflexd.reflexd_wake, "agent_worktree", none if how == "none" else boom)
+
+
+def test_a_read_only_turn_never_runs_in_the_shared_checkout(monkeypatch, tmp_path: Path) -> None:
+    """Codex's repro on 8805dc00: worktree setup fails, the wake falls back to
+    the bound repo itself, and a leaky read-only harness writes pwned.txt there
+    where the guard can't see it."""
+    for how in ("none", "raises"):
+        _setup_fails(monkeypatch, how)
+        repo_dir = tmp_path / how
+        repo_dir.mkdir()
+        repo = _repo(repo_dir)
+        relay = _wake(monkeypatch, repo_dir, repo, sender="mallory", mode="autonomous")
+        assert not (repo / "pwned.txt").exists(), how
+        assert any(p["content"].startswith("⚠ read-only turn skipped: couldn't set up a "
+                                           "safe worktree:") for p in relay.posted), how
+
+
+def test_writable_turns_still_fall_back_to_the_bound_repo(monkeypatch, tmp_path: Path) -> None:
+    _setup_fails(monkeypatch, "raises")
+    repo = _repo(tmp_path)
+    relay = _wake(monkeypatch, tmp_path, repo, sender="arav", mode="autonomous")
+    assert (repo / "pwned.txt").exists()  # the owner's turn runs in place, as before
+    assert not any("read-only turn skipped" in p["content"] for p in relay.posted)
