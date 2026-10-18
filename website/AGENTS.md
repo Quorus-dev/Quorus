@@ -1,5 +1,12 @@
-<!-- BEGIN:nextjs-agent-rules -->
-# This is NOT the Next.js you know
+# quorus.dev
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
-<!-- END:nextjs-agent-rules -->
+One static page (`index.html`, `src/site.css`, `src/main.ts`), built with Vite.
+No framework and no third-party scripts, fonts or trackers; the CSP in
+`vercel.json` allows only same-origin resources.
+
+Content rules: every claim must be true of the package on PyPI, as the README
+states it. No logos, badges, counters, testimonials or "trusted by" lines.
+Cursor, Windsurf and Cline connect over MCP only; never call them supported.
+
+`/llms.txt` and `/agents.md` are copied from the repo root's `llms.txt` at build
+time (`npm run build`), so there is one copy.
