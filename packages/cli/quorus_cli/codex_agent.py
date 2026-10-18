@@ -108,7 +108,7 @@ def _auth_headers(
             f"{relay_url}/v1/auth/token",
             json={"api_key": api_key},
             timeout=10,
-            follow_redirects=True,
+            follow_redirects=False,
         )
         resp.raise_for_status()
         token = resp.json()["token"]

@@ -288,3 +288,53 @@ def test_init_on_the_same_relay_keeps_its_agent_keys(hub_on_relay_a):
     _init(RELAY_A + "/")
     profile = json.loads((hub_on_relay_a / "profiles" / "work.json").read_text())
     assert profile["agent_api_keys"] == {"alice-claude": "mct_agent_for_a"}
+
+
+# ── credential exchanges never follow a redirect (codex, c0a0a097) ──────────
+
+
+def test_cli_token_exchange_never_follows_a_redirect_to_another_relay(monkeypatch):
+    from quorus_cli import cli
+
+    seen_b: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "relay-a.example":
+            return httpx.Response(307, headers={"location": "https://relay-b.example/steal"})
+        seen_b.append(request.content)
+        return httpx.Response(200, json={"token": "x"})
+
+    transport = httpx.MockTransport(handler)
+
+    def post(url, **kw):
+        with httpx.Client(transport=transport) as c:
+            return c.post(url, **kw)
+
+    monkeypatch.setattr(cli.httpx, "post", post)
+    monkeypatch.setattr(cli, "RELAY_URL", "https://relay-a.example")
+    monkeypatch.setattr(cli, "API_KEY", KEY_A)
+    monkeypatch.setattr(cli, "_cached_jwt", None)
+    with pytest.raises(httpx.HTTPStatusError, match="307"):
+        cli._auth_headers()
+    assert seen_b == []  # A's key never reached B
+
+
+def test_no_credential_post_follows_redirects():
+    """Any POST that carries a key or invite in its body keeps follow_redirects off."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    offenders = []
+    for path in [*(root / "packages").rglob("*.py"), *(root / "quorus").rglob("*.py")]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            url = ast.unparse(node.args[0])
+            if not any(p in url for p in ("/v1/auth/token", "/v1/auth/signup")):
+                continue
+            for kw in node.keywords:
+                if kw.arg == "follow_redirects" and ast.unparse(kw.value) != "False":
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert offenders == []

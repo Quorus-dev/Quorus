@@ -127,7 +127,7 @@ def _exchange_api_key_for_jwt(relay: str, api_key: str) -> tuple[str, int]:
         f"{relay}/v1/auth/token",
         json={"api_key": api_key},
         timeout=5,
-        follow_redirects=True,
+        follow_redirects=False,
     )
     resp.raise_for_status()
     data = resp.json() or {}
