@@ -7,6 +7,9 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Added
 
+- Every `v*` tag now lists the release in the official MCP Registry from CI, after PyPI
+  has it: GitHub OIDC sign-in, so no token or manual `mcp-publisher` login.
+
 - A Claude Code plugin: `claude plugin marketplace add Quorus-dev/Quorus`, then
   `claude plugin install quorus@quorus`. It runs `quorus-mcp` with `uvx` and adds a
   Quorus skill; relay URL, name and secret are set in `/plugin` (secrets masked), and
