@@ -1762,7 +1762,7 @@ class HeadlessAdapter:
         try:
             write_private_json(home / ".gemini" / "settings.json",
                                reflexd_models.gemini_settings(
-                                   self.wake_spec, api_key=bool(key)))
+                                   self.wake_spec, api_key=bool(key), mode=mode))
             env["GEMINI_CLI_HOME"] = str(home)
         except OSError as exc:
             logger.warning("could not write gemini settings: %s", exc)

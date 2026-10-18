@@ -594,3 +594,34 @@ def test_a_timeout_says_what_the_agent_was_doing() -> None:
                     "reply. Mention me to continue.")
     assert reflexd._timed_out_line() == ("⚠ ran out of time before finishing its reply. "
                                          "Mention me to continue.")
+
+
+def test_a_manual_or_readonly_gemini_cannot_leave_plan_mode() -> None:
+    """Release sweep: in a manual room Gemini 0.64 called exit_plan_mode (it
+    approves itself headless), wrote gm.txt, and Quorus published it to main."""
+    for mode in ("manual", "readonly"):
+        cfg = models.gemini_settings(None, mode=mode)
+        assert cfg["tools"]["exclude"] == ["exit_plan_mode"]
+        assert "--approval-mode" in models.gemini_flags(mode=mode)
+        assert models.gemini_flags(mode=mode)[-1] == "plan"
+    for mode in ("default", "autonomous"):
+        assert "exclude" not in models.gemini_settings(None, mode=mode)["tools"]
+
+
+def test_the_gemini_wake_writes_its_mode_into_the_settings(tmp_path: Path,
+                                                           monkeypatch) -> None:
+    import json as _json
+
+    adapter = reflexd.HeadlessAdapter()
+    adapter.agent_config_dir = tmp_path / "cfg"
+    adapter.wake_spec = None
+
+    async def capture(*_a: Any, **_k: Any) -> str:
+        return "ok"
+    adapter._run_with_resume = capture  # type: ignore[method-assign]
+    monkeypatch.setattr(reflexd.reflexd_wake, "wake_env", lambda *a, **k: {})
+    asyncio.run(adapter._run_gemini("ctx", cwd=None, resume=None, on_session=None,
+                                    mode="manual"))
+    written = _json.loads((tmp_path / "cfg" / "gemini-home" / ".gemini" /
+                           "settings.json").read_text())
+    assert written["tools"]["exclude"] == ["exit_plan_mode"]
