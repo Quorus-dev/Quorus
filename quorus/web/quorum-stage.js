@@ -224,6 +224,14 @@ function tick(S, now) {
   S.raf = requestAnimationFrame((n) => tick(S, n));
   const dt = Math.min(0.1, (now - (S.last || now)) / 1000);
   S.last = now;
+  // The first 20 ticks draw nothing and only measure the display's own frame period
+  // (60 Hz, 120 Hz, a 30 Hz monitor, headless Chrome pacing rAF at 20 Hz), so the
+  // budget below compares render time against the display and not the other way round.
+  if (S.period === undefined) {
+    if (dt > 0) (S.warm = S.warm || []).push(dt);
+    if ((S.warm || []).length >= 20) S.period = S.warm.sort((a, b) => a - b)[10];
+    return;
+  }
   const t = (now - S.t0) / 1000;
   budget(S, dt, t);
   const goal = S.focus ? 1 : 0;
@@ -247,15 +255,20 @@ function tick(S, now) {
 // ratio drops to 1.5 on a retina screen, and only under 30 fps does it drop to 1
 // (Arav: blurry is worse than no bloom). Never back up (that would oscillate), and
 // the first two seconds don't count (shader compiles). Plaques are DOM, always sharp.
+// "Long" is relative to the display period tick() measured before drawing: nothing
+// counts as slow unless it is also 1.5× slower than the display itself. Without
+// that, the guard shed bloom and DPR on an M4 Pro drawing a frame in under a
+// millisecond, only because headless Chrome paced rAF at 20 Hz.
 function budget(S, dt, t) {
   S.frames = (S.frames || 0) + 1;
   S.ema = S.ema === undefined ? dt : S.ema * 0.9 + dt * 0.1;
   readout(S, t);
   if (t < 2 || dt <= 0 || S.lockQuality) return;
-  if (S.ema < 0.024) { S.slowSince = 0; return; }
+  const slow = Math.max(0.024, S.period * 1.5);
+  if (S.ema < slow) { S.slowSince = 0; return; }
   S.slowSince = S.slowSince || t;
   if (t - S.slowSince < 1.5) return;  // slow for a moment is fine; slow for 1.5 s is not
-  const under30 = S.ema > 1 / 30, dpr = S.renderer.getPixelRatio();
+  const under30 = S.ema > Math.max(1 / 30, S.period * 2.2), dpr = S.renderer.getPixelRatio();
   S.slowSince = 0;
   S.ema = 0.016;
   if (S.bloom) { S.bloom = false; S.quality = "no-bloom"; return; }
