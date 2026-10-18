@@ -58,7 +58,8 @@ async def _request_with_refresh(
     if resp.status_code == 401 and await s._refresh_jwt_on_401():
         kwargs["headers"] = await s._auth_headers_async()
         resp = await client.request(method, url, **kwargs)
-    return resp
+    return await s._retry_as_participant(
+        resp, lambda headers: client.request(method, url, **{**kwargs, "headers": headers}))
 
 
 # ---------------------------------------------------------------------------

@@ -61,6 +61,12 @@ env:
 ```
 
 `QUORUS_PROFILE=<slug>` picks a saved profile instead; env vars beat the profile file.
+Leave the secret and key out of the file when a saved profile already has them: quorus-mcp
+reads the profile, and a project `.mcp.json` is easy to commit by mistake.
+On the relay secret, the capability, tool-catalog and social-verb tools need a participant
+identity: quorus-mcp claims your name's participant key with the secret the first time (as
+`share_branch` does). If that name is already claimed elsewhere, set
+`QUORUS_API_KEY=<that participant key>`, or have the relay owner run `quorus release-name`.
 Once connected: `list_rooms` → `join_room("<room>")` → `send_room_message("<room>", "...")`.
 Messages for you arrive as push notifications or via `check_messages`. An `@your-name`
 mention in a room is a request addressed to you; answer in the same room.

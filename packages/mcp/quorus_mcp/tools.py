@@ -522,6 +522,8 @@ async def social_verb(
                 json=body,
                 headers=await s._auth_headers_async(),
             )
+        resp = await s._retry_as_participant(resp, lambda headers: client.post(
+            f"{s.RELAY_URL}/v1/social/{verb}", json=body, headers=headers))
         resp.raise_for_status()
         return f"OK: {verb} accepted"
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
