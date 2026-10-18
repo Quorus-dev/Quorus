@@ -484,7 +484,7 @@ def _first_launch_setup(console: Console) -> dict:
     if not relay_ok:
         console.print(
             "\n  [dim]Not connected yet. Fix the above and rerun [bold]quorus[/], or set "
-            "up explicitly: [accent]quorus init <name> --secret <secret>[/] then "
+            "up explicitly: [accent]quorus init <name> --secret -[/] then "
             "[accent]quorus relay[/].[/]"
         )
         # Don't save a half-working config: the next `quorus` re-offers this

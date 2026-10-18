@@ -4944,6 +4944,12 @@ def _cmd_init(args):
     relay_url = (args.relay_url or "").strip().rstrip("/")
     secret = getattr(args, "secret", None) or ""
     api_key = getattr(args, "api_key", None) or ""
+    # `--secret -` / `--api-key -` read it from stdin, so it never sits in argv
+    # (shell history, ps) the way `--secret <value>` does.
+    if secret == "-":
+        secret = sys.stdin.readline().strip()
+    elif api_key == "-":
+        api_key = sys.stdin.readline().strip()
     # 0. Validate inputs
     import re as _re
     if not name:
@@ -7068,7 +7074,7 @@ def _cmd_doctor(args):
         "Config file exists",
         config_file.exists(),
         detail=str(config_file),
-        fix="Run: quorus init <name> --secret <secret>",
+        fix="Run: quorus init <name> --secret -",
     )
 
     # 1b. Env vars that silently override the file (a stray RELAY_URL sent a
@@ -7090,7 +7096,7 @@ def _cmd_doctor(args):
         "Relay URL configured",
         bool(RELAY_URL),
         detail=RELAY_URL or "(unset)",
-        fix="Run: quorus init <name> --secret <secret>",
+        fix="Run: quorus init <name> --secret -",
     )
 
     # 3. Secret configured
@@ -7145,7 +7151,7 @@ def _cmd_doctor(args):
         auth_ok,
         detail=auth_detail,
         fix="relay_secret (or api_key) must match the relay — "
-            "re-run: quorus init <name> --secret <secret>",
+            "re-run: quorus init <name> --secret -",
     )
 
     # 7. MCP config — optional: Quorus works without any AI app connected
@@ -7334,7 +7340,7 @@ def _cmd_relay(args):
     if not secret:
         _ui.error(
             "No relay secret configured",
-            hint="run: quorus init <your-name> --secret <a-secret> (then quorus relay)",
+            hint="run: quorus init <your-name> --secret - (reads it from stdin), then quorus relay",
         )
         sys.exit(1)
     host = getattr(args, "host", None) or "127.0.0.1"
@@ -8314,8 +8320,9 @@ def _has_tty() -> bool:
 _NON_INTERACTIVE_SETUP = """\
 quorus: the interactive hub needs a terminal, and stdin/stdout is not one.
 Set up without a terminal:
-  quorus init <name> --relay-url http://localhost:8080 --secret <secret>   # shared-secret relay
-  quorus init <name> --relay-url <url> --api-key <key>                      # account relay
+  quorus init <name> --relay-url http://localhost:8080 --secret -   # shared-secret relay
+  quorus init <name> --relay-url <url> --api-key -                  # account relay
+  (- reads the secret or key from stdin, so it stays out of shell history)
 Then use the plain commands; --json gives machine-readable output:
   quorus rooms --json | quorus say <room> "<message>" | quorus history <room> --json
 Agents: `quorus-mcp` is the MCP server (stdio); llms.txt in the repo and package explains
@@ -8717,7 +8724,7 @@ def _cmd_whoami(args) -> None:
                               "[bold]quorus workspaces use <slug>[/][/]")
         else:
             _ui.console.print("  [dim]not set up yet — run [bold]quorus[/] (guided) or "
-                              "[bold]quorus init <your-name> --secret <secret>[/][/]")
+                              "[bold]quorus init <your-name> --secret -[/][/]")
         raise SystemExit(1)
     data = pm.get(slug) or {}
     if not data:
@@ -8842,8 +8849,8 @@ def main():
         help="Override config dir (default: ~/.quorus; also honors $QUORUS_CONFIG_DIR)",
     )
     p_init_auth = p_init.add_mutually_exclusive_group(required=True)
-    p_init_auth.add_argument("--secret", help="Shared secret (legacy auth)")
-    p_init_auth.add_argument("--api-key", help="API key (production auth)")
+    p_init_auth.add_argument("--secret", help="Shared secret (legacy auth); - reads it from stdin")
+    p_init_auth.add_argument("--api-key", help="API key (production auth); - reads it from stdin")
     # Productized init flags (escape hatches for CI / non-interactive shells).
     p_init.add_argument(
         "--no-autostart",
@@ -10115,7 +10122,7 @@ def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
     detail = str(detail or exc.response.reason_phrase or "").strip()
     if code in (401, 403):
         _ui.error("The relay rejected your credentials" + (f": {detail}" if detail else ""),
-                  hint="check your secret/API key — re-run `quorus init <name> --secret <secret>`")
+                  hint="check your secret/API key — re-run `quorus init <name> --secret -`")
         return 3
     if code == 404:
         _ui.error(detail or "Not found", hint="`quorus rooms` lists what exists")
