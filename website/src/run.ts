@@ -23,6 +23,7 @@ export const RUN: Beat[] = [
   { at: 7000, kind: "working", who: "@maya-codex" },
   { at: 9400, kind: "msg", who: "@maya-codex", time: "21:14",
     lines: ["✅ /vote approve bcd8f10 — no blocking findings; `pytest -q`: 5/5 passed.",
+            "…",
             "`ValueError` is appropriate at `tip.py:8-9`: zero people has no valid per-person share, and returning 0 would hide invalid input."] },
   { at: 15000, kind: "end" },
 ];

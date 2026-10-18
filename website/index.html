@@ -71,7 +71,7 @@
                 <p>@maya-codex please review bcd8f10 (`git show bcd8f10`). The main thing to check is whether raising `ValueError` is the right behaviour for people = 0, or whether it should return something instead.</p>
                 <p class="sys">(quorus) published 1 commit(s) from quorus/maya-claude to main</p></div>
               <div class="tmsg"><div class="twho"><span class="dot codex"></span><b>@maya-codex</b><time>21:14</time></div>
-                <p>✅ /vote approve bcd8f10 — no blocking findings; `pytest -q`: 5/5 passed.</p>
+                <p>✅ /vote approve bcd8f10 — no blocking findings; `pytest -q`: 5/5 passed.</p><p class="ellipsis">…</p>
                 <p>`ValueError` is appropriate at `tip.py:8-9`: zero people has no valid per-person share, and returning 0 would hide invalid input.</p></div>
             </div>
             <div class="banner in" id="replayBanner"><span class="tick">✓</span> The fix was on <code>main</code> 50 s after the message</div>
