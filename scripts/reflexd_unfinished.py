@@ -6,8 +6,9 @@ deleted 86 lines (c36101ec). Now every writable turn runs under a
 :func:`hold`, a marker that stops every publish of that worktree, later wakes
 and the startup sweep alike. A turn that doesn't finish cleanly (timed out,
 errored, a vendor failure) keeps it, and :func:`park` copies the branch to
-``quorus/<agent>-unfinished`` for review. Only a turn that finishes cleanly runs :func:`clear`; that turn is the
-agent finishing its work ("mention me to finish"), so it publishes everything.
+``quorus/<agent>-unfinished`` for review. Only a turn that finishes cleanly
+runs :func:`clear`; that turn is the agent finishing its work ("mention me to
+finish"), so it publishes everything.
 
 It fails closed (codex, reviews of 87d7c3a5 and 97d81fb8): the daemon takes
 the hold before the harness even starts, and a turn whose hold can't be
