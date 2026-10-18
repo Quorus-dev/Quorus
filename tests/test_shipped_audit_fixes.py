@@ -12,6 +12,10 @@ ADMIN = {"Authorization": "Bearer test-secret"}
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    # Services read these at _reset_state(); a leaked DATABASE_URL from an
+    # earlier test would point join codes at an uninitialised Postgres.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("TRUSTED_PROXY_COUNT", raising=False)
     _reset_state()
     app.state.participant_keys = ParticipantKeyStore(tmp_path)
     monkeypatch.setattr(
