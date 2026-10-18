@@ -49,10 +49,10 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
-- A `postgres://` DATABASE_URL (what `fly postgres attach` sets) wasn't rewritten for
-  asyncpg, so the relay couldn't use it. It is now, like `postgresql://`.
 - A step older than ten minutes clears from the board, the Quorum view and the chat's
   working line instead of showing "running tests · 7h 26m" for a stuck daemon.
+- A `postgres://` DATABASE_URL (what `fly postgres attach` sets) wasn't rewritten for
+  asyncpg, so the relay couldn't use it. It is now, like `postgresql://`.
 - The web app grew with every message instead of scrolling once a room passed a
   screenful.
 
