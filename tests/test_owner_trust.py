@@ -39,16 +39,26 @@ class _Relay:
 
 
 def _run(monkeypatch, tmp_path: Path, sender: str, trust: str | None) -> dict:
+    import subprocess
+
+    repo = tmp_path / "app"  # a real repo: read-only turns run only in a guarded worktree
+    if not repo.exists():
+        repo.mkdir()
+        for cmd in (["init", "-q", "-b", "main"],
+                    ["-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q",
+                     "--allow-empty", "-m", "init"]):
+            subprocess.run(["git", *cmd], cwd=repo, check=True, capture_output=True)
     bindings = tmp_path / "b.json"
-    entry = {"path": str(tmp_path), "mode": "autonomous"}
+    entry = {"path": str(repo), "mode": "autonomous"}
     if trust:
         entry["trust"] = trust
     bindings.write_text(json.dumps({"build": entry}))
     monkeypatch.setattr(reflexd, "ROOM_BINDINGS_PATH", bindings)
     monkeypatch.setenv("REFLEXD_OWNER", "arav")
-    monkeypatch.setattr(reflexd.reflexd_wake, "WORKTREES_ENABLED", False)
+    monkeypatch.setattr(reflexd.reflexd_wake, "WORKTREES_ENABLED", True)
     d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
-                                              participant_name="arav-claude"))
+                                              participant_name="arav-claude",
+                                              runtime_dir=tmp_path / "runtime"))
     seen: dict = {}
 
     async def fake_run(harness, *, context, mode="default", **_kw: Any) -> str:
