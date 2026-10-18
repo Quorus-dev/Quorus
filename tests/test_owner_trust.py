@@ -184,3 +184,37 @@ def test_cursor_inbox_prompt_is_owner_only(tmp_path: Path, monkeypatch) -> None:
     out = reflexd.HeadlessAdapter._write_cursor_inbox("room transcript", participant="a-cursor")
     f = next((tmp_path / ".cursor" / "inbox" / "a-cursor").glob("wake_*.md"))
     assert "wrote prompt" in out and stat.S_IMODE(os.stat(f).st_mode) == 0o600
+
+
+# Codex's review of f5d69289.
+
+def test_an_agent_handoff_with_no_traceable_request_is_read_only(monkeypatch, tmp_path) -> None:
+    roles = {"aarya": "member", "aarya-codex": "member"}
+    # no reply_to at all
+    assert _run(monkeypatch, tmp_path, "aarya-codex", "members",
+                roles=roles)["mode"] == "readonly"
+    # an ancestor the relay doesn't have
+    assert _run(monkeypatch, tmp_path, "aarya-codex", "members", reply_to="gone",
+                history=[], roles=roles)["mode"] == "readonly"
+    # a cycle
+    history = [_msg("a", "aarya-codex", "b"), _msg("b", "aarya-codex", "a")]
+    assert _run(monkeypatch, tmp_path, "aarya-codex", "members", reply_to="a",
+                history=history, roles=roles)["mode"] == "readonly"
+
+
+def test_an_agent_serving_a_writers_request_keeps_its_write_turn(monkeypatch, tmp_path) -> None:
+    roles = {"aarya": "member", "aarya-codex": "member"}
+    history = [_msg("ask", "aarya"), _msg("hand", "aarya-codex", "ask")]
+    seen = _run(monkeypatch, tmp_path, "aarya-codex", "members", reply_to="hand",
+                history=history, roles=roles)
+    assert seen["mode"] == "autonomous"
+
+
+def test_an_observer_gets_a_read_only_turn_in_a_default_mode_room(monkeypatch, tmp_path) -> None:
+    """Owner-trust room, mode default: a stranger keeps the owner's default settings,
+    but someone the relay lists as an observer gets a read-only turn."""
+    monkeypatch.setattr(reflexd, "mode_for", lambda room: "default")
+    seen = _run(monkeypatch, tmp_path, "olive", None, roles={"olive": "observer"})
+    assert seen["mode"] == "readonly"
+    seen = _run(monkeypatch, tmp_path, "mallory", None, roles={"arav": "builder"})
+    assert seen["mode"] == "default"

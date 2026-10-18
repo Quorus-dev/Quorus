@@ -3301,12 +3301,15 @@ class Reflexd:
                 # arrived next resumed it read-only and the agent reported
                 # "no write tools" (live 2026-10-17).
                 prior_session, _persist_session = None, None
-            if room_mode != "default" and not trusted:
+            if not trusted and (room_mode != "default" or trust_for(room) == "members"
+                                or await self._sender_is_observer(relay, envelope)):
                 # Pre-launch audit: in autonomous mode any room member (or text
                 # injected into the room) could make the agent run code. Only
                 # the owner, and the owner's agents working on the owner's own
                 # requests, get write-capable turns unless the owner set the
-                # room to `trust: members`.
+                # room to `trust: members`. An observer gets a read-only turn
+                # in every mode, `default` included, where the owner's own CLI
+                # settings might allow edits (codex, review of f5d69289).
                 logger.info("read-only turn: %s isn't serving this agent's owner",
                             envelope.get("from_name") or "")
                 room_mode = "readonly"
@@ -3731,28 +3734,61 @@ class Reflexd:
             return False
         return trusted_origin(envelope, longer, owner)
 
-    async def _member_trusted(self, relay: Any, envelope: dict[str, Any],
-                              history: list[dict[str, Any]]) -> bool:
-        """`trust: members`: a write-capable turn only for a room member whose role
-        on the relay, right now, may change the room, and only if nobody earlier
-        in the reply chain is an observer or a stranger (an observer must not get
-        work done by asking an agent that then asks this one). Unknown roles, or
-        a relay that can't say, mean read-only (observer invites, 0.6.0)."""
+    async def _sender_is_observer(self, relay: Any, envelope: dict[str, Any]) -> bool:
+        """The relay lists the sender in this room with a role that can't change it."""
         lookup = getattr(relay, "fetch_member_roles", None)
         roles = await lookup(room=envelope.get("room") or "") if lookup else None
+        role = (roles or {}).get(envelope.get("from_name") or "")
+        return role is not None and role not in WRITER_ROLES
+
+    async def _member_trusted(self, relay: Any, envelope: dict[str, Any],
+                              history: list[dict[str, Any]]) -> bool:
+        """`trust: members`: a write-capable turn only when the request comes from a
+        person who, on the relay right now, may change the room.
+
+        The sender must hold a writer role. A person's own message counts as is. An
+        agent's message counts only if its reply chain leads, through writers only,
+        to a person with a writer role: an agent handing over work with no traceable
+        request (no reply_to, an ancestor missing even after fetching older history,
+        or a cycle) gets a read-only turn, so an observer can't get work done by
+        asking an agent that then asks this one (codex, review of f5d69289). Unknown
+        roles, or a relay that can't say, mean read-only too."""
+        room = envelope.get("room") or ""
+        lookup = getattr(relay, "fetch_member_roles", None)
+        roles = await lookup(room=room) if lookup else None
         if not roles:
             return False
+
+        def writer(name: str) -> bool:
+            return roles.get(name) in WRITER_ROLES
+
         sender = envelope.get("from_name") or ""
-        if roles.get(sender) not in WRITER_ROLES:
+        if not writer(sender):
             return False
+        if not is_agent_participant(sender):
+            return True
         by_id = {m.get("id"): m for m in history if m.get("id")}
+        fetched_more = False
         cur, seen = envelope.get("reply_to"), set()
-        while cur and cur in by_id and cur not in seen:
+        while True:
+            if not cur or cur in seen:
+                return False  # no traceable request, or a cycle
+            if cur not in by_id and not fetched_more:
+                fetched_more = True
+                try:
+                    longer = await relay.fetch_recent(room=room, limit=TRUST_CHAIN_LIMIT)
+                except Exception:
+                    return False
+                by_id.update({m.get("id"): m for m in longer if m.get("id")})
+            if cur not in by_id:
+                return False  # the chain leaves what the relay keeps
             seen.add(cur)
-            if roles.get(by_id[cur].get("from_name") or "") not in WRITER_ROLES:
+            who = by_id[cur].get("from_name") or ""
+            if not writer(who):
                 return False
+            if not is_agent_participant(who):
+                return True  # reached the person who asked
             cur = by_id[cur].get("reply_to")
-        return True
 
     def _build_prompt(
         self, envelope: dict[str, Any], history: list[dict[str, Any]],
