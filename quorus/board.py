@@ -68,7 +68,10 @@ function rowState(name, presence, history, approvals, now) {
   const mine = history.filter((m) => m.from_name === name);
   const r = { name, vendor: (name.match(AGENT) || [, ""])[1], rank: 5, line: "", detail: "",
               model: String(p.model || ""),  // tells agents apart without vendor logos
-              asks: [], approvals: approvals.filter((a) => a.agent === name) };
+              asks: [], approvals: approvals.filter((a) => a.agent === name),
+              // Mission control: the last few live steps, oldest first (sanitised
+              // `activity` history from /presence?trail=1, never raw output).
+              trail: p.online && Array.isArray(p.trail) ? p.trail.slice(-5) : [] };
   const myName = me();
   const ask = mine.slice().reverse().find((m) => myName && m.message_type !== "status"
     && mention(myName).test(m.content || "")
@@ -164,6 +167,15 @@ function rowEl(r) {
                 el("span", "bline", r.line));
     row.append(head);
     if (r.detail) row.append(el("div", "bdetail", r.detail));
+    if (r.trail.length > 1) {  // the current step is already the headline
+      const trail = el("ol", "btrail");
+      r.trail.forEach((t, i) => {
+        const li = el("li", i === r.trail.length - 1 ? "now" : "");
+        li.append(el("time", "", clock(t.t)), el("span", "", String(t.step || "")));
+        trail.append(li);
+      });
+      row.append(trail);
+    }
     r.asks.forEach((a) => row.append(el("div", "bask", "asked you: " + a)));
     r.approvals.forEach((a) => {
       const box = el("div", "bapproval");
@@ -216,7 +228,7 @@ function refresh() {
     }).catch(() => { B.card = {}; });  // 404: no repo bound here; hide the line
   }
   return members.then(() => Promise.all([
-    api("/presence").catch(() => []),
+    api("/presence?trail=1").catch(() => []),
     api("/rooms/" + enc(B.room) + "/history?limit=100").catch(() => []),
     api("/v1/approvals?room=" + enc(B.room)).then((r) => r.pending || []).catch(() => []),
   ])).then(([presence, history, approvals]) => {
