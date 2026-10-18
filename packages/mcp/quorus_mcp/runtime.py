@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from quorus.config import load_config, same_relay, withheld_credential_message
+from quorus.config import ConfigManager, load_config
 from quorus_mcp.sse import SSEListener, process_sse_event_data
 
 if TYPE_CHECKING:
@@ -89,11 +89,10 @@ def _resolve_auth(env_name: str, file_value: str, *, label: str) -> str:
 
 
 # Production API keys are minted as ``mct_<hex>_<hex>`` (see
-# ``quorus.auth.tokens.generate_api_key``); shared-secret relays give each
-# claimed name a ``quorus_pk_`` key, which is what a woken agent signs in
-# with. We log an advisory if the resolved key matches neither — but we do
-# NOT block, because tests and self-hosted deployments use other formats.
-_API_KEY_RE = re.compile(r"^(mct_[a-f0-9]+_[a-f0-9]+|quorus_pk_[A-Za-z0-9_-]+)$")
+# ``quorus.auth.tokens.generate_api_key``). We log an advisory if the
+# resolved key doesn't match — but we do NOT block, because tests and
+# self-hosted deployments use other formats.
+_API_KEY_RE = re.compile(r"^mct_[a-f0-9]+_[a-f0-9]+$")
 # Reject anything that would produce an *illegal* HTTP header value
 # (whitespace, CR/LF, or non-printable bytes). httpx would otherwise
 # raise ``Illegal header value`` on the relay request — that was the
@@ -114,7 +113,7 @@ def _validate_header_safe(value: str, *, label: str) -> None:
         raise SystemExit(
             f"{label} contains whitespace or control characters that would "
             "produce an illegal HTTP Authorization header. Re-run "
-            "`quorus init` or unset the offending env var."
+            "`quorus login` or unset the offending env var."
         )
 
 
@@ -123,6 +122,18 @@ def _validate_relay_url(value: str) -> str:
     if not value or p.scheme not in {"http", "https"} or not p.hostname or p.username or p.password:
         raise SystemExit(f"Invalid relay_url: {value!r}. Must be an http(s) URL with a hostname.")
     return value
+
+
+def _same_relay(a: str, b: str) -> bool:
+    """Do two relay URLs name the same relay (scheme, host, port, base path)?"""
+    def key(url: str) -> tuple[str, str, int | None, str]:
+        p = urlparse(url.strip())
+        port = p.port or {"http": 80, "https": 443}.get(p.scheme)
+        return p.scheme, (p.hostname or "").lower(), port, p.path.rstrip("/")
+    try:
+        return key(a) == key(b)
+    except ValueError:  # a malformed port: not provably the same relay
+        return False
 
 
 def load_runtime_config() -> dict[str, Any]:
@@ -136,29 +147,65 @@ def load_runtime_config() -> dict[str, Any]:
     Raises ``SystemExit`` (fail closed) on an invalid relay URL, missing
     credentials, or header-unsafe credential values.
     """
-    # QUORUS_PROFILE picks one saved profile without touching "current"; env
-    # vars still beat it. load_config binds saved credentials to their relay.
-    # Read-only: a server a client starts never rewrites the user's config
-    # (legacy migration is left to an explicit `quorus` command).
-    config = load_config(profile=_clean_env("QUORUS_PROFILE"), migrate=False)
+    profile_slug = _clean_env("QUORUS_PROFILE")
+    if profile_slug:
+        # Load just the named profile's data, then apply env-var overrides
+        # on top (env still beats profile for direct overrides like
+        # QUORUS_RELAY_URL below).
+        profile_data = ConfigManager(profile=profile_slug).load()
+        config = {
+            "config_file": str(ConfigManager(profile=profile_slug).path),
+            "relay_url": (
+                _clean_env("RELAY_URL")
+                or (profile_data.get("relay_url") or "http://localhost:8080")
+            ),
+            "relay_secret": (
+                _clean_env("RELAY_SECRET")
+                or (profile_data.get("relay_secret") or "")
+            ),
+            "api_key": (
+                _clean_env("API_KEY")
+                or (profile_data.get("api_key") or "")
+            ),
+            "instance_name": (
+                _clean_env("INSTANCE_NAME")
+                or (profile_data.get("instance_name") or "default")
+            ),
+            "push_notification_method": (
+                _clean_env("PUSH_NOTIFICATION_METHOD")
+                or profile_data.get("push_notification_method")
+                or "notifications/claude/channel"
+            ),
+            "push_notification_channel": (
+                _clean_env("PUSH_NOTIFICATION_CHANNEL")
+                or (profile_data.get("push_notification_channel") or "quorus")
+            ),
+        }
+    else:
+        config = load_config()
 
     env_relay = _clean_env("QUORUS_RELAY_URL")
     relay_url = env_relay or config["relay_url"]
-    # A saved secret or key belongs to the relay it was saved with. When
-    # QUORUS_RELAY_URL names another relay (a plugin field, a hand-written MCP
-    # entry), a blank QUORUS_* credential must not fall back to the saved one:
-    # that handed this user's key to the other relay's /v1/auth/token
-    # (codex, 59a2077e; reproduced on the 0.5.1 wheel).
-    bound = same_relay(relay_url, config["saved_relay_url"])
-    secret_fallback = (config["relay_secret"]
-                       if bound or config["relay_secret_from_env"] else "")
-    key_fallback = config["api_key"] if bound or config["api_key_from_env"] else ""
-    withheld = config["credentials_withheld"] or (
-        not bound and bool(config["relay_secret"] or config["api_key"])
-        and not (secret_fallback or key_fallback))
-    relay_secret = _resolve_auth("QUORUS_RELAY_SECRET", secret_fallback,
-                                 label="Relay secret")
-    api_key = _resolve_auth("QUORUS_API_KEY", key_fallback, label="API key")
+    # Saved credentials belong to the saved relay. When QUORUS_RELAY_URL points
+    # somewhere else (a plugin's relay field, a hand-written MCP entry), a blank
+    # secret or key must not fall back to the profile's: that would hand this
+    # user's credential to another relay's token endpoint (codex, 59a2077e).
+    profile_relay = bool(env_relay is None or _same_relay(env_relay, config["relay_url"]))
+    relay_secret = _resolve_auth(
+        "QUORUS_RELAY_SECRET", config["relay_secret"] if profile_relay else "",
+        label="Relay secret",
+    )
+    api_key = _resolve_auth(
+        "QUORUS_API_KEY", config["api_key"] if profile_relay else "", label="API key",
+    )
+    if not profile_relay and not relay_secret and not api_key \
+            and (config["relay_secret"] or config["api_key"]):
+        raise SystemExit(
+            f"QUORUS_RELAY_URL ({relay_url}) is not the relay your saved profile is for, "
+            "so its saved credentials are not sent there.\n"
+            "  - Set QUORUS_RELAY_SECRET or QUORUS_API_KEY for that relay, OR\n"
+            "  - Leave QUORUS_RELAY_URL empty to use the saved profile's relay."
+        )
     instance_name = _clean_env("QUORUS_INSTANCE_NAME") or config["instance_name"]
     sse_enabled = os.environ.get("SSE_ENABLED", "true").strip().lower() not in {
         "0", "false", "no", "off",
@@ -169,16 +216,11 @@ def load_runtime_config() -> dict[str, Any]:
     # string here means the value was missing in BOTH the env var and the
     # profile file. We fail closed with a clear message instead of letting
     # the relay receive a malformed ``Authorization: Bearer `` header.
-    if not relay_secret and not api_key and withheld:
-        raise SystemExit(
-            withheld_credential_message(relay_url)
-            + ".\n  - Or set QUORUS_RELAY_SECRET / QUORUS_API_KEY for that relay."
-        )
     if not relay_secret and not api_key:
         raise SystemExit(
             "Neither relay_secret nor api_key resolved to a non-empty value.\n"
             "  - Set QUORUS_API_KEY (or RELAY_SECRET) to a non-empty token, OR\n"
-            "  - Run `quorus init` to populate ~/.quorus/profiles/default.json.\n"
+            "  - Run `quorus login` to populate ~/.quorus/profiles/default.json.\n"
             "Empty/whitespace env vars are now treated as unset and fall back\n"
             "to the profile file."
         )
