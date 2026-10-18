@@ -164,6 +164,9 @@ def test_daemon_attaches_the_bundle_to_a_review_request(room, tmp_path, monkeypa
         async def bearer_jwt(self) -> str:
             return _bearer("a-claude")
 
+        async def fetch_member_roles(self, *, room: str):  # `trust: members`
+            return {"a-claude": "member", "b-codex": "member"}
+
     env = {"id": "e", "message_id": "m", "room": "rv", "from_name": "b-codex",
            "content": "@a-claude fix it", "message_type": "chat"}
     triage = reflexd.classify_message(content=env["content"], sender="b-codex",

@@ -31,8 +31,13 @@ def test_trusted_senders() -> None:
 
 
 class _Relay:
-    def __init__(self, history: list[dict] | None = None) -> None:
+    def __init__(self, history: list[dict] | None = None,
+                 roles: dict[str, str] | None = None) -> None:
         self.history = history or []
+        self.roles = roles
+
+    async def fetch_member_roles(self, *, room: str):
+        return self.roles
 
     async def fetch_recent(self, *, room: str, limit: int = 10):
         return self.history[-limit:]
@@ -42,7 +47,8 @@ class _Relay:
 
 
 def _run(monkeypatch, tmp_path: Path, sender: str, trust: str | None, *,
-         reply_to: str | None = None, history: list[dict] | None = None) -> dict:
+         reply_to: str | None = None, history: list[dict] | None = None,
+         roles: dict[str, str] | None = None) -> dict:
     import subprocess
 
     repo = tmp_path / "app"  # a real repo: read-only turns run only in a guarded worktree
@@ -76,7 +82,7 @@ def _run(monkeypatch, tmp_path: Path, sender: str, trust: str | None, *,
         env["reply_to"] = reply_to
     triage = reflexd.classify_message(content=env["content"], sender=sender,
                                       self_name="arav-claude")
-    asyncio.run(d._wake_and_reply(_Relay(history), env, triage=triage))
+    asyncio.run(d._wake_and_reply(_Relay(history, roles), env, triage=triage))
     return seen
 
 
@@ -139,8 +145,35 @@ def test_read_only_turn_does_not_point_at_the_owners_agents() -> None:
 
 
 def test_trust_members_opts_a_shared_room_in(monkeypatch, tmp_path: Path) -> None:
-    seen = _run(monkeypatch, tmp_path, "aarya", "members")
+    seen = _run(monkeypatch, tmp_path, "aarya", "members", roles={"aarya": "member"})
     assert seen["mode"] == "autonomous" and "READ-ONLY" not in seen["context"]
+
+
+# Observer invites (0.6.0): in a `trust: members` room the relay's current role
+# decides, and an observer never gets a write-capable turn, directly or relayed.
+
+def test_an_observer_in_a_members_room_gets_a_read_only_turn(monkeypatch, tmp_path) -> None:
+    seen = _run(monkeypatch, tmp_path, "olive", "members", roles={"olive": "observer"})
+    assert seen["mode"] == "readonly"
+
+
+def test_a_stranger_or_an_unknown_role_is_read_only_in_a_members_room(
+        monkeypatch, tmp_path) -> None:
+    assert _run(monkeypatch, tmp_path, "mallory", "members",
+                roles={"aarya": "member"})["mode"] == "readonly"
+    assert _run(monkeypatch, tmp_path, "aarya", "members",
+                roles={"aarya": "superuser"})["mode"] == "readonly"
+
+
+def test_an_agent_relaying_an_observers_request_is_read_only(monkeypatch, tmp_path) -> None:
+    history = [_msg("ask", "olive"), _msg("hand", "aarya-codex", "ask")]
+    seen = _run(monkeypatch, tmp_path, "aarya-codex", "members", reply_to="hand",
+                history=history, roles={"olive": "observer", "aarya-codex": "member"})
+    assert seen["mode"] == "readonly"
+
+
+def test_no_roles_from_the_relay_means_read_only(monkeypatch, tmp_path) -> None:
+    assert _run(monkeypatch, tmp_path, "aarya", "members", roles=None)["mode"] == "readonly"
 
 
 def test_cursor_inbox_prompt_is_owner_only(tmp_path: Path, monkeypatch) -> None:

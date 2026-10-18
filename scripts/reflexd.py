@@ -82,6 +82,7 @@ from quorus.notifications import notify as _notify  # noqa: E402
 from quorus.observability.redaction import env_secret_values, redact_secrets  # noqa: E402
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
 from quorus.private_files import write_private_json, write_private_text  # noqa: E402
+from quorus.roles import WRITER_ROLES  # noqa: E402
 from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime import review_share as _review_share  # noqa: E402
@@ -2255,6 +2256,17 @@ class RelayClient:
         resp = await self.client.post("/heartbeat", headers=headers, json=body)
         resp.raise_for_status()
 
+    async def fetch_member_roles(self, *, room: str) -> dict[str, str] | None:
+        """{name: role} for the room right now, or None if the relay didn't say."""
+        try:
+            resp = await self.client.get(f"/rooms/{room}", headers=await self._headers())
+            resp.raise_for_status()
+            roles = resp.json().get("member_roles")
+        except Exception as exc:
+            logger.debug("member role lookup failed for %s: %s", room, exc)
+            return None
+        return {str(k): str(v) for k, v in roles.items()} if isinstance(roles, dict) else None
+
     async def fetch_members(self, *, room: str) -> list[str]:
         """Room member names, or [] on any failure (prompt context only)."""
         try:
@@ -3706,7 +3718,7 @@ class Reflexd:
         """Whether this wake may run write-capable (see :func:`trusted_origin`)."""
         room = envelope.get("room") or ""
         if trust_for(room) != "owner":
-            return True
+            return await self._member_trusted(relay, envelope, history)
         owner = agent_owner(self.config.participant_name)
         if trusted_origin(envelope, history, owner):
             return True
@@ -3718,6 +3730,29 @@ class Reflexd:
         except Exception:
             return False
         return trusted_origin(envelope, longer, owner)
+
+    async def _member_trusted(self, relay: Any, envelope: dict[str, Any],
+                              history: list[dict[str, Any]]) -> bool:
+        """`trust: members`: a write-capable turn only for a room member whose role
+        on the relay, right now, may change the room, and only if nobody earlier
+        in the reply chain is an observer or a stranger (an observer must not get
+        work done by asking an agent that then asks this one). Unknown roles, or
+        a relay that can't say, mean read-only (observer invites, 0.6.0)."""
+        lookup = getattr(relay, "fetch_member_roles", None)
+        roles = await lookup(room=envelope.get("room") or "") if lookup else None
+        if not roles:
+            return False
+        sender = envelope.get("from_name") or ""
+        if roles.get(sender) not in WRITER_ROLES:
+            return False
+        by_id = {m.get("id"): m for m in history if m.get("id")}
+        cur, seen = envelope.get("reply_to"), set()
+        while cur and cur in by_id and cur not in seen:
+            seen.add(cur)
+            if roles.get(by_id[cur].get("from_name") or "") not in WRITER_ROLES:
+                return False
+            cur = by_id[cur].get("reply_to")
+        return True
 
     def _build_prompt(
         self, envelope: dict[str, Any], history: list[dict[str, Any]],

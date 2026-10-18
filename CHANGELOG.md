@@ -12,7 +12,8 @@ All notable changes to Quorus are documented here. This project follows
   change anything. The relay checks the room's current role on every write, so a downgrade,
   kick or revoke applies to their next request, and a role in another room never counts.
   Observers can't see approval previews or download code bundles, and leaving every room
-  doesn't make an observer a member.
+  doesn't make an observer a member. In a `trust: members` room, an observer's @-mention
+  (or an agent relaying one) gets a read-only agent turn.
 - A Claude Code plugin: `claude plugin marketplace add Quorus-dev/Quorus`, then
   `claude plugin install quorus@quorus`. It runs `quorus-mcp` with `uvx` and adds a
   Quorus skill; relay URL, name and secret are set in `/plugin` (secrets masked), and

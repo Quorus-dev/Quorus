@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 
 from quorus.auth.middleware import AuthContext
+from quorus.roles import OBSERVER, WRITER_ROLES  # one list for the relay and the daemon
 
 
 async def require_room_member(
@@ -72,8 +73,6 @@ async def require_room_member_or_admin(
 # change anything (codex's threat model). The role is the room's membership row,
 # read fresh on every request, never a JWT claim, so a downgrade, kick or revoke
 # applies to the next request. Unknown roles can't write either.
-OBSERVER = "observer"
-WRITER_ROLES = frozenset({"builder", "reviewer", "researcher", "pm", "qa", "member"})
 OBSERVER_DENIED = "observers can read this room but not change it"
 
 

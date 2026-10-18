@@ -32,6 +32,9 @@ class Relay(_D7Relay):
     async def fetch_members(self, **kw):
         return [e["name"] for e in self.entries]
 
+    async def fetch_member_roles(self, **kw):  # `trust: members` asks the relay
+        return {e["name"]: "member" for e in self.entries} | {"arav": "member"}
+
     async def mission_task_for(self, **kw):
         return self.mission
 
