@@ -24,8 +24,13 @@ T, R = "t-1", "room-1"
 
 
 @pytest.fixture(autouse=True)
-def _no_redis_fresh_store(monkeypatch):
+def _no_redis_fresh_store(monkeypatch, tmp_path):
     monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: None)
+    # Pin the store to this test's tmp_path, whatever the environment says:
+    # these tests must never touch a real ~/.quorus/p1_state.db.
+    monkeypatch.delenv("MESSAGES_FILE", raising=False)
+    monkeypatch.setenv("QUORUS_HISTORY_DB", str(tmp_path / "relay" / "history.db"))
+    assert p1_sqlite.db_path().is_relative_to(tmp_path)
     p1_sqlite._broken.clear()
     yield
     p1_sqlite._broken.clear()
