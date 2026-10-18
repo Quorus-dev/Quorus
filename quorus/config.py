@@ -31,15 +31,16 @@ def _trusted_proxy_count() -> int:
     """Number of proxies in front of the relay we trust to set X-Forwarded-For.
 
     Wave-5 Fix 4 — taking the LEFTMOST XFF entry trusts the client; taking
-    the rightmost-N is the safe pattern. The default of 1 matches Fly.io's
-    edge proxy. Operators behind multiple LBs (e.g. CloudFront → ALB → app)
-    must raise this so we walk past their controlled hops.
+    the rightmost-N is the safe pattern. The default is 0: a relay reached
+    directly must key on the socket peer, or any client can rotate XFF to
+    dodge per-IP rate limits. Deployments behind a proxy opt in (fly.toml
+    sets 1 for Fly's edge; CloudFront → ALB → app needs 2).
     """
     try:
-        n = int(os.environ.get("TRUSTED_PROXY_COUNT", "1"))
+        n = int(os.environ.get("TRUSTED_PROXY_COUNT", "0"))
     except ValueError:
-        n = 1
-    return max(1, n)
+        n = 0
+    return max(0, n)
 
 
 def get_real_ip(request: Any, *, trusted_n: int | None = None) -> str:
@@ -56,6 +57,9 @@ def get_real_ip(request: Any, *, trusted_n: int | None = None) -> str:
     """
     if trusted_n is None:
         trusted_n = _trusted_proxy_count()
+    if trusted_n <= 0:
+        client = getattr(request, "client", None)
+        return getattr(client, "host", None) or "unknown"
     headers = getattr(request, "headers", None)
     xff_raw = ""
     if headers is not None:
