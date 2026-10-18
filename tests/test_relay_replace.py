@@ -48,30 +48,33 @@ def test_replace_refuses_a_relay_quorus_did_not_start(monkeypatch, tmp_path):
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
         (tmp_path / "relay.pid").write_text(json.dumps(
-            {"pid": other.pid, "port": 18181, "started": local_relay._started(other.pid)}))
+            {"pid": other.pid, "port": 18181, "started": local_relay._started(other.pid),
+             "command": local_relay._ps(other.pid, "command")}))
         assert local_relay.stop_started_relay(18181) is False
         assert other.poll() is None  # still running: not ours to kill
     finally:
         other.kill()
 
 
+RECORDED = "/opt/py/bin/python3 -m quorus.relay_cli"
+
+
 @pytest.mark.parametrize(("command", "started", "signalled"), [
     # codex, review of 857a5271: a mere mention of quorus.relay_cli was enough.
     ("/usr/bin/vim notes-on-quorus.relay_cli.md", "Sat Oct 18 10:00:00 2026", False),
     ("/usr/bin/python3 -c import quorus.relay_cli", "Sat Oct 18 10:00:00 2026", False),
+    # codex, review of 56f6b852: an interpreter running something else, ending the same way
+    ("/opt/py/bin/python3 -c pass # -m quorus.relay_cli", "Sat Oct 18 10:00:00 2026", False),
     ("/usr/bin/sh -m quorus.relay_cli", "Sat Oct 18 10:00:00 2026", False),
-    # the right command, but the pid was reused by a process started later
-    ("/opt/py/bin/python3 -m quorus.relay_cli", "Sat Oct 18 11:11:11 2026", False),
-    ("/opt/py/bin/python3 -m quorus.relay_cli", "Sat Oct 18 10:00:00 2026", True),
-    ("/Applications/Python.app/Contents/MacOS/Python -m quorus.relay_cli",
-     "Sat Oct 18 10:00:00 2026", True),
+    # the exact command, but the pid was reused by a process started later
+    (RECORDED, "Sat Oct 18 11:11:11 2026", False),
+    (RECORDED, "Sat Oct 18 10:00:00 2026", True),
 ])
 def test_replace_signals_only_the_exact_process_it_started(
         monkeypatch, tmp_path, command, started, signalled):
-    import json
-
     (tmp_path / "relay.pid").write_text(json.dumps(
-        {"pid": 4242, "port": 18181, "started": "Sat Oct 18 10:00:00 2026"}))
+        {"pid": 4242, "port": 18181, "started": "Sat Oct 18 10:00:00 2026",
+         "command": RECORDED}))
     monkeypatch.setattr(local_relay, "_ps",
                         lambda pid, field: command if field == "command" else started)
     sent = []
@@ -79,6 +82,19 @@ def test_replace_signals_only_the_exact_process_it_started(
     monkeypatch.setattr(local_relay, "_healthy", lambda url, timeout=2.0: False)
     local_relay.stop_started_relay(18181)
     assert sent == ([4242] if signalled else [])
+
+
+def test_a_pid_file_recording_a_disguised_command_is_refused(monkeypatch, tmp_path):
+    """Even if relay.pid itself names `python3 -c ... # -m quorus.relay_cli`."""
+    disguised = "/opt/py/bin/python3 -c pass # -m quorus.relay_cli"
+    (tmp_path / "relay.pid").write_text(json.dumps(
+        {"pid": 4242, "port": 18181, "started": "x", "command": disguised}))
+    monkeypatch.setattr(local_relay, "_ps",
+                        lambda pid, field: disguised if field == "command" else "x")
+    sent = []
+    monkeypatch.setattr(local_relay.os, "kill", lambda pid, sig: sent.append(pid))
+    local_relay.stop_started_relay(18181)
+    assert sent == []
 
 
 def _free_port() -> int:
