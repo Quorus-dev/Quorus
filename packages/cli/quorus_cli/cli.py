@@ -5320,10 +5320,13 @@ def _cmd_invite_link(args):
     room = args.room
     console.print(f"[bold]Share this command to invite someone to '{room}':[/bold]")
     console.print("")
-    console.print(
-        f"  quorus join --name YOUR_NAME "
-        f"--relay {RELAY_URL} --secret {RELAY_SECRET} --room {room}"
-    )
+    from rich.markup import escape as _escape
+
+    # Pasted into a teammate's shell: quote what came from config.
+    console.print(_escape(
+        f"  quorus join --name YOUR_NAME --relay {shlex.quote(RELAY_URL)} "
+        f"--secret {shlex.quote(RELAY_SECRET)} --room {shlex.quote(room)}"
+    ))
     console.print("")
     console.print("[dim]Replace YOUR_NAME with the agent/user's name.[/dim]")
 
@@ -5737,7 +5740,7 @@ def _cmd_share(args):
     if not RELAY_URL:
         _ui.error(
             "Relay URL not configured",
-            hint="run: quorus init <name> --secret <s>",
+            hint="run: quorus init <name> --secret -",
         )
         return
 
@@ -5782,7 +5785,7 @@ def _cmd_share(args):
 
     body = resp.json()
     code = body["code"]
-    install_url = body["install_url"]
+    install_url = body.get("install_url")
 
     # Humanize TTL for the footer.
     if ttl_days == 1:
@@ -5810,7 +5813,13 @@ def _cmd_share(args):
     ui.console.print()
     # The code is looked up on THIS relay: say which one, or a teammate's
     # `quorus join` tried the (dead) default public relay instead.
-    relay_flag = f" --relay {RELAY_URL}"
+    # Both come from the relay: quote them, since teammates paste these into a shell.
+    from quorus.services.join_code_svc import install_command, normalize_code
+
+    if normalize_code(str(code)) is None:
+        _ui.error("The relay returned an invalid invite code", hint="try again")
+        return
+    relay_flag = f" --relay {shlex.quote(RELAY_URL)}"
     join_cmd = f"quorus join {code} --name <their-name>{relay_flag}"
     if any(h in RELAY_URL for h in ("127.0.0.1", "localhost", "0.0.0.0")):
         ui.console.print(
@@ -5818,10 +5827,13 @@ def _cmd_share(args):
             "on another computer needs a relay they can reach (a shared server, or "
             "`quorus relay --host 0.0.0.0` on your network).[/]\n"
         )
-    install_cmd = f"curl -sSL {install_url} | bash"  # the installer is bash, not sh
-    ui.console.print(f"    [accent]{join_cmd}[/]")
-    ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
-    ui.console.print(f"    [accent]{install_cmd}[/]")
+    from rich.markup import escape as _escape
+
+    install_cmd = install_command(str(install_url or ""))
+    ui.console.print(f"    [accent]{_escape(join_cmd)}[/]")
+    if install_cmd:
+        ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
+        ui.console.print(f"    [accent]{_escape(install_cmd)}[/]")
     ui.console.print()
 
     if want_copy:

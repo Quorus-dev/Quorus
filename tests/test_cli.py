@@ -2673,3 +2673,50 @@ def test_init_prefers_the_mcp_server_next_to_this_install(tmp_path, monkeypatch)
     assert cli_mod._mcp_server_command() == (str(mine), [])
     mine.unlink()  # no sibling: PATH's copy is still better than nothing
     assert cli_mod._mcp_server_command() == ("/home/u/.local/bin/quorus-mcp", [])
+
+
+def test_cmd_share_quotes_relay_supplied_commands(capsys, monkeypatch):
+    """The mint answer and the relay URL are pasted into a teammate's shell: a `$()`
+    in either must stay a literal string (Codex's 5009f340 block)."""
+    import shlex
+
+    from quorus.cli import _cmd_share
+
+    evil_relay = "http://relay.test/$(touch /tmp/pwned)"
+    evil_install = "http://relay.test/$(touch /tmp/pwned)/ABCD-EFGH.sh"
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"code": "ABCD-EFGH", "install_url": evil_install}
+    monkeypatch.setattr("quorus.cli.RELAY_URL", evil_relay)
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "s")
+    monkeypatch.setattr("quorus.cli._auth_headers", lambda: {})
+    monkeypatch.setattr("quorus.cli.httpx.post", lambda *a, **kw: resp)
+    from quorus_cli import ui
+
+    monkeypatch.setattr(ui.console, "width", 400)  # no wrapping inside a command
+    args = MagicMock(room="r", ttl=1, uses=1, copy=False)
+
+    _cmd_share(args)
+
+    lines = [ln.strip() for ln in capsys.readouterr().out.splitlines()]
+    join = next(ln for ln in lines if ln.startswith("quorus join"))
+    install = next(ln for ln in lines if ln.startswith("curl "))
+    assert shlex.split(join)[-1] == evil_relay
+    assert shlex.split(install)[:3] == ["curl", "-sSL", evil_install]
+    assert install.endswith("| bash")
+
+
+def test_cmd_share_drops_a_non_http_install_url(capsys, monkeypatch):
+    from quorus.cli import _cmd_share
+
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"code": "ABCD-EFGH", "install_url": "file:///etc/passwd"}
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://relay.test")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "s")
+    monkeypatch.setattr("quorus.cli._auth_headers", lambda: {})
+    monkeypatch.setattr("quorus.cli.httpx.post", lambda *a, **kw: resp)
+
+    _cmd_share(MagicMock(room="r", ttl=1, uses=1, copy=False))
+
+    out = capsys.readouterr().out
+    assert "quorus join ABCD-EFGH" in out
+    assert "curl" not in out and "/etc/passwd" not in out
