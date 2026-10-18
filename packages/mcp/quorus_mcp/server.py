@@ -11,6 +11,7 @@ from mcp import types
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.message import SessionMessage
 
+from quorus import __version__ as _quorus_version
 from quorus.operating_discipline import render_qod_for_mcp
 from quorus_mcp import channel as _channel
 from quorus_mcp import runtime, tools
@@ -271,6 +272,9 @@ _QOD_TAIL = (
 QUORUS_INSTRUCTIONS = f"{_QOD}\n\n---\n\n{_QOD_TAIL}\n\n{_channel.CHANNEL_INSTRUCTIONS}"
 
 mcp = FastMCP("quorus", instructions=QUORUS_INSTRUCTIONS, lifespan=_mcp_lifespan)
+# serverInfo.version: FastMCP takes no version and falls back to the mcp
+# package's own (it said "1.30.0" on quorus-ai 0.5.0, overseer's agent sweep).
+mcp._mcp_server.version = _quorus_version
 
 _orig_list_tools = mcp._mcp_server.request_handlers[types.ListToolsRequest]
 async def _list_tools_wrapped(req: types.ListToolsRequest):
