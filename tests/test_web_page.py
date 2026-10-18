@@ -72,3 +72,10 @@ def test_the_app_never_grows_past_the_viewport() -> None:
     and the Quorum stage drew its table below the fold (2026-10-18)."""
     assert "#app{display:grid;grid-template-columns:260px 1fr;grid-template-rows:minmax(0,1fr);" \
         "height:100%}" in DASHBOARD_HTML
+
+
+def test_chat_keeps_the_newest_message_in_view_when_the_box_resizes() -> None:
+    """The board's split layout shrinks the message box after the first render,
+    which left the newest message below the fold (review of 608f638b)."""
+    assert "new ResizeObserver(() => { if (wasAtBottom) box.scrollTop = box.scrollHeight; })" \
+        in DASHBOARD_JS
