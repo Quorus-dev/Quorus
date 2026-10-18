@@ -5,6 +5,32 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-10-18
+
+### Fixed
+
+- The first run ended on the hub home with no room open, so the first thing a new user typed
+  went nowhere and @-complete found no one. It now lands inside #general. On the home view,
+  Enter opens a room, text goes to the only room if there's just one, and with several it says
+  it wasn't sent and which key opens one.
+- The banner showed v0.5.0 whatever was installed; it shows the installed version.
+- `quorus relay --host 0.0.0.0` started a second relay next to the one your first `quorus` run
+  started on 127.0.0.1:8080: on macOS both bound the port and wrote the same state file, and on
+  Linux it failed to start. It now refuses while a relay answers on that port, and `--replace`
+  stops the one `quorus` started (and only that one) first.
+- "default" could be chosen as your name in the first-run wizard and `quorus init`, but
+  `quorus agent add` refuses it, so that user could never add an agent. Both now refuse it.
+- The relay couldn't use a `postgres://` DATABASE_URL, which is what `fly postgres attach` sets.
+- The README and several CLI and relay hints still showed the secret on the command line
+  (`--secret <s>`); they all use `--secret -` now.
+
+### Added
+
+- `docs/deployment.md`: how to share a relay with teammates or agents on other machines (your
+  LAN, Tailscale, a VPS, Docker, Fly.io, Railway, Render), each with its commands, settings,
+  HTTPS and whether it needs Postgres and Redis, and labelled by how far it's been tested.
+  The README links it, and a test fails if a README link points at a missing file.
+
 ## [0.5.2] — 2026-10-18
 
 ### Security
