@@ -120,28 +120,35 @@ export function create(host, P, hooks) {
   base.receiveShadow = true;
   S.scene.add(floor, top, edge, stem, base);
 
-  // "main": a dark glass monolith at the centre with a teal seam; shipped work
-  // lands here. The ring at its foot is the room's core and pulses when anyone speaks.
+  // "main": a wide dark-glass slab at the centre, turned off-axis, with two teal
+  // seams and a soft pool of light at its foot that pulses when anyone speaks.
+  // (A thin bar inside a ring read as a power button from the default camera.)
   const mono = new THREE.Group();
-  const glass = new THREE.Mesh(new THREE.BoxGeometry(0.34, 1.25, 0.34),
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.4, 0.2),
     new THREE.MeshPhysicalMaterial({ color: P.mono, roughness: 0.12, metalness: 0.05, clearcoat: 1,
       clearcoatRoughness: 0.08, envMapIntensity: 1.4 }));
-  glass.position.y = 0.93 + 0.625;
+  glass.position.y = 0.93 + 0.7;
   glass.castShadow = true;
   S.seam = new THREE.MeshStandardMaterial({ color: P.accent, emissive: P.accent, emissiveIntensity: 1.4,
     roughness: 0.3 });
-  const seamF = new THREE.Mesh(new THREE.BoxGeometry(0.03, 1.05, 0.02), S.seam);
-  seamF.position.set(0, glass.position.y, 0.175);
-  const seamB = seamF.clone();
-  seamB.position.z = -0.175;
-  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.012, 0.36), S.seam);
-  cap.position.y = glass.position.y + 0.63;
-  S.core = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.035, 16, 120), S.seam.clone());
-  S.core.rotation.x = Math.PI / 2;
-  S.core.position.y = 0.95;
-  mono.add(glass, seamF, seamB, cap, S.core);
+  [-0.3, 0.3].forEach((x) => {
+    const f = new THREE.Mesh(new THREE.BoxGeometry(0.025, 1.2, 0.02), S.seam);
+    f.position.set(x, glass.position.y, 0.105);
+    const b = f.clone();
+    b.position.z = -0.105;
+    mono.add(f, b);
+  });
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.012, 0.22), S.seam);
+  cap.position.y = glass.position.y + 0.705;
+  S.core = new THREE.Mesh(new THREE.CircleGeometry(0.95, 72),
+    new THREE.MeshBasicMaterial({ color: P.accent, transparent: true, opacity: 0.22, depthWrite: false,
+      blending: THREE.AdditiveBlending }));
+  S.core.rotation.x = -Math.PI / 2;
+  S.core.position.y = 0.935;
+  mono.add(glass, cap, S.core);
+  mono.rotation.y = -0.55;
   S.scene.add(mono);
-  S.monolith = new THREE.Vector3(0, 1.3, 0);
+  S.monolith = new THREE.Vector3(0, 1.45, 0);
 
   // Bloom targets, sized on resize.
   S.quadScene = new THREE.Scene();
@@ -185,7 +192,7 @@ function frame(S) {
   for (let i = 0; i < 24; i++) {
     const a = (i / 24) * Math.PI * 2;
     pts.push(new THREE.Vector3(Math.cos(a) * (SEAT_R + 0.45), 0, Math.sin(a) * (SEAT_R + 0.45)));
-    pts.push(new THREE.Vector3(Math.cos(a) * (SEAT_R + 0.2), 1.8, Math.sin(a) * (SEAT_R + 0.2)));
+    pts.push(new THREE.Vector3(Math.cos(a) * (SEAT_R + 0.2), 2.4, Math.sin(a) * (SEAT_R + 0.2)));
   }
   let d = 12;
   for (let pass = 0; pass < 4; pass++) {
@@ -224,7 +231,7 @@ function tick(S, now) {
   place(S, S.d * (1 - 0.48 * S.k), elev, az, target);
   S.pulse = Math.max(0, S.pulse - dt * 1.6);
   S.seam.emissiveIntensity = 1.4 + 2.2 * S.pulse;
-  S.core.material.emissiveIntensity = 1.2 + 2.6 * S.pulse;
+  S.core.material.opacity = 0.22 + 0.5 * S.pulse;
   S.glow.intensity = 4 + 14 * S.pulse;
   S.fx = S.fx.filter((f) => f.update(now) || (f.dispose(), false));
   S.hooks.onFrame(t, dt);

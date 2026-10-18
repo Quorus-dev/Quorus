@@ -8,14 +8,17 @@
 import * as THREE from "/vendor/three.module.min.js";
 
 export const AMBER = "#e8a63a", TOMATO = "#f2776e";
-const UP = 0.62;  // the height of a mark's centre above its seat
+const UP = 1.0;    // the height of a mark's centre above its seat
+const SCALE = 1.8; // marks were ~40px from the default camera and read as icons (review)
 
-// Round, soft particles (a point sprite is square by default): the size shrinks
-// with distance and the alpha falls off from the centre; bloom does the rest.
-const PARTICLE_VS = `void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = 0.24 * (300.0 / -mv.z); gl_Position = projectionMatrix * mv; }`;
-const PARTICLE_FS = `uniform vec3 color; void main(){ float d = length(gl_PointCoord - 0.5);
-  if (d > 0.5) discard; gl_FragColor = vec4(color, (1.0 - d * 2.0) * 0.9); }`;
+// Soft trails: each stream is a comet of points whose size and alpha fall off
+// behind the head (the `fade` attribute), with a soft radial edge; bloom does the rest.
+const PARTICLE_VS = `attribute float fade; varying float vFade;
+void main(){ vFade = fade; vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_PointSize = (0.12 + 0.3 * fade) * (300.0 / -mv.z); gl_Position = projectionMatrix * mv; }`;
+const PARTICLE_FS = `uniform vec3 color; varying float vFade;
+void main(){ float d = length(gl_PointCoord - 0.5); if (d > 0.5) discard;
+  float soft = smoothstep(0.5, 0.0, d); gl_FragColor = vec4(color, soft * soft * vFade * 0.85); }`;
 
 function physical(color, extra) {
   return new THREE.MeshPhysicalMaterial(Object.assign({ color, roughness: 0.3, metalness: 0.05,
@@ -91,22 +94,23 @@ function pillar(color) {
 // lives in the HTML plaque that quorum.js owns.
 export function makeTotem(name, vendor, color, P) {
   const seat = new THREE.Group();
-  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 0.12, 64),
+  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.48, 0.12, 64),
     new THREE.MeshPhysicalMaterial({ color: P.stem, roughness: 0.55 }));
   pedestal.position.y = 0.06;
   pedestal.castShadow = pedestal.receiveShadow = true;
   const mat = vendor ? physical(color) : null;
   const { g: mark, spin, mat: pmat } = vendor ? form(vendor, mat) : pillar(color);
   mark.position.y = UP;
+  mark.scale.setScalar(SCALE);
   mark.traverse((o) => { o.castShadow = true; });
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.02, 10, 80),
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.022, 10, 96),
     new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0, depthWrite: false }));
   ring.rotation.x = Math.PI / 2;
   ring.position.y = 0.135;
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 2.4, 24, 1, true),
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 3.0, 24, 1, true),
     new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0, depthWrite: false,
       blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
-  beam.position.y = 1.3;
+  beam.position.y = 1.6;
   const spark = new THREE.Mesh(new THREE.SphereGeometry(0.05, 16, 12),
     new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0 }));
   seat.add(pedestal, mark, ring, beam, spark);
@@ -117,26 +121,33 @@ export function makeTotem(name, vendor, color, P) {
   return seat;
 }
 
-// Working agents stream particles toward the monolith along a lifted arc.
+// Working agents stream soft trails toward the monolith along a lifted arc:
+// a few comets, each a head with a tail of fading points behind it.
 function particles(seat, color, to) {
-  const n = 42, prog = new Float32Array(n);
-  for (let i = 0; i < n; i++) prog[i] = Math.random();
+  const streams = 5, tail = 14, n = streams * tail;
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(n * 3), 3));
+  const fade = new Float32Array(n);
+  for (let k = 0; k < streams; k++) for (let j = 0; j < tail; j++) fade[k * tail + j] = 1 - j / tail;
+  geo.setAttribute("fade", new THREE.Float32BufferAttribute(fade, 1));
   const pos = geo.attributes.position.array;  // the attribute's own buffer, not a copy
+  const heads = new Float32Array(streams);
+  for (let k = 0; k < streams; k++) heads[k] = k / streams;
   const pts = new THREE.Points(geo, new THREE.ShaderMaterial({ transparent: true, depthWrite: false,
     blending: THREE.AdditiveBlending, uniforms: { color: { value: new THREE.Color(color) } },
     vertexShader: PARTICLE_VS, fragmentShader: PARTICLE_FS }));
-  const a = seat.position.clone().setY(UP + 0.1);
-  const mid = a.clone().lerp(to, 0.5).setY(UP + 1.1);
+  const a = seat.position.clone().setY(UP + 0.2);
+  const mid = a.clone().lerp(to, 0.5).setY(UP + 1.3);
   const curve = new THREE.QuadraticBezierCurve3(a, mid, to);
   pts.userData.step = (dt) => {
-    for (let i = 0; i < n; i++) {
-      prog[i] = (prog[i] + dt * (0.22 + (i % 7) * 0.012)) % 1;
-      const p = curve.getPoint(prog[i]);
-      pos[i * 3] = p.x + Math.sin(prog[i] * 20 + i) * 0.03;
-      pos[i * 3 + 1] = p.y + Math.cos(prog[i] * 17 + i) * 0.03;
-      pos[i * 3 + 2] = p.z;
+    for (let k = 0; k < streams; k++) {
+      heads[k] = (heads[k] + dt * (0.16 + k * 0.012)) % 1;
+      for (let j = 0; j < tail; j++) {
+        const i = k * tail + j, q = heads[k] - j * 0.011;
+        const p = curve.getPoint(q < 0 ? q + 1 : q);
+        const wob = Math.sin(q * 14 + k * 2) * 0.03;
+        pos[i * 3] = p.x + wob; pos[i * 3 + 1] = p.y + Math.cos(q * 11 + k) * 0.03; pos[i * 3 + 2] = p.z + wob;
+      }
     }
     geo.attributes.position.needsUpdate = true;
   };
@@ -149,8 +160,9 @@ export function updateTotem(seat, t, dt, reduce, accent, stage) {
   const u = seat.userData, s = u.state, w = reduce ? 0 : 1;
   if (!reduce) u.spin(t, dt);
   const breathe = 0.97 + w * 0.03 * Math.sin(t * 1.9 + u.angle);
-  u.mark.scale.setScalar(s === "asleep" || s === "pacing" ? 0.9 * breathe : 1);
-  u.mark.position.y = UP - (s === "asleep" || s === "pacing" ? 0.08 : 0) + w * (s === "busy" ? Math.sin(t * 1.6 + u.angle) * 0.025 : 0);
+  u.mark.scale.setScalar(SCALE * (s === "asleep" || s === "pacing" ? 0.9 * breathe : 1));
+  u.mark.position.y = UP - (s === "asleep" || s === "pacing" ? 0.12 : 0)
+    + w * (s === "busy" ? Math.sin(t * 1.6 + u.angle) * 0.04 : 0);
   const stuckFlicker = reduce ? 0.45 : (Math.sin(t * 23) > 0.2 ? 0.7 : 0.15) + Math.random() * 0.1;
   u.mat.emissive.set(s === "stuck" ? AMBER : u.color);
   u.mat.emissiveIntensity = s === "busy" ? 0.38 + w * 0.22 * Math.sin(t * 1.6 + u.angle)
@@ -161,7 +173,7 @@ export function updateTotem(seat, t, dt, reduce, accent, stage) {
     : s === "stuck" ? 0.55 : s === "busy" ? 0.3 + w * 0.12 * Math.sin(t * 1.6 + u.angle) : 0;
   u.beam.material.opacity = s === "needs" ? 0.16 + w * 0.06 * Math.sin(t * 3) : 0;
   u.spark.material.opacity = s === "needs" ? 0.9 : 0;
-  if (s === "needs") u.spark.position.y = reduce ? 1.6 : 0.3 + ((t * 0.9 + u.angle) % 1.6);
+  if (s === "needs") u.spark.position.y = reduce ? 2.0 : 0.4 + ((t * 0.9 + u.angle) % 2.4);
   if (s === "busy" && !reduce) {
     if (!u.particles) { u.particles = particles(seat, u.color, stage.monolith); stage.add(u.particles); }
     u.particles.userData.step(dt);
