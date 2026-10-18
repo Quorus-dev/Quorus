@@ -27,6 +27,6 @@ of that run (`rooms`, `mention`, `handoff`, `review`); the lock and scorecard
 cards are HTML tables of real `quorus locks` / `quorus scorecard` output. Every
 image is WebP (no AVIF encoder is installed here). The one web font is Plus
 Jakarta Sans (OFL, `public/fonts/`), preloaded and self-hosted. The footer's
-version is read from `../pyproject.toml` at build time. Motion is
+version is the one on PyPI, read at build time (`QUORUS_SITE_VERSION` offline). Motion is
 transform/opacity only (plus SVG stroke drawing), loaded after first paint as
 its own chunk, and absent under `prefers-reduced-motion`.
