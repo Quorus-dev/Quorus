@@ -273,6 +273,11 @@ def _prompt_name(console: Console) -> str:
                 "  [dim]Letters, numbers, hyphens, underscores only.[/]"
             )
             continue
+        # `quorus agent add` reads "default" as no name set, so a user who
+        # picked it could never add an agent (codex first-run audit).
+        if name.lower() == "default":
+            console.print("  [dim]\"default\" is reserved — pick your own name.[/]")
+            continue
         return name
 
 

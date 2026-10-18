@@ -4974,6 +4974,10 @@ def _cmd_init(args):
     # instance_name, after which a paste of `quorus init --secret --help`
     # could silently overwrite the user's production profile with a name of
     # "--help" and a localhost relay.
+    # `quorus agent add` reads "default" as no name set (agent_cmd._add).
+    if name.lower() == "default":
+        ui.error("'default' is reserved", hint="pick your own name, e.g. quorus init alice")
+        sys.exit(1)
     if not _re.match(r"^[A-Za-z0-9_][A-Za-z0-9_\-]*$", name):
         ui.error(
             f"Name '{name}' contains invalid characters",
