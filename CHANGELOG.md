@@ -49,6 +49,23 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- The first run ended on the hub home with no room open, so the first thing a new user typed
+  went nowhere. It now lands inside #general, or the room the invite was for. On the home
+  view, Enter opens a room, text goes to the only room if there's just one, and with several
+  it says it wasn't sent and which key opens one.
+- The banner showed v0.5.0 whatever was installed; it reads the installed version.
+- Pasting a teammate's invite into the first-run wizard saved an empty secret and
+  dropped the room: secret-free invites weren't redeemed, and the hub never exchanged a
+  `quorus_pk_` key for a sign-in. The wizard now redeems the code into your own key and
+  remembers the invited room.
+- The hub's share fell back to an invite holding the relay secret (admin) whenever the
+  relay couldn't mint a code, a timeout or a 500 included. It now says the invite
+  couldn't be made. `quorus invite-link` and `quorus invite-token`, which print the
+  secret, need `--with-secret` and say it's for your own machines; for anyone else, use
+  `quorus share`.
+- `quorus invites --revoke <id>` only stopped new joins; the people who had already
+  joined with that invite stayed in its room. Revoking now also removes them from the room,
+  effective on their next request.
 - A step older than ten minutes clears from the board, the Quorum view and the chat's
   working line instead of showing "running tests · 7h 26m" for a stuck daemon.
 - A `postgres://` DATABASE_URL (what `fly postgres attach` sets) wasn't rewritten for

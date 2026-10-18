@@ -2763,3 +2763,13 @@ def test_secret_invites_need_with_secret(command, capsys, monkeypatch):
     out = capsys.readouterr()
     text = " ".join((out.out + out.err).split())
     assert "admin" in text and "own machines" in text
+
+
+def test_the_banner_shows_the_installed_version(capsys):
+    """F2 (new-user pass 1): the first-run banner said v0.5.0 on 0.5.2."""
+    from quorus_cli import ui
+
+    import quorus
+
+    ui.banner()
+    assert f"v{quorus.__version__}" in capsys.readouterr().out
