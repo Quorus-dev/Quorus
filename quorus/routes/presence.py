@@ -7,6 +7,7 @@ import os
 from fastapi import APIRouter, Depends, Request
 
 from quorus.auth.middleware import AuthContext, require_identity, verify_auth
+from quorus.auth.name_reservations import reserve_names
 from quorus.routes.models import HeartbeatRequest
 from quorus.services import presence_trail
 
@@ -33,6 +34,7 @@ async def heartbeat(
     auth: AuthContext = Depends(verify_auth),
 ):
     require_identity(auth, req.instance_name)
+    await reserve_names(request, auth, _tid(auth), req.instance_name)
     svc = request.app.state.presence_service
     entry = await svc.heartbeat(_tid(auth), req.instance_name, req.status, req.room,
                                 reason=req.reason, activity=req.activity,

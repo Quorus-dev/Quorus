@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.auth.name_reservations import reserve_names
 from quorus.routes.models import RegisterWebhookRequest, RoomWebhookRequest
 
 router = APIRouter()
@@ -25,6 +26,7 @@ async def register_webhook(
         raise HTTPException(
             status_code=403, detail="Cannot register webhook for another user",
         )
+    await reserve_names(request, auth, _tid(auth), req.instance_name)
     svc = request.app.state.webhook_service
     await svc.register_dm(_tid(auth), req.instance_name, req.callback_url, req.secret)
     await request.app.state.backends.participants.add(_tid(auth), req.instance_name)

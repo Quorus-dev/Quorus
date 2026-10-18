@@ -10,6 +10,7 @@ import os
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, require_identity, verify_auth
+from quorus.auth.name_reservations import reserve_names
 from quorus.backends.redis_backends import BackendError
 from quorus.routes.models import AckRequest, SendMessageRequest
 
@@ -57,6 +58,7 @@ async def send_message(
             f"up to {_MAX_DM_SIZE // 1024} KB (MAX_MESSAGE_SIZE)"))
 
     tid = _tid(auth)
+    await reserve_names(request, auth, tid, sender)
     # 2026-05-16 audit (B4): DM send is a write endpoint with no rate limit.
     # Match the sibling room_messages.py cap (60/min/sender). Closes the
     # cheap DoS surface a tenant-shared sender could use to flood the
