@@ -2518,6 +2518,7 @@ class Reflexd:
         # own @mentions queued for an hour (overseer, fix 16).
         self._pace_parked: dict[str, tuple[dict[str, Any], Any]] = {}
         self._pace_task: asyncio.Task | None = None
+        self._readonly_warned: set[str] = set()  # worktrees told "stuck marker"
         self._last_spoke: dict[str, float] = {}
         self._last_wake_at: float = 0.0
         # Bounded in-memory queue for messages that arrive while a busy-file
@@ -3188,8 +3189,13 @@ class Reflexd:
                 # snapshot this one if it is read-only (security fix 15).
                 await self._settle_readonly(relay, room, worktree, None)
                 if reflexd_readonly.is_read_only(harness, room_mode):
-                    readonly_snap = await asyncio.to_thread(
-                        reflexd_readonly.begin, self._readonly_dir, worktree.path)
+                    try:
+                        readonly_snap = await asyncio.to_thread(
+                            reflexd_readonly.begin, self._readonly_dir, worktree.path)
+                    except reflexd_readonly.MarkerError as exc:
+                        # An unresolved earlier turn: its marker already keeps
+                        # this worktree from publishing; never overwrite it.
+                        logger.error("read-only turn: %s", exc)
             if room_mode == "manual":
                 # The approve tool must know where to ask: without this every
                 # permission prompt was denied "No Quorus room bound".
@@ -3824,21 +3830,28 @@ class Reflexd:
         """True when *worktree* is under a read-only turn (this one, or one a
         crash left behind) and so must not be published. Its changes are kept
         under refs/quorus/discarded/... and the worktree is put back."""
-        snap = snap or await asyncio.to_thread(
-            reflexd_readonly.pending, self._readonly_dir, worktree.path)
-        if snap is None:
-            return False
         try:
+            snap = snap or await asyncio.to_thread(
+                reflexd_readonly.pending, self._readonly_dir, worktree.path)
+            if snap is None:
+                return False
             ref = await asyncio.to_thread(
                 reflexd_readonly.settle, self._readonly_dir, worktree.path, snap,
                 self.config.participant_name)
-        except (OSError, subprocess.SubprocessError) as exc:
-            # Fail closed: the marker stays, so nothing publishes this worktree.
-            logger.error("read-only turn: couldn't reset %s: %s", worktree.path, exc)
-            await self._post_status(relay, room, envelope or {},
-                                    "⚠ a read-only turn changed files and I couldn't "
-                                    "reset them; nothing was published")
+        except (OSError, subprocess.SubprocessError, reflexd_readonly.MarkerError) as exc:
+            # Fail closed: the marker stays, so nothing publishes this worktree
+            # until a human resolves it. Say so once, not on every wake.
+            logger.error("read-only turn: couldn't settle %s: %s", worktree.path, exc)
+            key = str(worktree.path)
+            if key not in self._readonly_warned:
+                self._readonly_warned.add(key)
+                await self._post_status(
+                    relay, room, envelope or {},
+                    "⚠ a read-only turn's changes couldn't be checked or reset, so "
+                    f"nothing from {worktree.branch} will be published until the "
+                    f"marker in {self._readonly_dir} is resolved")
             return True
+        self._readonly_warned.discard(str(worktree.path))
         if ref:
             logger.warning("read-only turn changed files; discarded to %s", ref)
             await self._post_status(relay, room, envelope or {},

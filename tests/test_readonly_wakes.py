@@ -150,3 +150,74 @@ def test_every_reflexd_module_ships_in_the_wheel() -> None:
     toml = (_ROOT / "pyproject.toml").read_text()
     for f in (_ROOT / "scripts").glob("reflexd*.py"):
         assert f'"scripts/{f.name}" = "quorus/_reflexd/{f.name}"' in toml, f.name
+
+
+def test_an_edit_to_an_already_dirty_file_is_caught_and_prior_work_kept(tmp_path: Path) -> None:
+    """Codex on f09377ed: `git status` didn't change when an already-modified
+    file was modified again, so the write slipped through."""
+    repo = _repo(tmp_path)
+    (repo / "README.md").write_text("owner's unfinished edit\n")  # dirty before the turn
+    (repo / "notes.txt").write_text("owner's untracked notes\n")
+    (repo / "old.md").write_text("x\n")
+    _git(repo, "add", "old.md")
+    _git(repo, "commit", "-qm", "old")
+    (repo / "old.md").unlink()  # owner deleted it, uncommitted
+    marker_dir = tmp_path / "markers"
+    snap = ro.begin(marker_dir, repo)
+    (repo / "README.md").write_text("owner's unfinished edit\nINJECTED\n")  # same status
+    ref = ro.settle(marker_dir, repo, snap, "arav-gemini")
+    assert ref, "a content change to an already-dirty file must be caught"
+    assert (repo / "README.md").read_text() == "owner's unfinished edit\n"  # kept, not reset
+    assert (repo / "notes.txt").read_text() == "owner's untracked notes\n"
+    assert not (repo / "old.md").exists()
+    assert "INJECTED" in _git(repo, "show", f"{ref}:README.md")
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True,
+                            text=True, check=True).stdout.splitlines()
+    assert {" M README.md", "?? notes.txt", " D old.md"} == set(status)  # unstaged, as left
+
+
+def test_a_turn_that_leaves_prior_dirty_work_alone_is_quiet(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / "README.md").write_text("owner's unfinished edit\n")
+    marker_dir = tmp_path / "markers"
+    snap = ro.begin(marker_dir, repo)
+    assert ro.settle(marker_dir, repo, snap, "arav-gemini") is None
+    assert (repo / "README.md").read_text() == "owner's unfinished edit\n"
+
+
+def test_a_corrupt_marker_blocks_publishing_and_is_never_overwritten(tmp_path: Path) -> None:
+    """Codex on f09377ed: an unreadable marker read as 'no marker', which let
+    the worktree publish."""
+    import pytest
+
+    repo = _repo(tmp_path)
+    marker_dir = tmp_path / "markers"
+    ro.begin(marker_dir, repo)
+    marker = next(marker_dir.glob("*.json"))
+    marker.write_text("{not json")
+    with pytest.raises(ro.MarkerError):
+        ro.pending(marker_dir, repo)
+    with pytest.raises(ro.MarkerError):  # a new turn can't replace recovery state
+        ro.begin(marker_dir, repo)
+    assert marker.read_text() == "{not json"
+
+    class _Cfg:
+        participant_name = "arav-gemini"
+        runtime_dir = tmp_path
+
+    class _WT:
+        path, branch = repo, "quorus/arav-gemini"
+
+    d = reflexd.Reflexd.__new__(reflexd.Reflexd)
+    d.config, d._readonly_warned = _Cfg(), set()
+    posted: list[str] = []
+
+    async def post(relay, room, env, text):
+        posted.append(text)
+    d._post_status = post
+    marker_dir2 = tmp_path / "readonly-wakes"
+    marker_dir2.mkdir()
+    marker.rename(marker_dir2 / marker.name)
+    for _ in range(2):
+        assert asyncio.run(d._settle_readonly(_Relay(), "build", _WT(), None)) is True
+    assert len(posted) == 1 and "nothing from quorus/arav-gemini will be published" in posted[0]
