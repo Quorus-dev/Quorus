@@ -8,7 +8,7 @@ export const R = 3.0;            // table radius
 export const SEAT_R = R + 0.62;  // seats sit just outside the rim
 const WALL_Z = -4.4;             // the back wall
 const ELEV = 0.26;               // camera elevation (rad): a low, cartoon eye
-const TARGET = new THREE.Vector3(0, 1.4, -1.5);
+const TARGET = new THREE.Vector3(0, 1.75, -1.6);
 
 // Bloom: bright pass → two separable blurs at half and quarter size → add back.
 // The composite runs to the screen, so three's own ACES + sRGB chunks apply.
@@ -177,14 +177,16 @@ export function resize(S) {
 // Fit the desk rows and the wall screen for the host's aspect, from a low eye
 // (an office seen from its door, not a table from above).
 function frame(S) {
-  const pts = [[-3.8, 0, 0.6], [3.8, 0, 0.6], [-3.8, 2.4, -2.9], [3.8, 2.4, -2.9], [0, 0, 1.2],
-               [-1.9, 3.6, WALL_Z], [1.9, 3.6, WALL_Z]].map((p) => new THREE.Vector3(...p));
+  // The envelope is the desks themselves (front edge to back row, floor to head
+  // height) and the wall screen's top; margins are slim so the room fills the frame.
+  const pts = [[-3.5, 0, 0.9], [3.5, 0, 0.9], [-3.5, 2.2, -2.9], [3.5, 2.2, -2.9],
+               [-1.8, 3.5, WALL_Z], [1.8, 3.5, WALL_Z]].map((p) => new THREE.Vector3(...p));
   let d = 12;
   for (let pass = 0; pass < 4; pass++) {
     place(S, d, ELEV, 0, TARGET);
     let m = 0;
-    pts.forEach((p) => { const v = p.clone().project(S.cam); m = Math.max(m, Math.abs(v.x), Math.abs(v.y) * 1.08); });
-    d *= m / 0.92;
+    pts.forEach((p) => { const v = p.clone().project(S.cam); m = Math.max(m, Math.abs(v.x), Math.abs(v.y) * 1.04); });
+    d *= m / 0.97;
   }
   S.d = d;
   S.scene.fog.near = d + 6;

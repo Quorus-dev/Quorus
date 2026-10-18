@@ -195,16 +195,22 @@ export function makeAgent(name, vendor, color, P, accent) {
     l.position.set(sx * 0.58, 0.36, 0.62);
     return l;
   });
-  // The monitor stands on the far edge of the desk, facing the figure: the camera
-  // sees its slim back, and a soft panel on the figure's side lights the face.
-  const monitor = new THREE.Mesh(roundedBox(0.62, 0.38, 0.035, 0.012), dark);
-  monitor.position.set(0, 1.05, 0.86);
-  const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 0.14, 12), dark);
-  stand.position.set(0, 0.84, 0.86);
-  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.32),
+  // The monitor stands on the far edge of the desk, off to one side and turned a
+  // little toward the figure, so the camera sees its slim back while the body, the
+  // badge and the typing arm stay in view; a soft panel on the figure's side lights
+  // the face.
+  const mon = new THREE.Group();
+  const monitor = new THREE.Mesh(roundedBox(0.54, 0.32, 0.035, 0.012), dark);
+  monitor.position.y = 0.98;
+  const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 0.12, 12), dark);
+  stand.position.y = 0.83;
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.48, 0.26),
     new THREE.MeshStandardMaterial({ color: "#1c2522", emissive: accent || "#3fd2b0", emissiveIntensity: 0.25, roughness: 0.4 }));
-  screen.position.set(0, 1.05, 0.84);
+  screen.position.set(0, 0.98, -0.02);
   screen.rotation.y = Math.PI;  // faces the figure
+  mon.add(monitor, stand, screen);
+  mon.position.set(-0.34, 0, 0.86);
+  mon.rotation.y = 0.4;
   const chairSeat = new THREE.Mesh(roundedBox(0.56, 0.08, 0.56, 0.03), dark);
   chairSeat.position.set(0, 0.44, 0);
   const chairBack = new THREE.Mesh(roundedBox(0.52, 0.5, 0.06, 0.03), dark);
@@ -223,7 +229,7 @@ export function makeAgent(name, vendor, color, P, accent) {
   const spark = new THREE.Mesh(new THREE.SphereGeometry(0.05, 16, 12),
     new THREE.MeshBasicMaterial({ color: AMBER_C, transparent: true, opacity: 0 }));
   [top, ...legs, monitor, stand, chairSeat, chairBack, post, foot].forEach((o) => { o.castShadow = o.receiveShadow = true; });
-  seat.add(top, ...legs, monitor, stand, screen, chairSeat, chairBack, post, foot, fig.g, ring, spark);
+  seat.add(top, ...legs, mon, chairSeat, chairBack, post, foot, fig.g, ring, spark);
   seat.traverse((o) => { o.userData.seat = name; });
   seat.userData = Object.assign({ name, vendor, state: "", angle: 0, color: new THREE.Color(color),
     ring, spark, fig, screen, yaw: 0, face: null, hop: 0 }, {});

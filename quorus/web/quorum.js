@@ -170,16 +170,8 @@ function placeTags() {
     return;
   }
   const w = Q.host.clientWidth, h = Q.host.clientHeight, now = performance.now(), V3 = Q.stage.THREE.Vector3;
-  Q.bubbles.forEach((b, name) => {
-    const s = Q.seats.get(name);
-    if (!s || Number(b.dataset.until) < now) { b.hidden = true; return; }
-    const p = Q.stage.project(s.localToWorld(new V3(0, 1.95, 0)));  // just over the head
-    b.hidden = p.behind;
-    const left = Math.max(4, Math.min(w - b.offsetWidth - 4, p.x + 8));
-    const top = Math.max(4, p.y - b.offsetHeight - 4);
-    b.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
-  });
   mainTag();
+  const plaqueTop = new Map();
   // Plaques are compact in 3D (name and status; the model is in the card). The front
   // row's hang from the desk fronts like nameplates, where only floor is behind them;
   // the back row's float over the heads, against the wall screen, so neither row's
@@ -205,6 +197,24 @@ function placeTags() {
     top = Math.min(h - p.th - 4, top);
     p.t.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
     placed.push({ left, top, tw: p.tw, th: p.th });
+    plaqueTop.set(p.t, top);
+  });
+  // Bubbles go above the head, and above that seat's plaque when the plaque floats
+  // there too (the back row), so a bubble never hides a status line; two bubbles
+  // stack instead of overlapping.
+  const shown = [];
+  Q.bubbles.forEach((b, name) => {
+    const s = Q.seats.get(name), t = Q.tags.get(name);
+    if (!s || Number(b.dataset.until) < now) { b.hidden = true; return; }
+    const p = Q.stage.project(s.localToWorld(new V3(0, 1.95, 0)));
+    b.hidden = p.behind;
+    const ceiling = t && !t.hidden && plaqueTop.has(t) ? Math.min(p.y, plaqueTop.get(t) - 6) : p.y;
+    const left = Math.max(4, Math.min(w - b.offsetWidth - 4, p.x + 8)), bw = b.offsetWidth, bh = b.offsetHeight;
+    let top = Math.max(4, ceiling - bh - 4);
+    const clash = () => shown.find((q) => left < q.left + q.w + 6 && left + bw + 6 > q.left && top < q.top + q.h + 6 && top + bh + 6 > q.top);
+    for (let tries = 0, hit; tries < 12 && (hit = clash()); tries++) top = Math.max(4, hit.top - bh - 8);  // stack upward
+    shown.push({ left, top, w: bw, h: bh });
+    b.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
   });
 }
 
