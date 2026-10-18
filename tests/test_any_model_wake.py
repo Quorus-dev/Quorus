@@ -338,7 +338,8 @@ def test_a_failed_turns_leftover_work_gets_a_real_commit_message() -> None:
 
 def test_timeout_notice_says_what_happened() -> None:
     assert reflexd._timed_out_line().startswith("⚠ ran out of time")
-    assert "published below" in reflexd._timed_out_line(published=True)
+    # A cut-off turn never publishes (test_unfinished_wakes.py), so it never says so.
+    assert "published" not in reflexd._timed_out_line()
 
 
 def test_failover_goes_back_to_the_agents_own_model(monkeypatch) -> None:
