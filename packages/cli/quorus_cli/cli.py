@@ -851,8 +851,18 @@ def _cmd_members(args):
         ui.console.print(f"  [agent]@{m}[/]")
 
 
+def _message_text(args) -> str:
+    """The message as one string: a REMAINDER list from the CLI, a str from tests."""
+    msg = args.message
+    text = " ".join(msg) if isinstance(msg, list) else str(msg or "")
+    if not text.strip():
+        raise SystemExit("quorus: a message is required")
+    return text
+
+
 def _cmd_say(args):
     from quorus_cli import ui
+    args.message = _message_text(args)
     try:
         with ui.spinner(f"Sending to #{args.room}"):
             asyncio.run(_say(args.room, args.message))
@@ -872,6 +882,7 @@ def _cmd_say(args):
 
 def _cmd_dm(args):
     from quorus_cli import ui
+    args.message = _message_text(args)
     try:
         with ui.spinner(f"Sending DM to @{args.to}"):
             asyncio.run(_dm(args.to, args.message))
@@ -9046,11 +9057,13 @@ def main():
         help_text="Send message to a room (alias: s)",
     ))
     p_say.add_argument("room", help="Room name")
-    p_say.add_argument("message", help="Message content")
+    # REMAINDER: words like "--fps" inside an unquoted message are text, not
+    # flags (an agent's `quorus say room ✅ … --fps` failed, 2026-10-18).
+    p_say.add_argument("message", nargs=argparse.REMAINDER, help="Message content")
 
     p_dm = sub.add_parser("dm", help="Send direct message")
     p_dm.add_argument("to", help="Recipient name")
-    p_dm.add_argument("message", help="Message content")
+    p_dm.add_argument("message", nargs=argparse.REMAINDER, help="Message content")
 
     p_heartbeat = sub.add_parser("heartbeat", **_help_block(
         synopsis="Post an alive-signal heartbeat to your primary room.",
