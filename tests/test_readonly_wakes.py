@@ -272,3 +272,22 @@ def test_a_read_only_turn_that_cant_be_snapshotted_does_not_run(monkeypatch,
     assert _git(repo, "log", "--oneline", "main").count("\n") == 0
     assert any("couldn't check its worktree before a read-only turn" in p["content"]
                for p in relay.posted)
+
+
+def test_a_read_only_turn_without_its_worktree_never_runs_in_the_shared_checkout(
+        monkeypatch, tmp_path: Path) -> None:
+    """Codex on 8805dc00: when worktree setup failed the turn fell back to the
+    shared checkout, where the guard can't see writes. It must not run."""
+    monkeypatch.setattr(reflexd.reflexd_wake, "agent_worktree", lambda *_a, **_k: None)
+    repo = _repo(tmp_path)
+    relay = _wake(monkeypatch, tmp_path, repo, sender="mallory", mode="autonomous")
+    assert not (repo / "pwned.txt").exists()
+    assert any("has no isolated worktree for a read-only turn" in p["content"]
+               for p in relay.posted)
+
+
+def test_an_owner_turn_without_a_worktree_still_runs(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(reflexd.reflexd_wake, "agent_worktree", lambda *_a, **_k: None)
+    repo = _repo(tmp_path)
+    _wake(monkeypatch, tmp_path, repo, sender="arav", mode="autonomous")
+    assert (repo / "pwned.txt").exists()  # writable owner turn, in the bound repo as before
