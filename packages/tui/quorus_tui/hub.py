@@ -302,6 +302,7 @@ def _decode_invite_token(token: str) -> dict | None:
                 "secret": payload.get("s", "") or "",
                 "api_key": payload.get("k", "") or "",
                 "room": payload.get("n", "") or "",
+                "code": payload.get("c", "") or "",
             }
         if raw.startswith("quorus_join_") or raw.startswith("murm_join_"):
             prefix = (
@@ -409,6 +410,7 @@ def _first_launch_setup(console: Console) -> dict:
     relay_url = DEFAULT_RELAY
     secret = ""
     api_key = ""
+    invited_room = ""
     relay_ok = False
 
     # There is no public relay: Enter runs Quorus on this computer (a local
@@ -433,10 +435,14 @@ def _first_launch_setup(console: Console) -> dict:
         relay_url = decoded["relay_url"]
         secret = decoded["secret"]
         api_key = decoded["api_key"]
+        invited_room = decoded.get("room", "")
         console.print(f"\n  [dim]Connecting to {relay_url}...[/] ", end="")
         if _try_connect(relay_url):
             console.print("[success]✓[/]")
             relay_ok = True
+            if decoded.get("code"):
+                api_key, secret = _redeem_in_wizard(relay_url, decoded["code"], name), ""
+                relay_ok = bool(api_key)
             if decoded.get("room"):
                 console.print(
                     f"  [muted]You'll land in [room]#{decoded['room']}[/] "
@@ -469,8 +475,13 @@ def _first_launch_setup(console: Console) -> dict:
                 relay_url = (payload.get("r") or relay_url).rstrip("/")
                 secret = payload.get("s", "") or ""
                 api_key = payload.get("k", "") or ""
+                invited_room = payload.get("n", "") or ""
                 console.print("[success]✓[/]")
                 relay_ok = True
+                if payload.get("c"):
+                    # A secret-free invite: spend it for this name's own key.
+                    api_key, secret = _redeem_in_wizard(relay_url, payload["c"], name), ""
+                    relay_ok = bool(api_key)
                 if payload.get("n"):
                     console.print(
                         f"  [muted]You'll land in [room]#{payload['n']}[/] "
@@ -502,12 +513,15 @@ def _first_launch_setup(console: Console) -> dict:
     # "You're in as @name" is printed by the session once the relay has
     # actually answered — printing it here landed *before* "Connecting to …"
     # and made the happy path read like a race (finding #4).
-    return {
+    profile = {
         "relay_url": relay_url,
         "instance_name": name,
         "relay_secret": secret,
         "api_key": api_key,
     }
+    if invited_room:
+        profile["room"] = invited_room  # the room the invite was for
+    return profile
 
 
 # ── API helpers ───────────────────────────────────────────────────────────────
@@ -538,13 +552,22 @@ def _exchange_api_key_for_jwt(relay: str, api_key: str) -> str | None:
     return None
 
 
+def _redeem_in_wizard(relay_url: str, code: str, name: str) -> str:
+    """Spend a secret-free (v2) invite for *name*: its own ``quorus_pk_`` key, or ""
+    after saying why. It used to save the payload's empty secret and drop the
+    code, so an invited teammate landed unauthenticated (codex, first-run audit)."""
+    from quorus_cli.cli import _redeem_invite
+
+    return _redeem_invite(relay_url.rstrip("/"), code, name)
+
+
 def _get_auth_token(relay: str, secret: str) -> str:
     """Get the auth token to use. Exchanges API keys for JWTs if needed."""
     if not secret:
         return ""
 
-    # If it looks like an API key, exchange for JWT
-    if secret.startswith("mct_"):
+    # An API key or a participant key (from an invite) is exchanged for a JWT.
+    if secret.startswith(("mct_", "quorus_pk_")):
         jwt = _exchange_api_key_for_jwt(relay, secret)
         if jwt:
             return jwt
