@@ -30,6 +30,22 @@ def _tid(auth: AuthContext) -> str:
     return auth.tenant_id or _LEGACY_TENANT
 
 
+def _hide_tokens(entries, caller: str | None, holder_key: str):
+    """Drop ``lock_token`` from lock entries the caller does not hold.
+
+    The token is the release capability: anyone who can read it can
+    release the lock, so only the holder gets it back.
+    """
+    def scrub(entry: dict) -> dict:
+        if caller and entry.get(holder_key) == caller:
+            return entry
+        return {k: v for k, v in entry.items() if k != "lock_token"}
+
+    if isinstance(entries, dict):
+        return {path: scrub(e) for path, e in entries.items()}
+    return [scrub(e) for e in entries]
+
+
 @router.get("/rooms/{room_id}/state")
 async def get_room_state(
     room_id: str,
@@ -80,8 +96,12 @@ async def get_room_state(
         "snapshot_at": datetime.now(timezone.utc).isoformat(),
         "schema_version": _SCHEMA_VERSION,
         "active_goal": state.get("active_goal"),
-        "claimed_tasks": state.get("claimed_tasks", []),
-        "locked_files": state.get("locked_files", {}),
+        "claimed_tasks": _hide_tokens(
+            state.get("claimed_tasks", []), auth.sub, "claimed_by"
+        ),
+        "locked_files": _hide_tokens(
+            state.get("locked_files", {}), auth.sub, "held_by"
+        ),
         "resolved_decisions": state.get("resolved_decisions", []),
         "active_agents": active_agents,
         "message_count": message_count,
@@ -294,6 +314,13 @@ async def release_task(
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     room_name = room_data.get("name", rid)
     members = room_data.get("members", {})
+
+    # A token alone is not enough: a named caller can only release its own lock.
+    if auth.sub:
+        current = (await backends.room_state.get(tid, rid)).get("locked_files", {})
+        holder = (current.get(file_path) or {}).get("held_by")
+        if holder and holder != auth.sub:
+            raise HTTPException(status_code=403, detail="Lock is held by another member")
 
     # Release atomically with token verification (prevents TOCTOU race conditions)
     status, existing = await backends.room_state.release_lock_atomic(
