@@ -7351,6 +7351,22 @@ def _cmd_relay(args):
         )
         sys.exit(1)
     host = getattr(args, "host", None) or "127.0.0.1"
+    # The first `quorus` run starts a relay in the background on 127.0.0.1:8080.
+    # A second one on 0.0.0.0 binds beside it on macOS (two relays, one state
+    # file) and fails on Linux, so refuse, or with --replace stop ours first.
+    from quorus.runtime import local_relay
+
+    if local_relay._healthy(f"http://127.0.0.1:{args.port}", 1.0):
+        if not getattr(args, "replace", False):
+            _ui.error(f"A relay is already running on port {args.port}",
+                      hint=f"to serve it on {host} instead, stop it first: "
+                           f"quorus relay --host {host} --port {args.port} --replace")
+            sys.exit(1)
+        if not local_relay.stop_started_relay(args.port):
+            _ui.error(f"The relay on port {args.port} isn't one quorus started, so it "
+                      "wasn't stopped", hint="stop it yourself, or use another --port")
+            sys.exit(1)
+        console.print(f"[dim]stopped the relay quorus started on port {args.port}[/]")
     state = os.environ.get("MESSAGES_FILE") or str(resolve_config_dir() / "relay-state.json")
     env = {**os.environ, "RELAY_SECRET": secret, "PORT": str(args.port), "HOST": host,
            "ALLOW_LEGACY_AUTH": "1", "MESSAGES_FILE": state}
@@ -8904,6 +8920,8 @@ def main():
     p_relay.add_argument("--host", default="127.0.0.1",
                          help="Bind address (default: this machine only; "
                               "0.0.0.0 to share on your LAN)")
+    p_relay.add_argument("--replace", action="store_true",
+                         help="Stop the relay `quorus` started in the background first")
 
     p_rooms = sub.add_parser("rooms", **_help_block(
         synopsis="List all rooms visible to your account.",

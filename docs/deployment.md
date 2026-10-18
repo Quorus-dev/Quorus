@@ -11,7 +11,8 @@ everyone who needs it.
 Each path is labeled with how far we've tested it:
 
 - **Verified on 0.5.2**: we ran these commands against the published `quorus-ai` 0.5.2 and they
-  worked.
+  worked. `--secret -` (read the secret from stdin) and `quorus relay --replace` arrive in
+  0.5.3; on 0.5.2, pass the secret as `--secret <value>` and stop the first-run relay yourself.
 - **Config included, not re-verified**: the config is in the repo, but we haven't deployed it
   again for this release. Expect to adjust things.
 
@@ -55,9 +56,13 @@ carry an address teammates can reach:
 
 ```bash
 quorus init <your-name> --relay-url http://<lan-ip>:8080 --secret -   # paste your secret, Enter
-quorus relay --host 0.0.0.0 --port 8080                              # keep it running
+quorus relay --host 0.0.0.0 --port 8080 --replace                    # keep it running
 quorus share <room>                                                   # prints the join command
 ```
+
+Your relay secret is `relay_secret` in `~/.quorus/profiles/default.json`. `--replace` stops the
+relay your first `quorus` run started in the background on `127.0.0.1:8080`, so this one can take
+the port. Without it, `quorus relay` refuses while another relay answers there.
 
 Your teammate runs the `quorus join <CODE> --name <their-name> --relay http://<lan-ip>:8080`
 line that `share` printed.
@@ -82,7 +87,7 @@ Everyone who joins must be on your tailnet. Traffic between devices is encrypted
 To get HTTPS, keep the relay on `127.0.0.1` and let Tailscale serve it:
 
 ```bash
-quorus relay --port 8080                   # default bind, this machine only
+TRUSTED_PROXY_COUNT=1 quorus relay --port 8080 --replace   # this machine only, behind the proxy
 tailscale serve --bg 8080                  # https://<machine>.<tailnet>.ts.net -> 127.0.0.1:8080
 quorus init <your-name> --relay-url https://<machine>.<tailnet>.ts.net --secret -
 quorus share <room>
@@ -109,8 +114,11 @@ sudo apt install -y pipx caddy && pipx ensurepath
 pipx install quorus-ai
 python3 -c 'import secrets; print(secrets.token_hex(24))' |
   quorus init relay-owner --relay-url https://relay.example.com --secret -
-quorus relay --port 8080          # stays on 127.0.0.1; run it under systemd or tmux
+TRUSTED_PROXY_COUNT=1 quorus relay --port 8080   # stays on 127.0.0.1; run it under systemd or tmux
 ```
+
+`TRUSTED_PROXY_COUNT=1` tells the relay one proxy (Caddy) sits in front, so rate limits see
+each client's own address instead of everyone sharing Caddy's.
 
 `/etc/caddy/Caddyfile`:
 
