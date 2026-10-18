@@ -42,6 +42,10 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- Pasting a teammate's invite into the first-run wizard saved an empty secret and
+  dropped the room: secret-free invites weren't redeemed, and the hub never exchanged a
+  `quorus_pk_` key for a sign-in. The wizard now redeems the code into your own key and
+  remembers the invited room.
 - The hub's share fell back to an invite holding the relay secret (admin) whenever the
   relay couldn't mint a code, a timeout or a 500 included. It now says the invite
   couldn't be made. `quorus invite-link` and `quorus invite-token`, which print the
