@@ -7,11 +7,16 @@ with attestations. No API token is involved.
 
 ## Version bump
 
-The version appears in seven places; change all of them:
+The version appears in nine places; change all of them (a test checks):
 
 - `pyproject.toml` and `packages/{cli,mcp,sdk,tui}/pyproject.toml`
 - `quorus/__init__.py` (`__version__`)
 - `quorus/relay.py` (the FastAPI `version=`)
+- `server.json`, twice: the server's `version` and the PyPI package's `version`
+
+After the tag, publish the new `server.json` to the MCP Registry with
+`mcp-publisher publish` (GitHub login). The registry checks the
+`mcp-name:` comment at the top of the README, which PyPI serves.
 
 ## Gate
 

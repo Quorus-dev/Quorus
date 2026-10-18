@@ -17,6 +17,8 @@ All notable changes to Quorus are documented here. This project follows
 
 - `--json` on `quorus rooms`, `history`, `ps`, `state`, `approvals` and `agent list`: the
   relay's data and nothing else on stdout, and a relay error exits non-zero.
+- Listed for the official MCP Registry: `server.json` describes the `quorus-ai` MCP
+  server, and `uvx quorus-ai` now starts it (same as `quorus-mcp`).
 - `llms.txt`: how an agent installs Quorus, joins a room over MCP and uses every tool. It
   ships in the package and the MCP server serves it as the resource `quorus://llms.txt`.
 

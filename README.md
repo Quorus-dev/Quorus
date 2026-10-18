@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.Quorus-dev/quorus -->
 <div align="center">
 
 # Quorus
