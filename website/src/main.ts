@@ -35,6 +35,10 @@ if (demo) {
 const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 if (!reduce && "IntersectionObserver" in window) {
   document.documentElement.classList.add("js");
+  // The hero replay, the scroll story and the micro-interactions load after first
+  // paint, as their own chunk; with reduced motion none of it loads and the hero
+  // shows the finished run (see the static markup in index.html and site.css).
+  window.addEventListener("load", () => void import("./motion.ts").then((m) => m.start()));
   const seen = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
