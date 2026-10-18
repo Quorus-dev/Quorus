@@ -84,6 +84,7 @@ from quorus.private_files import write_private_json, write_private_text  # noqa:
 from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime import review_share as _review_share  # noqa: E402
+from quorus.runtime import track_record as _track  # noqa: E402  L2 bids
 from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
 from quorus.runtime.turnguard import is_busy as _tg_is_busy  # noqa: E402
 
@@ -2720,6 +2721,17 @@ class Reflexd:
                 room, message_id, triage.kind, bid_reason,
             )
             return False
+        if triage.kind == "open_todo":
+            # L2: this agent's own recent turns and kept/reverted commits
+            # scale the bid; the evidence rides in the reason.
+            try:
+                bid, bid_reason = _track.adjust_bid(
+                    bid, bid_reason, message_id=message_id,
+                    runtime_dir=self.config.runtime_dir,
+                    participant=self.config.participant_name,
+                    repo=workspace_for(room) if room else None)
+            except Exception as exc:  # a bad track record must never stop a bid
+                logger.debug("track-record bid skipped: %s", exc)
         if self._wake_lock.locked() and triage.kind != "mention":
             # Busy on another job: still bid (so the work never goes
             # ownerless when everyone is busy) but low, so an idle teammate
@@ -3258,6 +3270,14 @@ class Reflexd:
         reply = redact_secrets((reply or "").strip(),
                                [self.config.api_key, *env_secret_values(os.environ)])
         unknown_exit = reply == "[reflexd] harness errored"
+        kind = triage.kind if triage is not None else ""
+        _track.record_turn(
+            self.config.runtime_dir, self.config.participant_name,
+            _track.classify_turn(reply, vendor_failure=bool(vendor_failure),
+                                 failure_reason=failure_reason or ""),
+            kind=kind,
+            holdout=_track.is_holdout(envelope.get("message_id") or envelope.get("id") or "")
+            if kind == "open_todo" else None)
         previous_degraded = self._degraded_reason
         if vendor_failure:
             self._degraded_reason = vendor_failure.reason
