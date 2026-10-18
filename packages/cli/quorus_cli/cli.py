@@ -7238,8 +7238,10 @@ def _cmd_doctor(args):
     check(
         "MCP config found",
         mcp_found,
+        # Only a file that exists: a missing ~/.codex/config.toml read like a found one.
         detail=(str(mcp_json) if mcp_json.exists() else
-                str(home_claude) if home_claude.exists() else str(codex_cfg)),
+                str(home_claude) if home_claude.exists() else
+                str(codex_cfg) if codex_has_quorus else ""),
         fix="Install Claude Code or Codex, then: quorus connect claude|codex <room> <name>",
         optional=True,
     )

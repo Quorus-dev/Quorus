@@ -136,3 +136,19 @@ def test_doctor_reports_rejected_credentials_with_status(capsys, tmp_path) -> No
     out = _flat(capsys)
     assert "rejected these credentials (HTTP 401)" in out
     assert "relay_secret" in out
+
+
+def test_doctor_names_no_mcp_config_when_none_exists(capsys, tmp_path) -> None:
+    """With no MCP config anywhere, doctor printed ~/.codex/config.toml under "MCP
+    config found" as if that file existed (found testing the 0.5.1 README path)."""
+    with patch("httpx.get", side_effect=_gaierror_connect_error()), \
+         patch("quorus.config.resolve_config_file") as resolve, \
+         patch("quorus_cli.cli.Path.home", return_value=tmp_path), \
+         patch("quorus_cli.cli.Path.cwd", return_value=tmp_path):
+        resolve.return_value.exists.return_value = True
+        with pytest.raises(SystemExit):
+            cli._cmd_doctor(_doctor_args())
+
+    out = _flat(capsys)
+    assert "MCP config found" in out
+    assert "config.toml" not in out
