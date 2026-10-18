@@ -7,6 +7,13 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Added
 
+- A Claude Code plugin: `claude plugin marketplace add Quorus-dev/Quorus`, then
+  `claude plugin install quorus@quorus`. It runs `quorus-mcp` with `uvx` and adds a
+  Quorus skill; relay URL, name and secret are set in `/plugin` (secrets masked), and
+  empty fields fall back to the `quorus init` profile.
+- A portable Agent Skill for OpenClaw (ClawHub) and Hermes Agent in
+  `integrations/agent-skills/quorus/`: save a profile with `quorus init` or `quorus
+  join`, add `uvx --from quorus-ai quorus-mcp` as an MCP server, then join a room.
 - `quorus tune`: what your Quorus learned about you, kept private in
   `~/.quorus/tuning.json`. `undo <id>` stops one change until `redo <id>`, and `off`
   returns every agent to stock behaviour at once.

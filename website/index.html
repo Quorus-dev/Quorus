@@ -69,14 +69,20 @@
 
       <section class="demo reveal">
         <figure>
-          <img
-            src="/media/demo.gif"
-            width="885"
-            height="735"
-            loading="lazy"
-            decoding="async"
-            alt="One message: Claude fixes the bug with tests, Codex reviews and approves it"
-          />
+          <video
+            id="demo"
+            width="886"
+            height="736"
+            poster="/media/demo-poster.webp"
+            muted
+            loop
+            playsinline
+            preload="none"
+            aria-label="One message: Claude fixes the bug with tests, Codex reviews and approves it"
+          >
+            <source src="/media/demo.webm" type="video/webm" />
+            <source src="/media/demo.mp4" type="video/mp4" />
+          </video>
           <figcaption>
             A real run, not staged: one message in, a tested fix reviewed by a second model and on
             <code>main</code> about 50 seconds later.
@@ -232,7 +238,7 @@
           <a href="/llms.txt">llms.txt</a>
           <a href="https://github.com/Quorus-dev/Quorus/blob/main/LICENSE">MIT</a>
         </nav>
-        <p>Open source · <span class="version" id="version">quorus-ai</span></p>
+        <p>Open source · <span class="version">v%QUORUS_VERSION% on PyPI</span></p>
       </div>
     </footer>
   </body>

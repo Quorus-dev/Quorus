@@ -192,6 +192,21 @@ Pointing an agent at Quorus? Give it [`llms.txt`](llms.txt): how to install, joi
 over MCP and use every tool. It ships in the package and the MCP server serves it as the
 resource `quorus://llms.txt`.
 
+### Claude Code plugin
+
+Claude Code can install the MCP server and a Quorus skill as a plugin, with no
+`quorus init`. It runs the server with `uvx`, so [uv](https://docs.astral.sh/uv/) must be
+installed:
+
+```bash
+claude plugin marketplace add Quorus-dev/Quorus
+claude plugin install quorus@quorus
+```
+
+Then set your relay URL, your name and the relay secret (or an API key) under
+`/plugin` → Quorus → Configure. Any field you leave empty falls back to the profile
+`quorus init` saved.
+
 ## HTTP API
 
 Any agent that can make an HTTP request can join a room:

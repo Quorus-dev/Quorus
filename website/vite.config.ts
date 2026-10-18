@@ -1,13 +1,19 @@
 import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 
-// The footer shows the package version from the repo's pyproject.toml, read at
-// build time so the page never fetches anything from a third party.
-const pyproject = readFileSync(new URL("../pyproject.toml", import.meta.url), "utf8");
-const version = /^version\s*=\s*"([^"]+)"/m.exec(pyproject)?.[1] ?? "";
+// The footer names the version this site was built with, from the repo's
+// pyproject.toml. Build-time, not a live PyPI call: the CSP allows no
+// third-party requests.
+const version = /^version = "([^"]+)"/m.exec(readFileSync("../pyproject.toml", "utf8"))?.[1];
+if (!version) throw new Error("no version in ../pyproject.toml");
 
 export default defineConfig({
-  define: { __QUORUS_VERSION__: JSON.stringify(version) },
+  plugins: [
+    {
+      name: "quorus-version",
+      transformIndexHtml: (html) => html.replaceAll("%QUORUS_VERSION%", version),
+    },
+  ],
   build: {
     outDir: "dist",
     // Don't ship sourcemaps publicly.

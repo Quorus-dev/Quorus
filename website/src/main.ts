@@ -1,7 +1,5 @@
 import "./site.css";
 
-declare const __QUORUS_VERSION__: string; // from ../pyproject.toml at build time (vite.config.ts)
-
 // Copy a command to the clipboard.
 for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-copy]")) {
   button.addEventListener("click", async () => {
@@ -17,9 +15,20 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-c
   });
 }
 
-// The package version in the footer, read from pyproject.toml when the site is built.
-const version = document.getElementById("version");
-if (version && __QUORUS_VERSION__) version.textContent = `v${__QUORUS_VERSION__}`;
+// The demo starts after the page has loaded and gone idle, so decoding it never
+// competes with first paint (the poster is the first paint). With reduced motion
+// it doesn't play by itself: the poster stays, with controls.
+const demo = document.getElementById("demo") as HTMLVideoElement | null;
+if (demo) {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    demo.controls = true;
+  } else {
+    const start = () => void demo.play().catch(() => (demo.controls = true));
+    window.addEventListener("load", () =>
+      "requestIdleCallback" in window ? requestIdleCallback(start, { timeout: 2000 }) : setTimeout(start, 500),
+    );
+  }
+}
 
 // Reveal sections as they scroll into view: transform/opacity only, and only when
 // the browser doesn't ask for reduced motion. Without JS everything is simply visible.
