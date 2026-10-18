@@ -3117,6 +3117,9 @@ class Reflexd:
             except (OSError, subprocess.SubprocessError) as exc:
                 logger.warning("worktree setup failed, using %s: %s", ws, exc)
                 worktree, worktree_problem = None, type(exc).__name__
+            if worktree is not None and worktree.repaired:
+                logger.warning("%s", worktree.repaired)
+                await self._post_status(relay, room, envelope, f"⚠ {worktree.repaired}")
         # Step 3 of code across machines: remember where the branch started
         # so a review request can carry exactly this wake's commits.
         pre_head = (await asyncio.to_thread(_review_share.head_of, worktree)
@@ -3185,6 +3188,7 @@ class Reflexd:
         )
         failure_reason = None
         readonly_snap: dict[str, str] | None = None
+        readonly_turn = False
         try:
             # Only pass worktree extras when used: adapters written against
             # the older run() signature keep working.
@@ -3233,6 +3237,7 @@ class Reflexd:
                 # snapshot this one if it is read-only (security fix 15).
                 await self._settle_readonly(relay, room, worktree, None)
                 if reflexd_readonly.is_read_only(harness, room_mode):
+                    readonly_turn = True
                     try:
                         readonly_snap = await asyncio.to_thread(
                             reflexd_readonly.begin, self._readonly_dir, worktree.path)
@@ -3240,6 +3245,12 @@ class Reflexd:
                         # An unresolved earlier turn: its marker already keeps
                         # this worktree from publishing; never overwrite it.
                         logger.error("read-only turn: %s", exc)
+                    except (OSError, subprocess.SubprocessError) as exc:
+                        # Without a snapshot its writes can't be told apart:
+                        # don't run it, and say why instead of a bare "stuck".
+                        raise reflexd_readonly.SnapshotError(
+                            "couldn't check its worktree before a read-only turn "
+                            "(git failed there), so it didn't run") from exc
             if room_mode == "manual":
                 # The approve tool must know where to ask: without this every
                 # permission prompt was denied "No Quorus room bound".
@@ -3258,6 +3269,7 @@ class Reflexd:
             # text here, which may contain credentials or prompt contents.
             failure_reason = (
                 "timed out" if isinstance(exc, (TimeoutError, asyncio.TimeoutError))
+                else str(exc) if isinstance(exc, reflexd_readonly.SnapshotError)
                 else f"crashed ({type(exc).__name__})"
             )
             reply = "[reflexd] harness errored"
@@ -3283,8 +3295,8 @@ class Reflexd:
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
             reply = ""
-        if worktree is not None and await self._settle_readonly(
-                relay, room, worktree, readonly_snap, envelope):
+        if worktree is not None and (await self._settle_readonly(
+                relay, room, worktree, readonly_snap, envelope) or readonly_turn):
             pass  # a read-only turn never publishes, whatever its harness wrote
         elif worktree is not None:
             try:
