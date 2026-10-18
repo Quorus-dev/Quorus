@@ -28,12 +28,13 @@ def normalize_database_url(url: str) -> str:
     """Make a raw DATABASE_URL safe for the asyncpg driver.
 
     Handles two common incompatibilities:
-    - Non-asyncpg schemes (``postgresql://``, ``postgresql+psycopg2://``) are
-      rewritten to ``postgresql+asyncpg://``.
+    - Non-asyncpg schemes (``postgresql://``, ``postgresql+psycopg2://``, and
+      the ``postgres://`` that ``fly postgres attach`` and Heroku-style hosts
+      set) are rewritten to ``postgresql+asyncpg://``.
     - libpq-style ``sslmode=require`` (what Neon/Supabase/Render emit) is
       translated to ``ssl=require``, which asyncpg + SQLAlchemy understand.
     """
-    url = re.sub(r"^postgresql(\+\w+)?://", "postgresql+asyncpg://", url)
+    url = re.sub(r"^postgres(?:ql)?(\+\w+)?://", "postgresql+asyncpg://", url)
     url = url.replace("sslmode=", "ssl=")
     return url
 
