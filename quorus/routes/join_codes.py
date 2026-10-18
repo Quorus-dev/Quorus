@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -55,7 +56,17 @@ def _request_relay_url(request: Request) -> str:
     """
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("x-forwarded-host", request.url.netloc)
+    # These values land inside the `curl | sh` installer and the join payload,
+    # so a header that isn't a plain scheme and host://port is ignored:
+    # `x-forwarded-host: x"; rm -rf ~ #` must never reach a shell.
+    if scheme not in ("http", "https"):
+        scheme = request.url.scheme
+    if not _HOST_RE.fullmatch(host or ""):
+        host = request.url.netloc
     return f"{scheme}://{host}"
+
+
+_HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?|\[[0-9A-Fa-f:.]{2,45}\](:[0-9]{1,5})?")
 
 
 def _legacy_admin_secret() -> str:
