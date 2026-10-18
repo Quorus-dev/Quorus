@@ -269,6 +269,7 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     cfg = reflexd.ReflexdConfig(relay_url="http://relay.test", participant_name="a-gemini",
                                 api_key="k", runtime_dir=tmp_path)
     daemon = reflexd.Reflexd(cfg)
+    daemon.adapter.model = "gemini-3.5-flash"
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
     _turn(tmp_path, "vendor_failure", scope="relay.test|a|")
     _turn(tmp_path, "vendor_failure", scope="relay.test|a|")
@@ -281,7 +282,8 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
             return {}
 
         async def claim(self, *, room_id, message_id):
-            return {"winner": "someone-else"}
+            return {"claimed": True, "winner": "x-codex", "bid": 0.5,
+                    "candidates": ["a-gemini", "x-codex"]}
 
         async def post_social_defer(self, **kw):  # pragma: no cover
             return {}
@@ -299,7 +301,10 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     assert "track x0." in bids[0]["reason"] and "0✓ 2✗/24h" in bids[0]["reason"]
     [logged] = tr.load_bids(tmp_path, "a-gemini")
     assert logged["harness"] == "gemini" and logged["arm"] == "routed"
-    assert logged["scope"] == "relay.test|a|"
+    assert logged["scope"] == "relay.test|a|" and logged["model"] == "gemini-3.5-flash"
+    [auction] = tr.load_claims(tmp_path, "a-gemini", scope="relay.test|a|")
+    assert auction["winner"] == "x-codex" and auction["candidates"] == ["a-gemini", "x-codex"]
+    assert auction["message_id"] == envelope["message_id"] and auction["winning_bid"] == 0.5
     [line] = posts
     assert line["message_type"] == "status" and line["room"] == "dev"
     assert line["content"].startswith("(quorus) adapted t1: @open bids x0.")
@@ -369,3 +374,25 @@ def test_report_joins_only_within_a_scope(tmp_path):
                    now=NOW)
     assert tr.report(tmp_path, "a", NOW)["predictive"]["low"] == {"turns": 1, "failed": 1}
     assert tr.report(tmp_path, "a", NOW, scope="B")["predictive"]["low"]["turns"] == 0
+
+
+
+def test_turns_and_bids_record_the_model(tmp_path):
+    tr.record_turn(tmp_path, "a-gemini", "timed_out", scope=SCOPE, model="gemini-3.5-flash")
+    tr.record_turn(tmp_path, "a-gemini", "timed_out", scope=SCOPE, model="gemini-3.5-flash")
+    tr.decide_bid(0.5, "r", message_id=_not_holdout(), runtime_dir=tmp_path,
+                  participant="a-gemini", repo=None, scope=SCOPE, model="gemini-3.5-flash")
+    assert {t["model"] for t in tr.load_turns(tmp_path, "a-gemini")} == {"gemini-3.5-flash"}
+    assert tr.load_bids(tmp_path, "a-gemini")[0]["model"] == "gemini-3.5-flash"
+
+
+def test_record_claim_keeps_only_announced_results(tmp_path, monkeypatch):
+    tr.record_claim(tmp_path, "a", message_id="m", scope="S", claim={"winner": "b"})
+    tr.record_claim(tmp_path, "a", message_id="m", scope="S",
+                    claim={"claimed": True, "winner": "b", "bid": "x", "candidates": "nope"})
+    [row] = tr.load_claims(tmp_path, "a", scope="S")
+    assert row["winner"] == "b" and row["winning_bid"] is None and row["candidates"] == []
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "off")
+    tr.record_claim(tmp_path, "a", message_id="m2", scope="S",
+                    claim={"claimed": True, "winner": "b"})
+    assert len(tr.load_claims(tmp_path, "a")) == 1

@@ -134,13 +134,14 @@ def load_bids(runtime_dir: Path, participant: str, now: float | None = None, *,
 
 
 def record_turn(runtime_dir: Path, participant: str, outcome: str, *,
-                kind: str = "", message_id: str = "", scope: str = "",
+                kind: str = "", message_id: str = "", scope: str = "", model: str = "",
                 now: float | None = None) -> None:
     """Append one finished turn; ``message_id`` links an ``@open`` win to its bid."""
     if outcome not in OUTCOMES or mode() == "off":
         return
     now = time.time() if now is None else now
-    row: dict[str, Any] = {"ts": now, "outcome": outcome, "kind": kind, "scope": scope}
+    row: dict[str, Any] = {"ts": now, "outcome": outcome, "kind": kind, "scope": scope,
+                           "model": model}
     if message_id:
         row["message_id"] = message_id
     _append(runtime_dir, participant, "turns", row, now)
@@ -308,7 +309,7 @@ def _sync(track: Track, participant: str, scope: str, now: float) -> tuple[bool,
 
 def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
                participant: str, repo: Path | None, scope: str = "", harness: str = "",
-               floor: float = 0.05) -> BidDecision:
+               model: str = "", floor: float = 0.05) -> BidDecision:
     """The ``@open`` bid to submit, its reason, and a room line if one is due."""
     current = mode()
     if current == "off":
@@ -324,7 +325,8 @@ def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
     _append(runtime_dir, participant, "bids", {
         "ts": now, "message_id": message_id, "arm": arm, "raw": bid, "would": would,
         "applies": applies, "availability": track.availability, "quality": track.quality,
-        "multiplier": track.multiplier, "harness": harness, "scope": scope}, now)
+        "multiplier": track.multiplier, "harness": harness, "model": model,
+        "scope": scope}, now)
     announce = None
     if new is not None:
         if current == "shadow":
@@ -336,6 +338,29 @@ def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
     if arm == "routed" and applies:
         return BidDecision(would, f"{reason}+track {track.reason()}", announce)
     return BidDecision(bid, f"{reason}+track({arm}) {track.reason()}", announce)
+
+
+def record_claim(runtime_dir: Path, participant: str, *, message_id: str, scope: str,
+                 claim: dict[str, Any], now: float | None = None) -> None:
+    """The auction's result as the relay announced it: who could have taken
+    the ``@open``, who did, and with what bid. Recorded by every bidder, so
+    an assignment is known before anyone's outcome is."""
+    if mode() == "off" or not isinstance(claim, dict) or not claim.get("claimed"):
+        return
+    now = time.time() if now is None else now
+    candidates = claim.get("candidates")
+    _append(runtime_dir, participant, "claims", {
+        "ts": now, "message_id": message_id, "scope": scope,
+        "winner": str(claim.get("winner") or ""),
+        "winning_bid": claim.get("bid") if isinstance(claim.get("bid"), (int, float)) else None,
+        "candidates": [str(c) for c in candidates][:20] if isinstance(candidates, list) else [],
+    }, now)
+
+
+def load_claims(runtime_dir: Path, participant: str, now: float | None = None, *,
+                scope: str | None = None) -> list[dict]:
+    rows = _load(runtime_dir, participant, "claims", time.time() if now is None else now)
+    return [r for r in rows if scope is None or r.get("scope", "") == scope]
 
 
 def report(runtime_dir: Path, participant: str, now: float | None = None, *,
