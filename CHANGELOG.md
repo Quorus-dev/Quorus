@@ -42,6 +42,9 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- `quorus invites --revoke <id>` only stopped new joins; the people who had already
+  joined with that invite stayed in its room. Revoking now also removes them from the room,
+  effective on their next request.
 - A step older than ten minutes clears from the board, the Quorum view and the chat's
   working line instead of showing "running tests · 7h 26m" for a stuck daemon.
 - The web app grew with every message instead of scrolling once a room passed a
