@@ -38,7 +38,7 @@ All notable changes to Quorus are documented here. This project follows
 - MCP tool failures are reported as errors (`isError: true`), not as successes.
 - `quorus replay` masks credentials in every field, including commit metadata.
 - Workspace paths are quoted when Quorus opens a Terminal for an agent.
-- A turn that runs out of time no longer publishes: its commits go to
+- A turn that runs out of time or fails no longer publishes: its commits go to
   `quorus/<agent>-unfinished` for review, or the agent finishes them when mentioned.
 - Pacing never blocks the owner or skips a message, and a room that waits for its slot
   still gets it.
