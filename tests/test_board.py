@@ -125,3 +125,13 @@ def test_board_never_waits_for_the_scorecard() -> None:
     assert "Promise.all([members, card])" not in BOARD_JS  # rows don't wait for it
     assert "refresh();" in window  # it re-renders once the track records arrive
     assert "Loading the team" in BOARD_JS
+
+
+
+def test_mission_control_keeps_chat_beside_the_panels_on_wide_screens() -> None:
+    """Watch every agent work and talk to them at once: on a wide screen the
+    Board view no longer hides the chat; a phone still toggles between them."""
+    assert '$(id).hidden = on && !wide' in BOARD_JS
+    assert '$("chat").classList.toggle("split", on && wide)' in BOARD_JS
+    assert "#chat.split{display:grid" in DASHBOARD_HTML
+    assert 'grid-template-areas:"bar bar" "board msgs"' in DASHBOARD_HTML
