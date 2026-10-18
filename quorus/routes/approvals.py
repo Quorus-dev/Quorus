@@ -17,7 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from quorus.auth.middleware import AuthContext, verify_auth
-from quorus.routes.room_auth import require_room_member
+from quorus.routes.room_auth import (
+    OBSERVER_DENIED,
+    WRITER_ROLES,
+    require_room_writer,
+)
 from quorus.services.approval_svc import (
     ApprovalError,
     ApprovalSvc,
@@ -86,7 +90,7 @@ async def create_approval(
 ):
     """Agent-side: ask a human to allow a tool call."""
     tid = _tid(auth)
-    rid, room_data = await require_room_member(request, auth, tid, body.room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, body.room_id)
     if not auth.is_legacy and auth.sub and body.agent != auth.sub:
         raise HTTPException(
             status_code=403, detail="Cannot request approval as another agent",
@@ -228,6 +232,8 @@ async def decide_approval(
         raise HTTPException(
             status_code=403, detail="Only a room member can decide this",
         )
+    if (members or {}).get(decider) not in WRITER_ROLES:
+        raise HTTPException(status_code=403, detail=OBSERVER_DENIED)
     # (e) Agents belong to people. When the agent's owner is in the room,
     # only that owner speaks for it: in a room shared across teams, someone
     # else's human must not approve my agent's Bash call.

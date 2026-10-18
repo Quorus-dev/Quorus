@@ -17,7 +17,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-ROLES = ("member",)  # "observer" arrives with its enforcement (step 3), not before
+ROLES = ("member", "observer")  # observers: routes/room_auth.require_room_writer
 MAX_USES = 20
 MAX_TTL_S = 7 * 86400
 CODE_PREFIX = "qi_"

@@ -5830,7 +5830,8 @@ def _cmd_share(args):
         resp = httpx.post(
             f"{RELAY_URL}/v1/join/mint",
             headers=_auth_headers(),
-            json={"room": room, "ttl_days": ttl_days, "max_uses": uses},
+            json={"room": room, "ttl_days": ttl_days, "max_uses": uses,
+                  "role": "observer" if getattr(args, "observer", False) else "member"},
             timeout=15,
             follow_redirects=True,
         )
@@ -5913,6 +5914,8 @@ def _cmd_share(args):
 
     if body.get("invite_id"):
         admits = "1 person" if uses == 1 else f"up to {uses} people"
+        if getattr(args, "observer", False):
+            admits += " as an observer (reads the room, changes nothing)"
         ui.console.print(f"  [muted]admits {admits} · revoke: "
                          f"quorus invites --revoke {body['invite_id']}[/]\n")
 
@@ -9622,6 +9625,10 @@ def main():
     p_share.add_argument(
         "--uses", type=int, default=1,
         help="How many people the code admits (default: 1, max 20)",
+    )
+    p_share.add_argument(
+        "--observer", action="store_true",
+        help="They can read the room but not post, claim or change anything",
     )
     _copy_group = p_share.add_mutually_exclusive_group()
     _copy_group.add_argument(

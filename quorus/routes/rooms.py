@@ -17,6 +17,7 @@ from quorus.routes.models import (
     KickRequest,
     RenameRoomRequest,
 )
+from quorus.routes.room_auth import require_not_observer_only
 
 router = APIRouter()
 logger = logging.getLogger("quorus.routes.rooms")
@@ -42,6 +43,7 @@ async def create_room(
 
     # Rate limit: 10/min — room creation is a heavyweight operation
     tid = _tid(auth)
+    await require_not_observer_only(request, auth, tid)
     rate_limit_svc = request.app.state.rate_limit_service
     if not await rate_limit_svc.check_with_limit(tid, f"create_room:{creator}", 10):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")

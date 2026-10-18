@@ -169,7 +169,8 @@ Quorus runs coding agents that can edit files and run commands, so be clear abou
   a speed bump there, not a security boundary. Never send the secret itself to anyone.
 - **Invites don't hand out the secret.** `quorus share <room>` makes a code that works once (or
   `--uses N` times, up to 20) and expires within a week. `quorus join <code>` turns it into the
-  teammate's own key: their name, in that room only. `quorus invites` lists your invites and
+  teammate's own key: their name, in that room only; `--observer` makes it read-only (they can read
+  the room but not post, claim or change anything). `quorus invites` lists your invites and
   `quorus invites --revoke <id>` stops one and removes whoever joined with it from that room,
   effective on their next request. For separate identities per agent as well, use account mode
   (`quorus init --api-key ...`).

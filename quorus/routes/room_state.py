@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from quorus.auth.middleware import AuthContext, verify_auth
-from quorus.routes.room_auth import require_room_member
+from quorus.routes.room_auth import require_room_member, require_room_writer
 
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
@@ -223,7 +223,7 @@ async def claim_task(
     tid = _tid(auth)
 
     # Verify membership first (before rate limiting to avoid leaking room existence)
-    rid, room_data = await require_room_member(request, auth, tid, room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, room_id)
 
     # Rate limit: 30/min
     rate_limit_svc = request.app.state.rate_limit_service
@@ -305,7 +305,7 @@ async def release_task(
     tid = _tid(auth)
 
     # Verify membership first
-    rid, room_data = await require_room_member(request, auth, tid, room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, room_id)
 
     # Rate limit: 30/min
     rate_limit_svc = request.app.state.rate_limit_service
@@ -401,7 +401,7 @@ async def set_room_goal(
     tid = _tid(auth)
 
     # Verify membership first
-    rid, room_data = await require_room_member(request, auth, tid, room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, room_id)
 
     # Rate limit: 10/min
     rate_limit_svc = request.app.state.rate_limit_service
@@ -440,7 +440,7 @@ async def add_room_decision(
     tid = _tid(auth)
 
     # Verify membership first
-    rid, room_data = await require_room_member(request, auth, tid, room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, room_id)
 
     # Rate limit: 20/min
     rate_limit_svc = request.app.state.rate_limit_service

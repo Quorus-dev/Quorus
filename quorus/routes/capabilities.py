@@ -33,6 +33,7 @@ from quorus.auth.policy import (
     evaluate_scoped,
     load_policy_for_tenant,
 )
+from quorus.routes.room_auth import require_not_observer_only
 from quorus.services.capability_svc import CapabilityError, CapabilitySvc
 
 router = APIRouter()
@@ -127,6 +128,7 @@ async def publish_capability(
 ):
     """Publish or replace ``participant``'s capability manifest."""
     _require_jwt(auth)
+    await require_not_observer_only(request, auth, auth.tenant_id or "_legacy")
     if not participant.strip():
         raise HTTPException(
             status_code=400, detail="participant required",

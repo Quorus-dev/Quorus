@@ -137,10 +137,12 @@ def test_old_claims_migrate_unclassified_not_human(tmp_path) -> None:
     assert info["claim_id"] == "g1"  # the generation survives: tokens stay valid
 
 
-def test_only_member_invites_until_observers_are_enforced(tmp_path) -> None:
+def test_invites_are_member_or_observer_only(tmp_path) -> None:
     store = ParticipantKeyStore(tmp_path / "relay")
+    invite_codes.mint(store, room_id="x", room_name="r", role="observer",
+                      issuer="arav", ttl_s=60)
     with pytest.raises(ValueError):
-        invite_codes.mint(store, room_id="x", room_name="r", role="observer",
+        invite_codes.mint(store, room_id="x", room_name="r", role="admin",
                           issuer="arav", ttl_s=60)
     with pytest.raises(ValueError):
         invite_codes.mint(store, room_id="x", room_name="r", role="member",
