@@ -7,6 +7,7 @@ Before, a new user finished setup in an empty room and had to know
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -37,6 +38,25 @@ def _codex_logged_in() -> bool:
     return bool(os.environ.get("OPENAI_API_KEY")) or (home / "auth.json").exists()
 
 
+_run = subprocess.run  # tests swap this so they never call a real claude
+
+
+def _claude_logged_in() -> bool | None:
+    """`claude auth status`: False when Claude Code is signed out, None when
+    it can't tell (an old CLI without the command). A signed-out Claude
+    passed `doctor`, then every wake answered "not logged in" (0.5.0 sweep)."""
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return True
+    try:
+        out = _run(["claude", "auth", "status", "--json"], capture_output=True, text=True,
+                   timeout=10, stdin=subprocess.DEVNULL)
+        status = json.loads(out.stdout or "")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    logged_in = status.get("loggedIn") if isinstance(status, dict) else None
+    return logged_in if isinstance(logged_in, bool) else None
+
+
 def detect(which: Callable[[str], str | None] = shutil.which) -> list[Found]:
     """Installed agent CLIs, and whether each can run a turn right now."""
     from quorus_cli.agent_cmd import _gemini_has_key, _opencode_version
@@ -45,7 +65,9 @@ def detect(which: Callable[[str], str | None] = shutil.which) -> list[Found]:
     for h in ORDER:
         if which(h) is None:
             continue
-        if h == "codex" and not _codex_logged_in():
+        if h == "claude" and _claude_logged_in() is False:
+            found.append(Found(h, False, "not logged in: run `claude /login`"))
+        elif h == "codex" and not _codex_logged_in():
             found.append(Found(h, False, "not logged in: run `codex login`"))
         elif h == "gemini" and not _gemini_has_key():
             found.append(Found(h, False, "needs a free key from aistudio.google.com/apikey "
