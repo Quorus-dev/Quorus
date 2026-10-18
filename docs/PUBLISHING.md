@@ -14,9 +14,12 @@ The version appears in nine places; change all of them (a test checks):
 - `quorus/relay.py` (the FastAPI `version=`)
 - `server.json`, twice: the server's `version` and the PyPI package's `version`
 
-After the tag, publish the new `server.json` to the MCP Registry with
-`mcp-publisher publish` (GitHub login). The registry checks the
-`mcp-name:` comment at the top of the README, which PyPI serves.
+The tag also lists the release in the MCP Registry: the `mcp-registry` job in
+`publish.yml` runs after PyPI has the release, checks that `server.json` matches
+the tag, and publishes it with a pinned, checksum-verified `mcp-publisher` that
+signs in with GitHub OIDC (no token, no human login). The registry checks the
+`mcp-name:` comment at the top of the README, which PyPI serves. To bump
+`mcp-publisher`, change its version and sha256 in the job together.
 
 ## Gate
 
