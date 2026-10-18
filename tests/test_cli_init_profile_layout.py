@@ -283,3 +283,47 @@ def test_init_merges_into_the_existing_profile(hub_home, monkeypatch) -> None:
     assert merged["relay_secret"] == "TYPED-WRONG"
     assert "api_key" not in merged, "the superseded api_key would still win"
 
+
+
+def _agent_identity_dir(home: Path) -> Path:
+    """What the wake daemon writes for an agent (reflexd_wake.write_agent_config_dir)."""
+    import importlib.util
+    import sys
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "reflexd_wake.py"
+    spec = importlib.util.spec_from_file_location("reflexd_wake_u3", path)
+    assert spec is not None and spec.loader is not None
+    wake = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("reflexd_wake_u3", wake)
+    spec.loader.exec_module(wake)
+    return wake.write_agent_config_dir(home / ".quorus", relay_url="http://localhost:8787",
+                                       api_key=REAL_SECRET, participant="arav-claude",
+                                       legacy=True)
+
+
+def test_init_never_overwrites_an_agents_own_identity(hub_home: Path) -> None:
+    """U3 (0.5.0 sweep): an agent ran `quorus init` in a throwaway HOME, but its
+    inherited QUORUS_CONFIG_DIR beat HOME and init replaced its credentials."""
+    root = _agent_identity_dir(hub_home)
+    before = (root / "profiles" / "arav-claude.json").read_bytes()
+    args = _make_init_args(name="arav")
+    args.config_dir = None
+    args.force = False
+    with pytest.raises(SystemExit) as exc:
+        _cmd_init(args)
+    assert exc.value.code == 5
+    assert (root / "profiles" / "arav-claude.json").read_bytes() == before
+    assert not (root / "profiles" / "arav-claude.json.bak").exists()
+
+
+def test_init_force_or_another_dir_still_works(hub_home: Path, tmp_path: Path) -> None:
+    root = _agent_identity_dir(hub_home)
+    args = _make_init_args(name="arav")
+    args.config_dir = str(tmp_path / "elsewhere")
+    args.force = False
+    _cmd_init(args)  # an explicit other dir is fine
+    assert json.loads((tmp_path / "elsewhere" / "config.json").read_text())
+    args.config_dir = None
+    args.force = True
+    _cmd_init(args)
+    assert "TYPED-WRONG" in (root / "profiles" / "arav-claude.json").read_text()

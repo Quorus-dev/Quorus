@@ -5048,6 +5048,16 @@ def _cmd_init(args):
         config_dir = Path(cli_override).expanduser()
     else:
         config_dir = _config_dir()
+    # A daemon's agent identity dir (reflexd_wake.AGENT_MARKER): an agent's
+    # QUORUS_CONFIG_DIR points here and beats HOME, so an agent trying `quorus
+    # init` in a throwaway HOME replaced its own credentials (0.5.0 sweep).
+    if (config_dir / ".quorus-agent").exists() and getattr(args, "force", False) is not True:
+        _ui.error(
+            f"{config_dir} is an agent's own identity, kept by its wake daemon",
+            hint="nothing was written. For a separate setup, unset QUORUS_CONFIG_DIR "
+                 "or pass --config-dir <dir>; to really replace it, add --force.",
+        )
+        sys.exit(5)
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "config.json"
     # A first-run hub install keeps its config behind a pointer
@@ -8880,6 +8890,11 @@ def main():
         "--autostart",
         action="store_true",
         help="Also start the legacy reflexd-manager (prefer `quorus agent add`)",
+    )
+    p_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Write even into an agent's own identity dir (its daemon rewrites it)",
     )
     p_init.add_argument(
         "--no-smoke",
