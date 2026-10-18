@@ -37,3 +37,19 @@ async def reserve_names(request: Request, auth: AuthContext, tenant: str,
         raise HTTPException(status_code=409, detail=(
             f"the name {refused!r} belongs to an invited member of this relay; "
             "pick another name"))
+
+
+async def reserve_recipients(request: Request, tenant: str, *names: str) -> None:
+    """Reserve a message's recipients before delivery. Existing members,
+    invitees included, receive as usual; a name nobody holds is reserved, so
+    no later invite redeem can claim it and read what was sent to it."""
+    if tenant != LEGACY_TENANT or os.environ.get("DATABASE_URL"):
+        return
+    wanted = [n for n in names if n]
+    if not wanted:
+        return
+    from quorus.auth import invite_codes
+    from quorus.auth.participant_routes import _store
+
+    await asyncio.to_thread(invite_codes.reserve, _store(request), wanted,
+                            deliver_to_claimed=True)
