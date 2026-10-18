@@ -1,0 +1,54 @@
+"""The Claude Code plugin (plugins/quorus) stays in sync with the MCP server."""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PLUGIN = ROOT / "plugins" / "quorus"
+
+
+def _json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_marketplace_lists_the_plugin_directory():
+    market = _json(ROOT / ".claude-plugin" / "marketplace.json")
+    [entry] = market["plugins"]
+    assert entry["name"] == _json(PLUGIN / ".claude-plugin" / "plugin.json")["name"]
+    assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
+
+
+def test_plugin_root_has_no_stray_mcp_config():
+    # A plugin's root .mcp.json loads alongside plugin.json; the repo root's dev
+    # .mcp.json must never ship inside the plugin.
+    assert not (PLUGIN / ".mcp.json").exists()
+
+
+def test_server_runs_from_pypi_with_env_names_the_server_reads():
+    manifest = _json(PLUGIN / ".claude-plugin" / "plugin.json")
+    server = manifest["mcpServers"]["quorus"]
+    assert server["command"] == "uvx"
+    assert server["args"] == ["--from", "quorus-ai", "quorus-mcp"]
+    runtime = (ROOT / "packages" / "mcp" / "quorus_mcp" / "runtime.py").read_text()
+    options = manifest["userConfig"]
+    for env_name, ref in server["env"].items():
+        assert f'"{env_name}"' in runtime, f"quorus-mcp never reads {env_name}"
+        key = re.fullmatch(r"\$\{user_config\.(\w+)\}", ref).group(1)
+        assert key in options
+    assert options["relay_secret"]["sensitive"] and options["api_key"]["sensitive"]
+    assert not options["relay_url"].get("sensitive")
+
+
+def test_skill_names_only_tools_the_server_has():
+    skill = (PLUGIN / "skills" / "quorus" / "SKILL.md").read_text(encoding="utf-8")
+    assert skill.startswith("---\nname: quorus\ndescription: ")
+    mcp_src = "\n".join(p.read_text() for p in (ROOT / "packages" / "mcp" / "quorus_mcp")
+                        .glob("*.py"))
+    defined = set(re.findall(r"^async def (\w+)\(", mcp_src, re.M))
+    named = set(re.findall(r"`(\w+)\(", skill)) | set(re.findall(r"`(\w+)` ", skill))
+    tools = {n for n in named if "_" in n and n.islower()}
+    missing = sorted(t for t in tools if t not in defined)
+    assert not missing, f"skill names tools quorus-mcp doesn't define: {missing}"
