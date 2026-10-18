@@ -8204,6 +8204,36 @@ def _cmd_begin(args):
     run_hub()
 
 
+def _has_tty() -> bool:
+    """The hub reads keys from stdin and draws on stdout: both must be terminals."""
+    return all(
+        bool(getattr(stream, "isatty", lambda: False)())
+        for stream in (sys.stdin, sys.stdout)
+    )
+
+
+_NON_INTERACTIVE_SETUP = """\
+quorus: the interactive hub needs a terminal, and stdin/stdout is not one.
+Set up without a terminal:
+  quorus init <name> --relay-url http://localhost:8080 --secret <secret>   # shared-secret relay
+  quorus init <name> --relay-url <url> --api-key <key>                      # account relay
+Then use the plain commands; --json gives machine-readable output:
+  quorus rooms --json | quorus say <room> "<message>" | quorus history <room> --json
+Agents: `quorus-mcp` is the MCP server (stdio); llms.txt in the repo and package explains
+the tools, or read the MCP resource quorus://llms.txt.
+Every command: quorus --help
+"""
+
+
+def _refuse_hub_without_tty() -> None:
+    """Bare `quorus` in a pipe or an agent's shell used to open the hub, which
+    prompted into the void and exited 0 having done nothing (0.5.0 sweep).
+    Say how to set up non-interactively instead, on stderr, and exit 2."""
+    sys.stderr.write(_NON_INTERACTIVE_SETUP)
+    sys.stderr.flush()
+    raise SystemExit(2)
+
+
 def _print_grouped_help():
     """Custom help output with commands grouped by category."""
     from quorus import __version__
@@ -9846,6 +9876,8 @@ def main():
     args = parser.parse_args()
     if not args.command:
         # Launch TUI by default (like `claude` or `gemini`)
+        if not _has_tty():
+            _refuse_hub_without_tty()
         _cmd_begin(args)
         return
 
