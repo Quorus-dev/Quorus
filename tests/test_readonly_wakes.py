@@ -52,12 +52,13 @@ class _Relay:
 
 
 def _wake(monkeypatch, tmp: Path, repo: Path, *, sender: str, mode: str,
-          harness_writes: bool = True, commit: bool = False) -> _Relay:
+          harness_writes: bool = True, commit: bool = False,
+          worktrees: bool = True) -> _Relay:
     bindings = tmp / "bindings.json"
     bindings.write_text(json.dumps({"build": {"path": str(repo), "mode": mode}}))
     monkeypatch.setattr(reflexd, "ROOM_BINDINGS_PATH", bindings)
     monkeypatch.setenv("REFLEXD_OWNER", "arav")
-    monkeypatch.setattr(reflexd.reflexd_wake, "WORKTREES_ENABLED", True)
+    monkeypatch.setattr(reflexd.reflexd_wake, "WORKTREES_ENABLED", worktrees)
     d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
                                               participant_name="arav-gemini",
                                               runtime_dir=tmp / "runtime"))
@@ -253,3 +254,14 @@ def test_writable_turns_still_fall_back_to_the_bound_repo(monkeypatch, tmp_path:
     relay = _wake(monkeypatch, tmp_path, repo, sender="arav", mode="autonomous")
     assert (repo / "pwned.txt").exists()  # the owner's turn runs in place, as before
     assert not any("read-only turn skipped" in p["content"] for p in relay.posted)
+
+
+def test_worktrees_turned_off_never_authorize_a_read_only_write(monkeypatch,
+                                                                tmp_path: Path) -> None:
+    """Codex on 21be4efe: REFLEXD_WORKTREES=0 disables isolation, not read-only
+    authorization; a stranger's turn wrote pwned.txt into the shared checkout."""
+    repo = _repo(tmp_path)
+    relay = _wake(monkeypatch, tmp_path, repo, sender="mallory", mode="autonomous",
+                  worktrees=False)
+    assert not (repo / "pwned.txt").exists()
+    assert any("worktrees are turned off" in p["content"] for p in relay.posted)
