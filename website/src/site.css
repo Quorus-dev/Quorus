@@ -92,7 +92,7 @@ h3 { font-size: 1.08rem; margin: 0 0 6px; letter-spacing: -0.01em; }
 section { padding: 72px 0; border-top: 1px solid var(--line); }
 section > p { max-width: 62em; }
 
-/* ---- hero: copy left, the Quorum stage right ---- */
+/* ---- hero: copy left, the replayed run right ---- */
 section.hero {
   border-top: 0;
   padding: 24px 0 64px;
@@ -142,54 +142,6 @@ section.hero {
 .cmd button:active { transform: translateY(0); opacity: 0.9; }
 
 figure { margin: 32px 0 0; }
-/* ---- the Quorum stage: the hero's second beat ---- */
-.stage { padding-top: 0; border-top: 0; }
-.stage-head { max-width: 760px; margin-bottom: 22px; }
-.stage-head h2 { margin-bottom: 10px; }
-.stage-head p { color: var(--muted); margin: 0; }
-.stage-fig { margin: 0; }
-.stage-host {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  border-radius: var(--radius);
-  overflow: hidden;
-  border: 1px solid var(--line-strong);
-  background: var(--bg-2);
-  box-shadow: 0 40px 100px -40px rgba(63, 210, 176, 0.3), 0 30px 60px -30px rgba(0, 0, 0, 0.7);
-}
-@media (max-width: 719px) { .stage-host { aspect-ratio: 4 / 3; } }
-.stage-host canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-.stage-still {
-  position: absolute; inset: 0; z-index: 1;
-  display: block; width: 100%; height: 100%; object-fit: cover;
-  transition: opacity 700ms ease;
-}
-.stage-host.live .stage-still { opacity: 0; pointer-events: none; }
-/* Seat plaques: the app's own look (frosted glass, a 6px dot for the harness, no logos). */
-.qtags { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
-.qtag {
-  position: absolute; left: 0; top: 0;
-  display: grid; gap: 1px; max-width: 200px;
-  padding: 5px 10px 5px 20px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(16, 20, 18, 0.58);
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  will-change: transform;
-  color: var(--text);
-  font-size: 12px; line-height: 1.25;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
-}
-.qtag::before {
-  content: ""; position: absolute; left: 8px; top: 11px; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--seat); box-shadow: 0 0 6px var(--seat);
-}
-.qtag b { font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
-.qtag .qs { font-size: 11px; color: #cfd6d2; white-space: nowrap; }
-.qtag .qs:empty { display: none; }
-.qtag[data-state="busy"] { border-color: rgba(63, 210, 176, 0.45); }
-
 /* ---- the demo recording ---- */
 .demo { margin: 0; padding-top: 0; border-top: 0; }
 .demo figure { margin: 0; }
@@ -271,6 +223,37 @@ footer .row {
 footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
 footer nav a { color: var(--muted); }
 footer nav a:hover { color: var(--text); }
+footer .built { margin: 0; flex: 1 1 100%; color: var(--text); }
+footer .built a { color: var(--accent-2); text-decoration: none; }
+footer .built a:hover { text-decoration: underline; }
+
+/* ---- get started: three numbered steps, each with a copyable command ---- */
+.steps { list-style: none; margin: 28px 0 0; padding: 0; display: grid; gap: 22px; counter-reset: none; }
+.steps li {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 16px; align-items: start;
+  padding: 22px 22px 18px; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--line);
+}
+.steps .num {
+  width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 700; font-size: 0.95rem; color: var(--accent-ink); background: var(--gradient);
+  box-shadow: 0 0 18px rgba(63, 210, 176, 0.35);
+}
+.steps h3 { margin: 4px 0 12px; font-size: 1.15rem; letter-spacing: -0.01em; font-weight: 700; }
+.steps .cmd { display: flex; flex-wrap: wrap; max-width: 100%; }
+.steps .cmd code { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 0.98rem; }
+.steps .small { margin: 12px 0 0; }
+@media (max-width: 719px) {
+  .steps li { grid-template-columns: 1fr; padding: 18px; }
+  .steps .num { width: 30px; height: 30px; font-size: 0.85rem; }
+}
+.runs {
+  margin-top: 26px; padding: 20px 22px 8px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2);
+}
+.runs h3 { margin: 0 0 10px; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
+.runs ul { margin: 0; }
+.runs li { color: var(--muted); }
 .version { font: 0.85rem var(--mono); color: var(--text); background: var(--code); padding: 2px 8px; border-radius: 6px; }
 
 /* ---- reveal on scroll: transform/opacity only; off without JS or under reduced motion ---- */

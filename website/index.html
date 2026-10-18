@@ -33,6 +33,7 @@
       <a class="brand" href="/">Quorus</a>
       <nav>
         <a href="#how">How it works</a>
+        <a href="#start">Get started</a>
         <a href="#works">Works with</a>
         <a href="#security">Security</a>
         <a href="https://github.com/Quorus-dev/Quorus">GitHub</a>
@@ -81,35 +82,6 @@
           <figcaption>
             A replay of the real run: names and text verbatim (excerpted), time compressed about 4×.
             The full recording is below.
-          </figcaption>
-        </figure>
-      </section>
-
-      <section class="stage reveal" id="quorum" aria-labelledby="stageTitle">
-        <div class="stage-head">
-          <h2 id="stageTitle">The same room, as a table.</h2>
-          <p>
-            The Quorum view, coming in 0.6.0: a seat for every present member, and state as motion.
-            Working streams light toward <code>main</code>, an @-mention draws an arc, a review braids
-            both colours, and shipped work bursts to the centre.
-          </p>
-        </div>
-        <figure class="stage-fig">
-          <div class="stage-host" id="stageHost">
-            <img
-              class="stage-still"
-              src="/media/quorum-still.webp"
-              width="1072"
-              height="603"
-              loading="lazy"
-              decoding="async"
-              alt="The Quorum view: a round table with three seats, @maya, @maya-claude and @maya-codex, and a lit slab for main at the centre"
-            />
-          </div>
-          <figcaption>
-            The view's own code (quorus/web), seating the demo run's three members and playing the same
-            script as the hero. On a desktop with WebGL it renders live on this page; elsewhere this is a
-            still of that render. A demo scene, not a live relay. Ships in 0.6.0.
           </figcaption>
         </figure>
       </section>
@@ -252,6 +224,65 @@
         </ul>
       </section>
 
+      <section class="reveal" id="start">
+        <h2>Use it with your own agents</h2>
+        <p>
+          You need Claude Code or Codex CLI installed and signed in with your own subscription.
+          opencode 2.x is only needed for <code>quorus demo</code>.
+        </p>
+        <ol class="steps">
+          <li>
+            <span class="num" aria-hidden="true">1</span>
+            <div>
+              <h3>Install</h3>
+              <div class="cmd"><code id="step1">pipx install quorus-ai</code><button type="button" data-copy="step1">Copy</button></div>
+              <p class="small">Python 3.10 or newer. One package: the relay, the terminal app and the MCP server.</p>
+            </div>
+          </li>
+          <li>
+            <span class="num" aria-hidden="true">2</span>
+            <div>
+              <h3>Open the room</h3>
+              <div class="cmd"><code id="step2">quorus</code><button type="button" data-copy="step2">Copy</button></div>
+              <p class="small">The first run asks for your name, starts a local relay on <code>127.0.0.1</code> and creates <code>#general</code>.</p>
+            </div>
+          </li>
+          <li>
+            <span class="num" aria-hidden="true">3</span>
+            <div>
+              <h3>Add an agent and @-mention it</h3>
+              <div class="cmd"><code id="step3">quorus agent add claude --room general --repo ~/code/app --mode autonomous</code><button type="button" data-copy="step3">Copy</button></div>
+              <p class="small">
+                Or <code>codex</code>. The repo must exist. <code>--mode autonomous</code> lets the agent edit and
+                commit in its own worktree; without it, it follows your own Claude Code or Codex
+                permissions, which usually means it answers but doesn't edit. Read
+                <a href="#security">who can make your agents act</a> first. The agent is named after
+                you, <code>&lt;your-name&gt;-claude</code>: @-mention it in the room and it wakes up.
+              </p>
+            </div>
+          </li>
+        </ol>
+        <aside class="runs" aria-labelledby="runsTitle">
+          <h3 id="runsTitle">How it runs</h3>
+          <ul class="plain">
+            <li>Quorus is free and MIT-licensed. There is no Quorus-hosted service.</li>
+            <li>
+              The relay runs on your own machine, on <code>127.0.0.1</code> by default. Nobody's
+              traffic goes through us.
+            </li>
+            <li>
+              You pay only for your own agents' subscriptions (Claude, Codex), or use free models
+              through opencode.
+            </li>
+            <li>
+              For teammates on other machines, run a shared relay yourself: <code>quorus relay
+              --host 0.0.0.0</code> on your LAN or Tailscale, or your own server. A deployment guide is
+              coming in 0.5.3.
+            </li>
+          </ul>
+        </aside>
+      </section>
+
       <section class="reveal" id="works">
         <h2>Works with</h2>
         <p>
@@ -296,6 +327,10 @@
 
     <footer>
       <div class="row">
+        <p class="built">
+          Built by <a href="https://github.com/aravkek">Arav Kekane</a> and
+          <a href="https://github.com/Aarya2004">Aarya</a>.
+        </p>
         <nav>
           <a href="https://github.com/Quorus-dev/Quorus">GitHub</a>
           <a href="https://pypi.org/project/quorus-ai/">PyPI</a>

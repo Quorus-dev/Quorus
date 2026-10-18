@@ -15,7 +15,7 @@ from quorus.board import BOARD_JS
 from quorus.dashboard import DASHBOARD_HTML
 
 WEB = Path(quorum_view.__file__).parent / "web"
-OURS = ["quorum.js", "quorum-stage.js", "quorum-totems.js"]
+OURS = ["quorum.js", "quorum-stage.js", "quorum-totems.js", "quorum-cast.js"]
 
 
 def _src(name: str) -> str:
@@ -50,9 +50,10 @@ def test_our_code_runs_under_the_csp() -> None:
             assert sink not in src, (name, sink)
         # No external URLs: every import and asset is same-origin.
         assert not re.search(r"https?://", src), name
-    # The stage and the totems load only when the view opens; they bring three.js.
+    # The stage and the cast load only when the view opens; they bring three.js.
     entry = _src("quorum.js")
-    assert 'import("/quorum-stage.js")' in entry and 'import("/quorum-totems.js")' in entry
+    assert 'import("/quorum-stage.js")' in entry and 'import("/quorum-cast.js")' in entry
+    assert 'from "/quorum-totems.js"' in _src("quorum-cast.js")  # re-exported light effects
     for name in OURS[1:]:
         assert 'from "/vendor/three.module.min.js"' in _src(name), name
     for f in ("three.core.min.js", "three.module.min.js"):
@@ -97,7 +98,12 @@ def test_seat_tags_are_html_buttons_laid_out_apart() -> None:
     keyboard-focusable), placed in screen space and nudged apart."""
     src = _src("quorum.js")
     for name in OURS:
-        assert "label(" not in _src(name) and "CanvasTexture" not in _src(name), name
+        assert "label(" not in _src(name), name
+        if name != "quorum-cast.js":
+            assert "CanvasTexture" not in _src(name), name
+    # The cast's one canvas is the chest badge (an initial until a vendor's mark is
+    # cleared), never a name or a status: those stay DOM plaques.
+    assert _src("quorum-cast.js").count("CanvasTexture") == 1
     assert 'createElement("button")' in src and ".textContent = " in src
     assert "function placeTags()" in src and "step above the tag it collided with" in src
     assert "r.model ||" in src  # the model names the agent; no vendor logos
@@ -133,12 +139,22 @@ def test_quorum_degrades_instead_of_going_blank() -> None:
     assert "w = reduce ? 0 : 1" in _src("quorum-totems.js")
     # Rendering pauses while the tab is hidden.
     assert "if (!S.on || document.hidden)" in _src("quorum-stage.js")
-    # Slow frames step the quality down once each, never up: bloom first, then DPR to
-    # 1.5, and to 1 only under 30 fps (blurry is worse than no bloom). Text stays DOM.
+    # Slow frames step the quality down once each, never up: shadows soften, then the
+    # bloom goes, then shadows go. Resolution never drops (Arav: 1x is the blur) and the
+    # pixel ratio stays min(devicePixelRatio, 2). Text stays DOM.
     stage = _src("quorum-stage.js")
-    assert "function budget(S, dt, t)" in stage and 'S.quality = "no-bloom"' in stage
-    assert "if (dpr > 1.5) { S.renderer.setPixelRatio(1.5);" in stage
-    assert "const under30 = S.ema > 1 / 30" in stage and "if (dpr > 1 && under30)" in stage
+    assert "function budget(S, dt, t)" in stage
+    assert "S.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2))" in stage
+    assert stage.count("setPixelRatio(") == 1
+    assert 'shadowSize(S, 1024); S.quality = "soft shadows"' in stage
+    assert 'S.bloom = false; S.quality = "soft shadows, no bloom"' in stage
+    assert 'S.quality = "no shadows, no bloom"' in stage
+    # "Slow" is relative to the display's own frame period, measured by the first 20
+    # ticks before anything is drawn: a 30 Hz monitor or headless Chrome pacing rAF at
+    # 20 Hz must not shed bloom and DPR on a fast GPU (it did, on the M4 Pro).
+    assert "if ((S.warm || []).length >= 20) S.period = S.warm.sort((a, b) => a - b)[10];" in stage
+    assert stage.index("if (S.period === undefined)") < stage.index("budget(S, dt, t);")
+    assert "const slow = Math.max(0.024, S.period * 1.5);" in stage
     # The fps / DPR / quality readout (`quorus web --fps`) is DOM text, once a second.
     assert 'sessionStorage.getItem("qfps") === "1"' in stage and 'className = "qfps"' in stage
     assert "stats() { return stats(S); }" in stage
@@ -150,7 +166,7 @@ def test_quorum_degrades_instead_of_going_blank() -> None:
 def test_premium_stage_is_ours_and_studio_grade() -> None:
     """Arav (2026-10-18): studio-grade 3D, our own sculpted totems, state as
     motion, a drifting camera that dollies into a seat, no logos, nothing borrowed."""
-    entry, stage, totems = (_src(n) for n in OURS)
+    entry, stage, totems, cast = (_src(n) for n in OURS)
     # Only present members get a seat: online agents, people who spoke or the viewer.
     assert "rank.get(n) !== 6" in entry and "spoke.has(n) || n === Q.me" in entry
     assert "offline or away: see List" in entry
@@ -160,13 +176,20 @@ def test_premium_stage_is_ours_and_studio_grade() -> None:
                    "new THREE.Fog(", "WebGLRenderTarget", "#include <tonemapping_fragment>",
                    "#include <colorspace_fragment>", "function frame(S)"):
         assert needle in stage, needle
-    # One sculpted form per vendor family, a pillar for people, a monolith for main.
+    # One original chibi robot per vendor family (capsule body, visor, two eyes, a
+    # badge of initials until a vendor's mark is cleared), a person in a cap, a
+    # monolith for main. The seats come from the cast module; the totems file keeps
+    # the light effects.
     for needle in ('vendor === "claude"', 'vendor === "codex"', 'vendor === "gemini"',
-                   'vendor === "cursor"', 'vendor === "cline"', "lattice cube", "function pillar("):
-        assert needle in totems, needle
-    assert "monolith" in stage and "Q.pillar" not in entry and "CapsuleGeometry" not in totems
-    for name in OURS:  # nothing borrowed: no images, no logos
+                   'vendor === "cursor"', 'vendor === "opencode"', 'vendor === "cline"',
+                   "function robot(", "function person(", "CapsuleGeometry", "visor",
+                   "function badgeTexture(", "export function makeAgent(",
+                   "export function updateAgent("):
+        assert needle in cast, needle
+    assert "monolith" in stage and "Q.pillar" not in entry and "Q.T.makeAgent(" in entry
+    for name in OURS:  # nothing borrowed: no images, no mascots, no logo files
         assert not re.search(r"\.(svg|png|jpe?g|gif)\b", _src(name)), name
+    assert "Clawd" not in cast
     # State is motion; shipped bursts to main; mentions arc, reviews braid.
     for needle in ("function particles(", "stuckFlicker", "u.beam.material.opacity",
                    "export function arc(", "export function burst(", "export function ripple("):

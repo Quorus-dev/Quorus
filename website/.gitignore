@@ -43,7 +43,4 @@ next-env.d.ts
 # copied from ../llms.txt at build time
 /public/llms.txt
 /public/agents.md
-# copied from ../quorus/web at build time (the Quorum stage and three.js)
-/public/vendor
-/public/quorum
 /dist

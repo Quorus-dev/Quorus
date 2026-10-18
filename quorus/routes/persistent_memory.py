@@ -31,7 +31,7 @@ from quorus.auth.policy import (
     evaluate_scoped,
     load_policy_for_tenant,
 )
-from quorus.routes.room_auth import require_room_member
+from quorus.routes.room_auth import require_room_member, require_room_writer
 from quorus.services.persistent_memory_svc import (
     VISIBILITY_PRIVATE,
     VISIBILITY_PUBLIC,
@@ -161,7 +161,7 @@ async def set_memory(
             detail="cannot write memory for another participant",
         )
     tid = _tid(auth)
-    rid, room_data = await require_room_member(request, auth, tid, room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, room_id)
     members = _members_list(room_data)
     _policy_check(request, auth, "memory:write", rid, members, actor)
 
@@ -295,7 +295,7 @@ async def delete_memory(
             detail="cannot delete memory for another participant",
         )
     tid = _tid(auth)
-    rid, room_data = await require_room_member(request, auth, tid, room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, room_id)
     members = _members_list(room_data)
     _policy_check(request, auth, "memory:delete", rid, members, actor)
 

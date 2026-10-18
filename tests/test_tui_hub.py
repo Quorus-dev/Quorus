@@ -490,16 +490,17 @@ class TestRenderWelcome:
 # ---------------------------------------------------------------------------
 
 
-def test_mint_join_token_is_portable_envelope():
-    token = _mint_join_token("http://relay:8080", "topsecret", "general")
-    assert token.startswith("quorus_join_")
-    # Decodable back to the originating dict.
-    import base64
-    raw = base64.urlsafe_b64decode(token[len("quorus_join_"):]).decode()
-    payload = json.loads(raw)
-    assert payload["relay_url"] == "http://relay:8080"
-    assert payload["secret"] == "topsecret"
-    assert payload["room"] == "general"
+def test_mint_join_token_fails_closed_without_the_secret():
+    """No relay to mint a code: no invite, and never a local envelope holding the
+    relay secret (it used to fall back to one on any failure)."""
+    assert _mint_join_token("http://127.0.0.1:1", "topsecret", "general") == ""
+
+
+def test_mint_join_token_never_embeds_the_secret_on_a_relay_error(monkeypatch):
+    for status in (403, 404, 500):
+        monkeypatch.setattr(tui_hub.httpx, "post",
+                            lambda *a, _s=status, **kw: type("R", (), {"status_code": _s})())
+        assert _mint_join_token("http://relay:8080", "topsecret", "general") == ""
 
 
 def test_destroy_room_handles_unreachable_relay():

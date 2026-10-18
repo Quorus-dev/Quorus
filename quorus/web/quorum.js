@@ -1,6 +1,6 @@
 // The Quorum view: a Quorus room as a council table. This file owns the data and
 // the HTML (plaques, the seat card, the flat grid); quorum-stage.js draws the lit
-// stage and quorum-totems.js the sculpted marks and light effects, both loaded
+// stage and quorum-cast.js the mini agents (light effects via quorum-totems.js), both loaded
 // only when the view first opens. Every pose is real state from board.js's rows;
 // every click opens the same card (Approve / Deny / ask). No data path of its own.
 // v2 2026-10-18 (after Arav: "this looks horrendous"); v3 the same day: premium pass.
@@ -87,11 +87,11 @@ function layout(names) {
   names.forEach(tagFor);
   if (Q.flat) return;
   [...Q.seats.keys()].forEach((n) => {
-    if (!names.includes(n)) { Q.T.disposeTotem(Q.seats.get(n), Q.stage); Q.seats.delete(n); }
+    if (!names.includes(n)) { Q.T.disposeAgent(Q.seats.get(n), Q.stage); Q.seats.delete(n); }
   });
   names.forEach((n, i) => {
     let s = Q.seats.get(n);
-    if (!s) { s = Q.T.makeTotem(n, vendorOf(n), colourOf(n), Q.P); Q.stage.add(s, true); Q.seats.set(n, s); }
+    if (!s) { s = Q.T.makeAgent(n, vendorOf(n), colourOf(n), Q.P, cssVar("--accent", "#3cc7a2")); Q.stage.add(s, true); Q.seats.set(n, s); }
     const a = (i / names.length) * Math.PI * 2 + Math.PI / 2;
     s.position.set(Math.cos(a) * Q.seatR, 0, Math.sin(a) * Q.seatR);
     s.userData.angle = a;
@@ -205,11 +205,12 @@ function events(history) {
       } catch (e) { /* not a verb */ }
       return;
     }
-    if (PUBLISHED.test(body)) Q.stage.effect(Q.T.burst(Q.stage, from.position, colourOf(m.from_name), now));
+    if (PUBLISHED.test(body)) { Q.T.celebrate(from); Q.stage.effect(Q.T.burst(Q.stage, from.position, colourOf(m.from_name), now)); }
     const review = OK.test(body) || BLOCK.test(body);
     (body.match(/@[\w-]+/g) || []).forEach((tag) => {
       const to = Q.seats.get(tag.slice(1));
       if (!to || to === from) return;
+      Q.T.faceToward(from, to, 6000);
       // A review braids both members' colours; a plain mention is the sender's.
       const colors = review ? [colourOf(m.from_name), colourOf(tag.slice(1))] : [colourOf(m.from_name)];
       Q.stage.effect(Q.T.arc(Q.stage, from.position, to.position, colors, now));
@@ -219,7 +220,7 @@ function events(history) {
 
 function onFrame(t, dt) {
   const accent = cssVar("--accent", "#3cc7a2");
-  Q.seats.forEach((s) => Q.T.updateTotem(s, t, dt, reduceMotion, accent, Q.stage));
+  Q.seats.forEach((s) => Q.T.updateAgent(s, t, dt, reduceMotion, accent, Q.stage));
   placeTags();
 }
 
@@ -259,7 +260,7 @@ async function boot(host) {
     return goFlat(host);
   }
   try {
-    const [S, T] = await Promise.all([import("/quorum-stage.js"), import("/quorum-totems.js")]);
+    const [S, T] = await Promise.all([import("/quorum-stage.js"), import("/quorum-cast.js")]);
     Q.T = T;
     Q.seatR = S.SEAT_R;
     Q.P = S.palette(darkScheme.matches, cssVar("--accent", "#3cc7a2"), cssVar("--bg", "#0f1412"));

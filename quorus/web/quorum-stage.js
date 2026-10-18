@@ -87,7 +87,7 @@ export function create(host, P, hooks) {
   S.scene.environmentIntensity = 1.4;
 
   // Direct light only for shadows and a touch of key: the environment does the rest.
-  const key = new THREE.DirectionalLight(P.key, 1.9);
+  const key = S.key = new THREE.DirectionalLight(P.key, 1.9);
   key.position.set(-5, 9, 6);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
@@ -224,6 +224,14 @@ function tick(S, now) {
   S.raf = requestAnimationFrame((n) => tick(S, n));
   const dt = Math.min(0.1, (now - (S.last || now)) / 1000);
   S.last = now;
+  // The first 20 ticks draw nothing and only measure the display's own frame period
+  // (60 Hz, 120 Hz, a 30 Hz monitor, headless Chrome pacing rAF at 20 Hz), so the
+  // budget below compares render time against the display and not the other way round.
+  if (S.period === undefined) {
+    if (dt > 0) (S.warm = S.warm || []).push(dt);
+    if ((S.warm || []).length >= 20) S.period = S.warm.sort((a, b) => a - b)[10];
+    return;
+  }
   const t = (now - S.t0) / 1000;
   budget(S, dt, t);
   const goal = S.focus ? 1 : 0;
@@ -247,20 +255,36 @@ function tick(S, now) {
 // ratio drops to 1.5 on a retina screen, and only under 30 fps does it drop to 1
 // (Arav: blurry is worse than no bloom). Never back up (that would oscillate), and
 // the first two seconds don't count (shader compiles). Plaques are DOM, always sharp.
+// "Long" is relative to the display period tick() measured before drawing: nothing
+// counts as slow unless it is also 1.5× slower than the display itself. Without
+// that, the guard shed bloom and DPR on an M4 Pro drawing a frame in under a
+// millisecond, only because headless Chrome paced rAF at 20 Hz.
 function budget(S, dt, t) {
   S.frames = (S.frames || 0) + 1;
   S.ema = S.ema === undefined ? dt : S.ema * 0.9 + dt * 0.1;
   readout(S, t);
   if (t < 2 || dt <= 0 || S.lockQuality) return;
-  if (S.ema < 0.024) { S.slowSince = 0; return; }
+  const slow = Math.max(0.024, S.period * 1.5);
+  if (S.ema < slow) { S.slowSince = 0; return; }
   S.slowSince = S.slowSince || t;
   if (t - S.slowSince < 1.5) return;  // slow for a moment is fine; slow for 1.5 s is not
-  const under30 = S.ema > 1 / 30, dpr = S.renderer.getPixelRatio();
   S.slowSince = 0;
   S.ema = 0.016;
-  if (S.bloom) { S.bloom = false; S.quality = "no-bloom"; return; }
-  if (dpr > 1.5) { S.renderer.setPixelRatio(1.5); S.quality = "no-bloom, 1.5x"; resize(S); return; }
-  if (dpr > 1 && under30) { S.renderer.setPixelRatio(1); S.quality = "no-bloom, 1x"; resize(S); }
+  // Resolution is never the thing that gives: the pixel ratio stays at
+  // min(devicePixelRatio, 2) (Arav: dropping to 1x is the blur). Shadows soften
+  // first, then the bloom goes, then shadows go.
+  if (S.key.shadow.mapSize.x > 1024) { shadowSize(S, 1024); S.quality = "soft shadows"; return; }
+  if (S.bloom) { S.bloom = false; S.quality = "soft shadows, no bloom"; return; }
+  if (S.renderer.shadowMap.enabled) {
+    S.renderer.shadowMap.enabled = false;
+    S.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+    S.quality = "no shadows, no bloom";
+  }
+}
+
+function shadowSize(S, px) {
+  S.key.shadow.mapSize.set(px, px);
+  if (S.key.shadow.map) { S.key.shadow.map.dispose(); S.key.shadow.map = null; }
 }
 
 // An fps / DPR / quality line in the corner, once a second, when the page was opened

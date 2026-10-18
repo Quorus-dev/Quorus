@@ -17,7 +17,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-ROLES = ("member",)  # "observer" arrives with its enforcement (step 3), not before
+ROLES = ("member", "observer")  # observers: routes/room_auth.require_room_writer
 MAX_USES = 20
 MAX_TTL_S = 7 * 86400
 CODE_PREFIX = "qi_"
@@ -39,6 +39,12 @@ def create_table(db: sqlite3.Connection) -> None:
     # and a grant serialize on one SQLite write lock (codex, review of 8e6fa5c2).
     db.execute("CREATE TABLE IF NOT EXISTS reserved_names (folded TEXT PRIMARY KEY, "
                "name TEXT NOT NULL, reserved_at REAL NOT NULL)")
+    # Who joined with which invite, so revoking an invite also removes them from
+    # its room. Room access is the membership row, read on every request, so that
+    # takes effect on their next request.
+    db.execute("CREATE TABLE IF NOT EXISTS invite_redemptions (invite_id TEXT NOT NULL, "
+               "name TEXT NOT NULL, claim_id TEXT NOT NULL, redeemed_at REAL NOT NULL, "
+               "PRIMARY KEY (invite_id, name))")
 
 
 @dataclass(frozen=True)
@@ -172,6 +178,8 @@ def redeem(store, code: str, name: str,
             claim_id = db.execute("SELECT claim_id FROM claims WHERE name = ?",
                                   (name,)).fetchone()[0]
             db.execute("UPDATE invites SET uses = uses + 1 WHERE id = ?", (row[0],))
+            db.execute("INSERT OR REPLACE INTO invite_redemptions VALUES (?, ?, ?, ?)",
+                       (row[0], name, claim_id, time.time()))
             db.execute("COMMIT")
         except sqlite3.Error:
             if db.in_transaction:
@@ -197,6 +205,8 @@ def undo_redeem(store, invite_id: str, name: str, claim_id: str) -> bool:
         if gone:
             db.execute("UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?",
                        (invite_id,))
+            db.execute("DELETE FROM invite_redemptions WHERE invite_id = ? AND name = ? "
+                       "AND claim_id = ?", (invite_id, name, claim_id))
     return gone
 
 
@@ -204,6 +214,24 @@ def revoke(store, invite_id: str) -> bool:
     with store._lock, store._connect() as db:
         return db.execute("UPDATE invites SET revoked = 1 WHERE id = ?",
                           (invite_id,)).rowcount > 0
+
+
+def is_revoked(store, invite_id: str) -> bool:
+    with store._lock, store._connect() as db:
+        row = db.execute("SELECT revoked FROM invites WHERE id = ?", (invite_id,)).fetchone()
+    return row is None or bool(row[0])
+
+
+def joined_with(store, invite_id: str) -> tuple[str, list[str]] | None:
+    """The invite's room id and the names that joined with it, or None if unknown."""
+    with store._lock, store._connect() as db:
+        row = db.execute("SELECT room_id FROM invites WHERE id = ?", (invite_id,)).fetchone()
+        if row is None:
+            return None
+        names = [r[0] for r in db.execute(
+            "SELECT name FROM invite_redemptions WHERE invite_id = ? ORDER BY redeemed_at",
+            (invite_id,))]
+    return row[0], names
 
 
 def list_invites(store) -> list[dict]:

@@ -7,6 +7,10 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Added
 
+- Observer invites: `quorus share <room> --observer` admits someone who can read the room
+  (history, state, the live stream) but not post, DM agents, claim, lock, approve, upload or
+  change anything. The relay checks the room's current role on every write, so a downgrade,
+  kick or revoke applies to their next request, and a role in another room never counts.
 - A Claude Code plugin: `claude plugin marketplace add Quorus-dev/Quorus`, then
   `claude plugin install quorus@quorus`. It runs `quorus-mcp` with `uvx` and adds a
   Quorus skill; relay URL, name and secret are set in `/plugin` (secrets masked), and
@@ -45,6 +49,18 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- Pasting a teammate's invite into the first-run wizard saved an empty secret and
+  dropped the room: secret-free invites weren't redeemed, and the hub never exchanged a
+  `quorus_pk_` key for a sign-in. The wizard now redeems the code into your own key and
+  remembers the invited room.
+- The hub's share fell back to an invite holding the relay secret (admin) whenever the
+  relay couldn't mint a code, a timeout or a 500 included. It now says the invite
+  couldn't be made. `quorus invite-link` and `quorus invite-token`, which print the
+  secret, need `--with-secret` and say it's for your own machines; for anyone else, use
+  `quorus share`.
+- `quorus invites --revoke <id>` only stopped new joins; the people who had already
+  joined with that invite stayed in its room. Revoking now also removes them from the room,
+  effective on their next request.
 - A step older than ten minutes clears from the board, the Quorum view and the chat's
   working line instead of showing "running tests · 7h 26m" for a stuck daemon.
 - A `postgres://` DATABASE_URL (what `fly postgres attach` sets) wasn't rewritten for

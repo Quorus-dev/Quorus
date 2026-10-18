@@ -31,6 +31,7 @@ FILES = {
     "quorum.js": (WEB / "quorum.js", JS, FRESH),
     "quorum-stage.js": (WEB / "quorum-stage.js", JS, FRESH),
     "quorum-totems.js": (WEB / "quorum-totems.js", JS, FRESH),
+    "quorum-cast.js": (WEB / "quorum-cast.js", JS, FRESH),
     "vendor/three.module.min.js": (WEB / "vendor" / "three.module.min.js", JS, DAY),
     "vendor/three.core.min.js": (WEB / "vendor" / "three.core.min.js", JS, DAY),
     "vendor/fonts/plus-jakarta-sans.woff2": (
