@@ -15,6 +15,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from quorus.auth import invite_codes
+from quorus.routes import join_redeem
 from quorus.auth.participant_keys import ParticipantKeyStore
 from quorus.relay import _reset_state, app
 
@@ -200,3 +201,46 @@ def test_late_compensation_spares_a_newer_claim_and_runs_once(tmp_path) -> None:
     assert invite_codes.undo_redeem(store, inv.id, "bob", second) is True
     assert invite_codes.undo_redeem(store, inv.id, "bob", second) is False
     assert uses() == 1 and store.info("bob") is None
+
+
+async def test_a_room_created_mid_redeem_wins_over_the_invitee(client) -> None:
+    """Codex on 8e6fa5c2: the known-names snapshot was stale. Create a room as
+    'zed' between that read and the claim, and the invitee got zed's name."""
+    payload = await _mint(client)
+    stale = await join_redeem._known_names(_Req(app))  # read before 'zed' existed
+    assert "zed" not in stale
+    r = await client.post("/rooms", json={"name": "zeds-room", "created_by": "zed"},
+                          headers=ADMIN)
+    assert r.status_code == 200, r.text
+    with pytest.raises(invite_codes.InviteError) as exc:
+        invite_codes.redeem(app.state.participant_keys, payload["c"], "zed", stale)
+    assert exc.value.status == 409
+
+
+async def test_an_invitees_name_cant_be_granted_to_the_secret_holder(client) -> None:
+    """The other order: the redeem commits first, then a room is created as
+    that name with the shared secret. The grant is refused, so the invitee
+    never inherits a room made for someone else."""
+    payload = await _mint(client)
+    r = await client.post("/v1/join/redeem", json={"code": payload["c"], "name": "dana"})
+    assert r.status_code == 200, r.text
+    key = r.json()["participant_key"]
+    for call in (
+        client.post("/rooms", json={"name": "secret", "created_by": "dana"}, headers=ADMIN),
+        client.post("/rooms/build/join", json={"participant": "Dana"}, headers=ADMIN),
+        client.post("/heartbeat", json={"instance_name": "dana"}, headers=ADMIN),
+    ):
+        resp = await call
+        assert resp.status_code == 409, resp.text
+    assert (await client.get("/rooms/secret", headers=ADMIN)).status_code == 404
+    # The invitee acting as itself is unaffected.
+    jwt = (await client.post("/v1/auth/token", json={"api_key": key})).json()["token"]
+    me = {"Authorization": f"Bearer {jwt}"}
+    r = await client.post("/rooms/build/messages", headers=me,
+                          json={"from_name": "dana", "content": "hi"})
+    assert r.status_code == 200, r.text
+
+
+class _Req:
+    def __init__(self, application) -> None:
+        self.app = application

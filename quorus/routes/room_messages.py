@@ -11,6 +11,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.auth.name_reservations import reserve_names
 from quorus.backends.redis_backends import BackendError
 from quorus.routes.models import RoomMessageRequest
 from quorus.routes.room_auth import require_room_member
@@ -85,6 +86,7 @@ async def send_room_message(
         raise HTTPException(status_code=413, detail="Message content exceeds maximum size")
 
     tid = _tid(auth)
+    await reserve_names(request, auth, tid, sender)
 
     # Rate limit: 60/min per sender (agents send frequently)
     rate_limit_svc = request.app.state.rate_limit_service

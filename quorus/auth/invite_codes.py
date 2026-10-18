@@ -34,6 +34,11 @@ def create_table(db: sqlite3.Connection) -> None:
                "created_at REAL NOT NULL, expires_at REAL NOT NULL, "
                "max_uses INTEGER NOT NULL, uses INTEGER NOT NULL DEFAULT 0, "
                "revoked INTEGER NOT NULL DEFAULT 0)")
+    # Names the relay has granted authority to (rooms, messages, presence) on
+    # behalf of the shared-secret holder. Kept beside the claims so a redeem
+    # and a grant serialize on one SQLite write lock (codex, review of 8e6fa5c2).
+    db.execute("CREATE TABLE IF NOT EXISTS reserved_names (folded TEXT PRIMARY KEY, "
+               "name TEXT NOT NULL, reserved_at REAL NOT NULL)")
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,45 @@ def mint(store, *, room_id: str, room_name: str, role: str, issuer: str,
     return code, inv
 
 
+def reserve(store, names: Iterable[str]) -> str | None:
+    """Reserve *names* before the shared-secret holder acts as them. Returns
+    the first name an invitee already holds (refuse the grant), else None.
+
+    Runs under the same write lock as :func:`redeem`, so a room created as
+    "arav" and an invite redeemed as "arav" can't both win: whichever commits
+    second sees the other (codex, review of 8e6fa5c2: the known-names
+    snapshot was stale by the time the claim was inserted).
+    """
+    wanted = [n for n in dict.fromkeys(names) if n]
+    if not wanted:
+        return None
+    with store._lock:
+        db = _connect(store)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            for name in wanted:
+                folded = name.casefold()
+                if db.execute("SELECT 1 FROM reserved_names WHERE folded = ?",
+                              (folded,)).fetchone():
+                    continue
+                invited = db.execute(
+                    "SELECT 1 FROM claims WHERE lower(name) = ? AND kind = 'human'",
+                    (folded,)).fetchone()
+                if invited:
+                    db.execute("ROLLBACK")
+                    return name
+                db.execute("INSERT INTO reserved_names (folded, name, reserved_at) "
+                           "VALUES (?, ?, ?)", (folded, name, time.time()))
+            db.execute("COMMIT")
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+        finally:
+            db.close()
+    return None
+
+
 def redeem(store, code: str, name: str,
            reserved: Iterable[str] = ()) -> tuple[str, str, Invite]:
     """Spend one use of *code* and claim *name* (kind=human), atomically.
@@ -108,8 +152,11 @@ def redeem(store, code: str, name: str,
                 db.execute("ROLLBACK")
                 raise InviteError(403, "this invite is invalid, expired or used up")
             folded = name.casefold()
-            taken = any(r.casefold() == folded for r in reserved) or db.execute(
-                "SELECT 1 FROM claims WHERE lower(name) = ?", (folded,)).fetchone()
+            taken = (any(r.casefold() == folded for r in reserved)
+                     or db.execute("SELECT 1 FROM claims WHERE lower(name) = ?",
+                                   (folded,)).fetchone()
+                     or db.execute("SELECT 1 FROM reserved_names WHERE folded = ?",
+                                   (folded,)).fetchone())
             key = None if taken else insert_claim(db, name, "human", None, None)
             if key is None:
                 db.execute("ROLLBACK")
