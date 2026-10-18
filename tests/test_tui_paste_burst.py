@@ -33,7 +33,9 @@ from quorus_tui import hub
 from quorus_tui.autocomplete import AutocompletePopover
 
 hub.RENDER_TICK_S = 0.2
-pop = AutocompletePopover(mention_items_provider=lambda: [("@newbie-opencode", "(agent)")])
+pop = AutocompletePopover(
+    mention_items_provider=lambda: [("@newbie-opencode", "(agent)")],
+    slash_items_provider=lambda: [("/help", "show help"), ("/quit", "leave")])
 for _ in range(50):
     line = hub._read_input("> ", popover=pop, on_popover_change=lambda b, p: None)
     if line != hub._KEY_TIMEOUT:
@@ -42,8 +44,10 @@ open(sys.argv[1], "w").write(json.dumps([line]))
 """
 
 
-def _paste(burst: str, tmp_path) -> list[str]:
-    """Paste *burst* into `_read_input` over a pty and return what it submitted."""
+def _paste(burst: "str | list[str]", tmp_path) -> list[str]:
+    """Paste *burst* into `_read_input` over a pty and return what it submitted.
+    A list is typed as separate bursts, 0.3 s apart (a lone Esc must not be read
+    as the start of an escape sequence)."""
     out = tmp_path / "result.json"
     primary, secondary = pty.openpty()
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(_PATHS), "PYTHONIOENCODING": "utf-8"}
@@ -56,7 +60,10 @@ def _paste(burst: str, tmp_path) -> list[str]:
             # The composer redraws its prompt once it has the tty in raw mode.
             if select.select([primary], [], [], 0.05)[0] and b">" in os.read(primary, 4096):
                 break
-        os.write(primary, burst.encode())
+        for i, chunk in enumerate([burst] if isinstance(burst, str) else burst):
+            if i:
+                time.sleep(0.3)
+            os.write(primary, chunk.encode())
         while time.monotonic() < deadline and child.poll() is None:
             if select.select([primary], [], [], 0.05)[0]:
                 try:
@@ -91,3 +98,11 @@ def test_picker_labels_opencode_agents_as_agents():
     assert items == [("@newbie", "(human)"), ("@newbie-opencode", "(agent)"),
                      ("@newbie-claude", "(agent)")]
     assert hub._name_has_agent_keyword("newbie-opencode")
+
+
+def test_esc_on_the_slash_menu_drops_the_half_typed_command(tmp_path):
+    """New-user pass 3: Esc closed the / menu but left "/h", so typing /help next
+    sent "/h/help", an unknown command."""
+    # Enter on the open menu accepts "/help"; the second Enter sends it.
+    got = _paste(["/h", "\x1b", "/help", "\r", "\r"], tmp_path)
+    assert [line.strip() for line in got] == ["/help"]

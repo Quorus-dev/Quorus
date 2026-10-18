@@ -51,6 +51,8 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- Esc on the / menu closed it but left the half-typed command, so typing `/help` next sent
+  `/h/help`. Esc now drops it.
 - Pasting into the hub sent nothing until you pressed another key, and a pasted
   `@name ...` never got past the mention picker: the composer read stdin through Python's
   buffer, which swallowed the paste. It now reads the terminal directly.

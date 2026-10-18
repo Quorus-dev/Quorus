@@ -2896,6 +2896,12 @@ def _read_input(
                 elif key in (readchar.key.ENTER, "\r", "\n"):
                     _popover_action = popover.handle_key("ENTER")
                 elif key == readchar.key.ESC:
+                    # Esc on the / menu drops the half-typed command too: leaving
+                    # "/h" made the next "/help" into "/h/help" (new-user pass 3).
+                    if popover.kind == "slash" and buf[-len(popover.prefix):] == list(
+                            popover.prefix):
+                        del buf[-len(popover.prefix):]
+                        _redraw_line(buf)
                     _popover_action = popover.handle_key("ESC")
                 elif key in (readchar.key.BACKSPACE, "\x7f"):
                     # Backspace shrinks the buffer AND the popover prefix.
