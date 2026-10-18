@@ -86,7 +86,9 @@ def classify_turn(reply: str, *, vendor_failure: bool, failure_reason: str,
         return "vendor_failure"
     if slow_start or failure_reason == "timed out" or reply == "[reflexd] harness timed out":
         return "timed_out"
-    if failure_reason or reply == "[reflexd] harness errored":
+    if failure_reason or reply.startswith("[reflexd]"):
+        # Any daemon sentinel ("harness errored", "gemini not installed on
+        # this host", ...) means the agent never answered.
         return "errored"
     return "clean"
 

@@ -73,6 +73,7 @@ def test_holdout_is_deterministic_and_about_ten_percent():
     ("[reflexd] harness errored", False, "timed out", "timed_out"),
     ("[reflexd] harness errored", False, "crashed (OSError)", "errored"),
     ("[reflexd] harness errored", False, "", "errored"),
+    ("[reflexd] gemini not installed on this host", False, "", "errored"),  # live check
     ("quota", True, "", "vendor_failure"),
 ])
 def test_classify_turn(reply, vendor, reason, want):
