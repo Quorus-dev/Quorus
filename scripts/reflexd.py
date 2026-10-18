@@ -2732,7 +2732,8 @@ class Reflexd:
                     runtime_dir=self.config.runtime_dir,
                     participant=self.config.participant_name, repo=repo,
                     scope=self._track_scope(repo),
-                    harness=detect_harness(self.config.participant_name) or "")
+                    harness=detect_harness(self.config.participant_name) or "",
+                    model=str(getattr(self.adapter, "model", None) or ""))
                 bid, bid_reason = decision.bid, decision.reason
                 if decision.announce:
                     await self._post_status(relay, room, envelope, decision.announce)
@@ -2791,6 +2792,11 @@ class Reflexd:
                 continue
             if claim.get("claimed"):
                 winner = claim.get("winner")
+                if triage.kind == "open_todo":
+                    _track.record_claim(
+                        self.config.runtime_dir, self.config.participant_name,
+                        message_id=message_id, claim=claim,
+                        scope=self._track_scope(workspace_for(room) if room else None))
                 break
             await asyncio.sleep(0.25)
 
@@ -3284,6 +3290,7 @@ class Reflexd:
         _track.record_turn(
             self.config.runtime_dir, self.config.participant_name, turn_outcome,
             kind=kind, scope=self._track_scope(workspace_for(room) if room else None),
+            model=str(getattr(self.adapter, "model", None) or ""),
             message_id=(envelope.get("message_id") or envelope.get("id") or "")
             if kind == "open_todo" else "")
         previous_degraded = self._degraded_reason
