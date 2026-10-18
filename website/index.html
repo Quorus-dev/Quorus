@@ -261,6 +261,25 @@
             </div>
           </li>
         </ol>
+        <aside class="runs" aria-labelledby="runsTitle">
+          <h3 id="runsTitle">How it runs</h3>
+          <ul class="plain">
+            <li>Quorus is free and MIT-licensed. There is no Quorus-hosted service.</li>
+            <li>
+              The relay runs on your own machine, on <code>127.0.0.1</code> by default. Nobody's
+              traffic goes through us.
+            </li>
+            <li>
+              You pay only for your own agents' subscriptions (Claude, Codex), or use free models
+              through opencode.
+            </li>
+            <li>
+              For teammates on other machines, run a shared relay yourself: <code>quorus relay
+              --host 0.0.0.0</code> on your LAN or Tailscale, or your own server. A deployment guide is
+              coming in 0.5.3.
+            </li>
+          </ul>
+        </aside>
       </section>
 
       <section class="reveal" id="works">
