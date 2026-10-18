@@ -120,6 +120,16 @@ border-color:rgba(0,0,0,.08);box-shadow:0 6px 18px rgba(0,0,0,.1)}
 .qtag .qm{color:#5f6563}.qtag .qs{color:#3c4441}.qtag[data-state=needs] .qs{color:#4f3422}
 .qtag[data-state=stuck] .qs{color:#d13415}}
 .qtag:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Speech bubbles: the member's own latest message, shortened; DOM text. The "main" label over the wall screen. */
+.qbubble{position:absolute;left:0;top:0;max-width:250px;padding:7px 11px;border-radius:12px 12px 12px 3px;
+background:rgba(236,238,237,.94);color:#101513;font-family:"Plus Jakarta Sans",var(--font);font-size:12px;
+line-height:1.3;box-shadow:0 8px 24px rgba(0,0,0,.3);will-change:transform;overflow-wrap:anywhere}
+.qbubble[hidden]{display:none}
+/* In the office the plaque is a desk nameplate: name and status, the model in the card. */
+#quorum:not(.flat) .qtag{max-width:160px;padding:4px 9px 4px 18px}
+#quorum:not(.flat) .qtag .qm{display:none}
+#quorum:not(.flat) .qtag.qmain .qm{display:block}
+.qtag.qmain{background:rgba(16,20,18,.7);border-color:rgba(63,210,176,.4)}
 .qnote{position:absolute;left:12px;bottom:8px;margin:0}
 .qfps{position:absolute;right:12px;bottom:8px;margin:0;font:12px var(--mono);color:var(--muted);
 background:rgba(16,20,18,.6);padding:2px 8px;border-radius:6px}

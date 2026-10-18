@@ -1,7 +1,7 @@
 // The Quorum cast (2026-10-18, after Arav: "mini agents, a real cartoon"). One
 // original chibi robot per harness, built here from primitives: a capsule body, a
 // big head with a dark glossy visor and two lit eyes that carry the expression, a
-// small chest badge. Nothing is a vendor's mascot or a stock model; the shape and
+// small chest badge, seated at a desk. Nothing is a vendor's mascot or a stock model; the shape and
 // colour only nod to the harness (a warm pebble with an antenna, a teal pill with
 // ring ears, a slim two-tone blue with twin orbs, a grey lattice cube, a violet
 // wedge, an amber stack of discs). People are taller warm-white figures in a cap.
@@ -112,22 +112,28 @@ function headFor(vendor, mat, accent) {
   return { g, head };
 }
 
-// A person: taller, warm white, a cap instead of a visor, two simple dark eyes.
+// A person: taller, warm white, a cap with a brim, a warm face with two eyes and a
+// small mouth. No visor: people and agents read differently at a glance.
 function person(color) {
   const mat = pbr(color, { roughness: 0.5, clearcoat: 0.2 });
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.23, 0.55, 8, 24), mat);
   body.position.y = 0.6;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 40, 28), mat);
+  const faceMat = pbr("#f1dfc8", { roughness: 0.55, clearcoat: 0.1 });
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 40, 28), faceMat);
   head.position.y = 1.3;
-  const capMat = pbr("#2d3835", { roughness: 0.6 });
-  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.285, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2.4), capMat);
-  cap.position.y = 1.32;
-  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.03, 32), capMat);
-  brim.position.set(0, 1.36, 0.14); brim.scale.z = 1.3;
+  const capMat = pbr("#2f6b5e", { roughness: 0.6 });
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.28, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2.9), capMat);
+  cap.position.y = 1.33;
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.025, 32, 1, false, -Math.PI / 2, Math.PI), capMat);
+  brim.position.set(0, 1.4, 0.06);
+  brim.scale.z = 1.25;
   const eyeMat = new THREE.MeshStandardMaterial({ color: "#1a2220", roughness: 0.4 });
-  const eyes = [-1, 1].map((s) => { const e = eye(eyeMat); e.scale.setScalar(0.55); e.position.set(s * 0.09, 1.3, 0.262); return e; });
-  g.add(body, head, cap, brim, ...eyes);
+  const eyes = [-1, 1].map((s) => { const e = eye(eyeMat); e.scale.setScalar(0.5); e.position.set(s * 0.09, 1.3, 0.262); return e; });
+  const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.008, 6, 16, Math.PI), eyeMat);
+  mouth.rotation.z = Math.PI;
+  mouth.position.set(0, 1.21, 0.262);
+  g.add(body, head, cap, brim, mouth, ...eyes);
   g.traverse((o) => { o.castShadow = true; });
   return { g, mat, eyes, head, visor: null, arms: [], badge: null, height: 1.6 };
 }
@@ -142,7 +148,7 @@ function robot(vendor, color, accent) {
   body.position.y = 0.52;
   const feet = [-1, 1].map((s) => {
     const f = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.1, 6, 16), mat);
-    f.rotation.x = Math.PI / 2; f.position.set(s * 0.14, 0.08, 0.04); return f;
+    f.rotation.x = Math.PI / 2; f.position.set(s * 0.14, 0.08, 0.04); f.userData.foot = true; return f;
   });
   const arms = [-1, 1].map((s) => {
     const a = new THREE.Group();
@@ -175,26 +181,52 @@ function robot(vendor, color, accent) {
   return { g, mat, eyes, head, headG, visor, arms, badge, height: 1.55 };
 }
 
-// A member's seat: a low pedestal, the figure on it, a status ring at the foot and a
-// raised-hand spark for "needs you". Name and status text live in the HTML plaque.
+// A member's seat in the office: a chair, a desk with a monitor whose glow follows
+// the busy state, the figure seated behind it facing the room, a status ring on the
+// floor and a raised-hand spark for "needs you". The desk faces local +z (the camera).
 export function makeAgent(name, vendor, color, P, accent) {
   const seat = new THREE.Group();
-  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.54, 0.1, 64),
-    new THREE.MeshPhysicalMaterial({ color: P.stem, roughness: 0.55 }));
-  pedestal.position.y = 0.05;
-  pedestal.castShadow = pedestal.receiveShadow = true;
+  const wood = new THREE.MeshPhysicalMaterial({ color: P.desk, roughness: 0.6, metalness: 0 });
+  const dark = new THREE.MeshPhysicalMaterial({ color: P.stem, roughness: 0.55 });
+  const top = new THREE.Mesh(roundedBox(1.25, 0.06, 0.6, 0.02), wood);
+  top.position.set(0, 0.74, 0.62);
+  const legs = [-1, 1].map((sx) => {
+    const l = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.72, 0.5), dark);
+    l.position.set(sx * 0.58, 0.36, 0.62);
+    return l;
+  });
+  // The monitor stands on the far edge of the desk, facing the figure: the camera
+  // sees its slim back, and a soft panel on the figure's side lights the face.
+  const monitor = new THREE.Mesh(roundedBox(0.62, 0.38, 0.035, 0.012), dark);
+  monitor.position.set(0, 1.05, 0.86);
+  const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 0.14, 12), dark);
+  stand.position.set(0, 0.84, 0.86);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.32),
+    new THREE.MeshStandardMaterial({ color: "#1c2522", emissive: accent || "#3fd2b0", emissiveIntensity: 0.25, roughness: 0.4 }));
+  screen.position.set(0, 1.05, 0.84);
+  screen.rotation.y = Math.PI;  // faces the figure
+  const chairSeat = new THREE.Mesh(roundedBox(0.56, 0.08, 0.56, 0.03), dark);
+  chairSeat.position.set(0, 0.44, 0);
+  const chairBack = new THREE.Mesh(roundedBox(0.52, 0.5, 0.06, 0.03), dark);
+  chairBack.position.set(0, 0.74, -0.27);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.4, 12), dark);
+  post.position.y = 0.2;
+  const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.03, 32), dark);
+  foot.position.y = 0.015;
   const fig = vendor ? robot(vendor, color, accent || "#3fd2b0") : person(color);
-  fig.g.position.y = 0.1;
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.022, 10, 96),
+  fig.g.position.y = 0.3;  // seated: hips on the chair, feet tucked away
+  fig.g.traverse((o) => { if (o.userData.foot) o.visible = false; });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.02, 10, 96),
     new THREE.MeshBasicMaterial({ color: AMBER_C, transparent: true, opacity: 0, depthWrite: false }));
   ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.115;
+  ring.position.set(0, 0.012, 0);  // around the chair
   const spark = new THREE.Mesh(new THREE.SphereGeometry(0.05, 16, 12),
     new THREE.MeshBasicMaterial({ color: AMBER_C, transparent: true, opacity: 0 }));
-  seat.add(pedestal, fig.g, ring, spark);
+  [top, ...legs, monitor, stand, chairSeat, chairBack, post, foot].forEach((o) => { o.castShadow = o.receiveShadow = true; });
+  seat.add(top, ...legs, monitor, stand, screen, chairSeat, chairBack, post, foot, fig.g, ring, spark);
   seat.traverse((o) => { o.userData.seat = name; });
   seat.userData = Object.assign({ name, vendor, state: "", angle: 0, color: new THREE.Color(color),
-    ring, spark, fig, yaw: 0, face: null, hop: 0 }, {});
+    ring, spark, fig, screen, yaw: 0, face: null, hop: 0 }, {});
   return seat;
 }
 
@@ -204,15 +236,21 @@ const lerp = (a, b, k) => a + (b - a) * k;
 export function updateAgent(seat, t, dt, reduce, accent, stage) {
   const u = seat.userData, f = u.fig, s = u.state, w = reduce ? 0 : 1;
   const k = reduce ? 1 : Math.min(1, dt * 6);
-  // Face the table's centre, or whoever is being spoken to.
-  const target = u.face || new THREE.Vector3(0, 0, 0);
-  const want = Math.atan2(target.x - seat.position.x, target.z - seat.position.z);
+  // The desk faces the room (the camera side); the figure turns its body a little
+  // toward whoever it is speaking to and back.
+  seat.rotation.y = Math.atan2(-seat.position.x * 0.35, 14 - seat.position.z);
+  const target = u.face ? seat.worldToLocal(u.face.clone()) : null;
+  const want = target ? Math.max(-0.9, Math.min(0.9, Math.atan2(target.x, target.z))) : 0;
   let d = want - u.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
   u.yaw += d * k;
   f.g.rotation.y = u.yaw;
+  if (u.screen) {
+    u.screen.material.emissiveIntensity = s === "busy" ? 1.1 + w * 0.25 * Math.sin(t * 7 + u.angle)
+      : s === "asleep" || s === "pacing" || s === "offline" ? 0.05 : 0.3;
+  }
   // Idle bob and a blink every few seconds; asleep and stuck slump instead.
   const slump = s === "stuck" || s === "asleep" || s === "pacing" ? 1 : 0;
-  f.g.position.y = 0.1 + w * (slump ? 0 : Math.sin(t * 1.7 + u.angle) * 0.015) - slump * 0.05 + u.hop;
+  f.g.position.y = 0.3 + w * (slump ? 0 : Math.sin(t * 1.7 + u.angle) * 0.012) - slump * 0.05 + u.hop;
   u.hop = Math.max(0, u.hop - dt * 1.2);
   const headG = f.headG || f.head;
   if (headG) {
@@ -242,9 +280,7 @@ export function updateAgent(seat, t, dt, reduce, accent, stage) {
   u.ring.material.opacity = s === "needs" ? 0.7 + w * 0.3 * Math.sin(t * 4)
     : s === "stuck" ? 0.55 : s === "busy" ? 0.3 + w * 0.12 * Math.sin(t * 1.6 + u.angle) : 0;
   u.spark.material.opacity = s === "needs" ? 0.9 : 0;
-  if (s === "needs") {
-    u.spark.position.set(0.42 * Math.cos(u.yaw), 1.75 + (reduce ? 0 : Math.sin(t * 3) * 0.05), -0.42 * Math.sin(u.yaw));
-  }
+  if (s === "needs") u.spark.position.set(0.42, 1.95 + (reduce ? 0 : Math.sin(t * 3) * 0.05), 0.05);
   void stage;
 }
 

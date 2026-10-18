@@ -134,7 +134,8 @@ def test_quorum_degrades_instead_of_going_blank() -> None:
     # Reduced motion: a static premium still. No drift, no particles, no arcs;
     # the stage renders once per data change instead of looping.
     assert "if (reduceMotion) Q.stage.once(); else Q.stage.start();" in src
-    assert "if (!from || reduceMotion) return;" in src
+    # Bubbles (DOM text) still appear under reduced motion; arcs and bursts don't.
+    assert "bubble(m.from_name, body);\n    if (reduceMotion) return;" in src
     assert "drift: !hooks.reduceMotion" in _src("quorum-stage.js")
     assert "w = reduce ? 0 : 1" in _src("quorum-totems.js")
     # Rendering pauses while the tab is hidden.

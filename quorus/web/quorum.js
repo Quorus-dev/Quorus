@@ -21,7 +21,7 @@ const darkScheme = matchMedia("(prefers-color-scheme: dark)");
 const phone = matchMedia("(max-width: 640px)");
 const NARROW = 560;     // a host narrower than this can't frame the table either
 
-const Q = { stage: null, T: null, host: null, seats: new Map(), tags: new Map(), layer: null,
+const Q = { stage: null, T: null, host: null, seats: new Map(), tags: new Map(), bubbles: new Map(), layer: null,
             flat: false, names: [], rows: [], room: null, me: "", seen: new Set(), extra: 0,
             offline: 0, on: false, P: null, seatR: 3.62 };
 
@@ -57,6 +57,24 @@ function tagFor(name) {
   return t;
 }
 
+// A speech bubble over a seat: the member's own latest room message, shortened.
+// textContent only; it fades after a few seconds (placeTags hides it).
+const BUBBLE_MS = 9000, BUBBLE_CHARS = 110;
+function bubble(name, text) {
+  if (!Q.seats.has(name)) return;
+  let b = Q.bubbles.get(name);
+  if (!b) {
+    b = document.createElement("div");
+    b.className = "qbubble";
+    Q.layer.append(b);
+    Q.bubbles.set(name, b);
+  }
+  const short = text.replace(/\s+/g, " ").trim();
+  b.textContent = short.length > BUBBLE_CHARS ? short.slice(0, BUBBLE_CHARS - 1) + "\u2026" : short;
+  b.dataset.until = String(performance.now() + BUBBLE_MS);
+  b.hidden = false;
+}
+
 function layer(host) {
   if (Q.layer && Q.layer.parentNode === host) return Q.layer;
   Q.layer = document.createElement("div");
@@ -84,17 +102,27 @@ function layout(names) {
   [...Q.tags.keys()].forEach((n) => {
     if (!names.includes(n)) { Q.tags.get(n).remove(); Q.tags.delete(n); }
   });
+  [...Q.bubbles.keys()].forEach((n) => {
+    if (!names.includes(n)) { Q.bubbles.get(n).remove(); Q.bubbles.delete(n); }
+  });
   names.forEach(tagFor);
   if (Q.flat) return;
   [...Q.seats.keys()].forEach((n) => {
     if (!names.includes(n)) { Q.T.disposeAgent(Q.seats.get(n), Q.stage); Q.seats.delete(n); }
   });
-  names.forEach((n, i) => {
-    let s = Q.seats.get(n);
-    if (!s) { s = Q.T.makeAgent(n, vendorOf(n), colourOf(n), Q.P, cssVar("--accent", "#3cc7a2")); Q.stage.add(s, true); Q.seats.set(n, s); }
-    const a = (i / names.length) * Math.PI * 2 + Math.PI / 2;
-    s.position.set(Math.cos(a) * Q.seatR, 0, Math.sin(a) * Q.seatR);
-    s.userData.angle = a;
+  // Desks in one row up to three members, else two staggered rows, all facing the
+  // camera so every face shows. The group is centred; the back row sits deeper.
+  const n = names.length, gap = 1.85, back = n > 3 ? Math.ceil(n / 2) : n;
+  const xs = names.map((_, i) => {
+    const row = i < back ? 0 : 1, idx = row ? i - back : i, count = row ? n - back : back;
+    return (idx - (count - 1) / 2) * gap + (row && count === back ? gap / 2 : 0);
+  });
+  const mid = xs.reduce((a, b) => a + b, 0) / Math.max(1, n);
+  names.forEach((name, i) => {
+    let s = Q.seats.get(name);
+    if (!s) { s = Q.T.makeAgent(name, vendorOf(name), colourOf(name), Q.P, cssVar("--accent", "#3cc7a2")); Q.stage.add(s, true); Q.seats.set(name, s); }
+    s.position.set(xs[i] - mid, 0, i < back ? -2.3 : -0.4);
+    s.userData.angle = i * 1.3;  // phase for the idle motion, so the row doesn't bob in unison
   });
 }
 
@@ -141,11 +169,25 @@ function placeTags() {
       .forEach((n) => Q.layer.append(Q.tags.get(n)));
     return;
   }
-  const w = Q.host.clientWidth, h = Q.host.clientHeight;
+  const w = Q.host.clientWidth, h = Q.host.clientHeight, now = performance.now(), V3 = Q.stage.THREE.Vector3;
+  Q.bubbles.forEach((b, name) => {
+    const s = Q.seats.get(name);
+    if (!s || Number(b.dataset.until) < now) { b.hidden = true; return; }
+    const p = Q.stage.project(s.localToWorld(new V3(0, 1.95, 0)));  // just over the head
+    b.hidden = p.behind;
+    const left = Math.max(4, Math.min(w - b.offsetWidth - 4, p.x + 8));
+    const top = Math.max(4, p.y - b.offsetHeight - 4);
+    b.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+  });
+  mainTag();
+  // Plaques are compact in 3D (name and status; the model is in the card). The front
+  // row's hang from the desk fronts like nameplates, where only floor is behind them;
+  // the back row's float over the heads, against the wall screen, so neither row's
+  // plaque lands on the other row's faces. Bubbles have the air above the heads.
   const spots = Q.names.filter((n) => Q.seats.has(n)).map((name) => {
-    const s = Q.seats.get(name), t = Q.tags.get(name);
-    const p = Q.stage.project(s.position.clone().setY(2.25));  // clear of the tallest mark
-    return { t, x: p.x, y: p.y, tw: t.offsetWidth, th: t.offsetHeight, behind: p.behind };
+    const s = Q.seats.get(name), t = Q.tags.get(name), front = s.position.z > -1;
+    const p = Q.stage.project(s.localToWorld(front ? new V3(0, 0.76, 0.93) : new V3(0, 1.95, 0)));
+    return { t, x: p.x, y: front ? p.y + t.offsetHeight + 2 : p.y, tw: t.offsetWidth, th: t.offsetHeight, behind: p.behind };
   }).sort((a, b) => b.y - a.y);
   const placed = [];
   spots.forEach((p) => {
@@ -164,6 +206,26 @@ function placeTags() {
     p.t.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
     placed.push({ left, top, tw: p.tw, th: p.th });
   });
+}
+
+// The wall screen's label: "main", the branch the team ships to. DOM text, fixed size.
+function mainTag() {
+  if (!Q.stage) return;
+  let t = Q.mainTag;
+  if (!t) {
+    t = Q.mainTag = document.createElement("div");
+    t.className = "qtag qmain";
+    const who = document.createElement("b"), what = document.createElement("span");
+    who.textContent = "main";
+    what.className = "qm";
+    what.textContent = "branch";
+    t.append(who, what);
+    t.style.setProperty("--seat", cssVar("--accent", "#3cc7a2"));
+    Q.layer.append(t);
+  }
+  const p = Q.stage.project(Q.stage.monolith.clone().setY(Q.stage.monolith.y + 1.2));
+  t.hidden = p.behind;
+  t.style.transform = `translate(${Math.round(p.x - t.offsetWidth / 2)}px, ${Math.round(p.y - t.offsetHeight)}px)`;
 }
 
 function notes() {
@@ -195,8 +257,10 @@ function events(history) {
   fresh.forEach((m) => {
     const from = Q.seats.get(m.from_name);
     Q.stage.pulse(0.6);
-    if (!from || reduceMotion) return;
+    if (!from) return;
     const body = m.content || "";
+    if (m.message_type !== "social" && !PUBLISHED.test(body)) bubble(m.from_name, body);
+    if (reduceMotion) return;
     if (m.message_type === "social") {
       try {
         const sv = JSON.parse(body);

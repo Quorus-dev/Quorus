@@ -1,12 +1,14 @@
-// The Quorum stage (2026-10-18): renderer, image-based light, the table and the
-// "main" monolith, a camera that drifts and dollies, and a small in-house bloom.
+// The Quorum stage (2026-10-18): renderer, image-based light, the office and its
+// wall screen "main", a camera that drifts and dollies, and a small in-house bloom.
 // quorum.js owns the data; this file only draws. Everything here is procedural
 // (no textures, no external assets) so the relay's CSP stays `script-src 'self'`.
 import * as THREE from "/vendor/three.module.min.js";
 
 export const R = 3.0;            // table radius
 export const SEAT_R = R + 0.62;  // seats sit just outside the rim
-const TARGET = new THREE.Vector3(0, 0.55, 0);
+const WALL_Z = -4.4;             // the back wall
+const ELEV = 0.26;               // camera elevation (rad): a low, cartoon eye
+const TARGET = new THREE.Vector3(0, 1.4, -1.5);
 
 // Bloom: bright pass → two separable blurs at half and quarter size → add back.
 // The composite runs to the screen, so three's own ACES + sRGB chunks apply.
@@ -59,9 +61,9 @@ function environment(renderer) {
 
 export function palette(dark, accent, bg) {
   return dark
-    ? { bg, accent, floorColor: "#181f1c", table: "#222b27", rim: "#6a7872",
+    ? { bg, accent, floorColor: "#181f1c", wall: "#1b2320", desk: "#2a3430", rim: "#6a7872",
         stem: "#242d29", mono: "#0e1311", key: "#fff1e0", rimLight: "#bfffe9", exposure: 1.15 }
-    : { bg, accent, floorColor: "#e3e8e5", table: "#cfd6d2", rim: "#8a968f",
+    : { bg, accent, floorColor: "#e3e8e5", wall: "#d9e0dc", desk: "#c9d1cc", rim: "#8a968f",
         stem: "#c3cbc6", mono: "#dfe5e1", key: "#ffffff", rimLight: "#ffffff", exposure: 1.0 };
 }
 
@@ -100,58 +102,42 @@ export function create(host, P, hooks) {
   S.glow.position.set(0, 1.4, 0);
   S.scene.add(key, rim, S.glow);
 
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(12, 96),
+  // The office (step 3, 2026-10-18): a floor, a back wall, and on it the wall screen
+  // called "main", the branch the team ships to. Desks come with each seat (cast).
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(14, 96),
     new THREE.MeshPhysicalMaterial({ color: P.floorColor, roughness: 0.92, metalness: 0 }));
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
-  // A glossy dark slab: clearcoat gives the faint reflection of the room above it.
-  const top = new THREE.Mesh(new THREE.CylinderGeometry(R, R * 0.985, 0.12, 160),
-    new THREE.MeshPhysicalMaterial({ color: P.table, roughness: 0.16, metalness: 0.02,
-      clearcoat: 1, clearcoatRoughness: 0.1, envMapIntensity: 2.0 }));
-  top.position.y = 0.87;
-  top.castShadow = top.receiveShadow = true;
-  const edge = new THREE.Mesh(new THREE.TorusGeometry(R, 0.024, 12, 200),
-    new THREE.MeshPhysicalMaterial({ color: P.rim, roughness: 0.25, metalness: 0.9 }));
-  edge.rotation.x = Math.PI / 2;
-  edge.position.y = 0.93;
-  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.5, 0.81, 48),
-    new THREE.MeshPhysicalMaterial({ color: P.stem, roughness: 0.5 }));
-  stem.position.y = 0.405;
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.4, 0.06, 64),
-    new THREE.MeshPhysicalMaterial({ color: P.stem, roughness: 0.5 }));
-  base.position.y = 0.03;
-  base.receiveShadow = true;
-  S.scene.add(floor, top, edge, stem, base);
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(22, 7),
+    new THREE.MeshPhysicalMaterial({ color: P.wall, roughness: 0.9, metalness: 0 }));
+  wall.position.set(0, 3.5, WALL_Z);
+  wall.receiveShadow = true;
+  const base = new THREE.Mesh(new THREE.BoxGeometry(22, 0.18, 0.08),
+    new THREE.MeshPhysicalMaterial({ color: P.stem, roughness: 0.6 }));
+  base.position.set(0, 0.09, WALL_Z + 0.04);
+  S.scene.add(floor, wall, base);
 
-  // "main": a wide dark-glass slab at the centre, turned off-axis, with two teal
-  // seams and a soft pool of light at its foot that pulses when anyone speaks.
-  // (A thin bar inside a ring read as a power button from the default camera.)
+  // "main": a wide dark-glass screen in a lit frame on the back wall. Its frame and
+  // the pool of light below it pulse when anyone speaks; shipped work bursts into it.
   const mono = new THREE.Group();
-  const glass = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.4, 0.2),
-    new THREE.MeshPhysicalMaterial({ color: P.mono, roughness: 0.12, metalness: 0.05, clearcoat: 1,
-      clearcoatRoughness: 0.08, envMapIntensity: 1.4 }));
-  glass.position.y = 0.93 + 0.7;
-  glass.castShadow = true;
   S.seam = new THREE.MeshStandardMaterial({ color: P.accent, emissive: P.accent, emissiveIntensity: 1.4,
     roughness: 0.3 });
-  [-0.3, 0.3].forEach((x) => {
-    const f = new THREE.Mesh(new THREE.BoxGeometry(0.025, 1.2, 0.02), S.seam);
-    f.position.set(x, glass.position.y, 0.105);
-    const b = f.clone();
-    b.position.z = -0.105;
-    mono.add(f, b);
-  });
-  const cap = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.012, 0.22), S.seam);
-  cap.position.y = glass.position.y + 0.705;
-  S.core = new THREE.Mesh(new THREE.CircleGeometry(0.95, 72),
+  const frameMesh = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.0, 0.07), S.seam);
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(3.3, 1.8, 0.07),
+    new THREE.MeshPhysicalMaterial({ color: P.mono, roughness: 0.12, metalness: 0.05, clearcoat: 1,
+      clearcoatRoughness: 0.08, envMapIntensity: 1.4 }));
+  glass.position.z = 0.02;
+  S.core = new THREE.Mesh(new THREE.CircleGeometry(1, 72),
     new THREE.MeshBasicMaterial({ color: P.accent, transparent: true, opacity: 0.22, depthWrite: false,
       blending: THREE.AdditiveBlending }));
   S.core.rotation.x = -Math.PI / 2;
-  S.core.position.y = 0.935;
-  mono.add(glass, cap, S.core);
-  mono.rotation.y = -0.55;
-  S.scene.add(mono);
-  S.monolith = new THREE.Vector3(0, 1.45, 0);
+  S.core.scale.set(2.2, 0.8, 1);
+  S.core.position.set(0, 0.006, WALL_Z + 0.9);
+  mono.add(frameMesh, glass);
+  mono.position.set(0, 2.45, WALL_Z + 0.08);
+  S.scene.add(mono, S.core);
+  S.glow.position.set(0, 2.2, WALL_Z + 1.0);
+  S.monolith = new THREE.Vector3(0, 2.45, WALL_Z + 0.15);
 
   // Bloom targets, sized on resize.
   S.quadScene = new THREE.Scene();
@@ -188,25 +174,21 @@ export function resize(S) {
   frame(S);
 }
 
-// Fit the whole ring of seats (plus their marks) for the host's aspect: a fixed
-// camera cropped the front seats and shrank the back ones.
+// Fit the desk rows and the wall screen for the host's aspect, from a low eye
+// (an office seen from its door, not a table from above).
 function frame(S) {
-  const pts = [];
-  for (let i = 0; i < 24; i++) {
-    const a = (i / 24) * Math.PI * 2;
-    pts.push(new THREE.Vector3(Math.cos(a) * (SEAT_R + 0.45), 0, Math.sin(a) * (SEAT_R + 0.45)));
-    pts.push(new THREE.Vector3(Math.cos(a) * (SEAT_R + 0.2), 2.4, Math.sin(a) * (SEAT_R + 0.2)));
-  }
+  const pts = [[-3.8, 0, 0.6], [3.8, 0, 0.6], [-3.8, 2.4, -2.9], [3.8, 2.4, -2.9], [0, 0, 1.2],
+               [-1.9, 3.6, WALL_Z], [1.9, 3.6, WALL_Z]].map((p) => new THREE.Vector3(...p));
   let d = 12;
   for (let pass = 0; pass < 4; pass++) {
-    place(S, d, 0.82, 0, TARGET);
+    place(S, d, ELEV, 0, TARGET);
     let m = 0;
     pts.forEach((p) => { const v = p.clone().project(S.cam); m = Math.max(m, Math.abs(v.x), Math.abs(v.y) * 1.08); });
     d *= m / 0.92;
   }
   S.d = d;
-  S.scene.fog.near = d + 3.5;
-  S.scene.fog.far = d + 11;
+  S.scene.fog.near = d + 6;
+  S.scene.fog.far = d + 16;
 }
 
 function place(S, d, elev, az, target) {
@@ -237,9 +219,9 @@ function tick(S, now) {
   const goal = S.focus ? 1 : 0;
   S.k += (goal - S.k) * Math.min(1, dt * 5);
   const target = TARGET.clone();
-  if (S.focus) target.lerp(S.focus.clone().setY(0.6), S.k);
-  const az = S.drift ? Math.sin(t * Math.PI * 2 / 46) * 0.11 : 0;
-  const elev = 0.82 + (S.drift ? Math.sin(t * Math.PI * 2 / 31) * 0.012 : 0);
+  if (S.focus) target.lerp(S.focus.clone().setY(1.0), S.k);
+  const az = S.drift ? Math.sin(t * Math.PI * 2 / 46) * 0.05 : 0;
+  const elev = ELEV + (S.drift ? Math.sin(t * Math.PI * 2 / 31) * 0.01 : 0);
   place(S, S.d * (1 - 0.48 * S.k), elev, az, target);
   S.pulse = Math.max(0, S.pulse - dt * 1.6);
   S.seam.emissiveIntensity = 1.4 + 2.2 * S.pulse;
