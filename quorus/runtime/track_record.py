@@ -79,11 +79,12 @@ def is_holdout(message_id: str) -> bool:
     return digest[0] % 100 < HOLDOUT_PERCENT
 
 
-def classify_turn(reply: str, *, vendor_failure: bool, failure_reason: str) -> str:
+def classify_turn(reply: str, *, vendor_failure: bool, failure_reason: str,
+                  slow_start: bool = False) -> str:
     """Map a finished harness turn to one of :data:`OUTCOMES`."""
     if vendor_failure:
         return "vendor_failure"
-    if failure_reason == "timed out" or reply == "[reflexd] harness timed out":
+    if slow_start or failure_reason == "timed out" or reply == "[reflexd] harness timed out":
         return "timed_out"
     if failure_reason or reply == "[reflexd] harness errored":
         return "errored"
@@ -338,11 +339,21 @@ def report(runtime_dir: Path, participant: str, now: float | None = None) -> dic
       x1.0 vs at or above it. If low multipliers don't predict failures, the
       multiplier must not be switched on.
     """
-    bids = {b.get("message_id"): b for b in load_bids(runtime_dir, participant, now)}
+    by_message: dict[Any, list[dict]] = {}
+    for b in sorted(load_bids(runtime_dir, participant, now), key=lambda b: b["ts"]):
+        by_message.setdefault(b.get("message_id"), []).append(b)
+
+    def bid_before(turn: dict) -> dict | None:
+        # The prediction made before this outcome existed; a later bid on the
+        # same message (a retry) must never relabel it.
+        earlier = [b for b in by_message.get(turn.get("message_id"), [])
+                   if b["ts"] <= turn["ts"]]
+        return earlier[-1] if earlier else None
+
     arms = {a: {"turns": 0, "failed": 0} for a in ("routed", "holdout", "shadow")}
     predictive = {"low": {"turns": 0, "failed": 0}, "high": {"turns": 0, "failed": 0}}
     for t in load_turns(runtime_dir, participant, now):
-        bid = bids.get(t.get("message_id")) if t.get("kind") == "open_todo" else None
+        bid = bid_before(t) if t.get("kind") == "open_todo" else None
         if not bid or bid.get("arm") not in arms:
             continue
         failed = t["outcome"] in FAILED
