@@ -189,33 +189,53 @@ class PendingWrites:
     cache with ``setdefault`` kept entries another relay process had deleted
     and kept an entry's old visibility after it changed (codex, 2844ce20). So
     a refresh replaces the cache, except for these writes, which are kept and
-    re-mirrored until the store has them.
+    re-mirrored until the store has them, unless the store already holds a
+    newer write to the same field from another process (claude, 8bfb268d).
     """
 
     def __init__(self) -> None:
-        self._ops: dict[Any, dict[str, str]] = {}
+        # bucket -> field -> (op, when the write was made)
+        self._ops: dict[Any, dict[str, tuple[str, float]]] = {}
 
-    def note(self, bucket: Any, field: str, op: str, mirrored: bool) -> None:
+    def note(self, bucket: Any, field: str, op: str, mirrored: bool,
+             at: float | None = None) -> None:
         ops = self._ops.setdefault(bucket, {})
         if mirrored:
             ops.pop(field, None)
         else:
-            ops[field] = op
+            ops[field] = (op, time.time() if at is None else at)
         if not ops:
             self._ops.pop(bucket, None)
+
+    @staticmethod
+    def _written_at(entry: dict[str, Any] | None) -> float:
+        """When an entry was written: memory and capabilities stamp
+        ``updated_at``, tool records ``registered_at``."""
+        if not entry:
+            return 0.0
+        stamp = entry.get("updated_at", entry.get("registered_at", 0.0))
+        return float(stamp) if isinstance(stamp, (int, float)) else 0.0
 
     async def reconcile(self, bucket: Any, ns_key: str,
                         cached: dict[str, dict[str, Any]],
                         stored: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """The bucket to serve after a successful hydrate of *ns_key*."""
         merged = dict(stored)
-        for field, op in list(self._ops.get(bucket, {}).items()):
+        for field, (op, at) in list(self._ops.get(bucket, {}).items()):
+            theirs = stored.get(field)
             if op == "set" and field in cached:
-                merged[field] = cached[field]
-                self.note(bucket, field, op, await mirror_set(ns_key, field, cached[field]))
+                mine = cached[field]
+                if theirs is not None and self._written_at(theirs) > self._written_at(mine):
+                    self.note(bucket, field, op, True)  # a newer write landed elsewhere
+                    continue
+                merged[field] = mine
+                self.note(bucket, field, op, await mirror_set(ns_key, field, mine), at)
             elif op == "delete":
+                if theirs is not None and self._written_at(theirs) > at:
+                    self.note(bucket, field, op, True)  # set again after our delete
+                    continue
                 merged.pop(field, None)
-                self.note(bucket, field, op, await mirror_delete(ns_key, field))
+                self.note(bucket, field, op, await mirror_delete(ns_key, field), at)
             else:
                 self.note(bucket, field, op, True)
         return merged

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
+import time
 
 import pytest
 
@@ -236,3 +237,42 @@ async def test_writes_the_store_missed_are_kept_and_mirrored_later(always_refres
     other = PersistentMemorySvc()
     assert (await other.get(T, "alice", R, "new"))["value"] == 2
     assert await other.get(T, "alice", R, "old") is None
+
+
+class _Locked:
+    """Hold an exclusive lock on the store so this process's writes miss it."""
+
+    def __enter__(self):
+        self.conn = sqlite3.connect(str(p1_sqlite.db_path()))
+        self.conn.execute("BEGIN EXCLUSIVE")
+        return self
+
+    def __exit__(self, *exc):
+        self.conn.rollback()
+        self.conn.close()
+
+
+async def test_a_missed_write_doesnt_override_a_newer_one_elsewhere(always_refresh, monkeypatch):
+    """Claude's repro on 8bfb268d: A's missed 'room' write came back over B's
+    later 'private' one when A refreshed."""
+    monkeypatch.setattr(p1_sqlite, "_BUSY_S", 0.05)
+    a, b = PersistentMemorySvc(), PersistentMemorySvc()
+    await a.set(T, "alice", R, "warmup", 0)  # create the file before locking it
+    with _Locked():
+        await a.set(T, "alice", R, "k", "x", visibility="room")  # store misses it
+    time.sleep(0.01)
+    await b.set(T, "alice", R, "k", "x", visibility="private")  # lands, newer
+    assert (await a.get(T, "alice", R, "k"))["visibility"] == "private"
+    assert (await PersistentMemorySvc().get(T, "alice", R, "k"))["visibility"] == "private"
+
+
+async def test_a_missed_delete_doesnt_remove_a_newer_set_elsewhere(always_refresh, monkeypatch):
+    monkeypatch.setattr(p1_sqlite, "_BUSY_S", 0.05)
+    a, b = PersistentMemorySvc(), PersistentMemorySvc()
+    await a.set(T, "alice", R, "k", 1)
+    with _Locked():
+        assert await a.delete(T, "alice", R, "k")  # store misses the delete
+    time.sleep(0.01)
+    await b.set(T, "alice", R, "k", 2)  # set again after, and it lands
+    assert (await a.get(T, "alice", R, "k"))["value"] == 2
+    assert (await PersistentMemorySvc().get(T, "alice", R, "k"))["value"] == 2
