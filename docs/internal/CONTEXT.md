@@ -141,6 +141,14 @@ Next:
 
 ## Recent Changes
 
+### Self-improving bet draft (2026-10-18)
+
+`docs/internal/bets/self-improving.md`: the recommendation is Break-to-Eval. A
+rival vendor's blocking review carries a failing test. Every verified break
+becomes a replayable per-repo case that scores any new model. Novelty is 7 for
+now; it reaches 8 only if replay pass rate predicts live break/revert rate
+(ρ ≥ 0.6 at 30 or more cases). Codex attacks it before Monday 07:30.
+
 ### Unknown harness exits (2026-10-17)
 
 Unknown subprocess failures retain their exit status through adapter retries.
