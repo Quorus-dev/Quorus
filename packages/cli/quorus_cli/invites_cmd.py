@@ -35,8 +35,7 @@ def cmd_invites(args) -> int:
     from quorus_cli import cli, ui
 
     if not cli.RELAY_URL:
-        ui.error("Relay URL not configured",
-                 hint="run: quorus init <name> --secret -  (then paste the secret)")
+        ui.error("Relay URL not configured", hint="run: quorus init <name> --secret -")
         return 1
     base = f"{cli.RELAY_URL.rstrip('/')}/v1/join/invites"
     revoke = getattr(args, "revoke", None)
