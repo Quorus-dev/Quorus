@@ -2120,7 +2120,7 @@ def _slash_share(arg, state, relay_url, secret, agent_name, console):
         state.set_status_bar(f"no room '{target}' — try /rooms")
         return True
     code = _mint_join_token(relay_url, secret, target)
-    install_url = _share_install_url(code)
+    install_url = _share_install_url(code, relay_url)
     status = _slash.run_share_flow(
         console=console,
         room_name=target,
@@ -2131,16 +2131,17 @@ def _slash_share(arg, state, relay_url, secret, agent_name, console):
     return True
 
 
-def _share_install_url(code: str) -> str | None:
-    """One-line install URL for the share card.
+def _share_install_url(code: str, relay_url: str) -> str | None:
+    """One-line install for the share card, served by the relay that minted the code.
 
-    Server-issued short codes (no underscores, no `quorus_join_` prefix)
-    fit nicely under the q.dev/r/<code>.sh installer; the legacy base64
-    envelope is too long for a curl URL so we omit it.
+    It used to point at q.dev, a domain Quorus doesn't own, so whoever held it could
+    serve any script to a teammate. The installer is bash, so it runs under bash:
+    `| sh` is dash on Debian/Ubuntu and stops at `set -o pipefail`. The legacy
+    base64 envelope is too long for a curl URL, so it gets none.
     """
-    if not code or code.startswith("quorus_join_"):
+    if not code or code.startswith("quorus_join_") or not relay_url:
         return None
-    return f"curl -sSL https://q.dev/r/{code}.sh | sh"
+    return f"curl -sSL {relay_url.rstrip('/')}/v1/join/install/{code}.sh | bash"
 
 
 def _slash_delete(arg, state, relay_url, secret, agent_name, console):
@@ -3467,7 +3468,7 @@ def _main_input_loop(
                     )
                 else:
                     code = _mint_join_token(relay_url, secret, target)
-                    install_url = _share_install_url(code)
+                    install_url = _share_install_url(code, relay_url)
                     status = _slash_mod.run_share_flow(
                         console=console,
                         room_name=target,

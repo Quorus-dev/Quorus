@@ -5818,7 +5818,7 @@ def _cmd_share(args):
             "on another computer needs a relay they can reach (a shared server, or "
             "`quorus relay --host 0.0.0.0` on your network).[/]\n"
         )
-    install_cmd = f"curl -sSL {install_url} | sh"
+    install_cmd = f"curl -sSL {install_url} | bash"  # the installer is bash, not sh
     ui.console.print(f"    [accent]{join_cmd}[/]")
     ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
     ui.console.print(f"    [accent]{install_cmd}[/]")
@@ -9446,7 +9446,7 @@ def main():
         description=(
             "Mints an 8-char code (e.g. ABCD-EFGH) and prints two ways "
             "to use it — `quorus join` for teammates who already have "
-            "Quorus, and a `curl | sh` one-liner for fresh installs. "
+            "Quorus, and a `curl | bash` one-liner for fresh installs. "
             "Auto-copies the join command to clipboard when stdout is "
             "a TTY (override with --copy / --no-copy)."
         ),
