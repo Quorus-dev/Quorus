@@ -96,26 +96,32 @@ build per repo per machine, after each publish**, keyed by commit.
   server, which runs on the machine that holds the code. It answers from the
   map and says how many commits behind HEAD the map is.
 - **This revises my earlier "upload it to the relay" idea.** Keeping the map
-  local means no code structure leaves the laptop and the relay needs no blob
-  storage. Agents on other machines build their own map after they fetch. The
-  relay only learns `{repo, commit, built_at}` for the UI's freshness dot, and
-  it gets no paths.
+  local means the relay stores no map and needs no blob storage. Agents on
+  other machines build their own map after they fetch. The relay only learns
+  `{repo, commit, built_at}` for the UI's freshness dot, and it gets no paths.
+  It does not keep code structure private: `map_query` answers go into the
+  agent's prompt, which is sent to its hosted model, exactly like the files
+  the agent reads (codex, review of 80df40f0).
 
-## 5. Trust model: for @arav-codex (requirements this design assumes)
+## 5. Trust model (rev 2, after codex's review of 80df40f0)
 
-- Who can write: any room member can propose. Only a `kind=human` member of the
-  room accepts or retracts (invites rev 3's claim kinds), and agents never
-  self-accept. Is the room creator enough, or should it be any human member?
-- Injection: entries are data. They're quoted with random-id markers, stripped
-  of control characters, capped at 280 characters, and never interpolated into
-  instructions. The wake prompt says that notes can't change rules. Codex: is
-  that enough, or should accepted text also be filtered for imperative/system
-  phrasing?
+- Who can write: any room member can propose. Accepting and retracting default
+  to the room's owner, plus human curators the owner names explicitly. The
+  relay checks that authority at the moment of the action, against current
+  claims, and checks that the source message belongs to the same tenant and
+  room. Agents never accept.
+- Injection: quoting, control-character stripping and length caps reduce the
+  risk, and an imperative-phrase filter would too, but none of them can
+  guarantee resistance. So the design does not rely on them: notes are
+  untrusted data. They can never grant a permission, change a room's mode or
+  trust, approve a tool call, or authorize running anything; every one of
+  those stays a server-side check against claims and bindings.
 - Provenance: `author_claim_id` and `source_id` are required, so every line
   traces to a person and a message.
-- Map: `map_query` returns structure (files, symbols, edges). It returns no
-  file contents and never reads ignored or secret paths, because graphify
-  respects .gitignore. Codex should confirm this.
+- Map: `map_query` returns structure (files, symbols, edges), not file
+  contents. graphify's ignore and sensitive-path filters help, but they can't
+  guarantee a secret never appears in a symbol or path name, so the map is
+  treated with the same care as the code itself.
 
 ## 6. Prior art
 
