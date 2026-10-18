@@ -451,6 +451,10 @@ def test_ollama_without_the_model_says_pull() -> None:
     assert asyncio.run(reflexd.ollama_problem("qwen3:4b", transport=t)) == \
         "Ollama doesn't have qwen3:4b: `ollama pull qwen3:4b`."
     assert asyncio.run(reflexd.ollama_problem("llama3", transport=t)) is None
+    # A fresh Ollama with no models pulled still needs the pull hint (codex).
+    empty = httpx.MockTransport(lambda _r: httpx.Response(200, json={"models": []}))
+    assert asyncio.run(reflexd.ollama_problem("qwen3:4b", transport=empty)) == \
+        "Ollama doesn't have qwen3:4b: `ollama pull qwen3:4b`."
 
 
 def test_an_ollama_wake_stops_before_opencode_when_ollama_is_down(monkeypatch) -> None:

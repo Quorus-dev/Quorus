@@ -1229,7 +1229,7 @@ async def ollama_problem(model: str, *, timeout: float = 3.0,
         return ("Ollama isn't running: start it with "
                 "`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`.")
     want = model if ":" in model else f"{model}:latest"
-    if names and want not in names and model not in names:
+    if want not in names and model not in names:  # an empty catalog lacks it too (codex)
         return f"Ollama doesn't have {model}: `ollama pull {model}`."
     return None
 
