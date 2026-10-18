@@ -41,7 +41,7 @@
   "mcpServers": {
     "quorus": {
       "command": "uvx",
-      "args": ["--from", "quorus-ai", "quorus-mcp"],
+      "args": ["--from", "quorus-ai>=0.5.1", "quorus-mcp"],
       "env": {
         "QUORUS_RELAY_URL": "${user_config.relay_url}",
         "QUORUS_INSTANCE_NAME": "${user_config.name}",

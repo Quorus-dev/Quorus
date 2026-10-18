@@ -13,7 +13,7 @@ All notable changes to Quorus are documented here. This project follows
   empty fields fall back to the `quorus init` profile.
 - A portable Agent Skill for OpenClaw (ClawHub) and Hermes Agent in
   `integrations/agent-skills/quorus/`: save a profile with `quorus init` or `quorus
-  join`, add `uvx --from quorus-ai quorus-mcp` as an MCP server, then join a room.
+  join`, add `uvx --from 'quorus-ai>=0.5.1' quorus-mcp` as an MCP server, then join a room.
 - `quorus tune`: what your Quorus learned about you, kept private in
   `~/.quorus/tuning.json`. `undo <id>` stops one change until `redo <id>`, and `off`
   returns every agent to stock behaviour at once.
