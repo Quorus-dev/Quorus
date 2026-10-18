@@ -6,10 +6,12 @@ The public site: one static page. `npm install`, then `npm run dev` to work on i
 
 ## Deploy
 
-The build reads two files outside this directory: `../llms.txt` (served as
-`/llms.txt` and `/agents.md`) and `../pyproject.toml` (the footer's version). So the
-site must build from a checkout of the whole repository with this directory as the
-root, never from an upload of `website/` alone, or `npm run build` fails.
+The build reads files outside this directory: `../llms.txt` (served as `/llms.txt`
+and `/agents.md`) and the Quorum view from `../quorus/web`. So the site must build from
+a checkout of the whole repository with this directory as the root, never from an
+upload of `website/` alone, or `npm run build` fails. The footer's version is the one on
+PyPI, read at build time (the dev branch's pyproject.toml is ahead of PyPI); offline,
+set `QUORUS_SITE_VERSION`.
 
 On Vercel (project `murmur-ai-website`): Root Directory = `website`, with "Include
 files outside of the Root Directory in the Build Step" left on. `vercel.json` sets the
