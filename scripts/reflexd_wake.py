@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -363,6 +364,7 @@ class Worktree:
     repo: Path      # the bound repo (main checkout)
     branch: str     # quorus/<participant>
     main: str       # branch checked out in the main checkout
+    repaired: str = ""  # set when a broken worktree was moved aside and recreated
 
 
 _FALLBACK_IDENTITY = {
@@ -423,8 +425,19 @@ def agent_worktree(repo: Path, participant: str) -> Worktree | None:
         _git("config", key, main, cwd=repo)
     branch = f"quorus/{participant}"
     path = repo.parent / ".quorus-worktrees" / repo.name / participant
+    repaired = ""
     if (path / ".git").exists():
-        return Worktree(path, repo, branch, main)
+        if _belongs_to(path, repo):
+            return Worktree(path, repo, branch, main)
+        # The repo was re-created at the same path (or moved), so this
+        # worktree's git link is dead: every git call in it failed and the
+        # agent went "stuck" with no reason (overseer, 0.5.1). Keep its files,
+        # never delete them, and start a fresh worktree.
+        aside = path.with_name(f"{participant}.broken-{time.strftime('%Y%m%d%H%M%S')}")
+        path.rename(aside)
+        repaired = (f"my worktree for {repo.name} pointed at a repo that no longer exists "
+                    f"(re-created at the same path?), so I moved it to {aside} and made a "
+                    "fresh one")
     _git("worktree", "prune", cwd=repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     has_branch = _git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}",
@@ -434,7 +447,15 @@ def agent_worktree(repo: Path, participant: str) -> Worktree | None:
            else ["worktree", "add", "-b", branch, str(path), main])
     if _git(*add, cwd=repo).returncode != 0:
         return None
-    return Worktree(path, repo, branch, main)
+    return Worktree(path, repo, branch, main, repaired)
+
+
+def _belongs_to(path: Path, repo: Path) -> bool:
+    """Is *path* a working git worktree of *repo* (same object store)?"""
+    mine = _git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path)
+    theirs = _git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
+    return (mine.returncode == 0 and theirs.returncode == 0
+            and Path(mine.stdout.strip()).resolve() == Path(theirs.stdout.strip()).resolve())
 
 
 # Never auto-commit test/build leftovers, even in a repo with no .gitignore

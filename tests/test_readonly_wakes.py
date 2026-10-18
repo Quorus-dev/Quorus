@@ -221,3 +221,54 @@ def test_a_corrupt_marker_blocks_publishing_and_is_never_overwritten(tmp_path: P
     for _ in range(2):
         assert asyncio.run(d._settle_readonly(_Relay(), "build", _WT(), None)) is True
     assert len(posted) == 1 and "nothing from quorus/arav-gemini will be published" in posted[0]
+
+
+def _recreate(repo: Path) -> None:
+    import shutil
+
+    shutil.rmtree(repo)
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "README.md").write_text("new repo\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init again")
+
+
+def test_a_worktree_of_a_recreated_repo_is_moved_aside_and_rebuilt(tmp_path: Path) -> None:
+    """Overseer, 0.5.1: the repo was re-created at the same path, every git call
+    in the old worktree failed, and the agent went 'stuck' with no reason."""
+    wake = reflexd.reflexd_wake
+    repo = _repo(tmp_path)
+    first = wake.agent_worktree(repo, "arav-gemini")
+    (first.path / "notes.txt").write_text("unpublished thoughts\n")
+    _recreate(repo)
+    fixed = wake.agent_worktree(repo, "arav-gemini")
+    assert fixed is not None and fixed.repaired and "moved it to" in fixed.repaired
+    assert _git(fixed.path, "rev-parse", "--is-inside-work-tree") == "true"
+    assert (fixed.path / "README.md").read_text() == "new repo\n"
+    aside = next(fixed.path.parent.glob("arav-gemini.broken-*"))
+    assert (aside / "notes.txt").read_text() == "unpublished thoughts\n"  # never deleted
+    again = wake.agent_worktree(repo, "arav-gemini")
+    assert again is not None and again.repaired == ""  # healthy now: no repeat
+
+
+def test_the_room_hears_why_the_worktree_was_rebuilt(monkeypatch, tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _wake(monkeypatch, tmp_path, repo, sender="arav", mode="autonomous", harness_writes=False)
+    _recreate(repo)
+    relay = _wake(monkeypatch, tmp_path, repo, sender="arav", mode="autonomous")
+    assert any("pointed at a repo that no longer exists" in p["content"] for p in relay.posted)
+    assert "pwned.txt" in _git(repo, "show", "--stat", "main") or (repo / "pwned.txt").exists()
+
+
+def test_a_read_only_turn_that_cant_be_snapshotted_does_not_run(monkeypatch,
+                                                              tmp_path: Path) -> None:
+    def broken(*_a, **_k):
+        raise subprocess.CalledProcessError(128, ["git", "rev-parse"])
+    monkeypatch.setattr(ro, "begin", broken)
+    repo = _repo(tmp_path)
+    relay = _wake(monkeypatch, tmp_path, repo, sender="mallory", mode="autonomous")
+    assert not (repo / "pwned.txt").exists()
+    assert _git(repo, "log", "--oneline", "main").count("\n") == 0
+    assert any("couldn't check its worktree before a read-only turn" in p["content"]
+               for p in relay.posted)
