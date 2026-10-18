@@ -220,3 +220,16 @@ class TestInstallScript:
     async def test_400_on_bad_format(self, client: AsyncClient):
         resp = await client.get("/v1/join/install/nope.sh")
         assert resp.status_code == 400
+
+
+async def test_a_forged_forwarded_host_never_reaches_the_installer(client: AsyncClient):
+    """The relay URL is written into a script users pipe to `sh`: header values
+    that aren't a plain host[:port] / http(s) are ignored."""
+    await _create_room(client)
+    code = (await client.post("/v1/join/mint", headers=ADMIN_HEADERS,
+                              json={"room": "general"})).json()["code"]
+    resp = await client.get(f"/v1/join/install/{code}.sh", headers={
+        "x-forwarded-host": 'evil"; rm -rf ~ #', "x-forwarded-proto": "javascript"})
+    assert resp.status_code == 200
+    assert "rm -rf" not in resp.text and "javascript" not in resp.text
+    assert '--relay "http://test"' in resp.text
