@@ -56,7 +56,7 @@ def _request_relay_url(request: Request) -> str:
     """
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("x-forwarded-host", request.url.netloc)
-    # These values land inside the `curl | sh` installer and the join payload,
+    # These values land inside the `curl | bash` installer and the join payload,
     # so a header that isn't a plain scheme and host://port is ignored:
     # `x-forwarded-host: x"; rm -rf ~ #` must never reach a shell.
     if scheme not in ("http", "https"):
@@ -311,7 +311,7 @@ async def install_script(
     if not allowed:
         raise HTTPException(status_code=429, detail="rate_limited")
 
-    # URL ends in `.sh` by convention so curl | sh feels natural; strip it.
+    # URL ends in `.sh` by convention so curl | bash feels natural; strip it.
     raw = code_with_ext
     if raw.endswith(".sh"):
         raw = raw[: -len(".sh")]

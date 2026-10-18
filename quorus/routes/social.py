@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.auth.middleware import LEGACY_AUTH_REFUSED, AuthContext, verify_auth
 from quorus.auth.policy import (
     Decision,
     PolicyContext,
@@ -119,7 +119,7 @@ async def post_social_verb(
     if auth.is_legacy:
         raise HTTPException(
             status_code=403,
-            detail="legacy auth not permitted on this endpoint",
+            detail=LEGACY_AUTH_REFUSED,
         )
     if not auth.sub:
         raise HTTPException(status_code=401, detail="auth.sub required")

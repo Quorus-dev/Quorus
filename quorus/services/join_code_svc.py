@@ -19,9 +19,11 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
+import shlex
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 # Crockford excluding the ambiguous glyphs. 27 chars → ~38 bits for an
 # 8-char code, plenty of headroom against a 100-request-per-minute-per-IP
@@ -38,6 +40,19 @@ def _fmt_display(canonical: str) -> str:
     if len(canonical) == _CODE_LEN:
         return f"{canonical[:_DISPLAY_HYPHEN_AT]}-{canonical[_DISPLAY_HYPHEN_AT:]}"
     return canonical
+
+
+def install_command(url: str) -> str | None:
+    """``curl -sSL <url> | bash`` for a share card, or None unless ``url`` is plain http(s).
+
+    The URL comes from a relay's mint answer or an invite-derived profile, so it is
+    shell-quoted: pasted unquoted, a ``$(...)`` in it would run on the teammate's machine.
+    The installer is a bash script, so it is piped to bash, not sh (dash).
+    """
+    parsed = urlparse(url or "")
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    return f"curl -sSL {shlex.quote(url)} | bash"
 
 
 def normalize_code(raw: str) -> str | None:

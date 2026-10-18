@@ -184,13 +184,36 @@ async def _auth_headers_async() -> dict[str, str]:
     return {"Authorization": f"Bearer {await _get_bearer_token()}"}
 
 
+async def _retry_as_participant(resp: httpx.Response, send) -> httpx.Response:
+    """On the relay secret, endpoints that need a participant identity answer
+    403 (capabilities, the tool catalog, social verbs). Claim this agent's name
+    once, as share_branch does, and resend with its JWT via ``send(headers)``:
+    5 of 25 tools failed on the setup llms.txt teaches (0.5.1 agent-path check)."""
+    if API_KEY or resp.status_code != 403 or "legacy auth not permitted" not in resp.text:
+        return resp
+    from quorus import bundle_client
+
+    try:
+        token = await asyncio.to_thread(bundle_client.bearer, RELAY_URL, secret=RELAY_SECRET,
+                                        name=INSTANCE_NAME)
+    except (bundle_client.BundleClientError, httpx.HTTPError) as exc:
+        # Answer as the relay would, so every tool's error path names the cause.
+        return httpx.Response(403, json={"detail": f"this tool needs a participant key: {exc}"},
+                              request=resp.request)
+    return await send({"Authorization": f"Bearer {token}"})
+
+
 def _relay_error_message(exc: Exception) -> str:
     if isinstance(exc, httpx.ConnectError):
         return f"Error: Cannot reach relay server at {RELAY_URL}"
     if isinstance(exc, httpx.TimeoutException):
         return f"Error: Relay request timed out at {RELAY_URL}"
     if isinstance(exc, httpx.HTTPStatusError):
-        return f"Error: Relay returned {exc.response.status_code}: {exc.response.text}"
+        # Why, not the raw body: agents got "Relay returned 429: {...}" with no
+        # retry time (0.5.1 live check). Same wording as the CLI.
+        from quorus.http_hints import hint
+
+        return f"Error: {hint(exc.response)}"
     return f"Error: {exc}"
 
 

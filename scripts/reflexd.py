@@ -1724,6 +1724,7 @@ class HeadlessAdapter:
         if not reflexd_models.is_free_opencode(first):
             return reply
         self._note_slow(reply)
+        self._note_no_route(reply)
         tried = {first}
         from quorus.runtime.opencode_free import free_models
 
@@ -1744,6 +1745,7 @@ class HeadlessAdapter:
                                               on_session=on_session, timeout_s=timeout_s,
                                               mode=mode)
             self._note_slow(reply)
+            self._note_no_route(reply)
         if self.limited_until > time.time():
             self.model = first  # every free model is busy: cool down as before
             if first == self._home_model:
@@ -1761,6 +1763,20 @@ class HeadlessAdapter:
         self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S)
         if self.on_step is not None:  # one live line, not a room post per model
             self.on_step(f"{(self.model or 'default').split('/')[-1]} is slow to start; "
+                         "trying another free model")
+
+    def _note_no_route(self, reply: str) -> None:
+        """A free model the catalog lists but the provider won't serve ("Model
+        unavailable", provider.no-route; opencode/beam-free, 2026-10-18): cool it
+        down and move on, as for a rate limit, instead of reporting it."""
+        if not _NO_ROUTE_RE.search(str(reply or "")):
+            return
+        from quorus.runtime.opencode_free import mark_slow
+
+        mark_slow(self.model)
+        self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S)
+        if self.on_step is not None:
+            self.on_step(f"{(self.model or 'default').split('/')[-1]} is unavailable; "
                          "trying another free model")
 
     async def _opencode_once(
@@ -2014,6 +2030,9 @@ class RelayClient:
     on_name_taken: Callable[[str], None] | None = None
     _claim_blocked_until: float = 0.0
     _claim_blocked_reason: str = ""
+    # Learned at sign-in: True once a participant key worked, False when the
+    # relay answered that it has none (404/405). None until then.
+    keys_supported: bool | None = None
 
     async def __aenter__(self) -> "RelayClient":
         self._client = httpx.AsyncClient(
@@ -2091,6 +2110,7 @@ class RelayClient:
                     follow_redirects=False)
                 if resp.status_code in unsupported:
                     logger.info("relay has no participant keys; using the shared secret")
+                    self.keys_supported = False
                     return None
                 if resp.status_code == 409:
                     # Our own MCP server may have claimed and saved it meanwhile.
@@ -2118,11 +2138,13 @@ class RelayClient:
                                           follow_redirects=False)
             if resp.status_code in unsupported:
                 logger.info("relay has no participant keys; using the shared secret")
+                self.keys_supported = False
                 return None
             if resp.status_code != 200:
                 raise ParticipantAuthError(
                     f"the relay rejected {self.participant}'s saved key ({resp.status_code}); "
                     "the name may have been released")
+            self.keys_supported = True
             return resp.json()["token"]
         except (httpx.HTTPError, ValueError, KeyError, OSError) as exc:
             raise ParticipantAuthError(f"participant sign-in failed: {exc}") from exc
@@ -2514,25 +2536,19 @@ class Reflexd:
         if getattr(self.adapter, "wake_spec", None) is None and hasattr(
             self.adapter, "wake_spec",
         ):
-            agent_dir = config.runtime_dir / "agents" / config.participant_name
-            credential, legacy = self._agent_credential()
-            try:
-                reflexd_wake.write_agent_config_dir(
-                    agent_dir, relay_url=config.relay_url, api_key=credential,
-                    participant=config.participant_name, legacy=legacy,
-                )
-                self.adapter.agent_config_dir = agent_dir
-            except OSError as exc:
-                logger.warning("could not write agent config dir: %s", exc)
-                agent_dir = None
-            self.adapter.wake_spec = reflexd_wake.quorus_mcp_spec(
-                relay_url=config.relay_url, api_key=credential,
-                participant=config.participant_name, legacy=legacy,
-                config_dir=agent_dir,
-            )
+            # The identity itself is written by _refresh_identity: right away
+            # when the credential is already known, else after sign-in. A new
+            # agent on a shared-secret relay has no participant key until the
+            # daemon signs in, and writing the secret here meant every new
+            # agent's dir held it until its first wake (live check, 0.5.1).
+            self.adapter.agent_config_dir = (
+                config.runtime_dir / "agents" / config.participant_name)
             self.adapter.mcp_config_path = (
                 config.runtime_dir / f"wake-mcp-{config.participant_name}.json"
             )
+            self._wants_wake_spec = True
+            if self._agent_credential() is not None:
+                self._refresh_identity()
         self._stop = asyncio.Event()
         self._degraded_reason = _failover.load_reason(config)
         self._presence: tuple[str, str] = (
@@ -3014,7 +3030,7 @@ class Reflexd:
             cap = pace_for(self.config.participant_name)
             wait = 0.0 if cap is None else max(1.0, pace_wait_s(self._turns, cap, time.time()))
 
-    def _agent_credential(self) -> tuple[str, bool]:
+    def _agent_credential(self) -> tuple[str, bool] | None:
         """``(credential, legacy)`` for the woken agent.
 
         Never the relay's shared secret when the agent has its own key: the
@@ -3024,6 +3040,9 @@ class Reflexd:
         participant key in its agent dir; the agent signs in with that and
         acts only as itself. A relay too old for participant keys has none,
         and the daemon itself runs on the secret there, so the agent does too.
+
+        ``None`` while that isn't known yet (no saved key and the daemon hasn't
+        signed in): the caller writes nothing rather than guess the secret.
         """
         if not self.config.legacy_bearer:
             return self.config.api_key, False
@@ -3034,7 +3053,11 @@ class Reflexd:
             self.config.runtime_dir / "agents" / self.config.participant_name)
         if key:
             return key, False
-        logger.warning("relay has no participant keys: the woken agent gets the shared secret")
+        if getattr(getattr(self, "_relay", None), "keys_supported", None) is not False:
+            return None  # sign-in hasn't told us yet, or it saved no key (fail closed)
+        if not getattr(self, "_warned_shared_secret", False):
+            self._warned_shared_secret = True
+            logger.warning("relay has no participant keys: the woken agent gets the shared secret")
         return self.config.api_key, True
 
     def _refresh_identity(self) -> None:
@@ -3045,8 +3068,13 @@ class Reflexd:
         agent_dir = getattr(self.adapter, "agent_config_dir", None)
         if agent_dir is None:
             return
-        credential, legacy = self._agent_credential()
-        if getattr(self.adapter, "wake_spec", None) is not None:
+        known = self._agent_credential()
+        if known is None:
+            logger.warning("not signed in to the relay yet: this wake runs without room tools")
+            return
+        credential, legacy = known
+        if getattr(self.adapter, "wake_spec", None) is not None \
+                or getattr(self, "_wants_wake_spec", False):
             self.adapter.wake_spec = reflexd_wake.quorus_mcp_spec(
                 relay_url=self.config.relay_url, api_key=credential,
                 participant=self.config.participant_name, legacy=legacy,
@@ -3790,6 +3818,7 @@ class Reflexd:
             key_dir=self.config.runtime_dir / "agents" / self.config.participant_name,
             on_name_taken=self._name_taken,
         ) as relay:
+            self._relay = relay  # sign-in tells _agent_credential what the relay supports
             logger.info(
                 "reflexd starting participant=%s relay=%s",
                 self.config.participant_name, self.config.relay_url,

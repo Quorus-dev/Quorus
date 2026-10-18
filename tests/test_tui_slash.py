@@ -31,7 +31,7 @@ def test_run_share_flow_renders_card_and_returns_dismiss_status(monkeypatch):
         console=console,
         room_name="general",
         code="MJN2-EWVT",
-        install_url="curl -sSL https://q.dev/r/MJN2-EWVT.sh | sh",
+        install_url="curl -sSL http://localhost:8080/v1/join/install/MJN2-EWVT.sh | bash",
         read_one_key=lambda: "x",   # any non-c key dismisses
     )
     out = buf.getvalue()
@@ -157,3 +157,39 @@ def test_slash_mute_default_duration():
     console, _ = _console()
     _slash.slash_mute("", state, "http://relay", "secret", "arav", console)
     assert "1h" in state.get_status_bar()
+
+
+def test_share_install_is_the_minting_relays_script_run_by_bash():
+    """The share card's one-liner once fetched from q.dev, a domain Quorus doesn't
+    own, and piped the bash installer to `sh` (dash on Debian/Ubuntu)."""
+    from quorus_tui.hub import _share_install_url
+
+    cmd = _share_install_url("MJN2-EWVT", "http://10.0.0.5:8080/")
+    assert cmd == "curl -sSL http://10.0.0.5:8080/v1/join/install/MJN2-EWVT.sh | bash"
+    assert _share_install_url("quorus_join_abc", "http://10.0.0.5:8080") is None
+
+
+def test_share_install_quotes_an_invite_supplied_relay_url():
+    """The TUI's relay URL can come from an invite or profile; a `$()` in it ran
+    when the card was pasted (Codex's 5009f340 block)."""
+    import shlex
+
+    from quorus_tui.hub import _share_install_url
+
+    cmd = _share_install_url("MJN2-EWVT", "http://h/$(touch /tmp/pwned)`id`;x")
+    assert shlex.split(cmd)[:3] == [
+        "curl", "-sSL", "http://h/$(touch /tmp/pwned)`id`;x/v1/join/install/MJN2-EWVT.sh"]
+    assert cmd.endswith("| bash")
+    assert _share_install_url("MJN2-EWVT", "file:///etc") is None
+    assert _share_install_url("AB;rm -rf", "http://h") is None
+
+
+def test_no_install_one_liner_pipes_to_sh_or_names_a_foreign_domain():
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for src in [*root.glob("packages/*/quorus_*/**/*.py"), *root.glob("quorus/**/*.py")]:
+        text = src.read_text(encoding="utf-8")
+        assert "q.dev/" not in text, src
+        assert not re.search(r"curl [^\n\"']*\| sh\b", text), src

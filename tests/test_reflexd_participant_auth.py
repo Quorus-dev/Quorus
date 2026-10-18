@@ -263,3 +263,19 @@ def test_a_taken_name_is_not_retried_on_every_reconnect(tmp_path, monkeypatch) -
 
     assert asyncio.run(go()).count(".") == 2
     _reset_state()
+
+
+def test_sign_in_records_whether_the_relay_has_participant_keys(tmp_path, monkeypatch):
+    # The daemon decides the woken agent's credential from this: never guess
+    # the shared secret before sign-in has answered (live check of 0.5.1).
+    _relay_with_room(tmp_path, monkeypatch)
+    keyed = _client("http://r", tmp_path / "agent")
+    assert keyed.keys_supported is None
+    asyncio.run(keyed.bearer_jwt())
+    assert keyed.keys_supported is True
+    _reset_state()
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")  # claim-name answers 404
+    old = _client("http://r", tmp_path / "agent-old")
+    assert asyncio.run(old.bearer_jwt()) == SECRET
+    assert old.keys_supported is False
+    _reset_state()

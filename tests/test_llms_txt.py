@@ -33,7 +33,7 @@ def test_llms_txt_tells_an_agent_how_to_install_and_connect() -> None:
         "QUORUS_RELAY_SECRET",
         "QUORUS_API_KEY",
         "QUORUS_INSTANCE_NAME",
-        "quorus init <your-name> --relay-url http://localhost:8080 --secret <secret>",
+        "quorus init <your-name> --relay-url http://localhost:8080 --secret -",
         "join_room(",
         "quorus rooms --json",
         "quorus://llms.txt",

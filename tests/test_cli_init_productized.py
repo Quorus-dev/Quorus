@@ -467,3 +467,21 @@ def test_supervisor_log_uses_active_config(monkeypatch, tmp_path):
     monkeypatch.setattr(builtins, "open", guarded_open)
     assert cli._init_autostart_supervisor(ui=ui) == 12345
     assert (config / "reflexd-manager.log").exists()
+
+
+def test_init_reads_a_dash_secret_from_stdin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--secret -` keeps the secret out of argv (shell history, ps): llms.txt
+    teaches piping it in. Found testing the published 0.5.1 agent path."""
+    import io
+
+    from quorus.cli import _cmd_init
+
+    monkeypatch.chdir(tmp_path)  # a no-client init may write ./.mcp.json
+    monkeypatch.setattr(sys, "stdin", io.StringIO("piped-secret-123\n"))
+    _cmd_init(_make_init_args(api_key=None, secret="-", relay_url="http://localhost:8080"))
+
+    saved = [p.read_text() for p in (tmp_path / ".quorus").rglob("*.json")]
+    assert any("piped-secret-123" in text for text in saved)
+    assert not any('"-"' in text for text in saved)

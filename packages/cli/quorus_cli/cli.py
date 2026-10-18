@@ -327,6 +327,16 @@ def _auth_headers() -> dict[str, str]:
                 timeout=10,
                 follow_redirects=False,
             )
+            if resp.is_redirect:
+                # A redirected sign-in would re-send the key in the body to
+                # wherever Location points (codex, c0a0a097): stop here.
+                from rich.markup import escape as _esc
+                _ui.error(
+                    "The relay redirected the sign-in, so your key was not sent",
+                    hint=f"it pointed to {_esc(resp.headers.get('location', '?')[:200])}; "
+                         "check the relay URL (quorus init)",
+                )
+                sys.exit(3)
             resp.raise_for_status()
             _cached_jwt = resp.json()["token"]
         return {"Authorization": f"Bearer {_cached_jwt}"}
@@ -2875,6 +2885,14 @@ def _cmd_connect(args):
         except ValueError as exc:
             _ui.error(str(exc))
             return
+        # The saved profile already holds this relay's secret and quorus-mcp
+        # reads it there, so keep it out of the client's config file.
+        from quorus.config import DEFAULT_RELAY_URL, ConfigManager, same_relay
+
+        saved = ConfigManager().load(migrate=False)
+        if (explicit_secret and explicit_secret == saved.get("relay_secret")
+                and same_relay(relay_url, saved.get("relay_url") or DEFAULT_RELAY_URL)):
+            explicit_secret = ""
 
         env = McpEnv(
             command=mcp_command,
@@ -4284,10 +4302,10 @@ def _register_mcp_everywhere(
     name: str,
     relay_url: str,
     api_key: str,
-    relay_secret: str,
     mcp_command: str,
     mcp_args: list[str],
     ui,
+    profile: str = "",
 ) -> list[str]:
     """Auto-wire every installed MCP-compatible client in one sweep.
 
@@ -4304,6 +4322,10 @@ def _register_mcp_everywhere(
     so the caller can print a ``Restart X to pick up the MCP server``
     hint and decide whether to fall back to a project-level
     ``.mcp.json``.
+
+    The relay secret is never written: both callers saved it to the profile
+    for this relay, and quorus-mcp reads it from there. ``profile`` pins the
+    project-level fallback to the profile holding the key.
     """
     from quorus_cli.mcp_writers import ALL_WRITERS, McpEnv, register_all
 
@@ -4346,7 +4368,6 @@ def _register_mcp_everywhere(
         args=list(mcp_args),
         relay_url=relay_url,
         api_key=api_key,
-        relay_secret=relay_secret,
         instance_name_base=name,
         per_platform_keys=per_platform_keys if per_platform_keys else None,
     )
@@ -4388,14 +4409,13 @@ def _register_mcp_everywhere(
             "type": "stdio",
             "command": mcp_command,
             "args": list(mcp_args),
+            # No secret or key: a project file is easy to commit, and it was
+            # world-readable plaintext (0.5.1 agent-path check). quorus-mcp
+            # reads both from the saved profile for this relay.
             "env": {
                 "QUORUS_RELAY_URL": relay_url,
                 "QUORUS_INSTANCE_NAME": name,
-                **({"QUORUS_API_KEY": api_key} if api_key else {}),
-                **(
-                    {"QUORUS_RELAY_SECRET": relay_secret}
-                    if (relay_secret and not api_key) else {}
-                ),
+                **({"QUORUS_PROFILE": profile} if profile else {}),
             },
         }
         mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n")
@@ -4934,6 +4954,12 @@ def _cmd_init(args):
     relay_url = (args.relay_url or "").strip().rstrip("/")
     secret = getattr(args, "secret", None) or ""
     api_key = getattr(args, "api_key", None) or ""
+    # `--secret -` / `--api-key -` read it from stdin, so it never sits in argv
+    # (shell history, ps) the way `--secret <value>` does.
+    if secret == "-":
+        secret = sys.stdin.readline().strip()
+    elif api_key == "-":
+        api_key = sys.stdin.readline().strip()
     # 0. Validate inputs
     import re as _re
     if not name:
@@ -5113,10 +5139,11 @@ def _cmd_init(args):
         name=name,
         relay_url=relay_url,
         api_key=api_key,
-        relay_secret=secret,
         mcp_command=mcp_command,
         mcp_args=mcp_args,
         ui=ui,
+        # With a key, step 6 makes 'human' current; the agent's key stays here.
+        profile=(profile_slug if pointer_layout else "default") if api_key else "",
     )
 
     # ── Productized init steps (mint, profile, daemon, smoke) ──────────────
@@ -5148,8 +5175,9 @@ def _cmd_init(args):
     # supervisor's _resolve_manager_participants picks them up via
     # pm.current_profile()). The flat config is the legacy shape readers
     # like load_config() auto-migrate on next boot, so this is forward-
-    # compatible.
-    if minted_keys:
+    # compatible. With a key this runs even if no agent key was minted: a
+    # project .mcp.json pins QUORUS_PROFILE=default instead of holding the key.
+    if minted_keys or api_key:
         if pointer_layout:
             # The profile is the source of truth; read/merge there so we don't
             # flatten the pointer above.
@@ -5310,10 +5338,13 @@ def _cmd_invite_link(args):
     room = args.room
     console.print(f"[bold]Share this command to invite someone to '{room}':[/bold]")
     console.print("")
-    console.print(
-        f"  quorus join --name YOUR_NAME "
-        f"--relay {RELAY_URL} --secret {RELAY_SECRET} --room {room}"
-    )
+    from rich.markup import escape as _escape
+
+    # Pasted into a teammate's shell: quote what came from config.
+    console.print(_escape(
+        f"  quorus join --name YOUR_NAME --relay {shlex.quote(RELAY_URL)} "
+        f"--secret {shlex.quote(RELAY_SECRET)} --room {shlex.quote(room)}"
+    ))
     console.print("")
     console.print("[dim]Replace YOUR_NAME with the agent/user's name.[/dim]")
 
@@ -5505,8 +5536,6 @@ def _cmd_join(args):
             hint="run [accent]quorus init <your-name>[/] first, or pass --name",
         )
         return
-    repo_dir = Path(__file__).resolve().parent.parent
-    quorus_dir = Path(__file__).resolve().parent
     config_dir = _config_dir()
     config_path = config_dir / "config.json"
 
@@ -5543,13 +5572,12 @@ def _cmd_join(args):
         if "mcpServers" not in claude_config:
             claude_config["mcpServers"] = {}
 
+        # quorus_cli/mcp_server.py never existed in the package: use the real server.
+        mcp_cmd, mcp_args = _mcp_server_command()
         claude_config["mcpServers"]["quorus"] = {
             "type": "stdio",
-            "command": "uv",
-            "args": [
-                "run", "--directory", str(repo_dir),
-                "python", str(quorus_dir / "mcp_server.py"),
-            ],
+            "command": mcp_cmd,
+            "args": mcp_args,
             "env": {},
         }
         claude_config_path.write_text(json.dumps(claude_config, indent=2))
@@ -5727,7 +5755,7 @@ def _cmd_share(args):
     if not RELAY_URL:
         _ui.error(
             "Relay URL not configured",
-            hint="run: quorus init <name> --secret <s>",
+            hint="run: quorus init <name> --secret -",
         )
         return
 
@@ -5772,7 +5800,7 @@ def _cmd_share(args):
 
     body = resp.json()
     code = body["code"]
-    install_url = body["install_url"]
+    install_url = body.get("install_url")
 
     # Humanize TTL for the footer.
     if ttl_days == 1:
@@ -5800,7 +5828,13 @@ def _cmd_share(args):
     ui.console.print()
     # The code is looked up on THIS relay: say which one, or a teammate's
     # `quorus join` tried the (dead) default public relay instead.
-    relay_flag = f" --relay {RELAY_URL}"
+    # Both come from the relay: quote them, since teammates paste these into a shell.
+    from quorus.services.join_code_svc import install_command, normalize_code
+
+    if normalize_code(str(code)) is None:
+        _ui.error("The relay returned an invalid invite code", hint="try again")
+        return
+    relay_flag = f" --relay {shlex.quote(RELAY_URL)}"
     join_cmd = f"quorus join {code} --name <their-name>{relay_flag}"
     if any(h in RELAY_URL for h in ("127.0.0.1", "localhost", "0.0.0.0")):
         ui.console.print(
@@ -5808,10 +5842,13 @@ def _cmd_share(args):
             "on another computer needs a relay they can reach (a shared server, or "
             "`quorus relay --host 0.0.0.0` on your network).[/]\n"
         )
-    install_cmd = f"curl -sSL {install_url} | sh"
-    ui.console.print(f"    [accent]{join_cmd}[/]")
-    ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
-    ui.console.print(f"    [accent]{install_cmd}[/]")
+    from rich.markup import escape as _escape
+
+    install_cmd = install_command(str(install_url or ""))
+    ui.console.print(f"    [accent]{_escape(join_cmd)}[/]")
+    if install_cmd:
+        ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
+        ui.console.print(f"    [accent]{_escape(install_cmd)}[/]")
     ui.console.print()
 
     if want_copy:
@@ -6021,7 +6058,6 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         name=name,
         relay_url=relay_url,
         api_key=api_key,
-        relay_secret=secret,
         mcp_command=mcp_command,
         mcp_args=mcp_args,
         ui=_reg_ui,
@@ -6240,15 +6276,12 @@ def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
         "mcpServers": {
             "quorus": {
                 "type": "stdio",
-                "command": "uv",
-                "args": [
-                    "run", "--directory", str(quorus_dir.parent),
-                    "python", str(quorus_dir / "mcp_server.py"),
-                ],
+                "command": _mcp_server_command()[0],
+                "args": _mcp_server_command()[1],
+                # No RELAY_SECRET: the server reads it from the saved profile.
                 "env": {
                     "INSTANCE_NAME": name,
                     "RELAY_URL": relay_url,
-                    "RELAY_SECRET": secret,
                 },
             }
         }
@@ -6665,15 +6698,12 @@ def _cmd_add_agent(args):
         "mcpServers": {
             "quorus": {
                 "type": "stdio",
-                "command": "uv",
-                "args": [
-                    "run", "--directory", str(quorus_dir.parent),
-                    "python", str(quorus_dir / "mcp_server.py"),
-                ],
+                "command": _mcp_server_command()[0],
+                "args": _mcp_server_command()[1],
+                # No RELAY_SECRET: the server reads it from the saved profile.
                 "env": {
                     "INSTANCE_NAME": name,
                     "RELAY_URL": RELAY_URL,
-                    "RELAY_SECRET": RELAY_SECRET,
                 },
             }
         }
@@ -7046,7 +7076,7 @@ def _cmd_doctor(args):
         "Config file exists",
         config_file.exists(),
         detail=str(config_file),
-        fix="Run: quorus init <name> --secret <secret>",
+        fix="Run: quorus init <name> --secret -",
     )
 
     # 1b. Env vars that silently override the file (a stray RELAY_URL sent a
@@ -7068,7 +7098,7 @@ def _cmd_doctor(args):
         "Relay URL configured",
         bool(RELAY_URL),
         detail=RELAY_URL or "(unset)",
-        fix="Run: quorus init <name> --secret <secret>",
+        fix="Run: quorus init <name> --secret -",
     )
 
     # 3. Secret configured
@@ -7123,7 +7153,7 @@ def _cmd_doctor(args):
         auth_ok,
         detail=auth_detail,
         fix="relay_secret (or api_key) must match the relay — "
-            "re-run: quorus init <name> --secret <secret>",
+            "re-run: quorus init <name> --secret -",
     )
 
     # 7. MCP config — optional: Quorus works without any AI app connected
@@ -7139,8 +7169,10 @@ def _cmd_doctor(args):
     check(
         "MCP config found",
         mcp_found,
+        # Only a file that exists: a missing ~/.codex/config.toml read like a found one.
         detail=(str(mcp_json) if mcp_json.exists() else
-                str(home_claude) if home_claude.exists() else str(codex_cfg)),
+                str(home_claude) if home_claude.exists() else
+                str(codex_cfg) if codex_has_quorus else ""),
         fix="Install Claude Code or Codex, then: quorus connect claude|codex <room> <name>",
         optional=True,
     )
@@ -7310,7 +7342,7 @@ def _cmd_relay(args):
     if not secret:
         _ui.error(
             "No relay secret configured",
-            hint="run: quorus init <your-name> --secret <a-secret> (then quorus relay)",
+            hint="run: quorus init <your-name> --secret - (reads it from stdin), then quorus relay",
         )
         sys.exit(1)
     host = getattr(args, "host", None) or "127.0.0.1"
@@ -8290,8 +8322,9 @@ def _has_tty() -> bool:
 _NON_INTERACTIVE_SETUP = """\
 quorus: the interactive hub needs a terminal, and stdin/stdout is not one.
 Set up without a terminal:
-  quorus init <name> --relay-url http://localhost:8080 --secret <secret>   # shared-secret relay
-  quorus init <name> --relay-url <url> --api-key <key>                      # account relay
+  quorus init <name> --relay-url http://localhost:8080 --secret -   # shared-secret relay
+  quorus init <name> --relay-url <url> --api-key -                  # account relay
+  (- reads the secret or key from stdin, so it stays out of shell history)
 Then use the plain commands; --json gives machine-readable output:
   quorus rooms --json | quorus say <room> "<message>" | quorus history <room> --json
 Agents: `quorus-mcp` is the MCP server (stdio); llms.txt in the repo and package explains
@@ -8693,7 +8726,7 @@ def _cmd_whoami(args) -> None:
                               "[bold]quorus workspaces use <slug>[/][/]")
         else:
             _ui.console.print("  [dim]not set up yet — run [bold]quorus[/] (guided) or "
-                              "[bold]quorus init <your-name> --secret <secret>[/][/]")
+                              "[bold]quorus init <your-name> --secret -[/][/]")
         raise SystemExit(1)
     data = pm.get(slug) or {}
     if not data:
@@ -8818,8 +8851,8 @@ def main():
         help="Override config dir (default: ~/.quorus; also honors $QUORUS_CONFIG_DIR)",
     )
     p_init_auth = p_init.add_mutually_exclusive_group(required=True)
-    p_init_auth.add_argument("--secret", help="Shared secret (legacy auth)")
-    p_init_auth.add_argument("--api-key", help="API key (production auth)")
+    p_init_auth.add_argument("--secret", help="Shared secret (legacy auth); - reads it from stdin")
+    p_init_auth.add_argument("--api-key", help="API key (production auth); - reads it from stdin")
     # Productized init flags (escape hatches for CI / non-interactive shells).
     p_init.add_argument(
         "--no-autostart",
@@ -9436,7 +9469,7 @@ def main():
         description=(
             "Mints an 8-char code (e.g. ABCD-EFGH) and prints two ways "
             "to use it — `quorus join` for teammates who already have "
-            "Quorus, and a `curl | sh` one-liner for fresh installs. "
+            "Quorus, and a `curl | bash` one-liner for fresh installs. "
             "Auto-copies the join command to clipboard when stdout is "
             "a TTY (override with --copy / --no-copy)."
         ),
@@ -10091,7 +10124,7 @@ def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
     detail = str(detail or exc.response.reason_phrase or "").strip()
     if code in (401, 403):
         _ui.error("The relay rejected your credentials" + (f": {detail}" if detail else ""),
-                  hint="check your secret/API key — re-run `quorus init <name> --secret <secret>`")
+                  hint="check your secret/API key — re-run `quorus init <name> --secret -`")
         return 3
     if code == 404:
         _ui.error(detail or "Not found", hint="`quorus rooms` lists what exists")

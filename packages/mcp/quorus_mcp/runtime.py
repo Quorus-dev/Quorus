@@ -114,7 +114,7 @@ def _validate_header_safe(value: str, *, label: str) -> None:
         raise SystemExit(
             f"{label} contains whitespace or control characters that would "
             "produce an illegal HTTP Authorization header. Re-run "
-            "`quorus login` or unset the offending env var."
+            "`quorus init` or unset the offending env var."
         )
 
 
@@ -178,7 +178,7 @@ def load_runtime_config() -> dict[str, Any]:
         raise SystemExit(
             "Neither relay_secret nor api_key resolved to a non-empty value.\n"
             "  - Set QUORUS_API_KEY (or RELAY_SECRET) to a non-empty token, OR\n"
-            "  - Run `quorus login` to populate ~/.quorus/profiles/default.json.\n"
+            "  - Run `quorus init` to populate ~/.quorus/profiles/default.json.\n"
             "Empty/whitespace env vars are now treated as unset and fall back\n"
             "to the profile file."
         )

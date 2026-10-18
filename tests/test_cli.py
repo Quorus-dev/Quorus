@@ -681,7 +681,6 @@ def test_register_mcp_everywhere_reuses_matching_codex_identity(monkeypatch):
         name="arav-codex",
         relay_url="https://relay.test",
         api_key="mct_parent",
-        relay_secret="",
         mcp_command="uv",
         mcp_args=["run"],
         ui=FakeUi(),
@@ -2673,3 +2672,71 @@ def test_init_prefers_the_mcp_server_next_to_this_install(tmp_path, monkeypatch)
     assert cli_mod._mcp_server_command() == (str(mine), [])
     mine.unlink()  # no sibling: PATH's copy is still better than nothing
     assert cli_mod._mcp_server_command() == ("/home/u/.local/bin/quorus-mcp", [])
+
+
+def test_cmd_share_quotes_relay_supplied_commands(capsys, monkeypatch):
+    """The mint answer and the relay URL are pasted into a teammate's shell: a `$()`
+    in either must stay a literal string (Codex's 5009f340 block)."""
+    import shlex
+
+    from quorus.cli import _cmd_share
+
+    evil_relay = "http://relay.test/$(touch /tmp/pwned)"
+    evil_install = "http://relay.test/$(touch /tmp/pwned)/ABCD-EFGH.sh"
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"code": "ABCD-EFGH", "install_url": evil_install}
+    monkeypatch.setattr("quorus.cli.RELAY_URL", evil_relay)
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "s")
+    monkeypatch.setattr("quorus.cli._auth_headers", lambda: {})
+    monkeypatch.setattr("quorus.cli.httpx.post", lambda *a, **kw: resp)
+    from quorus_cli import ui
+
+    monkeypatch.setattr(ui.console, "width", 400)  # no wrapping inside a command
+    args = MagicMock(room="r", ttl=1, uses=1, copy=False)
+
+    _cmd_share(args)
+
+    lines = [ln.strip() for ln in capsys.readouterr().out.splitlines()]
+    join = next(ln for ln in lines if ln.startswith("quorus join"))
+    install = next(ln for ln in lines if ln.startswith("curl "))
+    assert shlex.split(join)[-1] == evil_relay
+    assert shlex.split(install)[:3] == ["curl", "-sSL", evil_install]
+    assert install.endswith("| bash")
+
+
+def test_cmd_share_drops_a_non_http_install_url(capsys, monkeypatch):
+    from quorus.cli import _cmd_share
+
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"code": "ABCD-EFGH", "install_url": "file:///etc/passwd"}
+    monkeypatch.setattr("quorus.cli.RELAY_URL", "http://relay.test")
+    monkeypatch.setattr("quorus.cli.RELAY_SECRET", "s")
+    monkeypatch.setattr("quorus.cli._auth_headers", lambda: {})
+    monkeypatch.setattr("quorus.cli.httpx.post", lambda *a, **kw: resp)
+
+    _cmd_share(MagicMock(room="r", ttl=1, uses=1, copy=False))
+
+    out = capsys.readouterr().out
+    assert "quorus join ABCD-EFGH" in out
+    assert "curl" not in out and "/etc/passwd" not in out
+
+
+def test_spawned_agent_mcp_config_runs_the_real_server(tmp_path, monkeypatch):
+    """_spawn_agent's .mcp.json ran `python quorus_cli/mcp_server.py`, a file that
+    never existed in the package, so a spawned agent had no room tools."""
+    from unittest.mock import AsyncMock
+
+    from quorus import cli
+
+    client = MagicMock(post=AsyncMock(side_effect=RuntimeError("offline")), aclose=AsyncMock())
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_get_client", lambda: client)
+    monkeypatch.setattr(cli, "_open_in_terminal", lambda cmd: None)
+    monkeypatch.setattr(cli, "_mcp_server_command", lambda: ("/opt/q/bin/quorus-mcp", []))
+
+    cli._spawn_agent("general", "worker-1", "http://127.0.0.1:8080", "s3cret")
+
+    server = json.loads((tmp_path / "quorus-agents" / "worker-1" / ".mcp.json").read_text())
+    entry = server["mcpServers"]["quorus"]
+    assert entry["command"] == "/opt/q/bin/quorus-mcp" and entry["args"] == []
+    assert "mcp_server.py" not in json.dumps(server)
