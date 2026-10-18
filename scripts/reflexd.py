@@ -3188,8 +3188,10 @@ class Reflexd:
                 prior_session, _persist_session = None, None
             if room_mode != "default":
                 extra_kw["mode"] = room_mode
-            if (worktree is None and ws is not None and reflexd_wake.WORKTREES_ENABLED
+            if (worktree is None and ws is not None
                     and reflexd_readonly.is_read_only(harness, room_mode)):
+                # With worktrees turned off too: disabling isolation doesn't
+                # authorize a read-only turn to write (codex, review of 21be4efe).
                 # Worktree setup failed, so the turn would run in the shared
                 # checkout where the read-only guard can't see its writes
                 # (codex, review of 8805dc00). Don't run it.
