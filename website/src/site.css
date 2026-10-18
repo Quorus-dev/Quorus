@@ -247,6 +247,13 @@ footer .built a:hover { text-decoration: underline; }
   .steps li { grid-template-columns: 1fr; padding: 18px; }
   .steps .num { width: 30px; height: 30px; font-size: 0.85rem; }
 }
+.runs {
+  margin-top: 26px; padding: 20px 22px 8px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2);
+}
+.runs h3 { margin: 0 0 10px; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
+.runs ul { margin: 0; }
+.runs li { color: var(--muted); }
 .version { font: 0.85rem var(--mono); color: var(--text); background: var(--code); padding: 2px 8px; border-radius: 6px; }
 
 /* ---- reveal on scroll: transform/opacity only; off without JS or under reduced motion ---- */
