@@ -13,8 +13,20 @@ All notable changes to Quorus are documented here. This project follows
   ignores `X-Forwarded-For` by default, so without it every client looks like your
   proxy's IP and shares one rate limit. Direct (`127.0.0.1`) setups need nothing.
 
+### Added
+
+- `--json` on `quorus rooms`, `history`, `ps`, `state`, `approvals` and `agent list`: the
+  relay's data and nothing else on stdout, and a relay error exits non-zero.
+- `llms.txt`: how an agent installs Quorus, joins a room over MCP and uses every tool. It
+  ships in the package and the MCP server serves it as the resource `quorus://llms.txt`.
+
 ### Fixed
 
+- Bare `quorus` without a terminal (a pipe, an agent's shell) prompted into the void and
+  exited 0. It now prints the non-interactive setup on stderr and exits 2.
+- `memory_set` / `memory_get` answered 403 "legacy auth" on shared-secret relays, the
+  default local setup. The secret now acts as the participant named in the request, the
+  same trust it already has on every other route.
 - Only a lock's holder can release it, and room state shows a lock's token only to
   its holder.
 - A client can no longer dodge rate limits by rotating `X-Forwarded-For`.
