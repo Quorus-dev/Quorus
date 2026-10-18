@@ -70,3 +70,16 @@ def test_agent_skill_for_clawhub_and_hermes():
     for env in set(re.findall(r"`(QUORUS_[A-Z_]+)`", body)):
         assert f"name: {env}" in head, f"{env} used but not declared in envVars"
     assert '"args":["--from","quorus-ai","quorus-mcp"]' in body
+
+
+@pytest.mark.parametrize("skill_path", [
+    PLUGIN / "skills" / "quorus" / "SKILL.md",
+    ROOT / "integrations" / "agent-skills" / "quorus" / "SKILL.md",
+])
+def test_skills_never_put_a_secret_in_argv_or_self_install(skill_path):
+    # Codex, e60f44ee: no `--secret`/`--api-key` examples, and setup is the user's call.
+    skill = " ".join(skill_path.read_text(encoding="utf-8").split())
+    assert not re.search(r"--(secret|api-key)\b", skill)
+    assert "never put a secret in a command line" in skill.lower()
+    assert re.search(r"don't (run setup|do any of it) .*(on your own|yourself)", skill,
+                     re.I | re.S)
