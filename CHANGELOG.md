@@ -24,6 +24,9 @@ All notable changes to Quorus are documented here. This project follows
   holdout), and only once shadow data shows low multipliers predict failed turns.
 - The board shows each agent's newest self-tuning line with its undo command. Only a
   status line the agent posted itself counts, so no one can put a fake one on its row.
+- `docs/deployment.md`: when you need a shared relay and how to run one, from your LAN and
+  Tailscale to a VPS and Fly.io, Railway or Render, each path labeled verified or
+  config-only. The README linked a page that didn't exist; a test now checks its links.
 
 ### Changed
 
@@ -42,18 +45,8 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
-- Pasting a teammate's invite into the first-run wizard saved an empty secret and
-  dropped the room: secret-free invites weren't redeemed, and the hub never exchanged a
-  `quorus_pk_` key for a sign-in. The wizard now redeems the code into your own key and
-  remembers the invited room.
-- The hub's share fell back to an invite holding the relay secret (admin) whenever the
-  relay couldn't mint a code, a timeout or a 500 included. It now says the invite
-  couldn't be made. `quorus invite-link` and `quorus invite-token`, which print the
-  secret, need `--with-secret` and say it's for your own machines; for anyone else, use
-  `quorus share`.
-- `quorus invites --revoke <id>` only stopped new joins; the people who had already
-  joined with that invite stayed in its room. Revoking now also removes them from the room,
-  effective on their next request.
+- A `postgres://` DATABASE_URL (what `fly postgres attach` sets) wasn't rewritten for
+  asyncpg, so the relay couldn't use it. It is now, like `postgresql://`.
 - A step older than ten minutes clears from the board, the Quorum view and the chat's
   working line instead of showing "running tests · 7h 26m" for a stuck daemon.
 - The web app grew with every message instead of scrolling once a room passed a
