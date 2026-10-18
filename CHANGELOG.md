@@ -49,6 +49,11 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- The first run ended on the hub home with no room open, so the first thing a new user typed
+  went nowhere. It now lands inside #general, or the room the invite was for. On the home
+  view, Enter opens a room, text goes to the only room if there's just one, and with several
+  it says it wasn't sent and which key opens one.
+- The banner showed v0.5.0 whatever was installed; it reads the installed version.
 - Pasting a teammate's invite into the first-run wizard saved an empty secret and
   dropped the room: secret-free invites weren't redeemed, and the hub never exchanged a
   `quorus_pk_` key for a sign-in. The wizard now redeems the code into your own key and

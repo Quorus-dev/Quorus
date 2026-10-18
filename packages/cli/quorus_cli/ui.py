@@ -135,8 +135,11 @@ def _gradient_text(line: str) -> Text:
     return text
 
 
-def banner(version: str = "0.5.0", tagline: bool = True) -> None:
-    """Print the Quorus banner with teal gradient."""
+def banner(version: str | None = None, tagline: bool = True) -> None:
+    """Print the Quorus banner with teal gradient. *version* defaults to the
+    installed package's (it said v0.5.0 on 0.5.2: new-user pass 1, F2)."""
+    if version is None:
+        from quorus import __version__ as version
     width = console.size.width
     if width < 60:
         console.print(f"[bold primary]{_TINY_BANNER}[/] [muted]v{version}[/]")
