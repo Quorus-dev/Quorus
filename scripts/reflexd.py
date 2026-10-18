@@ -3418,8 +3418,9 @@ class Reflexd:
                 try:
                     await asyncio.to_thread(reflexd_unfinished.hold,
                                             self._unfinished_dir, worktree)
-                    await asyncio.to_thread(reflexd_held.mark_window, self._held_dir,
-                                            worktree)
+                    await asyncio.to_thread(
+                        reflexd_held.mark_window, self._held_dir, worktree,
+                        reflexd_held.turn_start(history, envelope), context_ids)
                 except OSError as exc:
                     raise reflexd_readonly.SnapshotError(
                         "couldn't record the turn before starting it (its hold "
@@ -4235,8 +4236,9 @@ class Reflexd:
             logger.warning("publish guard history fetch failed: %s", exc)
             trigger, why = None, "the room's history couldn't be read before publishing"
         else:
+            seen = await asyncio.to_thread(reflexd_held.seen_ids, self._held_dir, wt)
             trigger, why = reflexd_held.find_stop(history, me=me, authorities=authorities,
-                                                  since=since)
+                                                  since=since, seen=seen)
         if trigger is None and not why:
             return None
         try:

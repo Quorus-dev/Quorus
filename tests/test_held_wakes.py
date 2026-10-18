@@ -272,3 +272,44 @@ def test_a_relay_that_cant_fetch_history_holds(monkeypatch, tmp_path):
 
     status = asyncio.run(d._guard_publish(Bare(), "build", wt))
     assert status and "couldn't be read" in status and _main_log(repo) == "init"
+
+
+def _ahead(seconds: float) -> str:
+    return datetime.fromtimestamp(time.time() + seconds, timezone.utc).isoformat()
+
+
+def test_a_relay_clock_ahead_of_the_laptop_doesnt_hold_the_turns_own_trigger(
+        monkeypatch, tmp_path):
+    """Claude, review of 3ba308a4: with the relay an hour ahead, the owner's
+    message that woke the turn looked mid-turn on the daemon's clock."""
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+    relay = _Relay([{"id": "e-m", "from_name": "arav", "content": f"@{ME} write the notes",
+                     "timestamp": _ahead(3600)}])
+    _wake(monkeypatch, d, relay, reply="✅", edit="mine\n")
+    assert _main_log(repo).splitlines()[0] == "docs: notes"
+
+
+def test_with_the_relay_ahead_a_real_mid_turn_message_still_holds(monkeypatch, tmp_path):
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+    relay = _Relay([{"id": "e-m", "from_name": "arav", "content": f"@{ME} write the notes",
+                     "timestamp": _ahead(3600)}])
+
+    def later(r):
+        r.history.append({"id": "x", "from_name": "arav", "content": f"@{ME} stand down",
+                          "timestamp": _ahead(3605)})
+
+    _wake(monkeypatch, d, relay, reply="✅", edit="mine\n", during=later)
+    assert _main_log(repo) == "init" and len(_held_refs(repo)) == 1
+
+
+@pytest.mark.parametrize("reply, said", [
+    ("done\nreapply held", "reapply held"),
+    ("done\n`drop held`.", "drop held"),
+    ("I won't reapply held commits, they're stale: drop held", None),  # not on its own line
+    ("reapply held\ndrop held", None),                                 # both: no answer
+    ("carried on", None),
+])
+def test_the_answer_must_be_a_line_of_its_own(reply, said):
+    assert held.answer(reply) == said

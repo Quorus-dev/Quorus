@@ -65,20 +65,52 @@ def _write_json(target: Path, data: Any) -> None:
 # --- the window: when the oldest unpublished turn started ---------------------
 
 
-def mark_window(held_dir: Path, wt, started_at: float | None = None) -> None:
-    """Called as a writable turn starts. Keeps an earlier start: the window
-    covers every turn whose commits are still unpublished."""
+_SEEN_MAX = 500
+
+
+def turn_start(history: list[dict[str, Any]], envelope: dict[str, Any]) -> float:
+    """When a turn started, on the relay's clock: the newest message it had
+    in view. Comparing relay timestamps with the daemon's own clock made a
+    relay running ahead count the turn's own trigger as mid-turn (claude,
+    review of 3ba308a4)."""
+    stamps = [_epoch(m.get("timestamp")) for m in [*history, envelope]]
+    known = [s for s in stamps if s is not None]
+    return max(known) if known else time.time()
+
+
+def mark_window(held_dir: Path, wt, started_at: float | None = None,
+                seen: set[str] | list[str] = ()) -> None:
+    """Called as a writable turn starts. Keeps the earliest start, so the
+    window covers every turn whose commits are still unpublished, and adds the
+    ids this turn already had in view (they're never mid-turn)."""
     target = _file(held_dir, wt.path, "window")
-    if not target.exists():
-        _write_json(target, {"since": time.time() if started_at is None else started_at})
+    current = _read_window(held_dir, wt)
+    since = current.get("since") if current else None
+    if since is None:
+        since = time.time() if started_at is None else started_at
+    ids = list(dict.fromkeys([*(current or {}).get("seen", []), *[i for i in seen if i]]))
+    _write_json(target, {"since": since, "seen": ids[-_SEEN_MAX:]})
+
+
+def _read_window(held_dir: Path, wt) -> dict[str, Any] | None:
+    try:
+        data = json.loads(_file(held_dir, wt.path, "window").read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def window(held_dir: Path, wt) -> float | None:
+    data = _read_window(held_dir, wt)
     try:
-        since = json.loads(_file(held_dir, wt.path, "window").read_text())["since"]
-        return float(since)
-    except (OSError, ValueError, KeyError, TypeError):
+        return float(data["since"]) if data else None
+    except (KeyError, TypeError, ValueError):
         return None
+
+
+def seen_ids(held_dir: Path, wt) -> set[str]:
+    data = _read_window(held_dir, wt) or {}
+    return {i for i in data.get("seen", []) if isinstance(i, str)}
 
 
 def _ahead(wt) -> list[str]:
@@ -128,7 +160,8 @@ def _mentions(content: str, me: str) -> bool:
 
 
 def find_stop(history: list[dict[str, Any]], *, me: str, authorities: set[str],
-              since: float, limit: int = HISTORY_LIMIT) -> tuple[dict[str, Any] | None, str]:
+              since: float, seen: set[str] | None = None,
+              limit: int = HISTORY_LIMIT) -> tuple[dict[str, Any] | None, str]:
     """``(trigger, why)``. The trigger is the first message after *since* that
     an authority (the owner or the room's lead, as authenticated by the relay)
     wrote and that @-mentions *me*. With no trigger, *why* is non-empty when
@@ -138,7 +171,7 @@ def find_stop(history: list[dict[str, Any]], *, me: str, authorities: set[str],
     if len(history) >= limit and (not known or min(known) > since):
         return None, "the room's history since the turn started couldn't be read in full"
     for msg, stamp in sorted(zip(history, stamps), key=lambda p: p[1] or 0.0):
-        if stamp is None or stamp <= since:
+        if stamp is None or stamp <= since or (msg.get("id") in (seen or ())):
             continue
         sender = msg.get("from_name") or msg.get("from") or ""
         if sender == me or sender not in authorities:
@@ -249,15 +282,27 @@ def prompt_note(held_dir: Path, wt) -> str:
         return ""
     return ("HELD COMMITS: your previous turn's commits were NOT published, because "
             "someone redirected you mid-turn. Read that message first.\n" + "\n".join(lines) +
-            f"\nIf the work still applies, put `{REAPPLY}` on a line of your reply and the "
-            f"daemon cherry-picks it back. If it doesn't, put `{DROP}`. Say one or the other.")
+            f"\nIf the work still applies, put `{REAPPLY}` on a line of its own in your "
+            f"reply and the daemon cherry-picks it back. If it doesn't, put `{DROP}` on a "
+            "line of its own. Exactly one of the two.")
+
+
+def answer(reply: str) -> str | None:
+    """The reply's answer: REAPPLY, DROP, or None. It must stand on a line of
+    its own (backticks and a trailing period allowed): "I won't reapply held
+    commits ... drop held" reapplied when any substring counted (claude,
+    review of 3ba308a4). A reply carrying both is no answer."""
+    lines = {line.strip().strip("`*_ .!").lower()
+             for line in (reply or "").splitlines()}
+    found = {phrase for phrase in (REAPPLY, DROP) if phrase in lines}
+    return found.pop() if len(found) == 1 else None
 
 
 def resolve(held_dir: Path, wt, reply: str, participant: str) -> list[str]:
     """After a writable turn that was shown the note: apply its answer.
     Returns room lines to post (a ⚠ when it didn't answer, or the reapply
     failed). Shown entries are always settled; their refs stay for humans."""
-    answer = (reply or "").lower()
+    said = answer(reply)
     entries = _entries(held_dir, wt)
     keep: list[dict[str, Any]] = []
     out: list[str] = []
@@ -266,14 +311,14 @@ def resolve(held_dir: Path, wt, reply: str, participant: str) -> list[str]:
             keep.append(entry)
             continue
         ref, shas = entry["ref"], entry["shas"]
-        if REAPPLY in answer:
+        if said == REAPPLY:
             picked = _git(wt.path, "-c", f"user.name={participant}", "-c",
                           f"user.email={participant}@agents.quorus.local",
                           "cherry-pick", "--allow-empty", *shas)
             if picked.returncode != 0:
                 _git(wt.path, "cherry-pick", "--abort")
                 out.append(f"⚠ couldn't reapply {ref} cleanly; it stays there for a human")
-        elif DROP not in answer:
+        elif said != DROP:
             out.append(f"⚠ held commits on {ref} were neither reapplied nor dropped; "
                        "they stay there, unpublished")
     _save(held_dir, wt, keep)
