@@ -15,9 +15,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from quorus.auth import invite_codes
-from quorus.routes import join_redeem
 from quorus.auth.participant_keys import ParticipantKeyStore
 from quorus.relay import _reset_state, app
+from quorus.routes import join_redeem
 
 ADMIN = {"Authorization": "Bearer test-secret"}
 
@@ -266,3 +266,48 @@ async def test_dms_still_reach_an_existing_invitee(client) -> None:
     r = await client.post("/messages", headers=ADMIN,
                           json={"from_name": "arav", "to": "dana", "content": "welcome"})
     assert r.status_code == 200, r.text
+
+
+def _cli_against_relay(monkeypatch, tmp_path):
+    """Route the CLI's httpx calls into this relay app, and keep its config and
+    MCP registrations in tmp_path (never the developer's real HOME)."""
+    from fastapi.testclient import TestClient
+    from quorus_cli import cli
+
+    tc = TestClient(app)
+
+    def post(url, **kw):
+        kw.pop("timeout", None)
+        kw.pop("follow_redirects", None)
+        return tc.post(url.replace("http://t", ""), **kw)
+    monkeypatch.setattr(cli.httpx, "post", post)
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "joiner"))
+    monkeypatch.setattr(cli, "_register_mcp_everywhere", lambda **_k: ([], {}))
+    return cli
+
+
+async def test_quorus_join_redeems_a_v2_code_into_its_own_key(client, monkeypatch,
+                                                              tmp_path) -> None:
+    """Part B: the joiner ends up with its own participant key in its config,
+    the shared secret never reaches its disk, and it is in the room."""
+    import json as _json
+
+    payload = await _mint(client)
+    cli = _cli_against_relay(monkeypatch, tmp_path)
+    import asyncio as _asyncio
+
+    await _asyncio.to_thread(cli._apply_join_payload, {**payload, "r": "http://t"}, "erin")
+    config = _json.loads((tmp_path / "joiner" / "config.json").read_text())
+    assert config["api_key"].startswith("quorus_pk_") and "relay_secret" not in config
+    assert "test-secret" not in (tmp_path / "joiner" / "config.json").read_text()
+    members = (await client.get("/rooms/build", headers=ADMIN)).json()["members"]
+    assert "erin" in members
+
+
+async def test_quorus_join_explains_a_taken_name(client, monkeypatch, tmp_path, capsys) -> None:
+    payload = await _mint(client)
+    cli = _cli_against_relay(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        cli._apply_join_payload({**payload, "r": "http://t"}, "arav")  # the owner's name
+    assert exc.value.code == 4
+    assert not (tmp_path / "joiner" / "config.json").exists()

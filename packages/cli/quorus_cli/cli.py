@@ -5829,6 +5829,38 @@ async def _join_agents_to_room(
         )
 
 
+def _redeem_invite(relay_url: str, code: str, name: str) -> str:
+    """Spend a v2 invite code for *name*; the participant key, or "" after
+    printing why not. Never follows a redirect: the code is a credential."""
+    try:
+        resp = httpx.post(f"{relay_url}/v1/join/redeem", json={"code": code, "name": name},
+                          timeout=15, follow_redirects=False)
+    except httpx.HTTPError:
+        _ui.error_with_retry("Can't reach relay", relay_url=relay_url)
+        return ""
+    detail = ""
+    try:
+        detail = (resp.json() or {}).get("detail", "") if resp.content else ""
+    except ValueError:
+        pass
+    if resp.status_code == 409:
+        _ui.error(f"The name {name!r} is taken on this relay",
+                  hint="pick another: quorus join <code> --name <your-name>")
+        return ""
+    if resp.status_code in (403, 404, 410):
+        _ui.error("This invite is invalid, expired or used up",
+                  hint="ask your teammate for a fresh one: quorus share <room>")
+        return ""
+    if resp.status_code != 200:
+        _ui.error(f"Joining failed (HTTP {resp.status_code})" + (f": {detail}" if detail else ""))
+        return ""
+    key = str((resp.json() or {}).get("participant_key") or "")
+    if not key.startswith("quorus_pk_"):
+        _ui.error("The relay answered without a key; ask for a fresh invite")
+        return ""
+    return key
+
+
 def _apply_join_payload(payload: dict, name: str) -> None:
     """Write config, register MCP, join room, print the welcome.
 
@@ -5851,6 +5883,16 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     console.print(f"  Relay: {relay_url}")
     console.print(f"  Name: {name}")
     console.print("")
+
+    # v2 invites (shared-secret relays, docs/weekend/invite-roles.md step 1):
+    # the code redeems into the joiner's OWN participant key and the relay adds
+    # them to the room. The shared secret is never sent and never written here.
+    redeemed = False
+    if payload.get("v") == 2 and payload.get("c"):
+        api_key = _redeem_invite(relay_url, str(payload["c"]), name)
+        if not api_key:
+            sys.exit(4)
+        secret, tenant_id, invite_token, redeemed = "", "", "", True
 
     # Auto-signup if no credentials provided in the join code.
     # JWT-admin minted codes don't embed credentials for security reasons,
@@ -5959,6 +6001,12 @@ def _apply_join_payload(payload: dict, name: str) -> None:
 
     # 3. Join the room (human + all registered agents)
     async def _do_join():
+        if redeemed:  # the relay already added us when the code was redeemed
+            console.print(f"[green]Joined '{room}' as '{name}'[/green]")
+            if agent_keys:
+                console.print("[dim]Your agents join separately: quorus agent add "
+                              f"<tool> --room {room}[/dim]")
+            return
         async with httpx.AsyncClient(follow_redirects=True) as client:
             try:
                 # Preferred path: use scoped invite token (no auth required).
