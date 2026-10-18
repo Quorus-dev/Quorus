@@ -201,7 +201,8 @@ def gemini_api_key(env: dict[str, str]) -> str | None:
     return None
 
 
-def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False) -> dict[str, Any]:
+def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False,
+                    mode: str = "default") -> dict[str, Any]:
     """settings.json for the agent's own Gemini home: Quorus tools, and
     API-key sign-in when the user has a key (a retired Google login in the
     user's own settings made every wake fail)."""
@@ -215,6 +216,13 @@ def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False) -> di
         # the 300s default; 120s of no progress ends it well inside a turn.
         "tools": {"shell": {"inactivityTimeout": 120}},
     }
+    if _GEMINI_APPROVAL.get(mode) == "plan":
+        # Plan mode isn't read-only headless: the model calls exit_plan_mode,
+        # which approves itself with no human to ask, then writes. A manual
+        # room's Gemini committed a file and Quorus published it to main
+        # (release sweep, gemini-cli 0.64, 2026-10-17). Without the tool it
+        # stays in plan mode and writes nothing.
+        cfg["tools"]["exclude"] = ["exit_plan_mode"]
     if api_key:
         cfg["security"] = {"auth": {"selectedType": "gemini-api-key"}}
     if spec is not None:
