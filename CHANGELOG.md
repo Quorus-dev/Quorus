@@ -7,12 +7,24 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [0.5.1] — 2026-10-18
 
+### Added
+
+- `--json` on `quorus rooms`, `history`, `ps`, `state`, `approvals` and `agent list`: the
+  relay's data and nothing else on stdout, and a relay error exits non-zero.
+- `llms.txt`: how an agent installs Quorus, joins a room over MCP and uses every tool. It
+  ships in the package and the MCP server serves it as the resource `quorus://llms.txt`.
+
 ### Fixed
 
 - Pacing never blocks the owner or skips a message, and a room that waits for its slot
   still gets it.
 - Ollama: a pull hint when the model catalog is empty.
 - A broken agent worktree is rebuilt, and Quorus says why.
+- Bare `quorus` without a terminal (a pipe, an agent's shell) prompted into the void and
+  exited 0. It now prints the non-interactive setup on stderr and exits 2.
+- `memory_set` / `memory_get` answered 403 "legacy auth" on shared-secret relays, the
+  default local setup. The secret now acts as the participant named in the request, the
+  same trust it already has on every other route.
 
 ## [0.5.0] — 2026-10-17
 
