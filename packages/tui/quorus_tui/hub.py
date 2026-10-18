@@ -145,7 +145,7 @@ def _sender_color(name: str) -> str:
 # Keep this list in sync with the suffixes mcp_writers.agent_identity
 # generates. "test"/"pm"/"auto" are NOT agent suffixes — they're labels
 # humans pick for themselves and we treat them as human.
-_AGENT_KEYWORDS = ("codex", "claude", "gemini", "cursor", "bot")
+_AGENT_KEYWORDS = ("codex", "claude", "gemini", "opencode", "cursor", "bot")
 
 
 def _name_has_agent_keyword(name: str) -> bool:
@@ -272,6 +272,11 @@ def _prompt_name(console: Console) -> str:
             console.print(
                 "  [dim]Letters, numbers, hyphens, underscores only.[/]"
             )
+            continue
+        # `quorus agent add` reads "default" as no name set, so a user who
+        # picked it could never add an agent (codex first-run audit).
+        if name.lower() == "default":
+            console.print("  [dim]\"default\" is reserved — pick your own name.[/]")
             continue
         return name
 
@@ -2789,6 +2794,25 @@ def _read_input(
         except (termios.error, OSError, AttributeError):
             _saved_termios = None  # not a real tty (CI / pipe) — fall through
 
+    # Read the tty's fd one byte at a time. `sys.stdin.read(1)` pulled a
+    # whole paste into Python's buffer, after which select() on the fd saw
+    # nothing pending: the rest of the paste waited for the next keypress and
+    # a pasted "@name ..." never got past the mention picker (new-user pass 2,
+    # F3).
+    import codecs as _codecs
+    _utf8 = _codecs.getincrementaldecoder("utf-8")("replace")
+
+    def _getch() -> str:
+        if _stdin_fd < 0:
+            return sys.stdin.read(1)
+        while True:
+            raw = os.read(_stdin_fd, 1)
+            if not raw:
+                return ""
+            ch = _utf8.decode(raw)
+            if ch:
+                return ch
+
     # Restore in-progress buffer from a prior render-tick timeout so the user
     # never loses what they were typing when the 2s redraw fires.
     buf: list[str] = list(_PENDING_INPUT_BUF)
@@ -2818,7 +2842,7 @@ def _read_input(
             # ESC (0x1b); we peek with select(timeout=0.05) to gather the
             # rest of the sequence without blocking on a lone ESC press.
             try:
-                _b = sys.stdin.read(1)
+                _b = _getch()
             except (OSError, ValueError):
                 _b = ""
             if not _b:
@@ -2831,7 +2855,7 @@ def _read_input(
                 _follow = ""
                 _sel_more, _, _ = _sel.select([sys.stdin], [], [], 0.05)
                 while _sel_more:
-                    _follow += sys.stdin.read(1)
+                    _follow += _getch()
                     _sel_more, _, _ = _sel.select([sys.stdin], [], [], 0.005)
                 key = "\x1b" + _follow
             elif _b in ("\x7f", "\x08"):
@@ -3032,6 +3056,26 @@ def _read_input(
 
 
 # ── Main hub loop ─────────────────────────────────────────────────────────────
+
+def _open_room(state: "HubState", relay_url: str, secret: str, agent_name: str,
+               name: str = "") -> bool:
+    """Select a room (by *name*, else the first), join it and load its history.
+
+    New-user pass 1, F1: the first run left people on the hub home with no room
+    selected, so what they typed went nowhere and @-complete had no members."""
+    rooms = state.get_rooms()
+    if not rooms:
+        return False
+    names = [r.get("name") or r.get("id", "") for r in rooms]
+    idx = names.index(name) if name in names else 0
+    with state._lock:
+        state.selected_room_idx = idx
+    rname = names[idx]
+    if rname:
+        _join_room(relay_url, secret, rname, agent_name)
+        _load_history_into(state, relay_url, secret, rname)
+    return True
+
 
 def _main_input_loop(
     *,
@@ -3381,6 +3425,9 @@ def _main_input_loop(
                 continue
 
             if not line:
+                if state.get_selected_room() is None and _open_room(
+                        state, relay_url, secret, agent_name):
+                    last_render = 0
                 continue
 
             # Record in history (dedup consecutive, cap length).
@@ -3725,9 +3772,17 @@ def _main_input_loop(
 
             # ── Default: send as chat message ──────────────────────────────────
             selected = state.get_selected_room()
+            if not selected and len(state.get_rooms()) == 1:
+                _open_room(state, relay_url, secret, agent_name)
+                selected = state.get_selected_room()
             if not selected:
-                state.set_status_bar("No room selected. Type 'create <name>' to make one.")
-                last_render = 0
+                hint = ("Not sent: no rooms yet. Type 'create <name>' to make one."
+                        if not state.get_rooms() else
+                        "Not sent: pick a room first. Enter opens the first room, "
+                        "Tab moves to the next one.")
+                console.print(f"  [warning]![/] {hint}")
+                state.set_status_bar(hint)
+                hold_render = True
                 continue
 
             room_name = selected.get("name") or selected.get("id", "")
@@ -3907,8 +3962,11 @@ def _run_session(
     state.set_rooms(rooms)
     if rooms:
         state.set_connected(True, "Connected")
-        # Land on the room list — user navigates with Tab/Up/Down to pick a room.
-        # Do NOT auto-join or pre-load messages; let the user choose intentionally.
+        # A returning user lands on the room list and picks. A first run lands
+        # inside the room the invite named (else #general), so the first thing
+        # they type reaches it (new-user pass 1, F1).
+        if announce_ready:
+            _open_room(state, relay_url, secret, agent_name, profile.get("room") or "general")
     else:
         state.set_connected(False, "No rooms yet")
     state.away_rows = _away_rows(relay_url, secret, rooms, chat_identity or agent_name)

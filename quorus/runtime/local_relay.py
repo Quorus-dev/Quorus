@@ -59,7 +59,8 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
         if _accepts(relay_url, secret):
             return True, "local relay is running"
         return False, ("a relay is already running on this computer with a different "
-                       "secret — stop it, or run `quorus init <name> --secret <its secret>`")
+                       "secret — stop it, or run `quorus init <name> --secret -` and "
+                       "paste its secret")
     parsed = urlparse(relay_url)
     cfg = resolve_config_dir()
     cfg.mkdir(parents=True, exist_ok=True)
@@ -68,13 +69,86 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
            "MESSAGES_FILE": str(cfg / "relay-state.json"), "LOG_LEVEL": "WARNING"}
     log = (cfg / "relay.log").open("ab")
     try:
-        subprocess.Popen([sys.executable, "-m", "quorus.relay_cli"], env=env, stdout=log,
-                         stderr=log, stdin=subprocess.DEVNULL, start_new_session=True,
-                         cwd=str(Path.home()))
+        proc = subprocess.Popen([sys.executable, "-m", "quorus.relay_cli"], env=env,
+                                stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                                start_new_session=True, cwd=str(Path.home()))
     except OSError as exc:
         return False, f"couldn't start the local relay ({exc}); run `quorus relay` yourself"
     for _ in range(40):
         if _healthy(relay_url, 0.5):
+            _record(cfg, proc.pid, parsed.port or 8080)
             return True, f"started your local relay (log: {cfg / 'relay.log'})"
         time.sleep(0.25)
     return False, f"the local relay didn't start — see {cfg / 'relay.log'}"
+
+
+RELAY_ARGV_TAIL = " -m quorus.relay_cli"
+
+
+def _record(cfg: Path, pid: int, port: int) -> None:
+    """So `quorus relay --replace` can stop exactly this relay, and nothing else:
+    its pid, start time and command line, read once it answers (so after exec)."""
+    import json
+
+    (cfg / "relay.pid").write_text(json.dumps({
+        "pid": pid, "port": port, "started": _started(pid), "command": _ps(pid, "command")}))
+
+
+def stop_started_relay(port: int, timeout: float = 5.0) -> bool:
+    """Stop the detached relay that `quorus` started on *port*, and only that one.
+
+    The pid file names the process and its start time. It is signalled only if,
+    right now, that pid's command line ends with exactly ``-m quorus.relay_cli``
+    and it started at the recorded time, so a reused pid or an unrelated process
+    that merely mentions quorus.relay_cli is never touched (codex, review of
+    857a5271). Returns True once nothing answers on *port*."""
+    import json
+    import signal
+
+    pid_file = resolve_config_dir() / "relay.pid"
+    try:
+        rec = json.loads(pid_file.read_text())
+        pid, started_port = int(rec["pid"]), int(rec["port"])
+        started, command = str(rec["started"]), str(rec["command"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    if started_port != port or not _is_our_relay(pid, started, command):
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    url = f"http://127.0.0.1:{port}"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _healthy(url, 0.3):
+            pid_file.unlink(missing_ok=True)
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def _ps(pid: int, field: str) -> str:
+    try:
+        return subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)], capture_output=True,
+                              text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _started(pid: int) -> str:
+    return _ps(pid, "lstart")
+
+
+def _is_our_relay(pid: int, started: str, command: str) -> bool:
+    """*pid* is still the relay we spawned: the command line it had when we spawned
+    it, compared whole (not parsed, so `python3 -c '...' -m quorus.relay_cli`
+    can't pass: codex, review of 56f6b852), and the same start time."""
+    if not (started and command.endswith(RELAY_ARGV_TAIL)):
+        return False
+    exe = command[: -len(RELAY_ARGV_TAIL)]
+    if " " in exe.strip() and not os.path.exists(exe):  # one interpreter, nothing more
+        return False
+    if not os.path.basename(exe).lower().startswith("python"):
+        return False
+    return _ps(pid, "command") == command and _started(pid) == started

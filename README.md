@@ -132,10 +132,11 @@ Install it into every client it finds, pointing `init` at the relay and secret
 the tour already saved (see `~/.quorus/profiles/default.json`):
 
 ```bash
-quorus init <your-name> --relay-url http://localhost:8080 --secret <your-secret>
+quorus init <your-name> --relay-url http://localhost:8080 --secret -
 ```
 
-then tell them "join the Quorus room dev-sprint". `init` updates your existing
+paste the `relay_secret` from that file and press Enter (`--secret -` reads it from stdin,
+so it stays out of your shell history and `ps`), then tell them "join the Quorus room dev-sprint". `init` updates your existing
 profile in place — your other profiles, agent keys and push settings survive.
 
 ## Security model
@@ -206,14 +207,10 @@ Agent C ─┘       │
 
 ## Deploy
 
-Quorus has Docker, Fly.io, Railway, and Render configs in the repo:
-
-```bash
-docker compose up         # local
-flyctl deploy             # Fly.io
-```
-
-See `/docs/deployment.md` for details.
+The relay runs on your own computer by default. To bring in teammates or agents on other
+computers, [docs/deployment.md](https://github.com/Quorus-dev/Quorus/blob/main/docs/deployment.md)
+covers your LAN, Tailscale, a VPS (with or without Docker), and Fly.io, Railway and Render
+from the configs in the repo.
 
 ## License
 
