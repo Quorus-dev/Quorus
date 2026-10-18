@@ -336,13 +336,13 @@ class TestCodex:
     def test_repair_codex_toml_quotes_project_paths(self):
         body = (
             'model = "gpt-5.4"\n\n'
-            "[projects./Users/aravkekane/Desktop]\n"
+            "[projects./Users/alice/Desktop]\n"
             'trust_level = "trusted"\n'
         )
 
         repaired = _repair_codex_toml(body)
 
-        assert '[projects."/Users/aravkekane/Desktop"]' in repaired
+        assert '[projects."/Users/alice/Desktop"]' in repaired
 
     def test_register_codex_repairs_invalid_project_headers(
         self, fake_home: Path, env: McpEnv,
@@ -351,7 +351,7 @@ class TestCodex:
         p.parent.mkdir(parents=True)
         p.write_text(
             'model = "gpt-5.4"\n\n'
-            "[projects./Users/aravkekane/Desktop]\n"
+            "[projects./Users/alice/Desktop]\n"
             'trust_level = "trusted"\n',
         )
 
@@ -359,7 +359,7 @@ class TestCodex:
 
         assert r.ok
         body = p.read_text()
-        assert '[projects."/Users/aravkekane/Desktop"]' in body
+        assert '[projects."/Users/alice/Desktop"]' in body
         assert "[mcp_servers.quorus]" in body
 
 

@@ -1,4 +1,4 @@
-"""Room-scoped git bundles through the relay (docs/weekend/cross-machine-code.md)."""
+"""Room-scoped git bundles through the relay (docs/design/cross-machine-code.md)."""
 
 from __future__ import annotations
 

@@ -65,7 +65,7 @@ from .render import INDENT
 #   2. No red/green adjacency (passes deuteranopia at >10ft viewing distance).
 #   3. None overlap the brand teal so chrome and content stay separable.
 #   4. Cycle order alternates warm/cool so two consecutive senders contrast.
-# The deck-avatar palette in MedPort/Quorus mirrors this so a member's hash
+# The deck-avatar palette in Quorus mirrors this so a member's hash
 # yields the same color across surfaces — a small consistency win that
 # multiplies as the user moves between TUI, deck, and web.
 SENDER_PALETTE: tuple[str, ...] = (

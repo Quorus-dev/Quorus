@@ -59,7 +59,7 @@ jobs:
     # cold-install bug across every Python we support, using the *exact* path
     # ./setup.sh recommends (stdlib `python -m venv`, NOT `uv venv`). If this
     # job is red, the project will not install cleanly for end users — block
-    # the merge. See docs/HACKATHON_REGRESSION.md for context.
+    # the merge.
     name: Install topology / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:

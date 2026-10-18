@@ -1,4 +1,4 @@
-"""Room-scoped git bundles carried by the relay (docs/weekend/cross-machine-code.md).
+"""Room-scoped git bundles carried by the relay (docs/design/cross-machine-code.md).
 
 The relay is a courier, not a code host: it validates the bundle header,
 enforces size, quota and TTL, and hands the bytes back to room members.

@@ -51,7 +51,7 @@ python scripts/e2e_live.py
 
 ## Architecture
 
-See `docs/internal/CONTEXT.md` for current architecture and design decisions.
+See `docs/design/` for design notes and `CLAUDE.md` for the architecture overview.
 
 ## License
 

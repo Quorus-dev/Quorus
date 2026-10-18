@@ -1,19 +1,5 @@
 # CLAUDE.md — Quorus
 
-## Shared Context Protocol
-
-**Read `docs/internal/CONTEXT.md` at the start of every session.** It contains the current project state, what's in progress, recent changes, architectural decisions, and next priorities. It is the shared memory between all contributors' Claude instances.
-
-**Update `docs/internal/CONTEXT.md` after every significant change:**
-
-- Add your changes to "Recent Changes" (keep last 10, drop oldest)
-- Update "In Progress" when starting/finishing work
-- Update "Current State" if the system's capabilities changed
-- Add to "Decisions Made" when architectural choices are made
-- Update "Next Up" when priorities shift
-
----
-
 ## Project
 
 Quorus — coordination layer for AI agent swarms. Real-time rooms, messaging, distributed locks.
@@ -21,7 +7,8 @@ Quorus — coordination layer for AI agent swarms. Real-time rooms, messaging, d
 **Stack:** Python 3.10+, FastAPI, asyncio, httpx, mcp (FastMCP), pytest, ruff, rich
 
 **Run tests:** `pytest -v`
-**From an agent worktree** (no venv of its own): `PYTHONPATH=.:packages/cli:packages/mcp:packages/sdk:packages/tui ~/dev/Quorus/.venv/bin/python -m pytest -q`
+**Setup:** `python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'`
+**From an agent worktree** (no venv of its own), use the main checkout's: `PYTHONPATH=.:packages/cli:packages/mcp:packages/sdk:packages/tui $(git rev-parse --git-common-dir)/../.venv/bin/python -m pytest -q`
 **Lint:** `ruff check .`
 **Lint fix:** `ruff check . --fix`
 
