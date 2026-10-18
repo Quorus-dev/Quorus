@@ -135,3 +135,54 @@ def test_mission_control_keeps_chat_beside_the_panels_on_wide_screens() -> None:
     assert '$("chat").classList.toggle("split", on && wide)' in BOARD_JS
     assert "#chat.split{display:grid" in DASHBOARD_HTML
     assert 'grid-template-areas:"bar bar" "board msgs"' in DASHBOARD_HTML
+
+
+def test_list_is_the_default_board_mode() -> None:
+    """The Quorum table opens only on request (#view=quorum or its button)."""
+    assert '<button id="modeList" class="on" type="button">List</button>' in DASHBOARD_HTML
+    assert '<div id="quorum" hidden>' in DASHBOARD_HTML
+    assert "localStorage" not in BOARD_JS  # the mode is never remembered across visits
+    assert 'if (view === "quorum") mode("quorum");' in BOARD_JS
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_a_step_older_than_ten_minutes_clears(tmp_path: Path) -> None:
+    """A daemon stuck in a wake showed "running tests · 7h 26m" for hours
+    (Arav, 2026-10-18). The relay's last_wake_at says when the wake began."""
+    now = 1792260000
+    presence = {
+        "stale-claude": {"name": "stale-claude", "online": True, "status": "busy",
+                         "activity": "running tests", "last_wake_at": now - 7 * 3600,
+                         "trail": [{"t": now - 7 * 3600, "step": "running tests"}]},
+        "fresh-claude": {"name": "fresh-claude", "online": True, "status": "busy",
+                         "activity": "editing relay.py",
+                         "last_wake_at": "2026-10-17T12:00:00+00:00"},
+        "no-since-codex": {"name": "no-since-codex", "online": True, "status": "busy",
+                           "activity": "reviewing"},
+    }
+    iso_now = 1792260000  # 2026-10-17T12:00:00Z is 1760702400; use the number form too
+    script = tmp_path / "run.js"
+    (tmp_path / "board.js").write_text(BOARD_JS)
+    script.write_text(
+        "globalThis.sessionStorage = { getItem: () => null };\n"
+        "const b = require('./board.js');\n"
+        f"const pres = {json.dumps(presence)};\n"
+        f"const now = {iso_now};\n"
+        "pres['fresh-claude'].last_wake_at = new Date((now - 120) * 1000).toISOString();\n"
+        "const rows = Object.keys(pres).map((n) => b.rowState(n, pres, [], [], now));\n"
+        "console.log(JSON.stringify(rows));\n")
+    out = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=30,
+                         cwd=tmp_path)
+    assert out.returncode == 0, out.stderr
+    rows = {r["name"]: r for r in json.loads(out.stdout)}
+    assert rows["stale-claude"]["rank"] == 5 and rows["stale-claude"]["line"] == "idle"
+    assert rows["stale-claude"]["trail"] == []
+    fresh = rows["fresh-claude"]
+    assert fresh["rank"] == 4 and fresh["line"] == "editing relay.py · 2m"
+    # No relay timestamp: the page's own first sighting counts, so it stays working.
+    assert rows["no-since-codex"]["rank"] == 4
+    assert rows["no-since-codex"]["line"].startswith("reviewing")
+    from quorus.dashboard import DASHBOARD_JS
+
+    # The chat's working line applies the same ten minutes.
+    assert "last_wake_at" in DASHBOARD_JS and "< 600000" in DASHBOARD_JS

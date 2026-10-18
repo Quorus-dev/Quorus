@@ -40,7 +40,9 @@ DASHBOARD_HTML = """\
 --chip:#1e2925;--on-accent:#0f1412;--glow:rgba(60,199,162,.25);color-scheme:dark}}
 *{box-sizing:border-box}html,body{height:100%}[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--font)}
-#app{display:grid;grid-template-columns:260px 1fr;grid-template-rows:minmax(0,1fr);height:100vh;height:100dvh;overflow:hidden}
+/* One explicit row of the full height: an implicit auto row sized itself to the
+   message list, so the chat grew with every message instead of scrolling. */
+#app{display:grid;grid-template-columns:260px 1fr;grid-template-rows:minmax(0,1fr);height:100%}
 #rooms{border-right:1px solid var(--rule);background:var(--panel);overflow-y:auto;
 padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 12px}
 #rooms h1{font-size:17px;margin:4px 6px 12px;display:flex;align-items:center;gap:8px}
@@ -50,7 +52,7 @@ padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 12px}
 padding:10px;border-radius:8px;font:inherit;cursor:pointer}
 .room:hover,.room.on{background:var(--chip)}.room small{color:var(--muted);display:block}
 #newRoom{margin:10px 6px;font:inherit;color:var(--accent);background:none;border:0;cursor:pointer}
-#chat{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%}
+#chat{display:flex;flex-direction:column;min-width:0;height:100%}
 #bar{display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 10px;
 border-bottom:1px solid var(--rule);background:var(--panel)}
 #bar h2{font-size:16px;margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
@@ -82,22 +84,33 @@ background:var(--chip);color:var(--ink);cursor:pointer}
 #boardModes{display:flex;gap:4px}#boardModes button{font:inherit;font-size:12px;padding:4px 12px;
 border-radius:999px;border:1px solid var(--rule);background:none;color:var(--muted);cursor:pointer}
 #boardModes button.on{background:var(--chip);color:var(--ink)}
-#quorum{position:relative;flex:1;min-height:420px;border-radius:12px;overflow:hidden;
+#quorum{position:relative;flex:1;min-height:520px;border-radius:12px;overflow:hidden;
 border:1px solid var(--rule)}#quorum canvas{position:absolute;inset:0;display:block;width:100%;height:100%}
 #board{position:relative}
 #quorumCard{position:absolute;right:28px;top:110px;width:min(440px,calc(100% - 56px));z-index:2;
 box-shadow:0 12px 40px rgba(0,0,0,.35);border-radius:12px}
 .qtags{position:absolute;inset:0;pointer-events:none}
-.qtag{position:absolute;left:0;top:0;pointer-events:auto;display:grid;gap:1px;max-width:190px;
-padding:4px 9px;border-radius:9px;border:1px solid var(--rule);border-left:3px solid var(--seat);
-background:rgba(16,20,18,.86);color:#fff;font:inherit;font-size:12px;line-height:1.25;
-text-align:left;cursor:pointer}
-.qtag b{font-size:12px}.qtag .qm{color:#b9c4bf;font-size:11px}
-.qtag .qs{font-size:11px;color:#dfe7e3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Seat plaques: fixed type size whatever the seat's depth, the vendor as a 6px dot
+   (no logos), laid out apart by quorum.js. */
+.qtag{position:absolute;left:0;top:0;pointer-events:auto;display:grid;gap:1px;max-width:200px;
+padding:5px 10px 5px 20px;border-radius:8px;border:1px solid rgba(255,255,255,.08);
+background:rgba(16,20,18,.72);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+color:#eceeed;font:inherit;font-size:12px;line-height:1.25;text-align:left;cursor:pointer;
+box-shadow:0 6px 18px rgba(0,0,0,.28)}
+.qtag::before{content:"";position:absolute;left:8px;top:11px;width:6px;height:6px;border-radius:50%;
+background:var(--seat)}
+.qtag b{font-size:12px;font-weight:600;letter-spacing:.01em}
+.qtag .qm{color:#adb5b2;font-size:11px;font-family:var(--mono)}
+.qtag .qs{font-size:11px;color:#cfd6d2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .qtag .qs:empty,.qtag .qm:empty{display:none}
-.qtag[data-state=needs]{border-color:#e8a63a;box-shadow:0 0 0 2px rgba(232,166,58,.45)}
-.qtag[data-state=needs] .qs{color:#f3c27a}.qtag[data-state=stuck] .qs{color:#f2776e}
-.qtag[data-state=offline]{opacity:.5}
+.qtag[data-state=busy]{border-color:rgba(60,199,162,.45)}
+.qtag[data-state=needs]{border-color:#e8a63a;box-shadow:0 0 0 2px rgba(232,166,58,.4),0 6px 18px rgba(0,0,0,.28)}
+.qtag[data-state=needs] .qs{color:#ffca16}.qtag[data-state=stuck] .qs{color:#ff977d}
+.qtag[data-state=asleep],.qtag[data-state=pacing]{opacity:.78}
+@media (prefers-color-scheme:light){.qtag{background:rgba(255,255,255,.8);color:#1a211e;
+border-color:rgba(0,0,0,.08);box-shadow:0 6px 18px rgba(0,0,0,.1)}
+.qtag .qm{color:#5f6563}.qtag .qs{color:#3c4441}.qtag[data-state=needs] .qs{color:#4f3422}
+.qtag[data-state=stuck] .qs{color:#d13415}}
 .qtag:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .qnote{position:absolute;left:12px;bottom:8px;margin:0}
 #quorum.flat{min-height:0;overflow:visible;border:0}
@@ -281,12 +294,19 @@ function renderMessage(m) {
 }
 
 function renderWorking(presence) {
-  const live = presence.filter((p) => p.online && p.status === "busy" && p.room === S.room);
-  const now = Date.now(), busy = live.map((p) => p.name);
+  const now = Date.now();
+  // The relay says when the wake began (epoch seconds from the file backend, ISO
+  // text from Redis). A step older than 10 minutes is a stuck daemon, not work:
+  // it drops off the line (Arav saw "running tests · 7h 26m", 2026-10-18).
+  const began = (p) => { const w = p.last_wake_at;
+    const t = typeof w === "number" ? w * 1000 : Date.parse(w || ""); return t > 0 ? t : 0; };
+  const live = presence.filter((p) => p.online && p.status === "busy" && p.room === S.room
+    && now - (began(p) || S.workSince[p.name] || now) < 600000);
+  const busy = live.map((p) => p.name);
   const step = {};
   live.forEach((p) => { step[p.name] = p.activity || "working"; });
   Object.keys(S.workSince).forEach((n) => { if (!busy.includes(n)) delete S.workSince[n]; });
-  busy.forEach((n) => { if (!S.workSince[n]) S.workSince[n] = now; });
+  busy.forEach((n) => { if (!S.workSince[n]) S.workSince[n] = began(live.find((p) => p.name === n)) || now; });
   $("working").textContent = busy.map((n) => {
     const s = Math.round((now - S.workSince[n]) / 1000);
     return "⋯ @" + n + " " + step[n] + " " + (s < 60 ? s + "s" : Math.floor(s / 60) + "m");
