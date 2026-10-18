@@ -1,10 +1,9 @@
-// The Quorum view: a Quorus room as a council table, drawn with three.js.
-// v2 (2026-10-18, after Arav: "this looks horrendous"): one lit stage, only
-// present members seated, no humanoid toys and no publish pillar. Every seat
-// is a member; every pose is real state from board.js's rows; every click
-// opens the same card (Approve / Deny / ask). No data path of its own.
-// Light by design: three.js loads only when this view first opens, it renders
-// only while visible, and it idles at a low frame rate.
+// The Quorum view: a Quorus room as a council table. This file owns the data and
+// the HTML (plaques, the seat card, the flat grid); quorum-stage.js draws the lit
+// stage and quorum-totems.js the sculpted marks and light effects, both loaded
+// only when the view first opens. Every pose is real state from board.js's rows;
+// every click opens the same card (Approve / Deny / ask). No data path of its own.
+// v2 2026-10-18 (after Arav: "this looks horrendous"); v3 the same day: premium pass.
 
 const VENDOR = {
   claude: ["#d97757", "Claude Code"], codex: ["#10a37f", "Codex"],
@@ -12,45 +11,30 @@ const VENDOR = {
   cursor: ["#8b5cf6", "Cursor"], cline: ["#e0a030", "Cline"],
 };
 const HUMAN = "#e8e4da";
-const AMBER = "#e8a63a", TOMATO = "#f2776e";
-const R = 3.0;          // table radius
-const SEAT_R = R + 0.62;  // seats sit just outside the rim
 const MAX_SEATS = 14;   // past this the marks blur together: the rest go to "+N more"
 const PUBLISHED = /\(quorus\) published (\d+) commit/;
+const OK = /✅|\bapproved?\b|\bLGTM\b|lifting my block/i;
+const BLOCK = /\/disagree|\bblocking\b|\brejected\b|\bnot approved\b/i;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const darkScheme = matchMedia("(prefers-color-scheme: dark)");
 // Phones get the same table drawn flat in HTML: no WebGL, no 650 KB download.
 const phone = matchMedia("(max-width: 640px)");
 const NARROW = 560;     // a host narrower than this can't frame the table either
 
-let THREE = null;       // loaded lazily
-const Q = { scene: null, cam: null, renderer: null, host: null, seats: new Map(),
-            core: null, glow: null, fx: [], seen: new Set(), on: false, raf: 0,
-            last: 0, rows: [], room: null, me: "", lastEvent: 0, ray: null,
-            tags: new Map(), layer: null, flat: false, names: [], extra: 0, offline: 0,
-            pulse: 0 };
+const Q = { stage: null, T: null, host: null, seats: new Map(), tags: new Map(), layer: null,
+            flat: false, names: [], rows: [], room: null, me: "", seen: new Set(), extra: 0,
+            offline: 0, on: false, P: null, seatR: 3.62 };
 
 function vendorOf(name) {
   return (name.match(/-(claude|codex|gemini|opencode|cursor|cline)$/) || [])[1] || null;
 }
+const colourOf = (name) => { const v = vendorOf(name); return v ? VENDOR[v][0] : HUMAN; };
 
 function cssVar(name, fallback) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
-// The stage palette follows the page theme (Radix sage, see the UI brief).
-function palette() {
-  const dark = darkScheme.matches;
-  return dark
-    ? { bg: cssVar("--bg", "#0f1412"), floor: "#161c19", table: "#242e29", tableEdge: "#2e3934",
-        rim: "#5a6862", seat: "#2a3430", key: "#fff1e0", fill: "#9fb8ff", rimLight: "#bfffe9",
-        hemi: ["#a7bab2", "#0b100e"], exposure: 1.15 }
-    : { bg: cssVar("--bg", "#f5f6f4"), floor: "#e9ece9", table: "#d9dfdb", tableEdge: "#c7cfca",
-        rim: "#9aa6a0", seat: "#cfd6d2", key: "#ffffff", fill: "#dfe8ff", rimLight: "#ffffff",
-        hemi: ["#ffffff", "#aeb8b2"], exposure: 1.0 };
-}
-
-// Seat tags are HTML, not canvas sprites: textContent only (never markup from
+// Seat plaques are HTML, not canvas sprites: textContent only (never markup from
 // room data), focusable buttons for keyboard users, fixed type size, and laid
 // out in screen space so a front seat's name can't sit on top of its own or a
 // neighbour's status (the overlap in Arav's screenshot).
@@ -66,9 +50,8 @@ function tagFor(name) {
   model.className = "qm";
   status.className = "qs";
   t.append(who, model, status);
-  const v = vendorOf(name);
-  t.style.setProperty("--seat", v ? VENDOR[v][0] : HUMAN);
-  t.addEventListener("click", () => openCard(name));
+  t.style.setProperty("--seat", colourOf(name));
+  t.addEventListener("click", () => pick(name));
   Q.layer.append(t);
   Q.tags.set(name, t);
   return t;
@@ -80,149 +63,6 @@ function layer(host) {
   Q.layer.className = "qtags";
   host.append(Q.layer);
   return Q.layer;
-}
-
-function mat(color, opts) {
-  return new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.6, metalness: 0.05 },
-    opts || {}));
-}
-
-function build(host) {
-  const P = palette();
-  Q.scene = new THREE.Scene();
-  Q.scene.background = new THREE.Color(P.bg);
-  Q.scene.fog = new THREE.Fog(P.bg, 20, 30);  // the floor fades into the page; frame() sets the range
-  Q.cam = new THREE.PerspectiveCamera(30, 1, 0.1, 60);
-  Q.renderer = new THREE.WebGLRenderer({ antialias: true });
-  Q.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
-  Q.renderer.outputColorSpace = THREE.SRGBColorSpace;
-  Q.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  Q.renderer.toneMappingExposure = P.exposure;
-  Q.renderer.shadowMap.enabled = true;
-  Q.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  host.prepend(Q.renderer.domElement);  // tags stay above the canvas
-
-  // Three-point light: a warm key with soft shadows, a cool fill, a rim from behind.
-  Q.scene.add(new THREE.HemisphereLight(P.hemi[0], P.hemi[1], 0.9));
-  const key = new THREE.DirectionalLight(P.key, 3.0);
-  key.position.set(-5, 9, 6);
-  key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
-  key.shadow.radius = 6;
-  key.shadow.bias = -0.0005;
-  Object.assign(key.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6, near: 1, far: 30 });
-  const fill = new THREE.DirectionalLight(P.fill, 0.5);
-  fill.position.set(6, 4, -3);
-  const rim = new THREE.DirectionalLight(P.rimLight, 0.9);
-  rim.position.set(0, 5, -9);
-  Q.scene.add(key, fill, rim);
-  const accent = cssVar("--accent", "#3cc7a2");
-  Q.glow = new THREE.PointLight(accent, 5, 6, 2);
-  Q.glow.position.set(0, 1.6, 0);
-  Q.scene.add(Q.glow);
-
-  // The floor, the table and the room's core: a ring that pulses when anyone speaks.
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(12, 96), mat(P.floor, { roughness: 0.95 }));
-  floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
-  const top = new THREE.Mesh(new THREE.CylinderGeometry(R, R * 0.97, 0.14, 128),
-    mat(P.table, { roughness: 0.5, metalness: 0.08 }));
-  top.position.y = 0.86;
-  top.castShadow = top.receiveShadow = true;
-  const edge = new THREE.Mesh(new THREE.TorusGeometry(R, 0.028, 12, 160),
-    mat(P.rim, { roughness: 0.3, metalness: 0.85 }));
-  edge.rotation.x = Math.PI / 2;
-  edge.position.y = 0.93;
-  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.5, 0.8, 48), mat(P.tableEdge));
-  stem.position.y = 0.4;
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.4, 0.06, 64), mat(P.tableEdge));
-  base.position.y = 0.03;
-  base.receiveShadow = true;
-  Q.core = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.04, 16, 120),
-    mat(accent, { emissive: accent, emissiveIntensity: 1.1, roughness: 0.4 }));
-  Q.core.rotation.x = Math.PI / 2;
-  Q.core.position.y = 0.98;
-  const pool = new THREE.Mesh(new THREE.CircleGeometry(0.66, 64),
-    new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.08 }));
-  pool.rotation.x = -Math.PI / 2;
-  pool.position.y = 0.935;
-  Q.scene.add(floor, top, edge, stem, base, Q.core, pool);
-  Q.ray = new THREE.Raycaster();
-  Q.renderer.domElement.addEventListener("click", onClick);
-  resize();
-}
-
-// Frame the whole ring of seats (plus their marks) inside the host, whatever
-// its aspect: a fixed camera cropped the front seats and shrank the back ones.
-function frame() {
-  const w = Q.host.clientWidth || 600, h = Q.host.clientHeight || 420;
-  Q.cam.aspect = w / h;
-  const elev = 0.82;  // radians above the table: steep enough that seats never hide each other
-  const target = new THREE.Vector3(0, 0.55, 0);
-  let d = 12;
-  const pts = [];
-  for (let i = 0; i < 24; i++) {
-    const a = (i / 24) * Math.PI * 2;
-    pts.push(new THREE.Vector3(Math.cos(a) * (SEAT_R + 0.45), 0, Math.sin(a) * (SEAT_R + 0.45)));
-    pts.push(new THREE.Vector3(Math.cos(a) * (SEAT_R + 0.2), 1.75, Math.sin(a) * (SEAT_R + 0.2)));
-  }
-  for (let pass = 0; pass < 4; pass++) {
-    Q.cam.position.set(0, target.y + Math.sin(elev) * d, Math.cos(elev) * d);
-    Q.cam.lookAt(target);
-    Q.cam.updateProjectionMatrix();
-    Q.cam.updateMatrixWorld();
-    let m = 0;
-    pts.forEach((p) => {
-      const v = p.clone().project(Q.cam);
-      m = Math.max(m, Math.abs(v.x), Math.abs(v.y) * 1.08);  // a little headroom for the tags
-    });
-    d *= m / 0.92;
-  }
-  // Fog relative to where the camera ended up: a fixed range swallowed the back seats.
-  Q.scene.fog.near = d + 3.5;
-  Q.scene.fog.far = d + 11;
-}
-
-function resize() {
-  if (!Q.flat && Q.renderer) {
-    const w = Q.host.clientWidth || 600, h = Q.host.clientHeight || 420;
-    Q.renderer.setSize(w, h);
-    frame();
-    draw();
-  }
-  if (Q.names.length) placeTags();
-}
-
-// One member's seat: a low pedestal at the rim and the member's mark above it,
-// a smooth sphere in the vendor colour for an agent, a faceted stone for a
-// person. A thin ring under the mark carries the status colour. Name, model
-// and status are HTML tags.
-function seat(name, vendor) {
-  const P = palette();
-  const g = new THREE.Group();
-  const col = vendor ? VENDOR[vendor][0] : HUMAN;
-  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 0.12, 48),
-    mat(P.seat, { roughness: 0.7 }));
-  pedestal.position.y = 0.06;
-  pedestal.castShadow = pedestal.receiveShadow = true;
-  const mark = vendor
-    ? new THREE.Mesh(new THREE.SphereGeometry(0.26, 48, 32), new THREE.MeshPhysicalMaterial({
-        color: col, roughness: 0.32, metalness: 0.05, clearcoat: 0.7, clearcoatRoughness: 0.25,
-        emissive: col, emissiveIntensity: 0 }))
-    : new THREE.Mesh(new THREE.IcosahedronGeometry(0.27, 0), new THREE.MeshPhysicalMaterial({
-        color: col, roughness: 0.28, metalness: 0.2, flatShading: true,
-        emissive: col, emissiveIntensity: 0 }));
-  mark.position.y = 0.62;
-  mark.castShadow = true;
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.02, 10, 72),
-    new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0 }));
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.135;
-  g.add(pedestal, mark, ring);
-  g.userData = { name, vendor, mark, ring, angle: 0, state: "" };
-  g.traverse((o) => { o.userData.seat = name; });
-  Q.scene.add(g);
-  return g;
 }
 
 // Who gets a seat: present members only. An agent is present when the relay
@@ -247,13 +87,13 @@ function layout(names) {
   names.forEach(tagFor);
   if (Q.flat) return;
   [...Q.seats.keys()].forEach((n) => {
-    if (!names.includes(n)) { Q.scene.remove(Q.seats.get(n)); Q.seats.delete(n); }
+    if (!names.includes(n)) { Q.T.disposeTotem(Q.seats.get(n), Q.stage); Q.seats.delete(n); }
   });
   names.forEach((n, i) => {
-    const s = Q.seats.get(n) || seat(n, vendorOf(n));
-    Q.seats.set(n, s);
+    let s = Q.seats.get(n);
+    if (!s) { s = Q.T.makeTotem(n, vendorOf(n), colourOf(n), Q.P); Q.stage.add(s, true); Q.seats.set(n, s); }
     const a = (i / names.length) * Math.PI * 2 + Math.PI / 2;
-    s.position.set(Math.cos(a) * SEAT_R, 0, Math.sin(a) * SEAT_R);
+    s.position.set(Math.cos(a) * Q.seatR, 0, Math.sin(a) * Q.seatR);
     s.userData.angle = a;
   });
 }
@@ -288,17 +128,12 @@ function apply(rows) {
       + ", " + (t.children[2].textContent || state));
   });
   if (Q.flat) return;
-  Q.seats.forEach((s, name) => {
-    const u = s.userData;
-    u.state = stateOf(byName.get(name));
-    u.ring.material.color.set(u.state === "stuck" ? TOMATO : u.state === "busy"
-      ? cssVar("--accent", "#3cc7a2") : AMBER);
-  });
+  Q.seats.forEach((s, name) => { s.userData.state = stateOf(byName.get(name)); });
 }
 
-// Tags follow their seats in screen space; the camera only moves on resize, so
-// this runs on layout and resize only. Then nudge any tag that overlaps one
-// placed before it, front seats first (they're nearest, so they keep their spot).
+// Plaques follow their marks in screen space, every frame while the camera drifts.
+// Then nudge any plaque that overlaps one placed before it, front seats first
+// (they're nearest, so they keep their spot).
 function placeTags() {
   if (Q.flat) {  // phones: the seats as a grid of cards, whoever needs you first
     const rank = new Map(Q.rows.map((r) => [r.name, r.rank]));
@@ -307,13 +142,15 @@ function placeTags() {
     return;
   }
   const w = Q.host.clientWidth, h = Q.host.clientHeight;
-  const spots = Q.names.map((name) => {
-    const v = Q.seats.get(name).position.clone().setY(1.05).project(Q.cam);
-    const t = Q.tags.get(name);
-    return { t, x: (v.x + 1) / 2 * w, y: (1 - v.y) / 2 * h, tw: t.offsetWidth, th: t.offsetHeight };
+  const spots = Q.names.filter((n) => Q.seats.has(n)).map((name) => {
+    const s = Q.seats.get(name), t = Q.tags.get(name);
+    const p = Q.stage.project(s.position.clone().setY(1.18));
+    return { t, x: p.x, y: p.y, tw: t.offsetWidth, th: t.offsetHeight, behind: p.behind };
   }).sort((a, b) => b.y - a.y);
   const placed = [];
   spots.forEach((p) => {
+    p.t.hidden = p.behind;
+    if (p.behind) return;
     const left = Math.max(4, Math.min(w - p.tw - 4, p.x - p.tw / 2));
     const clash = (top) => placed.find((q) => left < q.left + q.tw + 4
       && left + p.tw + 4 > q.left && top < q.top + q.th + 4 && top + p.th + 4 > q.top);
@@ -354,125 +191,67 @@ function events(history) {
   const first = Q.seen.size === 0;
   history.forEach((m) => m.id && Q.seen.add(m.id));
   if (first) return;  // don't replay the whole room on open
+  const now = performance.now();
   fresh.forEach((m) => {
     const from = Q.seats.get(m.from_name);
-    pulse();
-    if (!from) return;
+    Q.stage.pulse(0.6);
+    if (!from || reduceMotion) return;
     const body = m.content || "";
     if (m.message_type === "social") {
       try {
         const sv = JSON.parse(body);
         const to = Q.seats.get(((sv.payload || {}).to) || "");
-        if (sv.verb === "defer" && to) fly(from, to, AMBER, "orb");
+        if (sv.verb === "defer" && to) Q.stage.effect(Q.T.arc(Q.stage, from.position, to.position, [Q.T.AMBER], now));
       } catch (e) { /* not a verb */ }
       return;
     }
-    // A publish lands in the room's core: a ripple across the table, not a tower.
-    if (PUBLISHED.test(body)) ripple(VENDOR[from.userData.vendor || "opencode"][0]);
+    if (PUBLISHED.test(body)) Q.stage.effect(Q.T.burst(Q.stage, from.position, colourOf(m.from_name), now));
+    const review = OK.test(body) || BLOCK.test(body);
     (body.match(/@[\w-]+/g) || []).forEach((tag) => {
       const to = Q.seats.get(tag.slice(1));
-      if (to && to !== from) fly(from, to, cssVar("--accent", "#3cc7a2"), "arc");
+      if (!to || to === from) return;
+      // A review braids both members' colours; a plain mention is the sender's.
+      const colors = review ? [colourOf(m.from_name), colourOf(tag.slice(1))] : [colourOf(m.from_name)];
+      Q.stage.effect(Q.T.arc(Q.stage, from.position, to.position, colors, now));
     });
   });
 }
 
-function pulse() { Q.lastEvent = performance.now(); Q.pulse = 1; }
-
-function fly(from, to, color, kind) {
-  if (reduceMotion) return;
-  const a = from.position.clone().setY(0.75);
-  const b = to.position.clone().setY(0.75);
-  const m = new THREE.Mesh(new THREE.SphereGeometry(kind === "orb" ? 0.1 : 0.05, 16, 12),
-    new THREE.MeshBasicMaterial({ color }));
-  m.position.copy(a);
-  Q.scene.add(m);
-  Q.fx.push({ m, a, b, t0: performance.now(), dur: kind === "arc" ? 900 : 1400, kind });
-  Q.lastEvent = performance.now();
+function onFrame(t, dt) {
+  const accent = cssVar("--accent", "#3cc7a2");
+  Q.seats.forEach((s) => Q.T.updateTotem(s, t, dt, reduceMotion, accent, Q.stage));
+  placeTags();
 }
 
-function ripple(color) {
-  pulse();
-  if (reduceMotion) return;
-  const m = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.015, 8, 120),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7 }));
-  m.rotation.x = Math.PI / 2;
-  m.position.y = 0.95;
-  Q.scene.add(m);
-  Q.fx.push({ m, t0: performance.now(), dur: 1600, kind: "ripple" });
-}
-
-function step(now) {
-  const t = now / 1000;
-  Q.pulse = Math.max(0, Q.pulse - 0.03);
-  Q.core.material.emissiveIntensity = 1.1 + (reduceMotion ? 0.4 : 1.4) * Q.pulse;
-  Q.glow.intensity = 5 + 10 * Q.pulse;
-  const wave = reduceMotion ? 0 : 1;  // reduced motion: same poses, nothing oscillates
-  Q.seats.forEach((s) => {
-    const u = s.userData, mk = u.mark, ring = u.ring.material;
-    const resting = u.state === "asleep" || u.state === "pacing";
-    mk.position.y = resting ? 0.5 : 0.62 + wave * (u.state === "busy"
-      ? Math.sin(t * 2.2 + u.angle) * 0.03 : 0);
-    mk.scale.setScalar(resting ? 0.86 : 1);
-    mk.material.emissiveIntensity = u.state === "busy" ? 0.28 + wave * 0.18 * Math.sin(t * 2.2 + u.angle)
-      : u.state === "needs" ? 0.2 : resting ? 0 : 0.06;
-    ring.opacity = u.state === "needs" ? 0.75 + wave * 0.25 * Math.sin(t * 4)
-      : u.state === "stuck" ? 0.7 : u.state === "busy" ? 0.35 + wave * 0.15 * Math.sin(t * 2.2 + u.angle) : 0;
-  });
-  Q.fx = Q.fx.filter((f) => {
-    const k = Math.min(1, (now - f.t0) / f.dur);
-    if (f.kind === "ripple") {
-      const s = 1 + k * (R / 0.72 - 1);
-      f.m.scale.set(s, s, 1);
-      f.m.material.opacity = 0.7 * (1 - k);
-    } else {
-      f.m.position.lerpVectors(f.a, f.b, k);
-      f.m.position.y += Math.sin(k * Math.PI) * (f.kind === "arc" ? 1.0 : 0.7);
-    }
-    if (k < 1) return true;
-    Q.scene.remove(f.m);
-    f.m.geometry.dispose();
-    return false;
-  });
-}
-
-function draw() { if (Q.renderer) Q.renderer.render(Q.scene, Q.cam); }
-
-function loop(now) {
-  if (!Q.on || document.hidden) { Q.raf = 0; return; }
-  const busy = Q.fx.length || now - Q.lastEvent < 1500;
-  const every = reduceMotion ? 1000 : busy ? 33 : 120;  // ~30 fps while moving, ~8 idle
-  if (now - Q.last >= every) { Q.last = now; step(now); draw(); }
-  Q.raf = requestAnimationFrame(loop);
-}
-
-function onClick(ev) {
-  const r = Q.renderer.domElement.getBoundingClientRect();
-  const p = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1,
-                              -((ev.clientY - r.top) / r.height) * 2 + 1);
-  Q.ray.setFromCamera(p, Q.cam);
-  const hit = Q.ray.intersectObjects(Q.scene.children, true).find((h) => h.object.userData.seat);
-  openCard(hit ? hit.object.userData.seat : "");
-}
-
-function openCard(name) {
+// A seat's card is the board's own row, on frosted glass; the camera dollies in.
+function pick(name) {
   const card = document.getElementById("quorumCard");
   card.replaceChildren();
   const row = name && Q.rows.find((x) => x.name === name);
-  if (!row || !window.QuorusBoard) { card.hidden = true; return; }
+  const seat = name && Q.seats.get(name);
+  if (!row || !window.QuorusBoard) {
+    card.hidden = true;
+    if (Q.stage) { Q.stage.focus(null); if (reduceMotion) Q.stage.once(); }
+    return;
+  }
   card.append(window.QuorusBoard.rowEl(row));  // the board's own card, same actions
   card.hidden = false;
+  if (Q.stage && seat) { Q.stage.focus(seat.position); if (reduceMotion) Q.stage.once(); }
 }
 
-// Two row events can arrive while three.js is still downloading; both must wait
+// Two row events can arrive while the stage is still downloading; both must wait
 // for the one build, or the scene is built twice (two canvases, seen in the sandbox).
 function start(host) {
   if (!Q.starting) Q.starting = boot(host);
-  return Q.starting.then(() => { Q.on = true; startLoop(); });
+  return Q.starting.then(() => { Q.on = true; });
 }
 
 async function boot(host) {
   layer(host);
-  if (!Q.host) { Q.host = host; new ResizeObserver(resize).observe(host); }
+  if (!Q.host) {
+    Q.host = host;
+    new ResizeObserver(() => { if (Q.stage) Q.stage.resize(); if (Q.names.length) placeTags(); }).observe(host);
+  }
   // A host measured at 0 isn't narrow, it isn't laid out yet: the resize observer sizes it.
   const narrow = host.clientWidth > 0 && host.clientWidth < NARROW;
   if (phone.matches || narrow) {
@@ -480,25 +259,21 @@ async function boot(host) {
     return goFlat(host);
   }
   try {
-    if (!THREE) THREE = await import("/vendor/three.module.min.js");
-    build(host);
+    const [S, T] = await Promise.all([import("/quorum-stage.js"), import("/quorum-totems.js")]);
+    Q.T = T;
+    Q.seatR = S.SEAT_R;
+    Q.P = S.palette(darkScheme.matches, cssVar("--accent", "#3cc7a2"), cssVar("--bg", "#0f1412"));
+    Q.stage = S.create(host, Q.P, { onFrame, onPick: pick, reduceMotion });
   } catch (err) {  // no WebGL (or the library failed): the flat table still works
     Q.flatReason = String(err && err.message || err);
     console.error("quorum: 3D view unavailable", err);
     return goFlat(host);
   }
-  Q.on = true;
-  startLoop();
 }
 
 function goFlat(host) {
   Q.flat = true;
-  Q.on = true;
   host.classList.add("flat");
-}
-
-function startLoop() {
-  if (!Q.flat && !Q.raf) Q.raf = requestAnimationFrame(loop);
 }
 
 document.addEventListener("quorus:rows", (e) => {
@@ -514,17 +289,18 @@ document.addEventListener("quorus:rows", (e) => {
     events(history);
     notes();
     placeTags();
-    if (!Q.flat) draw();
+    // Reduced motion: a static premium still, redrawn only when the data changes.
+    if (!Q.flat) { if (reduceMotion) Q.stage.once(); else Q.stage.start(); }
   }).catch((err) => {  // never a blank panel: say what failed
     host.replaceChildren(Object.assign(document.createElement("p"),
       { className: "hint", textContent: "The Quorum view failed: " + err.message
         + " " + (err.stack || "").split("\n").slice(0, 3).join(" | ") }));
   });
 });
-document.addEventListener("quorus:quorum-off", () => { Q.on = false; });
+document.addEventListener("quorus:quorum-off", () => { Q.on = false; if (Q.stage) Q.stage.stop(); });
 document.addEventListener("keydown", (e) => {  // Esc closes a seat's card
-  if (e.key === "Escape") document.getElementById("quorumCard").hidden = true;
+  if (e.key === "Escape") pick("");
 });
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && Q.on && !Q.raf) Q.raf = requestAnimationFrame(loop);
+  if (!document.hidden && Q.on && Q.stage && !reduceMotion) Q.stage.start();
 });
