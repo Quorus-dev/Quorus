@@ -24,6 +24,23 @@ jobs:
       - name: Run ruff
         run: uvx ruff check .
 
+  public-tree:
+    # Dev notes live on weekend/* and in the private repo, never on a public
+    # branch (they reached main once; 76a56aea moved them out).
+    name: No dev notes on public branches
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse internal paths
+        run: |
+          bad=$(git ls-files docs/internal docs/weekend docs/superpowers graphify-out)
+          if [ -n "$bad" ]; then
+            echo "::error::dev notes are tracked on a public branch:"
+            echo "$bad"
+            exit 1
+          fi
+
   test:
     name: Tests / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
