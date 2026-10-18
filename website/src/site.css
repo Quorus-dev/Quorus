@@ -271,6 +271,30 @@ footer .row {
 footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
 footer nav a { color: var(--muted); }
 footer nav a:hover { color: var(--text); }
+footer .built { margin: 0; flex: 1 1 100%; color: var(--text); }
+footer .built a { color: var(--accent-2); text-decoration: none; }
+footer .built a:hover { text-decoration: underline; }
+
+/* ---- get started: three numbered steps, each with a copyable command ---- */
+.steps { list-style: none; margin: 28px 0 0; padding: 0; display: grid; gap: 22px; counter-reset: none; }
+.steps li {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 16px; align-items: start;
+  padding: 22px 22px 18px; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--line);
+}
+.steps .num {
+  width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 700; font-size: 0.95rem; color: var(--accent-ink); background: var(--gradient);
+  box-shadow: 0 0 18px rgba(63, 210, 176, 0.35);
+}
+.steps h3 { margin: 4px 0 12px; font-size: 1.15rem; letter-spacing: -0.01em; font-weight: 700; }
+.steps .cmd { display: flex; flex-wrap: wrap; max-width: 100%; }
+.steps .cmd code { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 0.98rem; }
+.steps .small { margin: 12px 0 0; }
+@media (max-width: 719px) {
+  .steps li { grid-template-columns: 1fr; padding: 18px; }
+  .steps .num { width: 30px; height: 30px; font-size: 0.85rem; }
+}
 .version { font: 0.85rem var(--mono); color: var(--text); background: var(--code); padding: 2px 8px; border-radius: 6px; }
 
 /* ---- reveal on scroll: transform/opacity only; off without JS or under reduced motion ---- */

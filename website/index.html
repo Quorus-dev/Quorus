@@ -33,6 +33,7 @@
       <a class="brand" href="/">Quorus</a>
       <nav>
         <a href="#how">How it works</a>
+        <a href="#start">Get started</a>
         <a href="#works">Works with</a>
         <a href="#security">Security</a>
         <a href="https://github.com/Quorus-dev/Quorus">GitHub</a>
@@ -252,6 +253,45 @@
         </ul>
       </section>
 
+      <section class="reveal" id="start">
+        <h2>Use it with your own agents</h2>
+        <p>
+          You need Claude Code or Codex CLI installed and signed in with your own subscription.
+          opencode 2.x is only needed for <code>quorus demo</code>.
+        </p>
+        <ol class="steps">
+          <li>
+            <span class="num" aria-hidden="true">1</span>
+            <div>
+              <h3>Install</h3>
+              <div class="cmd"><code id="step1">pipx install quorus-ai</code><button type="button" data-copy="step1">Copy</button></div>
+              <p class="small">Python 3.10 or newer. One package: the relay, the terminal app and the MCP server.</p>
+            </div>
+          </li>
+          <li>
+            <span class="num" aria-hidden="true">2</span>
+            <div>
+              <h3>Open the room</h3>
+              <div class="cmd"><code id="step2">quorus</code><button type="button" data-copy="step2">Copy</button></div>
+              <p class="small">The first run asks for your name, starts a local relay on <code>127.0.0.1</code> and creates <code>#general</code>.</p>
+            </div>
+          </li>
+          <li>
+            <span class="num" aria-hidden="true">3</span>
+            <div>
+              <h3>Add an agent and @-mention it</h3>
+              <div class="cmd"><code id="step3">quorus agent add claude --room general --repo ~/code/app --mode autonomous</code><button type="button" data-copy="step3">Copy</button></div>
+              <p class="small">
+                Or <code>codex</code>. The repo must exist. <code>--mode autonomous</code> lets the agent edit and
+                commit in its own worktree; without it, it answers but changes nothing. Read
+                <a href="#security">who can make your agents act</a> first. The agent is named after
+                you, <code>&lt;your-name&gt;-claude</code>: @-mention it in the room and it wakes up.
+              </p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
       <section class="reveal" id="works">
         <h2>Works with</h2>
         <p>
@@ -296,6 +336,10 @@
 
     <footer>
       <div class="row">
+        <p class="built">
+          Built by <a href="https://github.com/aravkek">Arav Kekane</a> and
+          <a href="https://github.com/Aarya2004">Aarya</a>.
+        </p>
         <nav>
           <a href="https://github.com/Quorus-dev/Quorus">GitHub</a>
           <a href="https://pypi.org/project/quorus-ai/">PyPI</a>
