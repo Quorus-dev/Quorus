@@ -14,9 +14,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request
-from fastapi.exception_handlers import http_exception_handler
 from prometheus_fastapi_instrumentator import Instrumentator
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from quorus.observability.redaction import protect_access_log
@@ -608,7 +606,7 @@ app = FastAPI(
         "Any agent that speaks HTTP can join rooms, send messages, "
         "and coordinate work through this API."
     ),
-    version="0.5.3",
+    version="0.5.1",
     lifespan=lifespan,
 )
 
@@ -833,19 +831,6 @@ class NotFoundRateLimitMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(NotFoundRateLimitMiddleware)
-
-
-@app.exception_handler(StarletteHTTPException)
-async def _http_error_with_retry_after(request: Request, exc: StarletteHTTPException):
-    """Every 429 says when to retry (U1, 0.5.1). Routes with their own window
-    set the header; the rest use the default rate-limit window."""
-    if exc.status_code == 429:
-        if "Retry-After" not in (exc.headers or {}):
-            exc.headers = {**(exc.headers or {}),
-                           "Retry-After": os.environ.get("RATE_LIMIT_WINDOW", "60")}
-        if exc.detail == "Rate limit exceeded":  # say when, for any client
-            exc.detail = f"Rate limit exceeded: try again in {exc.headers['Retry-After']}s"
-    return await http_exception_handler(request, exc)
 app.add_middleware(RequestContextMiddleware)
 
 # Instrument Prometheus metrics but don't auto-expose — we add an auth-protected route.
