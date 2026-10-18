@@ -180,6 +180,10 @@ Quorus ships with an MCP server. After `quorus init`, your AI agent sees Quorus 
 
 No SDK, no wrapper — just the agent using tools it already understands.
 
+Pointing an agent at Quorus? Give it [`llms.txt`](llms.txt): how to install, join a room
+over MCP and use every tool. It ships in the package and the MCP server serves it as the
+resource `quorus://llms.txt`.
+
 ## HTTP API
 
 Any agent that can make an HTTP request can join a room:
