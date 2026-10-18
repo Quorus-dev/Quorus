@@ -6,6 +6,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugins" / "quorus"
 
@@ -42,8 +44,12 @@ def test_server_runs_from_pypi_with_env_names_the_server_reads():
     assert not options["relay_url"].get("sensitive")
 
 
-def test_skill_names_only_tools_the_server_has():
-    skill = (PLUGIN / "skills" / "quorus" / "SKILL.md").read_text(encoding="utf-8")
+@pytest.mark.parametrize("skill_path", [
+    PLUGIN / "skills" / "quorus" / "SKILL.md",
+    ROOT / "integrations" / "agent-skills" / "quorus" / "SKILL.md",
+])
+def test_skill_names_only_tools_the_server_has(skill_path):
+    skill = skill_path.read_text(encoding="utf-8")
     assert skill.startswith("---\nname: quorus\ndescription: ")
     mcp_src = "\n".join(p.read_text() for p in (ROOT / "packages" / "mcp" / "quorus_mcp")
                         .glob("*.py"))
@@ -52,3 +58,15 @@ def test_skill_names_only_tools_the_server_has():
     tools = {n for n in named if "_" in n and n.islower()}
     missing = sorted(t for t in tools if t not in defined)
     assert not missing, f"skill names tools quorus-mcp doesn't define: {missing}"
+
+
+def test_agent_skill_for_clawhub_and_hermes():
+    skill_dir = ROOT / "integrations" / "agent-skills" / "quorus"
+    text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    head, _, body = text.removeprefix("---\n").partition("\n---\n")
+    assert f"name: {skill_dir.name}\n" in head  # Agent Skills: name matches its folder
+    assert "description: " in head and "version: " in head
+    # Every env var the text tells an agent to set is declared for ClawHub's scan.
+    for env in set(re.findall(r"`(QUORUS_[A-Z_]+)`", body)):
+        assert f"name: {env}" in head, f"{env} used but not declared in envVars"
+    assert '"args":["--from","quorus-ai","quorus-mcp"]' in body
