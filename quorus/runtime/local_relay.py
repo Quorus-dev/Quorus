@@ -69,9 +69,11 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
            "MESSAGES_FILE": str(cfg / "relay-state.json"), "LOG_LEVEL": "WARNING"}
     log = (cfg / "relay.log").open("ab")
     try:
-        subprocess.Popen([sys.executable, "-m", "quorus.relay_cli"], env=env, stdout=log,
-                         stderr=log, stdin=subprocess.DEVNULL, start_new_session=True,
-                         cwd=str(Path.home()))
+        proc = subprocess.Popen([sys.executable, "-m", "quorus.relay_cli"], env=env,
+                                stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                                start_new_session=True, cwd=str(Path.home()))
+        # So `quorus relay --replace` can stop exactly this relay, and nothing else.
+        (cfg / "relay.pid").write_text(f"{proc.pid} {parsed.port or 8080}\n")
     except OSError as exc:
         return False, f"couldn't start the local relay ({exc}); run `quorus relay` yourself"
     for _ in range(40):
@@ -79,3 +81,40 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
             return True, f"started your local relay (log: {cfg / 'relay.log'})"
         time.sleep(0.25)
     return False, f"the local relay didn't start — see {cfg / 'relay.log'}"
+
+
+def stop_started_relay(port: int, timeout: float = 5.0) -> bool:
+    """Stop the detached relay that `quorus` started on *port* (its pid file), if
+    that process is still a Quorus relay. Returns True once nothing answers there.
+    Never touches a relay this module didn't start."""
+    import signal
+
+    pid_file = resolve_config_dir() / "relay.pid"
+    try:
+        pid_s, port_s = pid_file.read_text().split()
+        pid, started_port = int(pid_s), int(port_s)
+    except (OSError, ValueError):
+        return False
+    if started_port != port or not _is_quorus_relay(pid):
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    url = f"http://127.0.0.1:{port}"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _healthy(url, 0.3):
+            pid_file.unlink(missing_ok=True)
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def _is_quorus_relay(pid: int) -> bool:
+    try:
+        out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True,
+                             text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "quorus.relay_cli" in out

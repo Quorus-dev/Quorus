@@ -49,6 +49,10 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- `quorus relay --host 0.0.0.0` started a second relay next to the one your first `quorus` run
+  started on 127.0.0.1:8080: on macOS both bound the port and wrote the same state file, and on
+  Linux it failed to start. It now refuses while a relay answers on that port, and `--replace`
+  stops the one `quorus` started (and only that one) first.
 - The first run ended on the hub home with no room open, so the first thing a new user typed
   went nowhere. It now lands inside #general, or the room the invite was for. On the home
   view, Enter opens a room, text goes to the only room if there's just one, and with several
