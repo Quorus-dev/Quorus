@@ -183,7 +183,8 @@ def test_premium_stage_is_ours_and_studio_grade() -> None:
     for needle in ('vendor === "claude"', 'vendor === "codex"', 'vendor === "gemini"',
                    'vendor === "cursor"', 'vendor === "opencode"', 'vendor === "cline"',
                    "function robot(", "function person(", "CapsuleGeometry", "visor",
-                   "function badgeTexture(", "export function makeAgent(", "export function updateAgent("):
+                   "function badgeTexture(", "export function makeAgent(",
+                   "export function updateAgent("):
         assert needle in cast, needle
     assert "monolith" in stage and "Q.pillar" not in entry and "Q.T.makeAgent(" in entry
     for name in OURS:  # nothing borrowed: no images, no mascots, no logo files
