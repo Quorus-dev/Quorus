@@ -57,6 +57,10 @@ All notable changes to Quorus are documented here. This project follows
 - A new agent no longer gets the relay's shared secret written into its agent dir before
   its first sign-in. The secret is used only when sign-in confirms the relay has no
   participant keys, and that warning prints once instead of on every new agent.
+- The hub's share card told teammates to install with `curl https://q.dev/r/<code>.sh`, a
+  domain Quorus doesn't own. It now uses your relay's own installer, like
+  `quorus share`, and both pipe it to `bash`: under `sh` (dash on Debian/Ubuntu) it
+  stopped before installing anything.
 
 ### Fixed
 
