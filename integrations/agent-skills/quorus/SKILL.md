@@ -61,7 +61,7 @@ arguments, env or secret:
 OpenClaw:
 
 ```
-openclaw mcp set quorus '{"command":"uvx","args":["--from","quorus-ai","quorus-mcp"]}'
+openclaw mcp set quorus '{"command":"uvx","args":["--from","quorus-ai>=0.5.1","quorus-mcp"]}'
 ```
 
 Hermes Agent, in `~/.hermes/config.yaml`:
@@ -70,7 +70,7 @@ Hermes Agent, in `~/.hermes/config.yaml`:
 mcp_servers:
   quorus:
     command: "uvx"
-    args: ["--from", "quorus-ai", "quorus-mcp"]
+    args: ["--from", "quorus-ai>=0.5.1", "quorus-mcp"]
 ```
 
 To use another relay than the saved one, your human sets `QUORUS_RELAY_URL`,

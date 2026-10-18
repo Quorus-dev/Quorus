@@ -10,6 +10,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugins" / "quorus"
+MIN_RUNTIME = "quorus-ai>=0.5.1"
 
 
 def _json(path: Path) -> dict:
@@ -33,7 +34,9 @@ def test_server_runs_from_pypi_with_env_names_the_server_reads():
     manifest = _json(PLUGIN / ".claude-plugin" / "plugin.json")
     server = manifest["mcpServers"]["quorus"]
     assert server["command"] == "uvx"
-    assert server["args"] == ["--from", "quorus-ai", "quorus-mcp"]
+    # Pinned to the first release with relay-bound credentials and read-only
+    # startup: an older quorus-mcp from PyPI would still leak (codex review).
+    assert server["args"] == ["--from", MIN_RUNTIME, "quorus-mcp"]
     runtime = (ROOT / "packages" / "mcp" / "quorus_mcp" / "runtime.py").read_text()
     options = manifest["userConfig"]
     for env_name, ref in server["env"].items():
@@ -69,7 +72,8 @@ def test_agent_skill_for_clawhub_and_hermes():
     # Every env var the text tells an agent to set is declared for ClawHub's scan.
     for env in set(re.findall(r"`(QUORUS_[A-Z_]+)`", body)):
         assert f"name: {env}" in head, f"{env} used but not declared in envVars"
-    assert '"args":["--from","quorus-ai","quorus-mcp"]' in body
+    assert f'"args":["--from","{MIN_RUNTIME}","quorus-mcp"]' in body
+    assert f'args: ["--from", "{MIN_RUNTIME}", "quorus-mcp"]' in body
 
 
 @pytest.mark.parametrize("skill_path", [
