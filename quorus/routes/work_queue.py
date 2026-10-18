@@ -27,7 +27,7 @@ from quorus.auth.policy import (
     evaluate_scoped,
     load_policy_for_tenant,
 )
-from quorus.routes.room_auth import require_room_member
+from quorus.routes.room_auth import require_room_member, require_room_writer
 from quorus.services.work_queue_svc import (
     ClaimRaceError,
     QuotaExceededError,
@@ -165,7 +165,7 @@ async def post_work_queue(
         raise HTTPException(status_code=401, detail="auth.sub required")
 
     tid = _tid(auth)
-    rid, room_data = await require_room_member(request, auth, tid, room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, room_id)
 
     actor = (body.actor or auth.sub or "").strip()
     if not actor:

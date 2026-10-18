@@ -14,6 +14,7 @@ from __future__ import annotations
 import hmac
 import os
 import re
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -35,6 +36,8 @@ class MintRequest(BaseModel):
     ttl_days: int = Field(default=1, ge=1, le=7)
     # Shared-secret relays: how many people one code admits (each redeem spends one).
     max_uses: int = Field(default=1, ge=1, le=20)
+    # "observer": may read the room but not change it (room_auth.require_room_writer).
+    role: Literal["member", "observer"] = "member"
 
 
 class MintResponse(BaseModel):
@@ -162,7 +165,7 @@ async def mint_code(
 
         code, _inv = await asyncio.to_thread(
             invite_codes.mint, _store(request), room_id=room_id, room_name=room_name,
-            role="member", issuer=auth.sub or "admin", ttl_s=req.ttl_days * 86400,
+            role=req.role, issuer=auth.sub or "admin", ttl_s=req.ttl_days * 86400,
             max_uses=req.max_uses)
         payload: dict = {"r": relay_url, "n": room_name, "c": code, "v": 2}
         invite_id: str | None = _inv.id
@@ -171,7 +174,7 @@ async def mint_code(
         # Same shape as `_encode_join_token`, so `quickjoin` decodes either path.
         invite_token = request.app.state.invite_service.create_token(
             tenant_id=tenant_id, room_id=room_id, issuer=auth.sub or "admin",
-            role="member", ttl=req.ttl_days * 86400)
+            role=req.role, ttl=req.ttl_days * 86400)
         payload = {"r": relay_url, "n": room_name, "t": tenant_id, "i": invite_token}
         invite_id = None
 

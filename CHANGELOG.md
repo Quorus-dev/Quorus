@@ -7,6 +7,10 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Added
 
+- Observer invites: `quorus share <room> --observer` admits someone who can read the room
+  (history, state, the live stream) but not post, DM agents, claim, lock, approve, upload or
+  change anything. The relay checks the room's current role on every write, so a downgrade,
+  kick or revoke applies to their next request, and a role in another room never counts.
 - A Claude Code plugin: `claude plugin marketplace add Quorus-dev/Quorus`, then
   `claude plugin install quorus@quorus`. It runs `quorus-mcp` with `uvx` and adds a
   Quorus skill; relay URL, name and secret are set in `/plugin` (secrets masked), and

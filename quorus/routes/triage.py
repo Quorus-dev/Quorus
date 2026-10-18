@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from quorus.auth.middleware import AuthContext, verify_auth
 from quorus.routes import triage_redis as _tr
-from quorus.routes.room_auth import require_room_member
+from quorus.routes.room_auth import require_room_writer
 
 router = APIRouter(prefix="/v1", tags=["triage"])
 _LEGACY_TENANT = "_legacy"
@@ -225,7 +225,7 @@ async def triage_message(
     auth: AuthContext = Depends(verify_auth),
 ):
     tid = _tid(auth)
-    rid, room_data = await require_room_member(request, auth, tid, body.room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, body.room_id)
     members = room_data.get("members", {})
     message_id = body.message_id or str(uuid.uuid4())
     action, candidates, reason = _classify(
@@ -269,7 +269,7 @@ async def submit_bid(
         raise HTTPException(status_code=403, detail="Cannot bid as another participant")
 
     tid = _tid(auth)
-    rid, _ = await require_room_member(request, auth, tid, body.room_id)
+    rid, _ = await require_room_writer(request, auth, tid, body.room_id)
 
     # R3: shared auction when Redis is configured — multi-worker /
     # multi-replica deploys elect exactly one winner. Falls through to the
@@ -331,7 +331,7 @@ async def claim_winner(
     auth: AuthContext = Depends(verify_auth),
 ):
     tid = _tid(auth)
-    rid, room_data = await require_room_member(request, auth, tid, body.room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, body.room_id)
 
     r = _tr.redis_or_none()
     if r is not None:
