@@ -2723,13 +2723,14 @@ class Reflexd:
             return False
         if triage.kind == "open_todo":
             # L2: this agent's own recent turns and kept/reverted commits
-            # scale the bid; the evidence rides in the reason.
+            # inform the bid (shadow by default: logged, not applied).
             try:
                 bid, bid_reason = _track.adjust_bid(
                     bid, bid_reason, message_id=message_id,
                     runtime_dir=self.config.runtime_dir,
                     participant=self.config.participant_name,
-                    repo=workspace_for(room) if room else None)
+                    repo=workspace_for(room) if room else None,
+                    harness=detect_harness(self.config.participant_name) or "")
             except Exception as exc:  # a bad track record must never stop a bid
                 logger.debug("track-record bid skipped: %s", exc)
         if self._wake_lock.locked() and triage.kind != "mention":
@@ -3276,8 +3277,8 @@ class Reflexd:
             _track.classify_turn(reply, vendor_failure=bool(vendor_failure),
                                  failure_reason=failure_reason or ""),
             kind=kind,
-            holdout=_track.is_holdout(envelope.get("message_id") or envelope.get("id") or "")
-            if kind == "open_todo" else None)
+            message_id=(envelope.get("message_id") or envelope.get("id") or "")
+            if kind == "open_todo" else "")
         previous_degraded = self._degraded_reason
         if vendor_failure:
             self._degraded_reason = vendor_failure.reason

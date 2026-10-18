@@ -1,23 +1,28 @@
-"""Track-record bids (L2): an agent's own outcomes scale its ``@open`` bid.
+"""Track-record bids (L2): an agent's own outcomes inform its ``@open`` bid.
 
-Two signals, both local to this machine and this user:
+Two kinds of evidence, both local to this machine and kept apart, because an
+agent that is out of quota is not one that writes bad code:
 
-* turns: how this agent's harness turns ended over the last 24h (clean,
-  errored, timed out, vendor failure), kept in the daemon's runtime dir;
-* ledger: its published commits on the room's bound repo (provenance git
-  notes) and how many of those were later reverted.
+* availability: how this agent's harness turns ended over the last 24h
+  (clean, errored, timed out, vendor failure such as quota);
+* quality: its published commits on the room's bound repo (provenance git
+  notes) and how many were later reverted. No label means unknown, not good.
 
-They combine into one Laplace-smoothed success rate ``s``, mapped to a
-multiplier between x0.5 and x1.3 that is exactly x1.0 with no evidence, so a
-new agent bids as it always did. The evidence goes in the bid reason, so the
-room can see why a bid moved.
+Each is a Laplace-smoothed rate mapped to a factor that is exactly x1.0 with no
+evidence; their product, clipped to x0.5-x1.3, is the multiplier.
 
-Holdout: about 10% of ``@open`` messages use raw bids. The pick is a hash of
-the message id, so every agent in an auction makes the same choice. Each turn
-records whether it came from a holdout ``@open``, which gives the metric:
-failed turns per ``@open`` win, routed vs holdout.
+Modes (``QUORUS_TRACK_BIDS``), stock behaviour first:
 
-``QUORUS_TRACK_BIDS=0`` turns it off.
+* ``shadow`` (default): bids stay raw. The would-be multiplier is logged and
+  shown in the bid reason, so we can test whether it predicts failed turns
+  before it is allowed to change who wins.
+* ``on``: the multiplier is applied, except on a holdout of about 10% of
+  ``@open``s picked by a hash of the message id (every bidder agrees).
+* ``off``: nothing is computed or logged.
+
+Every bid is logged before its outcome exists (arm, raw and would-be bid, both
+factors, harness), and every turn from an ``@open`` names its message, so
+:func:`report` can join them.
 """
 
 from __future__ import annotations
@@ -42,14 +47,20 @@ LEDGER_MAX_COMMITS = 300
 # Published-and-kept is weak evidence (unreviewed work is "kept" too) and grows
 # with volume, so it counts for at most this many good outcomes.
 LEDGER_KEPT_CAP = 10
-_MAX_TURNS = 500
+_MAX_ROWS = 500
 FAILED = ("errored", "timed_out", "vendor_failure")
 OUTCOMES = ("clean", *FAILED)
+MODES = ("off", "shadow", "on")
 _REVERTS = re.compile(r"This reverts commit ([0-9a-f]{7,40})")
 
 
-def enabled() -> bool:
-    return os.environ.get("QUORUS_TRACK_BIDS", "1").strip().lower() not in ("0", "off", "false")
+def mode() -> str:
+    raw = os.environ.get("QUORUS_TRACK_BIDS", "shadow").strip().lower()
+    if raw in ("0", "false", "no"):
+        return "off"
+    if raw in ("1", "true", "yes"):
+        return "on"
+    return raw if raw in MODES else "shadow"
 
 
 def is_holdout(message_id: str) -> bool:
@@ -69,40 +80,52 @@ def classify_turn(reply: str, *, vendor_failure: bool, failure_reason: str) -> s
     return "clean"
 
 
-# ── turns (this machine, last 24h) ───────────────────────────────────────
+# ── per-agent logs (this machine, last 24h) ──────────────────────────────
 
 
-def _turns_path(runtime_dir: Path, participant: str) -> Path:
-    return runtime_dir / f"track-{participant}.json"
+def _path(runtime_dir: Path, participant: str, log: str) -> Path:
+    return runtime_dir / f"track-{log}-{participant}.json"
 
 
-def load_turns(runtime_dir: Path, participant: str, now: float | None = None) -> list[dict]:
-    now = time.time() if now is None else now
+def _load(runtime_dir: Path, participant: str, log: str, now: float) -> list[dict]:
     try:
-        data = json.loads(_turns_path(runtime_dir, participant).read_text(encoding="utf-8"))
+        data = json.loads(_path(runtime_dir, participant, log).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     rows = data if isinstance(data, list) else []
     return [r for r in rows if isinstance(r, dict) and isinstance(r.get("ts"), (int, float))
-            and now - r["ts"] < WINDOW_S and r.get("outcome") in OUTCOMES]
+            and now - r["ts"] < WINDOW_S]
+
+
+def _append(runtime_dir: Path, participant: str, log: str, row: dict, now: float) -> None:
+    # One writer per file (each agent's own daemon); writes are atomic.
+    rows = _load(runtime_dir, participant, log, now) + [row]
+    try:
+        write_private_json(_path(runtime_dir, participant, log), rows[-_MAX_ROWS:])
+    except OSError:
+        pass  # best effort: bidding must never break a wake
+
+
+def load_turns(runtime_dir: Path, participant: str, now: float | None = None) -> list[dict]:
+    now = time.time() if now is None else now
+    return [r for r in _load(runtime_dir, participant, "turns", now)
+            if r.get("outcome") in OUTCOMES]
+
+
+def load_bids(runtime_dir: Path, participant: str, now: float | None = None) -> list[dict]:
+    return _load(runtime_dir, participant, "bids", time.time() if now is None else now)
 
 
 def record_turn(runtime_dir: Path, participant: str, outcome: str, *,
-                kind: str = "", holdout: bool | None = None,
-                now: float | None = None) -> None:
-    """Append one finished turn. Best effort: bidding must never break a wake."""
-    if outcome not in OUTCOMES:
+                kind: str = "", message_id: str = "", now: float | None = None) -> None:
+    """Append one finished turn; ``message_id`` links an ``@open`` win to its bid."""
+    if outcome not in OUTCOMES or mode() == "off":
         return
     now = time.time() if now is None else now
-    rows = load_turns(runtime_dir, participant, now)
     row: dict[str, Any] = {"ts": now, "outcome": outcome, "kind": kind}
-    if holdout is not None:
-        row["holdout"] = holdout
-    rows.append(row)
-    try:
-        write_private_json(_turns_path(runtime_dir, participant), rows[-_MAX_TURNS:])
-    except OSError:
-        pass
+    if message_id:
+        row["message_id"] = message_id
+    _append(runtime_dir, participant, "turns", row, now)
 
 
 # ── ledger (the bound repo's provenance notes) ───────────────────────────
@@ -159,69 +182,106 @@ def _read_ledger(repo: Path, participant: str) -> tuple[int, int]:
 # ── the multiplier ────────────────────────────────────────────────────────
 
 
+def _factor(good: int, bad: int) -> float:
+    s = (good + 1) / (good + bad + 2)  # Laplace: no evidence → 0.5 → x1.0
+    if s >= 0.5:
+        return 1.0 + (s - 0.5) / 0.5 * (MAX_MULT - 1.0)
+    return MIN_MULT + s / 0.5 * (1.0 - MIN_MULT)
+
+
 @dataclass(frozen=True)
 class Track:
     clean: int = 0
-    failed: int = 0
+    errored: int = 0
     timeouts: int = 0
+    vendor: int = 0
     kept: int = 0
     reverted: int = 0
 
     @property
+    def failed(self) -> int:
+        return self.errored + self.timeouts + self.vendor
+
+    @property
+    def has_evidence(self) -> bool:
+        return bool(self.clean or self.failed or self.kept or self.reverted)
+
+    @property
+    def availability(self) -> float:
+        return round(_factor(self.clean, self.failed), 2)
+
+    @property
+    def quality(self) -> float:
+        return round(_factor(min(self.kept, LEDGER_KEPT_CAP), self.reverted), 2)
+
+    @property
     def multiplier(self) -> float:
-        good = self.clean + min(self.kept, LEDGER_KEPT_CAP)
-        bad = self.failed + self.reverted
-        s = (good + 1) / (good + bad + 2)  # Laplace: no evidence → 0.5 → x1.0
-        if s >= 0.5:
-            m = 1.0 + (s - 0.5) / 0.5 * (MAX_MULT - 1.0)
-        else:
-            m = MIN_MULT + s / 0.5 * (1.0 - MIN_MULT)
-        return round(min(MAX_MULT, max(MIN_MULT, m)), 2)
+        return round(min(MAX_MULT, max(MIN_MULT, self.availability * self.quality)), 2)
 
     def reason(self) -> str:
-        parts = [f"{self.clean}✓ {self.failed}✗/24h"]
-        if self.timeouts:
-            parts.append(f"{self.timeouts} timeout{'s' if self.timeouts != 1 else ''}")
+        why = [f"{k} {n}" for k, n in (("timeout", self.timeouts), ("vendor", self.vendor),
+                                        ("error", self.errored)) if n]
+        avail = f"avail {self.clean}✓ {self.failed}✗/24h" + (f" ({', '.join(why)})"
+                                                            if why else "")
+        parts = [avail]
         if self.kept or self.reverted:
-            parts.append(f"ledger {self.kept} kept {self.reverted} reverted")
-        return f"track x{self.multiplier:.2f}: " + ", ".join(parts)
+            parts.append(f"quality {self.kept} kept {self.reverted} reverted")
+        return f"x{self.multiplier:.2f}: " + "; ".join(parts)
 
 
 def track_for(runtime_dir: Path, participant: str, repo: Path | None,
               now: float | None = None) -> Track:
     turns = load_turns(runtime_dir, participant, now)
     published, reverted = ledger_counts(repo, participant, now)
-    return Track(
-        clean=sum(1 for t in turns if t["outcome"] == "clean"),
-        failed=sum(1 for t in turns if t["outcome"] in FAILED),
-        timeouts=sum(1 for t in turns if t["outcome"] == "timed_out"),
-        kept=published - reverted, reverted=reverted,
-    )
+
+    def n(outcome: str) -> int:
+        return sum(1 for t in turns if t["outcome"] == outcome)
+
+    return Track(clean=n("clean"), errored=n("errored"), timeouts=n("timed_out"),
+                 vendor=n("vendor_failure"), kept=published - reverted, reverted=reverted)
 
 
 def adjust_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
-               participant: str, repo: Path | None,
+               participant: str, repo: Path | None, harness: str = "",
                floor: float = 0.05) -> tuple[float, str]:
-    """Scale an ``@open`` bid by this agent's track record (or leave it raw)."""
-    if not enabled():
+    """The ``@open`` bid to submit and its reason, per :func:`mode`."""
+    current = mode()
+    if current == "off":
         return bid, reason
     track = track_for(runtime_dir, participant, repo)
-    if not (track.clean or track.failed or track.kept or track.reverted):
+    if not track.has_evidence:
         return bid, reason  # no evidence yet: bid exactly as before
-    if is_holdout(message_id):
-        return bid, f"{reason}+holdout"
-    scaled = min(1.0, max(floor, bid * track.multiplier))
-    return scaled, f"{reason}+{track.reason()}"
+    would = min(1.0, max(floor, bid * track.multiplier))
+    arm = "shadow" if current == "shadow" else ("holdout" if is_holdout(message_id)
+                                                else "routed")
+    now = time.time()
+    _append(runtime_dir, participant, "bids", {
+        "ts": now, "message_id": message_id, "arm": arm, "raw": bid, "would": would,
+        "availability": track.availability, "quality": track.quality,
+        "multiplier": track.multiplier, "harness": harness}, now)
+    if arm == "routed":
+        return would, f"{reason}+track {track.reason()}"
+    return bid, f"{reason}+track({arm}) {track.reason()}"
 
 
 def report(runtime_dir: Path, participant: str, now: float | None = None) -> dict[str, Any]:
-    """The L2 metric for this agent: failed-turn rate after @open wins, by arm."""
-    arms: dict[str, dict[str, int]] = {"routed": {"turns": 0, "failed": 0},
-                                       "holdout": {"turns": 0, "failed": 0}}
+    """The L2 metrics for this agent's ``@open`` wins in the last 24h.
+
+    * ``arms``: failed-turn rate by arm (routed vs holdout; shadow is stock).
+    * ``predictive``: failed-turn rate when the would-be multiplier was below
+      x1.0 vs at or above it. If low multipliers don't predict failures, the
+      multiplier must not be switched on.
+    """
+    bids = {b.get("message_id"): b for b in load_bids(runtime_dir, participant, now)}
+    arms = {a: {"turns": 0, "failed": 0} for a in ("routed", "holdout", "shadow")}
+    predictive = {"low": {"turns": 0, "failed": 0}, "high": {"turns": 0, "failed": 0}}
     for t in load_turns(runtime_dir, participant, now):
-        if t.get("kind") != "open_todo" or "holdout" not in t:
+        bid = bids.get(t.get("message_id")) if t.get("kind") == "open_todo" else None
+        if not bid or bid.get("arm") not in arms:
             continue
-        arm = arms["holdout" if t["holdout"] else "routed"]
-        arm["turns"] += 1
-        arm["failed"] += t["outcome"] in FAILED
-    return arms
+        failed = t["outcome"] in FAILED
+        for bucket in (arms[bid["arm"]],
+                       predictive["low" if bid.get("multiplier", 1.0) < 1.0 else "high"]):
+            bucket["turns"] += 1
+            bucket["failed"] += failed
+    return {"arms": arms, "predictive": predictive}
