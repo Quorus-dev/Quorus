@@ -11,8 +11,10 @@ This helper gives them a write-through mirror + lazy hydrate:
   hiccup logs a warning and never fails the caller);
 * the first read of a bucket after process start hydrates it from Redis.
 
-No Redis configured → all three helpers are no-ops and the services behave
-exactly as before.
+No Redis configured → the same mirror goes to a stdlib SQLite file
+(``p1_sqlite``) next to the relay's other state, so a single-node relay keeps
+them across a restart too (memory slice 1). Redis stays the first choice when
+it is configured.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import time
 from typing import Any
 
 from quorus.backends.redis_client import get_redis_or_none
+from quorus.services import p1_sqlite
 
 logger = logging.getLogger("quorus.services.p1_persistence")
 
@@ -84,9 +87,23 @@ def _note_failure(op: str, ns_key: str, exc: BaseException) -> None:
     )
 
 
+async def _local(op: str, ns_key: str, fn, *args) -> tuple[Any, bool]:
+    """Run a blocking ``p1_sqlite`` call off the event loop. Returns
+    ``(result, ok)``: a corrupt store reads as empty and ok (the services run
+    in memory; it was logged once), a locked or failing one as not ok."""
+    try:
+        return await asyncio.to_thread(fn, ns_key, *args), True
+    except p1_sqlite.Unavailable:
+        return None, True
+    except Exception as exc:  # sqlite3 errors, a full disk, a bad mode
+        _note_failure(op, ns_key, exc)
+        return None, False
+
+
 async def mirror_set(ns_key: str, field: str, entry: dict[str, Any]) -> None:
     r = get_redis_or_none()
     if r is None:
+        await _local("set", ns_key, p1_sqlite.set_entry, field, entry)
         return
     try:
         async with _timeout(_OP_TIMEOUT_S):
@@ -101,6 +118,7 @@ async def mirror_set(ns_key: str, field: str, entry: dict[str, Any]) -> None:
 async def mirror_delete(ns_key: str, field: str) -> None:
     r = get_redis_or_none()
     if r is None:
+        await _local("delete", ns_key, p1_sqlite.delete_entry, field)
         return
     try:
         async with _timeout(_OP_TIMEOUT_S):
@@ -113,13 +131,14 @@ async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
     """Load a mirrored bucket.
 
     Returns ``(entries, ok)``. ``ok`` distinguishes "there is nothing to
-    load" (no Redis configured, or an empty hash — both fine, cache it)
+    load" (an empty bucket, or an unreadable SQLite file — both fine, cache it)
     from "we could not read" (transient error — the caller must NOT mark
     the bucket hydrated, or one blip serves empty state forever).
     """
     r = get_redis_or_none()
     if r is None:
-        return {}, True
+        stored, ok = await _local("hydrate", ns_key, p1_sqlite.load)
+        return (stored or {}), ok
     try:
         async with _timeout(_OP_TIMEOUT_S):
             raw = await r.hgetall(ns_key)
@@ -147,6 +166,7 @@ async def mirror_drop(ns_key: str) -> None:
     """Delete an entire mirrored bucket (used by service reset)."""
     r = get_redis_or_none()
     if r is None:
+        await _local("drop", ns_key, p1_sqlite.drop)
         return
     try:
         async with _timeout(_OP_TIMEOUT_S):

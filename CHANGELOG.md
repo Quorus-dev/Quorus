@@ -58,6 +58,11 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- Persistent memory, published capabilities and room tool catalogs survived a relay
+  restart only with Redis; a local relay forgot them all. Without Redis they now live in
+  `p1_state.db` next to the relay's other state (owner-only, 0600), deletes and resets
+  included. A corrupt file is logged once and the relay runs in memory; a locked one is
+  retried. `PersistentMemorySvc.reset()` also stopped raising a TypeError.
 - Esc on the / menu closed it but left the half-typed command, so typing `/help` next sent
   `/h/help`. Esc now drops it.
 - Pasting into the hub sent nothing until you pressed another key, and a pasted

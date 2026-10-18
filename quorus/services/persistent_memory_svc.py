@@ -233,7 +233,7 @@ class PersistentMemorySvc:
         mirrored entries came back on the next process start.
         """
         doomed = (
-            list(self._hydrated) if tid is None
+            self._hydrated.keys() if tid is None
             else [k for k in self._hydrated.keys() if k[0] == tid]
         )
         async with self._lock_factory_lock:
