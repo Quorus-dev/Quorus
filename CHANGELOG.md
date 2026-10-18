@@ -7,9 +7,6 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Added
 
-- Every `v*` tag now lists the release in the official MCP Registry from CI, after PyPI
-  has it: GitHub OIDC sign-in, so no token or manual `mcp-publisher` login.
-
 - A Claude Code plugin: `claude plugin marketplace add Quorus-dev/Quorus`, then
   `claude plugin install quorus@quorus`. It runs `quorus-mcp` with `uvx` and adds a
   Quorus skill; relay URL, name and secret are set in `/plugin` (secrets masked), and
@@ -54,16 +51,35 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Security
 
+- `quorus init`, `quorus join` and agent spawning wrote the relay secret in plaintext into
+  the MCP configs they create, including a world-readable `./.mcp.json` that projects
+  often commit. Those configs now hold no secret or key: `quorus-mcp` reads it from your
+  saved profile (mode 0600).
+- The hub's share card told teammates to install with `curl https://q.dev/r/<code>.sh`, a
+  domain Quorus doesn't own. It now uses your relay's own installer, like `quorus share`.
+  Both build the line only for an http(s) URL, shell-quote it so nothing in a relay URL
+  can run when pasted, and pipe it to `bash`: under `sh` (dash on Debian/Ubuntu) it
+  stopped before installing anything.
 - A new agent no longer gets the relay's shared secret written into its agent dir before
   its first sign-in. The secret is used only when sign-in confirms the relay has no
   participant keys, and that warning prints once instead of on every new agent.
-- The hub's share card told teammates to install with `curl https://q.dev/r/<code>.sh`, a
-  domain Quorus doesn't own. It now uses your relay's own installer, like
-  `quorus share`, and both pipe it to `bash`: under `sh` (dash on Debian/Ubuntu) it
-  stopped before installing anything.
+
+### Added
+
+- `quorus init --secret -` (or `--api-key -`) reads it from stdin, so it stays out of
+  shell history and `ps`. `llms.txt` and every setup hint now use it.
+- Every `v*` tag lists the release in the official MCP Registry from CI, after PyPI has
+  it: GitHub OIDC sign-in, so no token or manual `mcp-publisher` login.
 
 ### Fixed
 
+- Five MCP tools (`social_verb`, `publish_capability`, `lookup_capability`,
+  `search_capabilities`, `list_room_tools`) answered 403 "legacy auth not permitted" on a
+  shared-secret relay, the setup `llms.txt` teaches. `quorus-mcp` now claims the agent's
+  own participant key once and retries, and the 403 says what to set.
+- Agents set up by `quorus join` or spawned from the CLI got an MCP config that ran a
+  file the package never had, so they started with no room tools. They now run
+  `quorus-mcp`.
 - MCP tools could not send a message over 4 KB: the audit receipt carried the full text
   and the relay refuses audit records over 4 KB. Long fields are now receipted by their
   SHA-256 and size, so messages up to the room limit (50 KB) go through.
@@ -74,6 +90,11 @@ All notable changes to Quorus are documented here. This project follows
   limit, instead of the wake reporting the error. A paid model still reports it.
 - A redirected sign-in stops with a clear error ("the relay redirected the sign-in, so
   your key was not sent", exit 3) instead of a bare HTTP error.
+- `llms.txt` said to start the relay before `quorus init`, but the relay needs the secret
+  init saves. The MCP server's missing-credential error now says `quorus init`, as
+  `llms.txt` does, not `quorus login`.
+- `quorus doctor` listed a `~/.codex/config.toml` that didn't exist under "MCP config
+  found".
 
 ## [0.5.1] — 2026-10-18
 
