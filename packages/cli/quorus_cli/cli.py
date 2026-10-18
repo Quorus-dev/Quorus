@@ -5567,8 +5567,6 @@ def _cmd_join(args):
             hint="run [accent]quorus init <your-name>[/] first, or pass --name",
         )
         return
-    repo_dir = Path(__file__).resolve().parent.parent
-    quorus_dir = Path(__file__).resolve().parent
     config_dir = _config_dir()
     config_path = config_dir / "config.json"
 
@@ -5605,13 +5603,12 @@ def _cmd_join(args):
         if "mcpServers" not in claude_config:
             claude_config["mcpServers"] = {}
 
+        # quorus_cli/mcp_server.py never existed in the package: use the real server.
+        mcp_cmd, mcp_args = _mcp_server_command()
         claude_config["mcpServers"]["quorus"] = {
             "type": "stdio",
-            "command": "uv",
-            "args": [
-                "run", "--directory", str(repo_dir),
-                "python", str(quorus_dir / "mcp_server.py"),
-            ],
+            "command": mcp_cmd,
+            "args": mcp_args,
             "env": {},
         }
         claude_config_path.write_text(json.dumps(claude_config, indent=2))
@@ -6368,11 +6365,8 @@ def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
         "mcpServers": {
             "quorus": {
                 "type": "stdio",
-                "command": "uv",
-                "args": [
-                    "run", "--directory", str(quorus_dir.parent),
-                    "python", str(quorus_dir / "mcp_server.py"),
-                ],
+                "command": _mcp_server_command()[0],
+                "args": _mcp_server_command()[1],
                 # No RELAY_SECRET: the server reads it from the saved profile.
                 "env": {
                     "INSTANCE_NAME": name,
@@ -6793,11 +6787,8 @@ def _cmd_add_agent(args):
         "mcpServers": {
             "quorus": {
                 "type": "stdio",
-                "command": "uv",
-                "args": [
-                    "run", "--directory", str(quorus_dir.parent),
-                    "python", str(quorus_dir / "mcp_server.py"),
-                ],
+                "command": _mcp_server_command()[0],
+                "args": _mcp_server_command()[1],
                 # No RELAY_SECRET: the server reads it from the saved profile.
                 "env": {
                     "INSTANCE_NAME": name,
