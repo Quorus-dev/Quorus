@@ -49,6 +49,12 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [0.5.2] — 2026-10-18
 
+### Security
+
+- A new agent no longer gets the relay's shared secret written into its agent dir before
+  its first sign-in. The secret is used only when sign-in confirms the relay has no
+  participant keys, and that warning prints once instead of on every new agent.
+
 ### Fixed
 
 - MCP tools could not send a message over 4 KB: the audit receipt carried the full text
@@ -56,8 +62,31 @@ All notable changes to Quorus are documented here. This project follows
   SHA-256 and size, so messages up to the room limit (50 KB) go through.
 - MCP tool errors say why, like the CLI: the size limit, the name rule, or when to retry.
   The relay's 429 itself now says "try again in Ns", for any client.
+- A free opencode model that `opencode models` lists but the provider won't serve
+  ("Model unavailable") is cooled down and the next free model is tried, as for a rate
+  limit, instead of the wake reporting the error. A paid model still reports it.
+- A redirected sign-in stops with a clear error ("the relay redirected the sign-in, so
+  your key was not sent", exit 3) instead of a bare HTTP error.
 
 ## [0.5.1] — 2026-10-18
+
+### Security
+
+**Upgrade from 0.5.0.** In 0.5.0 a saved credential could be sent to a relay it wasn't
+saved for:
+
+- With relay A's key or secret saved and another relay named by `QUORUS_RELAY_URL`,
+  `RELAY_URL`, `REFLEXD_RELAY_URL` or `quorus join --relay`, `quorus-mcp`, the CLI and the
+  wake daemon sent A's credential to that relay. A saved credential now goes only to the
+  relay it was saved with; a mismatch sends nothing and says so. Credentials you pass
+  explicitly (env or flag) still work.
+- `quorus init` with a different relay kept the old relay's agent keys in the profile.
+  Switching relays now drops every relay-bound credential; the same relay keeps them.
+- Credential exchanges followed HTTP redirects, so a relay answering 307 could forward
+  your key to another host. They no longer follow redirects.
+
+Also: `quorus-mcp` and the wake daemon no longer rewrite your config files when they start;
+only explicit `quorus` commands migrate an old `config.json`.
 
 ### Upgrading
 
