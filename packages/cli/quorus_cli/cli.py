@@ -327,6 +327,16 @@ def _auth_headers() -> dict[str, str]:
                 timeout=10,
                 follow_redirects=False,
             )
+            if resp.is_redirect:
+                # A redirected sign-in would re-send the key in the body to
+                # wherever Location points (codex, c0a0a097): stop here.
+                from rich.markup import escape as _esc
+                _ui.error(
+                    "The relay redirected the sign-in, so your key was not sent",
+                    hint=f"it pointed to {_esc(resp.headers.get('location', '?')[:200])}; "
+                         "check the relay URL (quorus init)",
+                )
+                sys.exit(3)
             resp.raise_for_status()
             _cached_jwt = resp.json()["token"]
         return {"Authorization": f"Bearer {_cached_jwt}"}

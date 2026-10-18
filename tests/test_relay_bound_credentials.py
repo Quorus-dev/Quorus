@@ -314,9 +314,51 @@ def test_cli_token_exchange_never_follows_a_redirect_to_another_relay(monkeypatc
     monkeypatch.setattr(cli, "RELAY_URL", "https://relay-a.example")
     monkeypatch.setattr(cli, "API_KEY", KEY_A)
     monkeypatch.setattr(cli, "_cached_jwt", None)
-    with pytest.raises(httpx.HTTPStatusError, match="307"):
+    with pytest.raises(SystemExit) as exit_:
         cli._auth_headers()
+    assert exit_.value.code == 3
     assert seen_b == []  # A's key never reached B
+
+
+@pytest.mark.parametrize("argv", [["rooms"], ["say", "dev", "hi"], ["inbox"],
+                                  ["join", "--room", "dev"]])
+def test_commands_against_a_redirecting_relay_send_the_key_nowhere(monkeypatch, capsys,
+                                                                   argv):
+    """Arav's live check: relay A answers 307 → B for everything; B must get no key."""
+    import sys
+
+    from quorus_cli import cli
+
+    reached_b: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "relay-a.example":
+            return httpx.Response(307, headers={"location": "https://relay-b.example"
+                                                + request.url.path})
+        reached_b.append(f"{request.method} {request.url.path} "
+                         f"{request.headers.get('authorization', '')} {request.content!r}")
+        return httpx.Response(200, json={"token": "x", "rooms": [], "messages": []})
+
+    transport = httpx.MockTransport(handler)
+
+    def sync(method):
+        def call(url, **kw):
+            with httpx.Client(transport=transport) as c:
+                return c.request(method, url, **kw)
+        return call
+
+    monkeypatch.setattr(cli.httpx, "post", sync("POST"))
+    monkeypatch.setattr(cli.httpx, "get", sync("GET"))
+    monkeypatch.setattr(cli, "_get_client",
+                        lambda: httpx.AsyncClient(transport=transport, follow_redirects=True))
+    monkeypatch.setattr(cli, "RELAY_URL", "https://relay-a.example")
+    monkeypatch.setattr(cli, "API_KEY", KEY_A)
+    monkeypatch.setattr(cli, "RELAY_SECRET", "")
+    monkeypatch.setattr(cli, "_cached_jwt", None)
+    monkeypatch.setattr(sys, "argv", ["quorus", *argv])
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert not any(KEY_A in hit for hit in reached_b), reached_b
 
 
 def test_no_credential_post_follows_redirects():
