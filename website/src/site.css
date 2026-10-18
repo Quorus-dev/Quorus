@@ -11,7 +11,7 @@
 }
 
 * { box-sizing: border-box; }
-img { max-width: 100%; }
+img, video { max-width: 100%; }
 p, li, figcaption { overflow-wrap: anywhere; }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -25,6 +25,7 @@ body {
 
 a { color: var(--accent); text-decoration: none; }
 a:hover, a:focus-visible { text-decoration: underline; }
+p a, li a, figcaption a { text-decoration: underline; text-underline-offset: 2px; }
 
 code {
   font: 0.9em ui-monospace, "SF Mono", Menlo, monospace;
@@ -79,7 +80,7 @@ h3 { font-size: 1.05rem; margin: 0 0 6px; }
 }
 
 figure { margin: 32px 0 0; }
-figure img {
+figure video {
   display: block;
   width: 100%;
   height: auto;

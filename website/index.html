@@ -21,6 +21,7 @@
     <meta property="og:url" content="https://www.quorus.dev/" />
     <meta property="og:image" content="https://www.quorus.dev/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preload" as="image" href="/media/demo-poster.webp" fetchpriority="high" />
     <script type="module" src="/src/main.ts"></script>
   </head>
   <body>
@@ -51,11 +52,20 @@
           <a href="https://opencode.ai">opencode</a> 2.x.
         </p>
         <figure>
-          <img
-            src="/media/demo.gif"
-            width="900"
-            alt="One message: Claude fixes the bug with tests, Codex reviews and approves it"
-          />
+          <video
+            id="demo"
+            width="886"
+            height="736"
+            poster="/media/demo-poster.webp"
+            muted
+            loop
+            playsinline
+            preload="none"
+            aria-label="One message: Claude fixes the bug with tests, Codex reviews and approves it"
+          >
+            <source src="/media/demo.webm" type="video/webm" />
+            <source src="/media/demo.mp4" type="video/mp4" />
+          </video>
           <figcaption>
             A real run, not staged: one message in, a tested fix reviewed by a second model and on
             <code>main</code> about 50 seconds later.
@@ -154,7 +164,7 @@
 
     <footer>
       <p>
-        Open source, MIT ·
+        Open source, MIT · <span class="ver">v%QUORUS_VERSION% on PyPI</span> ·
         <a href="https://github.com/Quorus-dev/Quorus">github.com/Quorus-dev/Quorus</a> ·
         <a href="https://pypi.org/project/quorus-ai/">quorus-ai on PyPI</a>
       </p>
