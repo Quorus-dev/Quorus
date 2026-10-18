@@ -67,7 +67,9 @@ export function palette(dark, accent, bg) {
 
 export function create(host, P, hooks) {
   const S = { host, hooks, pick: [], fx: [], t0: performance.now(), last: 0, raf: 0, on: false,
-              drift: !hooks.reduceMotion, focus: null, k: 0, pulse: 0, bloom: true, d: 12 };
+              drift: !hooks.reduceMotion, focus: null, k: 0, pulse: 0, bloom: true, d: 12,
+              // The screenshot harness runs on software GL and must keep full quality.
+              lockQuality: sessionStorage.getItem("qq") === "lock" };
   S.scene = new THREE.Scene();
   S.scene.background = new THREE.Color(P.bg);
   S.scene.fog = new THREE.Fog(P.bg, 20, 30);
@@ -222,6 +224,7 @@ function tick(S, now) {
   const dt = Math.min(0.1, (now - (S.last || now)) / 1000);
   S.last = now;
   const t = (now - S.t0) / 1000;
+  budget(S, dt, t);
   const goal = S.focus ? 1 : 0;
   S.k += (goal - S.k) * Math.min(1, dt * 5);
   const target = TARGET.clone();
@@ -236,6 +239,26 @@ function tick(S, now) {
   S.fx = S.fx.filter((f) => f.update(now) || (f.dispose(), false));
   S.hooks.onFrame(t, dt);
   render(S);
+}
+
+// The frame budget is 60 fps on a laptop. If frames run long for a while, step
+// the quality down once each: first the bloom goes, then the pixel ratio drops to
+// 1. Never back up (that would oscillate), and the first two seconds don't count
+// (shader compiles). Reduced motion renders on demand and never gets here.
+function budget(S, dt, t) {
+  if (t < 2 || dt <= 0 || S.lockQuality) return;
+  S.ema = S.ema === undefined ? dt : S.ema * 0.9 + dt * 0.1;
+  if (S.ema < 0.024) { S.slowSince = 0; return; }
+  S.slowSince = S.slowSince || t;
+  if (t - S.slowSince < 1.5) return;  // slow for a moment is fine; slow for 1.5 s is not
+  S.slowSince = 0;
+  S.ema = 0.016;
+  if (S.bloom) { S.bloom = false; S.quality = "no-bloom"; return; }
+  if (S.renderer.getPixelRatio() > 1) {
+    S.renderer.setPixelRatio(1);
+    S.quality = "no-bloom, 1x";
+    resize(S);
+  }
 }
 
 function render(S) {
@@ -291,5 +314,6 @@ function api(S) {
     stop() { S.on = false; },
     once() { S.hooks.onFrame((performance.now() - S.t0) / 1000, 0); render(S); },
     setBloom(on) { S.bloom = on; },
+    quality() { return S.quality || "full"; },
   };
 }

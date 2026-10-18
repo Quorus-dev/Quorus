@@ -133,6 +133,10 @@ def test_quorum_degrades_instead_of_going_blank() -> None:
     assert "w = reduce ? 0 : 1" in _src("quorum-totems.js")
     # Rendering pauses while the tab is hidden.
     assert "if (!S.on || document.hidden)" in _src("quorum-stage.js")
+    # Slow frames step the quality down once each (bloom, then pixel ratio), never up.
+    assert "function budget(S, dt, t)" in _src("quorum-stage.js")
+    assert 'S.quality = "no-bloom"' in _src("quorum-stage.js")
+    assert "S.renderer.setPixelRatio(1);" in _src("quorum-stage.js")
     # Ten-plus members: a seat cap, the rest named in a note; an empty room says what to do.
     assert "MAX_SEATS = 14" in src and "No agents at this table yet" in src
     assert "#quorum canvas{position:absolute" in DASHBOARD_HTML  # can't grow its own host
