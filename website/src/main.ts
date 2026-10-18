@@ -47,3 +47,16 @@ if (!reduce && "IntersectionObserver" in window) {
   );
   for (const el of document.querySelectorAll(".reveal")) seen.observe(el);
 }
+
+// Card images (crops of the demo run) load once the page has loaded and gone idle,
+// so on a slow connection they never share bandwidth with the hero. Without JS,
+// the <noscript> copies show instead.
+const late = () => {
+  for (const img of document.querySelectorAll<HTMLImageElement>("img[data-src]")) {
+    img.src = img.dataset.src ?? "";
+    img.removeAttribute("data-src");
+  }
+};
+window.addEventListener("load", () =>
+  "requestIdleCallback" in window ? requestIdleCallback(late, { timeout: 1500 }) : setTimeout(late, 300),
+);

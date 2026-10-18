@@ -169,9 +169,11 @@ figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 12px; }
   padding: 0;
   margin: 28px 0 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
+/* Two columns, not three: the cards carry real terminal crops that need the width to stay readable. */
+@media (min-width: 720px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .grid li {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -181,8 +183,6 @@ figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 12px; }
   flex-direction: column;
   gap: 8px;
 }
-.grid li.wide { grid-column: 1 / -1; }
-@media (min-width: 960px) { .grid li.wide { grid-column: span 2; } }
 .grid p { margin: 0; color: var(--muted); font-size: 0.95rem; }
 .grid .shot {
   margin: 8px 0 4px;
@@ -192,6 +192,7 @@ figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 12px; }
   background: var(--bg-2);
 }
 .grid .shot img { display: block; width: 100%; }
+.grid .shot img:not([src]) { color: transparent; } /* no alt text while the crop waits for load */
 .grid .shot + p { font-size: 0.85rem; }
 
 .plain { padding-left: 1.2em; }
@@ -227,8 +228,3 @@ html.js .reveal.in { opacity: 1; transform: none; transition: opacity 600ms cubi
   .cmd button { transition: none; }
 }
 
-/* A wide board row would shrink to unreadable text on a phone: show its left side
-   at a readable height instead of the whole strip. */
-@media (max-width: 640px) {
-  .grid .shot img.wide-shot { height: 110px; object-fit: cover; object-position: left center; }
-}
