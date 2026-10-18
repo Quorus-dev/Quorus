@@ -3273,6 +3273,10 @@ class Reflexd:
 
         vendor_failure = reply if isinstance(reply, _failover.VendorFailure) else None
         exit_code = reply.exit_code if isinstance(reply, HarnessExitFailure) else "unknown"
+        # Classify before redaction turns the reply into a plain str.
+        turn_outcome = _track.classify_turn(
+            reply if isinstance(reply, str) else "", vendor_failure=bool(vendor_failure),
+            failure_reason=failure_reason or "", slow_start=isinstance(reply, SlowStart))
         # The reply is auto-posted to the room: mask any credential the agent
         # printed (prompt injection or not) before it is published.
         reply = redact_secrets((reply or "").strip(),
@@ -3280,9 +3284,7 @@ class Reflexd:
         unknown_exit = reply == "[reflexd] harness errored"
         kind = triage.kind if triage is not None else ""
         _track.record_turn(
-            self.config.runtime_dir, self.config.participant_name,
-            _track.classify_turn(reply, vendor_failure=bool(vendor_failure),
-                                 failure_reason=failure_reason or ""),
+            self.config.runtime_dir, self.config.participant_name, turn_outcome,
             kind=kind,
             message_id=(envelope.get("message_id") or envelope.get("id") or "")
             if kind == "open_todo" else "")

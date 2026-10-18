@@ -297,3 +297,30 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     [line] = posts
     assert line["message_type"] == "status" and line["room"] == "dev"
     assert line["content"].startswith("(quorus) adapted t1: @open bids x0.")
+
+
+def test_failed_harness_exits_and_slow_starts_are_not_clean():
+    # Codex's repro: a non-zero exit keeps the errored sentinel.
+    reply = reflexd.HarnessExitFailure(2)
+    assert tr.classify_turn(str(reply).strip(), vendor_failure=False,
+                            failure_reason="") == "errored"
+    stall = reflexd.SlowStart("opencode", 120)
+    assert tr.classify_turn(stall, vendor_failure=False, failure_reason="",
+                            slow_start=isinstance(stall, reflexd.SlowStart)) == "timed_out"
+
+
+def test_later_bid_cannot_relabel_an_earlier_outcome(tmp_path):
+    # Codex's repro: a retry's bid on the same message must not rewrite the
+    # prediction that was made before the first outcome.
+    def bid(ts, mult):
+        tr._append(tmp_path, "a", "bids", {"ts": ts, "message_id": "same-task",
+                                           "arm": "shadow", "multiplier": mult}, NOW)
+
+    bid(NOW - 3, 0.6)
+    tr.record_turn(tmp_path, "a", "errored", kind="open_todo", message_id="same-task",
+                   now=NOW - 2)
+    bid(NOW - 1, 1.3)
+    tr.record_turn(tmp_path, "a", "clean", kind="open_todo", message_id="same-task", now=NOW)
+    out = tr.report(tmp_path, "a", NOW)
+    assert out["predictive"]["low"] == {"turns": 1, "failed": 1}
+    assert out["predictive"]["high"] == {"turns": 1, "failed": 0}
