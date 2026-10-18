@@ -126,9 +126,11 @@ function rowState(name, presence, history, approvals, now) {
   // posts "(quorus) t1 (shadow, not applied): would set @open bids x0.75 for @x ·
   // 2 errors, 0 clean/24h · undo: quorus tune undo t1", or "(quorus) adapted t1: …").
   // One row line per decision, with its undo: the same affordance every slice shares.
+  // Only a `status` message the agent posted itself counts (its daemon always posts
+  // them that way), so no room member can put a fake adaptation on someone's row.
   const TUNE = /^\(quorus\) (adapted )?t\d+\b/, UNDO = / undo: quorus tune undo t\d+/;
-  const tune = history.slice().reverse().find((m) => TUNE.test(m.content || "")
-    && UNDO.test(m.content) && mention(name).test(m.content));
+  const tune = mine.slice().reverse().find((m) => m.message_type === "status"
+    && TUNE.test(m.content || "") && UNDO.test(m.content) && mention(name).test(m.content));
   if (tune) {
     const text = tune.content, id = (text.match(/\b(t\d+)\b/) || [])[1] || "";
     const shadow = /shadow, not applied/.test(text);

@@ -204,6 +204,12 @@ def test_the_newest_tuning_line_becomes_a_board_row(tmp_path: Path) -> None:
                "timestamp": "2026-10-18T08:05:00Z",
                "content": "(quorus) adapted t2: @open bids x0.60 for @x-gemini · 3 errors, "
                           "0 clean/24h · undo: quorus tune undo t2"}
+    # Neither of these may land on a row: a line about x-gemini posted by someone
+    # else, and a plain chat message from x-gemini (its daemon posts `status`).
+    spoof = dict(applied, from_name="x-gemini-2", timestamp="2026-10-18T08:09:00Z",
+                 content=applied["content"].replace("t2", "t9"))
+    chat = dict(applied, message_type="chat", timestamp="2026-10-18T08:09:30Z",
+                content=applied["content"].replace("t2", "t8"))
     script = tmp_path / "run.js"
     (tmp_path / "board.js").write_text(BOARD_JS)
     script.write_text(
@@ -211,9 +217,11 @@ def test_the_newest_tuning_line_becomes_a_board_row(tmp_path: Path) -> None:
         "const b = require('./board.js');\n"
         f"const pres = {json.dumps(presence)}, shadow = {json.dumps(shadow)};\n"
         f"const applied = {json.dumps(applied)}, now = {now};\n"
+        f"const spoof = {json.dumps(spoof)}, chat = {json.dumps(chat)};\n"
         "const run = (hist) => Object.fromEntries(Object.keys(pres)"
         ".map((n) => [n, b.rowState(n, pres, hist, [], now).tuning || null]));\n"
-        "console.log(JSON.stringify({ both: run([shadow, applied]), one: run([shadow]) }));\n")
+        "console.log(JSON.stringify({ both: run([shadow, applied, spoof, chat]), "
+        "one: run([shadow]) }));\n")
     out = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=30,
                          cwd=tmp_path)
     assert out.returncode == 0, out.stderr
@@ -226,5 +234,6 @@ def test_the_newest_tuning_line_becomes_a_board_row(tmp_path: Path) -> None:
         "text": "shadow, not applied: would set @open bids x0.75 for @x-gemini · x0.75 · "
                 "2 errors, 0 clean/24h"}
     assert got["both"]["x-gemini-2"] is None  # "@x-gemini" is not "@x-gemini-2"
+    assert 'mine.slice().reverse().find((m) => m.message_type === "status"' in BOARD_JS
     assert 'el("div", "btune", r.tuning.text + " · undo: ")' in BOARD_JS
     assert ".btune code{" in DASHBOARD_HTML
