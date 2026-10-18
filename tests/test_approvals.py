@@ -201,6 +201,10 @@ async def test_mcp_bridge_end_to_end(client, monkeypatch):
         async def _refresh_jwt_on_401():
             return False
 
+        @staticmethod
+        async def _retry_as_participant(resp, _send):
+            return resp
+
     monkeypatch.setattr(p1, "_srv", lambda: _FakeSrv)
     monkeypatch.setattr(p1, "APPROVAL_POLL_INTERVAL_S", 0.01)
 
@@ -330,6 +334,10 @@ async def test_padded_input_cannot_ride_an_approval(client, monkeypatch):
         @staticmethod
         async def _refresh_jwt_on_401():
             return False
+
+        @staticmethod
+        async def _retry_as_participant(resp, _send):
+            return resp
 
     monkeypatch.setattr(p1, "_srv", lambda: _FakeSrv)
     # A record reviewed and approved for the BENIGN input.

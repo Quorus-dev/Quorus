@@ -43,6 +43,15 @@ ALLOW_LEGACY_AUTH = os.environ.get("ALLOW_LEGACY_AUTH", _legacy_default).lower()
     "yes",
 )
 
+# The 403 for endpoints that need a participant identity. It names the fix: the
+# bare text left agents on the relay secret stuck (0.5.1 agent-path check).
+# quorus-mcp matches the prefix to claim a participant key and retry.
+LEGACY_AUTH_REFUSED = (
+    "legacy auth not permitted on this endpoint: it needs a participant identity. "
+    "Use a participant or API key (QUORUS_API_KEY); quorus-mcp 0.5.2+ claims one "
+    "with the relay secret"
+)
+
 # Cache of revoked key prefixes — refreshed periodically
 _revoked_prefixes: set[str] = set()
 _revoked_refreshed_at: datetime | None = None
