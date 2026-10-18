@@ -2916,6 +2916,14 @@ def _cmd_connect(args):
         except ValueError as exc:
             _ui.error(str(exc))
             return
+        # The saved profile already holds this relay's secret and quorus-mcp
+        # reads it there, so keep it out of the client's config file.
+        from quorus.config import DEFAULT_RELAY_URL, ConfigManager, same_relay
+
+        saved = ConfigManager().load(migrate=False)
+        if (explicit_secret and explicit_secret == saved.get("relay_secret")
+                and same_relay(relay_url, saved.get("relay_url") or DEFAULT_RELAY_URL)):
+            explicit_secret = ""
 
         env = McpEnv(
             command=mcp_command,
@@ -4325,10 +4333,10 @@ def _register_mcp_everywhere(
     name: str,
     relay_url: str,
     api_key: str,
-    relay_secret: str,
     mcp_command: str,
     mcp_args: list[str],
     ui,
+    profile: str = "",
 ) -> list[str]:
     """Auto-wire every installed MCP-compatible client in one sweep.
 
@@ -4345,6 +4353,10 @@ def _register_mcp_everywhere(
     so the caller can print a ``Restart X to pick up the MCP server``
     hint and decide whether to fall back to a project-level
     ``.mcp.json``.
+
+    The relay secret is never written: both callers saved it to the profile
+    for this relay, and quorus-mcp reads it from there. ``profile`` pins the
+    project-level fallback to the profile holding the key.
     """
     from quorus_cli.mcp_writers import ALL_WRITERS, McpEnv, register_all
 
@@ -4387,7 +4399,6 @@ def _register_mcp_everywhere(
         args=list(mcp_args),
         relay_url=relay_url,
         api_key=api_key,
-        relay_secret=relay_secret,
         instance_name_base=name,
         per_platform_keys=per_platform_keys if per_platform_keys else None,
     )
@@ -4429,14 +4440,13 @@ def _register_mcp_everywhere(
             "type": "stdio",
             "command": mcp_command,
             "args": list(mcp_args),
+            # No secret or key: a project file is easy to commit, and it was
+            # world-readable plaintext (0.5.1 agent-path check). quorus-mcp
+            # reads both from the saved profile for this relay.
             "env": {
                 "QUORUS_RELAY_URL": relay_url,
                 "QUORUS_INSTANCE_NAME": name,
-                **({"QUORUS_API_KEY": api_key} if api_key else {}),
-                **(
-                    {"QUORUS_RELAY_SECRET": relay_secret}
-                    if (relay_secret and not api_key) else {}
-                ),
+                **({"QUORUS_PROFILE": profile} if profile else {}),
             },
         }
         mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n")
@@ -5160,10 +5170,11 @@ def _cmd_init(args):
         name=name,
         relay_url=relay_url,
         api_key=api_key,
-        relay_secret=secret,
         mcp_command=mcp_command,
         mcp_args=mcp_args,
         ui=ui,
+        # With a key, step 6 makes 'human' current; the agent's key stays here.
+        profile=(profile_slug if pointer_layout else "default") if api_key else "",
     )
 
     # ── Productized init steps (mint, profile, daemon, smoke) ──────────────
@@ -5195,8 +5206,9 @@ def _cmd_init(args):
     # supervisor's _resolve_manager_participants picks them up via
     # pm.current_profile()). The flat config is the legacy shape readers
     # like load_config() auto-migrate on next boot, so this is forward-
-    # compatible.
-    if minted_keys:
+    # compatible. With a key this runs even if no agent key was minted: a
+    # project .mcp.json pins QUORUS_PROFILE=default instead of holding the key.
+    if minted_keys or api_key:
         if pointer_layout:
             # The profile is the source of truth; read/merge there so we don't
             # flatten the pointer above.
@@ -6132,7 +6144,6 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         name=name,
         relay_url=relay_url,
         api_key=api_key,
-        relay_secret=secret,
         mcp_command=mcp_command,
         mcp_args=mcp_args,
         ui=_reg_ui,
@@ -6362,10 +6373,10 @@ def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
                     "run", "--directory", str(quorus_dir.parent),
                     "python", str(quorus_dir / "mcp_server.py"),
                 ],
+                # No RELAY_SECRET: the server reads it from the saved profile.
                 "env": {
                     "INSTANCE_NAME": name,
                     "RELAY_URL": relay_url,
-                    "RELAY_SECRET": secret,
                 },
             }
         }
@@ -6787,10 +6798,10 @@ def _cmd_add_agent(args):
                     "run", "--directory", str(quorus_dir.parent),
                     "python", str(quorus_dir / "mcp_server.py"),
                 ],
+                # No RELAY_SECRET: the server reads it from the saved profile.
                 "env": {
                     "INSTANCE_NAME": name,
                     "RELAY_URL": RELAY_URL,
-                    "RELAY_SECRET": RELAY_SECRET,
                 },
             }
         }

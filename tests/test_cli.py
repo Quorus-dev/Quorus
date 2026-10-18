@@ -681,7 +681,6 @@ def test_register_mcp_everywhere_reuses_matching_codex_identity(monkeypatch):
         name="arav-codex",
         relay_url="https://relay.test",
         api_key="mct_parent",
-        relay_secret="",
         mcp_command="uv",
         mcp_args=["run"],
         ui=FakeUi(),
