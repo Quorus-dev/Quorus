@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Request
 
 from quorus.auth.middleware import AuthContext, require_identity, verify_auth
 from quorus.routes.models import HeartbeatRequest
+from quorus.services import presence_trail
 
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
@@ -45,6 +46,7 @@ async def heartbeat(
 async def get_presence(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
+    trail: bool = False,
 ):
     svc = request.app.state.presence_service
     # Single list_all call — the backend already returns every entry with
@@ -69,6 +71,9 @@ async def get_presence(
             "waiting_on": (e.get("waiting_on") or "") if online else "",
             "waiting_until": _float(e.get("waiting_until")) if online else 0.0,
             "model": e.get("model") or "",
+            # ?trail=1: the last steps (mission-control panels), same field as
+            # `activity`, so no new exposure; off by default to keep it small.
+            **({"trail": presence_trail.public(e.get("trail"))} if trail else {}),
         })
     result.sort(key=lambda x: (not x["online"], x["name"]))
     return result
