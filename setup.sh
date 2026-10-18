@@ -9,7 +9,7 @@
 #       Provision a working .venv at the repo root with all 5 packages
 #       installed editable, on Python 3.10/3.11/3.12/3.13/3.14.
 #       This is the path that broke at the Apr 23 2026 hackathon — see
-#       docs/HACKATHON_REGRESSION.md for full background.
+#
 
 set -euo pipefail
 
@@ -86,7 +86,7 @@ if [[ "${1:-}" == "--install" ]]; then
   # Patch entry-point scripts to inject sys.path themselves. This is the
   # belt-and-braces fix that survives Spotlight re-applying UF_HIDDEN to
   # the .pth file (which it does, repeatedly, on macOS — see
-  # docs/HACKATHON_REGRESSION.md). Idempotent.
+  # the install-topology tests). Idempotent.
   if [[ -x "${SCRIPT_DIR}/scripts/patch_entry_points.sh" ]]; then
     bash "${SCRIPT_DIR}/scripts/patch_entry_points.sh" "${SCRIPT_DIR}" || true
   fi

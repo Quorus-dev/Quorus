@@ -1,57 +1,43 @@
-# Publishing to PyPI
+# Releasing quorus-ai
 
-## Prerequisites
+quorus-ai ships to PyPI by trusted publishing: pushing a `v*` tag runs
+`.github/workflows/publish.yml` (environment `pypi`). It checks that the tag
+matches the package version, builds, test-installs the wheel, then uploads it
+with attestations. No API token is involved.
 
-1. PyPI account at https://pypi.org
-2. API token (generate at https://pypi.org/manage/account/token/)
-3. `uv` installed
+## Version bump
 
-## Pre-publish Checklist
+The version appears in nine places; change all of them (a test checks):
 
-```bash
-# 1. Run all tests
-uv run pytest tests/ -v
-# Should see 148+ tests passing
+- `pyproject.toml` and `packages/{cli,mcp,sdk,tui}/pyproject.toml`
+- `quorus/__init__.py` (`__version__`)
+- `quorus/relay.py` (the FastAPI `version=`)
+- `server.json`, twice: the server's `version` and the PyPI package's `version`
 
-# 2. Clean build
-rm -rf dist/
-uv build
-# Creates dist/quorus-{version}.tar.gz and .whl
+After the tag, publish the new `server.json` to the MCP Registry with
+`mcp-publisher publish` (GitHub login). The registry checks the
+`mcp-name:` comment at the top of the README, which PyPI serves.
 
-# 3. Test install in clean env
-uv venv /tmp/publish-test
-uv pip install --python /tmp/publish-test/bin/python dist/quorus-*.whl
-/tmp/publish-test/bin/quorus --help
-rm -rf /tmp/publish-test
-```
+## Gate
 
-## Publish
+1. Every security-relevant commit has a reviewer's GO.
+2. The full suite passes on the release branch (`pytest`, check its exit code),
+   and `ruff check .` is clean.
+3. The built wheel installs into a fresh HOME and works as a new user and as
+   an agent (`pipx install` from the wheel, `quorus init`, a room, an agent).
+4. The PR to `main` is green, and a human merges it with a merge commit (not a
+   squash, so provenance notes survive).
+5. Tag `vX.Y.Z` on `main`, then check that `pipx install quorus-ai==X.Y.Z` works
+   from PyPI.
 
-```bash
-# Option 1: uv publish (recommended)
-uv publish --token pypi-YOUR-API-TOKEN
+## Done-list: the public face ships with the release
 
-# Option 2: twine
-pip install twine
-twine upload dist/*
-```
+A release isn't done until everything a user sees matches what ships:
 
-## Post-publish Verification
-
-```bash
-# Wait 1-2 minutes for PyPI to index
-pip install quorus
-quorus --help
-python -c "from quorus_sdk.http_agent import QuorusClient; print('OK')"
-```
-
-## Version Bump
-
-Edit `quorus/__init__.py` and `pyproject.toml` version field, then rebuild and publish.
-
-## TestPyPI (dry run)
-
-```bash
-uv publish --publish-url https://test.pypi.org/legacy/ --token pypi-YOUR-TEST-TOKEN
-pip install -i https://test.pypi.org/simple/ quorus
-```
+- [ ] `CHANGELOG.md` has the release, and the GitHub release notes say the same.
+- [ ] The README's text, screenshots and command list match the shipped CLI.
+      The PyPI page is the README, so it updates with the release.
+- [ ] If the UI changed: the README GIFs are re-recorded from the real new UI
+      (a scripted scene on a test relay, an honest caption, no tokens visible,
+      checked frame by frame).
+- [ ] quorus.dev is updated the same day.

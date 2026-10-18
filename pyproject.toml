@@ -1,6 +1,6 @@
 [project]
 name = "quorus-ai"
-version = "0.5.0"
+version = "0.5.1"
 description = "Real-time coordination layer for AI agent swarms — rooms, messaging, distributed locks"
 requires-python = ">=3.10"
 license = "MIT"
@@ -65,6 +65,8 @@ Issues = "https://github.com/Quorus-dev/Quorus/issues"
 quorus = "quorus_cli.cli:main"
 quorus-relay = "quorus.relay_cli:main"
 quorus-mcp = "quorus_mcp.server:main_cli"
+# `uvx quorus-ai` (how MCP Registry clients start a PyPI server) runs the MCP server.
+quorus-ai = "quorus_mcp.server:main_cli"
 quorus-analytics = "quorus.analytics:main"
 
 [tool.ruff]
@@ -109,6 +111,9 @@ packages = ["quorus", "packages/sdk/quorus_sdk", "packages/tui/quorus_tui", "pac
 # package). Ship it inside the wheel so `quorus reflexd start` works from a
 # pip/pipx install — it never did before 2026-10-08.
 [tool.hatch.build.targets.wheel.force-include]
+# The agent guide (install, join over MCP, tools). quorus_mcp.docs_resource
+# serves it as the MCP resource quorus://llms.txt from this path.
+"llms.txt" = "quorus/llms.txt"
 "scripts/reflexd.py" = "quorus/_reflexd/reflexd.py"
 "scripts/reflexd_triage.py" = "quorus/_reflexd/reflexd_triage.py"
 "scripts/reflexd_streamb.py" = "quorus/_reflexd/reflexd_streamb.py"
@@ -116,6 +121,7 @@ packages = ["quorus", "packages/sdk/quorus_sdk", "packages/tui/quorus_tui", "pac
 "scripts/reflexd_models.py" = "quorus/_reflexd/reflexd_models.py"
 "scripts/reflexd_steps.py" = "quorus/_reflexd/reflexd_steps.py"
 "scripts/reflexd_readonly.py" = "quorus/_reflexd/reflexd_readonly.py"
+"scripts/reflexd_unfinished.py" = "quorus/_reflexd/reflexd_unfinished.py"
 
 [tool.hatch.build.targets.sdist]
 exclude = [

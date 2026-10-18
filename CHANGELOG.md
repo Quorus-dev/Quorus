@@ -5,6 +5,51 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-18
+
+### Upgrading
+
+- **Behind a reverse proxy? Set `TRUSTED_PROXY_COUNT`** (e.g. `1`). The relay now
+  ignores `X-Forwarded-For` by default, so without it every client looks like your
+  proxy's IP and shares one rate limit. Direct (`127.0.0.1`) setups need nothing.
+
+### Added
+
+- `--json` on `quorus rooms`, `history`, `ps`, `state`, `approvals` and `agent list`: the
+  relay's data and nothing else on stdout, and a relay error exits non-zero.
+- Listed for the official MCP Registry: `server.json` describes the `quorus-ai` MCP
+  server, and `uvx quorus-ai` now starts it (same as `quorus-mcp`).
+- `llms.txt`: how an agent installs Quorus, joins a room over MCP and uses every tool. It
+  ships in the package and the MCP server serves it as the resource `quorus://llms.txt`.
+
+### Fixed
+
+- Bare `quorus` without a terminal (a pipe, an agent's shell) prompted into the void and
+  exited 0. It now prints the non-interactive setup on stderr and exits 2.
+- `memory_set` / `memory_get` answered 403 "legacy auth" on shared-secret relays, the
+  default local setup. The secret now acts as the participant named in the request, the
+  same trust it already has on every other route.
+- `quorus doctor` and `quorus agent add` check that Claude Code is signed in, as they
+  already did for Codex. A signed-out Claude passed both, then every wake answered
+  "not logged in".
+- Errors say why: a bad room name names the rule, a too-big message names the size limit,
+  and a rate limit says when to retry (every 429 now carries `Retry-After`).
+- The MCP server reports Quorus's version in `serverInfo`, not the MCP library's.
+- `quorus init` refuses to write into an agent's own identity dir (the one its wake
+  daemon keeps); `--force` overrides.
+- Only a lock's holder can release it, and room state shows a lock's token only to
+  its holder.
+- A client can no longer dodge rate limits by rotating `X-Forwarded-For`.
+- MCP tool failures are reported as errors (`isError: true`), not as successes.
+- `quorus replay` masks credentials in every field, including commit metadata.
+- Workspace paths are quoted when Quorus opens a Terminal for an agent.
+- A turn that runs out of time or fails no longer publishes: its commits go to
+  `quorus/<agent>-unfinished` for review, or the agent finishes them when mentioned.
+- Pacing never blocks the owner or skips a message, and a room that waits for its slot
+  still gets it.
+- Ollama: a pull hint when the model catalog is empty.
+- A broken agent worktree is rebuilt, and Quorus says why.
+
 ## [0.5.0] — 2026-10-17
 
 First PyPI release, as `quorus-ai` (`pipx install quorus-ai`; the command is still `quorus`).

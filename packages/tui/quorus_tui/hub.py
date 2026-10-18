@@ -214,7 +214,7 @@ def _signup(relay_url: str, name: str, workspace: str) -> dict | None:
             json={"name": name, "workspace": workspace},
             headers={"X-Quorus-Setup-Local": "1"},
             timeout=10,
-            follow_redirects=True,
+            follow_redirects=False,
         )
         if r.status_code == 200:
             return r.json()
@@ -521,7 +521,7 @@ def _exchange_api_key_for_jwt(relay: str, api_key: str) -> str | None:
             f"{relay.rstrip('/')}/v1/auth/token",
             json={"api_key": api_key},
             timeout=10,
-            follow_redirects=True,
+            follow_redirects=False,
         )
         if r.status_code == 200:
             jwt = r.json().get("token")

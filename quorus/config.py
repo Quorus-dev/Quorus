@@ -16,6 +16,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from quorus.private_files import write_private_json
 
@@ -31,15 +32,16 @@ def _trusted_proxy_count() -> int:
     """Number of proxies in front of the relay we trust to set X-Forwarded-For.
 
     Wave-5 Fix 4 — taking the LEFTMOST XFF entry trusts the client; taking
-    the rightmost-N is the safe pattern. The default of 1 matches Fly.io's
-    edge proxy. Operators behind multiple LBs (e.g. CloudFront → ALB → app)
-    must raise this so we walk past their controlled hops.
+    the rightmost-N is the safe pattern. The default is 0: a relay reached
+    directly must key on the socket peer, or any client can rotate XFF to
+    dodge per-IP rate limits. Deployments behind a proxy opt in (fly.toml
+    sets 1 for Fly's edge; CloudFront → ALB → app needs 2).
     """
     try:
-        n = int(os.environ.get("TRUSTED_PROXY_COUNT", "1"))
+        n = int(os.environ.get("TRUSTED_PROXY_COUNT", "0"))
     except ValueError:
-        n = 1
-    return max(1, n)
+        n = 0
+    return max(0, n)
 
 
 def get_real_ip(request: Any, *, trusted_n: int | None = None) -> str:
@@ -56,6 +58,9 @@ def get_real_ip(request: Any, *, trusted_n: int | None = None) -> str:
     """
     if trusted_n is None:
         trusted_n = _trusted_proxy_count()
+    if trusted_n <= 0:
+        client = getattr(request, "client", None)
+        return getattr(client, "host", None) or "unknown"
     headers = getattr(request, "headers", None)
     xff_raw = ""
     if headers is not None:
@@ -191,7 +196,9 @@ class ConfigManager:
             )
         return resolve_config_file()
 
-    def load(self) -> dict[str, Any]:
+    def load(self, *, migrate: bool = True) -> dict[str, Any]:
+        """Return the active config. ``migrate=False`` never writes: a legacy
+        flat config is read as-is instead of being moved into profiles/."""
         # Explicit-path callers (tests, CLI --config pointing at a file)
         # get raw file contents, no profile resolution.
         if self._explicit_path is not None:
@@ -207,7 +214,12 @@ class ConfigManager:
             return data or {}
 
         # Default behavior: auto-migrate legacy, then return current.
-        pm.migrate_legacy_if_needed()
+        if not migrate:
+            legacy = pm.legacy_flat()
+            if legacy is not None:
+                return legacy
+        else:
+            pm.migrate_legacy_if_needed()
         current = pm.current_profile()
         if current is not None:
             return current
@@ -253,14 +265,57 @@ def env_overrides() -> list[str]:
             and os.environ[env] != file_config[key]]
 
 
-def load_config() -> dict[str, Any]:
+DEFAULT_RELAY_URL = "http://localhost:8080"
+
+
+def same_relay(a: str, b: str) -> bool:
+    """Do two relay URLs name the same relay (scheme, host, port, base path)?"""
+    def key(url: str) -> tuple[str, str, int | None, str]:
+        p = urlparse((url or "").strip())
+        port = p.port or {"http": 80, "https": 443}.get(p.scheme)
+        return p.scheme.lower(), (p.hostname or "").lower(), port, p.path.rstrip("/")
+    try:
+        return key(a) == key(b)
+    except ValueError:  # a malformed port: not provably the same relay
+        return False
+
+
+# Profile fields that are only valid on the relay they were issued by.
+RELAY_BOUND_KEYS = ("api_key", "relay_secret", "agent_api_keys")
+
+
+def drop_credentials_if_relay_changed(profile: dict[str, Any],
+                                      new_relay_url: str) -> tuple[dict[str, Any], bool]:
+    """A copy of *profile* without its relay-bound credentials when it is
+    being pointed at a different relay; ``(copy, dropped)``."""
+    saved = profile.get("relay_url") or DEFAULT_RELAY_URL
+    if same_relay(saved, new_relay_url):
+        return dict(profile), False
+    kept = {k: v for k, v in profile.items() if k not in RELAY_BOUND_KEYS}
+    return kept, any(k in profile for k in RELAY_BOUND_KEYS)
+
+
+def withheld_credential_message(relay_url: str) -> str:
+    return (f"no credential saved for {relay_url}; run `quorus init` or `quorus join` "
+            "for it (your saved credentials belong to another relay and are not sent)")
+
+
+def load_config(profile: str | None = None, *, migrate: bool = True) -> dict[str, Any]:
     """Load config from disk, then apply env-var overrides.
+
+    A saved ``relay_secret`` or ``api_key`` is bound to the ``relay_url`` saved
+    with it: when ``RELAY_URL`` points at a different relay, the saved ones are
+    withheld (``credentials_withheld``) and only credentials from the
+    environment apply, so a credential never reaches a relay it wasn't issued
+    for. ``saved_relay_url`` lets callers that take the relay from elsewhere
+    (``QUORUS_RELAY_URL``, a flag) apply the same rule.
 
     Preserved for back-compat with existing callers. New code should use
     ``ConfigManager`` directly for simple load/save.
     """
-    file_config: dict[str, Any] = ConfigManager().load()
-    config_file = resolve_config_file()
+    manager = ConfigManager(profile=profile) if profile else ConfigManager()
+    file_config: dict[str, Any] = manager.load(migrate=migrate)
+    config_file = manager.path if profile else resolve_config_file()
 
     def get(env_key: str, file_key: str, default: str) -> str:
         return os.environ.get(env_key) or file_config.get(file_key, default)
@@ -296,13 +351,23 @@ def load_config() -> dict[str, Any]:
             _removed_poll_key,
         )
 
-    api_key = os.environ.get("API_KEY") or file_config.get("api_key", "")
+    saved_relay_url = file_config.get("relay_url") or DEFAULT_RELAY_URL
+    relay_url = os.environ.get("RELAY_URL") or saved_relay_url
+    bound = same_relay(relay_url, saved_relay_url)
+    saved_secret = file_config.get("relay_secret") or ""
+    saved_key = file_config.get("api_key") or ""
+    env_secret = (os.environ.get("RELAY_SECRET") or "").strip()
+    env_key = (os.environ.get("API_KEY") or "").strip()
 
     return {
         "config_file": str(config_file),
-        "relay_url": get("RELAY_URL", "relay_url", "http://localhost:8080"),
-        "relay_secret": get("RELAY_SECRET", "relay_secret", ""),
-        "api_key": api_key,
+        "relay_url": relay_url,
+        "relay_secret": env_secret or (saved_secret if bound else ""),
+        "api_key": env_key or (saved_key if bound else ""),
+        "saved_relay_url": saved_relay_url,
+        "credentials_withheld": bool(not bound and (saved_secret or saved_key)),
+        "relay_secret_from_env": bool(env_secret),
+        "api_key_from_env": bool(env_key),
         "instance_name": get("INSTANCE_NAME", "instance_name", "default"),
         "enable_background_polling": as_bool(enable_background_polling, default=True),
         "push_notification_method": notification_method,

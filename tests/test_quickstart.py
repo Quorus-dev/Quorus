@@ -24,6 +24,7 @@ class _C:
 def tools(monkeypatch):
     """claude, codex (logged in), gemini (no key) and opencode 2 are installed."""
     monkeypatch.setattr(quickstart, "_codex_logged_in", lambda: True)
+    monkeypatch.setattr(quickstart, "_claude_logged_in", lambda: True)
     monkeypatch.setattr(agent_cmd, "_gemini_has_key", lambda: False)
     monkeypatch.setattr(agent_cmd, "_opencode_version", lambda: "2.0.30")
     return lambda b: f"/bin/{b}" if b in ("claude", "codex", "gemini", "opencode") else None
@@ -83,3 +84,36 @@ def test_doctor_on_a_fresh_install_points_at_quorus(tmp_path: Path) -> None:
     text = out.stdout + out.stderr
     assert "isn't set up yet" in text and "quorus demo" in text
     assert "--secret" not in text  # the old advice needed a secret nobody has yet
+
+
+def _auth(stdout: str = "", rc: int = 0, exc: Exception | None = None):
+    def run(cmd, **_kw):
+        assert cmd[:3] == ["claude", "auth", "status"]
+        if exc:
+            raise exc
+        return subprocess.CompletedProcess(cmd, rc, stdout=stdout, stderr="")
+    return run
+
+
+def test_a_signed_out_claude_is_not_ready(tools, monkeypatch) -> None:
+    """0.5.0 sweep: doctor said "Claude Code ready", then every wake answered
+    "not logged in"."""
+    monkeypatch.undo()
+    monkeypatch.setattr(quickstart, "_codex_logged_in", lambda: True)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr(quickstart, "_run", _auth('{"loggedIn": false}', rc=1))
+    claude = next(f for f in quickstart.detect(lambda b: f"/bin/{b}") if f.harness == "claude")
+    assert not claude.ready and "claude /login" in claude.note
+    assert any("claude /login" in w for w in agent_cmd._readiness_warnings("claude", None))
+
+
+@pytest.mark.parametrize("run", [_auth('{"loggedIn": true}'), _auth(exc=FileNotFoundError()),
+                                 _auth("error: unknown command 'auth'", rc=1)])
+def test_signed_in_or_unknown_claude_is_never_blocked(monkeypatch, run) -> None:
+    """An old Claude CLI without `auth status` can't tell; don't cry wolf."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr(quickstart, "_run", run)
+    assert quickstart._claude_logged_in() is not False
+    assert not any("claude /login" in w for w in agent_cmd._readiness_warnings("claude", None))

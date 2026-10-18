@@ -338,7 +338,8 @@ def test_a_failed_turns_leftover_work_gets_a_real_commit_message() -> None:
 
 def test_timeout_notice_says_what_happened() -> None:
     assert reflexd._timed_out_line().startswith("⚠ ran out of time")
-    assert "published below" in reflexd._timed_out_line(published=True)
+    # A cut-off turn never publishes (test_unfinished_wakes.py), so it never says so.
+    assert "published" not in reflexd._timed_out_line()
 
 
 def test_failover_goes_back_to_the_agents_own_model(monkeypatch) -> None:
@@ -451,6 +452,10 @@ def test_ollama_without_the_model_says_pull() -> None:
     assert asyncio.run(reflexd.ollama_problem("qwen3:4b", transport=t)) == \
         "Ollama doesn't have qwen3:4b: `ollama pull qwen3:4b`."
     assert asyncio.run(reflexd.ollama_problem("llama3", transport=t)) is None
+    # A fresh Ollama with no models pulled still needs the pull hint (codex).
+    empty = httpx.MockTransport(lambda _r: httpx.Response(200, json={"models": []}))
+    assert asyncio.run(reflexd.ollama_problem("qwen3:4b", transport=empty)) == \
+        "Ollama doesn't have qwen3:4b: `ollama pull qwen3:4b`."
 
 
 def test_an_ollama_wake_stops_before_opencode_when_ollama_is_down(monkeypatch) -> None:

@@ -1,4 +1,4 @@
-"""Per-participant keys for shared-secret relays (docs/weekend/cross-machine-code.md).
+"""Per-participant keys for shared-secret relays (docs/design/cross-machine-code.md).
 
 A relay with no database has only its shared ``RELAY_SECRET``, which every
 invitee holds, so it can't tell participants apart. Here a secret holder may

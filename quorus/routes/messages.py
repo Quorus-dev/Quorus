@@ -52,7 +52,9 @@ async def send_message(
     if auth.sub and msg.from_name != auth.sub:
         raise HTTPException(status_code=403, detail="Cannot send as another user")
     if len(msg.content.encode("utf-8")) > _MAX_DM_SIZE:
-        raise HTTPException(status_code=413, detail="Message content exceeds maximum size")
+        raise HTTPException(status_code=413, detail=(
+            f"message is {len(msg.content.encode('utf-8')) // 1024} KB; this relay takes "
+            f"up to {_MAX_DM_SIZE // 1024} KB (MAX_MESSAGE_SIZE)"))
 
     tid = _tid(auth)
     # 2026-05-16 audit (B4): DM send is a write endpoint with no rate limit.

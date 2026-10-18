@@ -86,7 +86,9 @@ def migrated_db(database_url):
     from alembic import command
     from alembic.config import Config
 
-    # Set DATABASE_URL for the migration
+    # Set DATABASE_URL for the migration. Restored at module teardown: left
+    # set, every later test ran as a Postgres relay (the S2 XFF test failed).
+    prior = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = database_url
 
     # Find alembic.ini relative to the quorus package
@@ -109,7 +111,11 @@ def migrated_db(database_url):
 
     yield database_url
 
-    # Cleanup handled by container teardown
+    # Container teardown drops the database; put the env back as it was.
+    if prior is None:
+        os.environ.pop("DATABASE_URL", None)
+    else:
+        os.environ["DATABASE_URL"] = prior
 
 
 @pytest.fixture

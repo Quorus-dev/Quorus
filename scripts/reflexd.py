@@ -592,6 +592,12 @@ assert _readonly_spec is not None and _readonly_spec.loader is not None
 reflexd_readonly = _ilu.module_from_spec(_readonly_spec)
 sys.modules.setdefault("reflexd_readonly", reflexd_readonly)
 _readonly_spec.loader.exec_module(reflexd_readonly)
+_UNFINISHED_PATH = Path(__file__).resolve().parent / "reflexd_unfinished.py"
+_unfinished_spec = _ilu.spec_from_file_location("reflexd_unfinished", _UNFINISHED_PATH)
+assert _unfinished_spec is not None and _unfinished_spec.loader is not None
+reflexd_unfinished = _ilu.module_from_spec(_unfinished_spec)
+sys.modules.setdefault("reflexd_unfinished", reflexd_unfinished)
+_unfinished_spec.loader.exec_module(reflexd_unfinished)
 _MODELS_PATH = Path(__file__).resolve().parent / "reflexd_models.py"
 _models_spec = _ilu.spec_from_file_location("reflexd_models", _MODELS_PATH)
 assert _models_spec is not None and _models_spec.loader is not None
@@ -1229,7 +1235,7 @@ async def ollama_problem(model: str, *, timeout: float = 3.0,
         return ("Ollama isn't running: start it with "
                 "`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`.")
     want = model if ":" in model else f"{model}:latest"
-    if names and want not in names and model not in names:
+    if want not in names and model not in names:  # an empty catalog lacks it too (codex)
         return f"Ollama doesn't have {model}: `ollama pull {model}`."
     return None
 
@@ -1278,13 +1284,12 @@ def _undelivered_lines(reply: str, posted: list[str]) -> list[str]:
     return out
 
 
-def _timed_out_line(published: bool = False, last_step: str = "") -> str:
+def _timed_out_line(last_step: str = "") -> str:
     """What the room sees instead of the raw "[reflexd] harness timed out".
     With the last live step it says where the time went ("while searching the
     code"), so a stuck agent says why instead of just that it stopped."""
-    done = " What it had committed is published below." if published else ""
     where = f" while {last_step}," if last_step else ""
-    return (f"⚠ ran out of time{where} before finishing its reply.{done} "
+    return (f"⚠ ran out of time{where} before finishing its reply. "
             "Mention me to continue.")
 
 
@@ -2427,7 +2432,7 @@ class ReflexdConfig:
 
     @classmethod
     def from_env(cls) -> "ReflexdConfig":
-        data = ConfigManager().load() or {}
+        data = ConfigManager().load(migrate=False) or {}  # read-only at startup
         relay_url = (
             os.environ.get("REFLEXD_RELAY_URL")
             or os.environ.get("RELAY_URL")
@@ -2443,12 +2448,19 @@ class ReflexdConfig:
         # endpoint enforces recipient == JWT.sub and 403s on the mismatch.
         # Concrete prod incident this prevents: 2026-05-03 00:33-00:34 UTC
         # reflexd loop emitting 403 every retry, never subscribing to SSE.
+        # A saved key only goes to the relay it was saved for: with the relay
+        # overridden to another one, only an env key may be used.
+        from quorus.config import DEFAULT_RELAY_URL, same_relay, withheld_credential_message
+        saved_key = data.get("api_key") or ""
+        bound = same_relay(relay_url, data.get("relay_url") or DEFAULT_RELAY_URL)
         api_key = (
             os.environ.get("REFLEXD_API_KEY")
             or os.environ.get("API_KEY")
-            or data.get("api_key")
-            or ""
+            or (saved_key if bound else "")
         )
+        if not api_key and saved_key and not bound:
+            raise SystemExit(f"reflexd: {withheld_credential_message(relay_url.rstrip('/'))}. "
+                             "Or set REFLEXD_API_KEY for that relay.")
         participant = (
             os.environ.get("REFLEXD_PARTICIPANT") or data.get("instance_name") or ""
         )
@@ -2536,9 +2548,17 @@ class Reflexd:
         self._limit_announced: set[tuple[str, float]] = set()
         # room -> ordered ids the agent saw in a wake it then answered.
         self._answered: dict[str, dict[str, None]] = {}
-        self._turns: list[float] = []  # wake start times, for pacing
+        self._turns: list[float] = []  # harness run start times, for pacing
         self._pace_announced: dict[str, float] = {}
+        # Paced envelopes wait here (newest per room, coalesced) instead of
+        # holding the wake lock: a pacing sleep under the lock kept the owner's
+        # own @mentions queued for an hour (overseer, fix 16).
+        self._pace_parked: dict[str, tuple[dict[str, Any], Any]] = {}
+        self._pace_task: asyncio.Task | None = None
         self._readonly_warned: set[str] = set()  # worktrees told "stuck marker"
+        # Unfinished-turn holds whose marker couldn't be written: still honoured
+        # by this process (the marker is what survives a restart).
+        self._unfinished_held: set[str] = set()
         self._last_spoke: dict[str, float] = {}
         self._last_wake_at: float = 0.0
         # Bounded in-memory queue for messages that arrive while a busy-file
@@ -2933,38 +2953,66 @@ class Reflexd:
         while len(seen) > ANSWERED_MAX:
             seen.pop(next(iter(seen)))
 
-    async def _paced(self, relay: RelayClient, envelope: dict[str, Any]) -> bool:
+    async def _paced(self, relay: RelayClient, envelope: dict[str, Any],
+                     triage: Any = None) -> bool:
         """Keep the agent inside its owner's plan: past its turns-per-hour cap,
-        WAIT for a slot (messages queue meanwhile and are coalesced), never drop.
-        A human's message always goes straight through. Codex burned a 5-hour
-        plan window in ~24 turns on night one (2026-10-17)."""
+        park the message for its slot (newest per room; the later wake reads
+        the room, so nothing is dropped). A human's message always goes
+        straight through. Codex burned a 5-hour plan window in ~24 turns on
+        night one (2026-10-17).
+
+        Turns are recorded only when the harness actually runs
+        (:meth:`_record_turn`), and the wait never holds the wake lock: skipped
+        envelopes burned the window and a sleep under the lock blocked the
+        owner's own @mentions for an hour (overseer, fix 16)."""
         cap = pace_for(self.config.participant_name)
-        if cap is None:
+        if cap is None or not is_agent_participant(envelope.get("from_name") or ""):
             return True
         now = time.time()
-        if not is_agent_participant(envelope.get("from_name") or ""):
-            self._turns.append(now)
-            return True
         wait = pace_wait_s(self._turns, cap, now)
-        if wait > 0:
-            room = envelope.get("room") or ""
-            if now - self._pace_announced.get(room, 0.0) > PACE_WINDOW_S:
-                self._pace_announced[room] = now
-                await self._post_status(
-                    relay, room, envelope,
-                    f"@{self.config.participant_name} is pacing itself ({cap} turns/hour to "
-                    f"stay inside its plan); next turn in about {_human_wait(wait)}")
-            logger.info("pacing: waiting %.0fs (cap %d/h)", wait, cap)
-            # Waiting for a plan slot isn't working: it showed as "⋯ @a-codex
-            # working 57m" for most of every hour (2026-10-17).
-            await self._set_presence(relay, "active", "")
+        if wait <= 0:
+            return True
+        room = envelope.get("room") or ""
+        if now - self._pace_announced.get(room, 0.0) > PACE_WINDOW_S:
+            self._pace_announced[room] = now
+            await self._post_status(
+                relay, room, envelope,
+                f"@{self.config.participant_name} is pacing itself ({cap} turns/hour to "
+                f"stay inside its plan); next turn in about {_human_wait(wait)}")
+        logger.info("pacing: parked for %.0fs (cap %d/h)", wait, cap)
+        self._pace_parked[room] = (envelope, triage)
+        if self._pace_task is None or self._pace_task.done():
+            self._pace_task = asyncio.get_running_loop().create_task(
+                self._release_paced(relay, wait))
+        return False
+
+    def _record_turn(self) -> None:
+        """A harness turn is starting: it counts against the pace window."""
+        now = time.time()
+        self._turns = [t for t in self._turns if now - t < PACE_WINDOW_S] + [now]
+
+    async def _release_paced(self, relay: RelayClient, wait: float) -> None:
+        """When the slot opens, wake once per room for the parked messages.
+        Keep going while anything is parked: a room whose wake re-parked it
+        (the slot went to the room before it) waits for the next slot rather
+        than being stranded with no worker left (codex, review of 10d8a8e0)."""
+        while True:
             await self._sleep_or_stop(wait)
             if self._stop.is_set():
-                return False
-            await self._set_presence(relay, "busy", room)
-        self._turns = [t for t in self._turns if time.time() - t < PACE_WINDOW_S]
-        self._turns.append(time.time())
-        return True
+                return
+            parked, self._pace_parked = self._pace_parked, {}
+            for envelope, triage in parked.values():
+                if self._stop.is_set():
+                    return
+                try:
+                    async with self._wake_lock:
+                        await self._wake_and_reply(relay, envelope, triage=triage)
+                except Exception as exc:  # one bad wake mustn't strand the rest
+                    logger.exception("paced wake failed: %s", exc)
+            if not self._pace_parked:
+                return
+            cap = pace_for(self.config.participant_name)
+            wait = 0.0 if cap is None else max(1.0, pace_wait_s(self._turns, cap, time.time()))
 
     def _agent_credential(self) -> tuple[str, bool]:
         """``(credential, legacy)`` for the woken agent.
@@ -3050,21 +3098,22 @@ class Reflexd:
             return
         if await self._limited(relay, envelope):
             return
-        if not await self._paced(relay, envelope):
+        wake_id = envelope_canonical_id(envelope)
+        if wake_id and wake_id in self._answered.get(room, {}):
+            # A lead @-mentioned by every teammate built a queue of mentions,
+            # then woke once per item it had already seen in an earlier wake's
+            # transcript and answered: ~10 NO_REPLY wakes in a row (live
+            # 2026-10-17). Seen in context + posted after = handled. Checked
+            # before pacing, so a skipped message never waits for a slot.
+            logger.info("skipping wake: %s was already in an answered wake's context", wake_id)
+            return
+        if not await self._paced(relay, envelope, triage):
             return
         self._refresh_identity()
 
         history = await relay.fetch_recent(
             room=room, limit=HEARTBEAT_HISTORY_LIMIT,
         )
-        wake_id = envelope_canonical_id(envelope)
-        if wake_id and wake_id in self._answered.get(room, {}):
-            # A lead @-mentioned by every teammate built a queue of mentions,
-            # then woke once per item it had already seen in an earlier wake's
-            # transcript and answered: ~10 NO_REPLY wakes in a row (live
-            # 2026-10-17). Seen in context + posted after = handled.
-            logger.info("skipping wake: %s was already in an answered wake's context", wake_id)
-            return
         context_ids = {m.get("id") for m in history if m.get("id")} | {wake_id}
         memory_entries: list[dict[str, Any]] = []
         try:
@@ -3093,6 +3142,9 @@ class Reflexd:
             except (OSError, subprocess.SubprocessError) as exc:
                 logger.warning("worktree setup failed, using %s: %s", ws, exc)
                 worktree, worktree_problem = None, type(exc).__name__
+            if worktree is not None and worktree.repaired:
+                logger.warning("%s", worktree.repaired)
+                await self._post_status(relay, room, envelope, f"⚠ {worktree.repaired}")
         # Step 3 of code across machines: remember where the branch started
         # so a review request can carry exactly this wake's commits.
         pre_head = (await asyncio.to_thread(_review_share.head_of, worktree)
@@ -3161,6 +3213,7 @@ class Reflexd:
         )
         failure_reason = None
         readonly_snap: dict[str, str] | None = None
+        readonly_turn = False
         try:
             # Only pass worktree extras when used: adapters written against
             # the older run() signature keep working.
@@ -3209,6 +3262,7 @@ class Reflexd:
                 # snapshot this one if it is read-only (security fix 15).
                 await self._settle_readonly(relay, room, worktree, None)
                 if reflexd_readonly.is_read_only(harness, room_mode):
+                    readonly_turn = True
                     try:
                         readonly_snap = await asyncio.to_thread(
                             reflexd_readonly.begin, self._readonly_dir, worktree.path)
@@ -3216,10 +3270,29 @@ class Reflexd:
                         # An unresolved earlier turn: its marker already keeps
                         # this worktree from publishing; never overwrite it.
                         logger.error("read-only turn: %s", exc)
+                    except (OSError, subprocess.SubprocessError) as exc:
+                        # Without a snapshot its writes can't be told apart:
+                        # don't run it, and say why instead of a bare "stuck".
+                        raise reflexd_readonly.SnapshotError(
+                            "couldn't check its worktree before a read-only turn "
+                            "(git failed there), so it didn't run") from exc
             if room_mode == "manual":
                 # The approve tool must know where to ask: without this every
                 # permission prompt was denied "No Quorus room bound".
                 extra_kw["approval_room"] = room
+            if worktree is not None and not readonly_turn:
+                # Hold the worktree before the harness runs (codex, review of
+                # 97d81fb8): a crash or a failed turn then can't leave commits
+                # a restarted daemon would publish. Only a clean finish clears
+                # it. No hold, no turn.
+                try:
+                    await asyncio.to_thread(reflexd_unfinished.hold,
+                                            self._unfinished_dir, worktree)
+                except OSError as exc:
+                    raise reflexd_readonly.SnapshotError(
+                        "couldn't record the turn before starting it (its hold "
+                        "marker failed to write), so it didn't run") from exc
+            self._record_turn()  # only a turn that runs counts against the pace
             reply = await self.adapter.run(
                 harness, context=prompt,
                 cwd=worktree.path if worktree is not None else ws,
@@ -3233,6 +3306,7 @@ class Reflexd:
             # text here, which may contain credentials or prompt contents.
             failure_reason = (
                 "timed out" if isinstance(exc, (TimeoutError, asyncio.TimeoutError))
+                else str(exc) if isinstance(exc, reflexd_readonly.SnapshotError)
                 else f"crashed ({type(exc).__name__})"
             )
             reply = "[reflexd] harness errored"
@@ -3244,6 +3318,9 @@ class Reflexd:
         reply = redact_secrets((reply or "").strip(),
                                [self.config.api_key, *env_secret_values(os.environ)])
         unknown_exit = reply == "[reflexd] harness errored"
+        # Didn't finish cleanly: its commits are held back, not published.
+        turn_failed = bool(vendor_failure or failure_reason or exit_code != "unknown"
+                           or reply.startswith(("[reflexd]", "⚠")))
         previous_degraded = self._degraded_reason
         if vendor_failure:
             self._degraded_reason = vendor_failure.reason
@@ -3258,11 +3335,39 @@ class Reflexd:
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
             reply = ""
-        if worktree is not None and await self._settle_readonly(
-                relay, room, worktree, readonly_snap, envelope):
+        if worktree is not None and (await self._settle_readonly(
+                relay, room, worktree, readonly_snap, envelope) or readonly_turn):
             pass  # a read-only turn never publishes, whatever its harness wrote
+        elif worktree is not None and turn_failed:
+            # Cut off or failed mid-work: hold first (fail closed), then copy
+            # its commits to <branch>-unfinished for review. Never to the
+            # room's branch (c36101ec: a half-written CHANGELOG reached main).
+            parked = None
+            self._unfinished_held.add(str(worktree.path))
+            try:
+                await asyncio.to_thread(reflexd_unfinished.hold, self._unfinished_dir,
+                                        worktree)
+                parked = await asyncio.to_thread(
+                    reflexd_unfinished.park, self._unfinished_dir, worktree,
+                    self.config.participant_name,
+                    f"wip: unfinished turn by {self.config.participant_name}")
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.exception("couldn't park an unfinished turn: %s", exc)
+            else:
+                if not parked:  # nothing unpublished: park lifted the hold
+                    self._unfinished_held.discard(str(worktree.path))
+            if parked and reply == "[reflexd] harness timed out":
+                reply = reflexd_unfinished.notice(parked, self._activity)
+            elif parked:
+                await self._post_status(relay, room, envelope,
+                                        reflexd_unfinished.notice(parked))
         elif worktree is not None:
             try:
+                # A clean finish lifts an unfinished turn's hold. If that fails,
+                # the except below keeps the work on its branch, unpublished.
+                await asyncio.to_thread(reflexd_unfinished.clear, self._unfinished_dir,
+                                        worktree)
+                self._unfinished_held.discard(str(worktree.path))
                 published = await self._publish_with_resolution(
                     worktree, harness=harness, resume=prior_session,
                     on_session=_persist_session, timeout_s=wake_timeout,
@@ -3279,9 +3384,6 @@ class Reflexd:
                              f"kept on {worktree.branch}")
             if published:
                 logger.info("%s", published)
-                if reply == "[reflexd] harness timed out":
-                    # Not a raw sentinel above real, published work.
-                    reply = _timed_out_line(published=True, last_step=self._activity)
                 reply = f"{reply}\n{published}" if reply else published
         if pre_head and reply:
             try:
@@ -3863,6 +3965,10 @@ class Reflexd:
     def _readonly_dir(self) -> Path:
         return self.config.runtime_dir / "readonly-wakes"
 
+    @property
+    def _unfinished_dir(self) -> Path:
+        return self.config.runtime_dir / "unfinished-wakes"
+
     async def _settle_readonly(self, relay: RelayClient, room: str, worktree: Any,
                                snap: dict[str, str] | None,
                                envelope: dict[str, Any] | None = None) -> bool:
@@ -3920,6 +4026,9 @@ class Reflexd:
                 )
                 if wt is not None and await self._settle_readonly(relay, room, wt, None):
                     continue  # a read-only turn's leftovers are never published
+                if wt is not None and (str(wt.path) in self._unfinished_held or
+                                       reflexd_unfinished.pending(self._unfinished_dir, wt.path)):
+                    continue  # a cut-off turn waits for review or its finishing turn
                 status = await asyncio.to_thread(
                     reflexd_wake.publish_worktree, wt, self.config.participant_name,
                 ) if wt is not None else None

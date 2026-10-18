@@ -56,7 +56,8 @@ async def claim_name(req: ClaimNameRequest, request: Request,
     # guard against a runaway loop minting names.
     limits, bucket = request.app.state.rate_limit_service, f"claim-name:{get_real_ip(request)}"
     if await limits.is_rate_limited("global", bucket, CLAIMS_PER_HOUR, window=3600):
-        raise HTTPException(status_code=429, detail="too many name claims; retry in an hour")
+        raise HTTPException(status_code=429, detail="too many name claims; retry in an hour",
+                            headers={"Retry-After": "3600"})
     key = await asyncio.to_thread(store.claim, req.name)
     if key is None:
         raise HTTPException(status_code=409, detail=(

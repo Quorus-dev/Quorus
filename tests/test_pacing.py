@@ -60,46 +60,121 @@ class _Relay:
         return {"id": "p"}
 
 
-def test_over_cap_waits_and_says_so_once_but_humans_go_first(monkeypatch) -> None:
+def test_over_cap_parks_and_says_so_once_but_humans_go_first(monkeypatch) -> None:
     d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
                                               participant_name="a-codex"))
     monkeypatch.setattr(reflexd, "pace_for", lambda name: 1)
-    slept: list[float] = []
+    released: list[float] = []
 
-    async def fake_sleep(s: float) -> None:
-        slept.append(s)
+    async def fake_release(relay: Any, wait: float) -> None:
+        released.append(wait)
 
-    monkeypatch.setattr(d, "_sleep_or_stop", fake_sleep)
+    monkeypatch.setattr(d, "_release_paced", fake_release)
     relay = _Relay()
     agent_msg = {"room": "build", "from_name": "a-claude", "message_id": "m"}
-    assert asyncio.run(d._paced(relay, agent_msg))  # first turn: free
-    assert slept == []
-    assert asyncio.run(d._paced(relay, agent_msg))  # second: waits for the hour slot
-    assert len(slept) == 1 and slept[0] > 3500
-    assert len(relay.posted) == 1 and "pacing itself (1 turns/hour" in relay.posted[0]["content"]
-    human = {"room": "build", "from_name": "arav", "message_id": "h"}
-    slept.clear()
-    assert asyncio.run(d._paced(relay, human)) and slept == []  # boss never waits
+
+    async def go() -> None:
+        assert await d._paced(relay, agent_msg)  # first turn: free
+        d._record_turn()  # ...and it ran
+        assert not await d._paced(relay, agent_msg)  # second: parked for the slot
+        await asyncio.sleep(0)
+        assert len(released) == 1 and released[0] > 3500
+        assert d._pace_parked["build"][0] is agent_msg
+        assert len(relay.posted) == 1
+        assert "pacing itself (1 turns/hour" in relay.posted[0]["content"]
+        human = {"room": "build", "from_name": "arav", "message_id": "h"}
+        assert await d._paced(relay, human)  # boss never waits
+    asyncio.run(go())
 
 
-def test_waiting_for_a_slot_shows_available_not_working(monkeypatch) -> None:
-    """Codex showed '⋯ working 57m' for most of every hour while it waited."""
+def test_skipped_messages_use_no_pace_turns(monkeypatch) -> None:
+    """Overseer, fix 16: three already-answered envelopes filled the 3/h window
+    and the next real message waited an hour."""
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+    monkeypatch.setattr(reflexd, "pace_for", lambda name: 3)
+    d._answered["build"] = {"m1": None, "m2": None, "m3": None}
+
+    async def no_limit(*_a: Any) -> bool:
+        return False
+    monkeypatch.setattr(d, "_limited", no_limit)
+    for mid in ("m1", "m2", "m3"):
+        env = {"room": "build", "from_name": "a-claude", "message_id": mid, "id": mid}
+        asyncio.run(d._wake_and_reply_inner(_Relay(), env))
+    assert d._turns == [] and d._pace_parked == {}
+
+
+def test_an_owner_mention_during_a_pacing_wait_wakes_at_once(monkeypatch) -> None:
+    """The pacing wait held the wake lock, so the owner's direct @mentions sat
+    queued for an hour. A parked message no longer holds anything."""
     d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
                                               participant_name="a-codex"))
     monkeypatch.setattr(reflexd, "pace_for", lambda name: 1)
-    seen: list[tuple[str, str]] = []
+    woke: list[str] = []
+    gate = asyncio.Event()
+
+    async def fake_sleep(_s: float) -> None:
+        await gate.wait()  # the slot opens only when the test says so
+    monkeypatch.setattr(d, "_sleep_or_stop", fake_sleep)
+
+    async def fake_wake(relay: Any, env: dict, *, triage: Any = None, **_k: Any) -> None:
+        if await d._paced(relay, env, triage):
+            d._record_turn()
+            woke.append(env["from_name"])
+
+    monkeypatch.setattr(d, "_wake_and_reply", fake_wake)
+
+    async def go() -> None:
+        relay = _Relay()
+        d._record_turn()  # the hour's one turn is used
+        async with d._wake_lock:
+            await d._wake_and_reply(relay, {"room": "build", "from_name": "a-claude",
+                                            "message_id": "agent"})
+        assert woke == [] and not d._wake_lock.locked()
+        async def boss() -> None:
+            async with d._wake_lock:
+                await d._wake_and_reply(relay, {"room": "build", "from_name": "arav",
+                                                "message_id": "boss"})
+        await asyncio.wait_for(boss(), timeout=2)  # the owner doesn't wait for the slot
+        assert woke == ["arav"]
+        d._turns = []  # the slot frees up
+        gate.set()
+        await d._pace_task
+        assert woke == ["arav", "a-claude"]  # the parked message still runs
+    asyncio.run(go())
+
+
+
+def test_a_room_re_parked_during_release_still_gets_its_slot(monkeypatch) -> None:
+    """Codex on 10d8a8e0: two parked rooms, cap 1/hour. The first wake took the
+    slot, the second re-parked while the release worker was still running, and
+    the worker then exited, stranding the second room."""
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+    monkeypatch.setattr(reflexd, "pace_for", lambda name: 1)
+    woke: list[str] = []
+    sleeps: list[float] = []
 
     async def fake_sleep(s: float) -> None:
-        seen.append(d._presence)  # what the room sees during the wait
+        sleeps.append(s)
+        d._turns = []  # time passes: the hour's slot opens again
 
-    async def fake_presence(relay: Any, status: str, room: str) -> None:
-        d._presence = (status, room)
+    async def fake_wake(relay: Any, env: dict, *, triage: Any = None, **_k: Any) -> None:
+        if await d._paced(relay, env, triage):
+            d._record_turn()
+            woke.append(env["room"])
 
     monkeypatch.setattr(d, "_sleep_or_stop", fake_sleep)
-    monkeypatch.setattr(d, "_set_presence", fake_presence)
-    d._presence = ("busy", "build")
-    msg = {"room": "build", "from_name": "a-claude", "message_id": "m"}
-    asyncio.run(d._paced(_Relay(), msg))
-    asyncio.run(d._paced(_Relay(), msg))  # over the cap: waits
-    assert seen == [("active", "")]
-    assert d._presence == ("busy", "build")  # working again once the turn starts
+    monkeypatch.setattr(d, "_wake_and_reply", fake_wake)
+
+    async def go() -> None:
+        relay = _Relay()
+        d._record_turn()  # the slot is used
+        for room in ("alpha", "beta"):
+            await d._wake_and_reply(relay, {"room": room, "from_name": "a-claude",
+                                            "message_id": room})
+        assert woke == [] and set(d._pace_parked) == {"alpha", "beta"}
+        await asyncio.wait_for(d._pace_task, timeout=5)
+    asyncio.run(go())
+    assert woke == ["alpha", "beta"] and d._pace_parked == {}
+    assert len(sleeps) == 2  # one wait per slot, then the worker ends

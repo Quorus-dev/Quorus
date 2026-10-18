@@ -2,7 +2,7 @@
 
 Shared by `quorus share-branch` / `quorus fetch` and the MCP tools. Fetched code only
 ever lands under ``refs/quorus/<uploader>/<branch>``: never a local branch,
-a checkout or a merge (docs/weekend/cross-machine-code.md).
+a checkout or a merge (docs/design/cross-machine-code.md).
 """
 
 from __future__ import annotations

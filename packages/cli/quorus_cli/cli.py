@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from rich.table import Table
 from quorus.config import load_config
 from quorus.profiles import ProfileManager
 from quorus_cli import ui as _ui
+from quorus_cli.http_hints import hint as _http_hint
 
 console = _ui.console
 _config = load_config()
@@ -266,6 +268,13 @@ def _get_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(follow_redirects=True)
 
 
+def _print_json(data: object) -> None:
+    """``--json`` output: the relay's data as-is, nothing else on stdout, so an
+    agent or a script can parse it. Errors still exit non-zero (0.5.0 sweep, A2)."""
+    sys.stdout.write(json.dumps(data, indent=2) + "\n")
+    sys.stdout.flush()
+
+
 def _sibling_quorus_mcp() -> str | None:
     """The `quorus-mcp` installed beside the running interpreter, if any.
 
@@ -299,16 +308,24 @@ def _mcp_server_command() -> tuple[str, list[str]]:
     return sys.executable, ["-m", "quorus.mcp_server"]
 
 
+_WITHHELD_WARNED = False
+
+
 def _auth_headers() -> dict[str, str]:
     """Get auth headers — JWT from API key, or legacy secret for local dev."""
-    global _cached_jwt
+    global _cached_jwt, _WITHHELD_WARNED
+    if _config.get("credentials_withheld") and not (API_KEY or RELAY_SECRET) \
+            and not _WITHHELD_WARNED:
+        from quorus.config import withheld_credential_message
+        _WITHHELD_WARNED = True
+        print(f"quorus: {withheld_credential_message(RELAY_URL)}", file=sys.stderr)
     if API_KEY:
         if not _cached_jwt:
             resp = httpx.post(
                 f"{RELAY_URL}/v1/auth/token",
                 json={"api_key": API_KEY},
                 timeout=10,
-                follow_redirects=True,
+                follow_redirects=False,
             )
             resp.raise_for_status()
             _cached_jwt = resp.json()["token"]
@@ -715,13 +732,20 @@ def _cmd_chat(args):
 
 def _cmd_rooms(args):
     from quorus_cli import ui
+    as_json = bool(getattr(args, "json", False))
     try:
-        with ui.spinner("Fetching rooms"):
+        if as_json:
             rooms = asyncio.run(_list_rooms())
+        else:
+            with ui.spinner("Fetching rooms"):
+                rooms = asyncio.run(_list_rooms())
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
         sys.exit(1)
 
+    if as_json:
+        _print_json(rooms)
+        return
     if not rooms:
         ui.console.print()
         ui.console.print("  [muted]— no rooms yet —[/]")
@@ -782,7 +806,7 @@ def _cmd_create(args):
         elif e.response.status_code == 401:
             ui.error("Not authenticated", hint="run: quorus init <name> --secret <s>")
         else:
-            ui.error("Could not create room", hint=f"server returned HTTP {e.response.status_code}")
+            ui.error("Could not create room", hint=_http_hint(e.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -798,7 +822,7 @@ def _cmd_invite(args):
             f"Invited {len(args.participants)} agent(s) to [room]#{args.room}[/]"
         )
     except httpx.HTTPStatusError as e:
-        ui.error("Invite failed", hint=f"HTTP {e.response.status_code}")
+        ui.error("Invite failed", hint=_http_hint(e.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -828,7 +852,7 @@ def _cmd_say(args):
         elif e.response.status_code == 403:
             ui.error(f"Not a member of #{args.room}", hint=f"join first: quorus join {args.room}")
         else:
-            ui.error("Send failed", hint=f"HTTP {e.response.status_code}")
+            ui.error("Send failed", hint=_http_hint(e.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -842,7 +866,7 @@ def _cmd_dm(args):
             asyncio.run(_dm(args.to, args.message))
         ui.success(f"DM sent to [agent]@{args.to}[/]")
     except httpx.HTTPStatusError as e:
-        ui.error("DM failed", hint=f"HTTP {e.response.status_code}")
+        ui.error("DM failed", hint=_http_hint(e.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -958,7 +982,7 @@ def _cmd_heartbeat(args):
     except httpx.HTTPStatusError as exc:
         ui.error(
             "Could not resolve primary room",
-            hint=f"HTTP {exc.response.status_code}",
+            hint=_http_hint(exc.response),
         )
         sys.exit(1)
 
@@ -973,7 +997,7 @@ def _cmd_heartbeat(args):
     try:
         asyncio.run(_say(room_name, message))
     except httpx.HTTPStatusError as exc:
-        ui.error("Heartbeat send failed", hint=f"HTTP {exc.response.status_code}")
+        ui.error("Heartbeat send failed", hint=_http_hint(exc.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -2338,9 +2362,9 @@ def _cmd_hook(args):
         console.print("[green]Hook disabled.[/green]")
 
 
-async def _history(room_name: str, limit: int = 50):
+async def _history(room_name: str, limit: int = 50, *, as_json: bool = False):
     """Fetch and display room message history."""
-    client = httpx.AsyncClient(follow_redirects=True)
+    client = _get_client()
     try:
         resp = await client.get(
             f"{RELAY_URL}/rooms/{room_name}/history",
@@ -2349,6 +2373,9 @@ async def _history(room_name: str, limit: int = 50):
         )
         resp.raise_for_status()
         messages = resp.json()
+        if as_json:
+            _print_json(messages)
+            return
         if not messages:
             console.print(f"[dim]No messages in {room_name}[/dim]")
             return
@@ -2360,12 +2387,16 @@ async def _history(room_name: str, limit: int = 50):
         for msg in messages:
             console.print(_format_chat_msg(msg))
     except httpx.ConnectError as exc:
+        if as_json:
+            raise
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
+        if as_json:
+            raise
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -2419,12 +2450,12 @@ async def _export(
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
 
-async def _ps() -> None:
+async def _ps(*, as_json: bool = False) -> None:
     """Show all agents with online/offline status from heartbeat presence."""
     client = _get_client()
     try:
@@ -2433,6 +2464,9 @@ async def _ps() -> None:
         )
         resp.raise_for_status()
         agents = resp.json()
+        if as_json:
+            _print_json(agents)
+            return
 
         if not agents:
             console.print()
@@ -2524,19 +2558,23 @@ async def _ps() -> None:
             " [dim]— send a test message[/]"
         )
     except httpx.ConnectError as exc:
+        if as_json:
+            raise
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
-        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+        if as_json:
+            raise
+        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
 
 def _cmd_ps(args):
-    asyncio.run(_ps())
+    asyncio.run(_ps(as_json=bool(getattr(args, "json", False))))
 
 
 def _cmd_history(args):
-    asyncio.run(_history(args.room, args.limit))
+    asyncio.run(_history(args.room, args.limit, as_json=bool(getattr(args, "json", False))))
 
 
 def _cmd_export(args):
@@ -2584,7 +2622,7 @@ async def _search(
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -2746,7 +2784,7 @@ async def _metrics(room_name: str) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -3710,7 +3748,7 @@ def _cmd_status(args):
 # quorus state <room>
 # ---------------------------------------------------------------------------
 
-async def _room_state(room_name: str) -> None:
+async def _room_state(room_name: str, *, as_json: bool = False) -> None:
     """Show the Shared State Matrix for a room (goal, agents, locks, stats)."""
     client = _get_client()
     try:
@@ -3720,6 +3758,9 @@ async def _room_state(room_name: str) -> None:
         )
         resp.raise_for_status()
         state = resp.json()
+        if as_json:
+            _print_json(state)
+            return
 
         console.print(f"[bold]Room:[/bold] {room_name}\n")
 
@@ -3796,18 +3837,22 @@ async def _room_state(room_name: str) -> None:
         console.print(f"[bold]Messages:[/bold] {msg_count}{last_str}")
 
     except httpx.ConnectError as exc:
+        if as_json:
+            raise
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
+        if as_json:
+            raise
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
 
 def _cmd_room_state(args):
-    asyncio.run(_room_state(args.room))
+    asyncio.run(_room_state(args.room, as_json=bool(getattr(args, "json", False))))
 
 
 # ---------------------------------------------------------------------------
@@ -3869,7 +3914,7 @@ async def _room_locks(room_name: str) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -3930,7 +3975,7 @@ async def _usage() -> None:
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
-        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -4584,7 +4629,7 @@ def _create_init_human_profile(
             headers={"X-Quorus-Setup-Local": "1", "Authorization":
                      f"Bearer {_workspace_jwt(relay_url=relay_url, api_key=api_key)}"},
             timeout=15,
-            follow_redirects=True,
+            follow_redirects=False,
         )
     except Exception as exc:
         ui.warn(f"Human signup failed: {exc.__class__.__name__}")
@@ -4792,7 +4837,7 @@ def _init_run_wake_smoke(
             f"{relay_url}/v1/auth/token",
             json={"api_key": human_api_key},
             timeout=10,
-            follow_redirects=True,
+            follow_redirects=False,
         )
         if token_resp.status_code != 200:
             return False, 0.0, f"token exchange HTTP {token_resp.status_code}"
@@ -4981,6 +5026,16 @@ def _cmd_init(args):
         config_dir = Path(cli_override).expanduser()
     else:
         config_dir = _config_dir()
+    # A daemon's agent identity dir (reflexd_wake.AGENT_MARKER): an agent's
+    # QUORUS_CONFIG_DIR points here and beats HOME, so an agent trying `quorus
+    # init` in a throwaway HOME replaced its own credentials (0.5.0 sweep).
+    if (config_dir / ".quorus-agent").exists() and getattr(args, "force", False) is not True:
+        _ui.error(
+            f"{config_dir} is an agent's own identity, kept by its wake daemon",
+            hint="nothing was written. For a separate setup, unset QUORUS_CONFIG_DIR "
+                 "or pass --config-dir <dir>; to really replace it, add --force.",
+        )
+        sys.exit(5)
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "config.json"
     # A first-run hub install keeps its config behind a pointer
@@ -5014,7 +5069,16 @@ def _cmd_init(args):
         # this run doesn't set (agent_api_keys, push settings, ...) survive.
         # Drop the superseded credential shape: a lingering api_key would
         # keep winning over the relay_secret we are writing.
-        merged = dict(pm.get(profile_slug) or {})
+        from quorus.config import drop_credentials_if_relay_changed
+        # Credentials (api_key, relay_secret, agent_api_keys) belong to the
+        # relay that issued them: switching this profile to another relay must
+        # not carry them along (codex, 84bbb9b2: the supervisor paired relay
+        # A's agent keys with relay B).
+        merged, dropped = drop_credentials_if_relay_changed(
+            pm.get(profile_slug) or {}, relay_url)
+        if dropped:
+            console.print("[yellow]New relay: credentials saved for the old one were "
+                          "dropped, not carried over.[/yellow]")
         merged.pop("api_key" if not api_key else "relay_secret", None)
         merged.update(config)
         backup_path = _backup_before_overwrite(profile_path)
@@ -5095,8 +5159,11 @@ def _cmd_init(args):
                 existing = json.loads(config_path.read_text()) if config_path.exists() else {}
             except (json.JSONDecodeError, ValueError, OSError):
                 existing = {}
+        from quorus.config import drop_credentials_if_relay_changed
+        existing, _ = drop_credentials_if_relay_changed(existing, relay_url)
         existing.update(config)
-        # Preserve previously-saved agent keys for platforms we didn't touch.
+        # Preserve previously-saved agent keys for platforms we didn't touch
+        # (on the same relay only: the line above drops them on a switch).
         prior = existing.get("agent_api_keys") or {}
         if not isinstance(prior, dict):
             prior = {}
@@ -5403,9 +5470,18 @@ def _cmd_join(args):
         arg_room = getattr(args, "room", None)
 
         relay_url = arg_relay if arg_relay else RELAY_URL
-        secret = arg_secret if arg_secret else RELAY_SECRET
-        api_key = arg_api_key if arg_api_key else API_KEY
+        # Saved credentials only go to the relay they were saved for: --relay
+        # pointing elsewhere without --secret/--api-key must not send them.
+        from quorus.config import same_relay, withheld_credential_message
+        # (RELAY_SECRET/API_KEY are already bound to RELAY_URL by load_config.)
+        inherit = not arg_relay or same_relay(arg_relay, RELAY_URL)
+        secret = arg_secret or (RELAY_SECRET if inherit else "")
+        api_key = arg_api_key or (API_KEY if inherit else "")
         room = arg_room if arg_room else ""
+        if not (secret or api_key) and (RELAY_SECRET or API_KEY) and not inherit:
+            _ui.error(withheld_credential_message(relay_url),
+                      hint="pass --secret or --api-key for that relay, or use its invite code")
+            sys.exit(3)
 
         # Only rewrite config if explicit flags were provided
         rewrite_config = bool(arg_relay or arg_secret or arg_api_key)
@@ -5489,7 +5565,7 @@ def _cmd_join(args):
                     f"{relay_url}/v1/auth/token",
                     json={"api_key": api_key},
                     timeout=10,
-                    follow_redirects=True,
+                    follow_redirects=False,
                 )
                 token_resp.raise_for_status()
                 token = token_resp.json().get("token", "")
@@ -5874,7 +5950,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                 json=signup_payload,
                 headers={"X-Quorus-Setup-Local": "1"},
                 timeout=15,
-                follow_redirects=True,
+                follow_redirects=False,
             )
             if signup_resp.status_code == 409 and not tenant_id:
                 # Workspace taken — retry with random suffix (only if creating new)
@@ -5884,7 +5960,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                     json={"name": name, "workspace": workspace},
                     headers={"X-Quorus-Setup-Local": "1"},
                     timeout=15,
-                    follow_redirects=True,
+                    follow_redirects=False,
                 )
             if signup_resp.status_code == 200:
                 signup_data = signup_resp.json()
@@ -6018,7 +6094,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                             f"{relay_url}/v1/auth/token",
                             json={"api_key": api_key},
                             timeout=10,
-                            follow_redirects=True,
+                            follow_redirects=False,
                         )
                         if token_resp.status_code == 200:
                             auth_token = token_resp.json().get("token", api_key)
@@ -6116,6 +6192,18 @@ def _cmd_quickjoin(args):
         _ui.error("Invalid or expired token")
         return
     _apply_join_payload(payload, args.name)
+
+
+def _open_in_terminal(cmd: str) -> None:
+    """Run *cmd* (already shell-quoted) in a new macOS Terminal tab.
+
+    The command is embedded in an AppleScript string literal, so its
+    backslashes and double quotes are escaped for that layer too.
+    """
+    escaped = cmd.replace("\\", "\\\\").replace('"', '\\"')
+    subprocess.run(
+        ["osascript", "-e", f'tell application "Terminal" to do script "{escaped}"']
+    )
 
 
 def _spawn_agent(room: str, name: str, relay_url: str, secret: str):
@@ -6237,11 +6325,7 @@ You communicate ONLY through the room — never reply in terminal.
 
     # Open a new terminal tab (macOS)
     if sys.platform == "darwin":
-        cmd = f"cd {workspace} && claude"
-        applescript = (
-            f'tell application "Terminal" to do script "{cmd}"'
-        )
-        subprocess.run(["osascript", "-e", applescript])
+        _open_in_terminal(f"cd {shlex.quote(str(workspace))} && claude")
         console.print(f"[green]Launched {name} in new Terminal tab[/green]")
     else:
         _ui.info(f"Run manually: cd {workspace} && claude")
@@ -6300,20 +6384,16 @@ def _spawn_codex_agent(
 
     console.print(f"[green]Workspace created: {workspace}[/green]")
 
+    ws = shlex.quote(str(workspace))
+    cmd = (
+        f"cd {ws} && quorus codex-agent {room} "
+        f"--name {name}{flag_suffix} --cwd {ws}"
+    )
     if sys.platform == "darwin":
-        cmd = (
-            f"cd {workspace} && quorus codex-agent {room} "
-            f"--name {name}{flag_suffix} --cwd {workspace}"
-        )
-        applescript = f'tell application "Terminal" to do script "{cmd}"'
-        subprocess.run(["osascript", "-e", applescript])
+        _open_in_terminal(cmd)
         console.print(f"[green]Launched Codex agent {name} in new Terminal tab[/green]")
     else:
-        _ui.info(
-            "Run manually: "
-            f"cd {workspace} && quorus codex-agent {room} "
-            f"--name {name}{flag_suffix} --cwd {workspace}"
-        )
+        _ui.info(f"Run manually: {cmd}")
 
 
 def _cmd_register_agents(args):
@@ -6675,15 +6755,12 @@ You are {name} in the {room} group chat. ALL communication goes through the room
         console.print(f"\n[green]Workspace ready: {workspace}[/green]")
 
         # Build claude launch command with model flag
-        model_flag = f"--model {model}" if model != "sonnet" else ""
-        claude_cmd = f"cd {workspace} && claude {model_flag}".strip()
+        model_flag = f"--model {shlex.quote(model)}" if model != "sonnet" else ""
+        claude_cmd = f"cd {shlex.quote(str(workspace))} && claude {model_flag}".strip()
 
         # Launch in new terminal tab (macOS)
         if sys.platform == "darwin":
-            applescript = (
-                f'tell application "Terminal" to do script "{claude_cmd}"'
-            )
-            subprocess.run(["osascript", "-e", applescript])
+            _open_in_terminal(claude_cmd)
             console.print(f"[bold green]{name} launched in new Terminal tab![/bold green]")
         else:
             _ui.info(f"Run manually: {claude_cmd}")
@@ -7334,7 +7411,7 @@ def _cmd_logs(args):
     except httpx_mod.ConnectError as exc:
         _relay_unreachable(exc=exc)
     except httpx_mod.HTTPStatusError as e:
-        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
 
 
 def _cmd_brief(args):
@@ -8129,7 +8206,7 @@ Be direct and actionable. No pleasantries. This will be injected into the agent'
             if e.response.status_code == 404:
                 _ui.error(f"Room \'{target_room}\' not found", hint="list rooms: quorus rooms")
             else:
-                _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+                _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -8200,6 +8277,36 @@ def _cmd_begin(args):
     """Open the Quorus interactive TUI hub."""
     from quorus_tui.hub import run_hub
     run_hub()
+
+
+def _has_tty() -> bool:
+    """The hub reads keys from stdin and draws on stdout: both must be terminals."""
+    return all(
+        bool(getattr(stream, "isatty", lambda: False)())
+        for stream in (sys.stdin, sys.stdout)
+    )
+
+
+_NON_INTERACTIVE_SETUP = """\
+quorus: the interactive hub needs a terminal, and stdin/stdout is not one.
+Set up without a terminal:
+  quorus init <name> --relay-url http://localhost:8080 --secret <secret>   # shared-secret relay
+  quorus init <name> --relay-url <url> --api-key <key>                      # account relay
+Then use the plain commands; --json gives machine-readable output:
+  quorus rooms --json | quorus say <room> "<message>" | quorus history <room> --json
+Agents: `quorus-mcp` is the MCP server (stdio); llms.txt in the repo and package explains
+the tools, or read the MCP resource quorus://llms.txt.
+Every command: quorus --help
+"""
+
+
+def _refuse_hub_without_tty() -> None:
+    """Bare `quorus` in a pipe or an agent's shell used to open the hub, which
+    prompted into the void and exited 0 having done nothing (0.5.0 sweep).
+    Say how to set up non-interactively instead, on stderr, and exit 2."""
+    sys.stderr.write(_NON_INTERACTIVE_SETUP)
+    sys.stderr.flush()
+    raise SystemExit(2)
 
 
 def _print_grouped_help():
@@ -8483,7 +8590,7 @@ def _cmd_login(args) -> None:
 # quorus approvals / approve / deny  (WAKE_REBUILD L3)
 # ---------------------------------------------------------------------------
 
-async def _approvals_list(room: str | None) -> None:
+async def _approvals_list(room: str | None, *, as_json: bool = False) -> None:
     client = _get_client()
     params = {"room": room} if room else None
     try:
@@ -8492,11 +8599,18 @@ async def _approvals_list(room: str | None) -> None:
         )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
+        if as_json:
+            raise
         # Every other command prints a one-line error here; approvals used
         # to dump a raw httpx traceback (runbook rehearsal, 2026-08-21).
         _relay_unreachable(exc=exc)
         raise SystemExit(2) from None
+    finally:
+        await client.aclose()
     pending = resp.json().get("pending", [])
+    if as_json:
+        _print_json(pending)
+        return
     if not pending:
         console.print("[dim]no approvals waiting[/]")
         return
@@ -8553,7 +8667,8 @@ async def _approval_decide(approval_id: str, approve: bool, reason: str) -> None
 
 
 def _cmd_approvals(args) -> None:
-    asyncio.run(_approvals_list(getattr(args, "room", None)))
+    asyncio.run(_approvals_list(getattr(args, "room", None),
+                                as_json=bool(getattr(args, "json", False))))
 
 
 def _cmd_approve(args) -> None:
@@ -8717,6 +8832,11 @@ def main():
         help="Also start the legacy reflexd-manager (prefer `quorus agent add`)",
     )
     p_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Write even into an agent's own identity dir (its daemon rewrites it)",
+    )
+    p_init.add_argument(
         "--no-smoke",
         action="store_true",
         help="Skip the post-init wake-smoke (no temp room, no @-mention)",
@@ -8747,7 +8867,7 @@ def main():
                          help="Bind address (default: this machine only; "
                               "0.0.0.0 to share on your LAN)")
 
-    sub.add_parser("rooms", **_help_block(
+    p_rooms = sub.add_parser("rooms", **_help_block(
         synopsis="List all rooms visible to your account.",
         description=(
             "Admins see every room on the relay. Regular users see only "
@@ -8756,6 +8876,7 @@ def main():
         example="quorus rooms",
         help_text="List all rooms",
     ))
+    p_rooms.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     p_create = sub.add_parser("create", **_help_block(
         synopsis="Create a new coordination room.",
@@ -8860,6 +8981,7 @@ def main():
     p_history.add_argument(
         "--limit", type=int, default=50, help="Max messages (default 50)"
     )
+    p_history.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     p_search = sub.add_parser(
         "search", help="Search room history by keyword, sender, or type"
@@ -8897,7 +9019,7 @@ def main():
         help="Max messages to export (default 1000)"
     )
 
-    sub.add_parser("ps", **_help_block(
+    p_ps = sub.add_parser("ps", **_help_block(
         synopsis="Show which agents are online right now.",
         description=(
             "Lists every agent the relay has seen recently, with last-seen "
@@ -8906,6 +9028,7 @@ def main():
         example="quorus ps",
         help_text="Show agent presence (online/offline)",
     ))
+    p_ps.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     sub.add_parser("status", help="Show relay health and stats")
 
     p_doctor = sub.add_parser("doctor", **_help_block(
@@ -9243,6 +9366,7 @@ def main():
 
     p_state = sub.add_parser("state", help="Show room state: goal, agents, locks, stats")
     p_state.add_argument("room", help="Room name")
+    p_state.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     p_locks = sub.add_parser("locks", help="Show active file locks in a room")
     p_locks.add_argument("room", help="Room name")
@@ -9472,6 +9596,7 @@ def main():
         help_text="Tool approvals waiting on you",
     ))
     p_approvals.add_argument("--room", default=None, help="Filter by room")
+    p_approvals.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     p_approve = sub.add_parser("approve", help="Approve an agent tool call")
     p_approve.add_argument("approval_id", help="Approval id (apr_...)")
@@ -9608,7 +9733,9 @@ def main():
     p_agent_add.add_argument(
         "--model", help="Model to run, e.g. sonnet, gpt-5.5, gemini-2.5-pro, "
                         "ollama/qwen3:4b (opencode: any provider/model)")
-    agent_sub.add_parser("list", help="Agents running on this machine")
+    p_agent_list = agent_sub.add_parser("list", help="Agents running on this machine")
+    p_agent_list.add_argument("--json", action="store_true",
+                              help="Machine-readable JSON output")
     p_agent_pace = agent_sub.add_parser(
         "pace", help="Cap an agent's turns per hour to stay inside its plan")
     p_agent_pace.add_argument("name", help="Agent name, e.g. arav-codex")
@@ -9844,6 +9971,8 @@ def main():
     args = parser.parse_args()
     if not args.command:
         # Launch TUI by default (like `claude` or `gemini`)
+        if not _has_tty():
+            _refuse_hub_without_tty()
         _cmd_begin(args)
         return
 

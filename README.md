@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.Quorus-dev/quorus -->
 <div align="center">
 
 # Quorus
@@ -170,6 +171,10 @@ Quorus ships with an MCP server. After `quorus init`, your AI agent sees Quorus 
 - `room_metrics` / `search_room`
 
 No SDK, no wrapper — just the agent using tools it already understands.
+
+Pointing an agent at Quorus? Give it [`llms.txt`](llms.txt): how to install, join a room
+over MCP and use every tool. It ships in the package and the MCP server serves it as the
+resource `quorus://llms.txt`.
 
 ## HTTP API
 

@@ -4,7 +4,7 @@ Background: at the April 23 2026 hackathon, a fresh `pipx install quorus`
 produced a venv in which `import quorus_sdk` failed because hatchling's
 editable shim files (`_editable_impl_quorus*.pth`) were marked macOS-hidden
 and Python 3.14's site.py silently skipped them. See
-`docs/HACKATHON_REGRESSION.md` for the full root cause.
+the regression tests below for the root cause.
 
 These tests assert the invariants we never want to lose again:
 

@@ -206,14 +206,15 @@ def test_middleware_fails_open_on_record_redis_error(monkeypatch):
         ("  203.0.113.5  ", "203.0.113.5"),
     ],
 )
-def test_get_client_ip_handles_xff(header_value, expected):
+def test_get_client_ip_handles_xff(header_value, expected, monkeypatch):
     """X-Forwarded-For parsing — wave-5 fix moves to rightmost-N pattern.
 
     Leftmost-trust let any client spoof its IP by prepending an entry to
     XFF. Rightmost-N walks back from the proxy hop our edge proxy
-    actually controls (default TRUSTED_PROXY_COUNT=1 = the very last
-    entry).
+    actually controls (TRUSTED_PROXY_COUNT=1, as fly.toml sets = the very
+    last entry).
     """
+    monkeypatch.setenv("TRUSTED_PROXY_COUNT", "1")
 
     class _StubRequest:
         def __init__(self, xff: str) -> None:

@@ -1,4 +1,4 @@
-"""Carry review requests' commits between machines (docs/weekend/cross-machine-code.md).
+"""Carry review requests' commits between machines (docs/design/cross-machine-code.md).
 
 Opt-in per room (``"share": true`` in room-bindings.json).
 

@@ -11,6 +11,7 @@ from mcp import types
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.message import SessionMessage
 
+from quorus import __version__ as _quorus_version
 from quorus.operating_discipline import render_qod_for_mcp
 from quorus_mcp import channel as _channel
 from quorus_mcp import runtime, tools
@@ -271,12 +272,28 @@ _QOD_TAIL = (
 QUORUS_INSTRUCTIONS = f"{_QOD}\n\n---\n\n{_QOD_TAIL}\n\n{_channel.CHANNEL_INSTRUCTIONS}"
 
 mcp = FastMCP("quorus", instructions=QUORUS_INSTRUCTIONS, lifespan=_mcp_lifespan)
+# serverInfo.version: FastMCP takes no version and falls back to the mcp
+# package's own (it said "1.30.0" on quorus-ai 0.5.0, overseer's agent sweep).
+mcp._mcp_server.version = _quorus_version
 
 _orig_list_tools = mcp._mcp_server.request_handlers[types.ListToolsRequest]
 async def _list_tools_wrapped(req: types.ListToolsRequest):
     await _remember_session(mcp.get_context())
     return await _orig_list_tools(req)
 mcp._mcp_server.request_handlers[types.ListToolsRequest] = _list_tools_wrapped
+
+# Tools report relay failures as "Error: ..." text (see _relay_error_message).
+# Flag those isError so an agent can't mistake a failed send for a success.
+_orig_call_tool = mcp._mcp_server.request_handlers[types.CallToolRequest]
+async def _call_tool_wrapped(req: types.CallToolRequest):
+    result = await _orig_call_tool(req)
+    res = result.root
+    if isinstance(res, types.CallToolResult) and not res.isError and res.content:
+        first = res.content[0]
+        if isinstance(first, types.TextContent) and first.text.startswith("Error:"):
+            res.isError = True
+    return result
+mcp._mcp_server.request_handlers[types.CallToolRequest] = _call_tool_wrapped
 
 
 def _install_session_capture() -> None:
@@ -413,7 +430,10 @@ async def social_verb(
 # ---------------------------------------------------------------------------
 
 from quorus_mcp import bundle_tools as _bundle_tools  # noqa: E402,F401
+from quorus_mcp import docs_resource as _docs_resource  # noqa: E402
 from quorus_mcp import phase1_registry as _phase1_registry  # noqa: E402,F401
+
+_docs_resource.register(mcp)
 
 
 def main_cli() -> None:

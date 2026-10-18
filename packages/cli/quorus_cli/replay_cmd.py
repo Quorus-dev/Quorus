@@ -84,6 +84,12 @@ def _clean(text: str, known: list[str]) -> str:
     return html.escape(redact_secrets(text[:MAX_BODY], known))
 
 
+def _mask(text: str, known: list[str]) -> str:
+    """Every field written to the page is masked, not just message bodies:
+    commit authors, stats and names are text anyone could have set."""
+    return html.escape(redact_secrets(text, known))
+
+
 def _clock(t: float) -> str:
     return time.strftime("%H:%M", time.localtime(t))
 
@@ -109,16 +115,16 @@ def render(room: str, messages: list[dict[str, Any]], commits: list[Commit],
         elif not quiet:
             humans.append(t)
         kind = "quiet" if quiet else ("human" if vendor == "human" else "agent")
-        events.append((t, f'<li class="msg {kind}"><div class="meta"><b>@{html.escape(who)}'
-                          f'</b><span class="tag">{html.escape(vendor)}</span>'
+        events.append((t, f'<li class="msg {kind}"><div class="meta"><b>@{_mask(who, known)}'
+                          f'</b><span class="tag">{_mask(vendor, known)}</span>'
                           f'<time>{_clock(t)}</time></div>'
                           f'<div class="body">{_clean(body, known)}</div></li>'))
     for c in commits:
         events.append((c.when, f'<li class="commit"><div class="meta"><b>commit '
-                               f'{html.escape(c.sha)}</b><span class="tag">'
-                               f'@{html.escape(c.author)} · {html.escape(c.vendor)}</span>'
+                               f'{_mask(c.sha, known)}</b><span class="tag">'
+                               f'@{_mask(c.author, known)} · {_mask(c.vendor, known)}</span>'
                                f'<time>{_clock(c.when)}</time></div><div class="body">'
-                               f'{_clean(c.subject, known)}<small>{html.escape(c.stat)}'
+                               f'{_clean(c.subject, known)}<small>{_mask(c.stat, known)}'
                                f'</small></div></li>'))
     events.sort(key=lambda e: e[0])
     first_ask = min(humans) if humans else (events[0][0] if events else 0.0)
@@ -129,7 +135,7 @@ def render(room: str, messages: list[dict[str, Any]], commits: list[Commit],
     strip = "".join(f'<div class="stat"><b>{v}</b><span>{k}</span></div>' for v, k in stats)
     vendors = sorted({_vendor(a) for a in agents})
     sub = (f"{len(agents)} agents on {', '.join(vendors)}" if agents else "no agents yet")
-    return PAGE.format(room=html.escape(room), sub=html.escape(sub), strip=strip,
+    return PAGE.format(room=_mask(room, known), sub=_mask(sub, known), strip=strip,
                        events="\n".join(e for _, e in events) or "<li>No messages.</li>",
                        made=time.strftime("%Y-%m-%d %H:%M"), repo=REPO_URL)
 
@@ -151,7 +157,7 @@ def cmd_replay(args: Any, console: Any) -> None:
     out = Path(args.out or f"quorus-replay-{args.room}.html").expanduser().resolve()
     out.write_text(render(args.room, messages, commits, known), encoding="utf-8")
     console.print(f"[success]✓[/] Replay of #{args.room} ({len(messages)} messages, "
-                  f"{len(commits)} commits): {out}")
+                  f"{len(commits)} commit{'' if len(commits) == 1 else 's'}): {out}")
     console.print("[dim]Nothing was uploaded. Credentials are masked, but read it "
                   "before you share it.[/]")
 
