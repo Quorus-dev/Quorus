@@ -227,6 +227,11 @@ def validate_participant(participant: str) -> None:
         raise ValueError("participant must be 1-64 letters, digits, hyphens or underscores")
 
 
+# `quorus init` refuses to write into a dir holding this (U3, 0.5.1): an agent
+# testing init with its inherited QUORUS_CONFIG_DIR overwrote its own identity.
+AGENT_MARKER = ".quorus-agent"
+
+
 def write_agent_config_dir(
     root: Path, *, relay_url: str, api_key: str, participant: str, legacy: bool,
 ) -> Path:
@@ -244,6 +249,7 @@ def write_agent_config_dir(
     _write_private_json(root / "profiles" / f"{participant}.json", profile)
     _write_private_json(root / "config.json",
                         {"current": participant, "profiles": [participant]})
+    (root / AGENT_MARKER).write_text(participant + "\n", encoding="utf-8")
     return root
 
 
