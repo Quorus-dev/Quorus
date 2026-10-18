@@ -3514,8 +3514,12 @@ class Reflexd:
         return not _pause_announced(recent, marker)
 
     def _track_scope(self, repo: Path | None) -> str:
-        """relay|owner|repo: L2 evidence learned in one context stays there."""
-        return "|".join((urlparse(self.config.relay_url).netloc,
+        """relay|owner|repo: L2 evidence learned in one context stays there.
+        The relay is scheme + host + base path, so two relays behind one host
+        (``/team-a``, ``/team-b``) never share evidence."""
+        url = urlparse(self.config.relay_url)
+        relay = f"{url.scheme}://{url.netloc}{url.path.rstrip('/')}"
+        return "|".join((relay,
                          agent_owner(self.config.participant_name), str(repo or "")))
 
     async def _post_status(
