@@ -3328,6 +3328,18 @@ class Reflexd:
                 # The approve tool must know where to ask: without this every
                 # permission prompt was denied "No Quorus room bound".
                 extra_kw["approval_room"] = room
+            if worktree is not None and not readonly_turn:
+                # Hold the worktree before the harness runs (codex, review of
+                # 97d81fb8): a crash or a failed turn then can't leave commits
+                # a restarted daemon would publish. Only a clean finish clears
+                # it. No hold, no turn.
+                try:
+                    await asyncio.to_thread(reflexd_unfinished.hold,
+                                            self._unfinished_dir, worktree)
+                except OSError as exc:
+                    raise reflexd_readonly.SnapshotError(
+                        "couldn't record the turn before starting it (its hold "
+                        "marker failed to write), so it didn't run") from exc
             self._record_turn()  # only a turn that runs counts against the pace
             reply = await self.adapter.run(
                 harness, context=prompt,
