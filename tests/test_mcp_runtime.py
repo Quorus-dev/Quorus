@@ -209,7 +209,7 @@ def saved_profile(tmp_path, monkeypatch):
 def test_profile_key_never_goes_to_another_relay(saved_profile, monkeypatch):
     monkeypatch.setenv("QUORUS_RELAY_URL", "https://other.example")
     monkeypatch.setenv("QUORUS_API_KEY", "")  # a plugin's blank field
-    with pytest.raises(SystemExit, match="not the relay your saved profile is for"):
+    with pytest.raises(SystemExit, match="no credential saved for https://other.example"):
         runtime.load_runtime_config()
 
 
@@ -228,7 +228,9 @@ def test_same_relay_keeps_the_saved_key(saved_profile, monkeypatch, url):
 
 
 def test_same_relay_comparison():
-    assert runtime._same_relay("https://h.example", "https://h.example:443/")
-    assert not runtime._same_relay("https://h.example/team-a", "https://h.example/team-b")
-    assert not runtime._same_relay("http://h.example", "https://h.example")
-    assert not runtime._same_relay("http://h:99999", "http://h")
+    from quorus.config import same_relay
+
+    assert same_relay("https://h.example", "https://h.example:443/")
+    assert not same_relay("https://h.example/team-a", "https://h.example/team-b")
+    assert not same_relay("http://h.example", "https://h.example")
+    assert not same_relay("http://h:99999", "http://h")
