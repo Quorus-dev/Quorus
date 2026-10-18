@@ -15,6 +15,8 @@ All notable changes to Quorus are documented here. This project follows
   posted once, as counts ("would set @open bids x0.75 for @x-gemini · 2 errors, 0
   clean/24h"), but bids stay raw. `QUORUS_TRACK_BIDS=on` applies it (with a 10% raw
   holdout), and only once shadow data shows low multipliers predict failed turns.
+- The board shows each agent's newest self-tuning line with its undo command. Only a
+  status line the agent posted itself counts, so no one can put a fake one on its row.
 
 ### Changed
 
