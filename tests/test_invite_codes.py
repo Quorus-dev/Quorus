@@ -333,3 +333,62 @@ async def test_quorus_join_explains_a_taken_name(client, monkeypatch, tmp_path, 
         cli._apply_join_payload({**payload, "r": "http://t"}, "arav")  # the owner's name
     assert exc.value.code == 4
     assert not (tmp_path / "joiner" / "config.json").exists()
+
+
+async def test_the_owner_lists_and_revokes_invites_without_seeing_codes(client) -> None:
+    r = await client.post("/v1/join/mint", json={"room": "build", "max_uses": 3}, headers=ADMIN)
+    inv_id = r.json()["invite_id"]
+    payload = (await client.get(f"/v1/join/resolve/{r.json()['code']}")).json()["payload"]
+    listed = await client.get("/v1/join/invites", headers=ADMIN)
+    assert listed.status_code == 200
+    assert payload["c"] not in listed.text and "code_hash" not in listed.text
+    row = next(i for i in listed.json() if i["id"] == inv_id)
+    assert (row["room"], row["uses"], row["max_uses"], row["revoked"]) == ("build", 0, 3, 0)
+
+    assert (await client.post(f"/v1/join/invites/{inv_id}/revoke",
+                              headers=ADMIN)).status_code == 200
+    redeem = await client.post("/v1/join/redeem", json={"code": payload["c"], "name": "gil"})
+    assert redeem.status_code == 403
+    assert (await client.post("/v1/join/invites/inv_000000000000/revoke",
+                              headers=ADMIN)).status_code == 404
+    assert (await client.post("/v1/join/invites/..%2Fx/revoke",
+                              headers=ADMIN)).status_code in (400, 404)
+
+
+async def test_only_the_secret_holder_manages_invites(client) -> None:
+    """An invitee's own key is a member, not the relay owner."""
+    r = await client.post("/v1/join/mint", json={"room": "build"}, headers=ADMIN)
+    inv_id = r.json()["invite_id"]
+    payload = (await client.get(f"/v1/join/resolve/{r.json()['code']}")).json()["payload"]
+    key = (await client.post("/v1/join/redeem", json={"code": payload["c"], "name": "hana"})
+           ).json()["participant_key"]
+    jwt = (await client.post("/v1/auth/token", json={"api_key": key})).json()["token"]
+    them = {"Authorization": f"Bearer {jwt}"}
+    assert (await client.get("/v1/join/invites", headers=them)).status_code == 403
+    assert (await client.post(f"/v1/join/invites/{inv_id}/revoke",
+                              headers=them)).status_code == 403
+    assert (await client.get("/v1/join/invites")).status_code == 401
+
+
+async def test_quorus_share_uses_and_quorus_invites_revoke(client, monkeypatch, tmp_path,
+                                                          capsys) -> None:
+    import argparse
+    import asyncio as _asyncio
+
+    cli = _cli_against_relay(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "RELAY_URL", "http://t")
+    monkeypatch.setattr(cli, "RELAY_SECRET", "test-secret")
+    monkeypatch.setattr(cli, "API_KEY", "")
+    await _asyncio.to_thread(cli._cmd_share,
+                             argparse.Namespace(room="build", ttl=1, uses=4, copy=False))
+    shown = capsys.readouterr().out
+    assert "up to 4 people" in shown and "quorus invites --revoke inv_" in shown
+    inv_id = shown.split("quorus invites --revoke ")[1].split()[0]
+
+    await _asyncio.to_thread(cli._cmd_invites, argparse.Namespace(revoke=None))
+    assert f"{inv_id}  #build  0/4 used" in capsys.readouterr().out
+    await _asyncio.to_thread(cli._cmd_invites, argparse.Namespace(revoke=inv_id))
+    assert f"Revoked {inv_id}" in capsys.readouterr().out
+    row = next(i for i in (await client.get("/v1/join/invites", headers=ADMIN)).json()
+               if i["id"] == inv_id)
+    assert row["revoked"] == 1

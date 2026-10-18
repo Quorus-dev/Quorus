@@ -1,4 +1,6 @@
 """``POST /v1/join/redeem``: turn an invite code into the joiner's own key.
+``GET /v1/join/invites`` and ``POST /v1/join/invites/{id}/revoke``: the
+relay owner's list of invites (never their codes) and the way to kill one.
 
 Shared-secret relays only (docs/weekend/invite-roles.md, step 1). The code is
 the bearer proof; redeeming spends one use, claims the name as a human, adds it
@@ -10,11 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from quorus.auth import invite_codes
+from quorus.auth.middleware import AuthContext, verify_auth
 from quorus.config import get_real_ip
 from quorus.routes.helpers import _validate_name
 
@@ -22,6 +26,7 @@ router = APIRouter(prefix="/v1/join", tags=["join-codes"])
 LEGACY_TENANT = "_legacy"
 REDEEMS_PER_HOUR = 10
 MAX_ROOM_MEMBERS = int(os.environ.get("MAX_ROOM_MEMBERS", "50"))
+_INVITE_ID = re.compile(r"inv_[0-9a-f]{12}")
 
 
 class RedeemRequest(BaseModel):
@@ -74,3 +79,37 @@ async def redeem(req: RedeemRequest, request: Request) -> dict:
                                                     "new invite") from None
     return {"participant_key": key, "name": req.name, "room": invite.room_name,
             "role": invite.role}
+
+
+def _owner_only(auth: AuthContext) -> None:
+    """Invites live on shared-secret relays, and only the secret's holder (the
+    relay owner) may list or revoke them: not a participant key, not an agent."""
+    if os.environ.get("DATABASE_URL"):
+        raise HTTPException(status_code=404, detail="this relay issues API keys")
+    if not auth.is_legacy:
+        raise HTTPException(status_code=403, detail="only the relay owner manages invites")
+
+
+@router.get("/invites")
+async def list_invites(request: Request, auth: AuthContext = Depends(verify_auth)) -> list:
+    _owner_only(auth)
+    from quorus.auth.participant_routes import _store
+
+    return await asyncio.to_thread(invite_codes.list_invites, _store(request))
+
+
+@router.post("/invites/{invite_id}/revoke")
+async def revoke_invite(invite_id: str, request: Request,
+                        auth: AuthContext = Depends(verify_auth)) -> dict:
+    _owner_only(auth)
+    if not _INVITE_ID.fullmatch(invite_id):
+        raise HTTPException(status_code=400, detail="invalid invite id")
+    rate = request.app.state.rate_limit_service
+    if not await rate.check_with_limit("global", f"invite-revoke:{get_real_ip(request)}",
+                                       60, window=60):
+        raise HTTPException(status_code=429, detail="rate_limited")
+    from quorus.auth.participant_routes import _store
+
+    if not await asyncio.to_thread(invite_codes.revoke, _store(request), invite_id):
+        raise HTTPException(status_code=404, detail="no such invite")
+    return {"id": invite_id, "revoked": True}

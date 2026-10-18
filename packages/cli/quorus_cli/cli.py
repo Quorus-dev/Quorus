@@ -1256,6 +1256,14 @@ def _cmd_scorecard(args):
     cmd_scorecard(args, console)
 
 
+def _cmd_invites(args):
+    from quorus_cli.invites_cmd import cmd_invites
+
+    rc = cmd_invites(args)
+    if rc:
+        sys.exit(rc)
+
+
 def _cmd_turnguard(args):
     """Mark the current agent busy/idle for the local Reflex daemon.
 
@@ -5649,6 +5657,7 @@ def _cmd_share(args):
     """
     room = args.room
     ttl_days = getattr(args, "ttl", 1)
+    uses = getattr(args, "uses", 1)
     want_copy = getattr(args, "copy", None)
     # Default `--copy` behavior: on when stdout is a TTY, off otherwise.
     if want_copy is None:
@@ -5665,6 +5674,10 @@ def _cmd_share(args):
         _ui.error("No auth configured", hint="run: quorus init")
         return
 
+    if not 1 <= uses <= 20:
+        _ui.error("--uses must be 1 to 20")
+        return
+
     # Call the mint endpoint — admin-only, auth via our configured
     # relay secret or API key. The relay checks the room exists and
     # returns 404 if not, so we don't need a pre-flight /rooms call.
@@ -5672,7 +5685,7 @@ def _cmd_share(args):
         resp = httpx.post(
             f"{RELAY_URL}/v1/join/mint",
             headers=_auth_headers(),
-            json={"room": room, "ttl_days": ttl_days},
+            json={"room": room, "ttl_days": ttl_days, "max_uses": uses},
             timeout=15,
             follow_redirects=True,
         )
@@ -5743,6 +5756,11 @@ def _cmd_share(args):
     ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
     ui.console.print(f"    [accent]{install_cmd}[/]")
     ui.console.print()
+
+    if body.get("invite_id"):
+        admits = "1 person" if uses == 1 else f"up to {uses} people"
+        ui.console.print(f"  [muted]admits {admits} · revoke: "
+                         f"quorus invites --revoke {body['invite_id']}[/]\n")
 
     if want_copy:
         # Copy the join command minus the literal <their-name> placeholder
@@ -9374,6 +9392,10 @@ def main():
         "--ttl", type=int, default=1,
         help="Code expiry in days (default: 1, max 7)",
     )
+    p_share.add_argument(
+        "--uses", type=int, default=1,
+        help="How many people the code admits (default: 1, max 20)",
+    )
     _copy_group = p_share.add_mutually_exclusive_group()
     _copy_group.add_argument(
         "--copy", dest="copy", action="store_const", const=True,
@@ -9622,6 +9644,10 @@ def main():
                           help="Hours to look back (default 2)")
     p_replay.add_argument("--repo", help="Repo for the commits (default: the room's binding)")
     p_replay.add_argument("--out", help="Output file (default quorus-replay-<room>.html)")
+
+    p_invites = sub.add_parser(
+        "invites", help="List this relay's invites, or revoke one (relay owner only)")
+    p_invites.add_argument("--revoke", metavar="ID", help="Revoke an invite by its id")
 
     p_score = sub.add_parser(
         "scorecard", help="Which agent and vendor's work holds up in this repo")
@@ -9968,6 +9994,7 @@ def main():
         "room": _cmd_room,
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
+        "invites": _cmd_invites,
         "phone": _cmd_phone,
         "web": _cmd_web,
         "retro": _cmd_retro,
