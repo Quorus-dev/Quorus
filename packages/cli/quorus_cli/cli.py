@@ -871,7 +871,15 @@ def _cmd_say(args):
         if e.response.status_code == 404:
             ui.error(f"Room '{args.room}' not found", hint="list rooms: quorus rooms")
         elif e.response.status_code == 403:
-            ui.error(f"Not a member of #{args.room}", hint=f"join first: quorus join {args.room}")
+            try:
+                refusal = _room_refusal(str(e.response.json().get("detail") or ""))
+            except ValueError:
+                refusal = None
+            if refusal:
+                ui.error(refusal[0], hint=refusal[1])
+            else:
+                ui.error(f"Not a member of #{args.room}",
+                         hint=f"join first: quorus join {args.room}")
         else:
             ui.error("Send failed", hint=_http_hint(e.response))
         sys.exit(1)
@@ -2438,7 +2446,7 @@ async def _history(room_name: str, limit: int = 50, *, as_json: bool = False):
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -2492,7 +2500,7 @@ async def _export(
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -2606,7 +2614,7 @@ async def _ps(*, as_json: bool = False) -> None:
     except httpx.HTTPStatusError as e:
         if as_json:
             raise
-        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+        _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -2664,7 +2672,7 @@ async def _search(
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -2826,7 +2834,7 @@ async def _metrics(room_name: str) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -3896,7 +3904,7 @@ async def _room_state(room_name: str, *, as_json: bool = False) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -3964,7 +3972,7 @@ async def _room_locks(room_name: str) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -4025,7 +4033,7 @@ async def _usage() -> None:
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
-        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+        _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -7575,7 +7583,7 @@ def _cmd_logs(args):
     except httpx_mod.ConnectError as exc:
         _relay_unreachable(exc=exc)
     except httpx_mod.HTTPStatusError as e:
-        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+        _report_http_error(e.response)
 
 
 def _cmd_brief(args):
@@ -8370,7 +8378,7 @@ Be direct and actionable. No pleasantries. This will be injected into the agent'
             if e.response.status_code == 404:
                 _ui.error(f"Room \'{target_room}\' not found", hint="list rooms: quorus rooms")
             else:
-                _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+                _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -10284,6 +10292,33 @@ class _RoomNotFound(ValueError):
     """A room name that doesn't exist on the relay (typo, wrong case)."""
 
 
+def _room_refusal(detail: str) -> "tuple[str, str] | None":
+    """A 403 about the room, not the credentials: an observer invite writing, or
+    someone whose invite was revoked. Both were reported as a bad secret, with a
+    hint to re-run init with a secret an invitee never had."""
+    if "observers can read" in detail:
+        return ("Your invite to this room is read-only: you can read it but not post, "
+                "claim or change anything", "ask the room's owner for a member invite")
+    if "room member" in detail:
+        return (f"You're not in that room ({detail})",
+                "your invite may have been revoked; ask for a new one, then `quorus join <code>`")
+    return None
+
+
+def _report_http_error(resp: "httpx.Response") -> None:
+    """Print why a relay request failed: the room refusal if it is one, else
+    the relay's reason with a reachability hint."""
+    try:
+        refusal = _room_refusal(str(resp.json().get("detail") or "")) \
+            if resp.status_code == 403 else None
+    except ValueError:
+        refusal = None
+    if refusal:
+        _ui.error(refusal[0], hint=refusal[1])
+    else:
+        _ui.error_with_retry(_http_hint(resp), relay_url=RELAY_URL)
+
+
 def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
     """One readable line for any relay error a command didn't handle itself.
     Before this, a wrong secret or missing room dumped a Python traceback."""
@@ -10295,6 +10330,10 @@ def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
     if isinstance(detail, list) and detail and isinstance(detail[0], dict):
         detail = detail[0].get("msg")  # pydantic validation errors
     detail = str(detail or exc.response.reason_phrase or "").strip()
+    refusal = _room_refusal(detail) if code == 403 else None
+    if refusal:
+        _ui.error(refusal[0], hint=refusal[1])
+        return 3
     if code in (401, 403):
         _ui.error("The relay rejected your credentials" + (f": {detail}" if detail else ""),
                   hint="check your secret/API key — re-run `quorus init <name> --secret -`")

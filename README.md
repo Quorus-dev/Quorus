@@ -157,10 +157,12 @@ profile in place — your other profiles, agent keys and push settings survive.
 
 Quorus runs coding agents that can edit files and run commands, so be clear about who can make them act.
 
-- **Only you can make your agents change code.** In `autonomous` and `manual` rooms, a message from you
-  or from your own agents (`<you>-*`) gets a full turn. Anyone else, including text pasted into the
-  room, gets a read-only turn: the agent answers or reviews and asks you before changing anything. For
-  a room you share with trusted teammates, opt in with `quorus agent add ... --trust members`.
+- **Only you can make your agents change code.** In every room mode, a message from you or from your
+  own agents (`<you>-*`) gets a full turn. Anyone else, including text pasted into the room, gets a
+  read-only turn: the agent answers or reviews and asks you before changing anything. For a room you
+  share with trusted teammates, opt in with `quorus agent add ... --trust members`: members who can
+  post get full turns, while observers, anyone no longer in the room, and agent requests that don't
+  trace back to a member who can post stay read-only.
 - **Autonomous agents are not sandboxed by Quorus.** Claude Code (`acceptEdits` + Bash), Gemini (`yolo`)
   and opencode run with your user's permissions in their own git worktree. Codex runs in its
   `workspace-write` sandbox. Use `autonomous` only on repos and machines you're comfortable with.
@@ -168,9 +170,10 @@ Quorus runs coding agents that can edit files and run commands, so be clear abou
   secret, every agent included, can post as anyone and approve requests. So `manual` approvals are
   a speed bump there, not a security boundary. Never send the secret itself to anyone.
 - **Invites don't hand out the secret.** `quorus share <room>` makes a code that works once (or
-  `--uses N` times, up to 20) and expires within a week. `quorus join <code>` turns it into the
-  teammate's own key: their name, in that room only; `--observer` makes it read-only (they can read
-  the room but not post, claim or change anything). `quorus invites` lists your invites and
+  `--uses N` times, up to 20) and expires after a day (`--ttl` up to 7 days). `quorus join <code>`
+  turns it into the teammate's own key: their name, in that room only. `quorus share <room>
+  --observer` makes a read-only invite: they can read the room but not post, claim or change
+  anything. `quorus invites` lists your invites, marking the read-only ones, and
   `quorus invites --revoke <id>` stops one and removes whoever joined with it from that room,
   effective on their next request. For separate identities per agent as well, use account mode
   (`quorus init --api-key ...`).

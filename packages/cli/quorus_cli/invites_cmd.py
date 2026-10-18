@@ -74,7 +74,9 @@ def cmd_invites(args) -> int:
         return 0
     now = time.time()
     for inv in invites:
-        ui.console.print(f"  {inv['id']}  #{inv['room']}  {inv['uses']}/{inv['max_uses']} "
+        # Observer invites are read-only; say so, or they look like any other.
+        role = "  read-only" if inv.get("role") == "observer" else ""
+        ui.console.print(f"  {inv['id']}  #{inv['room']}{role}  {inv['uses']}/{inv['max_uses']} "
                          f"used  {_status(inv, now)}  by {inv['issuer']}")
     ui.console.print("\n  [dim]revoke one: quorus invites --revoke <id>[/dim]")
     return 0

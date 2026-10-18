@@ -85,6 +85,10 @@ All notable changes to Quorus are documented here. This project follows
 - `quorus invites --revoke <id>` only stopped new joins; the people who had already
   joined with that invite stayed in its room. Revoking now also removes them from the room,
   effective on their next request.
+- An observer's `quorus say` answered "Not a member of #room, join first", and someone
+  whose invite was revoked was told to fix a secret they never had (or to retry). The CLI
+  now says the invite is read-only, or that you're no longer in the room. `quorus invites`
+  marks read-only invites.
 - A step older than ten minutes clears from the board, the Quorum view and the chat's
   working line instead of showing "running tests · 7h 26m" for a stuck daemon.
 - A `postgres://` DATABASE_URL (what `fly postgres attach` sets) wasn't rewritten for
