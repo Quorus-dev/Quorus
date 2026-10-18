@@ -1,6 +1,7 @@
 """``POST /v1/join/redeem``: turn an invite code into the joiner's own key.
 ``GET /v1/join/invites`` and ``POST /v1/join/invites/{id}/revoke``: the
-relay owner's list of invites (never their codes) and the way to kill one.
+relay owner's list of invites (never their codes) and the way to kill one,
+which also removes from its room everyone who joined with it.
 
 Shared-secret relays only (docs/weekend/invite-roles.md, step 1). The code is
 the bearer proof; redeeming spends one use, claims the name as a human, adds it
@@ -110,6 +111,20 @@ async def revoke_invite(invite_id: str, request: Request,
         raise HTTPException(status_code=429, detail="rate_limited")
     from quorus.auth.participant_routes import _store
 
-    if not await asyncio.to_thread(invite_codes.revoke, _store(request), invite_id):
+    store = _store(request)
+    if not await asyncio.to_thread(invite_codes.revoke, store, invite_id):
         raise HTTPException(status_code=404, detail="no such invite")
-    return {"id": invite_id, "revoked": True}
+    # Revoking also removes who joined with it from its room. Room access is the
+    # membership row, read on every request, so they're out on their next one.
+    room_id, names = await asyncio.to_thread(invite_codes.joined_with, store, invite_id)
+    rooms = request.app.state.room_service
+    removed = []
+    for name in names:
+        try:
+            rid, data = await rooms.get(LEGACY_TENANT, room_id)
+        except HTTPException:
+            break  # the room is gone, and its members with it
+        if name in (data.get("members") or ()):
+            await rooms.leave(LEGACY_TENANT, rid, name)
+            removed.append(name)
+    return {"id": invite_id, "revoked": True, "removed": removed}

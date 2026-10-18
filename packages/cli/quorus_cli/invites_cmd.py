@@ -35,7 +35,7 @@ def cmd_invites(args) -> int:
     from quorus_cli import cli, ui
 
     if not cli.RELAY_URL:
-        ui.error("Relay URL not configured", hint="run: quorus init <name> --secret <s>")
+        ui.error("Relay URL not configured", hint="run: quorus init <name> --secret -")
         return 1
     base = f"{cli.RELAY_URL.rstrip('/')}/v1/join/invites"
     revoke = getattr(args, "revoke", None)
@@ -65,8 +65,11 @@ def cmd_invites(args) -> int:
         ui.error(f"Relay answered HTTP {resp.status_code}")
         return 1
     if revoke:
-        ui.console.print(f"[green]Revoked {revoke}[/green]: its code admits no one new; "
-                         "people who already joined keep their access.")
+        removed = (resp.json() or {}).get("removed") or []
+        who = (f"removed from its room: {', '.join('@' + n for n in removed)}"
+               if removed else "no one who joined with it is still in its room")
+        ui.console.print(f"[green]Revoked {revoke}[/green]: its code admits no one new, "
+                         f"and {who}.")
         return 0
     invites = resp.json() or []
     if not invites:
