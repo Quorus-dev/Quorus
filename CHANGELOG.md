@@ -58,6 +58,12 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- A turn redirected mid-turn was published anyway: a stand-down from the owner reached
+  an agent while it worked, and the daemon published the work when the turn ended, so it
+  was built twice. Before publishing, the daemon now reads the room from the oldest
+  unpublished turn. If the owner or the room's lead @-mentioned the agent there (or that
+  history can't be read in full), the commits go to a fresh `<branch>-held-<time>` ref
+  instead, and the next wake must answer `reapply held` or `drop held`; silence gets a ⚠.
 - Persistent memory, published capabilities and room tool catalogs survived a relay
   restart only with Redis; a local relay forgot them all. Without Redis they now live in
   `p1_state.db` next to the relay's other state (owner-only, 0600), deletes and resets

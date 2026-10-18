@@ -122,6 +122,7 @@ packages = ["quorus", "packages/sdk/quorus_sdk", "packages/tui/quorus_tui", "pac
 "scripts/reflexd_steps.py" = "quorus/_reflexd/reflexd_steps.py"
 "scripts/reflexd_readonly.py" = "quorus/_reflexd/reflexd_readonly.py"
 "scripts/reflexd_unfinished.py" = "quorus/_reflexd/reflexd_unfinished.py"
+"scripts/reflexd_held.py" = "quorus/_reflexd/reflexd_held.py"
 
 [tool.hatch.build.targets.sdist]
 exclude = [

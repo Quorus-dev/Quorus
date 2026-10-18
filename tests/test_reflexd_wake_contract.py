@@ -528,6 +528,9 @@ def test_startup_sweep_never_leaves_a_merge_in_progress(tmp_path: Path) -> None:
         async def post_reply(self, **kw: Any) -> None:
             posts.append(kw["content"])
 
+        async def fetch_history(self, **_kw: Any) -> list:
+            return []  # nobody redirected the agent: the publish guard lets it through
+
     reflexd.ROOM_BINDINGS_PATH, saved = bindings, reflexd.ROOM_BINDINGS_PATH
     try:
         asyncio.run(d._publish_sweep(Relay()))
