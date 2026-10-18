@@ -62,7 +62,10 @@ def _notify_room(
     request: Request, tid: str, room_name: str, rec: dict,
     members: list[str],
 ) -> None:
-    """Broadcast the pending approval to every room member over SSE."""
+    """Push the pending approval, preview included, to the room's writers over SSE.
+
+    *members* must already exclude observers: the preview carries command lines
+    and file contents (codex, review of 416d2d55)."""
     sse = getattr(request.app.state, "sse_service", None)
     if sse is None:
         return
@@ -107,9 +110,8 @@ async def create_approval(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     members = await request.app.state.backends.rooms.get_members(tid, rid)
-    _notify_room(
-        request, tid, room_data.get("name", rid), rec, sorted(members.keys()),
-    )
+    writers = sorted(m for m, role in (members or {}).items() if role in WRITER_ROLES)
+    _notify_room(request, tid, room_data.get("name", rid), rec, writers)
 
     # Also drop a human-readable line in the room so the request is visible
     # in any client, not just SSE-aware ones.
@@ -121,8 +123,10 @@ async def create_approval(
                 (
                     # rec["tool_name"] is the SANITIZED value; body's is
                     # raw and let an agent forge extra lines in this notice.
-                    f"🔐 approval needed: `{rec['tool_name']}` — "
-                    f"{rec['input_preview']}\n"
+                    # No preview here: room history reaches observers too, and the
+                    # preview can hold command lines and file contents. Writers
+                    # see it in `quorus approvals` and the SSE event.
+                    f"🔐 approval needed: `{rec['tool_name']}` (details: `quorus approvals`)\n"
                     f"approve with `quorus approve {rec['id']}` "
                     f"or deny with `quorus deny {rec['id']}`"
                 ),
