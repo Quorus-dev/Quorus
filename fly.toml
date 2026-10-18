@@ -1,4 +1,7 @@
-# Fly.io deployment config for Murmur relay
+# Fly.io deployment config for the Quorus relay (account mode).
+# Walkthrough: docs/deployment.md. Set `app` to your own app name first.
+# Secrets:  DATABASE_URL (fly postgres attach), REDIS_URL, JWT_SECRET (32+
+#           chars) and BOOTSTRAP_SECRET, via `fly secrets set`.
 # Deploy: fly deploy
 # Scale:  fly scale count 2  (later, when you need it)
 # Logs:   fly logs

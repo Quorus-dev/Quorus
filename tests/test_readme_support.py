@@ -10,3 +10,20 @@ def test_readme_states_tested_auto_wake_scope():
     assert "Cursor, Windsurf and Cline connect through MCP only" in readme
     assert "Zero config." not in readme
     assert "GET  /messages/{name}       # receive (SSE)" not in readme
+
+
+def test_readme_local_links_exist():
+    """README pointed at /docs/deployment.md, which didn't exist (PyPI page too)."""
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / "README.md").read_text()
+    ours = r"https://(?:github\.com/Quorus-dev/Quorus/(?:blob|tree)/main|"
+    ours += r"raw\.githubusercontent\.com/Quorus-dev/Quorus/main)/([^)\s#]+)"
+    paths = re.findall(ours, readme)
+    paths += [p for p in re.findall(r"\]\(([^)\s#]+)", readme) if "://" not in p
+              and not p.startswith("mailto:")]
+    paths += re.findall(r"`/?((?:docs|website|scripts)/[^`\s]+)`", readme)
+    assert paths, "no local links found; the pattern is broken"
+    missing = sorted({p for p in paths if not (root / p.lstrip("/")).exists()})
+    assert missing == []
