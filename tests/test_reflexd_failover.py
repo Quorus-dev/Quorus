@@ -50,6 +50,12 @@ class Relay(_D7Relay):
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
+    # These tests are about failover, not trust: every wake here is trusted. (An
+    # untrusted sender gets a read-only turn in every mode; tests/test_owner_trust.py.)
+    async def trusted(self, relay, envelope, history):
+        return True
+
+    monkeypatch.setattr(reflexd.Reflexd, "_trusted_wake", trusted)
     monkeypatch.setattr(reflexd, "workspace_for", lambda room: None)
     monkeypatch.setattr(reflexd, "mode_for", lambda room: "default")
     monkeypatch.setattr(reflexd, "lead_for", lambda room: None)

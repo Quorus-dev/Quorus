@@ -210,11 +210,40 @@ def test_an_agent_serving_a_writers_request_keeps_its_write_turn(monkeypatch, tm
     assert seen["mode"] == "autonomous"
 
 
-def test_an_observer_gets_a_read_only_turn_in_a_default_mode_room(monkeypatch, tmp_path) -> None:
-    """Owner-trust room, mode default: a stranger keeps the owner's default settings,
-    but someone the relay lists as an observer gets a read-only turn."""
+def test_untrusted_senders_are_read_only_in_default_mode_too(monkeypatch, tmp_path) -> None:
+    """Codex, review of ee159a6d: a revoked observer looks like a stranger, and a
+    failed role lookup like nothing at all, so neither may fall back to the owner's
+    own (possibly write-capable) default settings."""
     monkeypatch.setattr(reflexd, "mode_for", lambda room: "default")
-    seen = _run(monkeypatch, tmp_path, "olive", None, roles={"olive": "observer"})
-    assert seen["mode"] == "readonly"
-    seen = _run(monkeypatch, tmp_path, "mallory", None, roles={"arav": "builder"})
-    assert seen["mode"] == "default"
+    assert _run(monkeypatch, tmp_path, "olive", None,
+                roles={"olive": "observer"})["mode"] == "readonly"
+    assert _run(monkeypatch, tmp_path, "mallory", None,
+                roles={"arav": "builder"})["mode"] == "readonly"
+    assert _run(monkeypatch, tmp_path, "olive", "members", roles=None)["mode"] == "readonly"
+    assert _run(monkeypatch, tmp_path, "arav", None)["mode"] == "default"
+
+
+def test_a_failover_handoff_of_the_owners_request_stays_trusted(monkeypatch, tmp_path) -> None:
+    from quorus.protocol import SocialVerb
+
+    sv = SocialVerb(verb="defer", actor="arav-codex", room_id="build", ref_message_id="ask",
+                    payload={"to": "arav-claude", "failover": {
+                        "original_message_id": "ask", "failed_agents": ["arav-codex"],
+                        "handoffs": 1, "reason": "quota", "task": "fix it",
+                        "branch": "quorus/arav-codex", "last_commit": ""}})
+    d_env = {"id": "hop", "message_id": "hop", "from_name": "arav-codex", "room": "build",
+             "message_type": "social", "content": sv.model_dump_json()}
+    owner = asyncio.run(reflexd.Reflexd._trusted_wake(
+        _bare_daemon(monkeypatch, tmp_path), _Relay([_msg("ask", "arav")]), d_env, []))
+    assert owner is True
+    stranger = asyncio.run(reflexd.Reflexd._trusted_wake(
+        _bare_daemon(monkeypatch, tmp_path), _Relay([_msg("ask", "mallory")]), d_env, []))
+    assert stranger is False
+
+
+def _bare_daemon(monkeypatch, tmp_path):
+    monkeypatch.setenv("REFLEXD_OWNER", "arav")
+    monkeypatch.setattr(reflexd, "trust_for", lambda room: "owner")
+    return reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                                 participant_name="arav-claude",
+                                                 runtime_dir=tmp_path / "rt"))

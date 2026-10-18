@@ -14,6 +14,9 @@ All notable changes to Quorus are documented here. This project follows
   Observers can't see approval previews or download code bundles, and leaving every room
   doesn't make an observer a member. In a `trust: members` room, an observer's @-mention
   (or an agent relaying one) gets a read-only agent turn.
+- Anyone the agent doesn't trust now gets a read-only turn in `default` mode rooms too, not
+  just `manual` and `autonomous` ones: the owner's own Claude Code or Codex settings could
+  allow edits. A failover handoff of the owner's own request stays trusted.
 - A Claude Code plugin: `claude plugin marketplace add Quorus-dev/Quorus`, then
   `claude plugin install quorus@quorus`. It runs `quorus-mcp` with `uvx` and adds a
   Quorus skill; relay URL, name and secret are set in `/plugin` (secrets masked), and

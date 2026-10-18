@@ -3301,15 +3301,15 @@ class Reflexd:
                 # arrived next resumed it read-only and the agent reported
                 # "no write tools" (live 2026-10-17).
                 prior_session, _persist_session = None, None
-            if not trusted and (room_mode != "default" or trust_for(room) == "members"
-                                or await self._sender_is_observer(relay, envelope)):
+            if not trusted:
                 # Pre-launch audit: in autonomous mode any room member (or text
                 # injected into the room) could make the agent run code. Only
                 # the owner, and the owner's agents working on the owner's own
                 # requests, get write-capable turns unless the owner set the
-                # room to `trust: members`. An observer gets a read-only turn
-                # in every mode, `default` included, where the owner's own CLI
-                # settings might allow edits (codex, review of f5d69289).
+                # room to `trust: members`. That holds in every mode, `default`
+                # included, where the owner's own CLI settings might allow edits:
+                # a missing member can't be told apart from a revoked observer
+                # (codex, reviews of f5d69289 and ee159a6d).
                 logger.info("read-only turn: %s isn't serving this agent's owner",
                             envelope.get("from_name") or "")
                 room_mode = "readonly"
@@ -3719,6 +3719,11 @@ class Reflexd:
     async def _trusted_wake(self, relay: Any, envelope: dict[str, Any],
                             history: list[dict[str, Any]]) -> bool:
         """Whether this wake may run write-capable (see :func:`trusted_origin`)."""
+        handoff = _failover.continuation(envelope)
+        if handoff and not envelope.get("reply_to"):
+            # A failover handoff carries no reply_to; it serves the request it names,
+            # so trust is traced from there (unchanged rules, just the right start).
+            envelope = {**envelope, "reply_to": handoff["root"]}
         room = envelope.get("room") or ""
         if trust_for(room) != "owner":
             return await self._member_trusted(relay, envelope, history)
@@ -3733,13 +3738,6 @@ class Reflexd:
         except Exception:
             return False
         return trusted_origin(envelope, longer, owner)
-
-    async def _sender_is_observer(self, relay: Any, envelope: dict[str, Any]) -> bool:
-        """The relay lists the sender in this room with a role that can't change it."""
-        lookup = getattr(relay, "fetch_member_roles", None)
-        roles = await lookup(room=envelope.get("room") or "") if lookup else None
-        role = (roles or {}).get(envelope.get("from_name") or "")
-        return role is not None and role not in WRITER_ROLES
 
     async def _member_trusted(self, relay: Any, envelope: dict[str, Any],
                               history: list[dict[str, Any]]) -> bool:
