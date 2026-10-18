@@ -9775,6 +9775,8 @@ def main():
     p_web.add_argument("--chat", action="store_true", help="Open the chat, not the board")
     p_web.add_argument("--print-url", action="store_true", dest="print_url",
                        help="Print the sign-in link instead of opening a browser")
+    p_web.add_argument("--fps", action="store_true",
+                       help="Show the Quorum view's fps / DPR / quality readout")
 
     p_phone = sub.add_parser("phone", help="Open your rooms on your phone (Tailscale by default)")
     p_phone.add_argument("--lan", action="store_true",

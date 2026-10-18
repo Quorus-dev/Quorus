@@ -16,12 +16,15 @@ from urllib.parse import quote, urlparse
 from quorus.config import load_config
 
 
-def web_url(relay_url: str, token: str, name: str, room: str | None, board: bool) -> str:
+def web_url(relay_url: str, token: str, name: str, room: str | None, board: bool,
+            fps: bool = False) -> str:
     frag = f"token={quote(token, safe='')}&name={quote(name, safe='')}"
     if room:
         frag += f"&room={quote(room, safe='')}"
     if board:
         frag += "&view=board"
+    if fps:  # the Quorum view shows its fps / DPR / quality line (the M1 proof)
+        frag += "&fps=1"
     return f"{relay_url.rstrip('/')}/#{frag}"
 
 
@@ -38,7 +41,8 @@ def cmd_web(args: Any, console: Any) -> None:
     else:
         from quorus_cli.agent_cmd import _bearer
         token = _bearer(cfg, cfg.get("api_key") or "", False)
-    url = web_url(relay, token, me, getattr(args, "room", None), not getattr(args, "chat", False))
+    url = web_url(relay, token, me, getattr(args, "room", None), not getattr(args, "chat", False),
+                  fps=bool(getattr(args, "fps", False)))
     if getattr(args, "print_url", False) or not webbrowser.open(url):
         console.print("Open this in your browser (it signs you in, so don't share it):")
         console.print(url, markup=False, highlight=False, soft_wrap=True)

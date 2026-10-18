@@ -120,6 +120,8 @@ border-color:rgba(0,0,0,.08);box-shadow:0 6px 18px rgba(0,0,0,.1)}
 .qtag[data-state=stuck] .qs{color:#d13415}}
 .qtag:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .qnote{position:absolute;left:12px;bottom:8px;margin:0}
+.qfps{position:absolute;right:12px;bottom:8px;margin:0;font:12px var(--mono);color:var(--muted);
+background:rgba(16,20,18,.6);padding:2px 8px;border-radius:6px}
 #quorum.flat{min-height:0;overflow:visible;border:0}
 #quorum.flat .qtags{position:static;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 #quorum.flat .qtag{position:static;max-width:none;transform:none!important}
@@ -211,6 +213,7 @@ if (frag.get("token")) {
 // `quorus web` can name the room and the view to land on.
 if (frag.get("room")) sessionStorage.setItem("qr", frag.get("room"));
 if (frag.get("view")) sessionStorage.setItem("qv", frag.get("view"));
+if (frag.get("fps")) sessionStorage.setItem("qfps", "1");  // `quorus web --fps`: Quorum fps readout
 if (new URLSearchParams(location.search).has("token")) {
   console.warn("Quorus: ?token= in a URL is deprecated and leaks via server logs. Use #token=.");
 }

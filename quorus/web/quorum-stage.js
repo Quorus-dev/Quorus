@@ -69,7 +69,8 @@ export function create(host, P, hooks) {
   const S = { host, hooks, pick: [], fx: [], t0: performance.now(), last: 0, raf: 0, on: false,
               drift: !hooks.reduceMotion, focus: null, k: 0, pulse: 0, bloom: true, d: 12,
               // The screenshot harness runs on software GL and must keep full quality.
-              lockQuality: sessionStorage.getItem("qq") === "lock" };
+              lockQuality: sessionStorage.getItem("qq") === "lock",
+              showFps: sessionStorage.getItem("qfps") === "1" };
   S.scene = new THREE.Scene();
   S.scene.background = new THREE.Color(P.bg);
   S.scene.fog = new THREE.Fog(P.bg, 20, 30);
@@ -241,24 +242,48 @@ function tick(S, now) {
   render(S);
 }
 
-// The frame budget is 60 fps on a laptop. If frames run long for a while, step
-// the quality down once each: first the bloom goes, then the pixel ratio drops to
-// 1. Never back up (that would oscillate), and the first two seconds don't count
-// (shader compiles). Reduced motion renders on demand and never gets here.
+// The frame budget is 60 fps at native DPR (capped at 2). If frames run long for
+// 1.5 s the quality steps down once each: the bloom goes first, then the pixel
+// ratio drops to 1.5 on a retina screen, and only under 30 fps does it drop to 1
+// (Arav: blurry is worse than no bloom). Never back up (that would oscillate), and
+// the first two seconds don't count (shader compiles). Plaques are DOM, always sharp.
 function budget(S, dt, t) {
-  if (t < 2 || dt <= 0 || S.lockQuality) return;
+  S.frames = (S.frames || 0) + 1;
   S.ema = S.ema === undefined ? dt : S.ema * 0.9 + dt * 0.1;
+  readout(S, t);
+  if (t < 2 || dt <= 0 || S.lockQuality) return;
   if (S.ema < 0.024) { S.slowSince = 0; return; }
   S.slowSince = S.slowSince || t;
   if (t - S.slowSince < 1.5) return;  // slow for a moment is fine; slow for 1.5 s is not
+  const under30 = S.ema > 1 / 30, dpr = S.renderer.getPixelRatio();
   S.slowSince = 0;
   S.ema = 0.016;
   if (S.bloom) { S.bloom = false; S.quality = "no-bloom"; return; }
-  if (S.renderer.getPixelRatio() > 1) {
-    S.renderer.setPixelRatio(1);
-    S.quality = "no-bloom, 1x";
-    resize(S);
+  if (dpr > 1.5) { S.renderer.setPixelRatio(1.5); S.quality = "no-bloom, 1.5x"; resize(S); return; }
+  if (dpr > 1 && under30) { S.renderer.setPixelRatio(1); S.quality = "no-bloom, 1x"; resize(S); }
+}
+
+// An fps / DPR / quality line in the corner, once a second, when the page was opened
+// with &fps=1 (`quorus web --fps`): the proof Arav reads on the M1. DOM text only.
+function readout(S, t) {
+  if (!S.showFps || t - (S.readAt || 0) < 1) return;
+  S.readAt = t;
+  if (!S.fpsEl) {
+    S.fpsEl = document.createElement("p");
+    S.fpsEl.className = "qfps";
+    S.host.append(S.fpsEl);
   }
+  const st = stats(S);
+  S.fpsEl.textContent = st.fps + " fps · " + st.dpr + "x · " + st.quality
+    + " · " + st.width + "×" + st.height;
+}
+
+function stats(S) {
+  const size = S.renderer.getSize(new THREE.Vector2());
+  return { fps: S.ema ? Math.round(1 / S.ema) : 0, dpr: S.renderer.getPixelRatio(),
+           quality: S.quality || "full", frames: S.frames || 0,
+           width: Math.round(size.x * S.renderer.getPixelRatio()),
+           height: Math.round(size.y * S.renderer.getPixelRatio()) };
 }
 
 function render(S) {
@@ -315,5 +340,6 @@ function api(S) {
     once() { S.hooks.onFrame((performance.now() - S.t0) / 1000, 0); render(S); },
     setBloom(on) { S.bloom = on; },
     quality() { return S.quality || "full"; },
+    stats() { return stats(S); },
   };
 }
