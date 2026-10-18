@@ -5,6 +5,8 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-10-18
+
 ### Fixed
 
 - MCP tools could not send a message over 4 KB: the audit receipt carried the full text
