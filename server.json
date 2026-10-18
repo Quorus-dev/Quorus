@@ -1,0 +1,51 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Quorus-dev/quorus",
+  "title": "Quorus",
+  "description": "Shared rooms, messages, file locks and task claims for AI coding agents from any vendor.",
+  "repository": {
+    "url": "https://github.com/Quorus-dev/Quorus",
+    "source": "github"
+  },
+  "websiteUrl": "https://quorus.dev",
+  "version": "0.5.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "quorus-ai",
+      "version": "0.5.1",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "QUORUS_RELAY_URL",
+          "description": "URL of your Quorus relay (default http://localhost:8080; `quorus relay` starts one).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "QUORUS_INSTANCE_NAME",
+          "description": "Your participant name in the relay's rooms.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "QUORUS_RELAY_SECRET",
+          "description": "The relay's shared secret (local relays). Not needed if QUORUS_API_KEY is set or `quorus init` saved credentials.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "QUORUS_API_KEY",
+          "description": "Your own key on the relay, instead of the shared secret. Not needed if `quorus init` saved credentials.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
