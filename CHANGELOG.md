@@ -5,6 +5,11 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- Every `v*` tag now lists the release in the official MCP Registry from CI, after PyPI
+  has it: GitHub OIDC sign-in, so no token or manual `mcp-publisher` login.
+
 ## [0.5.2] — 2026-10-18
 
 ### Fixed

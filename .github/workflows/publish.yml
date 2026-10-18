@@ -49,3 +49,47 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # List the release in the Official MCP Registry (registry.modelcontextprotocol.io).
+  # GitHub OIDC proves this repo owns the io.github.Quorus-dev/* namespace, so no
+  # token or human login is stored anywhere. Runs only after PyPI has the release:
+  # the registry checks the package and the `mcp-name:` marker in its README.
+  mcp-registry:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MCP_PUBLISHER_VERSION: "1.8.1"
+      # sha256 of mcp-publisher_linux_amd64.tar.gz in that release's checksums file.
+      MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+    steps:
+      - uses: actions/checkout@v4
+      - name: server.json matches the tag
+        run: |
+          python3 - <<'PY'
+          import json, os
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          doc = json.load(open("server.json"))
+          versions = {doc["version"], *(p["version"] for p in doc["packages"])}
+          assert versions == {tag}, f"server.json has {versions}, tag is {tag}"
+          PY
+      - name: Install mcp-publisher (pinned, checksum-verified)
+        run: |
+          url="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL -o mcp-publisher.tar.gz "$url"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Wait for PyPI to serve the release
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 30); do
+            curl -fsS "https://pypi.org/pypi/quorus-ai/$v/json" >/dev/null && exit 0
+            sleep 10
+          done
+          echo "quorus-ai $v is not on PyPI after 5 minutes"; exit 1
+      - name: Log in with GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+      - name: Publish server.json
+        run: ./mcp-publisher publish
