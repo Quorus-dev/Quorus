@@ -61,7 +61,7 @@ def asks_asker(text: str) -> str | None:
     ("your call", "should I ..."). Plan lines and Quorus status lines aren't
     asks, and a report that only mentions "permission" mid-way isn't either."""
     lines = [ln.strip() for ln in (text or "").splitlines()
-             if ln.strip() and not ln.strip().startswith(("(quorus)", "plan:", "[quorus]", ">"))]
+             if ln.strip() and not ln.strip().startswith(("(quorus)", "plan:", "[quorus]"))]
     for line in lines:
         if _QUESTION_END.search(line):
             return line

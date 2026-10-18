@@ -353,6 +353,18 @@ MISSION_TIMEOUT_S = int(os.environ.get("REFLEXD_MISSION_TIMEOUT_S", "3600"))
 HEARTBEAT_HISTORY_LIMIT = 10
 # At most one "is stuck" desktop banner per agent this often.
 STUCK_ALERT_EVERY_S = 3600.0
+# After the relay says our name is claimed but this machine has no key for it,
+# don't ask again for this long (a key that appears meanwhile is used at once).
+# Retrying on every stream reconnect burned the relay's per-IP claim budget and
+# locked every agent on the machine out for an hour (release check, 2026-10-17).
+CLAIM_BACKOFF_S = 600.0
+# A free opencode model that prints nothing for this long is dropped for the
+# turn and the next free model takes it (release check: nemotron sat 111-300s
+# before its first token while beam answered in 1.2s). Paid and local models
+# never get this deadline: a local Ollama model can rightly take minutes.
+FREE_FIRST_EVENT_S = 60.0
+# All free models slow at once: pause wakes this long, like a rate limit.
+SLOW_COOLDOWN_S = 15 * 60.0
 # Live steps: at most one presence post this often while a wake runs.
 STEP_POST_MIN_S = 3.0
 # R2: presence heartbeat cadence. Relay classifies away after ~90s silence,
@@ -1090,11 +1102,11 @@ def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # A model the vendor can't serve: say which key is missing, not just "exit 1".
 _NO_ROUTE_RE = re.compile(r"provider\.no-route|model unavailable|unrecognized_model|"
-                          r"issue with the selected model|model .{0,40}not (?:found|supported)",
-                          re.IGNORECASE)
+                          r"issue with the selected model|"
+                          r"models?\b.{0,60}not (?:found|supported)", re.IGNORECASE)
 _NO_ROUTE_HINT = {
-    "opencode": " Set the provider's key: `opencode auth login`, or XAI_API_KEY / "
-                "OPENROUTER_API_KEY, or pick another model with --model.",
+    "opencode": " Check the name with `opencode models`, or set the provider's key: "
+                "`opencode auth login`, or XAI_API_KEY / OPENROUTER_API_KEY.",
 }
 
 
@@ -1149,6 +1161,9 @@ def vendor_error(harness: str, stdout: str, stderr: str) -> str | None:
             found = _json_error_message(ev.get("error") or ev.get("message")) or found
         elif ev.get("type") == "result" and ev.get("is_error") is True:
             found = _json_error_message(ev.get("result")) or found
+        elif ev.get("type") == "result" and ev.get("status") == "error":  # gemini stream-json
+            said = _json_error_message(ev.get("error"))
+            found = reflexd_models.trim_gemini_error(said) if said else found
     if not found:
         lines = [ln.strip() for ln in _ANSI_RE.sub("", stderr or "").splitlines() if ln.strip()]
         found = next((ln for ln in reversed(lines) if _NO_ROUTE_RE.search(ln)), None)
@@ -1157,6 +1172,30 @@ def vendor_error(harness: str, stdout: str, stderr: str) -> str | None:
     text = "".join(ch for ch in _ANSI_RE.sub("", found) if ch.isprintable())[:200].strip()
     hint = _NO_ROUTE_HINT.get(harness, " Check the model name and that this CLI can use it.")
     return f"⚠ {harness}: {text.rstrip('.')}.{hint}"
+
+
+async def ollama_problem(model: str, *, timeout: float = 3.0,
+                         transport: httpx.AsyncBaseTransport | None = None) -> str | None:
+    """Why a local Ollama model can't answer right now, or None.
+
+    With Ollama stopped, opencode waited ~3 minutes and the room got "exited 1
+    with no known cause" (release check, 2026-10-17). One local GET first.
+    """
+    host = os.environ.get("OLLAMA_HOST") or "127.0.0.1:11434"
+    base = host if host.startswith("http") else f"http://{host}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+            resp = await client.get(f"{base.rstrip('/')}/api/tags")
+            resp.raise_for_status()
+            names = {m.get("name") for m in resp.json().get("models", [])
+                     if isinstance(m, dict)}
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return ("Ollama isn't running: start it with "
+                "`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`.")
+    want = model if ":" in model else f"{model}:latest"
+    if names and want not in names and model not in names:
+        return f"Ollama doesn't have {model}: `ollama pull {model}`."
+    return None
 
 
 def _parse_codex_stream(out: str) -> tuple[str, str | None]:
@@ -1203,10 +1242,14 @@ def _undelivered_lines(reply: str, posted: list[str]) -> list[str]:
     return out
 
 
-def _timed_out_line(published: bool = False) -> str:
-    """What the room sees instead of the raw "[reflexd] harness timed out"."""
+def _timed_out_line(published: bool = False, last_step: str = "") -> str:
+    """What the room sees instead of the raw "[reflexd] harness timed out".
+    With the last live step it says where the time went ("while searching the
+    code"), so a stuck agent says why instead of just that it stopped."""
     done = " What it had committed is published below." if published else ""
-    return f"⚠ ran out of time before finishing its reply.{done} Mention me to continue."
+    where = f" while {last_step}," if last_step else ""
+    return (f"⚠ ran out of time{where} before finishing its reply.{done} "
+            "Mention me to continue.")
 
 
 def _same_result(posted: str, reply: str) -> bool:
@@ -1216,6 +1259,16 @@ def _same_result(posted: str, reply: str) -> bool:
     if a and a == b:
         return True
     return reply.lstrip().startswith("✅") and posted.lstrip().startswith("✅")
+
+
+class SlowStart(str):
+    """The harness printed nothing before its first-output deadline (a free
+    model whose provider takes minutes to its first token)."""
+
+    def __new__(cls, harness: str, seconds: float):
+        obj = super().__new__(cls, f"⚠ {harness}: the model sent nothing for {seconds:.0f}s "
+                                   "(its free provider is slow right now).")
+        return obj
 
 
 class HarnessExitFailure(str):
@@ -1258,17 +1311,24 @@ async def _reap(proc: Any, timeout: float = 10.0) -> None:
 
 async def _collect(
     proc: Any, on_line: Callable[[bytes], None] | None,
+    first_out: asyncio.Event | None = None,
 ) -> tuple[bytes, bytes]:
     """``proc.communicate()``, but each stdout line also goes to *on_line* as it
-    arrives, so the room sees the agent's steps live instead of after the turn."""
-    if on_line is None or not isinstance(proc.stdout, asyncio.StreamReader):
+    arrives, so the room sees the agent's steps live instead of after the turn.
+    *first_out* is set when the first stdout bytes arrive."""
+    if (on_line is None and first_out is None) or not isinstance(
+            getattr(proc, "stdout", None), asyncio.StreamReader):
         return await proc.communicate()
     out, err = bytearray(), bytearray()
 
     async def drain_out() -> None:
         pending, skip = b"", False
         while chunk := await proc.stdout.read(65536):
+            if first_out is not None:
+                first_out.set()
             out.extend(chunk)
+            if on_line is None:
+                continue
             pending += chunk
             *lines, pending = pending.split(b"\n")
             for raw in lines:
@@ -1558,7 +1618,7 @@ class HeadlessAdapter:
         self, build: Callable[[str | None], list[str]], parse: Callable[[str], tuple],
         *, harness: str, cwd: Path | None, resume: str | None,
         on_session: Callable[[str], None] | None, timeout_s: int | None,
-        env: dict[str, str],
+        env: dict[str, str], first_output_s: float | None = None,
     ) -> str:
         """Shared wake for JSON-speaking harnesses: run, read (reply, session,
         error), retry once fresh if a stored session can't be resumed."""
@@ -1571,6 +1631,7 @@ class HeadlessAdapter:
 
         reply = await self._run_subprocess(
             build(resume), parser=parser, cwd=cwd, timeout_s=timeout_s, env=env,
+            first_output_s=first_output_s,
         )
         failed = reply == "[reflexd] harness errored"
         if failed or (resume and captured["err"] and reply == "[reflexd] (no reply)"):
@@ -1584,6 +1645,7 @@ class HeadlessAdapter:
             captured["sid"] = captured["err"] = None
             reply = await self._run_subprocess(
                 build(None), parser=parser, cwd=cwd, timeout_s=timeout_s, env=env,
+                first_output_s=first_output_s,
             )
         if captured["err"] and reply == "[reflexd] (no reply)":
             # The vendor's own words beat a generic sentinel (e.g. "model not
@@ -1609,14 +1671,23 @@ class HeadlessAdapter:
         the wake. A model the user picked and pays for is never swapped."""
         if self._rotated_at and time.time() - self._rotated_at > reflexd_models.ROTATE_BACK_S:
             self.model, self._rotated_at = self._home_model, 0.0
+        if (self.model or "").startswith("ollama/"):
+            problem = await ollama_problem(self.model.split("/", 1)[1])
+            if problem:  # say so now, not "exited 1 with no known cause" 3 min later
+                return f"⚠ opencode: {problem}"
         first = self.model
         reply = await self._opencode_once(context, cwd=cwd, resume=resume,
                                           on_session=on_session, timeout_s=timeout_s,
                                           mode=mode)
         if not reflexd_models.is_free_opencode(first):
             return reply
+        self._note_slow(reply)
         tried = {first}
-        for alt in reflexd_models.OPENCODE_FREE_MODELS:
+        from quorus.runtime.opencode_free import free_models
+
+        # The live catalog, not just our tuple: it churns (release check, 2026-10-17).
+        rotation = await asyncio.to_thread(free_models, reflexd_models.OPENCODE_FREE_MODELS)
+        for alt in rotation:
             if self.limited_until <= time.time():
                 break  # answered (or failed for another reason): done
             if alt in tried:
@@ -1630,11 +1701,25 @@ class HeadlessAdapter:
             reply = await self._opencode_once(context, cwd=cwd, resume=resume,
                                               on_session=on_session, timeout_s=timeout_s,
                                               mode=mode)
+            self._note_slow(reply)
         if self.limited_until > time.time():
             self.model = first  # every free model is busy: cool down as before
             if first == self._home_model:
                 self._rotated_at = 0.0
         return reply
+
+    def _note_slow(self, reply: str) -> None:
+        """A free model that never started answering: send it to the back of
+        the rotation and let the loop move on, as it does for a rate limit."""
+        if not isinstance(reply, SlowStart):
+            return
+        from quorus.runtime.opencode_free import mark_slow
+
+        mark_slow(self.model)
+        self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S)
+        if self.on_step is not None:  # one live line, not a room post per model
+            self.on_step(f"{(self.model or 'default').split('/')[-1]} is slow to start; "
+                         "trying another free model")
 
     async def _opencode_once(
         self, context: str, *, cwd: Path | None, resume: str | None,
@@ -1648,6 +1733,8 @@ class HeadlessAdapter:
                 model=self.model, resume=sid, standalone=not self.opencode_v1)),
             reflexd_models.parse_opencode_stream, harness="opencode", cwd=cwd,
             resume=resume, on_session=on_session, timeout_s=timeout_s, env=env,
+            first_output_s=(FREE_FIRST_EVENT_S
+                            if reflexd_models.is_free_opencode(self.model) else None),
         )
 
     async def _run_gemini(
@@ -1675,7 +1762,7 @@ class HeadlessAdapter:
         try:
             write_private_json(home / ".gemini" / "settings.json",
                                reflexd_models.gemini_settings(
-                                   self.wake_spec, api_key=bool(key)))
+                                   self.wake_spec, api_key=bool(key), mode=mode))
             env["GEMINI_CLI_HOME"] = str(home)
         except OSError as exc:
             logger.warning("could not write gemini settings: %s", exc)
@@ -1707,6 +1794,7 @@ class HeadlessAdapter:
         cwd: Path | None = None,
         timeout_s: int | None = None,
         env: dict[str, str] | None = None,
+        first_output_s: float | None = None,
     ) -> str:
         # Pre-flight: if the binary truly isn't on PATH, surface the same
         # sentinel string regardless of platform. ``shutil.which`` returning
@@ -1744,13 +1832,31 @@ class HeadlessAdapter:
         except OSError as exc:  # E2BIG etc.: never drop the wake silently
             logger.warning("harness %s failed to start: %s", argv[0], exc.strerror)
             return f"[reflexd] {argv[0]} could not start ({exc.strerror})"
+        budget = timeout_s or self.timeout_s
+        first = asyncio.Event() if first_output_s else None
+        collecting = asyncio.ensure_future(_collect(proc, self._step_handler(), first))
         try:
-            stdout, stderr = await asyncio.wait_for(
-                _collect(proc, self._step_handler()), timeout=timeout_s or self.timeout_s
-            )
+            if first is not None:
+                # A free model can sit minutes before its first token (nemotron:
+                # 111-300s, release check 2026-10-17). Waiting a whole turn on it
+                # beats nothing; moving to the next free model beats waiting.
+                started = time.monotonic()
+                waiter = asyncio.ensure_future(first.wait())
+                await asyncio.wait({waiter, collecting}, timeout=first_output_s,
+                                   return_when=asyncio.FIRST_COMPLETED)
+                waiter.cancel()
+                if not first.is_set() and not collecting.done():
+                    _kill_group(proc)
+                    collecting.cancel()
+                    await _reap(proc)
+                    logger.warning("harness %s sent nothing in %ss", argv[0], first_output_s)
+                    return SlowStart(Path(argv[0]).name, first_output_s)
+                budget = max(1, budget - (time.monotonic() - started))
+            stdout, stderr = await asyncio.wait_for(collecting, timeout=budget)
         except asyncio.CancelledError:
             # Daemon stopping: never orphan a running agent.
             _kill_group(proc)
+            collecting.cancel()
             raise
         except (TimeoutError, asyncio.TimeoutError):  # distinct classes on 3.10
             # L4: Python 3.11+ aliases ``asyncio.TimeoutError`` to the
@@ -1860,6 +1966,11 @@ class RelayClient:
     _sign_in: asyncio.Lock = field(default_factory=asyncio.Lock)
     _bearer_expires_at: float = 0.0
     _client: httpx.AsyncClient | None = None
+    # Name claimed elsewhere and no key here: until this time, fail without
+    # asking the relay again. The callback tells the owner once per episode.
+    on_name_taken: Callable[[str], None] | None = None
+    _claim_blocked_until: float = 0.0
+    _claim_blocked_reason: str = ""
 
     async def __aenter__(self) -> "RelayClient":
         self._client = httpx.AsyncClient(
@@ -1927,6 +2038,8 @@ class RelayClient:
 
         unsupported = (404, 405)
         key = bundle_client.load_participant_key(self.relay_url, self.participant, self.key_dir)
+        if not key and time.time() < self._claim_blocked_until:
+            raise ParticipantAuthError(self._claim_blocked_reason)
         try:
             if not key:
                 resp = await self.client.post(
@@ -1941,10 +2054,14 @@ class RelayClient:
                     key = bundle_client.load_participant_key(
                         self.relay_url, self.participant, self.key_dir)
                     if not key:
-                        raise ParticipantAuthError(
-                            f"name {self.participant} is claimed on this relay but its key "
-                            "isn't saved here; the relay owner can free it with "
-                            f"`quorus release-name {self.participant}`")
+                        reason = (f"name {self.participant} is claimed on this relay but its "
+                                  "key isn't saved here; the relay owner can free it with "
+                                  f"`quorus release-name {self.participant}`")
+                        if self._claim_blocked_until == 0.0 and self.on_name_taken:
+                            self.on_name_taken(reason)  # once, not once per retry
+                        self._claim_blocked_until = time.time() + CLAIM_BACKOFF_S
+                        self._claim_blocked_reason = reason
+                        raise ParticipantAuthError(reason)
                 elif resp.status_code != 200:
                     raise ParticipantAuthError(f"claim-name answered {resp.status_code}")
                 else:
@@ -3095,7 +3212,7 @@ class Reflexd:
                 logger.info("%s", published)
                 if reply == "[reflexd] harness timed out":
                     # Not a raw sentinel above real, published work.
-                    reply = _timed_out_line(published=True)
+                    reply = _timed_out_line(published=True, last_step=self._activity)
                 reply = f"{reply}\n{published}" if reply else published
         if pre_head and reply:
             try:
@@ -3176,7 +3293,7 @@ class Reflexd:
             reply = reply.replace("[reflexd] harness errored", status, 1)
 
         self._note_outcome(reply)
-        self._alert_owner(room, reply)
+        self._alert_owner(room, reply, asked_by=envelope.get("from_name") or None)
 
         # Don't double-post: if the agent already posted this result itself
         # (QOD tells it to post ✅), the room has it.
@@ -3221,7 +3338,7 @@ class Reflexd:
                 "release the task."
             )
         elif reply == "[reflexd] harness timed out":
-            reply = _timed_out_line()
+            reply = _timed_out_line(last_step=self._activity)
 
         thread_root_id = envelope_thread_root(envelope)
         # SSE fan-out gives each recipient a per-envelope id while the
@@ -3290,7 +3407,21 @@ class Reflexd:
         except Exception as exc:  # cosmetic: never fail a wake over it
             logger.debug("status post failed: %s", exc)
 
-    def _alert_owner(self, room: str, reply: str) -> None:
+    def _name_taken(self, reason: str) -> None:
+        """The relay won't let this agent sign in as itself until its owner frees
+        the name. It can't say so in the room (that needs a sign-in, and falling
+        back to the shared secret is refused), so: one desktop banner and the log."""
+        logger.error("cannot sign in: %s", reason)
+        if not _agent_events.enabled():
+            return
+        try:
+            asyncio.get_running_loop().run_in_executor(None, lambda: _notify(
+                f"{self.config.participant_name} can't sign in", reason,
+                sender=self.config.participant_name))
+        except RuntimeError:
+            pass
+
+    def _alert_owner(self, room: str, reply: str, asked_by: str | None = None) -> None:
         """Desktop banner for the agent's owner when the wake shipped work,
         needs them, or got stuck. Fire-and-forget; never blocks the reply."""
         if not _agent_events.enabled():
@@ -3298,6 +3429,7 @@ class Reflexd:
         alert = _agent_events.owner_alert(
             agent=self.config.participant_name,
             owner=os.environ.get("REFLEXD_OWNER") or None, reply=reply,
+            asked_by=asked_by,
         )
         if alert is None:
             return
@@ -3465,6 +3597,7 @@ class Reflexd:
             legacy_bearer=self.config.legacy_bearer,
             participant=self.config.participant_name,
             key_dir=self.config.runtime_dir / "agents" / self.config.participant_name,
+            on_name_taken=self._name_taken,
         ) as relay:
             logger.info(
                 "reflexd starting participant=%s relay=%s",

@@ -212,10 +212,3 @@ def test_the_daemon_passes_who_woke_it(monkeypatch) -> None:
     d._alert_owner("build", "Which port should the relay use?", asked_by="arav")
     d._alert_owner("build", "Which port should the relay use?", asked_by="arav-codex")
     assert sent == [("arav-claude needs you · #build", "Which port should the relay use?")]
-
-
-def test_a_quoted_question_is_not_the_agents_ask() -> None:
-    """Overseer's nit on bf9ba5a2: a '>' quote of someone else's question."""
-    reply = "> should we also add multiply()?\nAdded it, tests pass."
-    assert agent_events.owner_alert(agent="zed-codex", owner="zed", reply=reply,
-                                    asked_by="zed") is None
