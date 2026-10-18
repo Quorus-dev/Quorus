@@ -272,7 +272,7 @@ async def test_an_observer_cannot_read_approval_previews(client: AsyncClient) ->
     mark = await _join(client, "build", "mark", "member")
     asked = await client.post("/v1/approvals", json={
         "room_id": "build", "agent": "mark", "tool_name": "Bash",
-        "input": {"command": "cat secrets.txt"}}, headers=mark)
+        "tool_input": {"command": "cat secrets.txt"}}, headers=mark)
     approval_id = asked.json().get("id") or asked.json().get("approval_id")
     assert (await client.get(f"/v1/approvals/{approval_id}", headers=olive)).status_code == 404
     listed = (await client.get("/v1/approvals", headers=olive)).json()["pending"]
@@ -286,3 +286,31 @@ async def test_an_observer_cannot_download_bundles(client: AsyncClient, monkeypa
     # The role check runs before anything else, so even a relay without bundle
     # storage answers an observer with the observer refusal.
     assert r.status_code == 403 and r.json()["detail"] == OBSERVER_DENIED
+
+
+async def test_approval_previews_never_reach_room_history_or_observer_streams(client) -> None:
+    """Codex, review of 416d2d55: the preview still went to every member's SSE
+    stream and into the room's chat line, which observers can read."""
+    olive = await _join(client, "build", "olive", "observer")
+    mark = await _join(client, "build", "mark", "member")
+    pushed = []
+    sse = app.state.sse_service
+    real_push = sse.push
+
+    def spy(tid, member, payload):
+        pushed.append((member, payload))
+        return real_push(tid, member, payload)
+
+    sse.push = spy
+    try:
+        r = await client.post("/v1/approvals", json={
+            "room_id": "build", "agent": "mark", "tool_name": "Bash",
+            "tool_input": {"command": "cat top-secret.txt"}}, headers=mark)
+    finally:
+        sse.push = real_push
+    assert r.status_code == 200, r.text
+    history = (await client.get("/rooms/build/history", headers=olive)).text
+    assert "top-secret" not in history and "approval needed" in history
+    approval_events = [(m, p) for m, p in pushed if p.get("event") == "approval_requested"]
+    assert "olive" not in [m for m, _ in approval_events]
+    assert any(m == "mark" and "top-secret" in str(p) for m, p in approval_events)
