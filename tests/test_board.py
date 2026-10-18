@@ -53,7 +53,8 @@ def test_rows_sort_by_what_needs_a_human(tmp_path: Path) -> None:
     presence = {
         "a-claude": {"name": "a-claude", "online": True, "status": "busy",
                      "activity": "editing relay.py", "room": "r",
-                     "model": "claude-opus-5-5"},
+                     "model": "claude-opus-5-5",
+                     "trail": [{"t": now - 60 * i, "step": f"step {i}"} for i in range(7, 0, -1)]},
         "a-codex": {"name": "a-codex", "online": True, "status": "active",
                     "waiting_on": "pacing", "waiting_until": now + 840},
         "a-gemini": {"name": "a-gemini", "online": True, "status": "active",
@@ -97,6 +98,10 @@ def test_rows_sort_by_what_needs_a_human(tmp_path: Path) -> None:
     assert rows["a-claude"]["review"] == "blocked by @a-codex"
     assert rows["a-claude"]["shipped"].startswith("shipped 2 commit(s) to main")
     assert rows["a-claude"]["model"] == "claude-opus-5-5" and rows["a-codex"]["model"] == ""
+    # Mission control: the last 5 live steps, oldest first; offline agents show none.
+    assert [t["step"] for t in rows["a-claude"]["trail"]] == [f"step {i}" for i in range(5, 0, -1)]
+    assert rows["b-claude"]["trail"] == [] and rows["a-codex"]["trail"] == []
+    assert 'api("/presence?trail=1")' in BOARD_JS and '"btrail"' in BOARD_JS
 
 
 def test_quorus_web_link_lands_on_the_board_signed_in_as_you() -> None:
