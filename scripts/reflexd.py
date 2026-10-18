@@ -2793,7 +2793,8 @@ class Reflexd:
                     participant=self.config.participant_name, repo=repo,
                     scope=self._track_scope(repo),
                     harness=detect_harness(self.config.participant_name) or "",
-                    model=str(getattr(self.adapter, "model", None) or ""))
+                    model=str(getattr(self.adapter, "model", None) or ""),
+                    text=str(envelope.get("content") or ""))
                 bid, bid_reason = decision.bid, decision.reason
                 if decision.announce:
                     await self._post_status(relay, room, envelope, decision.announce)

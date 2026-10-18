@@ -7,6 +7,9 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Added
 
+- Track-record bids also note, in shadow, how this agent's earlier commits fared on the
+  paths an `@open` names (kept vs reverted, from the repo's provenance notes). It's logged
+  next to each bid and measured against how the turn went; it never changes a bid.
 - Observer invites: `quorus share <room> --observer` admits someone who can read the room
   (history, state, the live stream) but not post, DM agents, claim, lock, approve, upload or
   change anything. The relay checks the room's current role on every write, so a downgrade,

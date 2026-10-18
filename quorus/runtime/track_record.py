@@ -59,6 +59,11 @@ ENTER_DOWN, EXIT_DOWN = 0.8, 0.9
 ENTER_UP, EXIT_UP = 1.2, 1.1
 COOLDOWN_S = 3600.0
 _REVERTS = re.compile(r"This reverts commit ([0-9a-f]{7,40})")
+# Loop A, shadow only (agreed with codex 2026-10-18): per-path evidence is logged
+# beside each bid and measured, never applied. Paths an @open names, like
+# quorus/routes/rooms.py; their directory is the scope the evidence is read for.
+_PATH = re.compile(r"(?<![\w/.-])((?:[\w.-]+/)+[\w.-]+\.[A-Za-z0-9]{1,6})(?![\w/])")
+PATH_MIN_N = 3  # fewer commits than this under a path: too thin to count
 
 
 def mode() -> str:
@@ -200,6 +205,77 @@ def _read_ledger(repo: Path, participant: str) -> tuple[int, int]:
     return len(mine), len(hit)
 
 
+# ── loop A: per-path evidence (shadow) ───────────────────────────────────
+
+
+def path_scopes(text: str, limit: int = 5) -> list[str]:
+    """Directory prefixes of the file paths *text* names, e.g. "quorus/routes/"."""
+    seen: list[str] = []
+    for path in _PATH.findall(text or ""):
+        prefix = path.rsplit("/", 1)[0] + "/"
+        if prefix not in seen and ".." not in prefix and not prefix.startswith("/"):
+            seen.append(prefix)
+        if len(seen) >= limit:
+            break
+    return seen
+
+
+_files_cache: dict[str, tuple[float, list[tuple[str, str, frozenset[str]]], set[str]]] = {}
+
+
+def _commits_with_files(repo: Path, now: float) -> tuple[list[tuple[str, str, frozenset[str]]],
+                                                         set[str]]:
+    """[(sha, agent, files)] for the repo's recent agent commits, and reverted shas."""
+    hit = _files_cache.get(str(repo))
+    if hit and now - hit[0] < LEDGER_TTL_S:
+        return hit[1], hit[2]
+
+    def git(*args: str) -> str:
+        try:
+            out = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args], cwd=repo,
+                                 capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return out.stdout if out.returncode == 0 else ""
+
+    out = git("log", f"-n{LEDGER_MAX_COMMITS}", "--notes=quorus", "--name-only",
+              "--format=%x1e%H%x1f%N%x1f", "HEAD")
+    rows: list[tuple[str, str, frozenset[str]]] = []
+    for record in out.split("\x1e"):
+        parts = record.split("\x1f")
+        if len(parts) < 3 or not parts[1].strip():
+            continue
+        try:
+            meta = json.loads(parts[1].strip().splitlines()[0])
+        except (ValueError, IndexError):
+            continue
+        agent = meta.get("agent") if isinstance(meta, dict) else None
+        if agent:
+            files = frozenset(f for f in parts[2].split("\n") if f.strip())
+            rows.append((parts[0].strip(), str(agent), files))
+    reverted = set(_REVERTS.findall(git("log", f"-n{LEDGER_MAX_COMMITS * 2}", "--format=%B",
+                                        "HEAD")))
+    _files_cache[str(repo)] = (now, rows, reverted)
+    return rows, reverted
+
+
+def path_counts(repo: Path | None, participant: str, scopes: list[str],
+                now: float | None = None) -> tuple[int, int]:
+    """(kept, reverted) commits by *participant* that touched any of *scopes*."""
+    if repo is None or not scopes:
+        return 0, 0
+    rows, reverted = _commits_with_files(repo, time.time() if now is None else now)
+    kept = rev = 0
+    for sha, agent, files in rows:
+        if agent != participant or not any(f.startswith(s) for f in files for s in scopes):
+            continue
+        if any(sha.startswith(r) for r in reverted):
+            rev += 1
+        else:
+            kept += 1
+    return kept, rev
+
+
 # ── the multiplier ────────────────────────────────────────────────────────
 
 
@@ -311,13 +387,15 @@ def _sync(track: Track, participant: str, scope: str, now: float) -> tuple[bool,
 
 def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
                participant: str, repo: Path | None, scope: str = "", harness: str = "",
-               model: str = "", floor: float = 0.05) -> BidDecision:
+               model: str = "", floor: float = 0.05, text: str = "") -> BidDecision:
     """The ``@open`` bid to submit, its reason, and a room line if one is due."""
     current = mode()
     if current == "off":
         return BidDecision(bid, reason)
     track = track_for(runtime_dir, participant, repo, scope=scope)
-    if not track.has_evidence:
+    scopes = path_scopes(text)
+    p_kept, p_rev = path_counts(repo, participant, scopes)
+    if not track.has_evidence and not (p_kept or p_rev):
         return BidDecision(bid, reason)  # no evidence yet: bid exactly as before
     now = time.time()
     applies, new = _sync(track, participant, scope, now)
@@ -328,7 +406,10 @@ def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
         "ts": now, "message_id": message_id, "arm": arm, "raw": bid, "would": would,
         "applies": applies, "availability": track.availability, "quality": track.quality,
         "multiplier": track.multiplier, "harness": harness, "model": model,
-        "scope": scope}, now)
+        "scope": scope,
+        # loop A (shadow): logged to be measured, never part of `would`
+        "paths": scopes, "path_kept": p_kept, "path_reverted": p_rev,
+        "path_factor": round(_factor(min(p_kept, LEDGER_KEPT_CAP), p_rev), 2)}, now)
     announce = None
     if new is not None:
         if current == "shadow":
@@ -389,6 +470,10 @@ def report(runtime_dir: Path, participant: str, now: float | None = None, *,
 
     arms = {a: {"turns": 0, "failed": 0} for a in ("routed", "holdout", "shadow")}
     predictive = {"low": {"turns": 0, "failed": 0}, "high": {"turns": 0, "failed": 0}}
+    # Loop A (shadow): did this agent's track record on the paths an @open named
+    # predict how its turn went? Only bids with PATH_MIN_N+ commits there count.
+    path_predictive = {"low": {"turns": 0, "failed": 0}, "high": {"turns": 0, "failed": 0},
+                       "thin": 0}
     for t in load_turns(runtime_dir, participant, now, scope=scope):
         bid = bid_before(t) if t.get("kind") == "open_todo" else None
         if not bid or bid.get("arm") not in arms:
@@ -398,4 +483,11 @@ def report(runtime_dir: Path, participant: str, now: float | None = None, *,
                        predictive["low" if bid.get("multiplier", 1.0) < 1.0 else "high"]):
             bucket["turns"] += 1
             bucket["failed"] += failed
-    return {"arms": arms, "predictive": predictive}
+        if bid.get("paths"):
+            if bid.get("path_kept", 0) + bid.get("path_reverted", 0) < PATH_MIN_N:
+                path_predictive["thin"] += 1
+            else:
+                bucket = path_predictive["low" if bid.get("path_factor", 1.0) < 1.0 else "high"]
+                bucket["turns"] += 1
+                bucket["failed"] += failed
+    return {"arms": arms, "predictive": predictive, "path_predictive": path_predictive}
