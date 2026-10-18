@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from quorus import tuning
 from quorus.private_files import write_private_json
 
 WINDOW_S = 24 * 3600.0
@@ -51,10 +52,19 @@ _MAX_ROWS = 500
 FAILED = ("errored", "timed_out", "vendor_failure")
 OUTCOMES = ("clean", *FAILED)
 MODES = ("off", "shadow", "on")
+# Hysteresis: an adaptation starts past the outer line and ends only once the
+# multiplier is back inside the inner one, so it can't flap; a new one for the
+# same agent waits out the cooldown.
+ENTER_DOWN, EXIT_DOWN = 0.8, 0.9
+ENTER_UP, EXIT_UP = 1.2, 1.1
+COOLDOWN_S = 3600.0
 _REVERTS = re.compile(r"This reverts commit ([0-9a-f]{7,40})")
 
 
 def mode() -> str:
+    """off | shadow | on. ``quorus tune off`` beats the environment."""
+    if not tuning.enabled():
+        return "off"
     raw = os.environ.get("QUORUS_TRACK_BIDS", "shadow").strip().lower()
     if raw in ("0", "false", "no"):
         return "off"
@@ -241,27 +251,83 @@ def track_for(runtime_dir: Path, participant: str, repo: Path | None,
                  vendor=n("vendor_failure"), kept=published - reverted, reverted=reverted)
 
 
-def adjust_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
-               participant: str, repo: Path | None, harness: str = "",
-               floor: float = 0.05) -> tuple[float, str]:
-    """The ``@open`` bid to submit and its reason, per :func:`mode`."""
+def counts(track: Track) -> str:
+    """What moved the bid, as counts only. Availability is never called quality."""
+    def n(count: int, word: str) -> str:
+        return f"{count} {word}{'' if count == 1 else 's'}"
+
+    avail = [n(c, w) for c, w in ((track.vendor, "vendor fail"), (track.timeouts, "timeout"),
+                                  (track.errored, "error")) if c]
+    avail.append(f"{track.clean} clean")
+    out = f"x{track.multiplier:.2f} · {', '.join(avail)}/24h"
+    total = track.kept + track.reverted
+    if total:
+        out += f" · {track.reverted} of {total} commits reverted"
+    return out
+
+
+@dataclass(frozen=True)
+class BidDecision:
+    bid: float
+    reason: str
+    announce: str | None = None
+
+
+def _sync(track: Track, participant: str, scope: str, now: float) -> tuple[bool, Any]:
+    """(does an adaptation apply now, the new one to announce or None)."""
+    m = track.multiplier
+    last = tuning.latest("bid", participant, scope)
+    if last is not None and last.state == "undone":
+        return False, None  # the user said no; only `tune redo` brings it back
+    if last is not None and last.state == "active":
+        down = last.evidence.get("direction") == "down"
+        if (down and m >= EXIT_DOWN) or (not down and m <= EXIT_UP):
+            tuning.retire(last.id)
+            return False, None
+        return True, None
+    if ENTER_DOWN < m < ENTER_UP:
+        return False, None
+    if last is not None and now - last.created_ts < COOLDOWN_S:
+        return False, None
+    new = tuning.adapt("bid", subject=participant, scope=scope,
+                       change=f"@open bids x{m:.2f} for @{participant}",
+                       because=counts(track),
+                       evidence={"direction": "down" if m <= ENTER_DOWN else "up",
+                                 "multiplier": m, "availability": track.availability,
+                                 "quality": track.quality})
+    return new is not None, new
+
+
+def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
+               participant: str, repo: Path | None, scope: str = "", harness: str = "",
+               floor: float = 0.05) -> BidDecision:
+    """The ``@open`` bid to submit, its reason, and a room line if one is due."""
     current = mode()
     if current == "off":
-        return bid, reason
+        return BidDecision(bid, reason)
     track = track_for(runtime_dir, participant, repo)
     if not track.has_evidence:
-        return bid, reason  # no evidence yet: bid exactly as before
-    would = min(1.0, max(floor, bid * track.multiplier))
+        return BidDecision(bid, reason)  # no evidence yet: bid exactly as before
+    now = time.time()
+    applies, new = _sync(track, participant, scope, now)
+    would = min(1.0, max(floor, bid * track.multiplier)) if applies else bid
     arm = "shadow" if current == "shadow" else ("holdout" if is_holdout(message_id)
                                                 else "routed")
-    now = time.time()
     _append(runtime_dir, participant, "bids", {
         "ts": now, "message_id": message_id, "arm": arm, "raw": bid, "would": would,
-        "availability": track.availability, "quality": track.quality,
-        "multiplier": track.multiplier, "harness": harness}, now)
-    if arm == "routed":
-        return would, f"{reason}+track {track.reason()}"
-    return bid, f"{reason}+track({arm}) {track.reason()}"
+        "applies": applies, "availability": track.availability, "quality": track.quality,
+        "multiplier": track.multiplier, "harness": harness, "scope": scope}, now)
+    announce = None
+    if new is not None:
+        if current == "shadow":
+            announce = (f"(quorus) {new.id} (shadow, not applied): would set {new.change} "
+                        f"· {new.because} · undo: quorus tune undo {new.id}")
+        else:
+            announce = (f"(quorus) adapted {new.id}: {new.change} · {new.because} "
+                        f"· undo: quorus tune undo {new.id}")
+    if arm == "routed" and applies:
+        return BidDecision(would, f"{reason}+track {track.reason()}", announce)
+    return BidDecision(bid, f"{reason}+track({arm}) {track.reason()}", announce)
 
 
 def report(runtime_dir: Path, participant: str, now: float | None = None) -> dict[str, Any]:
