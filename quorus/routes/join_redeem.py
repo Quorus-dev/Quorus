@@ -78,6 +78,15 @@ async def redeem(req: RedeemRequest, request: Request) -> dict:
                                 claim_id)
         raise HTTPException(status_code=409, detail="couldn't join the room; ask for a "
                                                     "new invite") from None
+    # A revoke can land between spending the use and joining the room (codex,
+    # review of 79d70198): it finds no member to remove, then the join lands. So
+    # check again now. Revoke sets the flag before it reads the members, so either
+    # it removes this member or this check sees the flag.
+    if await asyncio.to_thread(invite_codes.is_revoked, store, invite.id):
+        await rooms.leave(LEGACY_TENANT, rid, req.name)
+        await asyncio.to_thread(invite_codes.undo_redeem, store, invite.id, req.name,
+                                claim_id)
+        raise HTTPException(status_code=403, detail="this invite was revoked")
     return {"participant_key": key, "name": req.name, "room": invite.room_name,
             "role": invite.role}
 

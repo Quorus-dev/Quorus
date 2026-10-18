@@ -78,3 +78,32 @@ async def test_a_kicked_invitee_is_out_on_the_next_request(client: AsyncClient) 
                           headers=ADMIN)
     assert r.status_code == 200, r.text
     assert (await client.get("/rooms/build/history", headers=bob)).status_code == 403
+
+
+async def test_a_revoke_landing_mid_redeem_still_keeps_them_out(client: AsyncClient) -> None:
+    """Codex's race on 79d70198: the redeem has spent the use but not yet joined the
+    room when the owner revokes, so revoke finds no member to remove; then the join
+    lands. The redeem must check the invite again after joining."""
+    r = await client.post("/v1/join/mint", json={"room": "build"}, headers=ADMIN)
+    inv_id = r.json()["invite_id"]
+    payload = (await client.get(f"/v1/join/resolve/{r.json()['code']}")).json()["payload"]
+
+    rooms = app.state.room_service
+    real_join = rooms.join
+
+    async def join_after_a_revoke(*args, **kwargs):
+        revoked = await client.post(f"/v1/join/invites/{inv_id}/revoke", headers=ADMIN)
+        assert revoked.status_code == 200 and revoked.json()["removed"] == []
+        return await real_join(*args, **kwargs)
+
+    rooms.join = join_after_a_revoke
+    try:
+        redeem = await client.post("/v1/join/redeem",
+                                   json={"code": payload["c"], "name": "bob"})
+    finally:
+        rooms.join = real_join
+    assert redeem.status_code == 403
+    assert "participant_key" not in redeem.text
+    room = (await client.get("/rooms/build", headers=ADMIN)).json()
+    assert "bob" not in room["members"]
+    assert app.state.participant_keys.info("bob") is None

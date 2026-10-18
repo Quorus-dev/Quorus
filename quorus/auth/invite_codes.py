@@ -216,6 +216,12 @@ def revoke(store, invite_id: str) -> bool:
                           (invite_id,)).rowcount > 0
 
 
+def is_revoked(store, invite_id: str) -> bool:
+    with store._lock, store._connect() as db:
+        row = db.execute("SELECT revoked FROM invites WHERE id = ?", (invite_id,)).fetchone()
+    return row is None or bool(row[0])
+
+
 def joined_with(store, invite_id: str) -> tuple[str, list[str]] | None:
     """The invite's room id and the names that joined with it, or None if unknown."""
     with store._lock, store._connect() as db:
