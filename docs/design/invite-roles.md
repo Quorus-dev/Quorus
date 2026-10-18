@@ -48,8 +48,9 @@ Invites (shared-secret relays). A new `invites` table sits in the claims DB
 (`participant_keys.db`, 0600): `id, code_hash, room_id, role, issuer, created_at,
 expires_at, max_uses, uses, revoked`. The code is `secrets.token_urlsafe(24)`,
 shown once and stored only as sha256. `max_uses` defaults to 1 (`quorus share
---uses N`, at most 20), and the TTL is at most 7 days. `quorus share --revoke <id>`
-and `quorus invites` list and revoke them. Nothing is signed, so no secret can
+--uses N`, at most 20), and the TTL is at most 7 days. `quorus invites` lists
+them (never their codes) and `quorus invites --revoke <id>` revokes one, both
+owner-only (`GET /v1/join/invites`, `POST /v1/join/invites/{id}/revoke`). Nothing is signed, so no secret can
 leak through the invite path.
 
 Mint. `POST /v1/join/mint` (legacy admin) creates the record. The payload holds

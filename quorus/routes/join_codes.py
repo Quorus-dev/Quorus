@@ -43,6 +43,8 @@ class MintResponse(BaseModel):
     relay_url: str
     join_url: str
     install_url: str
+    # Shared-secret relays: the invite's id, for `quorus invites --revoke`.
+    invite_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +165,7 @@ async def mint_code(
             role="member", issuer=auth.sub or "admin", ttl_s=req.ttl_days * 86400,
             max_uses=req.max_uses)
         payload: dict = {"r": relay_url, "n": room_name, "c": code, "v": 2}
+        invite_id: str | None = _inv.id
     else:
         # API-key relays: a scoped invite token the joiner presents at signup.
         # Same shape as `_encode_join_token`, so `quickjoin` decodes either path.
@@ -170,6 +173,7 @@ async def mint_code(
             tenant_id=tenant_id, room_id=room_id, issuer=auth.sub or "admin",
             role="member", ttl=req.ttl_days * 86400)
         payload = {"r": relay_url, "n": room_name, "t": tenant_id, "i": invite_token}
+        invite_id = None
 
     svc = request.app.state.join_code_service
     display_code, expires_at = await svc.mint(
@@ -187,6 +191,7 @@ async def mint_code(
         relay_url=relay_url,
         join_url=f"{relay_url}/v1/join/resolve/{display_code}",
         install_url=f"{relay_url}/v1/join/install/{display_code}.sh",
+        invite_id=invite_id,
     )
 
 
