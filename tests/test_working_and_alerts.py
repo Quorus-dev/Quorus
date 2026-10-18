@@ -180,3 +180,35 @@ def test_stuck_banner_at_most_once_an_hour(monkeypatch) -> None:
     d._stuck_alerted_at -= reflexd.STUCK_ALERT_EVERY_S + 1
     d._alert_owner("build", "⚠ opencode: still limited")
     assert len(sent) == 2
+
+
+def test_a_question_back_to_the_owner_needs_them_without_a_mention() -> None:
+    """Overseer's repro: the owner asked @zed-codex for a yes/no question;
+    Codex replied without @zed and no 'needs you' banner fired."""
+    alert = agent_events.owner_alert
+    reply = "Should we also add `multiply()`?"
+    assert alert(agent="zed-codex", owner="zed", reply=reply, asked_by="zed") == (
+        "zed-codex needs you", reply)
+    # The same words to another agent are that agent's business.
+    assert alert(agent="zed-codex", owner="zed", reply=reply, asked_by="zed-claude") is None
+    assert alert(agent="zed-codex", owner="zed", reply=reply) is None
+    # Reports to the owner aren't asks.
+    for report in ("Done, on main.", "✅ added permission checks to the relay",
+                   "plan: should I check the tests first?\n(quorus) published 1 commit(s) "
+                   "from quorus/a to main"):
+        got = alert(agent="zed-codex", owner="zed", reply=report, asked_by="zed")
+        assert got is None or "needs you" not in got[0], report
+    # A last line that asks, without a question mark.
+    asks = "Both options work.\nYour call: keep the cache or drop it"
+    assert alert(agent="zed-codex", owner="zed", reply=asks, asked_by="zed")[0] == (
+        "zed-codex needs you")
+
+
+def test_the_daemon_passes_who_woke_it(monkeypatch) -> None:
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setenv("REFLEXD_OWNER", "arav")
+    monkeypatch.setattr(reflexd, "_notify", lambda t, b, **_k: sent.append((t, b)))
+    d = _daemon()
+    d._alert_owner("build", "Which port should the relay use?", asked_by="arav")
+    d._alert_owner("build", "Which port should the relay use?", asked_by="arav-codex")
+    assert sent == [("arav-claude needs you · #build", "Which port should the relay use?")]
