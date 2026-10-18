@@ -87,7 +87,7 @@ export function create(host, P, hooks) {
   S.scene.environmentIntensity = 1.4;
 
   // Direct light only for shadows and a touch of key: the environment does the rest.
-  const key = new THREE.DirectionalLight(P.key, 1.9);
+  const key = S.key = new THREE.DirectionalLight(P.key, 1.9);
   key.position.set(-5, 9, 6);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
@@ -268,12 +268,23 @@ function budget(S, dt, t) {
   if (S.ema < slow) { S.slowSince = 0; return; }
   S.slowSince = S.slowSince || t;
   if (t - S.slowSince < 1.5) return;  // slow for a moment is fine; slow for 1.5 s is not
-  const under30 = S.ema > Math.max(1 / 30, S.period * 2.2), dpr = S.renderer.getPixelRatio();
   S.slowSince = 0;
   S.ema = 0.016;
-  if (S.bloom) { S.bloom = false; S.quality = "no-bloom"; return; }
-  if (dpr > 1.5) { S.renderer.setPixelRatio(1.5); S.quality = "no-bloom, 1.5x"; resize(S); return; }
-  if (dpr > 1 && under30) { S.renderer.setPixelRatio(1); S.quality = "no-bloom, 1x"; resize(S); }
+  // Resolution is never the thing that gives: the pixel ratio stays at
+  // min(devicePixelRatio, 2) (Arav: dropping to 1x is the blur). Shadows soften
+  // first, then the bloom goes, then shadows go.
+  if (S.key.shadow.mapSize.x > 1024) { shadowSize(S, 1024); S.quality = "soft shadows"; return; }
+  if (S.bloom) { S.bloom = false; S.quality = "soft shadows, no bloom"; return; }
+  if (S.renderer.shadowMap.enabled) {
+    S.renderer.shadowMap.enabled = false;
+    S.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+    S.quality = "no shadows, no bloom";
+  }
+}
+
+function shadowSize(S, px) {
+  S.key.shadow.mapSize.set(px, px);
+  if (S.key.shadow.map) { S.key.shadow.map.dispose(); S.key.shadow.map = null; }
 }
 
 // An fps / DPR / quality line in the corner, once a second, when the page was opened
