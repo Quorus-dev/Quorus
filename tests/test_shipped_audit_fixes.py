@@ -76,3 +76,37 @@ def test_peer_cannot_release_another_members_lock(client):
         json={"lock_token": token},
     )
     assert ok.status_code == 200
+
+
+# S2 ------------------------------------------------------------------------
+
+
+def test_direct_clients_cannot_rotate_forwarded_ips_to_bypass_limits(
+    client, monkeypatch
+):
+    monkeypatch.delenv("TRUSTED_PROXY_COUNT", raising=False)
+    for i in range(100):
+        r = client.get(
+            "/v1/join/resolve/ZZZZ-ZZZZ",
+            headers={"X-Forwarded-For": f"198.51.100.{i}"},
+        )
+        assert r.status_code in (404, 429)
+    r = client.get(
+        "/v1/join/resolve/ZZZZ-ZZZZ", headers={"X-Forwarded-For": "203.0.113.1"}
+    )
+    assert r.status_code == 429
+
+
+def test_forwarded_ip_used_only_behind_a_configured_proxy(monkeypatch):
+    from types import SimpleNamespace
+
+    from quorus.config import get_real_ip
+
+    req = SimpleNamespace(
+        headers={"X-Forwarded-For": "203.0.113.9"},
+        client=SimpleNamespace(host="10.0.0.5"),
+    )
+    monkeypatch.delenv("TRUSTED_PROXY_COUNT", raising=False)
+    assert get_real_ip(req) == "10.0.0.5"
+    monkeypatch.setenv("TRUSTED_PROXY_COUNT", "1")
+    assert get_real_ip(req) == "203.0.113.9"

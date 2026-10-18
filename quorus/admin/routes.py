@@ -143,9 +143,9 @@ async def create_tenant(req: CreateTenantRequest, request: Request):
     """Create a new tenant. Requires Bootstrap-Secret header."""
     # Rate-limit by IP so a leaked/brute-forced Bootstrap-Secret can't be
     # amplified into unlimited tenant creation (storage exhaustion DoS).
-    client_ip = request.headers.get("X-Real-IP") or (
-        request.client.host if request.client else "unknown"
-    )
+    from quorus.config import get_real_ip
+
+    client_ip = get_real_ip(request)
     rate_svc = request.app.state.rate_limit_service
     if not await rate_svc.check_with_limit("public", f"tenant_create:{client_ip}", 5):
         raise HTTPException(status_code=429, detail="Too many tenant creation attempts")
