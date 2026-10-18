@@ -151,7 +151,7 @@ def cmd_replay(args: Any, console: Any) -> None:
     out = Path(args.out or f"quorus-replay-{args.room}.html").expanduser().resolve()
     out.write_text(render(args.room, messages, commits, known), encoding="utf-8")
     console.print(f"[success]✓[/] Replay of #{args.room} ({len(messages)} messages, "
-                  f"{len(commits)} commits): {out}")
+                  f"{len(commits)} commit{'' if len(commits) == 1 else 's'}): {out}")
     console.print("[dim]Nothing was uploaded. Credentials are masked, but read it "
                   "before you share it.[/]")
 
