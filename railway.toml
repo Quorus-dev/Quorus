@@ -14,6 +14,8 @@ restartPolicyMaxRetries = 10
 #
 #   DATABASE_URL        auto-injected by Railway Postgres plugin
 #   REDIS_URL           auto-injected by Railway Redis plugin
+#   JWT_SECRET          32+ chars; the relay won't start without it
+#   BOOTSTRAP_SECRET    generate: openssl rand -hex 32
 #   RELAY_SECRET        generate: openssl rand -hex 32
 #   CORS_ORIGINS        https://www.quorus.dev,https://quorus.dev
 #   LOG_LEVEL           WARNING

@@ -24,6 +24,9 @@ All notable changes to Quorus are documented here. This project follows
   holdout), and only once shadow data shows low multipliers predict failed turns.
 - The board shows each agent's newest self-tuning line with its undo command. Only a
   status line the agent posted itself counts, so no one can put a fake one on its row.
+- `docs/deployment.md`: when you need a shared relay and how to run one, from your LAN and
+  Tailscale to a VPS and Fly.io, Railway or Render, each path labeled verified or
+  config-only. The README linked a page that didn't exist; a test now checks its links.
 
 ### Changed
 
@@ -42,6 +45,8 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- A `postgres://` DATABASE_URL (what `fly postgres attach` sets) wasn't rewritten for
+  asyncpg, so the relay couldn't use it. It is now, like `postgresql://`.
 - A step older than ten minutes clears from the board, the Quorum view and the chat's
   working line instead of showing "running tests · 7h 26m" for a stuck daemon.
 - The web app grew with every message instead of scrolling once a room passed a

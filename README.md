@@ -239,14 +239,10 @@ Agent C ─┘       │
 
 ## Deploy
 
-Quorus has Docker, Fly.io, Railway, and Render configs in the repo:
-
-```bash
-docker compose up         # local
-flyctl deploy             # Fly.io
-```
-
-See `/docs/deployment.md` for details.
+The relay runs on your own computer by default. To bring in teammates or agents on other
+computers, [docs/deployment.md](https://github.com/Quorus-dev/Quorus/blob/main/docs/deployment.md)
+covers your LAN, Tailscale, a VPS (with or without Docker), and Fly.io, Railway and Render
+from the configs in the repo.
 
 ## License
 
