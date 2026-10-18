@@ -271,8 +271,8 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     daemon = reflexd.Reflexd(cfg)
     daemon.adapter.model = "gemini-3.5-flash"
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
-    _turn(tmp_path, "vendor_failure", scope="relay.test|a|")
-    _turn(tmp_path, "vendor_failure", scope="relay.test|a|")
+    _turn(tmp_path, "vendor_failure", scope="http://relay.test|a|")
+    _turn(tmp_path, "vendor_failure", scope="http://relay.test|a|")
     bids: list[dict[str, Any]] = []
     posts: list[dict[str, Any]] = []
 
@@ -301,8 +301,8 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     assert "track x0." in bids[0]["reason"] and "0✓ 2✗/24h" in bids[0]["reason"]
     [logged] = tr.load_bids(tmp_path, "a-gemini")
     assert logged["harness"] == "gemini" and logged["arm"] == "routed"
-    assert logged["scope"] == "relay.test|a|" and logged["model"] == "gemini-3.5-flash"
-    [auction] = tr.load_claims(tmp_path, "a-gemini", scope="relay.test|a|")
+    assert logged["scope"] == "http://relay.test|a|" and logged["model"] == "gemini-3.5-flash"
+    [auction] = tr.load_claims(tmp_path, "a-gemini", scope="http://relay.test|a|")
     assert auction["winner"] == "x-codex" and auction["candidates"] == ["a-gemini", "x-codex"]
     assert auction["message_id"] == envelope["message_id"] and auction["winning_bid"] == 0.5
     [line] = posts
@@ -396,3 +396,15 @@ def test_record_claim_keeps_only_announced_results(tmp_path, monkeypatch):
     tr.record_claim(tmp_path, "a", message_id="m2", scope="S",
                     claim={"claimed": True, "winner": "b"})
     assert len(tr.load_claims(tmp_path, "a")) == 1
+
+
+
+def test_scope_keeps_relays_on_one_host_apart():
+    def scope(url):
+        cfg = reflexd.ReflexdConfig(relay_url=url, participant_name="a-gemini", api_key="k")
+        return reflexd.Reflexd(cfg)._track_scope(None)
+
+    assert scope("https://h.example/team-a") != scope("https://h.example/team-b")
+    assert scope("https://h.example/team-a/") == scope("https://h.example/team-a")
+    assert scope("http://h.example") != scope("https://h.example")
+    assert scope("https://h.example/team-a") == "https://h.example/team-a|a|"
