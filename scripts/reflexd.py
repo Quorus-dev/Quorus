@@ -3188,6 +3188,15 @@ class Reflexd:
                 prior_session, _persist_session = None, None
             if room_mode != "default":
                 extra_kw["mode"] = room_mode
+            if (worktree is None and ws is not None and reflexd_wake.WORKTREES_ENABLED
+                    and reflexd_readonly.is_read_only(harness, room_mode)):
+                # Worktree setup failed, so the turn would run in the shared
+                # checkout where the read-only guard can't see its writes
+                # (codex, review of 8805dc00). Don't run it.
+                readonly_turn = True
+                raise reflexd_readonly.SnapshotError(
+                    "has no isolated worktree for a read-only turn (setting it up "
+                    "failed), so it didn't run")
             if worktree is not None:
                 # Settle anything a crashed read-only turn left first, then
                 # snapshot this one if it is read-only (security fix 15).
