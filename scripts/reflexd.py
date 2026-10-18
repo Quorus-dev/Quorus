@@ -556,6 +556,12 @@ assert _wake_spec is not None and _wake_spec.loader is not None
 reflexd_wake = _ilu.module_from_spec(_wake_spec)
 sys.modules.setdefault("reflexd_wake", reflexd_wake)
 _wake_spec.loader.exec_module(reflexd_wake)
+_READONLY_PATH = Path(__file__).resolve().parent / "reflexd_readonly.py"
+_readonly_spec = _ilu.spec_from_file_location("reflexd_readonly", _READONLY_PATH)
+assert _readonly_spec is not None and _readonly_spec.loader is not None
+reflexd_readonly = _ilu.module_from_spec(_readonly_spec)
+sys.modules.setdefault("reflexd_readonly", reflexd_readonly)
+_readonly_spec.loader.exec_module(reflexd_readonly)
 _MODELS_PATH = Path(__file__).resolve().parent / "reflexd_models.py"
 _models_spec = _ilu.spec_from_file_location("reflexd_models", _MODELS_PATH)
 assert _models_spec is not None and _models_spec.loader is not None
@@ -3119,6 +3125,7 @@ class Reflexd:
             "mission" if mission else "chat",
         )
         failure_reason = None
+        readonly_snap: dict[str, str] | None = None
         try:
             # Only pass worktree extras when used: adapters written against
             # the older run() signature keep working.
@@ -3150,6 +3157,13 @@ class Reflexd:
                 prior_session, _persist_session = None, None
             if room_mode != "default":
                 extra_kw["mode"] = room_mode
+            if worktree is not None:
+                # Settle anything a crashed read-only turn left first, then
+                # snapshot this one if it is read-only (security fix 15).
+                await self._settle_readonly(relay, room, worktree, None)
+                if reflexd_readonly.is_read_only(harness, room_mode):
+                    readonly_snap = await asyncio.to_thread(
+                        reflexd_readonly.begin, self._readonly_dir, worktree.path)
             if room_mode == "manual":
                 # The approve tool must know where to ask: without this every
                 # permission prompt was denied "No Quorus room bound".
@@ -3192,7 +3206,10 @@ class Reflexd:
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
             reply = ""
-        if worktree is not None:
+        if worktree is not None and await self._settle_readonly(
+                relay, room, worktree, readonly_snap, envelope):
+            pass  # a read-only turn never publishes, whatever its harness wrote
+        elif worktree is not None:
             try:
                 published = await self._publish_with_resolution(
                     worktree, harness=harness, resume=prior_session,
@@ -3770,6 +3787,37 @@ class Reflexd:
         return "\n".join([*(f"{reflexd_wake.STATUS_PREFIX} resolved: {line}" for line in
                              resolved), status or ""]).strip() or None
 
+    @property
+    def _readonly_dir(self) -> Path:
+        return self.config.runtime_dir / "readonly-wakes"
+
+    async def _settle_readonly(self, relay: RelayClient, room: str, worktree: Any,
+                               snap: dict[str, str] | None,
+                               envelope: dict[str, Any] | None = None) -> bool:
+        """True when *worktree* is under a read-only turn (this one, or one a
+        crash left behind) and so must not be published. Its changes are kept
+        under refs/quorus/discarded/... and the worktree is put back."""
+        snap = snap or await asyncio.to_thread(
+            reflexd_readonly.pending, self._readonly_dir, worktree.path)
+        if snap is None:
+            return False
+        try:
+            ref = await asyncio.to_thread(
+                reflexd_readonly.settle, self._readonly_dir, worktree.path, snap,
+                self.config.participant_name)
+        except (OSError, subprocess.SubprocessError) as exc:
+            # Fail closed: the marker stays, so nothing publishes this worktree.
+            logger.error("read-only turn: couldn't reset %s: %s", worktree.path, exc)
+            await self._post_status(relay, room, envelope or {},
+                                    "⚠ a read-only turn changed files and I couldn't "
+                                    "reset them; nothing was published")
+            return True
+        if ref:
+            logger.warning("read-only turn changed files; discarded to %s", ref)
+            await self._post_status(relay, room, envelope or {},
+                                    reflexd_readonly.notice(ref))
+        return True
+
     async def _publish_sweep(self, relay: RelayClient) -> None:
         try:
             bindings = json.loads(ROOM_BINDINGS_PATH.read_text(encoding="utf-8"))
@@ -3791,6 +3839,8 @@ class Reflexd:
                 wt = await asyncio.to_thread(
                     reflexd_wake.existing_worktree, repo, self.config.participant_name,
                 )
+                if wt is not None and await self._settle_readonly(relay, room, wt, None):
+                    continue  # a read-only turn's leftovers are never published
                 status = await asyncio.to_thread(
                     reflexd_wake.publish_worktree, wt, self.config.participant_name,
                 ) if wt is not None else None
