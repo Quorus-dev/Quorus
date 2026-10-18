@@ -275,7 +275,7 @@ def cmd_agent(args: Any, console: Any) -> None:
     if action == "add":
         _add(args, console)
     elif action == "list":
-        _list(console)
+        _list(console, as_json=bool(getattr(args, "json", False)))
     elif action == "remove":
         _remove(args, console)
     elif action == "pace":
@@ -429,7 +429,7 @@ def _readiness_warnings(harness: str, model: str | None) -> list[str]:
     return out
 
 
-def _list(console: Any) -> None:
+def _list(console: Any, *, as_json: bool = False) -> None:
     """Your agents only: <you>-<tool>. Listing every quorus launchd job showed
     other identities' agents too (review 2026-10-09). Without launchd the
     agents are pid files; a dead one is listed so a reboot isn't silent."""
@@ -443,6 +443,11 @@ def _list(console: Any) -> None:
         if pf.stem not in seen:
             pid = agent_proc.live_pid(_agents_dir(), pf.stem)
             rows.append((pf.stem, f"pid {pid}" if pid else "", pid is not None))
+    if as_json:
+        sys.stdout.write(json.dumps(
+            [{"name": name, "running": up, "where": where}
+             for name, where, up in sorted(rows)], indent=2) + "\n")
+        return
     if not rows:
         console.print(f"[dim]no agents for @{me} running on this machine — add one: "
                       "quorus agent add claude --room <room>[/]")

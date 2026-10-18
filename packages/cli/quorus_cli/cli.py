@@ -266,6 +266,13 @@ def _get_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(follow_redirects=True)
 
 
+def _print_json(data: object) -> None:
+    """``--json`` output: the relay's data as-is, nothing else on stdout, so an
+    agent or a script can parse it. Errors still exit non-zero (0.5.0 sweep, A2)."""
+    sys.stdout.write(json.dumps(data, indent=2) + "\n")
+    sys.stdout.flush()
+
+
 def _sibling_quorus_mcp() -> str | None:
     """The `quorus-mcp` installed beside the running interpreter, if any.
 
@@ -715,13 +722,20 @@ def _cmd_chat(args):
 
 def _cmd_rooms(args):
     from quorus_cli import ui
+    as_json = bool(getattr(args, "json", False))
     try:
-        with ui.spinner("Fetching rooms"):
+        if as_json:
             rooms = asyncio.run(_list_rooms())
+        else:
+            with ui.spinner("Fetching rooms"):
+                rooms = asyncio.run(_list_rooms())
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
         sys.exit(1)
 
+    if as_json:
+        _print_json(rooms)
+        return
     if not rooms:
         ui.console.print()
         ui.console.print("  [muted]— no rooms yet —[/]")
@@ -2352,9 +2366,9 @@ def _cmd_hook(args):
         console.print("[green]Hook disabled.[/green]")
 
 
-async def _history(room_name: str, limit: int = 50):
+async def _history(room_name: str, limit: int = 50, *, as_json: bool = False):
     """Fetch and display room message history."""
-    client = httpx.AsyncClient(follow_redirects=True)
+    client = _get_client()
     try:
         resp = await client.get(
             f"{RELAY_URL}/rooms/{room_name}/history",
@@ -2363,6 +2377,9 @@ async def _history(room_name: str, limit: int = 50):
         )
         resp.raise_for_status()
         messages = resp.json()
+        if as_json:
+            _print_json(messages)
+            return
         if not messages:
             console.print(f"[dim]No messages in {room_name}[/dim]")
             return
@@ -2374,8 +2391,12 @@ async def _history(room_name: str, limit: int = 50):
         for msg in messages:
             console.print(_format_chat_msg(msg))
     except httpx.ConnectError as exc:
+        if as_json:
+            raise
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
+        if as_json:
+            raise
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
@@ -2438,7 +2459,7 @@ async def _export(
         await client.aclose()
 
 
-async def _ps() -> None:
+async def _ps(*, as_json: bool = False) -> None:
     """Show all agents with online/offline status from heartbeat presence."""
     client = _get_client()
     try:
@@ -2447,6 +2468,9 @@ async def _ps() -> None:
         )
         resp.raise_for_status()
         agents = resp.json()
+        if as_json:
+            _print_json(agents)
+            return
 
         if not agents:
             console.print()
@@ -2538,19 +2562,23 @@ async def _ps() -> None:
             " [dim]— send a test message[/]"
         )
     except httpx.ConnectError as exc:
+        if as_json:
+            raise
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
+        if as_json:
+            raise
         _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
 
 def _cmd_ps(args):
-    asyncio.run(_ps())
+    asyncio.run(_ps(as_json=bool(getattr(args, "json", False))))
 
 
 def _cmd_history(args):
-    asyncio.run(_history(args.room, args.limit))
+    asyncio.run(_history(args.room, args.limit, as_json=bool(getattr(args, "json", False))))
 
 
 def _cmd_export(args):
@@ -3724,7 +3752,7 @@ def _cmd_status(args):
 # quorus state <room>
 # ---------------------------------------------------------------------------
 
-async def _room_state(room_name: str) -> None:
+async def _room_state(room_name: str, *, as_json: bool = False) -> None:
     """Show the Shared State Matrix for a room (goal, agents, locks, stats)."""
     client = _get_client()
     try:
@@ -3734,6 +3762,9 @@ async def _room_state(room_name: str) -> None:
         )
         resp.raise_for_status()
         state = resp.json()
+        if as_json:
+            _print_json(state)
+            return
 
         console.print(f"[bold]Room:[/bold] {room_name}\n")
 
@@ -3810,8 +3841,12 @@ async def _room_state(room_name: str) -> None:
         console.print(f"[bold]Messages:[/bold] {msg_count}{last_str}")
 
     except httpx.ConnectError as exc:
+        if as_json:
+            raise
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
+        if as_json:
+            raise
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
@@ -3821,7 +3856,7 @@ async def _room_state(room_name: str) -> None:
 
 
 def _cmd_room_state(args):
-    asyncio.run(_room_state(args.room))
+    asyncio.run(_room_state(args.room, as_json=bool(getattr(args, "json", False))))
 
 
 # ---------------------------------------------------------------------------
@@ -8585,7 +8620,7 @@ def _cmd_login(args) -> None:
 # quorus approvals / approve / deny  (WAKE_REBUILD L3)
 # ---------------------------------------------------------------------------
 
-async def _approvals_list(room: str | None) -> None:
+async def _approvals_list(room: str | None, *, as_json: bool = False) -> None:
     client = _get_client()
     params = {"room": room} if room else None
     try:
@@ -8594,11 +8629,18 @@ async def _approvals_list(room: str | None) -> None:
         )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
+        if as_json:
+            raise
         # Every other command prints a one-line error here; approvals used
         # to dump a raw httpx traceback (runbook rehearsal, 2026-08-21).
         _relay_unreachable(exc=exc)
         raise SystemExit(2) from None
+    finally:
+        await client.aclose()
     pending = resp.json().get("pending", [])
+    if as_json:
+        _print_json(pending)
+        return
     if not pending:
         console.print("[dim]no approvals waiting[/]")
         return
@@ -8651,7 +8693,8 @@ async def _approval_decide(approval_id: str, approve: bool, reason: str) -> None
 
 
 def _cmd_approvals(args) -> None:
-    asyncio.run(_approvals_list(getattr(args, "room", None)))
+    asyncio.run(_approvals_list(getattr(args, "room", None),
+                                as_json=bool(getattr(args, "json", False))))
 
 
 def _cmd_approve(args) -> None:
@@ -8845,7 +8888,7 @@ def main():
                          help="Bind address (default: this machine only; "
                               "0.0.0.0 to share on your LAN)")
 
-    sub.add_parser("rooms", **_help_block(
+    p_rooms = sub.add_parser("rooms", **_help_block(
         synopsis="List all rooms visible to your account.",
         description=(
             "Admins see every room on the relay. Regular users see only "
@@ -8854,6 +8897,7 @@ def main():
         example="quorus rooms",
         help_text="List all rooms",
     ))
+    p_rooms.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     p_create = sub.add_parser("create", **_help_block(
         synopsis="Create a new coordination room.",
@@ -8958,6 +9002,7 @@ def main():
     p_history.add_argument(
         "--limit", type=int, default=50, help="Max messages (default 50)"
     )
+    p_history.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     p_search = sub.add_parser(
         "search", help="Search room history by keyword, sender, or type"
@@ -8995,7 +9040,7 @@ def main():
         help="Max messages to export (default 1000)"
     )
 
-    sub.add_parser("ps", **_help_block(
+    p_ps = sub.add_parser("ps", **_help_block(
         synopsis="Show which agents are online right now.",
         description=(
             "Lists every agent the relay has seen recently, with last-seen "
@@ -9004,6 +9049,7 @@ def main():
         example="quorus ps",
         help_text="Show agent presence (online/offline)",
     ))
+    p_ps.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     sub.add_parser("status", help="Show relay health and stats")
 
     p_doctor = sub.add_parser("doctor", **_help_block(
@@ -9341,6 +9387,7 @@ def main():
 
     p_state = sub.add_parser("state", help="Show room state: goal, agents, locks, stats")
     p_state.add_argument("room", help="Room name")
+    p_state.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     p_locks = sub.add_parser("locks", help="Show active file locks in a room")
     p_locks.add_argument("room", help="Room name")
@@ -9574,6 +9621,7 @@ def main():
         help_text="Tool approvals waiting on you",
     ))
     p_approvals.add_argument("--room", default=None, help="Filter by room")
+    p_approvals.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     p_approve = sub.add_parser("approve", help="Approve an agent tool call")
     p_approve.add_argument("approval_id", help="Approval id (apr_...)")
@@ -9723,7 +9771,9 @@ def main():
     p_agent_add.add_argument(
         "--model", help="Model to run, e.g. sonnet, gpt-5.5, gemini-2.5-pro, "
                         "ollama/qwen3:4b (opencode: any provider/model)")
-    agent_sub.add_parser("list", help="Agents running on this machine")
+    p_agent_list = agent_sub.add_parser("list", help="Agents running on this machine")
+    p_agent_list.add_argument("--json", action="store_true",
+                              help="Machine-readable JSON output")
     p_agent_pace = agent_sub.add_parser(
         "pace", help="Cap an agent's turns per hour to stay inside its plan")
     p_agent_pace.add_argument("name", help="Agent name, e.g. arav-codex")
