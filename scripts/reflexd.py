@@ -2536,8 +2536,13 @@ class Reflexd:
         self._limit_announced: set[tuple[str, float]] = set()
         # room -> ordered ids the agent saw in a wake it then answered.
         self._answered: dict[str, dict[str, None]] = {}
-        self._turns: list[float] = []  # wake start times, for pacing
+        self._turns: list[float] = []  # harness run start times, for pacing
         self._pace_announced: dict[str, float] = {}
+        # Paced envelopes wait here (newest per room, coalesced) instead of
+        # holding the wake lock: a pacing sleep under the lock kept the owner's
+        # own @mentions queued for an hour (overseer, fix 16).
+        self._pace_parked: dict[str, tuple[dict[str, Any], Any]] = {}
+        self._pace_task: asyncio.Task | None = None
         self._readonly_warned: set[str] = set()  # worktrees told "stuck marker"
         self._last_spoke: dict[str, float] = {}
         self._last_wake_at: float = 0.0
@@ -2933,38 +2938,56 @@ class Reflexd:
         while len(seen) > ANSWERED_MAX:
             seen.pop(next(iter(seen)))
 
-    async def _paced(self, relay: RelayClient, envelope: dict[str, Any]) -> bool:
+    async def _paced(self, relay: RelayClient, envelope: dict[str, Any],
+                     triage: Any = None) -> bool:
         """Keep the agent inside its owner's plan: past its turns-per-hour cap,
-        WAIT for a slot (messages queue meanwhile and are coalesced), never drop.
-        A human's message always goes straight through. Codex burned a 5-hour
-        plan window in ~24 turns on night one (2026-10-17)."""
+        park the message for its slot (newest per room; the later wake reads
+        the room, so nothing is dropped). A human's message always goes
+        straight through. Codex burned a 5-hour plan window in ~24 turns on
+        night one (2026-10-17).
+
+        Turns are recorded only when the harness actually runs
+        (:meth:`_record_turn`), and the wait never holds the wake lock: skipped
+        envelopes burned the window and a sleep under the lock blocked the
+        owner's own @mentions for an hour (overseer, fix 16)."""
         cap = pace_for(self.config.participant_name)
-        if cap is None:
+        if cap is None or not is_agent_participant(envelope.get("from_name") or ""):
             return True
         now = time.time()
-        if not is_agent_participant(envelope.get("from_name") or ""):
-            self._turns.append(now)
-            return True
         wait = pace_wait_s(self._turns, cap, now)
-        if wait > 0:
-            room = envelope.get("room") or ""
-            if now - self._pace_announced.get(room, 0.0) > PACE_WINDOW_S:
-                self._pace_announced[room] = now
-                await self._post_status(
-                    relay, room, envelope,
-                    f"@{self.config.participant_name} is pacing itself ({cap} turns/hour to "
-                    f"stay inside its plan); next turn in about {_human_wait(wait)}")
-            logger.info("pacing: waiting %.0fs (cap %d/h)", wait, cap)
-            # Waiting for a plan slot isn't working: it showed as "⋯ @a-codex
-            # working 57m" for most of every hour (2026-10-17).
-            await self._set_presence(relay, "active", "")
-            await self._sleep_or_stop(wait)
+        if wait <= 0:
+            return True
+        room = envelope.get("room") or ""
+        if now - self._pace_announced.get(room, 0.0) > PACE_WINDOW_S:
+            self._pace_announced[room] = now
+            await self._post_status(
+                relay, room, envelope,
+                f"@{self.config.participant_name} is pacing itself ({cap} turns/hour to "
+                f"stay inside its plan); next turn in about {_human_wait(wait)}")
+        logger.info("pacing: parked for %.0fs (cap %d/h)", wait, cap)
+        self._pace_parked[room] = (envelope, triage)
+        if self._pace_task is None or self._pace_task.done():
+            self._pace_task = asyncio.get_running_loop().create_task(
+                self._release_paced(relay, wait))
+        return False
+
+    def _record_turn(self) -> None:
+        """A harness turn is starting: it counts against the pace window."""
+        now = time.time()
+        self._turns = [t for t in self._turns if now - t < PACE_WINDOW_S] + [now]
+
+    async def _release_paced(self, relay: RelayClient, wait: float) -> None:
+        """When the slot opens, wake once per room for the parked messages."""
+        await self._sleep_or_stop(wait)
+        parked, self._pace_parked = self._pace_parked, {}
+        for envelope, triage in parked.values():
             if self._stop.is_set():
-                return False
-            await self._set_presence(relay, "busy", room)
-        self._turns = [t for t in self._turns if time.time() - t < PACE_WINDOW_S]
-        self._turns.append(time.time())
-        return True
+                return
+            try:
+                async with self._wake_lock:
+                    await self._wake_and_reply(relay, envelope, triage=triage)
+            except Exception as exc:  # one bad wake mustn't strand the rest
+                logger.exception("paced wake failed: %s", exc)
 
     def _agent_credential(self) -> tuple[str, bool]:
         """``(credential, legacy)`` for the woken agent.
@@ -3050,21 +3073,22 @@ class Reflexd:
             return
         if await self._limited(relay, envelope):
             return
-        if not await self._paced(relay, envelope):
+        wake_id = envelope_canonical_id(envelope)
+        if wake_id and wake_id in self._answered.get(room, {}):
+            # A lead @-mentioned by every teammate built a queue of mentions,
+            # then woke once per item it had already seen in an earlier wake's
+            # transcript and answered: ~10 NO_REPLY wakes in a row (live
+            # 2026-10-17). Seen in context + posted after = handled. Checked
+            # before pacing, so a skipped message never waits for a slot.
+            logger.info("skipping wake: %s was already in an answered wake's context", wake_id)
+            return
+        if not await self._paced(relay, envelope, triage):
             return
         self._refresh_identity()
 
         history = await relay.fetch_recent(
             room=room, limit=HEARTBEAT_HISTORY_LIMIT,
         )
-        wake_id = envelope_canonical_id(envelope)
-        if wake_id and wake_id in self._answered.get(room, {}):
-            # A lead @-mentioned by every teammate built a queue of mentions,
-            # then woke once per item it had already seen in an earlier wake's
-            # transcript and answered: ~10 NO_REPLY wakes in a row (live
-            # 2026-10-17). Seen in context + posted after = handled.
-            logger.info("skipping wake: %s was already in an answered wake's context", wake_id)
-            return
         context_ids = {m.get("id") for m in history if m.get("id")} | {wake_id}
         memory_entries: list[dict[str, Any]] = []
         try:
@@ -3220,6 +3244,7 @@ class Reflexd:
                 # The approve tool must know where to ask: without this every
                 # permission prompt was denied "No Quorus room bound".
                 extra_kw["approval_room"] = room
+            self._record_turn()  # only a turn that runs counts against the pace
             reply = await self.adapter.run(
                 harness, context=prompt,
                 cwd=worktree.path if worktree is not None else ws,
