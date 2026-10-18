@@ -1285,6 +1285,12 @@ def _cmd_retro(args):
     cmd_retro(args, console)
 
 
+def _cmd_tune(args):
+    from quorus_cli.tune_cmd import cmd_tune
+
+    cmd_tune(args, console)
+
+
 def _cmd_scorecard(args):
     from quorus_cli.scorecard_cmd import cmd_scorecard
 
@@ -8474,6 +8480,7 @@ def _print_grouped_help():
             ("duel",               "Two agents, one task; tests gate, blind judge picks"),
             ("retro <room>",       "What's going wrong in a room, ranked, with fixes"),
             ("replay <room>",      "Write a shareable page of how a room did a task"),
+            ("tune",               "What your Quorus learned; undo any of it"),
         ]),
         ("ROOMS & MESSAGING", [
             ("rooms",              "List all rooms"),
@@ -9834,6 +9841,12 @@ def main():
         "invites", help="List this relay's invites, or revoke one (relay owner only)")
     p_invites.add_argument("--revoke", metavar="ID", help="Revoke an invite by its id")
 
+    p_tune = sub.add_parser("tune", help="What your Quorus learned; undo any of it")
+    p_tune.add_argument("action", nargs="?", default="list",
+                        choices=["list", "undo", "redo", "off", "on"])
+    p_tune.add_argument("id", nargs="?", help="Adaptation id for undo/redo, e.g. t3")
+    p_tune.add_argument("--json", action="store_true", help="Print the adaptations as JSON")
+
     p_score = sub.add_parser(
         "scorecard", help="Which agent and vendor's work holds up in this repo")
     p_score.add_argument("--repo", help="Repo path (default: current directory)")
@@ -10183,6 +10196,7 @@ def main():
         "room": _cmd_room,
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
+        "tune": _cmd_tune,
         "invites": _cmd_invites,
         "phone": _cmd_phone,
         "web": _cmd_web,
