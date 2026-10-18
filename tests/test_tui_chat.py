@@ -155,13 +155,13 @@ def test_app_bar_singular_member():
 def test_share_card_includes_code_and_install():
     lines = chat.render_share_card(
         room_name="general", code="MJN2-EWVT",
-        install_url="curl -sSL https://q.dev/r/MJN2-EWVT.sh | sh",
+        install_url="curl -sSL http://localhost:8080/v1/join/install/MJN2-EWVT.sh | bash",
         console_width=80,
     )
     out = _render_to_str(lines, width=80)
     assert "Share #general" in out
     assert "MJN2-EWVT" in out
-    assert "q.dev/r/MJN2-EWVT.sh" in out
+    assert "/v1/join/install/MJN2-EWVT.sh" in out
     assert "Expires" in out
 
 
