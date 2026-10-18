@@ -5069,7 +5069,16 @@ def _cmd_init(args):
         # this run doesn't set (agent_api_keys, push settings, ...) survive.
         # Drop the superseded credential shape: a lingering api_key would
         # keep winning over the relay_secret we are writing.
-        merged = dict(pm.get(profile_slug) or {})
+        from quorus.config import drop_credentials_if_relay_changed
+        # Credentials (api_key, relay_secret, agent_api_keys) belong to the
+        # relay that issued them: switching this profile to another relay must
+        # not carry them along (codex, 84bbb9b2: the supervisor paired relay
+        # A's agent keys with relay B).
+        merged, dropped = drop_credentials_if_relay_changed(
+            pm.get(profile_slug) or {}, relay_url)
+        if dropped:
+            console.print("[yellow]New relay: credentials saved for the old one were "
+                          "dropped, not carried over.[/yellow]")
         merged.pop("api_key" if not api_key else "relay_secret", None)
         merged.update(config)
         backup_path = _backup_before_overwrite(profile_path)
@@ -5150,8 +5159,11 @@ def _cmd_init(args):
                 existing = json.loads(config_path.read_text()) if config_path.exists() else {}
             except (json.JSONDecodeError, ValueError, OSError):
                 existing = {}
+        from quorus.config import drop_credentials_if_relay_changed
+        existing, _ = drop_credentials_if_relay_changed(existing, relay_url)
         existing.update(config)
-        # Preserve previously-saved agent keys for platforms we didn't touch.
+        # Preserve previously-saved agent keys for platforms we didn't touch
+        # (on the same relay only: the line above drops them on a switch).
         prior = existing.get("agent_api_keys") or {}
         if not isinstance(prior, dict):
             prior = {}

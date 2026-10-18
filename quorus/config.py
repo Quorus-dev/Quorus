@@ -280,6 +280,21 @@ def same_relay(a: str, b: str) -> bool:
         return False
 
 
+# Profile fields that are only valid on the relay they were issued by.
+RELAY_BOUND_KEYS = ("api_key", "relay_secret", "agent_api_keys")
+
+
+def drop_credentials_if_relay_changed(profile: dict[str, Any],
+                                      new_relay_url: str) -> tuple[dict[str, Any], bool]:
+    """A copy of *profile* without its relay-bound credentials when it is
+    being pointed at a different relay; ``(copy, dropped)``."""
+    saved = profile.get("relay_url") or DEFAULT_RELAY_URL
+    if same_relay(saved, new_relay_url):
+        return dict(profile), False
+    kept = {k: v for k, v in profile.items() if k not in RELAY_BOUND_KEYS}
+    return kept, any(k in profile for k in RELAY_BOUND_KEYS)
+
+
 def withheld_credential_message(relay_url: str) -> str:
     return (f"no credential saved for {relay_url}; run `quorus init` or `quorus join` "
             "for it (your saved credentials belong to another relay and are not sent)")

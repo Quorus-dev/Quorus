@@ -237,3 +237,54 @@ def test_cli_load_still_migrates(tmp_path, monkeypatch):
     assert load_config()["api_key"] == KEY_A  # explicit `quorus` commands migrate
     assert (tmp_path / "profiles" / "default.json").exists()
     assert "relay_url" not in json.loads(path.read_text())
+
+
+# ── quorus init switching a profile to another relay (codex, 84bbb9b2) ──────
+
+
+@pytest.fixture
+def hub_on_relay_a(tmp_path, monkeypatch):
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    for name in _ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
+    monkeypatch.setattr("quorus.cli.shutil.which", lambda _: None)
+    monkeypatch.setattr("quorus.cli._is_platform_installed", lambda p: False)
+    monkeypatch.setattr("quorus.cli.httpx.get", lambda *a, **kw: MagicMock(status_code=200))
+    cfg = tmp_path / ".quorus"
+    (cfg / "profiles").mkdir(parents=True)
+    (cfg / "config.json").write_text(json.dumps({"current": "work", "profiles": ["work"]}))
+    (cfg / "profiles" / "work.json").write_text(json.dumps({
+        "instance_name": "alice", "relay_url": RELAY_A, "api_key": KEY_A,
+        "agent_api_keys": {"alice-claude": "mct_agent_for_a"}}))
+    return cfg
+
+
+def _init(relay_url):
+    from unittest.mock import MagicMock
+
+    from quorus_cli.cli import _cmd_init
+
+    args = MagicMock()
+    args.name, args.relay_url, args.secret, args.api_key = "alice", relay_url, "secret-b", None
+    _cmd_init(args)
+
+
+def test_init_to_another_relay_drops_every_saved_credential(hub_on_relay_a):
+    from quorus_cli.cli import _resolve_manager_participants
+
+    _init(RELAY_B)
+    profile = json.loads((hub_on_relay_a / "profiles" / "work.json").read_text())
+    assert profile["relay_url"] == RELAY_B and profile["relay_secret"] == "secret-b"
+    assert "agent_api_keys" not in profile and "api_key" not in profile
+    _names, keys, relay = _resolve_manager_participants(None)
+    assert relay == RELAY_B and "mct_agent_for_a" not in keys.values()
+
+
+def test_init_on_the_same_relay_keeps_its_agent_keys(hub_on_relay_a):
+    _init(RELAY_A + "/")
+    profile = json.loads((hub_on_relay_a / "profiles" / "work.json").read_text())
+    assert profile["agent_api_keys"] == {"alice-claude": "mct_agent_for_a"}
