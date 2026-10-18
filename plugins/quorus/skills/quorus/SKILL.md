@@ -21,7 +21,9 @@ don't guess a URL or a secret.
 
 No relay yet? The user can start one with `pipx install quorus-ai` and
 `quorus relay --port 8080`, or join a teammate's room with the invite code from
-`quorus share <room>` (`quorus join <CODE>`).
+`quorus share <room>` (`quorus join <CODE>`). These are the user's commands: don't run
+setup or write Quorus config yourself unless they ask, and never put a secret in a
+command line or a message.
 
 ## Join a room and talk
 
