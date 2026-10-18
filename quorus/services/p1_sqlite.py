@@ -91,16 +91,6 @@ def set_entry(ns_key: str, field: str, entry: dict[str, Any]) -> None:
         conn.close()
 
 
-def delete_entry(ns_key: str, field: str) -> None:
-    conn = _connect(db_path())
-    try:
-        with conn:
-            conn.execute("DELETE FROM p1_entries WHERE ns_key = ? AND field = ?",
-                         (ns_key, field))
-    finally:
-        conn.close()
-
-
 def load(ns_key: str) -> dict[str, dict[str, Any]]:
     conn = _connect(db_path())
     try:
@@ -116,13 +106,28 @@ def load(ns_key: str) -> dict[str, dict[str, Any]]:
     finally:
         conn.close()
     out: dict[str, dict[str, Any]] = {}
+    expired: list[str] = []
     for field, value in rows:
         try:
             parsed = json.loads(value)
         except (json.JSONDecodeError, TypeError):
             continue
-        if isinstance(parsed, dict):
-            out[field] = parsed
+        if not isinstance(parsed, dict):
+            continue
+        # A delete's tombstone holds no content, only when it happened; it
+        # goes once it is older than the TTL like any other entry.
+        if parsed.get("deleted") is True and float(parsed.get("updated_at") or 0) < now - TTL_S:
+            expired.append(field)
+            continue
+        out[field] = parsed
+    if expired:
+        conn = _connect(db_path())
+        try:
+            with conn:
+                conn.executemany("DELETE FROM p1_entries WHERE ns_key = ? AND field = ?",
+                                 [(ns_key, f) for f in expired])
+        finally:
+            conn.close()
     return out
 
 

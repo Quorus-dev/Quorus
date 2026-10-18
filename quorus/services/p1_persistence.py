@@ -117,26 +117,30 @@ async def mirror_set(ns_key: str, field: str, entry: dict[str, Any]) -> bool:
     return True
 
 
-async def mirror_delete(ns_key: str, field: str) -> bool:
-    """Delete one mirrored entry. False when the store didn't take it."""
-    r = get_redis_or_none()
-    if r is None:
-        return (await _local("delete", ns_key, p1_sqlite.delete_entry, field))[1]
-    try:
-        async with _timeout(_OP_TIMEOUT_S):
-            await r.hdel(ns_key, field)
-    except Exception as exc:
-        _note_failure("delete", ns_key, exc)
-        return False
-    return True
+def tombstone(at: float | None = None) -> dict[str, Any]:
+    """What a delete leaves in the store: no content, only when it happened.
+    Without it another relay process can't tell a delete from "never had it",
+    and re-wrote an older missed set over the delete (claude, fbcfa2dc)."""
+    return {"deleted": True, "updated_at": time.time() if at is None else at}
+
+
+def is_tombstone(entry: dict[str, Any] | None) -> bool:
+    return bool(entry) and entry.get("deleted") is True
+
+
+async def mirror_delete(ns_key: str, field: str, at: float | None = None) -> bool:
+    """Replace one mirrored entry with a tombstone (its content is gone).
+    False when the store didn't take it."""
+    return await mirror_set(ns_key, field, tombstone(at))
 
 
 async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
     """Load a mirrored bucket.
 
     Returns ``(entries, ok)``. When ``ok`` the entries are the whole bucket
-    as the store has it (an empty dict means empty): callers replace their
-    cache with it via :meth:`PendingWrites.reconcile`. Not ``ok`` means "we
+    as the store has it, delete tombstones included (an empty dict means
+    empty): callers replace their cache with it via
+    :meth:`PendingWrites.reconcile`, which never serves a tombstone. Not ``ok`` means "we
     could not read" (a blip, a locked or corrupt file): the caller keeps what
     it holds and must NOT mark the bucket hydrated, or one blip serves empty
     state forever.
@@ -156,6 +160,7 @@ async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
         _note_failure("hydrate", ns_key, exc)
         return {}, False
     out: dict[str, dict[str, Any]] = {}
+    expired: list[str] = []
     for k, v in (raw or {}).items():
         key = k.decode() if isinstance(k, bytes) else k
         val = v.decode() if isinstance(v, bytes) else v
@@ -163,8 +168,18 @@ async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
             parsed = json.loads(val)
         except (json.JSONDecodeError, TypeError):
             continue
-        if isinstance(parsed, dict):
-            out[key] = parsed
+        if not isinstance(parsed, dict):
+            continue
+        if is_tombstone(parsed) and float(parsed.get("updated_at") or 0) < time.time() - _TTL_S:
+            expired.append(key)
+            continue
+        out[key] = parsed
+    if expired:
+        try:
+            async with _timeout(_OP_TIMEOUT_S):
+                await r.hdel(ns_key, *expired)
+        except Exception as exc:  # pruning is housekeeping; serve the read anyway
+            _note_failure("prune", ns_key, exc)
     return out, True
 
 
@@ -219,14 +234,16 @@ class PendingWrites:
     async def reconcile(self, bucket: Any, ns_key: str,
                         cached: dict[str, dict[str, Any]],
                         stored: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """The bucket to serve after a successful hydrate of *ns_key*."""
-        merged = dict(stored)
+        """The bucket to serve after a successful hydrate of *ns_key*:
+        the live stored entries, plus missed local writes newer than what the
+        store holds for that field (a live entry or a delete's tombstone)."""
+        merged = {f: e for f, e in stored.items() if not is_tombstone(e)}
         for field, (op, at) in list(self._ops.get(bucket, {}).items()):
             theirs = stored.get(field)
             if op == "set" and field in cached:
                 mine = cached[field]
                 if theirs is not None and self._written_at(theirs) > self._written_at(mine):
-                    self.note(bucket, field, op, True)  # a newer write landed elsewhere
+                    self.note(bucket, field, op, True)  # a newer set or delete landed elsewhere
                     continue
                 merged[field] = mine
                 self.note(bucket, field, op, await mirror_set(ns_key, field, mine), at)
@@ -235,7 +252,7 @@ class PendingWrites:
                     self.note(bucket, field, op, True)  # set again after our delete
                     continue
                 merged.pop(field, None)
-                self.note(bucket, field, op, await mirror_delete(ns_key, field), at)
+                self.note(bucket, field, op, await mirror_delete(ns_key, field, at), at)
             else:
                 self.note(bucket, field, op, True)
         return merged

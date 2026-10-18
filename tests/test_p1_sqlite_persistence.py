@@ -8,6 +8,7 @@ reading the same file, which is what a new relay process does.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import stat
@@ -59,8 +60,12 @@ async def test_a_delete_survives_a_restart():
     after = PersistentMemorySvc()
     assert await after.get(T, "alice", R, "gone") is None
     assert (await after.get(T, "alice", R, "kept"))["value"] == 2
-    rows = _rows()
-    assert [r[1] for r in rows] == ["kept"]  # really deleted, not tombstoned
+    # The content is really gone: what's left of "gone" is a tombstone that
+    # holds only when it was deleted, so other relay processes can't undo it.
+    with sqlite3.connect(str(p1_sqlite.db_path())) as conn:
+        left = dict(conn.execute("SELECT field, value FROM p1_entries").fetchall())
+    assert set(left) == {"gone", "kept"}
+    assert set(json.loads(left["gone"])) == {"deleted", "updated_at"}
 
 
 async def test_reset_drops_the_rows():
@@ -281,3 +286,26 @@ async def test_a_missed_delete_doesnt_remove_a_newer_set_elsewhere(always_refres
     await b.set(T, "alice", R, "k", 2)  # set again after, and it lands
     assert (await a.get(T, "alice", R, "k"))["value"] == 2
     assert (await PersistentMemorySvc().get(T, "alice", R, "k"))["value"] == 2
+
+
+async def test_a_newer_delete_elsewhere_beats_an_older_missed_set(always_refresh, monkeypatch):
+    """Claude's repro on fbcfa2dc: k is stored, A's set to v2 misses the
+    locked store, B then deletes k and that lands; A must not bring v2 back."""
+    monkeypatch.setattr(p1_sqlite, "_BUSY_S", 0.05)
+    a, b = PersistentMemorySvc(), PersistentMemorySvc()
+    await a.set(T, "alice", R, "k", "v1")
+    with _Locked():
+        await a.set(T, "alice", R, "k", "v2")  # store misses it
+    time.sleep(0.01)
+    assert await b.delete(T, "alice", R, "k")  # newer, and it lands
+    assert await a.get(T, "alice", R, "k") is None
+    assert await PersistentMemorySvc().get(T, "alice", R, "k") is None
+    assert await a.list(T, "alice", R) == []
+
+
+async def test_old_tombstones_are_pruned(monkeypatch):
+    await p1_persistence.mirror_delete("p1mem:x", "k", at=time.time() - p1_sqlite.TTL_S - 60)
+    await p1_persistence.mirror_delete("p1mem:x", "fresh")
+    stored, ok = await p1_persistence.hydrate("p1mem:x")
+    assert ok and set(stored) == {"fresh"}
+    assert [r[1] for r in _rows()] == ["fresh"]
