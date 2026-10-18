@@ -133,10 +133,15 @@ def test_quorum_degrades_instead_of_going_blank() -> None:
     assert "w = reduce ? 0 : 1" in _src("quorum-totems.js")
     # Rendering pauses while the tab is hidden.
     assert "if (!S.on || document.hidden)" in _src("quorum-stage.js")
-    # Slow frames step the quality down once each (bloom, then pixel ratio), never up.
-    assert "function budget(S, dt, t)" in _src("quorum-stage.js")
-    assert 'S.quality = "no-bloom"' in _src("quorum-stage.js")
-    assert "S.renderer.setPixelRatio(1);" in _src("quorum-stage.js")
+    # Slow frames step the quality down once each, never up: bloom first, then DPR to
+    # 1.5, and to 1 only under 30 fps (blurry is worse than no bloom). Text stays DOM.
+    stage = _src("quorum-stage.js")
+    assert "function budget(S, dt, t)" in stage and 'S.quality = "no-bloom"' in stage
+    assert "if (dpr > 1.5) { S.renderer.setPixelRatio(1.5);" in stage
+    assert "const under30 = S.ema > 1 / 30" in stage and "if (dpr > 1 && under30)" in stage
+    # The fps / DPR / quality readout (`quorus web --fps`) is DOM text, once a second.
+    assert 'sessionStorage.getItem("qfps") === "1"' in stage and 'className = "qfps"' in stage
+    assert "stats() { return stats(S); }" in stage
     # Ten-plus members: a seat cap, the rest named in a note; an empty room says what to do.
     assert "MAX_SEATS = 14" in src and "No agents at this table yet" in src
     assert "#quorum canvas{position:absolute" in DASHBOARD_HTML  # can't grow its own host

@@ -29,6 +29,9 @@ All notable changes to Quorus are documented here. This project follows
   raises a beacon, stuck flickers, shipped bursts, @-mentions arc and reviews braid); a
   slow camera drift that dollies into a clicked seat; frosted-glass plaques in one
   self-hosted font. Reduced motion gets a static still; phones keep the flat grid.
+- The Quorum view holds 60 fps at native resolution: when frames run long it drops the
+  bloom first and keeps the pixel ratio at 1.5 or above unless it is under 30 fps. Plaques
+  are DOM text, always sharp. `quorus web --fps` shows the fps, pixel ratio and quality.
 
 ### Fixed
 

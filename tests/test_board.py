@@ -111,6 +111,10 @@ def test_quorus_web_link_lands_on_the_board_signed_in_as_you() -> None:
     assert url == ("http://127.0.0.1:8787/#token=a.b.c&name=arav&room=weekend-quorus"
                    "&view=board")
     assert "?" not in url  # the credential only ever rides in the fragment
+    assert web_url("http://r", "a.b.c", "arav", None, True, fps=True).endswith("&view=board&fps=1")
+    from quorus.dashboard import DASHBOARD_JS as _djs
+
+    assert 'if (frag.get("fps")) sessionStorage.setItem("qfps", "1");' in _djs
     from quorus.dashboard import DASHBOARD_JS
 
     assert 'sessionStorage.setItem("qr"' in DASHBOARD_JS
