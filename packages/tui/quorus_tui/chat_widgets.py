@@ -80,7 +80,7 @@ SENDER_PALETTE: tuple[str, ...] = (
 CURATED_SENDER_PALETTE = SENDER_PALETTE
 
 # Heuristic agent-name keywords — matches hub._name_has_agent_keyword.
-_AGENT_KEYWORDS = ("codex", "claude", "gemini", "cursor", "bot")
+_AGENT_KEYWORDS = ("codex", "claude", "gemini", "opencode", "cursor", "bot")
 
 # Inline pattern: `@user` or `#room`. Stop at whitespace, comma, period
 # (to avoid swallowing trailing punctuation), and a curated set of CJK /

@@ -145,7 +145,7 @@ def _sender_color(name: str) -> str:
 # Keep this list in sync with the suffixes mcp_writers.agent_identity
 # generates. "test"/"pm"/"auto" are NOT agent suffixes — they're labels
 # humans pick for themselves and we treat them as human.
-_AGENT_KEYWORDS = ("codex", "claude", "gemini", "cursor", "bot")
+_AGENT_KEYWORDS = ("codex", "claude", "gemini", "opencode", "cursor", "bot")
 
 
 def _name_has_agent_keyword(name: str) -> bool:
@@ -2794,6 +2794,25 @@ def _read_input(
         except (termios.error, OSError, AttributeError):
             _saved_termios = None  # not a real tty (CI / pipe) — fall through
 
+    # Read the tty's fd one byte at a time. `sys.stdin.read(1)` pulled a
+    # whole paste into Python's buffer, after which select() on the fd saw
+    # nothing pending: the rest of the paste waited for the next keypress and
+    # a pasted "@name ..." never got past the mention picker (new-user pass 2,
+    # F3).
+    import codecs as _codecs
+    _utf8 = _codecs.getincrementaldecoder("utf-8")("replace")
+
+    def _getch() -> str:
+        if _stdin_fd < 0:
+            return sys.stdin.read(1)
+        while True:
+            raw = os.read(_stdin_fd, 1)
+            if not raw:
+                return ""
+            ch = _utf8.decode(raw)
+            if ch:
+                return ch
+
     # Restore in-progress buffer from a prior render-tick timeout so the user
     # never loses what they were typing when the 2s redraw fires.
     buf: list[str] = list(_PENDING_INPUT_BUF)
@@ -2823,7 +2842,7 @@ def _read_input(
             # ESC (0x1b); we peek with select(timeout=0.05) to gather the
             # rest of the sequence without blocking on a lone ESC press.
             try:
-                _b = sys.stdin.read(1)
+                _b = _getch()
             except (OSError, ValueError):
                 _b = ""
             if not _b:
@@ -2836,7 +2855,7 @@ def _read_input(
                 _follow = ""
                 _sel_more, _, _ = _sel.select([sys.stdin], [], [], 0.05)
                 while _sel_more:
-                    _follow += sys.stdin.read(1)
+                    _follow += _getch()
                     _sel_more, _, _ = _sel.select([sys.stdin], [], [], 0.005)
                 key = "\x1b" + _follow
             elif _b in ("\x7f", "\x08"):

@@ -14,6 +14,10 @@ All notable changes to Quorus are documented here. This project follows
   Enter opens a room, text goes to the only room if there's just one, and with several it says
   it wasn't sent and which key opens one.
 - The banner showed v0.5.0 whatever was installed; it shows the installed version.
+- Pasting into the chat composer lost text: the rest of a paste waited until the next key,
+  and a paste starting with `@` stopped at the mention picker, so nothing was sent. Pastes
+  now arrive whole.
+- The @ picker labelled opencode agents "(human)".
 - `quorus relay --host 0.0.0.0` started a second relay next to the one your first `quorus` run
   started on 127.0.0.1:8080: on macOS both bound the port and wrote the same state file, and on
   Linux it failed to start. It now refuses while a relay answers on that port, and `--replace`
