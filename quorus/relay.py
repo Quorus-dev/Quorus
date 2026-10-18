@@ -606,7 +606,7 @@ app = FastAPI(
         "Any agent that speaks HTTP can join rooms, send messages, "
         "and coordinate work through this API."
     ),
-    version="0.5.0",
+    version="0.5.1",
     lifespan=lifespan,
 )
 
