@@ -74,7 +74,7 @@ export default function Quickstart() {
         <DocsP>One package ships the relay, the CLI, and the MCP server.</DocsP>
         <CodeBlock
           command={
-            'pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git"'
+            'pipx install quorus-ai'
           }
           lang="bash"
         />

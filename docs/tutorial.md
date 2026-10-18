@@ -12,7 +12,7 @@ By the end you will have a working script you can adapt to any multi-agent workf
 ## Step 1: Install Quorus
 
 ```bash
-pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git"
+pipx install quorus-ai
 ```
 
 ## Step 2: Start the Relay
