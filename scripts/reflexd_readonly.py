@@ -42,11 +42,6 @@ class MarkerError(RuntimeError):
     """A read-only marker exists but can't be trusted: publishing must stop."""
 
 
-class SnapshotError(RuntimeError):
-    """The worktree couldn't be snapshotted before a read-only turn, so the
-    turn must not run: its writes could not be told apart afterwards."""
-
-
 def _git(path: Path, *args: str, env: dict[str, str] | None = None) -> str:
     out = subprocess.run(
         ["git", "-c", "core.hooksPath=/dev/null", *args], cwd=path, capture_output=True,
