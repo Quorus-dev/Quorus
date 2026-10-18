@@ -59,7 +59,8 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
         if _accepts(relay_url, secret):
             return True, "local relay is running"
         return False, ("a relay is already running on this computer with a different "
-                       "secret — stop it, or run `quorus init <name> --secret <its secret>`")
+                       "secret — stop it, or run `quorus init <name> --secret -` and "
+                       "paste its secret")
     parsed = urlparse(relay_url)
     cfg = resolve_config_dir()
     cfg.mkdir(parents=True, exist_ok=True)

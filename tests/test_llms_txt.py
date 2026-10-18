@@ -41,6 +41,23 @@ def test_llms_txt_tells_an_agent_how_to_install_and_connect() -> None:
         assert needle in text, needle
 
 
+@pytest.mark.parametrize("doc", ["llms.txt", "README.md"])
+def test_docs_never_put_the_secret_on_argv(doc: str) -> None:
+    """`--secret <value>` lands in shell history and `ps`; docs teach `--secret -`.
+    The README still taught the argv form after 0.5.2 (launch FAQ check)."""
+    text = (_ROOT / doc).read_text(encoding="utf-8")
+    assert not re.search(r"--(secret|api-key) <", text)
+
+
+def test_setup_hints_never_put_the_secret_on_argv() -> None:
+    """Same for the hints the CLI and relay print."""
+    roots = [_ROOT / "quorus", *(_ROOT / "packages").glob("*/quorus_*")]
+    offenders = [f"{p.relative_to(_ROOT)}:{n}" for root in roots for p in root.rglob("*.py")
+                 for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+                 if re.search(r"--(secret|api-key) <", line)]
+    assert offenders == []
+
+
 async def test_llms_txt_names_every_mcp_tool() -> None:
     """A tool added to the server without a line here fails the build."""
     from quorus_mcp.server import mcp

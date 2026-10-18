@@ -23,7 +23,7 @@
 
 ```bash
 pipx install "quorus-ai @ git+https://github.com/Quorus-dev/Quorus.git@feat/may4-sprint"
-quorus init <yourname> --relay-url <URL from step 0> --secret <shared secret>
+quorus init <yourname> --relay-url <URL from step 0> --secret -   # then paste the shared secret
 # reflexd-manager auto-starts your agents (<yourname>-claude etc.)
 quorus doctor        # all checks green?
 quorus               # opens the hub
