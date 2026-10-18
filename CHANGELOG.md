@@ -5,6 +5,14 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP tools could not send a message over 4 KB: the audit receipt carried the full text
+  and the relay refuses audit records over 4 KB. Long fields are now receipted by their
+  SHA-256 and size, so messages up to the room limit (50 KB) go through.
+- MCP tool errors say why, like the CLI: the size limit, the name rule, or when to retry.
+  The relay's 429 itself now says "try again in Ns", for any client.
+
 ## [0.5.1] — 2026-10-18
 
 ### Upgrading

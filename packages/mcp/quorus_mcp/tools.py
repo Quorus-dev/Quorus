@@ -11,6 +11,8 @@ two module names alias to the same object.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -25,6 +27,28 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import Context
 
 _AUDIT_TIMEOUT_SECONDS = 3.0
+# The relay refuses audit arguments over 4 KB (a ledger-flood guard). Room
+# messages may be 50 KB, so long fields are receipted by hash, not refused.
+_AUDIT_MAX_BYTES = 4096
+_AUDIT_FIELD_INLINE = 512
+
+
+def _digest(value: str) -> dict:
+    raw = value.encode("utf-8")
+    return {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+
+
+def _audit_arguments(arguments: dict) -> dict:
+    """*arguments* for the audit receipt, under the relay's 4 KB cap. Long
+    strings become their SHA-256 and size, which still pins exactly what was
+    sent; a 60 KB room message used to fail the whole tool call (0.5.2)."""
+    if len(json.dumps(arguments, default=str).encode("utf-8")) <= _AUDIT_MAX_BYTES:
+        return arguments
+    slim = {k: _digest(v) if isinstance(v, str) and len(v) > _AUDIT_FIELD_INLINE else v
+            for k, v in arguments.items()}
+    if len(json.dumps(slim, default=str).encode("utf-8")) <= _AUDIT_MAX_BYTES:
+        return slim
+    return {"digest": _digest(json.dumps(arguments, sort_keys=True, default=str))}
 
 
 def _redact_outgoing(content: str) -> str:
@@ -55,7 +79,7 @@ async def _audit_tool_call(
     url = f"{s.RELAY_URL}/v1/audit/mcp-tool-call"
     payload = {
         "tool_name": tool_name,
-        "arguments": arguments,
+        "arguments": _audit_arguments(arguments),
         "mutating": mutating,
     }
     try:
