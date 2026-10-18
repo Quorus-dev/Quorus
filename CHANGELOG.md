@@ -30,6 +30,9 @@ All notable changes to Quorus are documented here. This project follows
 - `quorus doctor` and `quorus agent add` check that Claude Code is signed in, as they
   already did for Codex. A signed-out Claude passed both, then every wake answered
   "not logged in".
+- Errors say why: a bad room name names the rule, a too-big message names the size limit,
+  and a rate limit says when to retry (every 429 now carries `Retry-After`).
+- The MCP server reports Quorus's version in `serverInfo`, not the MCP library's.
 - `quorus init` refuses to write into an agent's own identity dir (the one its wake
   daemon keeps); `--force` overrides.
 - Only a lock's holder can release it, and room state shows a lock's token only to
