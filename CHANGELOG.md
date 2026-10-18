@@ -10,6 +10,12 @@ All notable changes to Quorus are documented here. This project follows
 - The Quorum view is a lit stage: only present members are seated (offline ones are a
   count), the publish pillar is gone, plaques keep one type size at any depth and never
   overlap, and the camera frames the whole table. List stays the default view.
+- The Quorum view, premium pass: image-based light, a glossy table, soft shadows and a
+  bloom; one sculpted totem per vendor family and a luminous pillar for people (no
+  logos); state is motion (working streams particles to the "main" monolith, needs-you
+  raises a beacon, stuck flickers, shipped bursts, @-mentions arc and reviews braid); a
+  slow camera drift that dollies into a clicked seat; frosted-glass plaques in one
+  self-hosted font. Reduced motion gets a static still; phones keep the flat grid.
 
 ### Fixed
 

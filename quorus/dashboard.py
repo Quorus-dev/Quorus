@@ -89,18 +89,25 @@ border:1px solid var(--rule)}#quorum canvas{position:absolute;inset:0;display:bl
 #board{position:relative}
 #quorumCard{position:absolute;right:28px;top:110px;width:min(440px,calc(100% - 56px));z-index:2;
 box-shadow:0 12px 40px rgba(0,0,0,.35);border-radius:12px}
+/* The seat card is the board's row on frosted glass over the stage. */
+#quorumCard .brow{background:rgba(22,29,26,.62);backdrop-filter:blur(16px) saturate(1.2);
+-webkit-backdrop-filter:blur(16px) saturate(1.2);border-color:rgba(255,255,255,.1)}
 .qtags{position:absolute;inset:0;pointer-events:none}
-/* Seat plaques: fixed type size whatever the seat's depth, the vendor as a 6px dot
-   (no logos), laid out apart by quorum.js. */
+/* The Quorum view's one web font, self-hosted (OFL, see web/vendor/fonts). */
+@font-face{font-family:"Plus Jakarta Sans";src:url(/vendor/fonts/plus-jakarta-sans.woff2) format("woff2");
+font-weight:200 800;font-display:swap}
+/* Seat plaques: frosted glass, fixed type size whatever the seat's depth, the vendor
+   as a 6px dot (no logos), the model in small caps, laid out apart by quorum.js. */
 .qtag{position:absolute;left:0;top:0;pointer-events:auto;display:grid;gap:1px;max-width:200px;
-padding:5px 10px 5px 20px;border-radius:8px;border:1px solid rgba(255,255,255,.08);
-background:rgba(16,20,18,.72);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-color:#eceeed;font:inherit;font-size:12px;line-height:1.25;text-align:left;cursor:pointer;
-box-shadow:0 6px 18px rgba(0,0,0,.28)}
+padding:5px 10px 5px 20px;border-radius:8px;border:1px solid rgba(255,255,255,.1);
+background:rgba(16,20,18,.58);backdrop-filter:blur(12px) saturate(1.2);
+-webkit-backdrop-filter:blur(12px) saturate(1.2);will-change:transform;
+color:#eceeed;font:inherit;font-family:"Plus Jakarta Sans",var(--font);font-size:12px;
+line-height:1.25;text-align:left;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.28)}
 .qtag::before{content:"";position:absolute;left:8px;top:11px;width:6px;height:6px;border-radius:50%;
-background:var(--seat)}
+background:var(--seat);box-shadow:0 0 6px var(--seat)}
 .qtag b{font-size:12px;font-weight:600;letter-spacing:.01em}
-.qtag .qm{color:#adb5b2;font-size:11px;font-family:var(--mono)}
+.qtag .qm{color:#adb5b2;font-size:11.5px;font-variant-caps:all-small-caps;letter-spacing:.06em}
 .qtag .qs{font-size:11px;color:#cfd6d2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .qtag .qs:empty,.qtag .qm:empty{display:none}
 .qtag[data-state=busy]{border-color:rgba(60,199,162,.45)}

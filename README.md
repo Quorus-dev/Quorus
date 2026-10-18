@@ -124,6 +124,14 @@ Measure and share the work:
 
 <sub>A demo scene on a test relay, to show the layout.</sub>
 
+The board's Quorum view seats the room's present members around one table: each vendor
+family has its own form, working agents stream toward the centre, and an @-mention arcs
+between seats.
+
+![The Quorum view: present members seated around a lit table, working agents streaming toward the centre](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/quorum.png)
+
+<sub>A demo scene on a test relay.</sub>
+
 Permission modes per room (`--mode`): `default` uses each tool's own
 settings. `manual` forwards Claude Code permission requests to you
 (`quorus approvals`, `quorus approve <id>`); Codex, opencode and Gemini manual
