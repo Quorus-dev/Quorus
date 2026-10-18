@@ -860,21 +860,12 @@ def _safe_detail(r: "httpx.Response") -> str:
 
 
 def _mint_join_token(relay_url: str, secret: str, room: str) -> str:
-    """Mint a portable join code for *room* via the server-side mint endpoint.
+    """Mint a join code for *room* through the relay's ``POST /v1/join/mint``.
 
-    SECURITY: the prior implementation built a local base64 envelope that
-    included the relay secret in plaintext — anyone seeing the resulting
-    `quorus_join_…` token gained admin-equivalent auth on the relay. This
-    is a hard ship-block (security audit Finding 26, CRITICAL).
-
-    The replacement calls `POST /v1/join/mint` so the relay issues a
-    short, single-use code bound to a *scoped invite token* (room-only,
-    time-limited). The relay secret never leaves the caller's machine.
-
-    Falls back to the legacy local envelope ONLY when the server returns
-    404 (very old relay without /v1/join/mint) — and in that fallback
-    the secret is still embedded; we log a warning so operators can
-    upgrade. New deployments must always hit the server path.
+    Returns the short code, or "" if the relay couldn't mint one. It used to fall
+    back to a local ``quorus_join_`` envelope holding the relay secret (admin) on
+    any failure, a 500 or a timeout included, so a hiccup handed the secret to
+    whoever got the invite. Now the share fails closed and the caller says why.
     """
     try:
         r = httpx.post(
@@ -882,39 +873,18 @@ def _mint_join_token(relay_url: str, secret: str, room: str) -> str:
             headers=_auth_headers(secret),
             json={"room": room, "ttl_days": 7},
             timeout=5,
-            follow_redirects=True,
+            follow_redirects=False,
         )
-        if r.status_code == 200:
-            data = r.json()
-            code = data.get("code") or data.get("display_code")
-            if code:
-                return code  # short server-issued code, no secret leak
-        if r.status_code == 404:
-            # Server too old to support /v1/join/mint — fall through to
-            # the legacy envelope and warn at the call site via stderr.
-            sys.stderr.write(
-                "[quorus] WARN: relay does not support /v1/join/mint — "
-                "falling back to legacy base64 envelope. Upgrade the "
-                "relay to avoid embedding the relay secret in invites.\n"
-            )
-        else:
-            sys.stderr.write(
-                f"[quorus] WARN: /v1/join/mint returned {r.status_code} — "
-                "falling back to legacy base64 envelope.\n"
-            )
-    except Exception as exc:
-        sys.stderr.write(
-            f"[quorus] WARN: /v1/join/mint failed ({exc!r}) — "
-            "falling back to legacy base64 envelope.\n"
-        )
+    except httpx.HTTPError:
+        return ""
+    if r.status_code != 200:
+        return ""
+    data = r.json()
+    return str(data.get("code") or data.get("display_code") or "")
 
-    # Legacy fallback (kept ONLY for compatibility with very old relays).
-    import base64 as _b64
 
-    payload = json.dumps(
-        {"relay_url": relay_url, "secret": secret, "room": room}
-    )
-    return "quorus_join_" + _b64.urlsafe_b64encode(payload.encode()).decode()
+_MINT_FAILED = ("Couldn't make an invite: the relay didn't issue a code. "
+                "Check it's running and up to date (quorus doctor).")
 
 
 def _create_error_msg(room: str, status: str, relay: str) -> str:
@@ -2125,6 +2095,9 @@ def _slash_share(arg, state, relay_url, secret, agent_name, console):
         state.set_status_bar(f"no room '{target}' — try /rooms")
         return True
     code = _mint_join_token(relay_url, secret, target)
+    if not code:
+        state.set_status_bar(_MINT_FAILED)
+        return True
     install_url = _share_install_url(code, relay_url)
     status = _slash.run_share_flow(
         console=console,
@@ -3516,14 +3489,16 @@ def _main_input_loop(
                     )
                 else:
                     code = _mint_join_token(relay_url, secret, target)
-                    install_url = _share_install_url(code, relay_url)
-                    status = _slash_mod.run_share_flow(
-                        console=console,
-                        room_name=target,
-                        code=code,
-                        install_url=install_url,
-                    )
-                    state.set_status_bar(status)
+                    if not code:
+                        state.set_status_bar(_MINT_FAILED)
+                    else:
+                        status = _slash_mod.run_share_flow(
+                            console=console,
+                            room_name=target,
+                            code=code,
+                            install_url=_share_install_url(code, relay_url),
+                        )
+                        state.set_status_bar(status)
                 last_render = 0
                 continue
 

@@ -5369,9 +5369,26 @@ def _cmd_init(args):
     )
 
 
+def _secret_share_refused(args, what: str) -> bool:
+    """`invite-link` and `invite-token` hand over RELAY_SECRET, which is admin on the
+    relay. They run only with --with-secret, for the owner's own machines; anyone
+    else gets an invite from `quorus share`, which redeems into their own key."""
+    if getattr(args, "with_secret", False):
+        _ui.warn(f"This {what} holds your relay secret, which is admin: whoever has it can "
+                 "read every room and act as anyone. Use it only on your own machines.")
+        return False
+    _ui.error(f"`quorus {what}` would hand over your relay secret",
+              hint=f"invite a teammate with: quorus share {args.room} (their own key, "
+                   f"that room only). For your own machine: quorus {what} "
+                   f"{args.room} --with-secret")
+    return True
+
+
 def _cmd_invite_link(args):
     """Generate a one-liner join command to share with others."""
     room = args.room
+    if _secret_share_refused(args, "invite-link"):
+        sys.exit(2)
     console.print(f"[bold]Share this command to invite someone to '{room}':[/bold]")
     console.print("")
     from rich.markup import escape as _escape
@@ -5418,12 +5435,14 @@ def _parse_join_token(token: str) -> dict:
 def _cmd_invite_token(args):
     """Generate a compact, copy-pasteable join token for a room."""
     room = args.room
+    if _secret_share_refused(args, "invite-token"):
+        sys.exit(2)
     token = _make_join_token(room, RELAY_URL, RELAY_SECRET)
     console.print(f"[bold]Join token for room '{room}':[/bold]")
     console.print("")
     console.print(f"  {token}")
     console.print("")
-    console.print("[dim]Share this token with any agent. They run:[/dim]")
+    console.print("[dim]On your other machine, run:[/dim]")
     console.print("[dim]  quorus join <token> --name THEIR_NAME[/dim]")
 
 
@@ -9198,9 +9217,11 @@ def main():
     )
 
     p_invite_link = sub.add_parser(
-        "invite-link", help="Generate a join command to share"
+        "invite-link", help="A join command holding the relay secret, for your own machines"
     )
     p_invite_link.add_argument("room", help="Room name")
+    p_invite_link.add_argument("--with-secret", action="store_true",
+                               help="Include the relay secret (admin): your own machines only")
 
     p_spawn = sub.add_parser(
         "spawn", help="Create agent workspace and launch an agent"
@@ -9575,9 +9596,11 @@ def main():
 
     p_invite_token = sub.add_parser(
         "invite-token",
-        help="Generate a one-line join token to share with agents",
+        help="A join token holding the relay secret, for your own machines",
     )
     p_invite_token.add_argument("room", help="Room name")
+    p_invite_token.add_argument("--with-secret", action="store_true",
+                                help="Include the relay secret (admin): your own machines only")
 
     p_share = sub.add_parser("share", **_help_block(
         synopsis="Generate a short invite code for a room.",

@@ -681,7 +681,6 @@ def test_register_mcp_everywhere_reuses_matching_codex_identity(monkeypatch):
         name="arav-codex",
         relay_url="https://relay.test",
         api_key="mct_parent",
-        relay_secret="",
         mcp_command="uv",
         mcp_args=["run"],
         ui=FakeUi(),
@@ -2720,3 +2719,47 @@ def test_cmd_share_drops_a_non_http_install_url(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "quorus join ABCD-EFGH" in out
     assert "curl" not in out and "/etc/passwd" not in out
+
+
+def test_spawned_agent_mcp_config_runs_the_real_server(tmp_path, monkeypatch):
+    """_spawn_agent's .mcp.json ran `python quorus_cli/mcp_server.py`, a file that
+    never existed in the package, so a spawned agent had no room tools."""
+    from unittest.mock import AsyncMock
+
+    from quorus import cli
+
+    client = MagicMock(post=AsyncMock(side_effect=RuntimeError("offline")), aclose=AsyncMock())
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_get_client", lambda: client)
+    monkeypatch.setattr(cli, "_open_in_terminal", lambda cmd: None)
+    monkeypatch.setattr(cli, "_mcp_server_command", lambda: ("/opt/q/bin/quorus-mcp", []))
+
+    cli._spawn_agent("general", "worker-1", "http://127.0.0.1:8080", "s3cret")
+
+    server = json.loads((tmp_path / "quorus-agents" / "worker-1" / ".mcp.json").read_text())
+    entry = server["mcpServers"]["quorus"]
+    assert entry["command"] == "/opt/q/bin/quorus-mcp" and entry["args"] == []
+    assert "mcp_server.py" not in json.dumps(server)
+
+
+@pytest.mark.parametrize("command", ["_cmd_invite_link", "_cmd_invite_token"])
+def test_secret_invites_need_with_secret(command, capsys, monkeypatch):
+    """invite-link / invite-token print the relay secret (admin). Without
+    --with-secret they refuse and point at `quorus share`; with it they warn."""
+    from quorus import cli
+
+    monkeypatch.setattr(cli, "RELAY_URL", "http://127.0.0.1:8080")
+    monkeypatch.setattr(cli, "RELAY_SECRET", "s3cret-value-123")
+    with pytest.raises(SystemExit) as exc:
+        getattr(cli, command)(MagicMock(room="dev", with_secret=False))
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert exc.value.code == 2
+    assert "s3cret-value-123" not in text and "quorus share dev" in text
+    if command == "_cmd_invite_token":
+        assert "quorus_join_" not in text
+
+    getattr(cli, command)(MagicMock(room="dev", with_secret=True))
+    out = capsys.readouterr()
+    text = " ".join((out.out + out.err).split())
+    assert "admin" in text and "own machines" in text
