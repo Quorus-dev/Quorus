@@ -235,6 +235,7 @@ async def post_social_verb(
         ):
             raise HTTPException(
                 429, detail="blocking-disagree rate limit (1/5min)",
+                headers={"Retry-After": "300"},
             )
     else:
         if not await rate_limit_svc.check_with_limit(

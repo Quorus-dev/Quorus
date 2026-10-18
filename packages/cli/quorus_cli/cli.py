@@ -20,6 +20,7 @@ from rich.table import Table
 from quorus.config import load_config
 from quorus.profiles import ProfileManager
 from quorus_cli import ui as _ui
+from quorus_cli.http_hints import hint as _http_hint
 
 console = _ui.console
 _config = load_config()
@@ -797,7 +798,7 @@ def _cmd_create(args):
         elif e.response.status_code == 401:
             ui.error("Not authenticated", hint="run: quorus init <name> --secret <s>")
         else:
-            ui.error("Could not create room", hint=f"server returned HTTP {e.response.status_code}")
+            ui.error("Could not create room", hint=_http_hint(e.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -813,7 +814,7 @@ def _cmd_invite(args):
             f"Invited {len(args.participants)} agent(s) to [room]#{args.room}[/]"
         )
     except httpx.HTTPStatusError as e:
-        ui.error("Invite failed", hint=f"HTTP {e.response.status_code}")
+        ui.error("Invite failed", hint=_http_hint(e.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -853,7 +854,7 @@ def _cmd_say(args):
         elif e.response.status_code == 403:
             ui.error(f"Not a member of #{args.room}", hint=f"join first: quorus join {args.room}")
         else:
-            ui.error("Send failed", hint=f"HTTP {e.response.status_code}")
+            ui.error("Send failed", hint=_http_hint(e.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -868,7 +869,7 @@ def _cmd_dm(args):
             asyncio.run(_dm(args.to, args.message))
         ui.success(f"DM sent to [agent]@{args.to}[/]")
     except httpx.HTTPStatusError as e:
-        ui.error("DM failed", hint=f"HTTP {e.response.status_code}")
+        ui.error("DM failed", hint=_http_hint(e.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -984,7 +985,7 @@ def _cmd_heartbeat(args):
     except httpx.HTTPStatusError as exc:
         ui.error(
             "Could not resolve primary room",
-            hint=f"HTTP {exc.response.status_code}",
+            hint=_http_hint(exc.response),
         )
         sys.exit(1)
 
@@ -999,7 +1000,7 @@ def _cmd_heartbeat(args):
     try:
         asyncio.run(_say(room_name, message))
     except httpx.HTTPStatusError as exc:
-        ui.error("Heartbeat send failed", hint=f"HTTP {exc.response.status_code}")
+        ui.error("Heartbeat send failed", hint=_http_hint(exc.response))
         sys.exit(1)
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
@@ -2418,7 +2419,7 @@ async def _history(room_name: str, limit: int = 50, *, as_json: bool = False):
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -2472,7 +2473,7 @@ async def _export(
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -2586,7 +2587,7 @@ async def _ps(*, as_json: bool = False) -> None:
     except httpx.HTTPStatusError as e:
         if as_json:
             raise
-        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -2644,7 +2645,7 @@ async def _search(
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -2806,7 +2807,7 @@ async def _metrics(room_name: str) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -3868,7 +3869,7 @@ async def _room_state(room_name: str, *, as_json: bool = False) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -3936,7 +3937,7 @@ async def _room_locks(room_name: str) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -3997,7 +3998,7 @@ async def _usage() -> None:
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
-        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 
@@ -7470,7 +7471,7 @@ def _cmd_logs(args):
     except httpx_mod.ConnectError as exc:
         _relay_unreachable(exc=exc)
     except httpx_mod.HTTPStatusError as e:
-        _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
 
 
 def _cmd_brief(args):
@@ -8265,7 +8266,7 @@ Be direct and actionable. No pleasantries. This will be injected into the agent'
             if e.response.status_code == 404:
                 _ui.error(f"Room \'{target_room}\' not found", hint="list rooms: quorus rooms")
             else:
-                _ui.error_with_retry(f"HTTP {e.response.status_code}", relay_url=RELAY_URL)
+                _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
     finally:
         await client.aclose()
 

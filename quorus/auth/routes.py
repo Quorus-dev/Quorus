@@ -491,6 +491,7 @@ async def register_agent(
                     detail=(
                         "Too many register-agent calls; retry in 1 hour"
                     ),
+                    headers={"Retry-After": str(_REGISTER_AGENT_WINDOW)},
                 )
 
         # Build agent name: {parent_name}-{suffix}
