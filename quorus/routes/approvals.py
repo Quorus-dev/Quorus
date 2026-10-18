@@ -52,10 +52,6 @@ class CreateApprovalRequest(BaseModel):
 class DecisionRequest(BaseModel):
     approve: bool
     reason: str = Field(default="", max_length=500)
-    # Legacy/admin auth carries no participant identity (``sub`` is None),
-    # so an operator using the shared secret must name themselves. Ignored
-    # when a real participant identity is present.
-    decided_by: str = Field(default="", max_length=100)
 
 
 def _notify_room(
@@ -207,15 +203,16 @@ async def decide_approval(
     if rec is None:
         raise HTTPException(status_code=404, detail="Unknown approval request")
 
-    # (a) Who is deciding? Legacy auth has no participant identity, so the
-    # caller must name themselves; a bare shared secret decides nothing.
-    decider = (auth.sub or body.decided_by or "").strip()
+    # (a) Who is deciding? Only a signed-in identity counts. The shared
+    # secret names nobody, and every woken agent holds it, so a decider it
+    # claims for itself would let an agent approve its own call as its owner.
+    decider = "" if auth.is_legacy else (auth.sub or "").strip()
     if not decider:
         raise HTTPException(
             status_code=403,
             detail=(
-                "Approvals need a named decider. Use a participant API key, "
-                "or pass decided_by with an operator identity."
+                "Approvals need you signed in as yourself, not the shared "
+                "secret: use an API key or your participant key."
             ),
         )
     # (b) + (c) Agents never decide — least of all their own request.

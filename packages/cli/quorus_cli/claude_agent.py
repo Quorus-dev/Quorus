@@ -692,7 +692,9 @@ def _build_mcp_config(
     elif relay_secret:
         env["QUORUS_RELAY_SECRET"] = relay_secret
 
-    mcp_command = shutil.which("quorus-mcp") or "quorus-mcp"
+    from quorus_cli.cli import _sibling_quorus_mcp  # this install's server, not PATH's
+
+    mcp_command = _sibling_quorus_mcp() or shutil.which("quorus-mcp") or "quorus-mcp"
     return {
         "mcpServers": {
             "quorus": {

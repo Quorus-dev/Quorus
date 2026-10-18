@@ -29,6 +29,9 @@ class SignupRequest(BaseModel):
     workspace: str
     email: EmailStr | None = None
     join_tenant_id: str | None = None  # Join existing tenant instead of creating new
+    # Proof the joiner was invited: a room invite token for that tenant (from
+    # a join code). A workspace JWT in the Authorization header also counts.
+    invite_token: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -151,6 +154,39 @@ async def _sync_agent_room_memberships(
 # ---------------------------------------------------------------------------
 
 
+async def _join_authority(
+    request: Request, req: SignupRequest, tenant_id: str,
+) -> tuple[bool, str | None]:
+    """Who may add a participant to an existing tenant.
+
+    The tenant UUID is not a secret (it is in every join code and JWT), so it
+    can't authorize anything. Before this check anyone could sign up into any
+    workspace, and naming an existing participant (its admin included) minted
+    and returned a fresh key for them (pre-launch audit, 2026-10-16).
+
+    Returns ``(may_reissue, caller)``: whether the caller may mint a key for an
+    EXISTING participant (workspace admin or the legacy operator) and the
+    caller's own name (a participant may re-key itself).
+    """
+    if request.headers.get("Authorization", "").startswith("Bearer "):
+        from quorus.auth.middleware import verify_auth
+
+        auth = await verify_auth(request)
+        if auth.is_legacy:
+            return True, None
+        if str(auth.tenant_id) != str(tenant_id):
+            raise HTTPException(status_code=403, detail="Not a member of that workspace")
+        return auth.role == "admin", auth.sub
+    invite_svc = getattr(request.app.state, "invite_service", None)
+    if req.invite_token and invite_svc is not None:
+        claims = invite_svc.verify_token(req.invite_token)  # 403 on failure
+        if str(claims.get("tenant_id")) == str(tenant_id):
+            return False, None
+    raise HTTPException(
+        status_code=403, detail="Joining a workspace needs an invite from it",
+    )
+
+
 @router.post("/signup", response_model=SignupResponse)
 async def signup(
     req: SignupRequest,
@@ -190,6 +226,9 @@ async def signup(
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid tenant ID format")
 
+            # Authorize BEFORE looking the tenant up, so an unauthenticated
+            # caller can't probe which tenant IDs exist.
+            may_reissue, caller = await _join_authority(request, req, req.join_tenant_id)
             tenant = await session.get(Tenant, req.join_tenant_id)
             if not tenant:
                 raise HTTPException(status_code=404, detail="Tenant not found")
@@ -203,6 +242,11 @@ async def signup(
             )
             participant = existing_participant.scalar_one_or_none()
 
+            if participant and not (may_reissue or caller == participant.name):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"'{req.name}' is already taken in this workspace",
+                )
             if participant:
                 logger.info(
                     "Rejoin-tenant: %s rejoined %s (tenant_id=%s)",
@@ -292,9 +336,15 @@ async def signup(
 
 
 @router.post("/token", response_model=TokenResponse)
-async def exchange_api_key(req: TokenRequest):
-    """Exchange an API key for a short-lived JWT."""
+async def exchange_api_key(req: TokenRequest, request: Request):
+    """Exchange an API key (or a shared-secret relay's participant key) for a JWT."""
     raw_key = req.api_key.strip()
+    from quorus.auth.participant_keys import KEY_PREFIX
+
+    if raw_key.startswith(KEY_PREFIX):
+        from quorus.auth.participant_routes import participant_token
+
+        return await participant_token(request, raw_key)
 
     try:
         prefix = extract_key_prefix(raw_key)

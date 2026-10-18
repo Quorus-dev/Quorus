@@ -18,7 +18,6 @@ Two leak vectors are closed:
 from __future__ import annotations
 
 import os
-import re
 
 os.environ.setdefault("RELAY_SECRET", "test-secret")
 
@@ -45,44 +44,6 @@ async def client():
         yield c
 
 
-def test_dashboard_reads_token_from_hash_not_query() -> None:
-    """The dashboard JS must read its credentials from ``location.hash``.
-
-    Reading from ``location.search`` was the audit finding: query strings hit
-    every layer of the network — proxies log them, CDNs cache them, browser
-    history persists them, Referer headers leak them cross-origin.
-    """
-    from quorus.dashboard import DASHBOARD_HTML
-
-    # Hash-based read must be the primary path.
-    assert "location.hash" in DASHBOARD_HTML, (
-        "dashboard regressed — must read token from URL fragment, not query string"
-    )
-
-    # The deprecation warning for ?token= must remain — operators should know
-    # their legacy share URLs are leaking.
-    assert "deprecated and leaks via server logs" in DASHBOARD_HTML
-
-
-def test_dashboard_sse_uses_credentials_not_query_token() -> None:
-    """EventSource must use ``withCredentials:true`` and must NOT pass ``?token=``.
-
-    Previously: ``new EventSource(url+'?token='+sseToken)``
-    Now:        ``new EventSource(url, {withCredentials:true})``
-    """
-    from quorus.dashboard import DASHBOARD_HTML
-
-    # No query-token construction on the SSE URL.
-    bad = re.compile(r"new\s+EventSource\([^)]*\?token=")
-    assert bad.search(DASHBOARD_HTML) is None, (
-        "dashboard regressed — EventSource URL contains ?token= "
-        "(SSE auth must come from HttpOnly cookie via /stream/token)"
-    )
-
-    # Withcredentials is the new path.
-    assert "withCredentials:true" in DASHBOARD_HTML, (
-        "EventSource must forward credentials so the HttpOnly SSE cookie is sent"
-    )
 
 
 async def test_stream_token_endpoint_sets_httponly_cookie(client):

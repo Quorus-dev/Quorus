@@ -10,6 +10,18 @@ os.environ.setdefault("RELAY_SECRET", "test-secret")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-that-is-at-least-32-bytes-long")
 os.environ.setdefault("BOOTSTRAP_SECRET", "test-bootstrap-secret")
 
+# An agent woken by reflexd runs the suite with its live identity in the
+# environment (QUORUS_RELAY_URL etc.), and config tests then resolve the real
+# relay instead of their defaults, and the daemon's REFLEXD_* settings (e.g.
+# REFLEXD_CODEX_SANDBOX) change the argv tests pin (found 2026-10-17). Tests
+# that need these set them with monkeypatch.
+AMBIENT_IDENTITY_VARS = (
+    "QUORUS_API_KEY", "QUORUS_RELAY_SECRET", "QUORUS_CONFIG_DIR", "QUORUS_RELAY_URL",
+    "QUORUS_INSTANCE_NAME", "QUORUS_PROFILE", "QUORUS_PARTICIPANT", "QUORUS_APPROVAL_ROOM",
+)
+for _var in [*AMBIENT_IDENTITY_VARS, *(v for v in os.environ if v.startswith("REFLEXD_"))]:
+    os.environ.pop(_var, None)
+
 
 def _preimport_patch_targets() -> None:
     """Python 3.10's ``unittest.mock`` resolves ``patch("pkg.sub.attr")`` with
@@ -163,3 +175,26 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(
                 pytest.mark.skip(reason=f"opt-in: run with -m {marker}")
             )
+
+
+@pytest.fixture(autouse=True)
+def _no_live_opencode_catalog():
+    """Tests never shell out to a real `opencode models`: unless a test passes
+    its own `run`, the catalog looks unavailable and the pinned tuple is used.
+
+    Deliberately not the `monkeypatch` fixture: a conftest autouse fixture that
+    requests it creates the test's `monkeypatch` first, so its undo runs AFTER
+    every module's own autouse teardown. test_triage_redis's clean_state then
+    tore down with the test's sentinel Redis still patched in (overseer, full
+    suite on 0c2cbaf7). A private MonkeyPatch keeps the tests' one untouched.
+    """
+    import subprocess
+
+    from quorus.runtime import opencode_free
+
+    opencode_free.reset_cache()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(opencode_free, "_default_run", lambda argv, **_kw:
+                   subprocess.CompletedProcess(argv, 1, stdout="", stderr=""))
+        yield
+    opencode_free.reset_cache()

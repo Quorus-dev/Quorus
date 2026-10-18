@@ -133,3 +133,56 @@ def test_load_runtime_config_has_no_polling_keys():
         "push_notification_method",
         "push_notification_channel",
     }
+
+
+@pytest.mark.parametrize("owner,expect_task", [("daemon", False), (None, True)])
+async def test_woken_agents_mcp_server_leaves_presence_to_the_daemon(
+    monkeypatch, owner, expect_task,
+):
+    """A wake's MCP server posting "active" flipped the daemon's busy
+    presence (and its live step) off mid-turn (2026-10-17)."""
+    if owner:
+        monkeypatch.setenv("QUORUS_PRESENCE_OWNER", owner)
+    else:
+        monkeypatch.delenv("QUORUS_PRESENCE_OWNER", raising=False)
+    monkeypatch.setattr(mcp_server, "API_KEY", "")
+    monkeypatch.setattr(mcp_server, "SSE_ENABLED", False)
+    mcp_server._reset_runtime_state()
+
+    async def idle(stop_event):
+        await stop_event.wait()
+
+    with patch.object(mcp_server, "_heartbeat_loop", idle):
+        async with runtime._mcp_lifespan(None):
+            started = mcp_server._heartbeat_task is not None
+    mcp_server._reset_runtime_state()
+    assert started is expect_task
+
+
+def test_wake_mcp_spec_marks_the_daemon_as_presence_owner():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "reflexd_wake.py"
+    spec = importlib.util.spec_from_file_location("reflexd_wake_t", path)
+    mod = importlib.util.module_from_spec(spec)
+    import sys
+
+    sys.modules[spec.name] = mod  # its dataclasses look themselves up there
+    spec.loader.exec_module(mod)
+    env = mod.quorus_mcp_spec(relay_url="http://r", api_key="k", participant="a-claude",
+                              legacy=True)["env"]
+    assert env["QUORUS_PRESENCE_OWNER"] == "daemon"
+
+
+@pytest.mark.parametrize("key,warns", [
+    ("mct_ab12_cd34", False),
+    ("quorus_pk_Abc-123_xyz", False),  # what a woken agent signs in with
+    ("hand-typed", True),
+])
+def test_key_shape_advisory_knows_participant_keys(monkeypatch, caplog, key, warns):
+    monkeypatch.setenv("QUORUS_API_KEY", key)
+    monkeypatch.setenv("QUORUS_RELAY_URL", "http://relay.test")
+    with caplog.at_level("WARNING", logger=runtime.logger.name):
+        runtime.load_runtime_config()
+    assert ("does not match the expected" in caplog.text) is warns

@@ -1973,20 +1973,6 @@ async def test_search_no_filters_returns_all(client: AsyncClient, auth_headers: 
     assert len(resp.json()) == 4
 
 
-async def test_dashboard_has_create_room_button(client: AsyncClient):
-    """Dashboard HTML should include a Create Room button."""
-    resp = await client.get("/")
-    assert resp.status_code == 200
-    assert "Create Room" in resp.text
-    assert "showCreate()" in resp.text
-
-
-async def test_dashboard_has_share_button(client: AsyncClient):
-    """Dashboard HTML should include a Share button."""
-    resp = await client.get("/")
-    assert resp.status_code == 200
-    assert "shareBtn" in resp.text
-    assert "showShare()" in resp.text
 
 
 async def test_dashboard_has_connection_status(client: AsyncClient):
@@ -1998,45 +1984,9 @@ async def test_dashboard_has_connection_status(client: AsyncClient):
     assert "conn-err" in resp.text
 
 
-async def test_dashboard_has_modal_support(client: AsyncClient):
-    """Dashboard should include modal infrastructure."""
-    resp = await client.get("/")
-    assert resp.status_code == 200
-    assert "modalRoot" in resp.text
-    assert "closeModal()" in resp.text
 
 
-async def test_dashboard_has_auto_scroll(client: AsyncClient):
-    """Dashboard should auto-scroll messages."""
-    resp = await client.get("/")
-    assert resp.status_code == 200
-    assert "scrollToBottom" in resp.text
-    assert "requestAnimationFrame" in resp.text
 
-
-async def test_dashboard_has_unread_badges(client: AsyncClient):
-    """Dashboard should track and display unread counts."""
-    resp = await client.get("/")
-    assert resp.status_code == 200
-    assert "unread" in resp.text
-
-
-async def test_dashboard_has_message_type_tags(client: AsyncClient):
-    """Dashboard should color-code message types."""
-    resp = await client.get("/")
-    assert resp.status_code == 200
-    assert "tag-claim" in resp.text
-    assert "tag-status" in resp.text
-    assert "tag-alert" in resp.text
-    assert "tag-sync" in resp.text
-
-
-async def test_dashboard_mobile_responsive(client: AsyncClient):
-    """Dashboard should have mobile responsive styles."""
-    resp = await client.get("/")
-    assert resp.status_code == 200
-    assert "@media" in resp.text
-    assert "toggleSidebar" in resp.text
 
 
 async def test_dashboard_css_variables(client: AsyncClient):

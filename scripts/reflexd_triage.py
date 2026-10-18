@@ -273,6 +273,12 @@ def classify_message(
     if sender and sender == self_name:
         return TriageResult("IGNORE", "self message")
     if message_type == "social":
+        from quorus.runtime.failover import continuation
+
+        handoff = continuation({"message_type": message_type, "content": content,
+                                "from_name": sender})
+        if handoff and handoff["to"] == self_name:
+            return TriageResult("RESPOND", "vendor failover", kind="mention")
         # Wire-typed social verbs are handled by the relay state-machine, not
         # reflexd. Surface the verb in the result so the daemon can log it,
         # but do not bid a prose reply on top of structured coordination.

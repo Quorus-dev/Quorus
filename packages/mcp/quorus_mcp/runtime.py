@@ -89,10 +89,11 @@ def _resolve_auth(env_name: str, file_value: str, *, label: str) -> str:
 
 
 # Production API keys are minted as ``mct_<hex>_<hex>`` (see
-# ``quorus.auth.tokens.generate_api_key``). We log an advisory if the
-# resolved key doesn't match — but we do NOT block, because tests and
-# self-hosted deployments use other formats.
-_API_KEY_RE = re.compile(r"^mct_[a-f0-9]+_[a-f0-9]+$")
+# ``quorus.auth.tokens.generate_api_key``); shared-secret relays give each
+# claimed name a ``quorus_pk_`` key, which is what a woken agent signs in
+# with. We log an advisory if the resolved key matches neither — but we do
+# NOT block, because tests and self-hosted deployments use other formats.
+_API_KEY_RE = re.compile(r"^(mct_[a-f0-9]+_[a-f0-9]+|quorus_pk_[A-Za-z0-9_-]+)$")
 # Reject anything that would produce an *illegal* HTTP header value
 # (whitespace, CR/LF, or non-printable bytes). httpx would otherwise
 # raise ``Illegal header value`` on the relay request — that was the
@@ -368,7 +369,8 @@ async def _mcp_lifespan(server: "FastMCP"):
         sse_task = asyncio.create_task(s._sse_listener(stop_event))
         poll_task = asyncio.create_task(s._polling_fallback(stop_event))
         logger.info("SSE push listener started (polling fallback armed)")
-    s._heartbeat_task = asyncio.create_task(s._heartbeat_loop(stop_event))
+    if os.environ.get("QUORUS_PRESENCE_OWNER") != "daemon":  # a woken agent: daemon posts
+        s._heartbeat_task = asyncio.create_task(s._heartbeat_loop(stop_event))
     try:
         yield {"stop_event": stop_event}
     finally:
