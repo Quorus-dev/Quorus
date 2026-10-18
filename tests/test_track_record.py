@@ -25,17 +25,38 @@ def _holdout() -> str:
     return next(f"m{i}" for i in range(200) if tr.is_holdout(f"m{i}"))
 
 
+@pytest.fixture(autouse=True)
+def _mode(monkeypatch):
+    monkeypatch.delenv("QUORUS_TRACK_BIDS", raising=False)
+
+
 def test_no_evidence_is_neutral_and_bounds_hold():
     assert tr.Track().multiplier == 1.0
     assert tr.Track(clean=500).multiplier == tr.MAX_MULT
-    assert tr.Track(failed=500).multiplier == tr.MIN_MULT
-    assert tr.Track(clean=1, failed=1).multiplier == 1.0
-    assert tr.Track(clean=4, failed=1).multiplier > 1.0 > tr.Track(clean=1, failed=4).multiplier
+    assert tr.Track(errored=500).multiplier == tr.MIN_MULT
+    assert tr.Track(clean=1, timeouts=1).multiplier == 1.0
+    assert tr.Track(clean=4, vendor=1).multiplier > 1.0 > tr.Track(clean=1, vendor=4).multiplier
+
+
+def test_availability_and_quality_are_separate_factors():
+    quota = tr.Track(vendor=3, kept=8)
+    assert quota.availability < 1.0 < quota.quality
+    reverts = tr.Track(clean=5, reverted=3)
+    assert reverts.quality < 1.0 < reverts.availability
+    assert "vendor 3" in quota.reason() and "quality 8 kept 0 reverted" in quota.reason()
 
 
 def test_kept_commits_are_capped_so_volume_alone_cannot_max_a_bid():
-    assert tr.Track(kept=500, failed=5).multiplier < tr.Track(kept=0, clean=500).multiplier
-    assert tr.Track(kept=500).multiplier == tr.Track(kept=tr.LEDGER_KEPT_CAP).multiplier
+    assert tr.Track(kept=500).quality == tr.Track(kept=tr.LEDGER_KEPT_CAP).quality
+    assert tr.Track(kept=500, errored=5).multiplier < tr.Track(clean=500).multiplier
+
+
+def test_mode_defaults_to_shadow(monkeypatch):
+    assert tr.mode() == "shadow"
+    for raw, want in (("on", "on"), ("1", "on"), ("0", "off"), ("off", "off"),
+                      ("nonsense", "shadow")):
+        monkeypatch.setenv("QUORUS_TRACK_BIDS", raw)
+        assert tr.mode() == want
 
 
 def test_holdout_is_deterministic_and_about_ten_percent():
@@ -66,28 +87,49 @@ def test_turns_keep_24h_only(tmp_path):
         "timed_out", "clean"]
 
 
-def test_two_failures_down_weight_the_bid_with_the_evidence_shown(tmp_path):
-    tr.record_turn(tmp_path, "a-gemini", "vendor_failure", now=NOW - 30)
-    tr.record_turn(tmp_path, "a-gemini", "timed_out", now=NOW - 20)
-    bid, reason = tr.adjust_bid(0.5, "open_capability_match", message_id=_not_holdout(),
-                                runtime_dir=tmp_path, participant="a-gemini", repo=None)
-    assert bid < 0.5
-    assert reason.startswith("open_capability_match+track x0.")
-    assert "0✓ 2✗/24h" in reason and "1 timeout" in reason
+def _two_failures(tmp_path):
+    tr.record_turn(tmp_path, "a-gemini", "vendor_failure")
+    tr.record_turn(tmp_path, "a-gemini", "timed_out")
+    return dict(runtime_dir=tmp_path, participant="a-gemini", repo=None, harness="gemini")
 
 
-def test_holdout_and_off_switch_keep_raw_bids(tmp_path, monkeypatch):
-    tr.record_turn(tmp_path, "a-gemini", "errored", now=None)
-    raw = dict(runtime_dir=tmp_path, participant="a-gemini", repo=None)
-    assert tr.adjust_bid(0.5, "r", message_id=_holdout(), **raw) == (0.5, "r+holdout")
-    monkeypatch.setenv("QUORUS_TRACK_BIDS", "0")
-    assert tr.adjust_bid(0.5, "r", message_id=_not_holdout(), **raw) == (0.5, "r")
+def test_shadow_keeps_the_bid_raw_but_logs_and_shows_the_would_be_bid(tmp_path):
+    kw = _two_failures(tmp_path)
+    mid = _not_holdout()
+    bid, reason = tr.adjust_bid(0.5, "open_capability_match", message_id=mid, **kw)
+    assert bid == 0.5
+    assert reason.startswith("open_capability_match+track(shadow) x0.")
+    assert "avail 0✓ 2✗/24h (timeout 1, vendor 1)" in reason
+    [logged] = tr.load_bids(tmp_path, "a-gemini")
+    assert logged["arm"] == "shadow" and logged["raw"] == 0.5 and logged["would"] < 0.5
+    assert logged["message_id"] == mid and logged["harness"] == "gemini"
 
 
-def test_no_evidence_leaves_bid_and_reason_untouched(tmp_path):
+def test_on_applies_except_on_holdout(tmp_path, monkeypatch):
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
+    kw = _two_failures(tmp_path)
+    bid, reason = tr.adjust_bid(0.5, "r", message_id=_not_holdout(), **kw)
+    assert bid < 0.5 and reason.startswith("r+track x0.")
+    bid, reason = tr.adjust_bid(0.5, "r", message_id=_holdout(), **kw)
+    assert bid == 0.5 and reason.startswith("r+track(holdout) x0.")
+    assert [b["arm"] for b in tr.load_bids(tmp_path, "a-gemini")] == ["routed", "holdout"]
+
+
+def test_off_computes_and_logs_nothing(tmp_path, monkeypatch):
+    kw = _two_failures(tmp_path)
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "off")
+    assert tr.adjust_bid(0.5, "r", message_id=_not_holdout(), **kw) == (0.5, "r")
+    tr.record_turn(tmp_path, "a-gemini", "errored")
+    assert tr.load_bids(tmp_path, "a-gemini") == []
+    assert len(tr.load_turns(tmp_path, "a-gemini")) == 2
+
+
+def test_no_evidence_leaves_bid_and_reason_untouched(tmp_path, monkeypatch):
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
     for mid in (_holdout(), _not_holdout()):
         assert tr.adjust_bid(0.3, "open_any_agent", message_id=mid, runtime_dir=tmp_path,
                              participant="nobody", repo=None) == (0.3, "open_any_agent")
+    assert tr.load_bids(tmp_path, "nobody") == []
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -114,16 +156,26 @@ def test_ledger_counts_published_and_reverted_commits(tmp_path):
     assert tr.ledger_counts(repo, "a-gemini") == (0, 0)
     track = tr.track_for(tmp_path / "rt", "a-codex", repo)
     assert (track.kept, track.reverted) == (1, 1)
-    assert "ledger 1 kept 1 reverted" in track.reason()
+    assert "quality 1 kept 1 reverted" in track.reason()
 
 
-def test_report_splits_open_wins_by_arm(tmp_path):
-    tr.record_turn(tmp_path, "a", "errored", kind="open_todo", holdout=False, now=NOW)
-    tr.record_turn(tmp_path, "a", "clean", kind="open_todo", holdout=False, now=NOW)
-    tr.record_turn(tmp_path, "a", "timed_out", kind="open_todo", holdout=True, now=NOW)
-    tr.record_turn(tmp_path, "a", "errored", kind="mention", now=NOW)
-    assert tr.report(tmp_path, "a", NOW) == {
-        "routed": {"turns": 2, "failed": 1}, "holdout": {"turns": 1, "failed": 1}}
+def test_report_joins_open_wins_to_their_bids(tmp_path, monkeypatch):
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
+    tr.record_turn(tmp_path, "a", "errored", now=NOW - 100)  # evidence: x<1
+    ids = [_not_holdout(), next(f"z{i}" for i in range(200) if not tr.is_holdout(f"z{i}")),
+           _holdout()]
+    for mid in ids:
+        tr.adjust_bid(0.5, "r", message_id=mid, runtime_dir=tmp_path, participant="a",
+                      repo=None)
+    tr.record_turn(tmp_path, "a", "errored", kind="open_todo", message_id=ids[0])
+    tr.record_turn(tmp_path, "a", "clean", kind="open_todo", message_id=ids[1])
+    tr.record_turn(tmp_path, "a", "timed_out", kind="open_todo", message_id=ids[2])
+    tr.record_turn(tmp_path, "a", "errored", kind="mention")
+    tr.record_turn(tmp_path, "a", "errored", kind="open_todo", message_id="never-bid")
+    out = tr.report(tmp_path, "a")
+    assert out["arms"]["routed"] == {"turns": 2, "failed": 1}
+    assert out["arms"]["holdout"] == {"turns": 1, "failed": 1}
+    assert out["predictive"]["low"] == {"turns": 3, "failed": 2}
 
 
 # ── wired into the daemon ────────────────────────────────────────────────
@@ -141,6 +193,7 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     cfg = reflexd.ReflexdConfig(relay_url="http://relay.test", participant_name="a-gemini",
                                 api_key="k", runtime_dir=tmp_path)
     daemon = reflexd.Reflexd(cfg)
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
     tr.record_turn(tmp_path, "a-gemini", "vendor_failure")
     tr.record_turn(tmp_path, "a-gemini", "vendor_failure")
     bids: list[dict[str, Any]] = []
@@ -163,3 +216,5 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     assert bids, "an @open must still bid"
     assert bids[0]["bid"] < 0.5
     assert "track x0." in bids[0]["reason"] and "0✓ 2✗/24h" in bids[0]["reason"]
+    [logged] = tr.load_bids(tmp_path, "a-gemini")
+    assert logged["harness"] == "gemini" and logged["arm"] == "routed"
