@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import subprocess
 import time
 from dataclasses import dataclass
@@ -142,15 +143,21 @@ def load_bids(runtime_dir: Path, participant: str, now: float | None = None, *,
 
 def record_turn(runtime_dir: Path, participant: str, outcome: str, *,
                 kind: str = "", message_id: str = "", scope: str = "", model: str = "",
+                started: float | None = None, prediction_id: str = "",
                 now: float | None = None) -> None:
-    """Append one finished turn; ``message_id`` links an ``@open`` win to its bid."""
+    """Append one finished turn. *prediction_id* is the bid snapshot taken when
+    the turn started; *started* is when it began (a later bid never predicts it)."""
     if outcome not in OUTCOMES or mode() == "off":
         return
     now = time.time() if now is None else now
     row: dict[str, Any] = {"ts": now, "outcome": outcome, "kind": kind, "scope": scope,
                            "model": model}
+    if started is not None:
+        row["started"] = started
     if message_id:
         row["message_id"] = message_id
+    if prediction_id:
+        row["prediction_id"] = prediction_id
     _append(runtime_dir, participant, "turns", row, now)
 
 
@@ -358,6 +365,7 @@ class BidDecision:
     bid: float
     reason: str
     announce: str | None = None
+    prediction_id: str = ""  # the logged bid row; the turn it predicts carries it
 
 
 def _sync(track: Track, participant: str, scope: str, now: float) -> tuple[bool, Any]:
@@ -402,8 +410,10 @@ def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
     would = min(1.0, max(floor, bid * track.multiplier)) if applies else bid
     arm = "shadow" if current == "shadow" else ("holdout" if is_holdout(message_id)
                                                 else "routed")
+    prediction_id = secrets.token_hex(8)
     _append(runtime_dir, participant, "bids", {
-        "ts": now, "message_id": message_id, "arm": arm, "raw": bid, "would": would,
+        "ts": now, "prediction_id": prediction_id,
+        "message_id": message_id, "arm": arm, "raw": bid, "would": would,
         "applies": applies, "availability": track.availability, "quality": track.quality,
         "multiplier": track.multiplier, "harness": harness, "model": model,
         "scope": scope,
@@ -419,8 +429,8 @@ def decide_bid(bid: float, reason: str, *, message_id: str, runtime_dir: Path,
             announce = (f"(quorus) adapted {new.id}: {new.change} · {new.because} "
                         f"· undo: quorus tune undo {new.id}")
     if arm == "routed" and applies:
-        return BidDecision(would, f"{reason}+track {track.reason()}", announce)
-    return BidDecision(bid, f"{reason}+track({arm}) {track.reason()}", announce)
+        return BidDecision(would, f"{reason}+track {track.reason()}", announce, prediction_id)
+    return BidDecision(bid, f"{reason}+track({arm}) {track.reason()}", announce, prediction_id)
 
 
 def record_claim(runtime_dir: Path, participant: str, *, message_id: str, scope: str,
@@ -455,18 +465,19 @@ def report(runtime_dir: Path, participant: str, now: float | None = None, *,
       x1.0 vs at or above it. If low multipliers don't predict failures, the
       multiplier must not be switched on.
     """
-    by_message: dict[Any, list[dict]] = {}
-    for b in sorted(load_bids(runtime_dir, participant, now, scope=scope),
-                    key=lambda b: b["ts"]):
-        by_message.setdefault((b.get("scope", ""), b.get("message_id")), []).append(b)
+    by_id = {b["prediction_id"]: b for b in load_bids(runtime_dir, participant, now,
+                                                       scope=scope) if b.get("prediction_id")}
 
     def bid_before(turn: dict) -> dict | None:
-        # The prediction made before this outcome existed; a later bid on the
-        # same message (a retry) must never relabel it.
-        earlier = [b for b in by_message.get((turn.get("scope", ""), turn.get("message_id")),
-                                             [])
-                   if b["ts"] <= turn["ts"]]
-        return earlier[-1] if earlier else None
+        # Joined on the immutable bid snapshot the turn carried from its start,
+        # never on message id + time: a retry's later bid can't relabel it, and a
+        # model-B turn says nothing about a model-A prediction (codex, review of
+        # f504e800). Anything unmatched is unknown, not a hit or a miss.
+        bid = by_id.get(turn.get("prediction_id", ""))
+        if (bid is None or bid.get("model", "") != turn.get("model", "")
+                or bid["ts"] > turn.get("started", turn["ts"])):
+            return None
+        return bid
 
     arms = {a: {"turns": 0, "failed": 0} for a in ("routed", "holdout", "shadow")}
     predictive = {"low": {"turns": 0, "failed": 0}, "high": {"turns": 0, "failed": 0}}
@@ -474,9 +485,13 @@ def report(runtime_dir: Path, participant: str, now: float | None = None, *,
     # predict how its turn went? Only bids with PATH_MIN_N+ commits there count.
     path_predictive = {"low": {"turns": 0, "failed": 0}, "high": {"turns": 0, "failed": 0},
                        "thin": 0}
+    unknown = 0
     for t in load_turns(runtime_dir, participant, now, scope=scope):
-        bid = bid_before(t) if t.get("kind") == "open_todo" else None
+        if t.get("kind") != "open_todo":
+            continue
+        bid = bid_before(t)
         if not bid or bid.get("arm") not in arms:
+            unknown += 1
             continue
         failed = t["outcome"] in FAILED
         for bucket in (arms[bid["arm"]],
@@ -490,4 +505,6 @@ def report(runtime_dir: Path, participant: str, now: float | None = None, *,
                 bucket = path_predictive["low" if bid.get("path_factor", 1.0) < 1.0 else "high"]
                 bucket["turns"] += 1
                 bucket["failed"] += failed
-    return {"arms": arms, "predictive": predictive, "path_predictive": path_predictive}
+    # Descriptive counts only; no held-out accuracy yet (loop A plan, codex).
+    return {"arms": arms, "predictive": predictive, "path_predictive": path_predictive,
+            "unknown": unknown}

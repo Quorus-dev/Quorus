@@ -99,11 +99,52 @@ def test_report_measures_whether_path_evidence_predicted_the_turn(tmp_path):
          "clean"),
     ]
     for i, (mid, extra, outcome) in enumerate(rows):
-        tr._append(rt, "a", "bids", {"ts": NOW + i, "message_id": mid, "arm": "shadow",
-                                     "raw": 0.5, "would": 0.5, "multiplier": 1.0, "scope": "",
-                                     **extra}, NOW + i)
-        tr.record_turn(rt, "a", outcome, kind="open_todo", message_id=mid, now=NOW + i + 0.5)
+        tr._append(rt, "a", "bids", {"ts": NOW + i, "message_id": mid, "prediction_id": mid,
+                                     "arm": "shadow", "raw": 0.5, "would": 0.5,
+                                     "multiplier": 1.0, "scope": "", **extra}, NOW + i)
+        tr.record_turn(rt, "a", outcome, kind="open_todo", message_id=mid, prediction_id=mid,
+                       now=NOW + i + 0.5)
     out = tr.report(rt, "a", NOW + 10)["path_predictive"]
     assert out["low"] == {"turns": 1, "failed": 1}
     assert out["high"] == {"turns": 1, "failed": 0}
     assert out["thin"] == 1  # m3: one commit there is too thin to count
+
+
+def test_an_outcome_counts_only_against_the_same_models_earlier_prediction(tmp_path):
+    """Codex, review of f504e800: a model-B turn was scored against a model-A bid.
+    That, a bid placed while the turn ran, and a turn with no snapshot are unknown."""
+    rt = tmp_path / "rt"
+    poor = {"paths": ["quorus/"], "path_kept": 0, "path_reverted": 4, "path_factor": 0.6}
+    tr._append(rt, "a", "bids", {"ts": NOW, "message_id": "m1", "prediction_id": "p1",
+                                 "arm": "shadow", "raw": 0.5, "would": 0.5, "multiplier": 1.0,
+                                 "scope": "", "model": "model-a", **poor}, NOW)
+    tr.record_turn(rt, "a", "errored", kind="open_todo", message_id="m1", model="model-b",
+                   prediction_id="p1", started=NOW + 1, now=NOW + 2)
+    # m2: the only bid came after the turn had started
+    tr._append(rt, "a", "bids", {"ts": NOW + 6, "message_id": "m2", "prediction_id": "p2",
+                                 "arm": "shadow", "raw": 0.5, "would": 0.5, "multiplier": 1.0,
+                                 "scope": "", "model": "model-a", **poor}, NOW + 6)
+    tr.record_turn(rt, "a", "errored", kind="open_todo", message_id="m2", model="model-a",
+                   prediction_id="p2", started=NOW + 5, now=NOW + 7)
+    # m3: a turn with no prediction snapshot at all (message id alone never joins)
+    tr._append(rt, "a", "bids", {"ts": NOW + 8, "message_id": "m3", "prediction_id": "p3",
+                                 "arm": "shadow", "raw": 0.5, "would": 0.5, "multiplier": 1.0,
+                                 "scope": "", "model": "model-a", **poor}, NOW + 8)
+    tr.record_turn(rt, "a", "errored", kind="open_todo", message_id="m3", model="model-a",
+                   started=NOW + 9, now=NOW + 9.5)
+    out = tr.report(rt, "a", NOW + 10)
+    assert out["path_predictive"]["low"] == {"turns": 0, "failed": 0}
+    assert out["unknown"] == 3
+
+
+def test_each_prediction_has_an_immutable_id(tmp_path):
+    repo = _repo(tmp_path)
+    _agent_commit(repo, "a-claude", "quorus/routes/rooms.py", "one")
+    tr.decide_bid(0.6, "cap", message_id="m1", runtime_dir=tmp_path / "rt",
+                  participant="a-claude", repo=repo, text="@open fix quorus/routes/rooms.py")
+    decision = tr.decide_bid(0.6, "cap", message_id="m1", runtime_dir=tmp_path / "rt",
+                             participant="a-claude", repo=repo, text="@open fix quorus/")
+    rows = tr.load_bids(tmp_path / "rt", "a-claude")
+    assert len(rows[-1]["prediction_id"]) == 16
+    assert decision.prediction_id == rows[-1]["prediction_id"]
+    assert rows[0]["prediction_id"] != rows[1]["prediction_id"]  # a re-bid is a new snapshot

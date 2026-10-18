@@ -241,12 +241,11 @@ def test_report_joins_open_wins_to_their_bids(tmp_path, monkeypatch):
     tr.record_turn(tmp_path, "a", "errored", now=NOW - 100)  # evidence: x<1
     ids = [_not_holdout(), next(f"z{i}" for i in range(200) if not tr.is_holdout(f"z{i}")),
            _holdout()]
-    for mid in ids:
-        tr.decide_bid(0.5, "r", message_id=mid, runtime_dir=tmp_path, participant="a",
-                      repo=None)
-    tr.record_turn(tmp_path, "a", "errored", kind="open_todo", message_id=ids[0])
-    tr.record_turn(tmp_path, "a", "clean", kind="open_todo", message_id=ids[1])
-    tr.record_turn(tmp_path, "a", "timed_out", kind="open_todo", message_id=ids[2])
+    pids = [tr.decide_bid(0.5, "r", message_id=mid, runtime_dir=tmp_path, participant="a",
+                          repo=None).prediction_id for mid in ids]
+    for mid, pid, outcome in zip(ids, pids, ("errored", "clean", "timed_out")):
+        tr.record_turn(tmp_path, "a", outcome, kind="open_todo", message_id=mid,
+                       prediction_id=pid)
     tr.record_turn(tmp_path, "a", "errored", kind="mention")
     tr.record_turn(tmp_path, "a", "errored", kind="open_todo", message_id="never-bid")
     out = tr.report(tmp_path, "a")
@@ -303,6 +302,8 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     [logged] = tr.load_bids(tmp_path, "a-gemini")
     assert logged["harness"] == "gemini" and logged["arm"] == "routed"
     assert logged["scope"] == "http://relay.test|a|" and logged["model"] == "gemini-3.5-flash"
+    # the wake that runs this @open takes this exact snapshot (codex, f504e800)
+    assert daemon._predictions[envelope["message_id"]] == logged["prediction_id"]
     [auction] = tr.load_claims(tmp_path, "a-gemini", scope="http://relay.test|a|")
     assert auction["winner"] == "x-codex" and auction["candidates"] == ["a-gemini", "x-codex"]
     assert auction["message_id"] == envelope["message_id"] and auction["winning_bid"] == 0.5
@@ -324,15 +325,17 @@ def test_failed_harness_exits_and_slow_starts_are_not_clean():
 def test_later_bid_cannot_relabel_an_earlier_outcome(tmp_path):
     # Codex's repro: a retry's bid on the same message must not rewrite the
     # prediction that was made before the first outcome.
-    def bid(ts, mult):
+    def bid(ts, mult, pid):
         tr._append(tmp_path, "a", "bids", {"ts": ts, "message_id": "same-task",
-                                           "arm": "shadow", "multiplier": mult}, NOW)
+                                           "prediction_id": pid, "arm": "shadow",
+                                           "multiplier": mult}, NOW)
 
-    bid(NOW - 3, 0.6)
+    bid(NOW - 3, 0.6, "p1")
     tr.record_turn(tmp_path, "a", "errored", kind="open_todo", message_id="same-task",
-                   now=NOW - 2)
-    bid(NOW - 1, 1.3)
-    tr.record_turn(tmp_path, "a", "clean", kind="open_todo", message_id="same-task", now=NOW)
+                   prediction_id="p1", now=NOW - 2)
+    bid(NOW - 1, 1.3, "p2")
+    tr.record_turn(tmp_path, "a", "clean", kind="open_todo", message_id="same-task",
+                   prediction_id="p2", now=NOW)
     out = tr.report(tmp_path, "a", NOW)
     assert out["predictive"]["low"] == {"turns": 1, "failed": 1}
     assert out["predictive"]["high"] == {"turns": 1, "failed": 0}
@@ -370,9 +373,10 @@ def test_other_scope_does_not_inherit_failure_evidence(tmp_path, monkeypatch):
 def test_report_joins_only_within_a_scope(tmp_path):
     for scope, mult in (("A", 0.6), ("B", 1.3)):
         tr._append(tmp_path, "a", "bids", {"ts": NOW - 5, "message_id": "m", "arm": "shadow",
-                                           "multiplier": mult, "scope": scope}, NOW)
+                                           "prediction_id": f"p{scope}", "multiplier": mult,
+                                           "scope": scope}, NOW)
     tr.record_turn(tmp_path, "a", "errored", kind="open_todo", message_id="m", scope="A",
-                   now=NOW)
+                   prediction_id="pA", now=NOW)
     assert tr.report(tmp_path, "a", NOW)["predictive"]["low"] == {"turns": 1, "failed": 1}
     assert tr.report(tmp_path, "a", NOW, scope="B")["predictive"]["low"]["turns"] == 0
 

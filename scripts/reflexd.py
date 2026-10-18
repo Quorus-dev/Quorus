@@ -2583,6 +2583,9 @@ class Reflexd:
         self._unfinished_held: set[str] = set()
         self._last_spoke: dict[str, float] = {}
         self._last_wake_at: float = 0.0
+        # @open message id -> the track-record bid snapshot; the turn that wins
+        # takes it when it starts, so its outcome joins that exact prediction.
+        self._predictions: dict[str, str] = {}
         # Bounded in-memory queue for messages that arrive while a busy-file
         # is set. Drained on stop, not replayed across restarts (PR-C1 scope).
         self._queue: list[dict[str, Any]] = []
@@ -2796,6 +2799,11 @@ class Reflexd:
                     model=str(getattr(self.adapter, "model", None) or ""),
                     text=str(envelope.get("content") or ""))
                 bid, bid_reason = decision.bid, decision.reason
+                if decision.prediction_id:
+                    self._predictions.pop(message_id, None)
+                    self._predictions[message_id] = decision.prediction_id
+                    while len(self._predictions) > 256:
+                        self._predictions.pop(next(iter(self._predictions)))
                 if decision.announce:
                     await self._post_status(relay, room, envelope, decision.announce)
             except Exception as exc:  # a bad track record must never stop a bid
@@ -3273,6 +3281,8 @@ class Reflexd:
         wake_max_turns = None if mission else CHAT_MAX_TURNS
 
         wake_started = datetime.now(timezone.utc)
+        prediction_id = self._predictions.pop(
+            str(envelope.get("message_id") or envelope.get("id") or ""), "")
         logger.info(
             "waking harness=%s room=%s reason=%s memory_entries=%d "
             "workspace=%s session=%s mode=%s",
@@ -3386,6 +3396,8 @@ class Reflexd:
             self.config.runtime_dir, self.config.participant_name, turn_outcome,
             kind=kind, scope=self._track_scope(workspace_for(room) if room else None),
             model=str(getattr(self.adapter, "model", None) or ""),
+            started=wake_started.timestamp(),
+            prediction_id=prediction_id if kind == "open_todo" else "",
             message_id=(envelope.get("message_id") or envelope.get("id") or "")
             if kind == "open_todo" else "")
         # Didn't finish cleanly: its commits are held back, not published.
