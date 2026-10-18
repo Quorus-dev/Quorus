@@ -343,6 +343,18 @@ $("composer").addEventListener("submit", (ev) => {
       $("msgInput").value = text; conn(false); });
 });
 
+// Keep the newest message in view when the box changes size: the board's split
+// layout shrinks it after the first render, which left the latest message below
+// the fold (review of 608f638b). Reading back up still sticks.
+if (typeof ResizeObserver !== "undefined") {
+  const box = $("messages");
+  let wasAtBottom = true;
+  box.addEventListener("scroll", () => {
+    wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  });
+  new ResizeObserver(() => { if (wasAtBottom) box.scrollTop = box.scrollHeight; }).observe(box);
+}
+
 function start() {
   if (!S.token) return showSignin();
   $("signin").hidden = true; $("app").hidden = false; $("who").textContent = "@" + S.name;

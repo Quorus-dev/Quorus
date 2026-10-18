@@ -266,8 +266,10 @@ function stateOf(r) {
 
 function statusText(r, state) {
   return !r ? "" : state === "needs" ? "✋ needs you"
-    : state === "stuck" ? "! stuck" : state === "asleep" ? "z z z " + r.line.replace("out of quota · ", "")
-    : state === "pacing" ? "⌛ " + r.line.replace("waiting for its plan slot · ", "")
+    : state === "stuck" ? "! stuck"
+    : state === "asleep" ? "asleep" + (r.line.includes("back about ")
+      ? " · back ~" + r.line.split("back about ")[1] : "")
+    : state === "pacing" ? "waiting" + (r.line.includes(" · ") ? " · " + r.line.split(" · ")[1] : "")
     : state === "busy" || state === "offline" ? r.line : "idle";
 }
 

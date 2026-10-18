@@ -108,6 +108,9 @@ def test_quorum_v2_is_a_lit_stage_with_only_present_members_seated() -> None:
                    "new THREE.Fog(", "MeshPhysicalMaterial", "function palette()"):
         assert needle in src, needle
     assert "CapsuleGeometry" not in src  # no pills (UI brief)
+    # Status words, not pictograms: "asleep · back ~03:40 AM", not "z z z back about".
+    assert "z z z" not in src and "⌛" not in src
+    assert '"asleep" + (r.line.includes("back about ")' in src
     # Narrow hosts and phones get the flat grid before any WebGL work.
     assert "host.clientWidth > 0 && host.clientWidth < NARROW" in src
     assert "if (phone.matches || narrow)" in src
