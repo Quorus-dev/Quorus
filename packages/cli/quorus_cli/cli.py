@@ -325,7 +325,7 @@ def _auth_headers() -> dict[str, str]:
                 f"{RELAY_URL}/v1/auth/token",
                 json={"api_key": API_KEY},
                 timeout=10,
-                follow_redirects=True,
+                follow_redirects=False,
             )
             resp.raise_for_status()
             _cached_jwt = resp.json()["token"]
@@ -4660,7 +4660,7 @@ def _create_init_human_profile(
             headers={"X-Quorus-Setup-Local": "1", "Authorization":
                      f"Bearer {_workspace_jwt(relay_url=relay_url, api_key=api_key)}"},
             timeout=15,
-            follow_redirects=True,
+            follow_redirects=False,
         )
     except Exception as exc:
         ui.warn(f"Human signup failed: {exc.__class__.__name__}")
@@ -4868,7 +4868,7 @@ def _init_run_wake_smoke(
             f"{relay_url}/v1/auth/token",
             json={"api_key": human_api_key},
             timeout=10,
-            follow_redirects=True,
+            follow_redirects=False,
         )
         if token_resp.status_code != 200:
             return False, 0.0, f"token exchange HTTP {token_resp.status_code}"
@@ -5596,7 +5596,7 @@ def _cmd_join(args):
                     f"{relay_url}/v1/auth/token",
                     json={"api_key": api_key},
                     timeout=10,
-                    follow_redirects=True,
+                    follow_redirects=False,
                 )
                 token_resp.raise_for_status()
                 token = token_resp.json().get("token", "")
@@ -6033,7 +6033,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                 json=signup_payload,
                 headers={"X-Quorus-Setup-Local": "1"},
                 timeout=15,
-                follow_redirects=True,
+                follow_redirects=False,
             )
             if signup_resp.status_code == 409 and not tenant_id:
                 # Workspace taken — retry with random suffix (only if creating new)
@@ -6043,7 +6043,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                     json={"name": name, "workspace": workspace},
                     headers={"X-Quorus-Setup-Local": "1"},
                     timeout=15,
-                    follow_redirects=True,
+                    follow_redirects=False,
                 )
             if signup_resp.status_code == 200:
                 signup_data = signup_resp.json()
@@ -6183,7 +6183,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                             f"{relay_url}/v1/auth/token",
                             json={"api_key": api_key},
                             timeout=10,
-                            follow_redirects=True,
+                            follow_redirects=False,
                         )
                         if token_resp.status_code == 200:
                             auth_token = token_resp.json().get("token", api_key)
