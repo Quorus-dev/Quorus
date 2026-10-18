@@ -44,15 +44,6 @@
       ]
     },
     {
-      "source": "/(vendor|quorum)/(.*)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=86400"
-        }
-      ]
-    },
-    {
       "source": "/(.*)\\.(svg|png|gif|ico|webp|woff2)",
       "headers": [
         {
