@@ -26,8 +26,9 @@ def _holdout() -> str:
 
 
 @pytest.fixture(autouse=True)
-def _mode(monkeypatch):
+def _mode(monkeypatch, tmp_path):
     monkeypatch.delenv("QUORUS_TRACK_BIDS", raising=False)
+    monkeypatch.setenv("QUORUS_TUNING_FILE", str(tmp_path / "tuning.json"))
 
 
 def test_no_evidence_is_neutral_and_bounds_hold():
@@ -87,38 +88,106 @@ def test_turns_keep_24h_only(tmp_path):
         "timed_out", "clean"]
 
 
+SCOPE = "relay.test|a|/repo"
+
+
 def _two_failures(tmp_path):
     tr.record_turn(tmp_path, "a-gemini", "vendor_failure")
     tr.record_turn(tmp_path, "a-gemini", "timed_out")
-    return dict(runtime_dir=tmp_path, participant="a-gemini", repo=None, harness="gemini")
+    return dict(runtime_dir=tmp_path, participant="a-gemini", repo=None, harness="gemini",
+                scope=SCOPE)
 
 
-def test_shadow_keeps_the_bid_raw_but_logs_and_shows_the_would_be_bid(tmp_path):
+def test_counts_name_availability_never_quality():
+    text = tr.counts(tr.Track(vendor=2, timeouts=1, kept=2, reverted=1))
+    assert text.startswith("x") and "2 vendor fails, 1 timeout, 0 clean/24h" in text
+    assert "1 of 3 commits reverted" in text and "quality" not in text
+
+
+def test_shadow_keeps_the_bid_raw_but_logs_and_announces_the_would_be_bid(tmp_path):
     kw = _two_failures(tmp_path)
     mid = _not_holdout()
-    bid, reason = tr.adjust_bid(0.5, "open_capability_match", message_id=mid, **kw)
-    assert bid == 0.5
-    assert reason.startswith("open_capability_match+track(shadow) x0.")
-    assert "avail 0✓ 2✗/24h (timeout 1, vendor 1)" in reason
+    d = tr.decide_bid(0.5, "open_capability_match", message_id=mid, **kw)
+    assert d.bid == 0.5
+    assert d.reason.startswith("open_capability_match+track(shadow) x0.")
+    assert "avail 0✓ 2✗/24h (timeout 1, vendor 1)" in d.reason
+    assert d.announce.startswith("(quorus) t1 (shadow, not applied): would set @open bids x0.")
+    assert "1 vendor fail, 1 timeout, 0 clean/24h" in d.announce
+    assert d.announce.endswith("undo: quorus tune undo t1")
     [logged] = tr.load_bids(tmp_path, "a-gemini")
-    assert logged["arm"] == "shadow" and logged["raw"] == 0.5 and logged["would"] < 0.5
+    assert logged["arm"] == "shadow" and logged["raw"] == 0.5 and logged["applies"]
     assert logged["message_id"] == mid and logged["harness"] == "gemini"
+    assert logged["scope"] == SCOPE
 
 
-def test_on_applies_except_on_holdout(tmp_path, monkeypatch):
+def test_on_applies_except_on_holdout_and_announces_once(tmp_path, monkeypatch):
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
     kw = _two_failures(tmp_path)
-    bid, reason = tr.adjust_bid(0.5, "r", message_id=_not_holdout(), **kw)
-    assert bid < 0.5 and reason.startswith("r+track x0.")
-    bid, reason = tr.adjust_bid(0.5, "r", message_id=_holdout(), **kw)
-    assert bid == 0.5 and reason.startswith("r+track(holdout) x0.")
+    d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
+    assert d.bid < 0.5 and d.reason.startswith("r+track x0.")
+    assert d.announce.startswith("(quorus) adapted t1: @open bids x0.")
+    d = tr.decide_bid(0.5, "r", message_id=_holdout(), **kw)
+    assert d.bid == 0.5 and d.reason.startswith("r+track(holdout) x0.") and d.announce is None
     assert [b["arm"] for b in tr.load_bids(tmp_path, "a-gemini")] == ["routed", "holdout"]
+
+
+def test_hysteresis_and_cooldown_stop_flapping(tmp_path, monkeypatch):
+    from quorus import tuning
+
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
+    kw = _two_failures(tmp_path)
+    for _ in range(2):
+        tr.record_turn(tmp_path, "a-gemini", "errored")  # 0✓ 4✗: x0.67
+    assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw).announce
+    for _ in range(2):
+        tr.record_turn(tmp_path, "a-gemini", "clean")  # 2✓ 4✗: x0.88, not past x0.9
+    d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
+    assert 0.8 < tr.track_for(tmp_path, "a-gemini", None).multiplier < 0.9
+    assert d.bid < 0.5 and d.announce is None
+    for _ in range(2):
+        tr.record_turn(tmp_path, "a-gemini", "clean")  # 4✓ 4✗: x1.0, it ends
+    d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
+    assert d.bid == 0.5 and tuning.adaptations()[0].state == "retired"
+    for _ in range(8):
+        tr.record_turn(tmp_path, "a-gemini", "errored")  # past x0.8 again, inside 1h
+    d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
+    assert d.bid == 0.5 and d.announce is None and len(tuning.adaptations()) == 1
+
+
+def test_undo_holds_until_redo_and_tune_off_is_immediate(tmp_path, monkeypatch):
+    from quorus import tuning
+
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
+    kw = _two_failures(tmp_path)
+    tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
+    assert tuning.undo("t1") is not None
+    for _ in range(5):
+        tr.record_turn(tmp_path, "a-gemini", "errored")
+    d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
+    assert d.bid == 0.5 and d.announce is None and len(tuning.adaptations()) == 1
+    assert tuning.redo("t1") is not None
+    assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw).bid < 0.5
+    tuning.set_enabled(False)
+    assert tr.mode() == "off"
+    assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw) == tr.BidDecision(0.5, "r")
+
+
+def test_scope_keeps_adaptations_apart(tmp_path, monkeypatch):
+    from quorus import tuning
+
+    monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
+    kw = _two_failures(tmp_path)
+    tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
+    tuning.undo("t1")
+    other = {**kw, "scope": "other-relay|a|/repo"}
+    assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **other).announce
+    assert [a.scope for a in tuning.adaptations()] == [SCOPE, "other-relay|a|/repo"]
 
 
 def test_off_computes_and_logs_nothing(tmp_path, monkeypatch):
     kw = _two_failures(tmp_path)
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "off")
-    assert tr.adjust_bid(0.5, "r", message_id=_not_holdout(), **kw) == (0.5, "r")
+    assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw) == tr.BidDecision(0.5, "r")
     tr.record_turn(tmp_path, "a-gemini", "errored")
     assert tr.load_bids(tmp_path, "a-gemini") == []
     assert len(tr.load_turns(tmp_path, "a-gemini")) == 2
@@ -127,8 +196,9 @@ def test_off_computes_and_logs_nothing(tmp_path, monkeypatch):
 def test_no_evidence_leaves_bid_and_reason_untouched(tmp_path, monkeypatch):
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
     for mid in (_holdout(), _not_holdout()):
-        assert tr.adjust_bid(0.3, "open_any_agent", message_id=mid, runtime_dir=tmp_path,
-                             participant="nobody", repo=None) == (0.3, "open_any_agent")
+        assert tr.decide_bid(0.3, "open_any_agent", message_id=mid, runtime_dir=tmp_path,
+                             participant="nobody", repo=None) == tr.BidDecision(
+                                 0.3, "open_any_agent")
     assert tr.load_bids(tmp_path, "nobody") == []
 
 
@@ -165,7 +235,7 @@ def test_report_joins_open_wins_to_their_bids(tmp_path, monkeypatch):
     ids = [_not_holdout(), next(f"z{i}" for i in range(200) if not tr.is_holdout(f"z{i}")),
            _holdout()]
     for mid in ids:
-        tr.adjust_bid(0.5, "r", message_id=mid, runtime_dir=tmp_path, participant="a",
+        tr.decide_bid(0.5, "r", message_id=mid, runtime_dir=tmp_path, participant="a",
                       repo=None)
     tr.record_turn(tmp_path, "a", "errored", kind="open_todo", message_id=ids[0])
     tr.record_turn(tmp_path, "a", "clean", kind="open_todo", message_id=ids[1])
@@ -197,6 +267,7 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     tr.record_turn(tmp_path, "a-gemini", "vendor_failure")
     tr.record_turn(tmp_path, "a-gemini", "vendor_failure")
     bids: list[dict[str, Any]] = []
+    posts: list[dict[str, Any]] = []
 
     class BidRelay:
         async def submit_bid(self, **kw):
@@ -209,6 +280,10 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
         async def post_social_defer(self, **kw):  # pragma: no cover
             return {}
 
+        async def post_reply(self, **kw):
+            posts.append(kw)
+            return {}
+
     monkeypatch.setattr(reflexd, "BID_WINDOW_SECONDS", 0.2)
     envelope = {"id": "f", "message_id": _not_holdout(), "room": "dev", "from_name": "arav",
                 "content": "@open please fix the tests", "message_type": "chat"}
@@ -218,3 +293,7 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     assert "track x0." in bids[0]["reason"] and "0✓ 2✗/24h" in bids[0]["reason"]
     [logged] = tr.load_bids(tmp_path, "a-gemini")
     assert logged["harness"] == "gemini" and logged["arm"] == "routed"
+    assert logged["scope"] == "relay.test|a|"
+    [line] = posts
+    assert line["message_type"] == "status" and line["room"] == "dev"
+    assert line["content"].startswith("(quorus) adapted t1: @open bids x0.")

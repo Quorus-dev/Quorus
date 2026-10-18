@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -2724,13 +2725,19 @@ class Reflexd:
         if triage.kind == "open_todo":
             # L2: this agent's own recent turns and kept/reverted commits
             # inform the bid (shadow by default: logged, not applied).
+            repo = workspace_for(room) if room else None
             try:
-                bid, bid_reason = _track.adjust_bid(
+                decision = _track.decide_bid(
                     bid, bid_reason, message_id=message_id,
                     runtime_dir=self.config.runtime_dir,
-                    participant=self.config.participant_name,
-                    repo=workspace_for(room) if room else None,
+                    participant=self.config.participant_name, repo=repo,
+                    scope="|".join((urlparse(self.config.relay_url).netloc,
+                                    agent_owner(self.config.participant_name),
+                                    str(repo or ""))),
                     harness=detect_harness(self.config.participant_name) or "")
+                bid, bid_reason = decision.bid, decision.reason
+                if decision.announce:
+                    await self._post_status(relay, room, envelope, decision.announce)
             except Exception as exc:  # a bad track record must never stop a bid
                 logger.debug("track-record bid skipped: %s", exc)
         if self._wake_lock.locked() and triage.kind != "mention":
