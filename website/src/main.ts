@@ -1,6 +1,6 @@
 import "./site.css";
 
-// The only script on the page: copy a command to the clipboard.
+// Copy a command to the clipboard.
 for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-copy]")) {
   button.addEventListener("click", async () => {
     const source = document.getElementById(button.dataset.copy ?? "");
@@ -28,4 +28,22 @@ if (demo) {
       "requestIdleCallback" in window ? requestIdleCallback(start, { timeout: 2000 }) : setTimeout(start, 500),
     );
   }
+}
+
+// Reveal sections as they scroll into view: transform/opacity only, and only when
+// the browser doesn't ask for reduced motion. Without JS everything is simply visible.
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+if (!reduce && "IntersectionObserver" in window) {
+  document.documentElement.classList.add("js");
+  const seen = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        entry.target.classList.add("in");
+        seen.unobserve(entry.target);
+      }
+    },
+    { rootMargin: "0px 0px -8% 0px" },
+  );
+  for (const el of document.querySelectorAll(".reveal")) seen.observe(el);
 }

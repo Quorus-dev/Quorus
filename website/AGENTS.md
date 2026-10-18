@@ -10,3 +10,9 @@ Cursor, Windsurf and Cline connect over MCP only; never call them supported.
 
 `/llms.txt` and `/agents.md` are copied from the repo root's `llms.txt` at build
 time (`npm run build`), so there is one copy.
+
+Visuals: `public/media/*.webp` are real screenshots of the shipped UI (the Quorum
+view and board rows) taken on a seeded test relay at 2x; every caption says so. The
+one web font is Plus Jakarta Sans (OFL, `public/fonts/`), preloaded and self-hosted.
+The footer's version is read from `../pyproject.toml` at build time. Motion is
+transform/opacity only and stops under `prefers-reduced-motion`.

@@ -186,3 +186,49 @@ def test_key_shape_advisory_knows_participant_keys(monkeypatch, caplog, key, war
     with caplog.at_level("WARNING", logger=runtime.logger.name):
         runtime.load_runtime_config()
     assert ("does not match the expected" in caplog.text) is warns
+
+
+# ── saved credentials stay bound to the saved relay (codex, 59a2077e) ─────
+
+_SAVED = "http://127.0.0.1:8080"
+
+
+@pytest.fixture
+def saved_profile(tmp_path, monkeypatch):
+    import json
+
+    for name in ("QUORUS_RELAY_URL", "QUORUS_RELAY_SECRET", "QUORUS_API_KEY",
+                 "QUORUS_INSTANCE_NAME", "QUORUS_PROFILE", "RELAY_URL", "RELAY_SECRET",
+                 "API_KEY", "INSTANCE_NAME", "MCP_TUNNEL_CONFIG_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / "config.json").write_text(json.dumps(
+        {"relay_url": _SAVED, "api_key": "mct_aa_bb", "instance_name": "alice"}))
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path))
+
+
+def test_profile_key_never_goes_to_another_relay(saved_profile, monkeypatch):
+    monkeypatch.setenv("QUORUS_RELAY_URL", "https://other.example")
+    monkeypatch.setenv("QUORUS_API_KEY", "")  # a plugin's blank field
+    with pytest.raises(SystemExit, match="not the relay your saved profile is for"):
+        runtime.load_runtime_config()
+
+
+def test_another_relay_uses_only_its_own_credentials(saved_profile, monkeypatch):
+    monkeypatch.setenv("QUORUS_RELAY_URL", "https://other.example")
+    monkeypatch.setenv("QUORUS_RELAY_SECRET", "other-secret")
+    settings = runtime.load_runtime_config()
+    assert settings["relay_secret"] == "other-secret" and settings["api_key"] == ""
+
+
+@pytest.mark.parametrize("url", [None, _SAVED + "/", "HTTP://127.0.0.1:8080", _SAVED])
+def test_same_relay_keeps_the_saved_key(saved_profile, monkeypatch, url):
+    if url is not None:
+        monkeypatch.setenv("QUORUS_RELAY_URL", url)
+    assert runtime.load_runtime_config()["api_key"] == "mct_aa_bb"
+
+
+def test_same_relay_comparison():
+    assert runtime._same_relay("https://h.example", "https://h.example:443/")
+    assert not runtime._same_relay("https://h.example/team-a", "https://h.example/team-b")
+    assert not runtime._same_relay("http://h.example", "https://h.example")
+    assert not runtime._same_relay("http://h:99999", "http://h")
