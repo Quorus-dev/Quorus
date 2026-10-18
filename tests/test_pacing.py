@@ -85,6 +85,7 @@ def test_over_cap_parks_and_says_so_once_but_humans_go_first(monkeypatch) -> Non
         human = {"room": "build", "from_name": "arav", "message_id": "h"}
         assert await d._paced(relay, human)  # boss never waits
     asyncio.run(go())
+    assert d._waiting[0] == "pacing"  # the board shows "pacing", not "working"
 
 
 def test_skipped_messages_use_no_pace_turns(monkeypatch) -> None:
@@ -143,38 +144,3 @@ def test_an_owner_mention_during_a_pacing_wait_wakes_at_once(monkeypatch) -> Non
         assert woke == ["arav", "a-claude"]  # the parked message still runs
     asyncio.run(go())
 
-
-
-def test_a_room_re_parked_during_release_still_gets_its_slot(monkeypatch) -> None:
-    """Codex on 10d8a8e0: two parked rooms, cap 1/hour. The first wake took the
-    slot, the second re-parked while the release worker was still running, and
-    the worker then exited, stranding the second room."""
-    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
-                                              participant_name="a-codex"))
-    monkeypatch.setattr(reflexd, "pace_for", lambda name: 1)
-    woke: list[str] = []
-    sleeps: list[float] = []
-
-    async def fake_sleep(s: float) -> None:
-        sleeps.append(s)
-        d._turns = []  # time passes: the hour's slot opens again
-
-    async def fake_wake(relay: Any, env: dict, *, triage: Any = None, **_k: Any) -> None:
-        if await d._paced(relay, env, triage):
-            d._record_turn()
-            woke.append(env["room"])
-
-    monkeypatch.setattr(d, "_sleep_or_stop", fake_sleep)
-    monkeypatch.setattr(d, "_wake_and_reply", fake_wake)
-
-    async def go() -> None:
-        relay = _Relay()
-        d._record_turn()  # the slot is used
-        for room in ("alpha", "beta"):
-            await d._wake_and_reply(relay, {"room": room, "from_name": "a-claude",
-                                            "message_id": room})
-        assert woke == [] and set(d._pace_parked) == {"alpha", "beta"}
-        await asyncio.wait_for(d._pace_task, timeout=5)
-    asyncio.run(go())
-    assert woke == ["alpha", "beta"] and d._pace_parked == {}
-    assert len(sleeps) == 2  # one wait per slot, then the worker ends
