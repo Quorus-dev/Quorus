@@ -52,6 +52,32 @@ def asks_owner(text: str, owner: str | None) -> str | None:
     return None
 
 
+_QUESTION_END = re.compile(r"\?[\s`'\"*)\]]*$")
+
+
+def asks_asker(text: str) -> str | None:
+    """The ask in a reply to the owner's own message, which rarely @-mentions
+    them: a line that ends in a question mark, or a last line that asks
+    ("your call", "should I ..."). Plan lines and Quorus status lines aren't
+    asks, and a report that only mentions "permission" mid-way isn't either."""
+    lines = [ln.strip() for ln in (text or "").splitlines()
+             if ln.strip() and not ln.strip().startswith(("(quorus)", "plan:", "[quorus]"))]
+    for line in lines:
+        if _QUESTION_END.search(line):
+            return line
+    if lines and _ASKS_UNADDRESSED.search(lines[-1]):
+        return lines[-1]
+    return None
+
+
+# Without an @mention, only phrasings that can't be a report: "added
+# permission checks" is a status line, "need your permission" is an ask.
+_ASKS_UNADDRESSED = re.compile(
+    r"\b(please (approve|confirm|decide)|need(s)? (your )?(approval|ok|decision|permission)|"
+    r"need you|your call|which one|can you|could you|should (i|we)|"
+    r"(i'?m|we'?re|i am|we are) blocked)\b", re.IGNORECASE)
+
+
 _DONE = re.compile(r"\b(done|complete|completed|finished|shipped|on main|merged|all set)\b",
                    re.IGNORECASE)
 
@@ -67,14 +93,22 @@ def tells_owner_done(text: str, owner: str | None) -> str | None:
     return None
 
 
-def owner_alert(*, agent: str, owner: str | None, reply: str) -> tuple[str, str] | None:
-    """``(title, body)`` for the owner's banner, or None to stay quiet."""
+def owner_alert(*, agent: str, owner: str | None, reply: str,
+                asked_by: str | None = None) -> tuple[str, str] | None:
+    """``(title, body)`` for the owner's banner, or None to stay quiet.
+
+    *asked_by* is who woke the agent. When that is the owner, a question in
+    the reply is for them even without "@owner": Codex answered the owner's
+    "ask me one yes/no question" with "Should we also add `multiply()`?" and
+    no banner fired (overseer, release check 2026-10-17)."""
     reply = (reply or "").strip()
     if not reply:
         return None
     if reply.startswith(_STUCK_PREFIXES):
         return f"{agent} is stuck", reply
     ask = asks_owner(reply, owner)
+    if not ask and owner and asked_by == owner:
+        ask = asks_asker(reply)
     if ask:
         return f"{agent} needs you", ask
     done = tells_owner_done(reply, owner)

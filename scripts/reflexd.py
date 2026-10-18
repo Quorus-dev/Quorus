@@ -3321,7 +3321,7 @@ class Reflexd:
                       "mention me to retry")
             reply = reply.replace("[reflexd] harness errored", status, 1)
 
-        self._alert_owner(room, reply)
+        self._alert_owner(room, reply, asked_by=envelope.get("from_name") or None)
 
         # Don't double-post: if the agent already posted this result itself
         # (QOD tells it to post ✅), the room has it.
@@ -3449,7 +3449,7 @@ class Reflexd:
         except RuntimeError:
             pass
 
-    def _alert_owner(self, room: str, reply: str) -> None:
+    def _alert_owner(self, room: str, reply: str, asked_by: str | None = None) -> None:
         """Desktop banner for the agent's owner when the wake shipped work,
         needs them, or got stuck. Fire-and-forget; never blocks the reply."""
         if not _agent_events.enabled():
@@ -3457,6 +3457,7 @@ class Reflexd:
         alert = _agent_events.owner_alert(
             agent=self.config.participant_name,
             owner=os.environ.get("REFLEXD_OWNER") or None, reply=reply,
+            asked_by=asked_by,
         )
         if alert is None:
             return
