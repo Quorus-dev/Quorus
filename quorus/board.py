@@ -252,13 +252,22 @@ function refresh() {
   });
 }
 
+const SPLIT = "(min-width: 1100px)";
+if (typeof matchMedia !== "undefined") {  // re-lay out when the window crosses the line
+  matchMedia(SPLIT).addEventListener("change", () => { if (B.on) show(true); });
+}
+
 function show(on) {
   B.on = on;
   $("board").hidden = !on;
   if (on && !$("boardRows").children.length) {
     $("boardRows").replaceChildren(el("p", "hint", "Loading the team…"));
   }
-  ["messages", "working", "composer"].forEach((id) => { $(id).hidden = on; });
+  // Mission control: on a wide screen the room's chat stays beside the agent
+  // panels, so you watch them work and talk to them at once; a phone toggles.
+  const wide = typeof matchMedia !== "undefined" && matchMedia(SPLIT).matches;
+  ["messages", "working", "composer"].forEach((id) => { $(id).hidden = on && !wide; });
+  $("chat").classList.toggle("split", on && wide);
   $("viewToggle").textContent = on ? "Chat" : "Board";
   if (on) { refresh(); if (!B.timer) B.timer = setInterval(refresh, 3000); }
   else if (B.timer) { clearInterval(B.timer); B.timer = null; }

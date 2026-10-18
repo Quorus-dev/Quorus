@@ -128,6 +128,13 @@ display:flex;flex-wrap:wrap;gap:8px;align-items:center;overflow-wrap:anywhere}
 .good{color:var(--accent)}.bad{color:var(--bad)}
 .bassign input{width:100%;font:inherit;font-size:13px;padding:6px 10px;border-radius:8px;
 border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
+@media (min-width:1100px){#chat.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,380px);
+grid-template-rows:auto minmax(0,1fr) auto auto;
+grid-template-areas:"bar bar" "board msgs" "board work" "board comp"}
+#chat.split #bar{grid-area:bar}#chat.split #board{grid-area:board;min-height:0}
+#chat.split #messages{grid-area:msgs;min-height:0;border-left:1px solid var(--rule)}
+#chat.split #working{grid-area:work;border-left:1px solid var(--rule)}
+#chat.split #composer{grid-area:comp;border-left:1px solid var(--rule)}}
 @media (max-width:720px){#app{grid-template-columns:minmax(0,1fr)}#app.inroom #rooms{display:none}
 #app:not(.inroom) #chat{display:none}#back{display:block}}
 </style>
