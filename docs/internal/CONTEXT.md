@@ -141,6 +141,18 @@ Next:
 
 ## Recent Changes
 
+### Website v2: the hero replays the run, the Quorum stage follows (2026-10-18)
+
+quorus.dev's hero is now the real demo run replayed in the page (`website/src/run.ts`
+holds the recording's lines verbatim, about 4× faster; the static markup is the
+finished run for no-JS and reduced motion). Second beat: the Quorum view's own
+`quorus/web` stage and totems, copied in with three.js at `npm run build`, seat the
+run's three members and play the same script; desktop ≥960px only, after load,
+idle and in view, else a 27 KB still. Scroll story (wires draw, lock row claims,
+scorecard counts) and micro-interactions, all transform/opacity. Lighthouse:
+mobile 99/100/100/100, desktop 100×4, CLS 0 on both; three.js never loads during
+the audit. The stage band's caption says it ships in 0.6.0.
+
 ### Self-improving bet draft (2026-10-18)
 
 `docs/internal/bets/self-improving.md`: the recommendation is Break-to-Eval. A
@@ -250,39 +262,6 @@ opencode agents (one retry). Ollama works (qwen3:4b made the edit) but needs
 OLLAMA_CONTEXT_LENGTH=32768 and is slow on a laptop. Gemini CLI: personal
 Google login is dead (IneligibleTierError), needs an AI Studio key; built and
 unit-tested, not yet live-verified.
-
-### Fresh-user run + launch prep (2026-10-16)
-
-Installed the wheel as a brand-new user and followed the README. Found and fixed:
-- Daemon auto-committed `__pycache__` to the user's main; leftovers now ignored.
-- Codex could never use its Quorus tools: MCP approval auto-cancelled in
-  `codex exec`, and the user's `~/.codex/config.toml` quorus entry (human's
-  secret) overrode the agent's. Fixed and verified live.
-- Chatter: stray "/ defer" lines, agents forced to answer passing mentions,
-  15-line replies. Second Ctrl-C printed a traceback. Hub never said how to add an agent.
-- Repo: removed a hardcoded old-relay API key and stale secret configs; internal
-  notes moved here; README has a real demo GIF and the new tagline.
-- Still open: Linux daemon path untested; agent worktrees live outside the repo.
-
-### Every agent answers the human (2026-10-16)
-
-- A human's message, or any direct @-mention, wakes every agent it reaches,
-  with no auction and no NO_REPLY option (Arav's rule: all agents answer him).
-  Open tasks and agent-to-agent chatter still pick one agent, which may stay silent.
-- Verified live in #demo: both agents answered an unaddressed message in ~15s.
-
-### Release audit by Codex (2026-10-16)
-
-Ten fixes, each with a failing-first test. Report kept out of git; summary:
-- Secrets: redacted from relay access logs, Sentry events, daemon logs and
-  harness stderr; credential files written via private temp + atomic replace.
-- Auth: DM streams refuse the shared secret when DATABASE_URL is set;
-  `quorus agent add` joins with the owner key in account mode (was HTTP 403).
-- Paths: participant names validated before building daemon state paths;
-  supervisor log follows the active config dir (was hard-coded to the real home).
-- README now claims auto-wake only for Claude Code and Codex.
-- Open (medium): agent worktrees live at `<repo-parent>/.quorus-worktrees/`,
-  outside the bound repo; moving them needs a migration that keeps unpublished branches.
 
 ## Architecture
 
