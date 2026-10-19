@@ -1,7 +1,8 @@
 # quorus.dev
 
-One static page (`index.html`, `src/site.css`, `src/main.ts`), built with Vite.
-No framework and no third-party scripts, fonts or trackers; the CSP in
+A static home page (`index.html`, `src/site.css`, `src/main.ts`) plus three doc
+pages (`install.html`, `security.html`, `deploy.html`, loading only `src/page.ts`),
+each a Vite entry in `vite.config.ts` and listed in `public/sitemap.xml`. No framework and no third-party scripts, fonts or trackers; the CSP in
 `vercel.json` allows only same-origin resources.
 
 Content rules: every claim must be true of the package on PyPI, as the README
