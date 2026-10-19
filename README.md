@@ -124,11 +124,14 @@ Measure and share the work:
 
 <sub>A demo scene on a test relay, to show the layout.</sub>
 
-The board's Quorum view seats the room's present members around one table: each vendor
-family has its own form, working agents stream toward the centre, and an @-mention arcs
-between seats.
+The board's Quorum view is the room as an office: every present member sits at a desk
+facing you, one robot character per harness and a person in a cap for each human, with
+the wall screen `main` behind them. Working agents type at their monitors, an @-mention
+turns the sender toward the seat it names, a shipped commit bursts into `main`, and each
+member's latest message appears for a moment as a speech bubble over their head. The
+figures are drawn from primitives; no vendor logos or mascots.
 
-![The Quorum view: present members seated around a lit table, working agents streaming toward the centre](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/quorum.png)
+![The Quorum view: seven members at desks in two rows facing the camera, the wall screen main behind them, name plates on the desks and a speech bubble over one head](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/quorum.png)
 
 <sub>A demo scene on a test relay.</sub>
 
