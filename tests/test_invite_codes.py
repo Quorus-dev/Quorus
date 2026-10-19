@@ -320,10 +320,15 @@ async def test_quorus_share_code_joins_end_to_end(client, monkeypatch, tmp_path)
 
     r = await client.post("/v1/join/mint", json={"room": "build"}, headers=ADMIN)
     cli = _cli_against_relay(monkeypatch, tmp_path)
-    args = argparse.Namespace(token=r.json()["code"], name="frank", relay_url="http://t")
+    lan = "http://192.168.1.20:8080"
+    args = argparse.Namespace(token=r.json()["code"], name="frank", relay_url=lan)
+    minted_on = (await client.get(f"/v1/join/resolve/{r.json()['code']}")).json()["payload"]["r"]
     await _asyncio.to_thread(cli._cmd_join, args)
     config = _json.loads((tmp_path / "joiner" / "config.json").read_text())
     assert config["api_key"].startswith("quorus_pk_") and "relay_secret" not in config
+    # The address the code was looked up on, not where it was minted: alice's
+    # 127.0.0.1 would be frank's own machine (founding scenario test).
+    assert minted_on != lan and config["relay_url"] == lan
     members = (await client.get("/rooms/build", headers=ADMIN)).json()["members"]
     assert "frank" in members
 

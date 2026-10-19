@@ -478,7 +478,10 @@ def _first_launch_setup(console: Console) -> dict:
                     resp = None
             if resp is not None and resp.status_code == 200:
                 payload = (resp.json() or {}).get("payload") or {}
-                relay_url = (payload.get("r") or relay_url).rstrip("/")
+                # Keep the address that just answered. The payload's "r" is the
+                # address the code was minted on: 127.0.0.1 when alice shared
+                # from her own machine, which on bob's computer is bob's own
+                # (founding scenario test).
                 secret = payload.get("s", "") or ""
                 api_key = payload.get("k", "") or ""
                 invited_room = payload.get("n", "") or ""

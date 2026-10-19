@@ -20,11 +20,11 @@ def _resp(status: int, body: dict) -> MagicMock:
     return r
 
 
-def _run_wizard(monkeypatch, *, redeem_status=200):
+def _run_wizard(monkeypatch, *, redeem_status=200, minted_on="http://relay.test:8080"):
     answers = iter(["ABCD-EFGH", "http://relay.test:8080"])
     monkeypatch.setattr(hub, "_prompt_name", lambda console: "bob")
     monkeypatch.setattr(hub.Prompt, "ask", lambda *a, **kw: next(answers))
-    payload = {"r": "http://relay.test:8080", "n": "build", "c": "qi_" + "x" * 30, "v": 2}
+    payload = {"r": minted_on, "n": "build", "c": "qi_" + "x" * 30, "v": 2}
     monkeypatch.setattr(hub.httpx, "get", lambda url, **kw: _resp(200, {"payload": payload}))
     redeemed = []
 
@@ -50,6 +50,16 @@ def test_the_wizard_redeems_an_invite_code_into_its_own_key(monkeypatch) -> None
     assert profile["api_key"] == "quorus_pk_bobkey" and profile["relay_secret"] == ""
     assert profile["room"] == "build"
     assert saved and saved[0][1]["api_key"] == "quorus_pk_bobkey"
+
+
+def test_the_address_that_answered_is_kept_over_the_minted_one(monkeypatch) -> None:
+    """alice shared from her own machine, so the code says 127.0.0.1: on bob's
+    computer that is bob's own. The address bob typed served the code, so it's
+    the one he redeems on and saves (founding scenario test)."""
+    profile, redeemed, saved = _run_wizard(monkeypatch, minted_on="http://127.0.0.1:8080")
+    assert redeemed[0][0] == "http://relay.test:8080/v1/join/redeem"
+    assert profile["relay_url"] == "http://relay.test:8080"
+    assert saved[0][0][1] == "http://relay.test:8080"
 
 
 def test_a_refused_invite_saves_nothing(monkeypatch) -> None:
