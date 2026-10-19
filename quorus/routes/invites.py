@@ -169,7 +169,7 @@ async def invite_join(
     if tenant_id == _LEGACY_TENANT:
         # Shared-secret rooms: this added any name it was given, with no claim,
         # and its token was signed with the distributed secret. Invites there
-        # redeem through /v1/join/redeem (docs/weekend/invite-roles.md).
+        # redeem through /v1/join/redeem (docs/design/invite-roles.md).
         raise HTTPException(status_code=410,
                             detail="this relay uses invite codes: run `quorus join <code>`")
     room_id = claims["room_id"]

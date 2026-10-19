@@ -89,10 +89,11 @@ def _resolve_auth(env_name: str, file_value: str, *, label: str) -> str:
 
 
 # Production API keys are minted as ``mct_<hex>_<hex>`` (see
-# ``quorus.auth.tokens.generate_api_key``). We log an advisory if the
-# resolved key doesn't match — but we do NOT block, because tests and
-# self-hosted deployments use other formats.
-_API_KEY_RE = re.compile(r"^mct_[a-f0-9]+_[a-f0-9]+$")
+# ``quorus.auth.tokens.generate_api_key``); shared-secret relays give each
+# claimed name a ``quorus_pk_`` key, which is what a woken agent signs in
+# with. We log an advisory if the resolved key matches neither — but we do
+# NOT block, because tests and self-hosted deployments use other formats.
+_API_KEY_RE = re.compile(r"^(mct_[a-f0-9]+_[a-f0-9]+|quorus_pk_[A-Za-z0-9_-]+)$")
 # Reject anything that would produce an *illegal* HTTP header value
 # (whitespace, CR/LF, or non-printable bytes). httpx would otherwise
 # raise ``Illegal header value`` on the relay request — that was the
@@ -113,7 +114,7 @@ def _validate_header_safe(value: str, *, label: str) -> None:
         raise SystemExit(
             f"{label} contains whitespace or control characters that would "
             "produce an illegal HTTP Authorization header. Re-run "
-            "`quorus login` or unset the offending env var."
+            "`quorus init` or unset the offending env var."
         )
 
 
@@ -137,7 +138,9 @@ def load_runtime_config() -> dict[str, Any]:
     """
     # QUORUS_PROFILE picks one saved profile without touching "current"; env
     # vars still beat it. load_config binds saved credentials to their relay.
-    config = load_config(profile=_clean_env("QUORUS_PROFILE"))
+    # Read-only: a server a client starts never rewrites the user's config
+    # (legacy migration is left to an explicit `quorus` command).
+    config = load_config(profile=_clean_env("QUORUS_PROFILE"), migrate=False)
 
     env_relay = _clean_env("QUORUS_RELAY_URL")
     relay_url = env_relay or config["relay_url"]
@@ -175,7 +178,7 @@ def load_runtime_config() -> dict[str, Any]:
         raise SystemExit(
             "Neither relay_secret nor api_key resolved to a non-empty value.\n"
             "  - Set QUORUS_API_KEY (or RELAY_SECRET) to a non-empty token, OR\n"
-            "  - Run `quorus login` to populate ~/.quorus/profiles/default.json.\n"
+            "  - Run `quorus init` to populate ~/.quorus/profiles/default.json.\n"
             "Empty/whitespace env vars are now treated as unset and fall back\n"
             "to the profile file."
         )

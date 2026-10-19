@@ -99,7 +99,7 @@ class ParticipantKeyStore:
                     db.execute("UPDATE claims SET claim_id = ? WHERE name = ?",
                                (secrets.token_hex(16), name))
             if "kind" not in columns:
-                # Who a claim belongs to (docs/weekend/invite-roles.md). Rows from
+                # Who a claim belongs to (docs/design/invite-roles.md). Rows from
                 # before include daemon keys, so they are `unclassified`, never
                 # human: they can't approve or own agents until the relay owner
                 # classifies them (codex, review of 45e1f921).

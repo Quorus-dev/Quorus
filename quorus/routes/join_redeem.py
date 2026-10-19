@@ -3,7 +3,7 @@
 relay owner's list of invites (never their codes) and the way to kill one,
 which also removes from its room everyone who joined with it.
 
-Shared-secret relays only (docs/weekend/invite-roles.md, step 1). The code is
+Shared-secret relays only (docs/design/invite-roles.md, step 1). The code is
 the bearer proof; redeeming spends one use, claims the name as a human, adds it
 to the invite's room with the invite's role, and returns the participant key
 once. The joiner never receives ``RELAY_SECRET``.

@@ -1,6 +1,6 @@
 """`quorus invites`: the relay owner's invites, and `--revoke <id>` to kill one.
 
-Shared-secret relays only (docs/weekend/invite-roles.md, step 1). The relay
+Shared-secret relays only (docs/design/invite-roles.md, step 1). The relay
 never returns a code, only its id, room, uses and expiry. Revoking stops new
 joins with that code; people who already joined keep their own keys.
 """
@@ -65,8 +65,11 @@ def cmd_invites(args) -> int:
         ui.error(f"Relay answered HTTP {resp.status_code}")
         return 1
     if revoke:
-        ui.console.print(f"[green]Revoked {revoke}[/green]: its code admits no one new; "
-                         "people who already joined keep their access.")
+        removed = (resp.json() or {}).get("removed") or []
+        who = (f"removed from its room: {', '.join('@' + n for n in removed)}"
+               if removed else "no one who joined with it is still in its room")
+        ui.console.print(f"[green]Revoked {revoke}[/green]: its code admits no one new, "
+                         f"and {who}.")
         return 0
     invites = resp.json() or []
     if not invites:

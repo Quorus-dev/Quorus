@@ -156,7 +156,10 @@ def test_a_failed_park_still_holds_the_work_back(monkeypatch, tmp_path: Path) ->
     assert (repo / "CHANGELOG.md").read_text().count("\n") == 90
 
 
-def test_even_an_unwritable_hold_blocks_this_process(monkeypatch, tmp_path: Path) -> None:
+def test_no_hold_means_no_turn_even_across_a_restart(monkeypatch, tmp_path: Path) -> None:
+    """Codex on 97d81fb8: an in-memory hold dies with the daemon. The hold is
+    now written before the harness starts, and a turn that can't write it
+    doesn't run at all."""
     repo = _repo(tmp_path)
     d = _daemon(monkeypatch, tmp_path, repo)
 
@@ -164,9 +167,31 @@ def test_even_an_unwritable_hold_blocks_this_process(monkeypatch, tmp_path: Path
         raise OSError("disk full")
 
     monkeypatch.setattr(reflexd.reflexd_unfinished, "hold", fail)
-    _wake(monkeypatch, d, reply=TIMED_OUT, edit="half\n")
-    asyncio.run(d._publish_sweep(_Relay()))
+    relay = _wake(monkeypatch, d, reply=TIMED_OUT, edit="half\n")
+    assert any("didn't run" in p["content"] for p in relay.posted), relay.posted
+    restarted = _daemon(monkeypatch, tmp_path, repo)
+    asyncio.run(restarted._publish_sweep(_Relay()))
     assert (repo / "CHANGELOG.md").read_text().count("\n") == 90
+
+
+def test_the_hold_is_on_while_the_harness_runs(monkeypatch, tmp_path: Path) -> None:
+    """A daemon that dies mid-turn leaves the hold: its restart can't publish."""
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+    seen: list[bool] = []
+
+    async def fake_run(harness, *, context, cwd=None, **_kw: Any) -> str:
+        seen.append(reflexd.reflexd_unfinished.pending(d._unfinished_dir, Path(cwd)))
+        return "✅ done"
+
+    monkeypatch.setattr(d.adapter, "run", fake_run)
+    env = {"id": "e-h", "message_id": "h", "room": "build", "from_name": "arav",
+           "content": "@arav-gemini go", "message_type": "chat"}
+    triage = reflexd.classify_message(content=env["content"], sender="arav",
+                                      self_name="arav-gemini")
+    asyncio.run(d._wake_and_reply(_Relay(), env, triage=triage))
+    assert seen == [True]
+    assert not any((tmp_path / "runtime" / "unfinished-wakes").glob("*.json"))
 
 
 def test_a_failed_retry_keeps_the_hold(monkeypatch, tmp_path: Path) -> None:

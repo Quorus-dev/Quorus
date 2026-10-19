@@ -196,7 +196,9 @@ class ConfigManager:
             )
         return resolve_config_file()
 
-    def load(self) -> dict[str, Any]:
+    def load(self, *, migrate: bool = True) -> dict[str, Any]:
+        """Return the active config. ``migrate=False`` never writes: a legacy
+        flat config is read as-is instead of being moved into profiles/."""
         # Explicit-path callers (tests, CLI --config pointing at a file)
         # get raw file contents, no profile resolution.
         if self._explicit_path is not None:
@@ -212,7 +214,12 @@ class ConfigManager:
             return data or {}
 
         # Default behavior: auto-migrate legacy, then return current.
-        pm.migrate_legacy_if_needed()
+        if not migrate:
+            legacy = pm.legacy_flat()
+            if legacy is not None:
+                return legacy
+        else:
+            pm.migrate_legacy_if_needed()
         current = pm.current_profile()
         if current is not None:
             return current
@@ -273,12 +280,27 @@ def same_relay(a: str, b: str) -> bool:
         return False
 
 
+# Profile fields that are only valid on the relay they were issued by.
+RELAY_BOUND_KEYS = ("api_key", "relay_secret", "agent_api_keys")
+
+
+def drop_credentials_if_relay_changed(profile: dict[str, Any],
+                                      new_relay_url: str) -> tuple[dict[str, Any], bool]:
+    """A copy of *profile* without its relay-bound credentials when it is
+    being pointed at a different relay; ``(copy, dropped)``."""
+    saved = profile.get("relay_url") or DEFAULT_RELAY_URL
+    if same_relay(saved, new_relay_url):
+        return dict(profile), False
+    kept = {k: v for k, v in profile.items() if k not in RELAY_BOUND_KEYS}
+    return kept, any(k in profile for k in RELAY_BOUND_KEYS)
+
+
 def withheld_credential_message(relay_url: str) -> str:
     return (f"no credential saved for {relay_url}; run `quorus init` or `quorus join` "
             "for it (your saved credentials belong to another relay and are not sent)")
 
 
-def load_config(profile: str | None = None) -> dict[str, Any]:
+def load_config(profile: str | None = None, *, migrate: bool = True) -> dict[str, Any]:
     """Load config from disk, then apply env-var overrides.
 
     A saved ``relay_secret`` or ``api_key`` is bound to the ``relay_url`` saved
@@ -292,7 +314,7 @@ def load_config(profile: str | None = None) -> dict[str, Any]:
     ``ConfigManager`` directly for simple load/save.
     """
     manager = ConfigManager(profile=profile) if profile else ConfigManager()
-    file_config: dict[str, Any] = manager.load()
+    file_config: dict[str, Any] = manager.load(migrate=migrate)
     config_file = manager.path if profile else resolve_config_file()
 
     def get(env_key: str, file_key: str, default: str) -> str:

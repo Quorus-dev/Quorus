@@ -839,9 +839,12 @@ app.add_middleware(NotFoundRateLimitMiddleware)
 async def _http_error_with_retry_after(request: Request, exc: StarletteHTTPException):
     """Every 429 says when to retry (U1, 0.5.1). Routes with their own window
     set the header; the rest use the default rate-limit window."""
-    if exc.status_code == 429 and "Retry-After" not in (exc.headers or {}):
-        exc.headers = {**(exc.headers or {}),
-                       "Retry-After": os.environ.get("RATE_LIMIT_WINDOW", "60")}
+    if exc.status_code == 429:
+        if "Retry-After" not in (exc.headers or {}):
+            exc.headers = {**(exc.headers or {}),
+                           "Retry-After": os.environ.get("RATE_LIMIT_WINDOW", "60")}
+        if exc.detail == "Rate limit exceeded":  # say when, for any client
+            exc.detail = f"Rate limit exceeded: try again in {exc.headers['Retry-After']}s"
     return await http_exception_handler(request, exc)
 app.add_middleware(RequestContextMiddleware)
 

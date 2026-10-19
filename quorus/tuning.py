@@ -1,7 +1,7 @@
 """Per-user tuning: what this user's Quorus changed about itself, and why.
 
-Each install personalizes itself from its owner's own outcomes
-(docs/internal/bets/per-user.md). Every change is an *adaptation*:
+Each install personalizes itself from its owner's own outcomes.
+Every change is an *adaptation*:
 
 * private: it lives in ``~/.quorus/tuning.json`` (0600), one file per user
   whatever ``QUORUS_CONFIG_DIR`` an agent runs with, and is never sent to the

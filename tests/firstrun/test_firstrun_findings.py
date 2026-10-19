@@ -1,6 +1,6 @@
 """New-user pass findings, pinned: plain `quorus`, a clean HOME, a real pty.
 
-Each test replays what a manual pass caught (docs/weekend/firstrun-findings.md).
+Each test replays what a manual new-user pass caught.
 Anything the user types is checked in the local relay's own room history, not
 on screen; the screen is checked only for what is purely visible. One first
 run is shared by the module; each test then sends its own uniquely marked

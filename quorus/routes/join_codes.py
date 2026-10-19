@@ -157,7 +157,7 @@ async def mint_code(
     if auth.is_legacy and not os.environ.get("DATABASE_URL"):
         # Shared-secret relay: never ship the secret (it is admin). The payload
         # carries an opaque, use-limited code that `quorus join` redeems for the
-        # joiner's own participant key (docs/weekend/invite-roles.md).
+        # joiner's own participant key (docs/design/invite-roles.md).
         import asyncio
 
         from quorus.auth import invite_codes

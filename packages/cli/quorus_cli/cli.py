@@ -6073,7 +6073,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     console.print(f"  Name: {name}")
     console.print("")
 
-    # v2 invites (shared-secret relays, docs/weekend/invite-roles.md step 1):
+    # v2 invites (shared-secret relays, docs/design/invite-roles.md step 1):
     # the code redeems into the joiner's OWN participant key and the relay adds
     # them to the room. The shared secret is never sent and never written here.
     redeemed = False

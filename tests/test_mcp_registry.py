@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
-import tomllib
-
 import quorus
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - py310 (CI)
+    import tomli as tomllib
 
 _ROOT = Path(__file__).resolve().parent.parent
 

@@ -1,4 +1,4 @@
-"""Invites without the shared secret (docs/weekend/invite-roles.md, step 1).
+"""Invites without the shared secret (docs/design/invite-roles.md, step 1).
 
 An invite on a shared-secret relay used to carry RELAY_SECRET, which is admin.
 Now it carries an opaque, use-limited code that redeems into the joiner's own

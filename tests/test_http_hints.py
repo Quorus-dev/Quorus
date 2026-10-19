@@ -1,4 +1,4 @@
-"""U1 (0.5.1): the CLI says why the relay refused, not just the status code.
+"""U1 (0.5.1, 0.5.2): the CLI and the MCP tools say why the relay refused.
 
 0.5.0 printed "Could not create room · server returned HTTP 422", "hint: HTTP
 413" and "hint: HTTP 429" (overseer's agent sweep).
@@ -56,3 +56,32 @@ def test_no_body_still_gives_the_code() -> None:
             raise ValueError
 
     assert hint(R()) == "HTTP 502"
+
+
+def _mcp_error(resp) -> str:
+    import httpx
+    from quorus_mcp import server
+
+    err = httpx.HTTPStatusError("x", request=httpx.Request("POST", "http://t"),
+                                response=httpx.Response(resp.status_code,
+                                                        headers=dict(resp.headers),
+                                                        content=resp.content))
+    return server._relay_error_message(err)
+
+
+def test_mcp_tools_say_why_too(client) -> None:
+    """0.5.1 live check: agents got 'Relay returned 429: {...}' with no retry time."""
+    for i in range(10):
+        client.post("/rooms", json={"name": f"m{i}", "created_by": "arav"}, headers=ADMIN)
+    limited = client.post("/rooms", json={"name": "m10", "created_by": "arav"}, headers=ADMIN)
+    assert _mcp_error(limited).startswith("Error: the relay is rate-limiting you: try again in ")
+    bad = client.post("/rooms", json={"name": "a b", "created_by": "arav"}, headers=ADMIN)
+    assert "alphanumeric" in _mcp_error(bad) and "{" not in _mcp_error(bad)
+
+
+def test_the_relay_itself_says_when_to_retry(client) -> None:
+    """Any client (curl, an SDK, another harness) sees the wait, not a bare refusal."""
+    for i in range(11):
+        r = client.post("/rooms", json={"name": f"n{i}", "created_by": "arav"}, headers=ADMIN)
+    assert r.status_code == 429
+    assert r.json()["detail"] == f"Rate limit exceeded: try again in {r.headers['retry-after']}s"

@@ -1,4 +1,4 @@
-"""Per-user tuning store and `quorus tune` (docs/internal/bets/per-user.md)."""
+"""Per-user tuning store and `quorus tune`."""
 
 from __future__ import annotations
 

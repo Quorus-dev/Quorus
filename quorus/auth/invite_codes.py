@@ -1,4 +1,4 @@
-"""Invite codes on shared-secret relays (docs/weekend/invite-roles.md, step 1).
+"""Invite codes on shared-secret relays (docs/design/invite-roles.md, step 1).
 
 An invite used to carry ``RELAY_SECRET``, which is admin. Now the relay keeps
 an invite record and hands out an opaque random code, stored only as sha256.
