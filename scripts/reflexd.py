@@ -83,6 +83,7 @@ from quorus.observability.redaction import env_secret_values, redact_secrets  # 
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
 from quorus.private_files import write_private_json, write_private_text  # noqa: E402
 from quorus.roles import WRITER_ROLES  # noqa: E402
+from quorus.runtime import commit_evidence as _commit_evidence  # noqa: E402  audit F2
 from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime import review_share as _review_share  # noqa: E402
@@ -3285,6 +3286,13 @@ class Reflexd:
                     room=room, worktree=worktree, message=envelope.get("content") or "")
             except httpx.HTTPError as exc:
                 logger.warning("auto-fetch skipped: %s", exc)
+        # Audit F2: a commit the message names is rendered here, by the daemon,
+        # so even a read-only reviewer (no shell) sees the code, not a summary.
+        evidence_repo = worktree.path if worktree is not None else ws
+        if evidence_repo is not None:
+            shared_note += await asyncio.to_thread(
+                _commit_evidence.evidence_block, evidence_repo,
+                envelope.get("content") or "", os.urandom(6).hex())
         _members = getattr(relay, "fetch_members", None)
         teammates = await _members(room=room) if _members is not None else []
         trusted = await self._trusted_wake(relay, envelope, history)
