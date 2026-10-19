@@ -4,7 +4,6 @@ stops every relay its HOME started, pid file or not."""
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import time
@@ -14,7 +13,12 @@ import pytest
 
 pytest.importorskip("fcntl", reason="needs a POSIX pty")
 from quorus.runtime import local_relay
-from tests.firstrun.pty_session import free_port, spawned_relays, stop_home_relays
+from tests.firstrun.pty_session import (
+    child_env,
+    free_port,
+    spawned_relays,
+    stop_home_relays,
+)
 
 pytestmark = pytest.mark.firstrun
 
@@ -43,9 +47,13 @@ def test_the_harness_stops_a_relay_its_pid_file_missed(tmp_path) -> None:
     home = (tmp_path / "home").resolve()
     (home / ".quorus").mkdir(parents=True)
     port = free_port()
-    env = {**{k: v for k, v in os.environ.items() if k != "RELAY_URL"},
+    # The harness's own scrubbed env: tmp HOME, no DATABASE_URL, REDIS_URL,
+    # SENTRY_DSN or other inherited settings (codex, review of 51f9ef9d).
+    env = {**child_env(home, f"http://127.0.0.1:{port}"),
            "RELAY_SECRET": "s", "PORT": str(port), "HOST": "127.0.0.1",
            "MESSAGES_FILE": str(home / ".quorus" / "relay-state.json"), "LOG_LEVEL": "INFO"}
+    assert not {"DATABASE_URL", "REDIS_URL", "SENTRY_DSN"} & env.keys()
+    assert env["HOME"] == str(home)
     with (home / ".quorus" / "relay.log").open("ab") as log:
         proc = subprocess.Popen([sys.executable, "-m", "quorus.relay_cli"], env=env, cwd=home,
                                 stdout=log, stderr=log, stdin=subprocess.DEVNULL)
