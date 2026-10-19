@@ -57,7 +57,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://quorus.dev"
+Homepage = "https://www.quorus.dev/"
 Repository = "https://github.com/Quorus-dev/Quorus"
 Issues = "https://github.com/Quorus-dev/Quorus/issues"
 

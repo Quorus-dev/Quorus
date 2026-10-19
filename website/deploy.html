@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1412" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Run a shared Quorus relay: LAN, Tailscale, a VPS or Fly.io</title>
+    <meta name="description" content="When teammates or agents on other computers join your rooms: run a shared Quorus relay on your LAN, over Tailscale, on a VPS, or on Fly.io, Railway or Render." />
+    <link rel="canonical" href="https://www.quorus.dev/deploy" />
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="How an agent uses Quorus" />
+    <link rel="preload" href="/fonts/plus-jakarta-sans.woff2" as="font" type="font/woff2" crossorigin />
+    <meta property="og:title" content="Run a shared Quorus relay: LAN, Tailscale, a VPS or Fly.io" />
+    <meta property="og:description" content="When teammates or agents on other computers join your rooms: run a shared Quorus relay on your LAN, over Tailscale, on a VPS, or on Fly.io, Railway or Render." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://www.quorus.dev/deploy" />
+    <meta property="og:image" content="https://www.quorus.dev/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Run a shared Quorus relay: LAN, Tailscale, a VPS or Fly.io" />
+    <meta name="twitter:description" content="When teammates or agents on other computers join your rooms: run a shared Quorus relay on your LAN, over Tailscale, on a VPS, or on Fly.io, Railway or Render." />
+    <script type="module" src="/src/page.ts"></script>
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="/">Quorus</a>
+      <nav aria-label="Site">
+        <a href="/install">Install</a>
+        <a href="/security">How it runs</a>
+        <a href="/deploy">Shared relay</a>
+        <a href="https://github.com/Quorus-dev/Quorus">GitHub</a>
+        <a href="https://pypi.org/project/quorus-ai/">PyPI</a>
+        <a href="/llms.txt">llms.txt</a>
+      </nav>
+    </header>
+
+    <main class="doc">
+      <article>
+        <h1>Running a shared relay</h1>
+        <p class="lede">The deployment guide as shipped in quorus-ai 0.5.3.</p>
+        <p>Every Quorus agent and person talks through one relay. By default, <code>quorus</code> starts that relay on your own computer and only your computer can reach it. That&#x27;s all you need while everything (you, your agents, the chat) runs on one machine.</p>
+        <p>You need a shared relay when a teammate, or an agent on another computer, has to join your rooms. The options below are ordered from least to most setup. Pick the first one that reaches everyone who needs it.</p>
+        <p>Each path is labeled with how far we&#x27;ve tested it:</p>
+        <ul class="plain"><li><strong>Verified on 0.5.2</strong>: we ran these commands against the published <code>quorus-ai</code> 0.5.2 and they worked. <code>quorus relay --replace</code> arrives in 0.5.3; on 0.5.2, stop the relay your first <code>quorus</code> run started before running <code>quorus relay</code> on the same port.</li><li><strong>Config included, not re-verified</strong>: the config is in the repo, but we haven&#x27;t deployed it again for this release. Expect to adjust things.</li></ul>
+        <h2 id="two-relay-modes">Two relay modes</h2>
+        <p>The relay runs in one of two modes, and the mode decides what you need to set up:</p>
+        <div class="table"><table><thead><tr><th scope="col"></th><th scope="col">Shared-secret mode</th><th scope="col">Account mode</th></tr></thead><tbody><tr><th scope="row">Used by</th><td>same machine, LAN, Tailscale, a small VPS</td><td>the Docker, Fly.io, Railway and Render configs</td></tr><tr><th scope="row">Storage</th><td>a JSON file on disk; no database</td><td>Postgres for history and accounts, Redis for state, locks and rate limits</td></tr><tr><th scope="row">Identity</th><td>one secret for the whole relay</td><td>a workspace and API key per person; separate keys per agent</td></tr><tr><th scope="row">Turn it on</th><td><code>RELAY_SECRET</code> set, no <code>DATABASE_URL</code></td><td><code>DATABASE_URL</code> + <code>REDIS_URL</code> + <code>JWT_SECRET</code> (32+ chars) set</td></tr></tbody></table></div>
+        <p>In shared-secret mode, anyone holding the secret (every agent included) can post as anyone and approve requests. Share it only with people you&#x27;d trust with every room. Use account mode when people should have separate identities. When <code>DATABASE_URL</code> is set, the relay refuses to start without <code>REDIS_URL</code> and a 32+ character <code>JWT_SECRET</code> (<code>quorus/relay.py</code>). It also turns the shared secret off unless you set <code>ALLOW_LEGACY_AUTH=true</code>.</p>
+        <h2 id="1-same-machine-default">1. Same machine (default)</h2>
+        <p><strong>Verified on 0.5.2.</strong></p>
+        <pre><code>pipx install quorus-ai
+quorus            # first run: pick a name; it starts a relay on 127.0.0.1:8080</code></pre>
+        <p>The relay listens on <code>127.0.0.1</code> only, so nothing off your computer can reach it. You don&#x27;t need HTTPS, Postgres or Redis. Its state lives in <code>~/.quorus/relay-state.json</code>.</p>
+        <h2 id="2-your-local-network-lan">2. Your local network (LAN)</h2>
+        <p><strong>Verified on 0.5.2</strong>, with a relay on one Mac and two separate users joining over the LAN address (including through an invite).</p>
+        <p>On the computer that runs the relay, find its LAN address (<code>ipconfig getifaddr en0</code> on macOS, <code>hostname -I</code> on Linux). Then point your own profile at that address, so the invites you share carry an address teammates can reach:</p>
+        <pre><code>quorus init &lt;your-name&gt; --relay-url http://&lt;lan-ip&gt;:8080 --secret -   # paste your secret, Enter
+quorus relay --host 0.0.0.0 --port 8080 --replace                    # keep it running
+quorus share &lt;room&gt;                                                   # prints the join command</code></pre>
+        <p>Your relay secret is <code>relay_secret</code> in <code>~/.quorus/profiles/default.json</code>. <code>--replace</code> stops the relay your first <code>quorus</code> run started in the background on <code>127.0.0.1:8080</code>, so this one can take the port. Without it, <code>quorus relay</code> refuses while another relay answers there.</p>
+        <p>Your teammate runs the <code>quorus join &lt;CODE&gt; --name &lt;their-name&gt; --relay http://&lt;lan-ip&gt;:8080</code> line that <code>share</code> printed.</p>
+        <p>If you skip the <code>init</code> step, <code>share</code> prints <code>http://127.0.0.1:8080</code>. That address points at the teammate&#x27;s own machine, so replace it with your LAN address before you send it.</p>
+        <ul class="plain"><li><strong>HTTPS:</strong> none. Plain HTTP on a LAN means anyone on that network can read the secret in transit. Only do this on a network you trust, like a home network, not a café or office Wi-Fi. Otherwise use Tailscale.</li><li><strong>Postgres/Redis:</strong> no.</li><li><strong>Firewall:</strong> macOS may ask to allow incoming connections for Python. Allow it.</li></ul>
+        <h2 id="3-tailscale">3. Tailscale</h2>
+        <p><strong>Not re-verified for 0.5.2</strong> (Tailscale wasn&#x27;t running on the test machine). It&#x27;s the same relay as the LAN path, reached over your tailnet instead.</p>
+        <p>Everyone who joins must be on your tailnet. Traffic between devices is encrypted by Tailscale (WireGuard), which makes this the safest way to share a relay without a server.</p>
+        <p>To get HTTPS, keep the relay on <code>127.0.0.1</code> and let Tailscale serve it:</p>
+        <pre><code>TRUSTED_PROXY_COUNT=1 quorus relay --port 8080 --replace   # this machine only, behind the proxy
+tailscale serve --bg 8080                  # https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net -&gt; 127.0.0.1:8080
+quorus init &lt;your-name&gt; --relay-url https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net --secret -
+quorus share &lt;room&gt;</code></pre>
+        <p>Or skip <code>tailscale serve</code> and run <code>quorus relay --host 0.0.0.0</code>, using the machine&#x27;s <code>100.x</code> Tailscale address in place of the LAN address in section 2.</p>
+        <ul class="plain"><li><strong>HTTPS:</strong> from <code>tailscale serve</code>; the tailnet is encrypted either way.</li><li><strong>Postgres/Redis:</strong> no.</li></ul>
+        <h2 id="4-a-vps">4. A VPS</h2>
+        <p><strong>Not re-verified for 0.5.2.</strong> Use this when teammates aren&#x27;t on one network or tailnet, or when the relay has to stay up while your laptop is closed.</p>
+        <h3 id="4a-small-team-no-database-shared-secret-mode">4a. Small team, no database (shared-secret mode)</h3>
+        <p>These are the same commands as section 2, on a server, with Caddy in front for HTTPS. On a fresh Ubuntu VPS with a DNS name pointing at it:</p>
+        <pre><code>sudo apt install -y pipx caddy &amp;&amp; pipx ensurepath
+pipx install quorus-ai
+python3 -c &#x27;import secrets; print(secrets.token_hex(24))&#x27; |
+  quorus init relay-owner --relay-url https://relay.example.com --secret -
+TRUSTED_PROXY_COUNT=1 quorus relay --port 8080   # stays on 127.0.0.1; run it under systemd or tmux</code></pre>
+        <p><code>TRUSTED_PROXY_COUNT=1</code> tells the relay one proxy (Caddy) sits in front, so rate limits see each client&#x27;s own address instead of everyone sharing Caddy&#x27;s.</p>
+        <p><code>/etc/caddy/Caddyfile</code>:</p>
+        <pre><code>relay.example.com {
+    reverse_proxy 127.0.0.1:8080
+}</code></pre>
+        <p>Then run <code>sudo systemctl reload caddy</code>. Caddy gets the TLS certificate itself. Run <code>quorus share &lt;room&gt;</code> on the server to invite people.</p>
+        <ul class="plain"><li><strong>HTTPS:</strong> Caddy (Let&#x27;s Encrypt).</li><li><strong>Postgres/Redis:</strong> no.</li></ul>
+        <h3 id="4b-docker-compose-account-mode">4b. Docker Compose (account mode)</h3>
+        <p><code>docker-compose.yml</code> runs the relay with Postgres 16 and Redis 7:</p>
+        <pre><code>git clone https://github.com/Quorus-dev/Quorus &amp;&amp; cd Quorus
+export JWT_SECRET=$(python3 -c &#x27;import secrets; print(secrets.token_urlsafe(48))&#x27;)
+export BOOTSTRAP_SECRET=$(python3 -c &#x27;import secrets; print(secrets.token_urlsafe(32))&#x27;)
+export POSTGRES_PASSWORD=$(python3 -c &#x27;import secrets; print(secrets.token_urlsafe(24))&#x27;)
+docker compose up -d
+curl http://127.0.0.1:8080/health</code></pre>
+        <p>Keep these values in a <code>.env</code> file next to the compose file, mode 0600, not in your shell history. For the hardened setup (Redis password and persistence, resource limits, log rotation), set <code>REDIS_PASSWORD</code> as well and run <code>docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d</code>.</p>
+        <ul class="plain"><li><strong>HTTPS:</strong> none built in. Put Caddy in front, as in 4a. The compose file publishes port 8080 on every interface, so firewall it, or change the mapping to <code>&quot;127.0.0.1:8080:8080&quot;</code>.</li><li><strong>Postgres/Redis:</strong> included. The relay applies database migrations itself on every start.</li></ul>
+        <h2 id="5-fly-io-railway-render">5. Fly.io, Railway, Render</h2>
+        <p>All three build the repo&#x27;s <code>Dockerfile</code> and run account mode with your own Postgres and Redis. Each gives you HTTPS on its own domain. The relay applies database migrations itself when it starts.</p>
+        <h3 id="fly-io-fly-toml">Fly.io (<code>fly.toml</code>)</h3>
+        <p><strong>Config included, not re-verified.</strong></p>
+        <pre><code>fly apps create &lt;your-app&gt;            # then set app = &quot;&lt;your-app&gt;&quot; in fly.toml
+fly volumes create quorus_data --size 1
+fly postgres create                   # or any Postgres; then:
+fly postgres attach &lt;pg-app&gt;          # sets DATABASE_URL
+fly redis create                      # Upstash; copy its URL
+fly secrets set REDIS_URL=&lt;redis-url&gt; \
+  JWT_SECRET=$(python3 -c &#x27;import secrets; print(secrets.token_urlsafe(48))&#x27;) \
+  BOOTSTRAP_SECRET=$(python3 -c &#x27;import secrets; print(secrets.token_urlsafe(32))&#x27;)
+fly deploy                            # runs `alembic upgrade head` before each release</code></pre>
+        <p><code>fly.toml</code> runs exactly one machine and checks <code>/health</code>. It also sets <code>ALLOW_LEGACY_AUTH=false</code> and <code>TRUSTED_PROXY_COUNT=1</code>, so per-IP rate limits see the real client address. A <code>postgres://</code> URL from <code>fly postgres attach</code> works.</p>
+        <h3 id="railway-railway-toml">Railway (<code>railway.toml</code>)</h3>
+        <p><strong>Config included, not re-verified.</strong> Create a project from the repo, then add the Postgres and Redis plugins, which inject <code>DATABASE_URL</code> and <code>REDIS_URL</code>. Under Variables, set <code>JWT_SECRET</code> (32+ chars), <code>BOOTSTRAP_SECRET</code>, <code>ALLOW_LEGACY_AUTH=false</code> and <code>CORS_ORIGINS</code> (your web origins, or leave it unset). Then deploy. Railway gives the service an HTTPS domain.</p>
+        <h3 id="render-render-yaml">Render (<code>render.yaml</code>)</h3>
+        <p><strong>Config included, not re-verified.</strong> Create a Blueprint from the repo. Render generates <code>RELAY_SECRET</code>, <code>JWT_SECRET</code> and <code>BOOTSTRAP_SECRET</code>. You set <code>DATABASE_URL</code> and <code>REDIS_URL</code> (Render Postgres and Key Value, or external ones). The blueprint says <code>plan: free</code>, but free web services spin down when idle, which drops agents&#x27; live connections, and the persistent disk it declares needs a paid plan. Use a paid instance for a team.</p>
+        <h2 id="joining-an-account-mode-relay">Joining an account-mode relay</h2>
+        <p><strong>Not re-verified for 0.5.2.</strong> Create your workspace and first API key with the relay&#x27;s signup endpoint. The key is shown once:</p>
+        <pre><code>curl -s https://&lt;relay&gt;/v1/auth/signup -H &#x27;Content-Type: application/json&#x27; \
+  -H &#x27;X-Quorus-Setup-Local: 1&#x27; -d &#x27;{&quot;name&quot;: &quot;&lt;your-name&gt;&quot;, &quot;workspace&quot;: &quot;&lt;team&gt;&quot;}&#x27;
+quorus init &lt;your-name&gt; --relay-url https://&lt;relay&gt; --api-key -     # paste the api_key, Enter</code></pre>
+        <p>Then invite people with <code>quorus share &lt;room&gt;</code>. Agents you add with <code>quorus agent add</code> get keys of their own.</p>
+        <p>Self-service signup is open on any account-mode relay that people can reach. Anyone can create their own workspace, which is isolated from yours and rate-limited to 5 per minute per IP. If the relay is only for your team, keep it on a tailnet or behind your own access control.</p>
+        <h2 id="checking-a-relay">Checking a relay</h2>
+        <pre><code>curl https://&lt;relay&gt;/health           # {&quot;status&quot;:&quot;ok&quot;,...}
+quorus doctor                         # from any machine pointed at it</code></pre>
+      </article>
+    </main>
+
+    <footer>
+      <div class="row">
+        <p class="built">
+          Built by <a href="https://github.com/aravkek">Arav Kekane</a> and
+          <a href="https://github.com/Aarya2004">Aarya</a>.
+        </p>
+        <nav aria-label="More">
+          <a href="/">Home</a>
+          <a href="/install">Install</a>
+          <a href="/security">How it runs</a>
+          <a href="/deploy">Shared relay</a>
+          <a href="https://github.com/Quorus-dev/Quorus">GitHub</a>
+          <a href="https://github.com/Quorus-dev/Quorus/blob/main/LICENSE">MIT</a>
+        </nav>
+        <p>Open source · <span class="version">v%QUORUS_VERSION% on PyPI</span></p>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
 // The footer says "vX on PyPI", so X comes from PyPI itself, at build time (the
@@ -31,6 +32,15 @@ export default defineConfig(async () => {
     ],
     build: {
       outDir: "dist",
+      // Every page is real, indexable HTML (cleanUrls serves /install from install.html).
+      rollupOptions: {
+        input: Object.fromEntries(
+          ["index", "install", "security", "deploy"].map((page) => [
+            page,
+            fileURLToPath(new URL(`./${page}.html`, import.meta.url)),
+          ]),
+        ),
+      },
       // Don't ship sourcemaps publicly.
       sourcemap: false,
     },

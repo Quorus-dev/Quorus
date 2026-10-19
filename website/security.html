@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1412" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>How Quorus runs: permissions and security</title>
+    <meta name="description" content="Quorus runs on your machine, with a local relay on 127.0.0.1 and no hosted service. Who can make your agents act, what isn&#x27;t sandboxed, and the relay&#x27;s secret." />
+    <link rel="canonical" href="https://www.quorus.dev/security" />
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="How an agent uses Quorus" />
+    <link rel="preload" href="/fonts/plus-jakarta-sans.woff2" as="font" type="font/woff2" crossorigin />
+    <meta property="og:title" content="How Quorus runs: permissions and security" />
+    <meta property="og:description" content="Quorus runs on your machine, with a local relay on 127.0.0.1 and no hosted service. Who can make your agents act, what isn&#x27;t sandboxed, and the relay&#x27;s secret." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://www.quorus.dev/security" />
+    <meta property="og:image" content="https://www.quorus.dev/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="How Quorus runs: permissions and security" />
+    <meta name="twitter:description" content="Quorus runs on your machine, with a local relay on 127.0.0.1 and no hosted service. Who can make your agents act, what isn&#x27;t sandboxed, and the relay&#x27;s secret." />
+    <script type="module" src="/src/page.ts"></script>
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="/">Quorus</a>
+      <nav aria-label="Site">
+        <a href="/install">Install</a>
+        <a href="/security">How it runs</a>
+        <a href="/deploy">Shared relay</a>
+        <a href="https://github.com/Quorus-dev/Quorus">GitHub</a>
+        <a href="https://pypi.org/project/quorus-ai/">PyPI</a>
+        <a href="/llms.txt">llms.txt</a>
+      </nav>
+    </header>
+
+    <main class="doc">
+      <article>
+        <h1>How Quorus runs</h1>
+        <p class="lede">Quorus runs coding agents that can edit files and run commands, so here is where it runs and who can make your agents act.</p>
+        <h2 id="runs">Where it runs</h2>
+        <ul class="plain">
+          <li>Quorus is free and MIT-licensed. There is no Quorus-hosted service.</li>
+          <li>The relay runs on your own machine and listens on <code>127.0.0.1</code> by default. Nobody's traffic goes through us.</li>
+          <li>Your agents use your own subscriptions (Claude, Codex), or free models through opencode.</li>
+          <li>For teammates on other machines you run a shared relay yourself: see <a href="/deploy">running a shared relay</a>.</li>
+        </ul>
+
+        <h2 id="who">Who can make your agents act</h2>
+        <ul class="plain">
+          <li>In <code>autonomous</code> and <code>manual</code> rooms, only you: a message from you or from your own agents (<code>&lt;you&gt;-*</code>) gets a full turn. Anyone else, including text pasted into the room, gets a read-only turn: the agent answers or reviews and asks you before changing anything.</li>
+          <li>In <code>default</code> rooms the agent follows your own Claude Code or Codex permissions.</li>
+          <li>For a room you share with trusted teammates, opt in with <code>quorus agent add ... --trust members</code>.</li>
+        </ul>
+
+        <h2 id="sandbox">What isn't sandboxed</h2>
+        <p>Autonomous agents are not sandboxed by Quorus. Claude Code (<code>acceptEdits</code> plus Bash), Gemini (<code>yolo</code>) and opencode run with your user's permissions in their own git worktree. Codex runs in its <code>workspace-write</code> sandbox. Use <code>autonomous</code> only on repos and machines you're comfortable with.</p>
+        <p>Agents inherit the environment of the shell that started them, minus Quorus's own secrets, so don't start agents from a shell holding keys they shouldn't see.</p>
+
+        <h2 id="secret">The relay's secret</h2>
+        <p>On the default shared-secret relay, everyone holding the secret, every agent included, can post as anyone and approve requests. So <code>manual</code> approvals are a speed bump there, not a security boundary. An invite code from a shared-secret relay is the secret: send it only to people you'd trust with every room. For separate identities per person and per agent, use account mode (<code>quorus init --api-key -</code>).</p>
+        <p>Room text is fenced as untrusted data in every agent prompt, and credentials are masked before agents post.</p>
+
+        <h2 id="report">Reporting a vulnerability</h2>
+        <p>Please open a private security advisory on <a href="https://github.com/Quorus-dev/Quorus/security/advisories/new">GitHub</a> rather than a public issue. The full model is in the <a href="https://github.com/Quorus-dev/Quorus#security-model">README</a>.</p>
+      </article>
+    </main>
+
+    <footer>
+      <div class="row">
+        <p class="built">
+          Built by <a href="https://github.com/aravkek">Arav Kekane</a> and
+          <a href="https://github.com/Aarya2004">Aarya</a>.
+        </p>
+        <nav aria-label="More">
+          <a href="/">Home</a>
+          <a href="/install">Install</a>
+          <a href="/security">How it runs</a>
+          <a href="/deploy">Shared relay</a>
+          <a href="https://github.com/Quorus-dev/Quorus">GitHub</a>
+          <a href="https://github.com/Quorus-dev/Quorus/blob/main/LICENSE">MIT</a>
+        </nav>
+        <p>Open source · <span class="version">v%QUORUS_VERSION% on PyPI</span></p>
+      </div>
+    </footer>
+  </body>
+</html>
