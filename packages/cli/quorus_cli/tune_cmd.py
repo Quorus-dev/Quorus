@@ -46,8 +46,9 @@ def cmd_tune(args: Any, console: Any) -> None:
         console.print("[dim]Nothing learned yet. When you hand out work with "
                       "`@open <task>` in a room, Quorus keeps track of how each agent's "
                       "turns go. If one keeps failing or its commits get reverted, it shows "
-                      "up here, with one line in the room saying why and an undo. For now "
-                      "these are notes only: no agent works differently because of them.[/]")
+                      "up here, with one line in the room saying why and an undo. By default "
+                      "these are notes only and no agent works differently because of them; "
+                      "QUORUS_TRACK_BIDS=on lets them change which agent gets a task.[/]")
         return
     from rich.table import Table
 

@@ -60,8 +60,8 @@ def cmd_track_report(args: Any, console: Any) -> int:
         return 0
     if not reports:
         console.print("Nothing to report yet. This shows how your agents' turns went when "
-                      "you handed out work with `@open <task>` in a room (the first free "
-                      "agent takes it). Hand out a few tasks that way, then check back.",
+                      "you handed out work with `@open <task>` in a room (an available agent "
+                      "that fits can take it). Hand out a few tasks that way, then check back.",
                       markup=False, highlight=False, soft_wrap=True)
         return 0
     for name, rep in reports.items():

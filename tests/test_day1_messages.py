@@ -12,7 +12,7 @@ import pytest
 from quorus_cli import web_cmd
 
 _REQ = httpx.Request("GET", "http://relay.test/rooms")
-_JARGON = ("loop A", "bid", "track log", "matched turns")
+_JARGON = ("loop A", "bid ", "bids", "track log", "matched turns", "first free agent")
 
 
 def _rooms(monkeypatch, rooms):
