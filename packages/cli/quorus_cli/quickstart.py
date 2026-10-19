@@ -149,9 +149,9 @@ def offer(console: Any, room: str, cwd: Path | None = None,
                 return Confirm.ask(q, default=False)
         console.print(f"\n  They'd work in [accent]{repo}[/].")
         if invitee:
-            console.print("  [dim]This room is on a teammate's relay. Your agents act only "
-                          "on requests sent with your own key, and its owner runs the "
-                          "relay, so you're trusting it to report who sent what.[/]")
+            from quorus_cli.agent_cmd import TEAMMATE_RELAY_NOTE
+
+            console.print(f"  [dim]{TEAMMATE_RELAY_NOTE}[/]")
         if ask_write("  Let them edit files and run commands there when you ask? Commands "
                      "run with your account's permissions. Others in the room still only "
                      "get answers."):
@@ -170,7 +170,8 @@ def offer(console: Any, room: str, cwd: Path | None = None,
     for t in tools:
         args = SimpleNamespace(tool=t, room=room, repo=str(repo) if repo else None,
                                mode=mode, name=None, model=FREE_MODEL.get(t),
-                               lead=(t == lead), trust=None)
+                               lead=(t == lead), trust=None,
+                               disclosed=invitee)  # asked above, after the note
         try:
             add(args, console)
             added.append(t)

@@ -36,6 +36,12 @@ from quorus_cli import agent_proc
 # opencode = any model: Ollama (local), OpenRouter, DeepSeek, Qwen, Gemini...
 HARNESSES = ("claude", "codex", "gemini", "opencode")
 _LABEL_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+# Shown before an invited member gives an agent write access on a teammate's
+# relay, in the wizard and in `quorus agent add` (Codex's trust call on 3212878c,
+# review of 0f9a90b7): key stamps keep other members out, not the relay's owner.
+TEAMMATE_RELAY_NOTE = ("This room is on a teammate's relay. Your agents act only on requests "
+                       "sent with your own key, and its owner runs the relay, so you're "
+                       "trusting it to report who sent what.")
 LABEL_PREFIX = "dev.quorus.agent."
 _LA = Path.home() / "Library" / "LaunchAgents"
 MODES = ("default", "manual", "autonomous")
@@ -356,8 +362,20 @@ def _add(args: Any, console: Any) -> None:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
+    member = (cfg.get("api_key") or "").startswith("quorus_pk_")
+    mode = args.mode
+    if (member and repo is not None and mode == "autonomous"
+            and not getattr(args, "disclosed", False)):
+        console.print(f"[dim]{TEAMMATE_RELAY_NOTE}[/]")
+        if sys.stdin.isatty():
+            from rich.prompt import Confirm
+
+            if not Confirm.ask(f"Let @{name} edit files and run commands in {repo} when "
+                               "you ask?", default=False):
+                mode = None  # Enter keeps each tool's own permissions
+        # Not a terminal: the explicit --mode autonomous is the consent.
     cred, legacy = _credentials(cfg, name, suffix)
-    if (cfg.get("api_key") or "").startswith("quorus_pk_"):
+    if member:
         _pin_owner(cfg, name)
     # Adding members requires the room owner/admin, not the child agent
     # (self-join is deliberately forbidden even if it inherited membership).
@@ -365,7 +383,7 @@ def _add(args: Any, console: Any) -> None:
     _join(cfg, args.room, name, _bearer(cfg, join_cred, legacy))
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
-        mode = _bind(args.room, repo, args.mode, getattr(args, "trust", None))
+        mode = _bind(args.room, repo, mode, getattr(args, "trust", None))
         console.print(f"[success]✓[/] #{args.room} works in {repo} [dim]({mode})[/]")
     if getattr(args, "lead", False):
         previous = _read_leads().get(args.room)
