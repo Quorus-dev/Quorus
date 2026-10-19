@@ -64,7 +64,8 @@ All notable changes to Quorus are documented here. This project follows
 
 - The first-run wizard started its relay on localhost:8080 even when `RELAY_URL`
   named another address, and the hub then started a second relay there. It now uses
-  `RELAY_URL` (the same override the rest of Quorus honours) for both. And with
+  `RELAY_URL` (the same override the rest of Quorus honours) for both. A local relay
+  that never answers at startup is now stopped instead of left running untracked. And with
   `QUORUS_NO_LAUNCHD=1`, `quorus agent` never calls launchctl, for sandboxes with a
   tmp HOME. The new-user findings (F1-F4 and Esc on the / menu) are now pty tests
   that run plain `quorus` with a clean HOME (`tests/firstrun/`).

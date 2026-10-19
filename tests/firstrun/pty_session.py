@@ -28,6 +28,7 @@ import select
 import signal
 import socket
 import struct
+import subprocess
 import sys
 import termios
 import threading
@@ -69,19 +70,19 @@ def child_env(home: Path, relay_url: str) -> dict[str, str]:
 
 class PtySession:
     def __init__(self, home: Path, *, cols: int = 120, rows: int = 40) -> None:
-        self.home = home
+        home.mkdir(parents=True, exist_ok=True)
+        self.home = home.resolve()  # /var is /private/var on macOS: compare resolved
         self.port = free_port()
         self.relay_url = f"http://127.0.0.1:{self.port}"
         self._raw = ""
         self._mark = 0
         self._lock = threading.Lock()
-        home.mkdir(parents=True, exist_ok=True)
         pid, fd = pty.fork()
         if pid == 0:  # the child: the user's terminal is this pty
             try:
-                os.chdir(home)
+                os.chdir(self.home)
                 os.execve(sys.executable, [sys.executable, "-c", _RUN],
-                          child_env(home, self.relay_url))
+                          child_env(self.home, self.relay_url))
             finally:
                 os._exit(127)
         self.pid, self.fd = pid, fd
@@ -178,16 +179,62 @@ class PtySession:
         self._stop_relay()
 
     def _stop_relay(self) -> None:
-        """The relay the first run started (detached, its own session): stopped
-        through local_relay, which signals only the process its pid file names."""
-        from quorus.runtime.local_relay import stop_started_relay
+        stop_home_relays(self.home, self.port)
 
-        saved = os.environ.get("QUORUS_CONFIG_DIR")
-        os.environ["QUORUS_CONFIG_DIR"] = str(self.home / ".quorus")
-        try:
-            stop_started_relay(self.port)
-        finally:
-            if saved is None:
-                os.environ.pop("QUORUS_CONFIG_DIR", None)
-            else:
-                os.environ["QUORUS_CONFIG_DIR"] = saved
+
+def spawned_relays(home: Path) -> list[int]:
+    """Pids of every relay process *home*'s relay log says it started."""
+    try:
+        log = (home / ".quorus" / "relay.log").read_text(errors="replace")
+    except OSError:
+        return []
+    return [int(n) for n in re.findall(r"Started server process \[(\d+)\]", log)]
+
+
+def stop_home_relays(home: Path, port: int) -> None:
+    """Every relay *home* started, not just the one its pid file names: a relay
+    the pid file missed (a startup timeout, a second start) must not outlive the
+    test (codex, review of e409ee1a). The pid-file relay goes through
+    local_relay's identity check; any other is signalled only while it is still a
+    `-m quorus.relay_cli` process whose working directory is *home*. A relay that
+    can't be stopped fails the test."""
+    from quorus.runtime.local_relay import RELAY_ARGV_TAIL, _ps, stop_started_relay
+
+    home = home.resolve()
+    saved = os.environ.get("QUORUS_CONFIG_DIR")
+    os.environ["QUORUS_CONFIG_DIR"] = str(home / ".quorus")
+    try:
+        stop_started_relay(port)
+    finally:
+        if saved is None:
+            os.environ.pop("QUORUS_CONFIG_DIR", None)
+        else:
+            os.environ["QUORUS_CONFIG_DIR"] = saved
+    survivors = []
+    for pid in spawned_relays(home):
+        if not _ps(pid, "command").endswith(RELAY_ARGV_TAIL) or _cwd(pid) != home:
+            continue  # already gone, or a reused pid that isn't ours
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(50):
+            if not _ps(pid, "command").endswith(RELAY_ARGV_TAIL):  # gone (or a zombie)
+                break
+            time.sleep(0.1)
+        else:
+            survivors.append(pid)
+    if survivors:
+        raise AssertionError(f"relay(s) {survivors} from {home} didn't stop")
+
+
+def _cwd(pid: int) -> Path | None:
+    """A process's working directory (Linux /proc, else lsof on macOS)."""
+    try:
+        return Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    paths = [line[1:] for line in out.splitlines() if line.startswith("n")]
+    return Path(paths[0]).resolve() if paths else None

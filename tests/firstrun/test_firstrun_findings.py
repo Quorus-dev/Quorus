@@ -10,19 +10,18 @@ message, so no test can pass on another's output.
 from __future__ import annotations
 
 import json
-import sys
 import time
 
 import httpx
 import pytest
 
 import quorus
+
+# Skip before importing the harness: it needs fcntl/termios, which Windows lacks.
+pytest.importorskip("fcntl", reason="needs a POSIX pty")
 from tests.firstrun.pty_session import ENTER, ESC, PtySession, plain
 
-pytestmark = [
-    pytest.mark.firstrun,
-    pytest.mark.skipif(sys.platform == "win32", reason="needs a pty"),
-]
+pytestmark = pytest.mark.firstrun
 
 
 @pytest.fixture(scope="module")
