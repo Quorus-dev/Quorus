@@ -5,6 +5,28 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-10-19
+
+Fixes only, from a full audit of 0.6.1 installed from PyPI.
+
+### Fixed
+
+- A reviewer could approve a commit without seeing it. When an agent was asked to review
+  a commit on a read-only turn (the demo's reviewer, or anyone who isn't the agent's
+  owner), it had no shell, so it reviewed the author's description instead of the diff.
+  Quorus now runs `git show` itself for each commit hash named in the request (up to 3,
+  with git's external diff, textconv, pager, fsmonitor, signing and `GIT_*` overrides
+  off, and a size cap) and puts the output in the reviewer's prompt, marked as untrusted.
+  The reviewer's own permissions don't change.
+- `QUORUS_NOTIFY=0` didn't turn off every desktop banner, as the README says: an agent's
+  @-mention banner, the hub's and the watcher's ignored it. They now all check the same
+  switch, and `quorus demo` no longer shows banners.
+
+### Changed
+
+- The Claude Code plugin and the README link the privacy policy
+  (https://www.quorus.dev/privacy). The plugin pins `quorus-ai==0.6.2`.
+
 ## [0.6.1] — 2026-10-19
 
 Fixes only, from stranger tests of 0.6.0.
