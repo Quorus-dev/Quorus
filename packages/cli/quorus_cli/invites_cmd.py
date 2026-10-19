@@ -79,9 +79,9 @@ def cmd_invites(args) -> int:
     for inv in invites:
         # Observer invites are read-only; say so, or they look like any other.
         role = "  read-only" if inv.get("role") == "observer" else ""
-        # The relay secret signs as "admin"; to the owner reading this list
-        # that's their own invite, not someone called admin (stranger test F5).
-        issuer = "you (relay secret)" if inv["issuer"] == "admin" else inv["issuer"]
+        # The relay secret signs as "admin": anyone holding the secret could
+        # have made it, so name the credential, not a person (codex, c7bfdef8).
+        issuer = "a relay-secret holder" if inv["issuer"] == "admin" else inv["issuer"]
         ui.console.print(f"  {inv['id']}  #{inv['room']}{role}  {inv['uses']}/{inv['max_uses']} "
                          f"used  {_status(inv, now)}  by {issuer}")
     ui.console.print("\n  [dim]revoke one: quorus invites --revoke <id>[/dim]")

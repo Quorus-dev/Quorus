@@ -574,8 +574,15 @@ def _ask_relay_address(console: Console, tries: int = 3) -> str:
     for _ in range(tries):
         raw = Prompt.ask("  Their relay address (shown next to the code, e.g. "
                          "http://192.168.1.20:8080)").strip().rstrip("/")
-        parsed = urlparse(raw)
-        if parsed.scheme in ("http", "https") and parsed.hostname and " " not in raw:
+        try:
+            parsed = urlparse(raw)
+            port_ok = parsed.port is None or 0 < parsed.port < 65536
+        except ValueError:  # "http://[bad", "http://h:99999" (codex, review of c7bfdef8)
+            parsed, port_ok = None, False
+        # Never accept credentials in the URL; the reply below doesn't echo the input.
+        if (parsed is not None and port_ok and parsed.scheme in ("http", "https")
+                and parsed.hostname and not parsed.username and not parsed.password
+                and " " not in raw):
             return raw
         console.print("  [warning]That isn't an address.[/] [dim]It looks like "
                       "http://192.168.1.20:8080: your teammate's `quorus share` "

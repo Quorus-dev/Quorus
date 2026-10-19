@@ -47,6 +47,12 @@ def test_wizard_asks_again_for_a_relay_address_that_isnt_one(monkeypatch):
     console = SimpleNamespace(print=lambda *a, **_k: printed.append(" ".join(map(str, a))))
     assert hub._ask_relay_address(console) == "http://192.168.1.20:8080"
     assert sum("isn't an address" in p for p in printed) == 2
+    # Malformed, out-of-range ports and URL credentials: asked again, never echoed.
+    printed.clear()
+    tricky = iter(["http://[bad", "http://h:99999", "http://bob:pw@h:8080"])
+    monkeypatch.setattr(hub.Prompt, "ask", lambda *_a, **_k: next(tricky))
+    assert hub._ask_relay_address(console) == ""
+    assert len(printed) == 3 and not any("pw" in p for p in printed)
     bad = iter(["nope"] * 3)
     monkeypatch.setattr(hub.Prompt, "ask", lambda *_a, **_k: next(bad))
     assert hub._ask_relay_address(console) == ""
@@ -110,4 +116,20 @@ def test_the_owner_sees_their_own_invites_not_admins(monkeypatch):
     printed: list[str] = []
     monkeypatch.setattr(cli._ui.console, "print", lambda s="", *a, **kw: printed.append(s))
     assert invites_cmd.cmd_invites(SimpleNamespace(revoke=None)) == 0
-    assert "by you (relay secret)" in printed[0] and "by bob" in printed[1]
+    assert "by a relay-secret holder" in printed[0] and "by bob" in printed[1]
+
+
+def test_release_name_says_the_name_stays_reserved(tmp_path, capsys):
+    # F7: "the next claim gets a new key" read as "the name is free again", but
+    # names carry rooms, creator rights and memory; reuse stays refused.
+    from quorus_cli.bundle_cmd import cmd_release_name
+    from rich.console import Console
+
+    from quorus.auth.participant_keys import ParticipantKeyStore
+
+    ParticipantKeyStore(tmp_path).claim("bob")
+    console = Console(force_terminal=False, width=200)
+    cmd_release_name(SimpleNamespace(name="bob", data_dir=str(tmp_path)), console)
+    out = capsys.readouterr().out
+    assert "stays reserved" in out and "new name" in out
+    assert "next claim gets a new key" not in out
