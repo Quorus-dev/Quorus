@@ -85,6 +85,11 @@ def _env() -> dict[str, str]:
                 "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
                 # git >= 2.44: a missing object is an error, never a fetch.
                 "GIT_NO_LAZY_FETCH": "1", "GIT_PROTOCOL_FROM_USER": "0",
+                # An empty allowlist: no transport at all, custom git-remote-*
+                # helpers included, and it outranks every protocol.* key in the
+                # repo's config, on git versions that ignore GIT_NO_LAZY_FETCH too
+                # (codex, review of b522df57).
+                "GIT_ALLOW_PROTOCOL": "",
                 "GIT_NO_REPLACE_OBJECTS": "1",
                 # .git/info/grafts can give a commit a different parent, which
                 # changes its diff the same way: point git at an empty grafts file.

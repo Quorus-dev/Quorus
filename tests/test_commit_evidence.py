@@ -183,6 +183,40 @@ def test_a_missing_blob_never_lazy_fetches_through_a_repo_helper(repo: Path,
     assert "return a + b" not in block  # the blob isn't here, and nothing fetched it
 
 
+def test_a_custom_remote_helper_never_runs_even_on_older_git(
+        repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pinning transports by name missed custom `git-remote-<name>` helpers. On a
+    git that ignores GIT_NO_LAZY_FETCH (before 2.44), a repo allowing
+    `protocol.probe.allow=always` ran its own helper (codex, review of b522df57).
+    The empty GIT_ALLOW_PROTOCOL list outranks every protocol key in config."""
+    sentinels = tmp_path / "ran.txt"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _sentinel_script(tmp_path, "probe", sentinels).rename(bin_dir / "git-remote-probe")
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    real_env = ce._env
+
+    def older_git() -> dict[str, str]:
+        env = real_env()
+        env.pop("GIT_NO_LAZY_FETCH", None)
+        return env
+
+    monkeypatch.setattr(ce, "_env", older_git)
+    _git(repo, "config", "uploadpack.allowFilter", "true")
+    partial = tmp_path / "partial"
+    subprocess.run(["git", "-c", "protocol.file.allow=always", "clone", "-q",
+                    "--filter=blob:none", "--no-checkout", f"file://{repo}", str(partial)],
+                   check=True, capture_output=True)
+    _git(partial, "config", "remote.origin.url", "probe::anything")
+    _git(partial, "config", "protocol.probe.allow", "always")
+    sha = _head(repo)
+
+    block = ce.evidence_block(partial, f"review {sha[:9]}", "n")
+
+    assert not sentinels.exists(), sentinels.read_text()
+    assert "return a + b" not in block
+
+
 def _bad_and_benign(repo: Path) -> tuple[str, str]:
     """A bad commit, then a benign one on a side branch with the same parent."""
     base = _head(repo)
