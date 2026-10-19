@@ -61,7 +61,9 @@ def test_non_member_say_keeps_the_join_hint(monkeypatch, errors):
 
 
 def test_revoked_invitee_is_told_about_the_room_not_their_secret(errors):
-    cli._report_http_error(_refused("Must be a room member to access this resource").response)
+    with pytest.raises(SystemExit) as exit_:
+        cli._report_http_error(_refused("Must be a room member to access this resource").response)
+    assert exit_.value.code == 3  # a refusal is not a success
     assert cli._explain_http_error(_refused("Must be a room member to access this resource")) == 3
     for msg, hint in errors:
         assert "not in that room" in msg and "revoked" in hint

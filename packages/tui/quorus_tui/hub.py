@@ -426,8 +426,7 @@ def _first_launch_setup(console: Console) -> dict:
     console.print()
     console.print(
         "  [muted]Press Enter to run Quorus on this computer, or paste a "
-        "teammate's invite ([/][accent]quorus://…[/][muted] link or [/]"
-        "[accent]ABCD-EFGH[/][muted] code) to join their relay.[/]"
+        "teammate's invite code ([/][accent]ABCD-EFGH[/][muted]) to join their relay.[/]"
     )
     raw = Prompt.ask(
         "\n  Invite, or Enter to run it here", default="", show_default=False
@@ -460,19 +459,23 @@ def _first_launch_setup(console: Console) -> dict:
         if canonical is None:
             console.print(
                 "\n  [error]Couldn't recognize that input.[/] "
-                "[dim]Expected a quorus:// link or a code like ABCD-EFGH.[/]"
+                "[dim]Expected an invite code like ABCD-EFGH.[/]"
             )
         else:
             # A short code lives on the teammate's relay: we need its address.
-            relay_url = Prompt.ask(
-                "  Their relay address (shown next to the code, e.g. "
-                "http://192.168.1.20:8080)").strip().rstrip("/") or relay_url
-            console.print(f"  [dim]Resolving [accent]{raw}[/] on {relay_url}...[/] ", end="")
-            try:
-                resp = httpx.get(f"{relay_url}/v1/join/resolve/{canonical}",
-                                 timeout=10, follow_redirects=True)
-            except Exception:
-                resp = None
+            # Anything that isn't one (a stray message, a bare word) is asked
+            # again instead of being "resolved" against it (stranger test F2).
+            address = _ask_relay_address(console)
+            relay_url = address or relay_url
+            resp = None
+            if address:
+                console.print(f"  [dim]Resolving [accent]{raw}[/] on {relay_url}...[/] ",
+                              end="")
+                try:
+                    resp = httpx.get(f"{relay_url}/v1/join/resolve/{canonical}",
+                                     timeout=10, follow_redirects=True)
+                except Exception:
+                    resp = None
             if resp is not None and resp.status_code == 200:
                 payload = (resp.json() or {}).get("payload") or {}
                 relay_url = (payload.get("r") or relay_url).rstrip("/")
@@ -490,7 +493,7 @@ def _first_launch_setup(console: Console) -> dict:
                         f"  [muted]You'll land in [room]#{payload['n']}[/] "
                         "automatically.[/]"
                     )
-            else:
+            elif address:
                 console.print("[error]code not found, expired, or relay unreachable[/]")
     else:
         secret = new_secret()
@@ -501,11 +504,19 @@ def _first_launch_setup(console: Console) -> dict:
             console.print(f"  [dim]{note}[/]")
 
     if not relay_ok:
-        console.print(
-            "\n  [dim]Not connected yet. Fix the above and rerun [bold]quorus[/], or set "
-            "up explicitly: [accent]quorus init <name> --secret -[/] then "
-            "[accent]quorus relay[/].[/]"
-        )
+        if raw:
+            # An invitee has no secret: `quorus init --secret` was the wrong advice.
+            console.print(
+                "\n  [dim]Not connected yet. Check the code and your teammate's relay "
+                "address, then rerun [bold]quorus[/], or join directly: [accent]quorus "
+                "join <code> --relay <their-address>[/].[/]"
+            )
+        else:
+            console.print(
+                "\n  [dim]Not connected yet. Fix the above and rerun [bold]quorus[/], or set "
+                "up explicitly: [accent]quorus init <name> --secret -[/] then "
+                "[accent]quorus relay[/].[/]"
+            )
         # Don't save a half-working config: the next `quorus` re-offers this
         # wizard instead of opening a hub that can't reach anything.
         return {}
@@ -553,6 +564,23 @@ def _exchange_api_key_for_jwt(relay: str, api_key: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+def _ask_relay_address(console: Console, tries: int = 3) -> str:
+    """Ask for the teammate's relay address until it looks like one
+    (http(s)://host[:port]); empty after *tries* bad answers."""
+    from urllib.parse import urlparse
+
+    for _ in range(tries):
+        raw = Prompt.ask("  Their relay address (shown next to the code, e.g. "
+                         "http://192.168.1.20:8080)").strip().rstrip("/")
+        parsed = urlparse(raw)
+        if parsed.scheme in ("http", "https") and parsed.hostname and " " not in raw:
+            return raw
+        console.print("  [warning]That isn't an address.[/] [dim]It looks like "
+                      "http://192.168.1.20:8080: your teammate's `quorus share` "
+                      "shows it after --relay.[/]")
+    return ""
 
 
 def _redeem_in_wizard(relay_url: str, code: str, name: str) -> str:
@@ -3468,10 +3496,10 @@ def _main_input_loop(
 
             if cmd_lower == "j":
                 # Join by invite: an ABCD-EFGH code (what `quorus share`
-                # prints), a quorus:// link, or a legacy quorus_join_ token.
+                # prints); a 0.5.x quorus:// link or quorus_join_ token still works.
                 # It used to reject codes and never actually joined anything.
                 console.print()
-                token = Prompt.ask("  Paste invite (ABCD-EFGH code or quorus:// link)").strip()
+                token = Prompt.ask("  Paste invite code (ABCD-EFGH)").strip()
                 if not token:
                     state.set_status_bar("Cancelled — no invite entered.")
                 else:
