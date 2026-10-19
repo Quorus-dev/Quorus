@@ -96,7 +96,7 @@ def test_concurrent_daemons_never_lose_a_write(store):
 
 
 def test_cli_lists_undoes_redoes_and_switches_off(store):
-    assert "nothing learned yet" in _run()
+    assert "Nothing learned yet" in _run()
     _adapt()
     listed = _run()
     assert "t1" in listed and "x0.67" in listed and "relay.test · arav · /repo" in listed

@@ -53,7 +53,7 @@ def test_report_shows_arms_prediction_and_unmatched(tmp_path, monkeypatch, capsy
 def test_few_turns_are_called_too_few(tmp_path, monkeypatch, capsys) -> None:
     _logs(tmp_path, "arav-codex", n=3, fail_low=False)
     out = _run(monkeypatch, capsys, "--runtime-dir", str(tmp_path), "--agent", "arav-codex")
-    assert "too few to judge loop A yet" in out
+    assert "too few to say yet" in out
 
 
 def test_json_is_the_report_per_agent(tmp_path, monkeypatch, capsys) -> None:
@@ -66,7 +66,7 @@ def test_json_is_the_report_per_agent(tmp_path, monkeypatch, capsys) -> None:
 
 def test_no_logs_says_so_and_writes_nothing(tmp_path, monkeypatch, capsys) -> None:
     out = _run(monkeypatch, capsys, "--runtime-dir", str(tmp_path))
-    assert "no agent here has bid on an @open yet" in out
+    assert "Nothing to report yet" in out and "@open <task>" in out
     assert list(tmp_path.iterdir()) == []
 
 
