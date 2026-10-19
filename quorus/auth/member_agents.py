@@ -81,3 +81,11 @@ def owner_of(store, name: str) -> str | None:
     if info and info["kind"] == "agent" and info["owner"]:
         return info["owner"]
     return None
+
+
+def owner_claim_of(store, name: str) -> str | None:
+    """The claim generation of the member who owns agent *name*, or None."""
+    info = store.info(name)
+    if info and info["kind"] == "agent" and info["owner"] and info["owner_claim_id"]:
+        return info["owner_claim_id"]
+    return None

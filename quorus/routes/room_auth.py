@@ -157,6 +157,20 @@ async def agent_owner(request: Request, auth: AuthContext) -> str | None:
     return await asyncio.to_thread(owner_of, store, auth.sub)
 
 
+async def agent_owner_claim(request: Request, auth: AuthContext) -> str | None:
+    """The owner's claim for the calling agent, for its message stamp, or None."""
+    if auth.is_legacy or not auth.sub or not auth.claims.get("pk_claim"):
+        return None
+    store = getattr(request.app.state, "participant_keys", None)
+    if store is None:
+        return None
+    import asyncio
+
+    from quorus.auth.member_agents import owner_claim_of
+
+    return await asyncio.to_thread(owner_claim_of, store, auth.sub)
+
+
 async def drop_owned_agents(request: Request, tid: str, rid: str, owner: str) -> None:
     """After *owner* left or was removed from a room, every agent *owner* owns
     leaves it too, so no route that checks membership by name still lets them in."""

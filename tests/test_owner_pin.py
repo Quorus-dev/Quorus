@@ -90,13 +90,43 @@ def test_a_message_missing_from_history_is_read_only(daemon) -> None:
     assert not _wake(daemon, _delivered(msg), [])
 
 
+BOB_AGENT = {"sender_tenant": "_legacy", "sender_auth": "key", "sender_claim_id": "a" * 32,
+             "sender_owner_claim_id": "c" * 32}  # an agent bob's own key claimed
+
+
 def test_the_owners_agent_carries_the_owners_key_trust(daemon) -> None:
     owner_pin.save_pin("bob-codex", **PIN, path=daemon.pins)
     root = _stored("m1", "bob", **BOB_KEY)
-    hop = _stored("m2", "bob-claude", reply_to="m1")
+    hop = _stored("m2", "bob-claude", reply_to="m1", **BOB_AGENT)
     assert _wake(daemon, _delivered(hop), [root, hop])
     forged_root = _stored("m1", "bob", sender_tenant="_legacy", sender_auth="secret")
     assert not _wake(daemon, _delivered(hop), [forged_root, hop])
+
+
+@pytest.mark.parametrize("stamp", [
+    # codex, review of 0f9a90b7: the relay owner posts as an unclaimed `bob-claude`,
+    # replying to an old request bob really sent with his key.
+    {"sender_tenant": "_legacy", "sender_auth": "secret"},
+    {},  # no stamp
+    {**BOB_AGENT, "sender_owner_claim_id": "d" * 32},  # someone else's agent
+    {k: v for k, v in BOB_AGENT.items() if k != "sender_owner_claim_id"},  # no owner
+    {**BOB_AGENT, "sender_tenant": "other"},
+])
+def test_a_bob_named_hop_without_bobs_agent_stamp_is_read_only(daemon, stamp) -> None:
+    owner_pin.save_pin("bob-codex", **PIN, path=daemon.pins)
+    root = _stored("m1", "bob", **BOB_KEY)
+    forged = _stored("m2", "bob-claude", reply_to="m1", **stamp)
+    assert not _wake(daemon, _delivered(forged), [root, forged])
+    # ...and no further down a chain of real agents either.
+    real = _stored("m3", "bob-claude", reply_to="m2", **BOB_AGENT)
+    assert not _wake(daemon, _delivered(real), [root, forged, real])
+
+
+def test_a_delivered_copy_must_match_the_stored_sender(daemon) -> None:
+    owner_pin.save_pin("bob-codex", **PIN, path=daemon.pins)
+    root = _stored("m1", "bob", **BOB_KEY)
+    hop = _stored("m2", "bob-claude", reply_to="m1", **BOB_AGENT)
+    assert not _wake(daemon, {**_delivered(hop), "from_name": "bob-gemini"}, [root, hop])
 
 
 def test_no_pin_keeps_todays_rules(daemon) -> None:

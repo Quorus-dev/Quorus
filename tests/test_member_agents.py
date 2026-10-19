@@ -176,3 +176,27 @@ async def test_a_reclaimed_owner_name_doesnt_revive_old_agents(tmp_path) -> None
     with store._connect() as db:
         db.execute("UPDATE claims SET claim_id = 'other' WHERE name = 'bob'")
     assert not store.is_current("bob-codex", agent_gen)
+
+
+async def test_an_owned_agents_messages_carry_the_owners_claim(client: AsyncClient) -> None:
+    """bob's daemon trusts a `bob-*` hop only with this stamp, which the relay
+    reads from its claims table. The relay owner can post as an unclaimed
+    `bob-claude` with the secret, but that post never carries it (codex, review
+    of 0f9a90b7)."""
+    _, bob = await _join(client, "build", "bob")
+    agent = await _agent(client, bob, "bob-codex")
+    assert await _say(client, agent, "bob-codex") == 200
+    assert await _say(client, bob, "bob") == 200
+    r = await client.post("/rooms/build/join", json={"participant": "bob-claude"},
+                          headers=ADMIN)
+    assert r.status_code == 200, r.text
+    assert await _say(client, ADMIN, "bob-claude") == 200
+    history = (await client.get("/rooms/build/history", headers=ADMIN)).json()
+    msgs = history if isinstance(history, list) else history["messages"]
+    by = {m["from_name"]: m for m in msgs}
+    bob_claim = by["bob"]["sender_claim_id"]
+    assert by["bob-codex"]["sender_auth"] == "key"
+    assert by["bob-codex"]["sender_owner_claim_id"] == bob_claim
+    assert "sender_owner_claim_id" not in by["bob"]  # a person, not an agent
+    assert by["bob-claude"]["sender_auth"] == "secret"
+    assert "sender_owner_claim_id" not in by["bob-claude"]

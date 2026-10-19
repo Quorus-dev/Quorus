@@ -57,34 +57,47 @@ def save_pin(participant: str, tenant: str, claim_id: str, path: Path | None = N
     write_private_text(target, json.dumps(data, indent=2) + "\n")
 
 
+def owners_agent(msg: dict[str, Any], owner: str, pin: dict[str, str]) -> bool:
+    """*msg* was sent by one of the pinned owner's own agents: a ``<owner>-*``
+    name, stamped ``key`` in the pinned tenant with the owner's claim as its
+    owner (``sender_owner_claim_id``). A secret caller can pick a ``bob-*`` name
+    but never that stamp (codex, review of 0f9a90b7)."""
+    return ((msg.get("from_name") or "").startswith(f"{owner}-")
+            and msg.get("sender_tenant") == pin.get("tenant")
+            and msg.get("sender_auth") == "key" and bool(msg.get("sender_claim_id"))
+            and bool(pin.get("claim_id"))
+            and msg.get("sender_owner_claim_id") == pin["claim_id"])
+
+
 def owner_root(envelope: dict[str, Any], history: list[dict[str, Any]],
-               owner: str) -> dict[str, Any] | None:
+               owner: str, pin: dict[str, str]) -> dict[str, Any] | None:
     """The stored message of the owner's request this wake serves: the envelope
     itself when the owner sent it, else the first human message up its reply
-    chain through the owner's agents. Stamps live on stored messages only, so a
+    chain, where the triggering message and every hop is one of the owner's
+    own agents by the relay's stamp. Stamps live on stored messages only, so a
     message missing from *history* is None (read-only)."""
     by_id = {m.get("id"): m for m in history if m.get("id")}
     sender = envelope.get("from_name") or ""
-    if sender == owner:
-        # A delivered copy has its own id; the stored message's is message_id.
-        return by_id.get(envelope.get("message_id") or envelope.get("id"))
-    if not sender.startswith(f"{owner}-"):
+    # A delivered copy has its own id; the stored message's is message_id.
+    msg = by_id.get(envelope.get("message_id") or envelope.get("id"))
+    if msg is None or (msg.get("from_name") or "") != sender:
         return None
-    cur, seen = envelope.get("reply_to"), set()
-    while cur and cur in by_id and cur not in seen:
-        seen.add(cur)
-        msg = by_id[cur]
+    seen: set[str] = set()
+    while True:
         who = msg.get("from_name") or ""
         if who == owner:
             return msg
-        if not who.startswith(f"{owner}-"):
+        if not owners_agent(msg, owner, pin):
             return None
+        seen.add(msg["id"])
         cur = msg.get("reply_to")
-    return None
+        if not cur or cur in seen or cur not in by_id:
+            return None
+        msg = by_id[cur]
 
 
 def pinned_owner_request(envelope: dict[str, Any], history: list[dict[str, Any]],
                          owner: str, pin: dict[str, str]) -> bool:
     """This wake serves a request the pinned owner sent with their own key."""
-    root = owner_root(envelope, history, owner)
+    root = owner_root(envelope, history, owner, pin)
     return root is not None and authenticated(root, pin)

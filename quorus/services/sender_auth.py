@@ -7,23 +7,33 @@ the claim generation, so a name that was released and claimed again by someone
 else gets a different ``sender_claim_id``. A hosted login carries the immutable
 participant id. Loop B trusts an owner verdict only when the stamp matches the
 owner's pinned identity (codex, review of the plan).
+
+An agent a member owns (``quorus.auth.member_agents``) is also stamped with its
+owner's claim, ``sender_owner_claim_id``, read from the relay's claims table,
+so the owner's daemon can tell the owner's real agents from a secret caller
+using a ``bob-*`` name (codex, review of 0f9a90b7).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-FIELDS = ("sender_auth", "sender_tenant", "sender_claim_id", "sender_participant_id")
+FIELDS = ("sender_auth", "sender_tenant", "sender_claim_id", "sender_participant_id",
+          "sender_owner_claim_id")
 _CLAIM = "pk_claim"  # quorus.auth.participant_routes.CLAIM_CLAIM
 
 
-def stamp(auth: Any, tenant_id: str) -> dict[str, str]:
+def stamp(auth: Any, tenant_id: str, owner_claim_id: str | None = None) -> dict[str, str]:
+    """*owner_claim_id*: the claim of the member who owns this key's agent claim,
+    looked up by the relay (never taken from the request)."""
     out = {"sender_tenant": tenant_id}
     if auth.is_legacy:
         out["sender_auth"] = "secret"
     elif auth.claims.get(_CLAIM):
         out["sender_auth"] = "key"
         out["sender_claim_id"] = str(auth.claims[_CLAIM])
+        if owner_claim_id:
+            out["sender_owner_claim_id"] = str(owner_claim_id)
     elif auth.participant_id:
         out["sender_auth"] = "jwt"
         out["sender_participant_id"] = str(auth.participant_id)
