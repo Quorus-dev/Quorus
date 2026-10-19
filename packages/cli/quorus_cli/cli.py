@@ -1316,6 +1316,12 @@ def _cmd_scorecard(args):
     cmd_scorecard(args, console)
 
 
+def _cmd_track_report(args):
+    from quorus_cli.track_report_cmd import cmd_track_report
+
+    sys.exit(cmd_track_report(args, console))
+
+
 def _cmd_invites(args):
     from quorus_cli.invites_cmd import cmd_invites
 
@@ -8518,6 +8524,7 @@ def _print_grouped_help():
         ]),
         ("MEASURE", [
             ("scorecard",          "Whose work holds up in this repo, by agent/vendor"),
+            ("track-report",       "Loop A's shadow numbers per agent, last 24h"),
             ("duel",               "Two agents, one task; tests gate, blind judge picks"),
             ("retro <room>",       "What's going wrong in a room, ranked, with fixes"),
             ("replay <room>",      "Write a shareable page of how a room did a task"),
@@ -9909,6 +9916,13 @@ def main():
     p_score.add_argument("--by", choices=["agent", "vendor"], default="agent")
     p_score.add_argument("--json", action="store_true", help="One JSON row per commit")
 
+    p_track = sub.add_parser(
+        "track-report", help="Loop A's shadow numbers per agent, last 24h (read-only)")
+    p_track.add_argument("--agent", help="One agent (default: every agent on this machine)")
+    p_track.add_argument("--runtime-dir", help="Where the daemon keeps its logs "
+                         "(default: ~/.quorus/runtime)")
+    p_track.add_argument("--json", action="store_true", help="Print the report as JSON")
+
     p_agent = sub.add_parser("agent", **_help_block(
         synopsis="Add your AI agents (Claude, Codex, Gemini) to a room.",
         description=(
@@ -10249,6 +10263,7 @@ def main():
         "room": _cmd_room,
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
+        "track-report": _cmd_track_report,
         "tune": _cmd_tune,
         "invites": _cmd_invites,
         "phone": _cmd_phone,
