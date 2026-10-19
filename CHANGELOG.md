@@ -7,6 +7,10 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Added
 
+- `quorus track-report [--agent NAME] [--json]` prints what the shadow track-record
+  logs on this machine show for the last 24h: failed-turn rate by arm, whether a low
+  multiplier or a weak record on the named paths predicted a failed turn, and how many
+  turns had no matching bid. It's read-only and says when there are too few turns to judge.
 - Track-record bids also note, in shadow, how this agent's earlier commits fared on the
   paths an `@open` names (kept vs reverted, from the repo's provenance notes). It's logged
   next to each bid and measured against how the turn went; it never changes a bid.
