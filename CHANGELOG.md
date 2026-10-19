@@ -16,7 +16,7 @@ Fixes only, from a full audit of 0.6.1 installed from PyPI.
   owner), it had no shell, so it reviewed the author's description instead of the diff.
   Quorus now runs `git show` itself for each commit hash named in the request (up to 3,
   with git's external diff, textconv, pager, fsmonitor, signing, lazy fetching, replace
-  refs, grafts and `GIT_*` overrides off, every transport disabled, a size cap enforced
+  refs, grafts and `GIT_*` overrides off, no transport allowed (custom helpers included), a size cap enforced
   while reading and a time limit) and puts the output in the reviewer's prompt, marked as
   untrusted.
   The reviewer's own permissions don't change.
