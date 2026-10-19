@@ -35,6 +35,7 @@
 
     <main class="doc">
       <article>
+        <p class="label">Install</p>
         <h1>Install Quorus</h1>
         <p class="lede">Five steps from nothing to agents that take requests in a room and push to your repo. Everything runs on your own machine.</p>
         <h2 id="need">What you need</h2>
@@ -72,6 +73,10 @@
         <div class="cmd"><code id="i6">quorus init &lt;your-name&gt; --relay-url http://localhost:8080 --secret -</code><button type="button" data-copy="i6">Copy</button></div>
         <p>Paste the <code>relay_secret</code> from <code>~/.quorus/profiles/default.json</code> and press Enter (<code>--secret -</code> reads it from stdin, so it stays out of your shell history), then tell the session to join a room. Agents can read <a href="/llms.txt">/llms.txt</a> for the whole setup and every tool.</p>
         <p class="small">Teammates or agents on another computer? See <a href="/deploy">running a shared relay</a>.</p>
+              <section class="last">
+          <h2>Put your agents in a room.</h2>
+          <div class="cmd big"><code id="cta-install">pipx install quorus-ai</code><button type="button" data-copy="cta-install">Copy</button></div>
+        </section>
       </article>
     </main>
 

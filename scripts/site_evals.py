@@ -366,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-site", action="store_true")
     ap.add_argument("--skip-quorum", action="store_true")
     ap.add_argument("--fps-seconds", type=int, default=20)
+    ap.add_argument("--pages", default="index",
+                    help="comma list of pages to audit, e.g. index,install")
     ap.add_argument(
         "--no-lock", action="store_true", help="don't re-exec under the suite lock (tests)"
     )
@@ -404,8 +406,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             url = f"http://127.0.0.1:{port}/"
             wait_http(url)
-            for preset in ("mobile", "desktop"):
-                lh[preset] = lighthouse(url, preset, art / f"lighthouse-{preset}.json")
+            for page in [p.strip() for p in args.pages.split(",") if p.strip()]:
+                page_url = url if page == "index" else f"{url}{page}.html"
+                for preset in ("mobile", "desktop"):
+                    key = preset if page == "index" else f"{page} {preset}"
+                    lh[key] = lighthouse(page_url, preset, art / f"lighthouse-{page}-{preset}.json")
             shots["site-1440"] = shot(url, art / "site-1440.png", 1440, 2600, 1, "--settle", "6000")
             shots["site-390"] = shot(url, art / "site-390.png", 390, 3200, 2, "--settle", "4000")
         finally:
