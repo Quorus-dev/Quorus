@@ -9,6 +9,7 @@ send to servers or logs, and the page strips it from history.
 
 from __future__ import annotations
 
+import sys
 import webbrowser
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -28,6 +29,28 @@ def web_url(relay_url: str, token: str, name: str, room: str | None, board: bool
     return f"{relay_url.rstrip('/')}/#{frag}"
 
 
+def _check_room(relay: str, token: str, room: str) -> None:
+    """Fail before opening a browser on a room that doesn't exist: the page used
+    to open on an empty board and exit 0 (stranger test, 2026-10-19). If the
+    relay can't be asked, open anyway and let the page say what it can."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"{relay.rstrip('/')}/rooms", timeout=10,
+                         headers={"Authorization": f"Bearer {token}"})
+        rooms = resp.json() if resp.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        return
+    if not isinstance(rooms, list):
+        return
+    names = sorted(str(r.get("name")) for r in rooms if isinstance(r, dict) and r.get("name"))
+    if room.lstrip("#") in names:
+        return
+    have = ", ".join(f"#{n}" for n in names) if names else "none yet (quorus create <name>)"
+    print(f"web: no room {room.lstrip('#')!r}; your rooms: {have}", file=sys.stderr)
+    raise SystemExit(4)
+
+
 def cmd_web(args: Any, console: Any) -> None:
     from quorus_cli.phone_cmd import _participant_token
 
@@ -41,7 +64,10 @@ def cmd_web(args: Any, console: Any) -> None:
     else:
         from quorus_cli.agent_cmd import _bearer
         token = _bearer(cfg, cfg.get("api_key") or "", False)
-    url = web_url(relay, token, me, getattr(args, "room", None), not getattr(args, "chat", False),
+    room = getattr(args, "room", None)
+    if room:
+        _check_room(relay, token, room)
+    url = web_url(relay, token, me, room, not getattr(args, "chat", False),
                   fps=bool(getattr(args, "fps", False)))
     if getattr(args, "print_url", False) or not webbrowser.open(url):
         console.print("Open this in your browser (it signs you in, so don't share it):")

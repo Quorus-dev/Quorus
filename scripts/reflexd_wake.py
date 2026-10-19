@@ -40,6 +40,64 @@ from quorus.private_files import write_private_json
 # Never set from code; scripts/dogfood.sh sets it when the owner asks.
 CODEX_SANDBOX = os.environ.get("REFLEXD_CODEX_SANDBOX", "").strip()
 _CODEX_SANDBOXES = {"read-only", "workspace-write"}
+_SANDBOX_BY_MODE = {"manual": "read-only", "readonly": "read-only",
+                    "autonomous": "workspace-write"}
+
+
+def codex_effective_sandbox(mode: str = "default") -> str:
+    """What `codex exec` actually gets in *mode*: the room mode's sandbox, else
+    the daemon's REFLEXD_CODEX_SANDBOX, else `sandbox_mode` in the owner's
+    ~/.codex/config.toml, else codex's own headless default, read-only."""
+    if mode in _SANDBOX_BY_MODE:
+        return _SANDBOX_BY_MODE[mode]
+    if CODEX_SANDBOX:
+        return CODEX_SANDBOX
+    home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    try:
+        text = (home / "config.toml").read_text(encoding="utf-8")
+    except OSError:
+        return "read-only"
+    return _codex_config_sandbox(text) or "read-only"
+
+
+def _codex_config_sandbox(text: str) -> str | None:
+    """`sandbox_mode` as codex resolves it from config.toml: the active profile's
+    (`profile = "x"` selects `[profiles.x]`) over the top-level value. Parsed as
+    TOML, so quoting styles don't matter and an inactive profile's value never
+    counts (codex, review of a5b0f90e). Unparseable: unknown, so read-only."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib  # type: ignore[no-redef]
+    try:
+        data = tomllib.loads(text)
+    except (tomllib.TOMLDecodeError, ValueError):
+        return None
+    profile, profiles = data.get("profile"), data.get("profiles")
+    if isinstance(profile, str) and isinstance(profiles, dict):
+        active = profiles.get(profile)
+        if isinstance(active, dict) and isinstance(active.get("sandbox_mode"), str):
+            return active["sandbox_mode"]
+    top = data.get("sandbox_mode")
+    return top if isinstance(top, str) else None
+
+
+def cannot_write(harness: str, mode: str = "default") -> bool:
+    """*harness* is known to run with no file edits or shell in *mode*, so a
+    wake should say so once instead of trying, failing and handing the task to
+    a teammate (0.6.0 stranger test: codex and opencode bounced one fix back
+    and forth ten times). Only what's known counts: claude or gemini in
+    `default` mode run on the owner's own settings, which may allow writes."""
+    if mode == "readonly":
+        return True
+    if harness == "codex":
+        return codex_effective_sandbox(mode) == "read-only"
+    if harness == "opencode":
+        # manual/readonly deny edit and shell. default sets no permission rules,
+        # and headless `opencode run` can't ask anyone, so it has no write or
+        # shell tools either (seen live on 2.0.30).
+        return mode != "autonomous"
+    return False
 
 # Each agent works in its OWN git worktree of the bound repo (branch
 # quorus/<agent>) and fast-forwards the repo's main branch when done. Two
@@ -731,8 +789,13 @@ def wake_instructions(
     teammates: list[str], has_workspace: bool, worktree: Worktree | None = None,
     manual: bool = False, from_agent: bool = False, lead: str | None = None,
     owner: str | None = None, untrusted: str | None = None,
+    cannot_write: str | None = None,
 ) -> str:
-    """The Wake Intent block — tells the agent it may (and should) do work."""
+    """The Wake Intent block — tells the agent it may (and should) do work.
+
+    *cannot_write*: why this turn has no edits or shell, with the command the
+    owner can run. Given only on the owner's own turns: an untrusted sender
+    must never be told how to turn autonomous mode on (codex)."""
     others = ", ".join(f"@{t}" for t in teammates if t != participant) or "(none)"
     is_lead = bool(lead) and lead == participant
     led_by = lead if lead and not is_lead and lead in teammates else None
@@ -789,10 +852,15 @@ def wake_instructions(
            "approval. If one is denied or not answered, do not retry or work "
            "around it - stop and say exactly what you need approved.\n"
            if manual else "")
+        + (f"- You can't edit files or run commands in this turn: {cannot_write}. "
+           "If the request needs changes, say that once, in one line, and stop. "
+           "Don't hand the task to a teammate agent: it can't edit here either.\n"
+           if cannot_write else "")
         +
         "- If the message asks for work, do the work now rather than stopping "
         "at a plan. If a tool you need is not permitted, say exactly what is "
-        "blocked so a human can decide.\n"
+        "blocked so a human can decide, and don't hand the task to a teammate "
+        "agent for that reason: it has the same permissions here.\n"
         "- If it is just a question, answer it in 1-3 sentences.\n"
         f"- {ws}\n"
         "- For anything longer than a few minutes, post a 1-line plan first with "

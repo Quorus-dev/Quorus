@@ -37,9 +37,9 @@ from .render import (
 # the table the user reads top-to-bottom. Each tuple: (key, label, hint).
 _ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("n", "New room",         "create a room and switch to it"),
-    ("j", "Join by invite",   "paste a quorus_join_ token"),
+    ("j", "Join by invite",   "paste a teammate's invite code"),
     ("r", "Rooms",            "full numbered list with member counts"),
-    ("s", "Share <room>",     "mint an invite token for a room"),
+    ("s", "Share <room>",     "make an invite code for a room"),
     ("d", "Delete <room>",    "destroy a room (confirmation required)"),
     ("/", "Slash palette",    "type / to see every command"),
     ("?", "Help",             "full keybinds + slash commands"),

@@ -43,9 +43,12 @@ def cmd_tune(args: Any, console: Any) -> None:
     elif not tuning.enabled():
         console.print("[warning]tuning is off[/] (quorus tune on to resume)")
     if not rows:
-        console.print("[dim]nothing learned yet. When an agent's own turns keep failing "
-                      "(or its commits get reverted), its @open bids move, and the room "
-                      "gets one line saying why, with an undo.[/]")
+        console.print("[dim]Nothing learned yet. When you hand out work with "
+                      "`@open <task>` in a room, Quorus keeps track of how each agent's "
+                      "turns go. If one keeps failing or its commits get reverted, it shows "
+                      "up here, with one line in the room saying why and an undo. By default "
+                      "these are notes only and no agent works differently because of them; "
+                      "QUORUS_TRACK_BIDS=on lets them change which agent gets a task.[/]")
         return
     from rich.table import Table
 

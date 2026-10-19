@@ -8,8 +8,15 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
+
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugins" / "quorus"
+VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+# The Agent Skill's config snippets: the first release with relay-bound credentials.
 MIN_RUNTIME = "quorus-ai>=0.5.1"
 
 
@@ -34,9 +41,10 @@ def test_server_runs_from_pypi_with_env_names_the_server_reads():
     manifest = _json(PLUGIN / ".claude-plugin" / "plugin.json")
     server = manifest["mcpServers"]["quorus"]
     assert server["command"] == "uvx"
-    # Pinned to the first release with relay-bound credentials and read-only
-    # startup: an older quorus-mcp from PyPI would still leak (codex review).
-    assert server["args"] == ["--from", MIN_RUNTIME, "quorus-mcp"]
+    # Pinned exactly to this release: Anthropic's plugin directory rejects an
+    # unpinned launcher, and a range could pull an older quorus-mcp that leaks
+    # (codex review). Every release bumps this pin with pyproject's version.
+    assert server["args"] == ["--from", f"quorus-ai=={VERSION}", "quorus-mcp"]
     runtime = (ROOT / "packages" / "mcp" / "quorus_mcp" / "runtime.py").read_text()
     options = manifest["userConfig"]
     for env_name, ref in server["env"].items():
@@ -87,3 +95,14 @@ def test_skills_never_put_a_secret_in_argv_or_self_install(skill_path):
     assert "never put a secret in a command line" in skill.lower()
     assert re.search(r"don't (run setup|do any of it) .*(on your own|yourself)", skill,
                      re.I | re.S)
+
+
+def test_manifest_names_this_release_the_site_and_a_square_icon():
+    manifest = _json(PLUGIN / ".claude-plugin" / "plugin.json")
+    assert manifest["version"] == VERSION
+    assert manifest["homepage"] == "https://www.quorus.dev/"
+    icon = (PLUGIN / ".claude-plugin" / "icon.png").read_bytes()
+    assert icon[:8] == b"\x89PNG\r\n\x1a\n" and icon[12:16] == b"IHDR"
+    width, height = int.from_bytes(icon[16:20], "big"), int.from_bytes(icon[20:24], "big")
+    # The directory keeps the first icon it sees, so it must already be right.
+    assert (width, height) == (1024, 1024) and len(icon) < 2 * 1024 * 1024

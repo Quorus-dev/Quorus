@@ -46,7 +46,8 @@ def render(name: str, rep: dict[str, Any]) -> list[str]:
     lines.append(f"  path record <1.0: {_rate(paths['low'])}; >=1.0: {_rate(paths['high'])}; "
                  f"too thin: {paths['thin']}")
     if matched < MIN_TURNS:
-        lines.append(f"  fewer than {MIN_TURNS} matched turns: too few to judge loop A yet")
+        lines.append(f"  fewer than {MIN_TURNS} tasks so far: too few to say yet whether an "
+                     "agent's track record predicts how its next task goes")
     return lines
 
 
@@ -58,7 +59,9 @@ def cmd_track_report(args: Any, console: Any) -> int:
         print(json.dumps(reports, indent=2, sort_keys=True))
         return 0
     if not reports:
-        console.print(f"No track logs in {runtime_dir}: no agent here has bid on an @open yet.",
+        console.print("Nothing to report yet. This shows how your agents' turns went when "
+                      "you handed out work with `@open <task>` in a room (an available agent "
+                      "that fits can take it). Hand out a few tasks that way, then check back.",
                       markup=False, highlight=False, soft_wrap=True)
         return 0
     for name, rep in reports.items():

@@ -798,10 +798,13 @@ def _cmd_rooms(args):
             r["id"][:8],
         )
     ui.console.print(table)
-    ui.console.print(
-        "\n  [dim]next:[/] [accent]quorus share <room>[/] "
-        "[dim]— invite humans + agents[/]"
-    )
+    if RELAY_SECRET or API_KEY.startswith("mct_"):
+        # Only the relay's owner can share; a member's own key (quorus_pk_)
+        # was pointed at a command that refuses them (stranger test F3).
+        ui.console.print(
+            "\n  [dim]next:[/] [accent]quorus share <room>[/] "
+            "[dim]— invite humans + agents[/]"
+        )
 
 
 def _cmd_create(args):
@@ -880,6 +883,8 @@ def _cmd_say(args):
             else:
                 ui.error(f"Not a member of #{args.room}",
                          hint=f"join first: quorus join {args.room}")
+        elif (revoked := _revoked_key(e.response)):
+            ui.error(revoked[0], hint=revoked[1])
         else:
             ui.error("Send failed", hint=_http_hint(e.response))
         sys.exit(1)
@@ -5859,11 +5864,13 @@ def _cmd_share(args):
         )
         return
     if resp.status_code in (401, 403):
+        # Members and observers ran this and were told to check RELAY_SECRET
+        # (stranger test F3): only the relay's owner invites people.
         _ui.error(
-            "Not authorized to mint invite codes",
-            hint="admin-only — check RELAY_SECRET or API key role",
+            "Only the relay's owner can invite people",
+            hint="ask them to run `quorus share <room>` and send you the code",
         )
-        return
+        sys.exit(3)
     try:
         resp.raise_for_status()
     except httpx.HTTPStatusError:
@@ -10320,6 +10327,21 @@ def _room_refusal(detail: str) -> "tuple[str, str] | None":
     return None
 
 
+def _revoked_key(resp: "httpx.Response") -> "tuple[str, str] | None":
+    """A 401 for a participant key the relay's owner released: retrying can
+    never work, but the hint said "retry — relay is up" (stranger test F6)."""
+    if resp.status_code != 401:
+        return None
+    try:
+        detail = str(resp.json().get("detail") or "")
+    except ValueError:
+        return None
+    if "participant key" not in detail.lower():
+        return None
+    return ("Your key on this relay no longer works: its owner removed it",
+            "ask them for a new invite, then `quorus join <code> --relay <their-address>`")
+
+
 def _report_http_error(resp: "httpx.Response") -> None:
     """Print why a relay request failed: the room refusal if it is one, else
     the relay's reason with a reachability hint."""
@@ -10328,10 +10350,18 @@ def _report_http_error(resp: "httpx.Response") -> None:
             if resp.status_code == 403 else None
     except ValueError:
         refusal = None
+    revoked = _revoked_key(resp)
     if refusal:
         _ui.error(refusal[0], hint=refusal[1])
+    elif revoked:
+        _ui.error(revoked[0], hint=revoked[1])
     else:
         _ui.error_with_retry(_http_hint(resp), relay_url=RELAY_URL)
+    # A refusal used to exit 0, so scripts and agents read it as success
+    # (stranger test F4). Same codes as `quorus --help` lists.
+    code = resp.status_code
+    raise SystemExit(3 if code in (401, 403) else 4 if code == 404
+                     else 5 if code in (400, 409, 413, 422) else 1)
 
 
 def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
@@ -10348,6 +10378,10 @@ def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
     refusal = _room_refusal(detail) if code == 403 else None
     if refusal:
         _ui.error(refusal[0], hint=refusal[1])
+        return 3
+    revoked = _revoked_key(exc.response)
+    if revoked:
+        _ui.error(revoked[0], hint=revoked[1])
         return 3
     if code in (401, 403):
         _ui.error("The relay rejected your credentials" + (f": {detail}" if detail else ""),

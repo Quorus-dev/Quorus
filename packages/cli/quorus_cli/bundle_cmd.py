@@ -87,6 +87,11 @@ def cmd_release_name(args: Any, console: Any) -> None:
                       "run this on the relay's machine (or pass --data-dir)")
         raise SystemExit(1)
     if ParticipantKeyStore(folder).release(args.name):
-        console.print(f"[success]✓[/] released {args.name!r}; the next claim gets a new key")
+        # The name itself stays reserved: rooms, creator rights and memory are
+        # keyed by name, so handing it to someone new would hand them those too
+        # (codex, review of 5198a3da). Say so instead of implying it's free.
+        console.print(f"[success]✓[/] released {args.name!r}: its key and sign-ins stop "
+                      "working now. The name stays reserved on this relay; to let them "
+                      "back in, send a new invite and have them join under a new name.")
     else:
         console.print(f"[dim]{args.name!r} was not claimed[/]")

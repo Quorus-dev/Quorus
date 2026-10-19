@@ -9,7 +9,7 @@ Quick start:
     messages = room.receive()
 """
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 from quorus.sdk import Room
 

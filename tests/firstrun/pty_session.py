@@ -52,13 +52,15 @@ def plain(text: str) -> str:
     return _ANSI.sub("", text).replace("\r", "")
 
 
-def child_env(home: Path, relay_url: str) -> dict[str, str]:
+def child_env(home: Path, relay_url: str, extra_path: Path | None = None) -> dict[str, str]:
     # Absolute: the child runs in the tmp HOME, where a relative entry like "."
     # would load some other copy of quorus than the one under test.
     code = [str(Path(p).resolve()) for p in sys.path if p and Path(p).is_dir()]
     dead = "http://127.0.0.1:9"
+    # *extra_path* holds a test's stub agent CLIs (F5): still no real vendor CLI.
+    path = f"{Path(sys.executable).parent}:/usr/bin:/bin"
     return {
-        "HOME": str(home), "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin",
+        "HOME": str(home), "PATH": f"{extra_path}:{path}" if extra_path else path,
         "PYTHONPATH": os.pathsep.join(code), "PYTHONDONTWRITEBYTECODE": "1",
         "TERM": "xterm-256color", "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8",
         "COLUMNS": "120", "LINES": "40", "RELAY_URL": relay_url, "QUORUS_NO_LAUNCHD": "1",
@@ -69,9 +71,14 @@ def child_env(home: Path, relay_url: str) -> dict[str, str]:
 
 
 class PtySession:
-    def __init__(self, home: Path, *, cols: int = 120, rows: int = 40) -> None:
+    def __init__(self, home: Path, *, cols: int = 120, rows: int = 40,
+                 cwd: Path | None = None, extra_path: Path | None = None) -> None:
+        """*cwd*: where the user runs `quorus` (default: HOME); a git repo there is
+        what the wizard offers to bind. *extra_path*: a directory of stub agent
+        CLIs put first on PATH."""
         home.mkdir(parents=True, exist_ok=True)
         self.home = home.resolve()  # /var is /private/var on macOS: compare resolved
+        self.cwd = (cwd or home).resolve()
         self.port = free_port()
         self.relay_url = f"http://127.0.0.1:{self.port}"
         self._raw = ""
@@ -80,9 +87,9 @@ class PtySession:
         pid, fd = pty.fork()
         if pid == 0:  # the child: the user's terminal is this pty
             try:
-                os.chdir(self.home)
+                os.chdir(self.cwd)
                 os.execve(sys.executable, [sys.executable, "-c", _RUN],
-                          child_env(self.home, self.relay_url))
+                          child_env(self.home, self.relay_url, extra_path))
             finally:
                 os._exit(127)
         self.pid, self.fd = pid, fd
@@ -176,10 +183,31 @@ class PtySession:
                 pass
         self._reader.join(timeout=2)
         os.close(self.fd)
+        stop_home_agents(self.home)
         self._stop_relay()
 
     def _stop_relay(self) -> None:
         stop_home_relays(self.home, self.port)
+
+
+def stop_home_agents(home: Path) -> None:
+    """Every wake daemon the session's `quorus agent add` started (F5): they run
+    detached, so the session's process group doesn't cover them. Each is found
+    by its pid file in the tmp HOME and stopped through agent_proc's identity
+    check, with its process group (the stub CLI it was running), never by
+    pattern. A daemon that won't stop fails the test."""
+    from quorus_cli import agent_proc
+
+    agents_dir = home / ".quorus" / "agents"
+    survivors = []
+    for pidfile in sorted(agents_dir.glob("*.pid")) if agents_dir.is_dir() else []:
+        name = pidfile.stem
+        if agent_proc.live_pid(agents_dir, name) is None:
+            continue
+        if not agent_proc.stop(agents_dir, name, timeout=10):
+            survivors.append(name)
+    if survivors:
+        raise AssertionError(f"wake daemon(s) {survivors} from {home} didn't stop")
 
 
 def spawned_relays(home: Path) -> list[int]:

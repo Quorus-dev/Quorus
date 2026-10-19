@@ -28,7 +28,7 @@ logger = logging.getLogger("mcp_tunnel.mcp")
 # environment (auth-fallback tests rely on this). tools/phase1_tools/runtime
 # read these constants back through THIS module's namespace at call time,
 # so monkeypatching ``quorus.mcp_server.RELAY_URL`` etc. works unchanged.
-_settings = runtime.load_runtime_config()
+_settings, SETUP_PROBLEM = runtime.settings_or_setup_problem()
 CONFIG_FILE = Path(_settings["config_file"])
 RELAY_URL = _settings["relay_url"]
 RELAY_SECRET = _settings["relay_secret"]
@@ -146,6 +146,7 @@ async def _get_bearer_token() -> str:
     illegal header value.
     """
     global _cached_jwt
+    runtime.refuse_if_not_set_up(SETUP_PROBLEM)
     if not API_KEY:
         if not RELAY_SECRET:
             raise RuntimeError(
@@ -293,6 +294,8 @@ _QOD_TAIL = (
     "quorus heartbeat"
 )
 QUORUS_INSTRUCTIONS = f"{_QOD}\n\n---\n\n{_QOD_TAIL}\n\n{_channel.CHANNEL_INSTRUCTIONS}"
+if SETUP_PROBLEM:  # the first thing the model reads, so it can tell the user
+    QUORUS_INSTRUCTIONS = f"{SETUP_PROBLEM}\n\n{QUORUS_INSTRUCTIONS}"
 
 mcp = FastMCP("quorus", instructions=QUORUS_INSTRUCTIONS, lifespan=_mcp_lifespan)
 # serverInfo.version: FastMCP takes no version and falls back to the mcp

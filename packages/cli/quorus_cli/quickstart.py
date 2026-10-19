@@ -98,8 +98,18 @@ def plan(found: list[Found]) -> tuple[list[str], str | None]:
 def offer(console: Any, room: str, cwd: Path | None = None,
           ask: Callable[[str], bool] | None = None,
           add: Callable[[Any, Any], None] | None = None,
-          which: Callable[[str], str | None] = shutil.which) -> list[str]:
-    """Offer to add every ready agent CLI to *room*; return the tools added."""
+          which: Callable[[str], str | None] = shutil.which,
+          ask_write: Callable[[str], bool] | None = None) -> list[str]:
+    """Offer to add every ready agent CLI to *room*; return the tools added.
+
+    With a repo, a second question decides the room's permission mode. The
+    wizard used to bind in `default` mode, where `codex exec` runs in its own
+    read-only sandbox and opencode has no edit or shell tools, so a stranger
+    who then asked for a fix got "I cannot apply the fix" and two agents handing
+    the task back and forth (0.6.0 stranger test). The choice is explicit, names
+    the repo, and Enter keeps the existing permissions (codex, review of the
+    plan). Yes binds `autonomous`: the owner's own requests get full turns in the
+    agent's worktree; anyone else's stay read-only, as in 0.6.0."""
     found = detect(which)
     if not found:
         console.print("  [muted]No agent CLIs found. Install one (Claude Code, Codex, "
@@ -124,12 +134,32 @@ def offer(console: Any, room: str, cwd: Path | None = None,
     if not ask(f"  Add them to [room]#{room}[/] {where}?"):
         console.print(f"  [dim]Later: quorus agent add <tool> --room {room} --repo <path>[/]")
         return []
+    mode = None  # default: whatever each tool's own settings allow
+    if repo is not None:
+        if ask_write is None:
+            from rich.prompt import Confirm
+
+            def ask_write(q: str) -> bool:
+                return Confirm.ask(q, default=False)
+        console.print(f"\n  They'd work in [accent]{repo}[/].")
+        if ask_write("  Let them edit files and run commands there when you ask? Commands "
+                     "run with your account's permissions. Others in the room still only "
+                     "get answers."):
+            mode = "autonomous"
+            console.print("  [dim]OK: your requests get full turns; anyone else's stay "
+                          "read-only.[/]")
+        else:
+            # Not "read-only": default mode keeps each tool's own settings, and
+            # Claude Code's may already allow edits (codex, review of a5b0f90e).
+            console.print("  [dim]OK: permissions stay as they are; each tool keeps its "
+                          f"own settings. Later: quorus agent add <tool> --room {room} "
+                          f"--repo {repo} --mode autonomous[/]")
     if add is None:
         from quorus_cli.agent_cmd import _add as add
     added: list[str] = []
     for t in tools:
         args = SimpleNamespace(tool=t, room=room, repo=str(repo) if repo else None,
-                               mode=None, name=None, model=FREE_MODEL.get(t),
+                               mode=mode, name=None, model=FREE_MODEL.get(t),
                                lead=(t == lead), trust=None)
         try:
             add(args, console)

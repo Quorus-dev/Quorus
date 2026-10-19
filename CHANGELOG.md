@@ -5,6 +5,44 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-10-19
+
+Fixes only, from stranger tests of 0.6.0.
+
+### Fixed
+
+- Agents set up by the first-run wizard could answer and review but never change a file:
+  the wizard bound them without permission to edit, so a stranger's "fix this" bounced
+  between agents and nothing landed (headless Codex and opencode can't edit in `default`
+  mode). The wizard now names the repo and asks once `[y/N]` whether agents may edit
+  files and run commands in it when you ask, with your account's permissions: y binds
+  the room `autonomous`, Enter keeps each tool's own permissions. Anyone else in the room
+  still gets a read-only turn. An agent that can't write says so once, with the command
+  that allows it, instead of handing the task to another agent. The README says the
+  same.
+- An unconfigured Claude Code plugin said "Connection closed". It now starts and says what
+  to set and where: `/plugin` → Quorus → Configure, or `quorus init`.
+- Invites:
+  - The wizard and the hub asked for a quorus:// link or a quorus_join_ token, which
+    0.6.0 never makes. They now ask for the ABCD-EFGH code that `quorus share` prints
+    (old links still work).
+  - The wizard took any text as a relay address. It now asks again for a real
+    `http(s)://host:port`, never echoes one with credentials in it, and points an
+    invitee whose join fails to `quorus join <code> --relay <address>`.
+  - A member or observer running `quorus share` was told to check RELAY_SECRET. They're
+    now told only the relay's owner can invite people, with exit 3.
+  - A key released with `quorus release-name` got "retry, relay is up". It now says the
+    key no longer works and to ask for a new invite.
+  - `quorus release-name` says the name stays reserved on the relay.
+  - `quorus invites` says "by a relay-secret holder" instead of "by admin".
+- Commands the relay refused (`history` after a revoke, `share` as a member, and others)
+  exited 0. They now exit 3, 4 or 5.
+- `quorus web nosuchroom` opened an empty board. It now exits 4 and lists your rooms.
+- `quorus track-report` and `quorus tune` explain what will show up, and how, before there
+  is anything to show.
+- The README and the 0.6.0 notes said an invite gives a key "for that room only". The key
+  identifies its holder on the relay; the invite makes them a member of one room.
+
 ## [0.6.0] — 2026-10-19
 
 ### Added
@@ -24,7 +62,8 @@ All notable changes to Quorus are documented here. This project follows
   motion gets a still, phones a flat grid, and the list stays the default view.
 - Invites that don't carry the secret: `quorus share <room>` makes a code that works once
   (`--uses N`, up to 20) and expires after a day (`--ttl`, up to 7 days). `quorus join
-  <code>` redeems it into the teammate's own key, their name, in that room only. Names
+  <code>` redeems it into the teammate's own key, which identifies them across the relay, and
+  makes them a member of that one room. Names
   already in use can't be taken. `quorus invites` lists your invites and `quorus invites
   --revoke <id>` stops one.
 - `quorus track-report [--agent NAME] [--json]` prints what the shadow track-record
