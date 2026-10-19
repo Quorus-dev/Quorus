@@ -97,11 +97,21 @@ def _env() -> dict[str, str]:
     return env
 
 
-def _kill(proc: subprocess.Popen[bytes]) -> None:
-    """Kill git and anything it started (its own session), then reap it."""
+def kill_group(proc: subprocess.Popen[bytes]) -> None:
+    """Kill the session *proc* leads (started with ``start_new_session``) and reap
+    its leader.
+
+    The group is killed even when the leader has already exited: a helper it
+    left behind, still holding stdout, kept running after a timeout because
+    only a live leader was killed (codex, review of 39f69326). The group's id is
+    the leader's pid, which the kernel doesn't reuse while any member is alive,
+    so this never signals an unrelated process. No members left is fine.
+    """
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
+        pass
+    if proc.poll() is None:
         proc.kill()
     proc.wait()
 
@@ -110,10 +120,10 @@ def collect(argv: list[str], cwd: Path, max_bytes: int,
             timeout: float | None = None) -> tuple[int | None, bytes, bool]:
     """Run *argv*; return (exit code, at most *max_bytes* of stdout, cut).
 
-    Output is read as it comes. At the cap, or when *timeout* runs out, the
-    whole process group is killed and reaped, so a huge commit or a hung helper
-    never fills memory or outlives the call. The exit code is None when cut.
-    A timeout raises subprocess.TimeoutExpired after the kill.
+    Output is read as it comes. When the call ends (at the cap, at *timeout*,
+    or normally) the whole process group is killed and its leader reaped, so a
+    huge commit or a hung helper never fills memory or outlives the call. The
+    exit code is None when cut. A timeout raises subprocess.TimeoutExpired.
     """
     limit = GIT_TIMEOUT_S if timeout is None else timeout
     deadline = time.monotonic() + limit
@@ -141,8 +151,7 @@ def collect(argv: list[str], cwd: Path, max_bytes: int,
                 cut = True
                 break
         if cut:
-            _kill(proc)
-            return None, bytes(buf), True
+            return None, bytes(buf), True  # the finally kills git at the cap
         try:
             code = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
@@ -150,8 +159,9 @@ def collect(argv: list[str], cwd: Path, max_bytes: int,
         return code, bytes(buf), False
     finally:
         sel.close()
-        if proc.poll() is None:
-            _kill(proc)
+        # Always, not only while the leader lives: at the cap, on a timeout, and
+        # after a normal exit, nothing git started may outlive the call.
+        kill_group(proc)
         proc.stdout.close()
 
 

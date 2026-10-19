@@ -310,6 +310,34 @@ def test_every_call_has_a_hard_deadline(tmp_path: Path) -> None:
     assert _wait_gone(int(pidfile.read_text()))
 
 
+# The leader starts a helper and exits at once. "holds": the helper keeps the
+# leader's stdout open, so the read never ends (codex, review of 39f69326).
+# "detached": the helper has no stdout, and the leader exits cleanly.
+_ORPHANER = """
+import subprocess, sys
+out = None if sys.argv[2] == "holds" else subprocess.DEVNULL
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], stdout=out)
+open(sys.argv[1], "w").write(str(child.pid))
+print("leader done", flush=True)
+"""
+
+
+def test_a_helper_holding_stdout_dies_after_its_leader_exits(tmp_path: Path) -> None:
+    pidfile = tmp_path / "child.pid"
+    with pytest.raises(subprocess.TimeoutExpired):
+        ce.collect([sys.executable, "-c", _ORPHANER, str(pidfile), "holds"], tmp_path,
+                   max_bytes=10_000, timeout=1.5)
+    assert _wait_gone(int(pidfile.read_text()))
+
+
+def test_a_clean_exit_still_leaves_nothing_behind(tmp_path: Path) -> None:
+    pidfile = tmp_path / "child.pid"
+    code, out, cut = ce.collect([sys.executable, "-c", _ORPHANER, str(pidfile), "detached"],
+                                tmp_path, max_bytes=10_000, timeout=20)
+    assert (code, out, cut) == (0, b"leader done\n", False)
+    assert _wait_gone(int(pidfile.read_text()))
+
+
 def test_a_hung_git_means_no_evidence_not_a_hung_wake(repo: Path,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     def hang(*_a: object, **_k: object) -> tuple[int | None, bytes, bool]:
