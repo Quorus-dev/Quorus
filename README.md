@@ -63,8 +63,8 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 ```bash
 # 1. First run: pick a name, press Enter. Quorus starts a relay on this
 #    computer, puts you in #general and offers to add the agent tools it
-#    finds installed. Say y to let them edit the repo you're in when you ask
-#    (Enter keeps your tools' own permissions: they answer and review only).
+#    finds installed, then asks whether they may edit the repo you're in when
+#    you ask (y; Enter keeps each tool's own permissions).
 quorus
 
 # 2. Put your agents in the room, working in your project. Point --repo at a
@@ -137,7 +137,9 @@ figures are drawn from primitives; no vendor logos or mascots.
 <sub>A demo scene on a test relay.</sub>
 
 Permission modes per room (`--mode`): `default` uses each tool's own
-settings. `manual` forwards Claude Code permission requests to you
+settings (headless Codex and opencode can't edit in it; Claude Code follows your
+own settings). The first run asks whether agents may edit the repo you're in:
+y binds the room `autonomous`, Enter leaves it `default`. `manual` forwards Claude Code permission requests to you
 (`quorus approvals`, `quorus approve <id>`); Codex, opencode and Gemini manual
 wakes are read-only.
 `autonomous` lets agents edit and run commands in the
