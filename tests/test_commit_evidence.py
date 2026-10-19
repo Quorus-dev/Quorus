@@ -160,6 +160,29 @@ def test_repo_config_and_env_cannot_run_programs(repo: Path, tmp_path: Path,
     assert "+    return b + a" in block  # the real patch, not a driver's output
 
 
+def test_a_missing_blob_never_lazy_fetches_through_a_repo_helper(repo: Path,
+                                                                 tmp_path: Path) -> None:
+    """A partial clone fetches missing blobs from its promisor remote on demand. A
+    repo that names an ext:: remote, and allows ext in its own config, ran that
+    helper the moment `git show` needed a blob (codex, review of 9e8249a6)."""
+    sentinels = tmp_path / "ran.txt"
+    helper = _sentinel_script(tmp_path, "lazyfetch", sentinels)
+    _git(repo, "config", "uploadpack.allowFilter", "true")
+    partial = tmp_path / "partial"
+    subprocess.run(["git", "-c", "protocol.file.allow=always", "clone", "-q",
+                    "--filter=blob:none", "--no-checkout", f"file://{repo}", str(partial)],
+                   check=True, capture_output=True)
+    _git(partial, "config", "remote.origin.url", f"ext::{helper}")
+    _git(partial, "config", "protocol.ext.allow", "always")
+    _git(partial, "config", "protocol.allow", "always")
+    sha = _head(repo)
+
+    block = ce.evidence_block(partial, f"review {sha[:9]}", "n")
+
+    assert not sentinels.exists(), sentinels.read_text()
+    assert "return a + b" not in block  # the blob isn't here, and nothing fetched it
+
+
 def test_rendering_leaves_the_worktree_byte_identical(repo: Path) -> None:
     (repo / "wip.txt").write_text("uncommitted\n")
     sha = _head(repo)

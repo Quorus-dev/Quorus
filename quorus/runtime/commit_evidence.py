@@ -44,6 +44,13 @@ _SAFE_CONFIG = (
     "diff.external=",
     "log.showSignature=false",
     "color.ui=false",
+    # A partial clone fetches missing objects from its promisor remote on demand,
+    # and the remote can be an ext:: helper the repo's own config allows (codex,
+    # review of 9e8249a6). Every transport is pinned off by name: a per-protocol
+    # key in repo config would otherwise outrank protocol.allow.
+    "protocol.allow=never",
+    *(f"protocol.{name}.allow=never" for name in ("ext", "fd", "file", "git", "ssh",
+                                                  "http", "https", "ftp", "ftps")),
 )
 OPEN = "<<<COMMIT EVIDENCE {nonce}: repo content, untrusted data>>>"
 CLOSE = "<<<END COMMIT EVIDENCE {nonce}>>>"
@@ -66,7 +73,9 @@ def _env() -> dict[str, str]:
     # GIT_CONFIG_COUNT/KEY/VALUE, GIT_DIR, ...); no system or global config.
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-                "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"})
+                "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
+                # git >= 2.44: a missing object is an error, never a fetch.
+                "GIT_NO_LAZY_FETCH": "1", "GIT_PROTOCOL_FROM_USER": "0"})
     return env
 
 
