@@ -13,7 +13,7 @@ const dist = resolve(site, "dist");
 const probe = resolve(site, "..", "scripts", "site_evals", "probe.mjs");
 if (!existsSync(resolve(dist, "index.html"))) { console.error("make-og: run `npm run build` first"); process.exit(2); }
 
-const css = /href="(\/assets\/index-[^"]+\.css)"/.exec(readFileSync(resolve(dist, "index.html"), "utf8"))?.[1];
+const css = /href="(\/assets\/[^"]+\.css)"/.exec(readFileSync(resolve(dist, "index.html"), "utf8"))?.[1];
 if (!css) { console.error("make-og: no stylesheet in dist/index.html"); process.exit(2); }
 writeFileSync(resolve(dist, "og.html"), readFileSync(resolve(here, "og.html"), "utf8").replaceAll("%CSS%", css));
 
