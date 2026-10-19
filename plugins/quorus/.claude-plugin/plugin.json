@@ -8,6 +8,7 @@
     "url": "https://github.com/Quorus-dev/Quorus"
   },
   "homepage": "https://www.quorus.dev/",
+  "privacyPolicyUrl": "https://www.quorus.dev/privacy",
   "repository": "https://github.com/Quorus-dev/Quorus",
   "license": "MIT",
   "keywords": ["multi-agent", "coordination", "mcp", "group-chat", "codex", "gemini"],
