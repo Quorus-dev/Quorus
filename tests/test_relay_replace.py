@@ -75,13 +75,45 @@ def test_replace_signals_only_the_exact_process_it_started(
     (tmp_path / "relay.pid").write_text(json.dumps(
         {"pid": 4242, "port": 18181, "started": "Sat Oct 18 10:00:00 2026",
          "command": RECORDED}))
-    monkeypatch.setattr(local_relay, "_ps",
-                        lambda pid, field: command if field == "command" else started)
     sent = []
+    # Once signalled, the process is gone: ps shows nothing for its pid.
+    monkeypatch.setattr(local_relay, "_ps", lambda pid, field: "" if sent else (
+        command if field == "command" else started))
     monkeypatch.setattr(local_relay.os, "kill", lambda pid, sig: sent.append(pid))
     monkeypatch.setattr(local_relay, "_healthy", lambda url, timeout=2.0: False)
     local_relay.stop_started_relay(18181)
     assert sent == ([4242] if signalled else [])
+
+
+def test_replace_waits_for_the_old_relay_to_exit_not_just_go_quiet(monkeypatch, tmp_path):
+    """uvicorn stops answering at once but saves the relay's state only when its
+    streams close: a replacement started in between loaded the old state file and
+    the first run's rooms were lost (founding scenario test)."""
+    (tmp_path / "relay.pid").write_text(json.dumps(
+        {"pid": 4242, "port": 18181, "started": "Sat Oct 18 10:00:00 2026",
+         "command": RECORDED}))
+    polls = []
+
+    def ps(pid, field):  # still shutting down for the first three looks after SIGTERM
+        if field == "command":
+            polls.append(pid)
+            return RECORDED if len(polls) <= 4 else ""
+        return "Sat Oct 18 10:00:00 2026"
+
+    monkeypatch.setattr(local_relay, "_ps", ps)
+    monkeypatch.setattr(local_relay.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(local_relay, "_healthy", lambda url, timeout=2.0: False)
+    monkeypatch.setattr(local_relay.time, "sleep", lambda s: None)
+    assert local_relay.stop_started_relay(18181) is True
+    assert len(polls) == 5  # the identity check before SIGTERM, then 3 alive, 1 gone
+    assert not (tmp_path / "relay.pid").exists()
+
+    (tmp_path / "relay.pid").write_text(json.dumps(
+        {"pid": 4242, "port": 18181, "started": "Sat Oct 18 10:00:00 2026",
+         "command": RECORDED}))
+    monkeypatch.setattr(local_relay, "_ps", lambda pid, field: (
+        RECORDED if field == "command" else "Sat Oct 18 10:00:00 2026"))
+    assert local_relay.stop_started_relay(18181, timeout=0.05) is False  # never exited
 
 
 def test_a_pid_file_recording_a_disguised_command_is_refused(monkeypatch, tmp_path):
