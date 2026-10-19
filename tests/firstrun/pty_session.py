@@ -38,6 +38,7 @@ import termios
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
 _RUN = "import sys; sys.argv = ['quorus']; from quorus_cli.cli import main; main()"
@@ -95,6 +96,10 @@ def child_env(home: Path, relay_url: str, extra_path: Path | None = None) -> dic
     dead = "http://127.0.0.1:9"
     # *extra_path* holds a test's stub agent CLIs (F5): still no real vendor CLI.
     path = f"{notifier_stub_dir(home)}:{Path(sys.executable).parent}:/usr/bin:/bin"
+    # The relay may be a teammate's on a LAN address (the founding scenario): it,
+    # and only it, skips the dead proxy too.
+    no_proxy = ",".join(dict.fromkeys(("127.0.0.1", "localhost",
+                                       urlparse(relay_url).hostname or "localhost")))
     return {
         "HOME": str(home), "PATH": f"{extra_path}:{path}" if extra_path else path,
         "PYTHONPATH": os.pathsep.join(code), "PYTHONDONTWRITEBYTECODE": "1",
@@ -103,21 +108,23 @@ def child_env(home: Path, relay_url: str, extra_path: Path | None = None) -> dic
         "QUORUS_NOTIFY": "0",
         "HTTP_PROXY": dead, "HTTPS_PROXY": dead, "ALL_PROXY": dead,
         "http_proxy": dead, "https_proxy": dead, "all_proxy": dead,
-        "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
+        "NO_PROXY": no_proxy, "no_proxy": no_proxy,
     }
 
 
 class PtySession:
     def __init__(self, home: Path, *, cols: int = 120, rows: int = 40,
-                 cwd: Path | None = None, extra_path: Path | None = None) -> None:
+                 cwd: Path | None = None, extra_path: Path | None = None,
+                 relay_url: str | None = None) -> None:
         """*cwd*: where the user runs `quorus` (default: HOME); a git repo there is
         what the wizard offers to bind. *extra_path*: a directory of stub agent
-        CLIs put first on PATH."""
+        CLIs put first on PATH. *relay_url*: a teammate's relay this user joins
+        by invite (default: a free port for the user's own first-run relay)."""
         home.mkdir(parents=True, exist_ok=True)
         self.home = home.resolve()  # /var is /private/var on macOS: compare resolved
         self.cwd = (cwd or home).resolve()
-        self.port = free_port()
-        self.relay_url = f"http://127.0.0.1:{self.port}"
+        self.port = free_port() if relay_url is None else int(relay_url.rsplit(":", 1)[1])
+        self.relay_url = relay_url or f"http://127.0.0.1:{self.port}"
         self._raw = ""
         self._mark = 0
         self._lock = threading.Lock()
