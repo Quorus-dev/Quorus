@@ -128,6 +128,7 @@ def test_owner_alert_rules() -> None:
 def test_daemon_pings_owner_when_work_ships(monkeypatch) -> None:
     sent: list[tuple[str, str]] = []
     monkeypatch.setenv("REFLEXD_OWNER", "arav")
+    monkeypatch.setenv("QUORUS_NOTIFY", "1")  # conftest turns banners off
     monkeypatch.setattr(reflexd, "_notify", lambda t, b, **_k: sent.append((t, b)))
     d = _daemon()
     d._alert_owner("build", "done\n(quorus) published 2 commit(s) from b to main")
@@ -207,6 +208,7 @@ def test_a_question_back_to_the_owner_needs_them_without_a_mention() -> None:
 def test_the_daemon_passes_who_woke_it(monkeypatch) -> None:
     sent: list[tuple[str, str]] = []
     monkeypatch.setenv("REFLEXD_OWNER", "arav")
+    monkeypatch.setenv("QUORUS_NOTIFY", "1")  # conftest turns banners off
     monkeypatch.setattr(reflexd, "_notify", lambda t, b, **_k: sent.append((t, b)))
     d = _daemon()
     d._alert_owner("build", "Which port should the relay use?", asked_by="arav")

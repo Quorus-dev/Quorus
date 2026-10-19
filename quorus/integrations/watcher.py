@@ -29,7 +29,9 @@ def _notify_macos(title: str, body: str) -> None:
     which would be a shell injection vector (CVE-class: command injection via
     untrusted SSE message content).
     """
-    if sys.platform != "darwin":
+    from quorus.notifications.native import enabled
+
+    if sys.platform != "darwin" or not enabled():
         return
     try:
         # Pass title and body via argv; AppleScript reads them via `item N of argv`

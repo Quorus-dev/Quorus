@@ -7530,7 +7530,11 @@ def _cmd_notify_test(args):
     import sys as _sys
 
     from quorus.notifications import notify as _notify
+    from quorus.notifications.native import enabled as _notify_enabled
 
+    if not _notify_enabled():
+        console.print("[muted]· notifications are off (QUORUS_NOTIFY=0)[/muted]")
+        return
     ok = _notify(
         "Quorus test",
         "this is a test from quorus notify-test",
