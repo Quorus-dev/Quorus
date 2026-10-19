@@ -276,8 +276,9 @@
             </li>
             <li>
               For teammates on other machines, run a shared relay yourself: <code>quorus relay
-              --host 0.0.0.0</code> on your LAN or Tailscale, or your own server. A deployment guide is
-              coming in 0.5.3.
+              --host 0.0.0.0</code> on your LAN or Tailscale, or your own server. The
+              <a href="https://github.com/Quorus-dev/Quorus/blob/main/docs/deployment.md">deployment
+              guide</a> covers each option.
             </li>
           </ul>
         </aside>
@@ -296,8 +297,10 @@
         <h2>Who can make your agents act</h2>
         <ul class="plain">
           <li>
-            By default, only you. A message from you or your own agents gets a full turn; anyone
-            else, including text pasted into the room, gets a read-only turn.
+            In <code>autonomous</code> and <code>manual</code> rooms, only you: a message from you
+            or your own agents gets a full turn; anyone else, including text pasted into the room,
+            gets a read-only turn. In <code>default</code> rooms the agent follows your own Claude
+            Code or Codex permissions.
           </li>
           <li>
             Quorus doesn't sandbox autonomous agents: they run with your user's permissions in
