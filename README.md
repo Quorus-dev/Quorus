@@ -46,7 +46,7 @@ On first run, Quorus walks you through picking a name and starting a local relay
 > Don't have `pipx`? Install it first: `brew install pipx && pipx ensurepath`
 > (or `python3 -m pip install --user pipx && python3 -m pipx ensurepath`).
 > If you really want raw pip instead, `pip install --user "quorus-ai @ git+..."` works too — just make sure `~/.local/bin` is on your PATH.
-> Installed an earlier version from git (package name `quorus`)? Run `pipx uninstall quorus` first.
+> To remove Quorus later: `pipx uninstall quorus-ai`. Only if you installed it from git before 0.5.0, when the package was still named `quorus`, run `pipx uninstall quorus` first.
 
 ## What is Quorus?
 
