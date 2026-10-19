@@ -62,6 +62,12 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- The first-run wizard started its relay on localhost:8080 even when `RELAY_URL`
+  named another address, and the hub then started a second relay there. It now uses
+  `RELAY_URL` (the same override the rest of Quorus honours) for both. And with
+  `QUORUS_NO_LAUNCHD=1`, `quorus agent` never calls launchctl, for sandboxes with a
+  tmp HOME. The new-user findings (F1-F4 and Esc on the / menu) are now pty tests
+  that run plain `quorus` with a clean HOME (`tests/firstrun/`).
 - A turn redirected mid-turn was published anyway: a stand-down from the owner reached
   an agent while it worked, and the daemon published the work when the turn ended, so it
   was built twice. Before publishing, the daemon now reads the room from the oldest

@@ -407,7 +407,10 @@ def _first_launch_setup(console: Console) -> dict:
 
     name = _prompt_name(console)
 
-    relay_url = DEFAULT_RELAY
+    # RELAY_URL is the same override load_config honours (quorus/config.py), so
+    # the wizard's own relay and the saved profile agree; the first-run pty tests
+    # use it to run on a free port instead of 8080.
+    relay_url = (os.environ.get("RELAY_URL") or DEFAULT_RELAY).rstrip("/")
     secret = ""
     api_key = ""
     invited_room = ""
@@ -492,7 +495,7 @@ def _first_launch_setup(console: Console) -> dict:
     else:
         secret = new_secret()
         console.print("\n  [dim]Setting up Quorus on this computer...[/] ", end="")
-        relay_ok, note = ensure_local_relay(DEFAULT_RELAY, secret)
+        relay_ok, note = ensure_local_relay(relay_url, secret)
         console.print("[success]✓[/]" if relay_ok else "[error]✗[/]")
         if note:
             console.print(f"  [dim]{note}[/]")
