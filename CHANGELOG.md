@@ -13,11 +13,13 @@ Fixes only, from stranger tests of 0.6.0.
 
 - Agents set up by the first-run wizard could answer and review but never change a file:
   the wizard bound them without permission to edit, so a stranger's "fix this" bounced
-  between agents and nothing landed. The wizard now names the repo and asks once
-  `[y/N]` whether agents may edit files and run commands in it when you ask, with your
-  account's permissions. Enter keeps each tool's own settings. Anyone else in the room
+  between agents and nothing landed (headless Codex and opencode can't edit in `default`
+  mode). The wizard now names the repo and asks once `[y/N]` whether agents may edit
+  files and run commands in it when you ask, with your account's permissions: y binds
+  the room `autonomous`, Enter keeps each tool's own permissions. Anyone else in the room
   still gets a read-only turn. An agent that can't write says so once, with the command
-  that allows it, instead of handing the task to another agent.
+  that allows it, instead of handing the task to another agent. The README says the
+  same.
 - An unconfigured Claude Code plugin said "Connection closed". It now starts and says what
   to set and where: `/plugin` → Quorus → Configure, or `quorus init`.
 - Invites:
