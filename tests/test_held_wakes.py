@@ -313,3 +313,23 @@ def test_with_the_relay_ahead_a_real_mid_turn_message_still_holds(monkeypatch, t
 ])
 def test_the_answer_must_be_a_line_of_its_own(reply, said):
     assert held.answer(reply) == said
+
+
+def test_a_later_wakes_context_doesnt_excuse_the_oldest_turn(monkeypatch, tmp_path):
+    """Codex, review of 3ba308a4/9b7f9a45: a later wake had the stand-down in
+    its context, its ids were added to the oldest window's exclusions, and the
+    sweep then published the older turn's commits."""
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+    wt = reflexd.reflexd_wake.agent_worktree(repo, ME)
+    held.mark_window(d._held_dir, wt, started_at=time.time() - 60, seen={"e-old"})
+    (wt.path / "notes.md").write_text("unpublished\n")
+    _git(wt.path, "commit", "-qam", "docs: unpublished")
+    stand_down = {"id": "s1", "from_name": "arav", "content": f"@{ME} stand down",
+                  "timestamp": datetime.fromtimestamp(time.time() - 30,
+                                                      timezone.utc).isoformat()}
+    # A later turn starts with the stand-down in view.
+    held.mark_window(d._held_dir, wt, started_at=time.time(), seen={"s1"})
+    assert "s1" not in held.seen_ids(d._held_dir, wt)
+    asyncio.run(d._publish_sweep(_Relay([stand_down])))
+    assert _main_log(repo) == "init" and len(_held_refs(repo)) == 1

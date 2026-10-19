@@ -80,16 +80,17 @@ def turn_start(history: list[dict[str, Any]], envelope: dict[str, Any]) -> float
 
 def mark_window(held_dir: Path, wt, started_at: float | None = None,
                 seen: set[str] | list[str] = ()) -> None:
-    """Called as a writable turn starts. Keeps the earliest start, so the
-    window covers every turn whose commits are still unpublished, and adds the
-    ids this turn already had in view (they're never mid-turn)."""
-    target = _file(held_dir, wt.path, "window")
-    current = _read_window(held_dir, wt)
-    since = current.get("since") if current else None
-    if since is None:
-        since = time.time() if started_at is None else started_at
-    ids = list(dict.fromkeys([*(current or {}).get("seen", []), *[i for i in seen if i]]))
-    _write_json(target, {"since": since, "seen": ids[-_SEEN_MAX:]})
+    """Called as a writable turn starts. The first unpublished turn opens the
+    window: its start and the ids it had in view (never mid-turn for it). Later
+    turns change neither. Adding their context let a stand-down that a later
+    wake happened to see excuse the older turn's commits (codex, review of
+    3ba308a4)."""
+    if _read_window(held_dir, wt) is not None:
+        return
+    ids = list(dict.fromkeys(i for i in seen if i))
+    _write_json(_file(held_dir, wt.path, "window"),
+                {"since": time.time() if started_at is None else started_at,
+                 "seen": ids[-_SEEN_MAX:]})
 
 
 def _read_window(held_dir: Path, wt) -> dict[str, Any] | None:
