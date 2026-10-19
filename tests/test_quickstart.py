@@ -90,6 +90,10 @@ def test_enter_at_the_write_question_keeps_existing_permissions(tools, tmp_path)
     assert calls and {a.mode for a in calls} == {None}
     assert any("--mode autonomous" in line and str(tmp_path.resolve()) in line
                for line in c.out)
+    # Default mode keeps each tool's own settings, which may allow edits: the wizard
+    # must not promise "no changes" (codex, review of a5b0f90e).
+    assert any("permissions stay as they are" in line for line in c.out)
+    assert not any("don't change files" in line for line in c.out)
 
 
 def test_without_a_repo_the_write_question_is_not_asked(tools, tmp_path) -> None:

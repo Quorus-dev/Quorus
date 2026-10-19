@@ -149,9 +149,11 @@ def offer(console: Any, room: str, cwd: Path | None = None,
             console.print("  [dim]OK: your requests get full turns; anyone else's stay "
                           "read-only.[/]")
         else:
-            console.print("  [dim]OK: they answer and review, and don't change files. "
-                          f"Later: quorus agent add <tool> --room {room} --repo {repo} "
-                          "--mode autonomous[/]")
+            # Not "read-only": default mode keeps each tool's own settings, and
+            # Claude Code's may already allow edits (codex, review of a5b0f90e).
+            console.print("  [dim]OK: permissions stay as they are; each tool keeps its "
+                          f"own settings. Later: quorus agent add <tool> --room {room} "
+                          f"--repo {repo} --mode autonomous[/]")
     if add is None:
         from quorus_cli.agent_cmd import _add as add
     added: list[str] = []

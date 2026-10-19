@@ -57,8 +57,29 @@ def codex_effective_sandbox(mode: str = "default") -> str:
         text = (home / "config.toml").read_text(encoding="utf-8")
     except OSError:
         return "read-only"
-    m = re.search(r'^\s*sandbox_mode\s*=\s*"([^"]+)"', text, re.MULTILINE)
-    return m.group(1) if m else "read-only"
+    return _codex_config_sandbox(text) or "read-only"
+
+
+def _codex_config_sandbox(text: str) -> str | None:
+    """`sandbox_mode` as codex resolves it from config.toml: the active profile's
+    (`profile = "x"` selects `[profiles.x]`) over the top-level value. Parsed as
+    TOML, so quoting styles don't matter and an inactive profile's value never
+    counts (codex, review of a5b0f90e). Unparseable: unknown, so read-only."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib  # type: ignore[no-redef]
+    try:
+        data = tomllib.loads(text)
+    except (tomllib.TOMLDecodeError, ValueError):
+        return None
+    profile, profiles = data.get("profile"), data.get("profiles")
+    if isinstance(profile, str) and isinstance(profiles, dict):
+        active = profiles.get(profile)
+        if isinstance(active, dict) and isinstance(active.get("sandbox_mode"), str):
+            return active["sandbox_mode"]
+    top = data.get("sandbox_mode")
+    return top if isinstance(top, str) else None
 
 
 def cannot_write(harness: str, mode: str = "default") -> bool:

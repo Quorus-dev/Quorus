@@ -50,6 +50,8 @@ def record(**kw):
 def git(*a):
     return subprocess.run(["git", "-c", "user.name=stub", "-c", "user.email=s@x", *a],
                           capture_output=True, text=True, check=True).stdout.strip()
+def from_agent(prompt):
+    return "Your teammate agent `" in prompt and "@-mentioned you" in prompt
 def act(prompt, can_write, me, other):
     sha = re.search(r"review ([0-9a-f]{7,40})", prompt)
     if sha:
@@ -57,7 +59,11 @@ def act(prompt, can_write, me, other):
     if "without addressing anyone, and you were picked" in prompt:
         return "NO_REPLY"  # unaddressed agent chatter: the instructions say add or stay quiet
     if "this turn is READ-ONLY" in prompt:  # not the owner's request (0.6.0's rule)
-        return "I can't change files for this request; @alice please approve or assign it."
+        if from_agent(prompt):  # the handoff landed here: stop, don't bounce it back
+            return "I'm read-only for this request too; @alice please approve or assign it."
+        # What the real CLIs did on 0.6.0: hand the stranger's task to the other agent.
+        return ("This request isn't from my owner, so this turn is read-only. "
+                "@%s can you apply it?" % other)
     if "can't edit files or run commands in this turn" in prompt:
         cmd = re.search(r"`(quorus agent add [^`]+)`", prompt)
         return "I can't edit here: %s" % (cmd.group(1) if cmd else "no write access")
@@ -77,9 +83,12 @@ _CODEX_STUB = _STUB_COMMON + r'''
 argv = sys.argv[1:]
 if argv[:1] == ["--version"]:
     print("codex-cli 0.160.1"); sys.exit(0)
+if argv[:1] != ["exec"]:  # some other probe: not a wake, nothing to record
+    sys.exit(0)
 prompt = argv[-1]
 can_write = any(a == 'sandbox_mode="workspace-write"' for a in argv)
-record(stub="codex", argv=argv[:-1], can_write=can_write)
+record(stub="codex", argv=argv[:-1], can_write=can_write, from_agent=from_agent(prompt),
+       untrusted="this turn is READ-ONLY" in prompt)
 reply = act(prompt, can_write, "alice-codex", "alice-opencode")
 print(json.dumps({"type": "thread.started", "thread_id": "t-stub"}))
 print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": reply}}))
@@ -89,11 +98,14 @@ _OPENCODE_STUB = _STUB_COMMON + r'''
 argv = sys.argv[1:]
 if argv[:1] == ["--version"]:
     print("opencode 2.0.30"); sys.exit(0)
+if argv[:1] != ["run"]:  # e.g. `opencode models`, the free-model catalog: not a wake
+    sys.exit(0)
 prompt = argv[-1]
 cfg = json.loads(os.environ.get("OPENCODE_CONFIG_CONTENT") or "{}")
 rules = cfg.get("permissions") or []
 can_write = any(r.get("action") == "edit" and r.get("effect") == "allow" for r in rules)
-record(stub="opencode", argv=argv[:-1], permissions=rules, can_write=can_write)
+record(stub="opencode", argv=argv[:-1], permissions=rules, can_write=can_write,
+       from_agent=from_agent(prompt), untrusted="this turn is READ-ONLY" in prompt)
 reply = act(prompt, can_write, "alice-opencode", "alice-codex")
 print(json.dumps({"type": "step_start", "sessionID": "ses_stub", "part": {}}))
 print(json.dumps({"type": "text", "sessionID": "ses_stub",
@@ -238,8 +250,10 @@ def test_f5_enter_keeps_read_only_and_the_agent_says_so_once(tmp_path_factory):
 
 
 def test_f5_a_strangers_handoff_stays_read_only(tmp_path_factory):
-    """With write access on, a request from someone who isn't the owner still
-    gets a read-only turn, and so does any handoff it causes (0.6.0's rule)."""
+    """With write access on, a request from someone who isn't the owner gets a
+    read-only turn, and so does the handoff it causes: the stubs do what the real
+    CLIs did on 0.6.0 and hand the stranger's task to the other agent, whose turn
+    must be read-only too, with no write launch args (0.6.0's rule; codex)."""
     home = tmp_path_factory.mktemp("f5-stranger") / "home"
     repo, bin_dir = _setup(home)
     s = PtySession(home, cwd=repo, extra_path=bin_dir)
@@ -251,14 +265,22 @@ def test_f5_a_strangers_handoff_stays_read_only(tmp_path_factory):
                    json={"participant": "mallory", "role": "member"}).raise_for_status()
             c.post(f"{s.relay_url}/rooms/general/messages", headers=auth,
                    json={"from_name": "mallory", "content": ASK}).raise_for_status()
-        _wait_for(s, "alice-codex", "", timeout=120)
-        time.sleep(15)
+        _wait_for(s, "alice-codex", "can you apply it", timeout=120)  # the handoff
+        deadline = time.monotonic() + 120  # ...and the turn it caused
+        while not any(c["from_agent"] for c in _calls(home)):
+            assert time.monotonic() < deadline, _calls(home)
+            time.sleep(1)
+        time.sleep(15)  # whatever else the chain does, let it finish
         assert "return a - b" in _git(repo, "show", "main:calc.py")
         assert _git(repo, "log", "--oneline", "main").count("\n") == 0
         calls = _calls(home)
-        assert calls and all(call["can_write"] is False for call in calls), calls
-        agents = [m for m in _history(s) if (m.get("from_name") or "").startswith("alice-")]
-        assert agents and all("@alice-" not in m["content"] for m in agents), [
-            (m["from_name"], m["content"][:80]) for m in agents]  # no handoff either
+        handoffs = [c for c in calls if c["from_agent"]]
+        assert handoffs, calls
+        for call in calls:  # every turn in the chain: read-only, told so, no write args
+            assert call["can_write"] is False and call["untrusted"] is True, call
+            if call["stub"] == "codex":
+                assert not any("workspace-write" in a for a in call["argv"]), call
+            else:
+                assert not any(r.get("effect") == "allow" for r in call["permissions"]), call
     finally:
         s.close()

@@ -42,6 +42,25 @@ def test_codex_effective_sandbox_follows_mode_env_then_config(monkeypatch, tmp_p
     assert wake.codex_effective_sandbox("manual") == "read-only"  # the room mode wins
 
 
+@pytest.mark.parametrize("toml,expected", [
+    ("sandbox_mode = 'workspace-write'\n", "workspace-write"),  # valid single quotes
+    ('[profiles.other]\nsandbox_mode = "workspace-write"\n', "read-only"),  # inactive
+    ('profile = "work"\nsandbox_mode = "read-only"\n[profiles.work]\n'
+     'sandbox_mode = "workspace-write"\n', "workspace-write"),  # the active profile wins
+    ('profile = "work"\nsandbox_mode = "workspace-write"\n[profiles.other]\n'
+     'sandbox_mode = "read-only"\n', "workspace-write"),  # top level when the profile is silent
+    ('sandbox_mode = "workspace-write"\n[broken\n', "read-only"),  # unparseable: unknown
+    ("sandbox_mode = 3\n", "read-only"),
+])
+def test_codex_config_is_parsed_as_toml_in_the_active_scope(tmp_path, toml, expected) -> None:
+    """Codex's repros on a5b0f90e: a regex misread single-quoted values and counted
+    a value inside an inactive profile."""
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text(toml)
+    assert wake.codex_effective_sandbox("default") == expected
+
+
 @pytest.mark.parametrize("harness,mode,expected", [
     ("codex", "default", True), ("codex", "autonomous", False), ("codex", "manual", True),
     ("opencode", "default", True), ("opencode", "autonomous", False),
