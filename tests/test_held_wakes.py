@@ -252,7 +252,12 @@ def test_each_hold_gets_its_own_ref_and_a_merge_in_progress_blocks(tmp_path):
     _git(repo, "commit", "-qam", "main side")
     (wt.path / "notes.md").write_text("agent side\n")
     _git(wt.path, "commit", "-qam", "agent side")
-    subprocess.run(["git", "merge", "main"], cwd=wt.path, capture_output=True)
+    # The merge conflicts (non-zero exit), so not _git. Without an identity
+    # git won't start a merge at all on a runner with none configured (CI).
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@x", "merge", "main"],
+                   cwd=wt.path, capture_output=True)
+    assert subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+                          cwd=wt.path, capture_output=True).returncode == 0
     held.hold(runtime, wt, ME, trigger=None, why="test")
     assert held.blocks_publish(runtime, wt)
     _git(wt.path, "merge", "--abort")
