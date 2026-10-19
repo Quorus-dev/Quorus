@@ -1,5 +1,5 @@
 // Motion for quorus.dev, loaded after first paint by main.ts. Everything here is
-// transform/opacity (plus SVG stroke drawing), driven by the Web Animations API with
+// transform/opacity, driven by the Web Animations API with
 // one easing family, and it never runs under prefers-reduced-motion: main.ts only
 // imports this module when motion is allowed. Text is built with textContent only.
 
@@ -81,52 +81,10 @@ export function replay(log: HTMLElement, banner: HTMLElement): () => void {
   return stop;
 }
 
-// ---- scroll story -----------------------------------------------------------------
-function drawWires(svg: SVGSVGElement) {
-  svg.querySelectorAll<SVGPathElement>(".wires path").forEach((path, i) => {
-    const len = path.getTotalLength();
-    path.style.strokeDasharray = `${len}`;
-    path.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }],
-      { duration: 900, delay: 120 + i * 60, easing: EASE, fill: "both" });
-  });
-}
-
-function countUp(cell: HTMLElement) {
-  const target = Number(cell.dataset.n ?? "0"), pct = cell.dataset.pct === "1";
-  const t0 = performance.now(), dur = 900 + Math.min(600, target * 2);
-  const tick = (now: number) => {
-    const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
-    cell.textContent = `${Math.round(target * e)}${pct ? "%" : ""}`;
-    if (k < 1) requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-}
-
-function claimRow(row: HTMLElement) {
-  row.animate([{ opacity: 0, transform: "translateX(-10px)" }, { opacity: 1, transform: "none" }],
-    { duration: 600, delay: 500, easing: EASE, fill: "both" });
-  row.animate([{ backgroundColor: "rgba(232,166,58,.28)" }, { backgroundColor: "rgba(232,166,58,0)" }],
-    { duration: 1400, delay: 500, easing: "ease-out", fill: "both" });
-}
-
-export function story() {
-  const once = new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      if (!e.isIntersecting) continue;
-      const t = e.target as HTMLElement;
-      if (t.matches("svg")) drawWires(t as unknown as SVGSVGElement);
-      else if (t.matches("table.score")) t.querySelectorAll<HTMLElement>("td.n").forEach(countUp);
-      else if (t.matches("table.locks")) t.querySelectorAll<HTMLElement>("tr.claim").forEach(claimRow);
-      once.unobserve(t);
-    }
-  }, { rootMargin: "0px 0px -15% 0px" });
-  document.querySelectorAll(".compare svg, table.score, table.locks").forEach((n) => once.observe(n));
-}
-
 // ---- micro -----------------------------------------------------------------------
 export function micro() {
   if (!matchMedia("(pointer: fine)").matches) return;
-  // Magnetic copy button: leans toward the pointer within 90px, snaps back after.
+  // Magnetic copy buttons: lean toward the pointer within 90px, snap back after.
   document.querySelectorAll<HTMLButtonElement>(".cmd button").forEach((btn) => {
     const box = btn.parentElement as HTMLElement;
     box.addEventListener("pointermove", (ev) => {
@@ -154,6 +112,5 @@ export function micro() {
 export function start() {
   const log = document.getElementById("replayLog"), banner = document.getElementById("replayBanner");
   if (log && banner) replay(log, banner);
-  story();
   micro();
 }
