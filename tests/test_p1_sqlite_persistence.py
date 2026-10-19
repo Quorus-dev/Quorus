@@ -358,3 +358,72 @@ async def test_a_file_from_before_the_stamp_column_is_upgraded():
     assert await p1_persistence.mirror_set("p1mem:x", "k", _entry("room", 10.0))
     stored, ok = await p1_persistence.hydrate("p1mem:x")
     assert ok and set(stored) == {"old", "k"}
+
+
+# --- Codex, review of a86d9b76: migration stamps and pruning races ---
+
+
+async def test_an_upgraded_file_keeps_its_rows_stamps():
+    """Rows from before the stamp column had stamp 0, so any older write
+    replaced a newer tombstone. The upgrade fills stamps from each row."""
+    path = p1_sqlite.db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(path)) as conn:
+        conn.execute("CREATE TABLE p1_entries (ns_key TEXT NOT NULL, field TEXT NOT NULL,"
+                     " value TEXT NOT NULL, touched REAL NOT NULL, PRIMARY KEY (ns_key, field))")
+        conn.execute("INSERT INTO p1_entries VALUES (?, ?, ?, ?)",
+                     ("p1mem:x", "k", json.dumps(p1_persistence.tombstone(_NOW + 50.0)),
+                      time.time()))
+    await p1_persistence.mirror_set("p1mem:x", "k", _entry("room", 10.0))  # older
+    stored, ok = await p1_persistence.hydrate("p1mem:x")
+    assert ok and p1_persistence.is_tombstone(stored["k"])
+
+
+def _old_tombstone() -> dict:
+    return p1_persistence.tombstone(time.time() - p1_sqlite.TTL_S - 60)
+
+
+async def test_sqlite_pruning_spares_a_write_that_replaced_the_tombstone(monkeypatch):
+    await p1_persistence.mirror_delete("p1mem:x", "k", at=_old_tombstone()["updated_at"])
+    real_connect, calls = p1_sqlite._connect, []
+
+    def connect(path):
+        calls.append(path)
+        if len(calls) == 2:  # the prune's connection: someone writes first
+            with sqlite3.connect(str(path)) as other:
+                other.execute("UPDATE p1_entries SET value = ?, stamp = ? WHERE field = 'k'",
+                              (json.dumps(_entry("room", 1.0)), _NOW + 1.0))
+        return real_connect(path)
+
+    monkeypatch.setattr(p1_sqlite, "_connect", connect)
+    await p1_persistence.hydrate("p1mem:x")
+    monkeypatch.setattr(p1_sqlite, "_connect", real_connect)
+    stored, _ = await p1_persistence.hydrate("p1mem:x")
+    assert stored["k"]["visibility"] == "room"  # the new write survived the prune
+
+
+async def test_redis_pruning_spares_a_write_that_replaced_the_tombstone(monkeypatch):
+    import fakeredis
+
+    r = fakeredis.aioredis.FakeRedis()
+    monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: r)
+    await r.hset("p1mem:x", "k", json.dumps(_old_tombstone()))
+    real_prune = p1_persistence._redis_prune
+
+    async def racing_prune(redis, ns_key, field, observed):
+        await redis.hset(ns_key, field, json.dumps(_entry("room", 1.0)))  # lands first
+        await real_prune(redis, ns_key, field, observed)
+
+    monkeypatch.setattr(p1_persistence, "_redis_prune", racing_prune)
+    await p1_persistence.hydrate("p1mem:x")
+    assert json.loads(await r.hget("p1mem:x", "k"))["visibility"] == "room"
+
+
+async def test_an_untouched_old_tombstone_is_still_pruned_on_redis(monkeypatch):
+    import fakeredis
+
+    r = fakeredis.aioredis.FakeRedis()
+    monkeypatch.setattr(p1_persistence, "get_redis_or_none", lambda: r)
+    await r.hset("p1mem:x", "k", json.dumps(_old_tombstone()))
+    await p1_persistence.hydrate("p1mem:x")
+    assert await r.hget("p1mem:x", "k") is None

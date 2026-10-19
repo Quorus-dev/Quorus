@@ -205,7 +205,7 @@ async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
         _note_failure("hydrate", ns_key, exc)
         return {}, False
     out: dict[str, dict[str, Any]] = {}
-    expired: list[str] = []
+    expired: list[tuple[str, str]] = []
     for k, v in (raw or {}).items():
         key = k.decode() if isinstance(k, bytes) else k
         val = v.decode() if isinstance(v, bytes) else v
@@ -216,16 +216,34 @@ async def hydrate(ns_key: str) -> tuple[dict[str, dict[str, Any]], bool]:
         if not isinstance(parsed, dict):
             continue
         if is_tombstone(parsed) and float(parsed.get("updated_at") or 0) < time.time() - _TTL_S:
-            expired.append(key)
+            expired.append((key, val))
             continue
         out[key] = parsed
-    if expired:
+    for field, observed in expired:
         try:
             async with _timeout(_OP_TIMEOUT_S):
-                await r.hdel(ns_key, *expired)
+                await _redis_prune(r, ns_key, field, observed)
         except Exception as exc:  # pruning is housekeeping; serve the read anyway
             _note_failure("prune", ns_key, exc)
     return out, True
+
+
+async def _redis_prune(r, ns_key: str, field: str, observed: str) -> None:
+    """Delete *field* only while it still holds the tombstone we read: a write
+    that replaced it after our read must survive (codex, review of a86d9b76)."""
+    async with r.pipeline(transaction=True) as pipe:
+        try:
+            await pipe.watch(ns_key)
+            raw = await pipe.hget(ns_key, field)
+            current = raw.decode() if isinstance(raw, bytes) else raw
+            if current != observed:
+                await pipe.unwatch()
+                return
+            pipe.multi()
+            pipe.hdel(ns_key, field)
+            await pipe.execute()
+        except WatchError:
+            return  # it changed under us: leave it
 
 
 async def mirror_drop(ns_key: str) -> None:

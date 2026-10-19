@@ -74,8 +74,7 @@ def _connect(path: Path) -> sqlite3.Connection:
         conn.execute(_SCHEMA)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(p1_entries)")}
         if "stamp" not in columns:  # a file from before the stamp column
-            conn.execute("ALTER TABLE p1_entries ADD COLUMN stamp REAL NOT NULL DEFAULT 0")
-            conn.commit()
+            _add_stamps(conn)
     except sqlite3.OperationalError:
         conn.close()
         raise  # locked: transient
@@ -89,6 +88,25 @@ def _connect(path: Path) -> sqlite3.Connection:
                          "tool catalogs stay in memory until it is fixed", key, exc)
         raise Unavailable(key) from exc
     return conn
+
+
+def _add_stamps(conn: sqlite3.Connection) -> None:
+    """Add the stamp column and fill it from each row's own timestamp, in one
+    transaction. Left at 0, an older write replaced a newer tombstone from
+    before the upgrade (codex, review of a86d9b76)."""
+    with conn:
+        conn.execute("ALTER TABLE p1_entries ADD COLUMN stamp REAL NOT NULL DEFAULT 0")
+        rows = conn.execute("SELECT ns_key, field, value FROM p1_entries").fetchall()
+        updates = []
+        for ns_key, field, value in rows:
+            try:
+                parsed = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(parsed, dict) and written_at(parsed):
+                updates.append((written_at(parsed), ns_key, field))
+        conn.executemany("UPDATE p1_entries SET stamp = ? WHERE ns_key = ? AND field = ?",
+                         updates)
 
 
 def set_entry(ns_key: str, field: str, entry: dict[str, Any]) -> dict[str, Any]:
@@ -135,7 +153,7 @@ def load(ns_key: str) -> dict[str, dict[str, Any]]:
     finally:
         conn.close()
     out: dict[str, dict[str, Any]] = {}
-    expired: list[str] = []
+    expired: list[tuple[str, str]] = []
     for field, value in rows:
         try:
             parsed = json.loads(value)
@@ -146,15 +164,18 @@ def load(ns_key: str) -> dict[str, dict[str, Any]]:
         # A delete's tombstone holds no content, only when it happened; it
         # goes once it is older than the TTL like any other entry.
         if parsed.get("deleted") is True and float(parsed.get("updated_at") or 0) < now - TTL_S:
-            expired.append(field)
+            expired.append((field, value))
             continue
         out[field] = parsed
     if expired:
+        # Only the exact tombstone that was read: a write that replaced it in
+        # the meantime must survive (codex, review of a86d9b76).
         conn = _connect(db_path())
         try:
             with conn:
-                conn.executemany("DELETE FROM p1_entries WHERE ns_key = ? AND field = ?",
-                                 [(ns_key, f) for f in expired])
+                conn.executemany(
+                    "DELETE FROM p1_entries WHERE ns_key = ? AND field = ? AND value = ?",
+                    [(ns_key, f, v) for f, v in expired])
         finally:
             conn.close()
     return out
