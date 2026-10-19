@@ -40,11 +40,23 @@ def test_one_keypress_adds_every_ready_agent_and_claude_leads(tools, tmp_path: P
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     calls: list[Any] = []
     c = _C()
+    asked: list[str] = []
+
+    def ask_write(q: str) -> bool:
+        asked.append(q)
+        return True
+
     added = quickstart.offer(c, "general", cwd=tmp_path, ask=lambda q: True,
-                             add=lambda a, _c: calls.append(a), which=tools)
+                             add=lambda a, _c: calls.append(a), which=tools,
+                             ask_write=ask_write)
     assert added == ["claude", "codex", "opencode"]
     assert [a.lead for a in calls] == [True, False, False]
     assert {a.repo for a in calls} == {str(tmp_path.resolve())}
+    # Yes to the write question: the owner's requests get full turns.
+    assert {a.mode for a in calls} == {"autonomous"}
+    assert len(asked) == 1 and "edit files and run commands" in asked[0]
+    assert "your account's permissions" in asked[0]
+    assert any(str(tmp_path.resolve()) in line and "work in" in line for line in c.out)
     assert calls[2].model == quickstart.FREE_MODEL["opencode"]  # stays in the free tier
     assert any("Gemini CLI found but" in line for line in c.out)
     assert any("Claude Code agent leads" in line for line in c.out)
@@ -60,8 +72,33 @@ def test_saying_no_adds_nothing_and_one_failure_doesnt_stop_the_rest(tools, tmp_
         if a.tool == "codex":
             raise SystemExit("agent: boom")
     added = quickstart.offer(_C(), "general", cwd=tmp_path, ask=lambda q: True, add=add,
-                             which=tools)
+                             which=tools, ask_write=lambda q: False)
     assert added == ["claude", "opencode"]
+
+
+def test_enter_at_the_write_question_keeps_existing_permissions(tools, tmp_path) -> None:
+    """0.6.0 stranger blocker: the wizard bound the repo in default mode, where
+    codex and opencode can't write, and a stranger's first fix request bounced
+    between two agents. The choice is explicit and defaults to no (codex): Enter
+    keeps each tool's own permissions, and the way to switch is printed."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    calls: list[Any] = []
+    c = _C()
+    quickstart.offer(c, "general", cwd=tmp_path, ask=lambda q: True,
+                     add=lambda a, _c: calls.append(a), which=tools,
+                     ask_write=lambda q: False)
+    assert calls and {a.mode for a in calls} == {None}
+    assert any("--mode autonomous" in line and str(tmp_path.resolve()) in line
+               for line in c.out)
+
+
+def test_without_a_repo_the_write_question_is_not_asked(tools, tmp_path) -> None:
+    asked: list[str] = []
+    calls: list[Any] = []
+    quickstart.offer(_C(), "general", cwd=tmp_path, ask=lambda q: True,
+                     add=lambda a, _c: calls.append(a), which=tools,
+                     ask_write=lambda q: asked.append(q) or True)
+    assert asked == [] and calls and {a.mode for a in calls} == {None}
 
 
 def test_no_repo_means_chat_only_and_one_agent_has_no_lead(monkeypatch, tmp_path) -> None:
@@ -69,7 +106,8 @@ def test_no_repo_means_chat_only_and_one_agent_has_no_lead(monkeypatch, tmp_path
     calls: list[Any] = []
     quickstart.offer(_C(), "general", cwd=tmp_path, ask=lambda q: True,
                      add=lambda a, _c: calls.append(a),
-                     which=lambda b: "/bin/opencode" if b == "opencode" else None)
+                     which=lambda b: "/bin/opencode" if b == "opencode" else None,
+                     ask_write=lambda q: True)
     assert len(calls) == 1 and calls[0].repo is None and calls[0].lead is False
 
 

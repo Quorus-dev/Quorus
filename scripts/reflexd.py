@@ -3293,7 +3293,7 @@ class Reflexd:
             memory_entries=memory_entries,
             teammates=[t for t in teammates if is_agent_participant(t)],
             has_workspace=ws is not None, worktree=worktree,
-            shared_note=shared_note, trusted=trusted,
+            shared_note=shared_note, trusted=trusted, harness=harness,
         )
         log_reason = (triage.reason if triage else None) or reason or "?"
         # D2: resume the room's prior session so the agent keeps its memory.
@@ -3889,6 +3889,7 @@ class Reflexd:
         worktree: Any = None,
         shared_note: str = "",
         trusted: bool | None = None,
+        harness: str | None = None,
     ) -> str:
         """Compose QOD + recent memory + history + WakeIntent.
 
@@ -3932,19 +3933,32 @@ class Reflexd:
             preamble = self_assign_preamble(description=triage.description) + "\n"
             kind = "open_todo"
         owner = agent_owner(self.config.participant_name)
+        room_mode = mode_for(wake_room)
+        trusted_now = (trusted if trusted is not None
+                       else trusted_origin(envelope, history, owner))
+        # The owner asked, and this harness is known to run read-only in this
+        # room's mode: tell it once, with the command, rather than let it try,
+        # fail and defer in a loop (0.6.0 stranger blocker). Never for an
+        # untrusted sender: they get the read-only line and no way to widen it.
+        cannot_write = (
+            f"#{wake_room} is in `{room_mode}` mode and {harness} runs read-only in "
+            f"it; your owner can change that with `quorus agent add {harness} --room "
+            f"{wake_room} --mode autonomous`"
+            if harness and trusted_now and has_workspace
+            and reflexd_wake.cannot_write(harness, room_mode) else None)
         intent_blurb = reflexd_wake.wake_instructions(
             participant=self.config.participant_name, room=wake_room,
             sender=wake_sender, kind=kind, teammates=list(teammates or []),
             has_workspace=has_workspace, worktree=worktree,
             from_agent=is_agent_participant(wake_sender),
-            manual=mode_for(wake_room) == "manual",
+            manual=room_mode == "manual",
             lead=lead_for(wake_room),
             owner=os.environ.get("REFLEXD_OWNER") or None,
-            untrusted=(owner if mode_for(wake_room) != "default"
+            untrusted=(owner if room_mode != "default"
                        and trust_for(wake_room) == "owner"
-                       and not (trusted if trusted is not None
-                                else trusted_origin(envelope, history, owner))
+                       and not trusted_now
                        else None),
+            cannot_write=cannot_write,
         )
 
         memory_block = render_memory_context(memory_entries or [])

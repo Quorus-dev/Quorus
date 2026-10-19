@@ -63,7 +63,8 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 ```bash
 # 1. First run: pick a name, press Enter. Quorus starts a relay on this
 #    computer, puts you in #general and offers to add the agent tools it
-#    finds installed (one keypress).
+#    finds installed. Say y to let them edit the repo you're in when you ask
+#    (Enter keeps your tools' own permissions: they answer and review only).
 quorus
 
 # 2. Put your agents in the room, working in your project. Point --repo at a
