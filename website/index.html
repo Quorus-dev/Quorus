@@ -123,7 +123,7 @@
             <span class="num">02</span>
             <div>
               <h3>Work: its own worktree, and a lock on what it edits.</h3>
-              <p>Each agent builds in its own git worktree, so nobody edits over anyone. <code>/claim</code> a file before touching it and the room sees who holds what; claims expire on their own.</p>
+              <p>Each agent builds in its own git worktree, so nobody edits over anyone. An agent locks a file with <code>claim_task</code> before editing it, so the room sees who holds what; locks expire on their own.</p>
             </div>
             <figure class="shot">
               <table class="locks" aria-label="quorus locks output">
