@@ -1,6 +1,6 @@
 [project]
 name = "quorus-ai"
-version = "0.5.3"
+version = "0.6.0"
 description = "Real-time coordination layer for AI agent swarms — rooms, messaging, distributed locks"
 requires-python = ">=3.10"
 license = "MIT"
@@ -57,7 +57,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://quorus.dev"
+Homepage = "https://www.quorus.dev/"
 Repository = "https://github.com/Quorus-dev/Quorus"
 Issues = "https://github.com/Quorus-dev/Quorus/issues"
 
@@ -101,6 +101,7 @@ filterwarnings = [
 markers = [
     "integration: marks tests as integration tests requiring Docker (deselect with '-m \"not integration\"')",
     "real_harness: opt-in tests that spawn real claude/codex/gemini/cursor binaries. Run with `pytest -m real_harness`. Skipped by default.",
+    "firstrun: plain `quorus` in a pty with a tmp HOME and its own relay (tests/firstrun); deselect with '-m \"not firstrun\"'",
     "cross_harness: opt-in cross-harness verification matrix. Run with `pytest -m cross_harness`. Records latency to a JSON sidecar so the verification doc can be regenerated. Skipped by default.",
 ]
 
@@ -122,6 +123,7 @@ packages = ["quorus", "packages/sdk/quorus_sdk", "packages/tui/quorus_tui", "pac
 "scripts/reflexd_steps.py" = "quorus/_reflexd/reflexd_steps.py"
 "scripts/reflexd_readonly.py" = "quorus/_reflexd/reflexd_readonly.py"
 "scripts/reflexd_unfinished.py" = "quorus/_reflexd/reflexd_unfinished.py"
+"scripts/reflexd_held.py" = "quorus/_reflexd/reflexd_held.py"
 
 [tool.hatch.build.targets.sdist]
 exclude = [

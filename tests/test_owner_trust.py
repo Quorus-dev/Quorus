@@ -31,8 +31,13 @@ def test_trusted_senders() -> None:
 
 
 class _Relay:
-    def __init__(self, history: list[dict] | None = None) -> None:
+    def __init__(self, history: list[dict] | None = None,
+                 roles: dict[str, str] | None = None) -> None:
         self.history = history or []
+        self.roles = roles
+
+    async def fetch_member_roles(self, *, room: str):
+        return self.roles
 
     async def fetch_recent(self, *, room: str, limit: int = 10):
         return self.history[-limit:]
@@ -42,7 +47,8 @@ class _Relay:
 
 
 def _run(monkeypatch, tmp_path: Path, sender: str, trust: str | None, *,
-         reply_to: str | None = None, history: list[dict] | None = None) -> dict:
+         reply_to: str | None = None, history: list[dict] | None = None,
+         roles: dict[str, str] | None = None) -> dict:
     import subprocess
 
     repo = tmp_path / "app"  # a real repo: read-only turns run only in a guarded worktree
@@ -76,7 +82,7 @@ def _run(monkeypatch, tmp_path: Path, sender: str, trust: str | None, *,
         env["reply_to"] = reply_to
     triage = reflexd.classify_message(content=env["content"], sender=sender,
                                       self_name="arav-claude")
-    asyncio.run(d._wake_and_reply(_Relay(history), env, triage=triage))
+    asyncio.run(d._wake_and_reply(_Relay(history, roles), env, triage=triage))
     return seen
 
 
@@ -139,8 +145,35 @@ def test_read_only_turn_does_not_point_at_the_owners_agents() -> None:
 
 
 def test_trust_members_opts_a_shared_room_in(monkeypatch, tmp_path: Path) -> None:
-    seen = _run(monkeypatch, tmp_path, "aarya", "members")
+    seen = _run(monkeypatch, tmp_path, "aarya", "members", roles={"aarya": "member"})
     assert seen["mode"] == "autonomous" and "READ-ONLY" not in seen["context"]
+
+
+# Observer invites (0.6.0): in a `trust: members` room the relay's current role
+# decides, and an observer never gets a write-capable turn, directly or relayed.
+
+def test_an_observer_in_a_members_room_gets_a_read_only_turn(monkeypatch, tmp_path) -> None:
+    seen = _run(monkeypatch, tmp_path, "olive", "members", roles={"olive": "observer"})
+    assert seen["mode"] == "readonly"
+
+
+def test_a_stranger_or_an_unknown_role_is_read_only_in_a_members_room(
+        monkeypatch, tmp_path) -> None:
+    assert _run(monkeypatch, tmp_path, "mallory", "members",
+                roles={"aarya": "member"})["mode"] == "readonly"
+    assert _run(monkeypatch, tmp_path, "aarya", "members",
+                roles={"aarya": "superuser"})["mode"] == "readonly"
+
+
+def test_an_agent_relaying_an_observers_request_is_read_only(monkeypatch, tmp_path) -> None:
+    history = [_msg("ask", "olive"), _msg("hand", "aarya-codex", "ask")]
+    seen = _run(monkeypatch, tmp_path, "aarya-codex", "members", reply_to="hand",
+                history=history, roles={"olive": "observer", "aarya-codex": "member"})
+    assert seen["mode"] == "readonly"
+
+
+def test_no_roles_from_the_relay_means_read_only(monkeypatch, tmp_path) -> None:
+    assert _run(monkeypatch, tmp_path, "aarya", "members", roles=None)["mode"] == "readonly"
 
 
 def test_cursor_inbox_prompt_is_owner_only(tmp_path: Path, monkeypatch) -> None:
@@ -151,3 +184,66 @@ def test_cursor_inbox_prompt_is_owner_only(tmp_path: Path, monkeypatch) -> None:
     out = reflexd.HeadlessAdapter._write_cursor_inbox("room transcript", participant="a-cursor")
     f = next((tmp_path / ".cursor" / "inbox" / "a-cursor").glob("wake_*.md"))
     assert "wrote prompt" in out and stat.S_IMODE(os.stat(f).st_mode) == 0o600
+
+
+# Codex's review of f5d69289.
+
+def test_an_agent_handoff_with_no_traceable_request_is_read_only(monkeypatch, tmp_path) -> None:
+    roles = {"aarya": "member", "aarya-codex": "member"}
+    # no reply_to at all
+    assert _run(monkeypatch, tmp_path, "aarya-codex", "members",
+                roles=roles)["mode"] == "readonly"
+    # an ancestor the relay doesn't have
+    assert _run(monkeypatch, tmp_path, "aarya-codex", "members", reply_to="gone",
+                history=[], roles=roles)["mode"] == "readonly"
+    # a cycle
+    history = [_msg("a", "aarya-codex", "b"), _msg("b", "aarya-codex", "a")]
+    assert _run(monkeypatch, tmp_path, "aarya-codex", "members", reply_to="a",
+                history=history, roles=roles)["mode"] == "readonly"
+
+
+def test_an_agent_serving_a_writers_request_keeps_its_write_turn(monkeypatch, tmp_path) -> None:
+    roles = {"aarya": "member", "aarya-codex": "member"}
+    history = [_msg("ask", "aarya"), _msg("hand", "aarya-codex", "ask")]
+    seen = _run(monkeypatch, tmp_path, "aarya-codex", "members", reply_to="hand",
+                history=history, roles=roles)
+    assert seen["mode"] == "autonomous"
+
+
+def test_untrusted_senders_are_read_only_in_default_mode_too(monkeypatch, tmp_path) -> None:
+    """Codex, review of ee159a6d: a revoked observer looks like a stranger, and a
+    failed role lookup like nothing at all, so neither may fall back to the owner's
+    own (possibly write-capable) default settings."""
+    monkeypatch.setattr(reflexd, "mode_for", lambda room: "default")
+    assert _run(monkeypatch, tmp_path, "olive", None,
+                roles={"olive": "observer"})["mode"] == "readonly"
+    assert _run(monkeypatch, tmp_path, "mallory", None,
+                roles={"arav": "builder"})["mode"] == "readonly"
+    assert _run(monkeypatch, tmp_path, "olive", "members", roles=None)["mode"] == "readonly"
+    assert _run(monkeypatch, tmp_path, "arav", None)["mode"] == "default"
+
+
+def test_a_failover_handoff_of_the_owners_request_stays_trusted(monkeypatch, tmp_path) -> None:
+    from quorus.protocol import SocialVerb
+
+    sv = SocialVerb(verb="defer", actor="arav-codex", room_id="build", ref_message_id="ask",
+                    payload={"to": "arav-claude", "failover": {
+                        "original_message_id": "ask", "failed_agents": ["arav-codex"],
+                        "handoffs": 1, "reason": "quota", "task": "fix it",
+                        "branch": "quorus/arav-codex", "last_commit": ""}})
+    d_env = {"id": "hop", "message_id": "hop", "from_name": "arav-codex", "room": "build",
+             "message_type": "social", "content": sv.model_dump_json()}
+    owner = asyncio.run(reflexd.Reflexd._trusted_wake(
+        _bare_daemon(monkeypatch, tmp_path), _Relay([_msg("ask", "arav")]), d_env, []))
+    assert owner is True
+    stranger = asyncio.run(reflexd.Reflexd._trusted_wake(
+        _bare_daemon(monkeypatch, tmp_path), _Relay([_msg("ask", "mallory")]), d_env, []))
+    assert stranger is False
+
+
+def _bare_daemon(monkeypatch, tmp_path):
+    monkeypatch.setenv("REFLEXD_OWNER", "arav")
+    monkeypatch.setattr(reflexd, "trust_for", lambda room: "owner")
+    return reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                                 participant_name="arav-claude",
+                                                 runtime_dir=tmp_path / "rt"))

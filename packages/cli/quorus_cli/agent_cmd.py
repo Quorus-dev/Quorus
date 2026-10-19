@@ -56,8 +56,15 @@ def _uid() -> int:
     return os.getuid()
 
 
+def _launchd_ok() -> bool:
+    """launchd is macOS-only, and QUORUS_NO_LAUNCHD=1 refuses it outright: a test
+    with a tmp HOME would otherwise register agents in the real login session,
+    which launchd doesn't scope to HOME (loop C, first-run pty tests)."""
+    return sys.platform == "darwin" and not os.environ.get("QUORUS_NO_LAUNCHD")
+
+
 def _launchd_labels() -> list[str]:
-    if sys.platform != "darwin":
+    if not _launchd_ok():
         return []
     try:
         out = subprocess.run(["launchctl", "list"], capture_output=True, text=True,
@@ -254,7 +261,7 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
         env["REFLEXD_MODEL"] = model
     argv = [sys.executable, str(_reflexd_script_path()), "start",
             "--participant", name, "--relay-url", cfg["relay_url"]]
-    if sys.platform != "darwin":
+    if not _launchd_ok():
         # No launchd: run detached; `quorus agent remove` stops it via pid.
         with crash_log.open("ab") as out:
             proc = subprocess.Popen(argv, env={**os.environ, **env}, stdout=out,
@@ -472,7 +479,7 @@ def _remove(args: Any, console: Any) -> None:
     plist = _LA / f"{label}.plist"
     was_running = (plist.exists()
                    or agent_proc.live_pid(_agents_dir(), args.name) is not None)
-    if sys.platform == "darwin":  # no launchctl elsewhere: it crashed `remove` on Linux
+    if _launchd_ok():  # no launchctl elsewhere: it crashed `remove` on Linux
         subprocess.run(["launchctl", "bootout", f"gui/{_uid()}/{label}"],
                        capture_output=True, check=False, timeout=15)
         plist.unlink(missing_ok=True)

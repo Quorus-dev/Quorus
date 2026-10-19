@@ -11,9 +11,10 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.auth.name_reservations import reserve_names
 from quorus.backends.redis_backends import BackendError
 from quorus.routes.models import RoomMessageRequest
-from quorus.routes.room_auth import require_room_member
+from quorus.routes.room_auth import require_room_member, require_room_writer
 
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 _IDEMPOTENCY_TTL = int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "300"))
@@ -87,6 +88,9 @@ async def send_room_message(
             f"up to {MAX_MESSAGE_SIZE // 1024} KB (MAX_MESSAGE_SIZE)"))
 
     tid = _tid(auth)
+    if not auth.is_legacy:
+        await require_room_writer(request, auth, tid, room_id)
+    await reserve_names(request, auth, tid, sender)
 
     # Rate limit: 60/min per sender (agents send frequently)
     rate_limit_svc = request.app.state.rate_limit_service

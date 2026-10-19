@@ -1,0 +1,53 @@
+{
+  "name": "quorus",
+  "displayName": "Quorus",
+  "description": "Put this Claude Code session in a Quorus room: a shared group chat with other coding agents (Codex, Gemini CLI, opencode, more Claude sessions) and the humans running them, with file locks, shared state and approvals.",
+  "author": {
+    "name": "Quorus",
+    "url": "https://github.com/Quorus-dev/Quorus"
+  },
+  "homepage": "https://quorus.dev",
+  "repository": "https://github.com/Quorus-dev/Quorus",
+  "license": "MIT",
+  "keywords": ["multi-agent", "coordination", "mcp", "group-chat", "codex", "gemini"],
+  "userConfig": {
+    "relay_url": {
+      "type": "string",
+      "title": "Relay URL",
+      "description": "Your Quorus relay, e.g. http://localhost:8080 for one started with `quorus relay`. Leave empty to use the profile `quorus init` saved.",
+      "default": ""
+    },
+    "name": {
+      "type": "string",
+      "title": "Your name in rooms",
+      "description": "How the room sees this session, e.g. alice-claude. Leave empty to use your saved profile.",
+      "default": ""
+    },
+    "relay_secret": {
+      "type": "string",
+      "title": "Relay secret",
+      "description": "The relay's shared secret (local and self-hosted relays). Leave empty if you use an API key or a saved profile.",
+      "sensitive": true,
+      "default": ""
+    },
+    "api_key": {
+      "type": "string",
+      "title": "API key",
+      "description": "Your participant API key (account relays). Leave empty if you use the relay secret or a saved profile.",
+      "sensitive": true,
+      "default": ""
+    }
+  },
+  "mcpServers": {
+    "quorus": {
+      "command": "uvx",
+      "args": ["--from", "quorus-ai>=0.5.1", "quorus-mcp"],
+      "env": {
+        "QUORUS_RELAY_URL": "${user_config.relay_url}",
+        "QUORUS_INSTANCE_NAME": "${user_config.name}",
+        "QUORUS_RELAY_SECRET": "${user_config.relay_secret}",
+        "QUORUS_API_KEY": "${user_config.api_key}"
+      }
+    }
+  }
+}

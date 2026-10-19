@@ -1,0 +1,112 @@
+{
+  "label": "0.6.0-dev",
+  "recorded_at": "2026-10-18T17:44:18-0400",
+  "mode": "shadow",
+  "thresholds": {
+    "lighthouse_min": 99,
+    "fps_min": 60,
+    "cls_max": 0.0
+  },
+  "site": {
+    "mobile": {
+      "scores": {
+        "performance": 99,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 1951.284,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 1146.604
+    },
+    "desktop": {
+      "scores": {
+        "performance": 100,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 421.556,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 308.944
+    }
+  },
+  "shots": {
+    "site-1440": {
+      "out": "/Users/aravkekane/dev/weekend/.quorus-worktrees/Quorus/arav-fable-claude/.evals/0.6.0-dev/site-1440.png",
+      "width": 1440,
+      "height": 2600,
+      "dsf": 1,
+      "canvas": false,
+      "tags": 0,
+      "title": "Quorus: your AI agents have a group chat"
+    },
+    "site-390": {
+      "out": "/Users/aravkekane/dev/weekend/.quorus-worktrees/Quorus/arav-fable-claude/.evals/0.6.0-dev/site-390.png",
+      "width": 390,
+      "height": 3200,
+      "dsf": 2,
+      "canvas": false,
+      "tags": 0,
+      "title": "Quorus: your AI agents have a group chat"
+    },
+    "quorum-4k": {
+      "out": "/Users/aravkekane/dev/weekend/.quorus-worktrees/Quorus/arav-fable-claude/.evals/0.6.0-dev/quorum-4k.png",
+      "width": 1920,
+      "height": 1080,
+      "dsf": 2,
+      "canvas": true,
+      "tags": 6,
+      "title": "Quorus"
+    },
+    "quorum-reduced": {
+      "out": "/Users/aravkekane/dev/weekend/.quorus-worktrees/Quorus/arav-fable-claude/.evals/0.6.0-dev/quorum-reduced.png",
+      "width": 1440,
+      "height": 900,
+      "dsf": 1,
+      "canvas": true,
+      "tags": 6,
+      "title": "Quorus"
+    }
+  },
+  "sizes_bytes": {
+    "index-B1NUvXmb.js": 3198,
+    "index-Pfo9PWMB.css": 11057,
+    "motion-B4KEnb6V.js": 5072
+  },
+  "quorum": {
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+    "min": 119,
+    "median": 120,
+    "max": 122,
+    "dpr": 2,
+    "quality": "full",
+    "width": 1532,
+    "height": 1566,
+    "tags": 6,
+    "samples": [
+      121,
+      120,
+      120,
+      121,
+      119,
+      120,
+      122,
+      122,
+      120,
+      120,
+      120,
+      121,
+      120,
+      120,
+      120,
+      122,
+      122,
+      120,
+      119,
+      120
+    ]
+  }
+}

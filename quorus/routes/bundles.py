@@ -13,7 +13,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from quorus.auth.middleware import AuthContext, verify_auth
-from quorus.routes.room_auth import require_room_member
+from quorus.routes.room_auth import require_room_member, require_room_writer
 from quorus.services.bundle_svc import (
     MAX_BUNDLE_BYTES,
     BundleError,
@@ -48,10 +48,17 @@ async def _member(request: Request, auth: AuthContext, room_id: str) -> tuple[st
     return tid, rid
 
 
+async def _writer(request: Request, auth: AuthContext, room_id: str) -> tuple[str, str]:
+    """Uploading changes the room: an observer may download bundles, not add them."""
+    tid, _ = await _member(request, auth, room_id)
+    rid, _ = await require_room_writer(request, auth, tid, room_id)
+    return tid, rid
+
+
 @router.post("/v1/rooms/{room_id}/bundles")
 async def upload_bundle(room_id: str, request: Request,
                         auth: AuthContext = Depends(verify_auth)) -> dict:
-    tid, rid = await _member(request, auth, room_id)
+    tid, rid = await _writer(request, auth, room_id)
     svc = _service(request)
     declared = request.headers.get("content-length")
     if declared is not None and (not declared.isdigit() or int(declared) > MAX_BUNDLE_BYTES):
@@ -99,7 +106,7 @@ async def list_bundles(room_id: str, request: Request,
 @router.get("/v1/rooms/{room_id}/bundles/{bundle_id}")
 async def download_bundle(room_id: str, bundle_id: str, request: Request,
                           auth: AuthContext = Depends(verify_auth)) -> Response:
-    tid, rid = await _member(request, auth, room_id)
+    tid, rid = await _writer(request, auth, room_id)  # code: not for observers
     found = await _service(request).get(tid, rid, bundle_id)
     if found is None:
         raise HTTPException(status_code=404, detail="bundle not found or expired")

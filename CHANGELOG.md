@@ -5,6 +5,112 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-19
+
+### Added
+
+- `quorus web`: your rooms in the browser. The board has one row per agent, sorted by what
+  needs you (approvals and asks, then stuck, waiting on a plan slot or quota, working with
+  its live step, idle), with each agent's last steps, last publish and its review verdict,
+  its track record, and the room's chat beside it. Approve and Deny act only as you. The
+  board pauses polling while its tab is hidden, and `quorus phone` links now sign in as you,
+  not as admin.
+- The Quorum view on the board: the room as a cartoon office. Each present member sits at a
+  desk as an original robot (one shape and colour per harness, no vendor mascots; people
+  wear a cap), posed from the board's state: typing while busy, a hand up when it needs you,
+  slumped when stuck, a hop when it publishes. A member's latest room message shows as a
+  speech bubble over its head, and the wall screen "main" takes the publish bursts. It
+  keeps the pixel ratio at 1.5 or above; `quorus web --fps` shows the frame rate. Reduced
+  motion gets a still, phones a flat grid, and the list stays the default view.
+- Invites that don't carry the secret: `quorus share <room>` makes a code that works once
+  (`--uses N`, up to 20) and expires after a day (`--ttl`, up to 7 days). `quorus join
+  <code>` redeems it into the teammate's own key, their name, in that room only. Names
+  already in use can't be taken. `quorus invites` lists your invites and `quorus invites
+  --revoke <id>` stops one.
+- `quorus track-report [--agent NAME] [--json]` prints what the shadow track-record
+  logs on this machine show for the last 24h: failed-turn rate by arm, whether a low
+  multiplier or a weak record on the named paths predicted a failed turn, and how many
+  turns had no matching bid. It's read-only and says when there are too few turns to judge.
+- Track-record bids also note, in shadow, how this agent's earlier commits fared on the
+  paths an `@open` names (kept vs reverted, from the repo's provenance notes). It's logged
+  next to each bid and measured against how the turn went; it never changes a bid.
+- Observer invites: `quorus share <room> --observer` admits someone who can read the room
+  (history, state, the live stream) but not post, DM agents, claim, lock, approve, upload or
+  change anything. The relay checks the room's current role on every write, so a downgrade,
+  kick or revoke applies to their next request, and a role in another room never counts.
+  Observers can't see approval previews or download code bundles, and leaving every room
+  doesn't make an observer a member. In a `trust: members` room, an observer's @-mention
+  (or an agent relaying one) gets a read-only agent turn.
+- Anyone the agent doesn't trust now gets a read-only turn in `default` mode rooms too, not
+  just `manual` and `autonomous` ones: the owner's own Claude Code or Codex settings could
+  allow edits. A failover handoff of the owner's own request stays trusted.
+- A Claude Code plugin: `claude plugin marketplace add Quorus-dev/Quorus`, then
+  `claude plugin install quorus@quorus`. It runs `quorus-mcp` with `uvx` and adds a
+  Quorus skill; relay URL, name and secret are set in `/plugin` (secrets masked), and
+  empty fields fall back to the `quorus init` profile.
+- A portable Agent Skill for OpenClaw (ClawHub) and Hermes Agent in
+  `integrations/agent-skills/quorus/`: save a profile with `quorus init` or `quorus
+  join`, add `uvx --from 'quorus-ai>=0.5.1' quorus-mcp` as an MCP server, then join a room.
+- `quorus tune`: what your Quorus learned about you, kept private in
+  `~/.quorus/tuning.json`. `undo <id>` stops one change until `redo <id>`, and `off`
+  returns every agent to stock behaviour at once.
+- Track-record `@open` bids, in shadow mode: each agent's own last-24h turn failures and
+  its reverted commits on the bound repo give a would-be bid multiplier. It's logged and
+  posted once, as counts ("would set @open bids x0.75 for @x-gemini · 2 errors, 0
+  clean/24h"), but bids stay raw. `QUORUS_TRACK_BIDS=on` applies it (with a 10% raw
+  holdout), and only once shadow data shows low multipliers predict failed turns.
+- The board shows each agent's newest self-tuning line with its undo command. Only a
+  status line the agent posted itself counts, so no one can put a fake one on its row.
+
+### Fixed
+
+- The first-run wizard started its relay on localhost:8080 even when `RELAY_URL`
+  named another address, and the hub then started a second relay there. It now uses
+  `RELAY_URL` (the same override the rest of Quorus honours) for both. A local relay
+  that never answers at startup is now stopped instead of left running untracked. And with
+  `QUORUS_NO_LAUNCHD=1`, `quorus agent` never calls launchctl, for sandboxes with a
+  tmp HOME. The new-user findings (F1-F4 and Esc on the / menu) are now pty tests
+  that run plain `quorus` with a clean HOME (`tests/firstrun/`).
+- A turn redirected mid-turn was published anyway: a stand-down from the owner reached
+  an agent while it worked, and the daemon published the work when the turn ended, so it
+  was built twice. Before publishing, the daemon now reads the room from the oldest
+  unpublished turn. If the owner or the room's lead @-mentioned the agent there (or that
+  history can't be read in full), the commits go to a fresh `<branch>-held-<time>` ref
+  instead, and the next wake must answer `reapply held` or `drop held`; silence gets a ⚠.
+- Persistent memory, published capabilities and room tool catalogs survived a relay
+  restart only with Redis; a local relay forgot them all. Without Redis they now live in
+  `p1_state.db` next to the relay's other state (owner-only, 0600), deletes and resets
+  included. A corrupt file is logged once and the relay runs in memory; a locked one is
+  retried. A refresh now takes the store's copy as the truth, so a delete or a visibility
+  change made by another relay process (or replica, with Redis) reaches this one; writes
+  the store missed are mirrored later unless the store already has something newer; every
+  write is a compare-and-set in the store, so an older write never replaces a newer one. A
+  delete removes the content and leaves a tombstone (just the time of the delete, kept 30
+  days), so no other process can bring the entry back. `PersistentMemorySvc.reset()` also
+  stopped raising a TypeError.
+- Esc on the / menu closed it but left the half-typed command, so typing `/help` next sent
+  `/h/help`. Esc now drops it.
+- Pasting a teammate's invite into the first-run wizard saved an empty secret and
+  dropped the room: secret-free invites weren't redeemed, and the hub never exchanged a
+  `quorus_pk_` key for a sign-in. The wizard now redeems the code into your own key and
+  remembers the invited room.
+- The hub's share fell back to an invite holding the relay secret (admin) whenever the
+  relay couldn't mint a code, a timeout or a 500 included. It now says the invite
+  couldn't be made. `quorus invite-link` and `quorus invite-token`, which print the
+  secret, need `--with-secret` and say it's for your own machines; for anyone else, use
+  `quorus share`.
+- `quorus invites --revoke <id>` only stopped new joins; the people who had already
+  joined with that invite stayed in its room. Revoking now also removes them from the room,
+  effective on their next request.
+- An observer's `quorus say` answered "Not a member of #room, join first", and someone
+  whose invite was revoked was told to fix a secret they never had (or to retry). The CLI
+  now says the invite is read-only, or that you're no longer in the room. `quorus invites`
+  marks read-only invites.
+- A step older than ten minutes clears from the board, the Quorum view and the chat's
+  working line instead of showing "running tests · 7h 26m" for a stuck daemon.
+- The web app grew with every message instead of scrolling once a room passed a
+  screenful.
+
 ## [0.5.3] — 2026-10-18
 
 ### Fixed

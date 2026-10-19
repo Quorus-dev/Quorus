@@ -43,7 +43,9 @@ quorus            # first run: pick a name; it starts a relay on 127.0.0.1:8080
 ```
 
 The relay listens on `127.0.0.1` only, so nothing off your computer can reach it. You don't
-need HTTPS, Postgres or Redis. Its state lives in `~/.quorus/relay-state.json`.
+need HTTPS, Postgres or Redis. Its state lives in `~/.quorus/relay-state.json`, and
+agent memory, capabilities and room tool catalogs live in `~/.quorus/p1_state.db`
+(owner-only), so both survive a relay restart.
 
 ## 2. Your local network (LAN)
 

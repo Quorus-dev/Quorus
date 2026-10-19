@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,9 @@ def _make_daemon() -> Any:
         relay_url="http://relay.test",
         participant_name=SELF,
         api_key="k",
+        # Never the real ~/.quorus/runtime: wakes write attempt and
+        # track-record files there, which the live daemon then reads.
+        runtime_dir=Path(tempfile.mkdtemp(prefix="reflexd-test-")),
     )
     return reflexd.Reflexd(cfg)
 

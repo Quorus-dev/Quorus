@@ -18,7 +18,8 @@ from quorus.dashboard import DASHBOARD_HTML, DASHBOARD_JS
 def test_page_has_no_inline_script_or_handlers() -> None:
     # Only <script src="/web.js">, so `script-src 'self'` lets it run.
     scripts = re.findall(r"<script\b([^>]*)>", DASHBOARD_HTML)
-    assert scripts == [' src="/web.js"']
+    assert scripts == [' src="/web.js"', ' src="/board.js"',
+                       ' type="module" src="/quorum.js"']  # board + Quorum view, 2026-10-17
     assert not re.search(r"\son[a-z]+\s*=", DASHBOARD_HTML), "inline event handler"
 
 
@@ -63,6 +64,21 @@ def test_relay_serves_page_and_script_under_its_csp() -> None:
     assert "script-src 'self'" in page.headers.get("content-security-policy", "")
     assert js.status_code == 200 and "javascript" in js.headers["content-type"]
     assert js.text == DASHBOARD_JS
+
+
+def test_the_app_never_grows_past_the_viewport() -> None:
+    """The app grid had one implicit auto row, so the chat (height:100% of it)
+    sized itself to the whole message list: a 30-message room was 3800px tall
+    and the Quorum stage drew its table below the fold (2026-10-18)."""
+    assert "#app{display:grid;grid-template-columns:260px 1fr;grid-template-rows:minmax(0,1fr);" \
+        "height:100vh;height:100dvh;overflow:hidden}" in DASHBOARD_HTML
+
+
+def test_chat_keeps_the_newest_message_in_view_when_the_box_resizes() -> None:
+    """The board's split layout shrinks the message box after the first render,
+    which left the newest message below the fold (review of 608f638b)."""
+    assert "new ResizeObserver(() => { if (wasAtBottom) box.scrollTop = box.scrollHeight; })" \
+        in DASHBOARD_JS
 
 
 def test_only_the_messages_scroll_not_the_page() -> None:

@@ -1603,6 +1603,15 @@ async def test_invite_page_requires_auth(client: AsyncClient, auth_headers):
     assert resp.status_code == 401
 
 
+def _tenant_admin(tenant: str = "t-inv") -> dict:
+    """An API-key relay's admin. Shared-secret (`_legacy`) rooms no longer take
+    /invite/{room}/join at all: they redeem invite codes (test_invite_codes.py)."""
+    from quorus.auth.tokens import create_jwt
+
+    return {"Authorization": "Bearer " + create_jwt(
+        sub="alice", tenant_id=tenant, tenant_slug=tenant, role="admin")}
+
+
 async def test_invite_join_with_scoped_token(client: AsyncClient, auth_headers):
     """Invite join endpoint should accept valid JWT tokens without relay auth."""
     from quorus.relay import app
@@ -1611,11 +1620,11 @@ async def test_invite_join_with_scoped_token(client: AsyncClient, auth_headers):
 
     resp = await client.post(
         "/rooms", json={"name": "scoped-room", "created_by": "alice"},
-        headers=auth_headers,
+        headers=_tenant_admin(),
     )
     room_id = resp.json()["id"]
     token = invite_svc.create_token(
-        tenant_id="_legacy", room_id=room_id, issuer="alice", role="member",
+        tenant_id="t-inv", room_id=room_id, issuer="alice", role="member",
     )
     # No auth headers — only the scoped token
     resp = await client.post(
@@ -1634,16 +1643,16 @@ async def test_invite_join_rejects_wrong_room_token(client: AsyncClient, auth_he
 
     resp_a = await client.post(
         "/rooms", json={"name": "room-a", "created_by": "alice"},
-        headers=auth_headers,
+        headers=_tenant_admin(),
     )
     room_a_id = resp_a.json()["id"]
     await client.post(
         "/rooms", json={"name": "room-b", "created_by": "alice"},
-        headers=auth_headers,
+        headers=_tenant_admin(),
     )
     # Token signed for room-a's ID
     token_for_a = invite_svc.create_token(
-        tenant_id="_legacy", room_id=room_a_id, issuer="alice", role="member",
+        tenant_id="t-inv", room_id=room_a_id, issuer="alice", role="member",
     )
     # Try to join room-b with room-a's token — room_id won't match room-b
     resp = await client.post(

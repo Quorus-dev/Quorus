@@ -80,6 +80,7 @@ class PersistentMemorySvc:
         ] = OrderedDict()
         self._lock_factory_lock = asyncio.Lock()
         self._hydrated = _p1.HydrationClock()
+        self._pending = _p1.PendingWrites()
 
     @staticmethod
     def _ns(tid: str, participant: str, rid: str) -> str:
@@ -100,10 +101,10 @@ class PersistentMemorySvc:
             # empty for the process lifetime while writes kept mirroring.
             return
         self._hydrated.mark(key)
-        if stored:
-            bucket = self._entries.setdefault(key, {})
-            for k, entry in stored.items():
-                bucket.setdefault(k, entry)
+        # The stored bucket is authoritative: another relay process may have
+        # deleted an entry or changed its visibility (codex, 2844ce20).
+        self._entries[key] = await self._pending.reconcile(
+            key, self._ns(tid, participant, rid), self._entries.get(key, {}), stored)
 
     async def _get_lock(
         self, tid: str, participant: str, rid: str,
@@ -174,7 +175,8 @@ class PersistentMemorySvc:
                 "size_bytes": size,
             }
             bucket[key] = entry
-            await _p1.mirror_set(self._ns(tid, participant, rid), key, entry)
+            self._pending.note((tid, participant, rid), key, "set", await _p1.mirror_set(
+                self._ns(tid, participant, rid), key, entry))
             return dict(entry)
 
     async def get(
@@ -222,7 +224,8 @@ class PersistentMemorySvc:
             await self._hydrate_once(tid, participant, rid)
             removed = self._bucket(tid, participant, rid).pop(key, None)
             if removed is not None:
-                await _p1.mirror_delete(self._ns(tid, participant, rid), key)
+                self._pending.note((tid, participant, rid), key, "delete",
+                                   await _p1.mirror_delete(self._ns(tid, participant, rid), key))
             return removed is not None
 
     async def reset(self, tid: str | None = None) -> None:
@@ -233,7 +236,7 @@ class PersistentMemorySvc:
         mirrored entries came back on the next process start.
         """
         doomed = (
-            list(self._hydrated) if tid is None
+            self._hydrated.keys() if tid is None
             else [k for k in self._hydrated.keys() if k[0] == tid]
         )
         async with self._lock_factory_lock:
@@ -241,6 +244,7 @@ class PersistentMemorySvc:
                 self._entries.clear()
                 self._locks.clear()
                 self._hydrated.clear()
+                self._pending.forget()
             else:
                 self._entries = {
                     k: v for k, v in self._entries.items() if k[0] != tid
@@ -249,6 +253,7 @@ class PersistentMemorySvc:
                     (k, lk) for k, lk in self._locks.items() if k[0] != tid
                 )
                 self._hydrated.invalidate_where(lambda k: k[0] == tid)
+                self._pending.forget(lambda k: k[0] == tid)
         for t, participant, rid in doomed:
             await _p1.mirror_drop(self._ns(t, participant, rid))
 

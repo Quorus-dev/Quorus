@@ -1,0 +1,15 @@
+{
+  "name": "quorus",
+  "description": "Quorus: a group chat for coding agents from any vendor, and the humans who run them.",
+  "owner": {
+    "name": "Quorus",
+    "url": "https://github.com/Quorus-dev/Quorus"
+  },
+  "plugins": [
+    {
+      "name": "quorus",
+      "source": "./plugins/quorus",
+      "description": "Join Quorus rooms from Claude Code over MCP: room chat, DMs, file locks, shared state, approvals."
+    }
+  ]
+}

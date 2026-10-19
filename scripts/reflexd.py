@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -81,9 +82,11 @@ from quorus.notifications import notify as _notify  # noqa: E402
 from quorus.observability.redaction import env_secret_values, redact_secrets  # noqa: E402
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
 from quorus.private_files import write_private_json, write_private_text  # noqa: E402
+from quorus.roles import WRITER_ROLES  # noqa: E402
 from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime import review_share as _review_share  # noqa: E402
+from quorus.runtime import track_record as _track  # noqa: E402  L2 bids
 from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
 from quorus.runtime.turnguard import is_busy as _tg_is_busy  # noqa: E402
 
@@ -598,6 +601,12 @@ assert _unfinished_spec is not None and _unfinished_spec.loader is not None
 reflexd_unfinished = _ilu.module_from_spec(_unfinished_spec)
 sys.modules.setdefault("reflexd_unfinished", reflexd_unfinished)
 _unfinished_spec.loader.exec_module(reflexd_unfinished)
+_HELD_PATH = Path(__file__).resolve().parent / "reflexd_held.py"
+_held_spec = _ilu.spec_from_file_location("reflexd_held", _HELD_PATH)
+assert _held_spec is not None and _held_spec.loader is not None
+reflexd_held = _ilu.module_from_spec(_held_spec)
+sys.modules.setdefault("reflexd_held", reflexd_held)
+_held_spec.loader.exec_module(reflexd_held)
 _MODELS_PATH = Path(__file__).resolve().parent / "reflexd_models.py"
 _models_spec = _ilu.spec_from_file_location("reflexd_models", _MODELS_PATH)
 assert _models_spec is not None and _models_spec.loader is not None
@@ -2200,6 +2209,21 @@ class RelayClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def fetch_history(self, *, room: str, limit: int) -> list[dict[str, Any]]:
+        """Like :meth:`fetch_recent`, but raises instead of returning [] when
+        the relay can't answer: the publish guard must tell "no messages" from
+        "couldn't read them" (it holds on the second)."""
+        resp = await self.client.get(f"/rooms/{room}/history", headers=await self._headers(),
+                                     params={"limit": limit})
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict):
+            data = next((data[k] for k in ("messages", "history", "items")
+                         if isinstance(data.get(k), list)), None)
+        if not isinstance(data, list):
+            raise ValueError("room history isn't a list")
+        return data
+
     async def fetch_recent(
         self, *, room: str, limit: int = HEARTBEAT_HISTORY_LIMIT
     ) -> list[dict[str, Any]]:
@@ -2257,16 +2281,34 @@ class RelayClient:
         self, *, participant: str, status: str = "active", room: str = "",
         reason: str = "",
         activity: str = "",
+        waiting_on: str = "",
+        waiting_until: float = 0.0,
+        model: str = "",
     ) -> None:
         """Presence heartbeat (R2) — lets the relay show active/away + queued."""
         headers = await self._headers()
-        body = {"instance_name": participant, "status": status, "room": room}
+        body: dict[str, Any] = {"instance_name": participant, "status": status, "room": room}
         if reason:
             body["reason"] = reason
         if activity:
             body["activity"] = activity
+        if waiting_on:
+            body["waiting_on"], body["waiting_until"] = waiting_on, max(0.0, waiting_until)
+        if model:
+            body["model"] = model
         resp = await self.client.post("/heartbeat", headers=headers, json=body)
         resp.raise_for_status()
+
+    async def fetch_member_roles(self, *, room: str) -> dict[str, str] | None:
+        """{name: role} for the room right now, or None if the relay didn't say."""
+        try:
+            resp = await self.client.get(f"/rooms/{room}", headers=await self._headers())
+            resp.raise_for_status()
+            roles = resp.json().get("member_roles")
+        except Exception as exc:
+            logger.debug("member role lookup failed for %s: %s", room, exc)
+            return None
+        return {str(k): str(v) for k, v in roles.items()} if isinstance(roles, dict) else None
 
     async def fetch_members(self, *, room: str) -> list[str]:
         """Room member names, or [] on any failure (prompt context only)."""
@@ -2557,6 +2599,7 @@ class Reflexd:
         # the busy presence at most every STEP_POST_MIN_S.
         self._activity = ""
         self._stuck_alerted_at = 0.0
+        self._waiting: tuple[str, float] = ("", 0.0)  # (kind, until epoch)
         self._presence_relay: Any = None
         self._step_task: asyncio.Task[None] | None = None
         if hasattr(self.adapter, "on_step"):
@@ -2577,6 +2620,9 @@ class Reflexd:
         self._unfinished_held: set[str] = set()
         self._last_spoke: dict[str, float] = {}
         self._last_wake_at: float = 0.0
+        # @open message id -> the track-record bid snapshot; the turn that wins
+        # takes it when it starts, so its outcome joins that exact prediction.
+        self._predictions: dict[str, str] = {}
         # Bounded in-memory queue for messages that arrive while a busy-file
         # is set. Drained on stop, not replayed across restarts (PR-C1 scope).
         self._queue: list[dict[str, Any]] = []
@@ -2776,6 +2822,29 @@ class Reflexd:
                 room, message_id, triage.kind, bid_reason,
             )
             return False
+        if triage.kind == "open_todo":
+            # L2: this agent's own recent turns and kept/reverted commits
+            # inform the bid (shadow by default: logged, not applied).
+            repo = workspace_for(room) if room else None
+            try:
+                decision = _track.decide_bid(
+                    bid, bid_reason, message_id=message_id,
+                    runtime_dir=self.config.runtime_dir,
+                    participant=self.config.participant_name, repo=repo,
+                    scope=self._track_scope(repo),
+                    harness=detect_harness(self.config.participant_name) or "",
+                    model=str(getattr(self.adapter, "model", None) or ""),
+                    text=str(envelope.get("content") or ""))
+                bid, bid_reason = decision.bid, decision.reason
+                if decision.prediction_id:
+                    self._predictions.pop(message_id, None)
+                    self._predictions[message_id] = decision.prediction_id
+                    while len(self._predictions) > 256:
+                        self._predictions.pop(next(iter(self._predictions)))
+                if decision.announce:
+                    await self._post_status(relay, room, envelope, decision.announce)
+            except Exception as exc:  # a bad track record must never stop a bid
+                logger.debug("track-record bid skipped: %s", exc)
         if self._wake_lock.locked() and triage.kind != "mention":
             # Busy on another job: still bid (so the work never goes
             # ownerless when everyone is busy) but low, so an idle teammate
@@ -2829,6 +2898,11 @@ class Reflexd:
                 continue
             if claim.get("claimed"):
                 winner = claim.get("winner")
+                if triage.kind == "open_todo":
+                    _track.record_claim(
+                        self.config.runtime_dir, self.config.participant_name,
+                        message_id=message_id, claim=claim,
+                        scope=self._track_scope(workspace_for(room) if room else None))
                 break
             await asyncio.sleep(0.25)
 
@@ -2935,7 +3009,7 @@ class Reflexd:
         if post is None:
             return
         status, room = self._presence
-        extra = {"activity": self._activity} if status == "busy" and self._activity else {}
+        extra = self._presence_extra(status)
         try:
             if status == "degraded":
                 extra["reason"] = self._degraded_reason
@@ -2943,6 +3017,31 @@ class Reflexd:
                        **extra)
         except Exception as exc:  # presence is cosmetic: never fail a wake on it
             logger.debug("presence update failed: %s", exc)
+
+    def _presence_extra(self, status: str) -> dict[str, Any]:
+        """The fields that go with a presence post: the live step while busy,
+        otherwise what the agent is waiting on, for the "needs you" board."""
+        if status == "busy":
+            return {"activity": self._activity} if self._activity else {}
+        kind, until = self._waiting_now()
+        return {"waiting_on": kind, "waiting_until": until} if kind else {}
+
+    def _waiting_now(self) -> tuple[str, float]:
+        until = getattr(self.adapter, "limited_until", 0.0) or 0.0
+        if until > time.time():
+            return "quota", until
+        kind, until = self._waiting
+        if kind == "pacing" and until and until < time.time():
+            return "", 0.0
+        return kind, until
+
+    def _note_outcome(self, reply: str) -> None:
+        """A failed turn leaves the agent "stuck" until its next good one."""
+        failed = (reply or "").lstrip().startswith(("⚠", "[reflexd]"))
+        if failed and not _is_limit(reply):
+            self._waiting = ("stuck", 0.0)
+        elif not failed and self._waiting[0] == "stuck":
+            self._waiting = ("", 0.0)
 
     def _on_step(self, step: str) -> None:
         """A step from the harness stream: show it on the working line soon."""
@@ -2997,6 +3096,9 @@ class Reflexd:
                 f"stay inside its plan); next turn in about {_human_wait(wait)}")
         logger.info("pacing: parked for %.0fs (cap %d/h)", wait, cap)
         self._pace_parked[room] = (envelope, triage)
+        # Waiting for a plan slot isn't working: it showed as "⋯ @a-codex
+        # working 57m" for most of every hour (2026-10-17).
+        self._waiting = ("pacing", now + wait)
         if self._pace_task is None or self._pace_task.done():
             self._pace_task = asyncio.get_running_loop().create_task(
                 self._release_paced(relay, wait))
@@ -3014,6 +3116,7 @@ class Reflexd:
         than being stranded with no worker left (codex, review of 10d8a8e0)."""
         while True:
             await self._sleep_or_stop(wait)
+            self._waiting = ("", 0.0)
             if self._stop.is_set():
                 return
             parked, self._pace_parked = self._pace_parked, {}
@@ -3156,8 +3259,6 @@ class Reflexd:
         # inherit daemon cwd and the wake instructions say so.
         ws = workspace_for(room)
         worktree = None
-        worktree_problem = ("" if reflexd_wake.WORKTREES_ENABLED
-                            else "worktrees are turned off (REFLEXD_WORKTREES=0)")
         if ws is not None and reflexd_wake.WORKTREES_ENABLED:
             try:
                 worktree = await asyncio.to_thread(
@@ -3165,11 +3266,8 @@ class Reflexd:
                 )
                 if worktree is not None:
                     await asyncio.to_thread(reflexd_wake.sync_worktree, worktree)
-                else:
-                    worktree_problem = "git couldn't create one in the bound repo"
             except (OSError, subprocess.SubprocessError) as exc:
                 logger.warning("worktree setup failed, using %s: %s", ws, exc)
-                worktree, worktree_problem = None, type(exc).__name__
             if worktree is not None and worktree.repaired:
                 logger.warning("%s", worktree.repaired)
                 await self._post_status(relay, room, envelope, f"⚠ {worktree.repaired}")
@@ -3232,6 +3330,8 @@ class Reflexd:
         wake_max_turns = None if mission else CHAT_MAX_TURNS
 
         wake_started = datetime.now(timezone.utc)
+        prediction_id = self._predictions.pop(
+            str(envelope.get("message_id") or envelope.get("id") or ""), "")
         logger.info(
             "waking harness=%s room=%s reason=%s memory_entries=%d "
             "workspace=%s session=%s mode=%s",
@@ -3261,12 +3361,15 @@ class Reflexd:
                 # arrived next resumed it read-only and the agent reported
                 # "no write tools" (live 2026-10-17).
                 prior_session, _persist_session = None, None
-            if room_mode != "default" and not trusted:
+            if not trusted:
                 # Pre-launch audit: in autonomous mode any room member (or text
                 # injected into the room) could make the agent run code. Only
                 # the owner, and the owner's agents working on the owner's own
                 # requests, get write-capable turns unless the owner set the
-                # room to `trust: members`.
+                # room to `trust: members`. That holds in every mode, `default`
+                # included, where the owner's own CLI settings might allow edits:
+                # a missing member can't be told apart from a revoked observer
+                # (codex, reviews of f5d69289 and ee159a6d).
                 logger.info("read-only turn: %s isn't serving this agent's owner",
                             envelope.get("from_name") or "")
                 room_mode = "readonly"
@@ -3275,16 +3378,15 @@ class Reflexd:
                 extra_kw["mode"] = room_mode
             if (worktree is None and ws is not None
                     and reflexd_readonly.is_read_only(harness, room_mode)):
-                # Without its worktree the turn would run in the shared checkout,
-                # where the read-only guard can't see its writes (codex, review
-                # of 8805dc00). Fail closed: don't run it, say why. That holds
-                # with worktrees turned off too: disabling isolation doesn't
+                # With worktrees turned off too: disabling isolation doesn't
                 # authorize a read-only turn to write (codex, review of 21be4efe).
-                logger.error("read-only turn skipped: no safe worktree (%s)", worktree_problem)
-                await self._post_status(
-                    relay, room, envelope, "⚠ read-only turn skipped: couldn't set up a "
-                    f"safe worktree: {worktree_problem or 'unknown reason'}")
-                return
+                # Worktree setup failed, so the turn would run in the shared
+                # checkout where the read-only guard can't see its writes
+                # (codex, review of 8805dc00). Don't run it.
+                readonly_turn = True
+                raise reflexd_readonly.SnapshotError(
+                    "has no isolated worktree for a read-only turn (setting it up "
+                    "failed), so it didn't run")
             if worktree is not None:
                 # Settle anything a crashed read-only turn left first, then
                 # snapshot this one if it is read-only (security fix 15).
@@ -3316,10 +3418,19 @@ class Reflexd:
                 try:
                     await asyncio.to_thread(reflexd_unfinished.hold,
                                             self._unfinished_dir, worktree)
+                    await asyncio.to_thread(
+                        reflexd_held.mark_window, self._held_dir, worktree,
+                        reflexd_held.turn_start(history, envelope), context_ids)
                 except OSError as exc:
                     raise reflexd_readonly.SnapshotError(
                         "couldn't record the turn before starting it (its hold "
                         "marker failed to write), so it didn't run") from exc
+                # Commits held from an earlier turn: this turn must reapply or
+                # drop them (reflexd_held).
+                held_note = await asyncio.to_thread(reflexd_held.prompt_note,
+                                                    self._held_dir, worktree)
+                if held_note:
+                    prompt = f"{prompt}\n\n{held_note}"
             self._record_turn()  # only a turn that runs counts against the pace
             reply = await self.adapter.run(
                 harness, context=prompt,
@@ -3341,11 +3452,24 @@ class Reflexd:
 
         vendor_failure = reply if isinstance(reply, _failover.VendorFailure) else None
         exit_code = reply.exit_code if isinstance(reply, HarnessExitFailure) else "unknown"
+        # Classify before redaction turns the reply into a plain str.
+        turn_outcome = _track.classify_turn(
+            reply if isinstance(reply, str) else "", vendor_failure=bool(vendor_failure),
+            failure_reason=failure_reason or "", slow_start=isinstance(reply, SlowStart))
         # The reply is auto-posted to the room: mask any credential the agent
         # printed (prompt injection or not) before it is published.
         reply = redact_secrets((reply or "").strip(),
                                [self.config.api_key, *env_secret_values(os.environ)])
         unknown_exit = reply == "[reflexd] harness errored"
+        kind = triage.kind if triage is not None else ""
+        _track.record_turn(
+            self.config.runtime_dir, self.config.participant_name, turn_outcome,
+            kind=kind, scope=self._track_scope(workspace_for(room) if room else None),
+            model=str(getattr(self.adapter, "model", None) or ""),
+            started=wake_started.timestamp(),
+            prediction_id=prediction_id if kind == "open_todo" else "",
+            message_id=(envelope.get("message_id") or envelope.get("id") or "")
+            if kind == "open_todo" else "")
         # Didn't finish cleanly: its commits are held back, not published.
         turn_failed = bool(vendor_failure or failure_reason or exit_code != "unknown"
                            or reply.startswith(("[reflexd]", "⚠")))
@@ -3396,13 +3520,22 @@ class Reflexd:
                 await asyncio.to_thread(reflexd_unfinished.clear, self._unfinished_dir,
                                         worktree)
                 self._unfinished_held.discard(str(worktree.path))
-                published = await self._publish_with_resolution(
-                    worktree, harness=harness, resume=prior_session,
-                    on_session=_persist_session, timeout_s=wake_timeout,
-                    max_turns=wake_max_turns, writable_root=ws, summary=reply,
-                    mode=room_mode, approval_room=room if room_mode == "manual" else None,
-                    room=room,
-                )
+                for line in await asyncio.to_thread(
+                        reflexd_held.resolve, self._held_dir, worktree, reply or "",
+                        self.config.participant_name):
+                    await self._post_status(relay, room, envelope, line)
+                published = await self._guard_publish(relay, room, worktree)
+                if published is None:
+                    published = await self._publish_with_resolution(
+                        worktree, harness=harness, resume=prior_session,
+                        on_session=_persist_session, timeout_s=wake_timeout,
+                        max_turns=wake_max_turns, writable_root=ws, summary=reply,
+                        mode=room_mode,
+                        approval_room=room if room_mode == "manual" else None,
+                        room=room, relay=relay,
+                    )
+                    await asyncio.to_thread(reflexd_held.settle_window, self._held_dir,
+                                            worktree)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # never lose the agent's reply over git
@@ -3491,6 +3624,7 @@ class Reflexd:
                       "mention me to retry")
             reply = reply.replace("[reflexd] harness errored", status, 1)
 
+        self._note_outcome(reply)
         self._alert_owner(room, reply, asked_by=envelope.get("from_name") or None)
 
         # Don't double-post: if the agent already posted this result itself
@@ -3593,6 +3727,15 @@ class Reflexd:
             return False
         return not _pause_announced(recent, marker)
 
+    def _track_scope(self, repo: Path | None) -> str:
+        """relay|owner|repo: L2 evidence learned in one context stays there.
+        The relay is scheme + host + base path, so two relays behind one host
+        (``/team-a``, ``/team-b``) never share evidence."""
+        url = urlparse(self.config.relay_url)
+        relay = f"{url.scheme}://{url.netloc}{url.path.rstrip('/')}"
+        return "|".join((relay,
+                         agent_owner(self.config.participant_name), str(repo or "")))
+
     async def _post_status(
         self, relay: RelayClient, room: str, envelope: dict[str, Any], text: str,
     ) -> None:
@@ -3668,9 +3811,14 @@ class Reflexd:
     async def _trusted_wake(self, relay: Any, envelope: dict[str, Any],
                             history: list[dict[str, Any]]) -> bool:
         """Whether this wake may run write-capable (see :func:`trusted_origin`)."""
+        handoff = _failover.continuation(envelope)
+        if handoff and not envelope.get("reply_to"):
+            # A failover handoff carries no reply_to; it serves the request it names,
+            # so trust is traced from there (unchanged rules, just the right start).
+            envelope = {**envelope, "reply_to": handoff["root"]}
         room = envelope.get("room") or ""
         if trust_for(room) != "owner":
-            return True
+            return await self._member_trusted(relay, envelope, history)
         owner = agent_owner(self.config.participant_name)
         if trusted_origin(envelope, history, owner):
             return True
@@ -3682,6 +3830,55 @@ class Reflexd:
         except Exception:
             return False
         return trusted_origin(envelope, longer, owner)
+
+    async def _member_trusted(self, relay: Any, envelope: dict[str, Any],
+                              history: list[dict[str, Any]]) -> bool:
+        """`trust: members`: a write-capable turn only when the request comes from a
+        person who, on the relay right now, may change the room.
+
+        The sender must hold a writer role. A person's own message counts as is. An
+        agent's message counts only if its reply chain leads, through writers only,
+        to a person with a writer role: an agent handing over work with no traceable
+        request (no reply_to, an ancestor missing even after fetching older history,
+        or a cycle) gets a read-only turn, so an observer can't get work done by
+        asking an agent that then asks this one (codex, review of f5d69289). Unknown
+        roles, or a relay that can't say, mean read-only too."""
+        room = envelope.get("room") or ""
+        lookup = getattr(relay, "fetch_member_roles", None)
+        roles = await lookup(room=room) if lookup else None
+        if not roles:
+            return False
+
+        def writer(name: str) -> bool:
+            return roles.get(name) in WRITER_ROLES
+
+        sender = envelope.get("from_name") or ""
+        if not writer(sender):
+            return False
+        if not is_agent_participant(sender):
+            return True
+        by_id = {m.get("id"): m for m in history if m.get("id")}
+        fetched_more = False
+        cur, seen = envelope.get("reply_to"), set()
+        while True:
+            if not cur or cur in seen:
+                return False  # no traceable request, or a cycle
+            if cur not in by_id and not fetched_more:
+                fetched_more = True
+                try:
+                    longer = await relay.fetch_recent(room=room, limit=TRUST_CHAIN_LIMIT)
+                except Exception:
+                    return False
+                by_id.update({m.get("id"): m for m in longer if m.get("id")})
+            if cur not in by_id:
+                return False  # the chain leaves what the relay keeps
+            seen.add(cur)
+            who = by_id[cur].get("from_name") or ""
+            if not writer(who):
+                return False
+            if not is_agent_participant(who):
+                return True  # reached the person who asked
+            cur = by_id[cur].get("reply_to")
 
     def _build_prompt(
         self, envelope: dict[str, Any], history: list[dict[str, Any]],
@@ -3929,6 +4126,7 @@ class Reflexd:
         max_turns: int | None, writable_root: Path | None,
         summary: str | None = None, mode: str = "default",
         approval_room: str | None = None, room: str = "",
+        relay: "RelayClient | None" = None,
     ) -> str | None:
         """Publish the agent's branch; on a conflict, wake the SAME agent (same
         session) to resolve the merge left in its worktree, then retry once.
@@ -3980,6 +4178,11 @@ class Reflexd:
         await asyncio.to_thread(
             reflexd_wake.finish_merge, wt, self.config.participant_name)
         unresolved = await asyncio.to_thread(reflexd_wake.merge_in_progress, wt)
+        if not unresolved and relay is not None:
+            # The resolution wake took time: re-check the room before publishing.
+            held = await self._guard_publish(relay, room, wt)
+            if held is not None:
+                return held
         status = None if unresolved else await publish()
         if unresolved or (status or "").startswith(reflexd_wake.CONFLICT_MARK):
             await asyncio.to_thread(reflexd_wake.abort_merge, wt)
@@ -3997,6 +4200,59 @@ class Reflexd:
     @property
     def _unfinished_dir(self) -> Path:
         return self.config.runtime_dir / "unfinished-wakes"
+
+    @property
+    def _held_dir(self) -> Path:
+        return self.config.runtime_dir / "held-wakes"
+
+    async def _guard_publish(self, relay: RelayClient, room: str, wt: Any) -> str | None:
+        """Before publishing *wt*: if the owner or the room's lead @-mentioned
+        this agent since its oldest unpublished turn started (or that history
+        can't be read in full), hold the commits on a fresh ref instead and
+        return the room status. None means publish as usual (reflexd_held)."""
+        try:
+            if await asyncio.to_thread(reflexd_held.blocks_publish, self._held_dir, wt):
+                return (f"{reflexd_wake.STATUS_PREFIX} held commits are still on "
+                        f"{wt.branch} behind a merge in progress; not published")
+            ahead = await asyncio.to_thread(reflexd_held.oldest_commit_time, wt)
+            if ahead is None and not await asyncio.to_thread(reflexd_wake.worktree_dirty, wt):
+                await asyncio.to_thread(reflexd_held.settle_window, self._held_dir, wt)
+                return None  # nothing unpublished
+            since = await asyncio.to_thread(reflexd_held.window, self._held_dir, wt)
+            since = since if since is not None else (ahead or time.time())
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("publish guard couldn't inspect %s: %s", wt.path, exc)
+            return (f"{reflexd_wake.STATUS_PREFIX} couldn't check {wt.branch} before "
+                    "publishing; kept unpublished")
+        me = self.config.participant_name
+        authorities = {agent_owner(me)}
+        lead = lead_for(room)
+        if lead and lead != me:
+            authorities.add(lead)
+        try:
+            fetch = getattr(relay, "fetch_history", None) or relay.fetch_recent
+            history = await fetch(room=room, limit=reflexd_held.HISTORY_LIMIT)
+        except Exception as exc:  # any failure: hold, never publish blind
+            logger.warning("publish guard history fetch failed: %s", exc)
+            trigger, why = None, "the room's history couldn't be read before publishing"
+        else:
+            seen = await asyncio.to_thread(reflexd_held.seen_ids, self._held_dir, wt)
+            trigger, why = reflexd_held.find_stop(history, me=me, authorities=authorities,
+                                                  since=since, seen=seen)
+        if trigger is None and not why:
+            return None
+        try:
+            ref = await asyncio.to_thread(reflexd_held.hold, self._held_dir, wt, me,
+                                          trigger=trigger, why=why)
+            await asyncio.to_thread(reflexd_held.settle_window, self._held_dir, wt)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("publish guard couldn't hold %s: %s", wt.path, exc)
+            return (f"{reflexd_wake.STATUS_PREFIX} couldn't hold {wt.branch}'s commits "
+                    "after a mid-turn message; kept unpublished")
+        if ref is None:
+            return None
+        shas = (await asyncio.to_thread(reflexd_held._entries, self._held_dir, wt))[-1]["shas"]
+        return reflexd_held.status(ref, shas, trigger, why)
 
     async def _settle_readonly(self, relay: RelayClient, room: str, worktree: Any,
                                snap: dict[str, str] | None,
@@ -4058,9 +4314,11 @@ class Reflexd:
                 if wt is not None and (str(wt.path) in self._unfinished_held or
                                        reflexd_unfinished.pending(self._unfinished_dir, wt.path)):
                     continue  # a cut-off turn waits for review or its finishing turn
-                status = await asyncio.to_thread(
-                    reflexd_wake.publish_worktree, wt, self.config.participant_name,
-                ) if wt is not None else None
+                status = await self._guard_publish(relay, room, wt) if wt is not None else None
+                if status is None and wt is not None:
+                    status = await asyncio.to_thread(
+                        reflexd_wake.publish_worktree, wt, self.config.participant_name)
+                    await asyncio.to_thread(reflexd_held.settle_window, self._held_dir, wt)
                 if wt is not None and (status or "").startswith(reflexd_wake.CONFLICT_MARK):
                     # No agent is awake to resolve it here: never leave a
                     # half-done merge behind. The next wake retries properly.
@@ -4186,12 +4444,14 @@ class Reflexd:
         while not self._stop.is_set():
             try:
                 status, room = self._presence
-                extra = ({"activity": self._activity}
-                         if status == "busy" and self._activity else {})
+                extra = self._presence_extra(status)
                 await relay.post_heartbeat(
                     participant=self.config.participant_name,
                     status=status, room=room, **extra,
                     **({"reason": self._degraded_reason} if status == "degraded" else {}),
+                    # Lets people tell agents apart by model, without vendor logos.
+                    **({"model": str(model)} if (model := getattr(self.adapter, "model", None))
+                       else {}),
                 )
             except Exception as exc:
                 logger.debug("heartbeat failed: %s", exc)

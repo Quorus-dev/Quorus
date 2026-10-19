@@ -42,6 +42,7 @@ from quorus.auth.policy import (
     load_policy_for_tenant,
 )
 from quorus.routes.helpers import _validate_name
+from quorus.routes.room_auth import require_not_observer_only
 
 router = APIRouter()
 
@@ -221,6 +222,7 @@ async def send_agent_dm(
         raise HTTPException(
             status_code=403, detail="cannot send DM as another user",
         )
+    await require_not_observer_only(request, auth, auth.tenant_id or "_legacy")
 
     # Self-DM is meaningless and almost certainly a misconfig (e.g. a
     # reflexd loop pointed at its own participant). Reject loudly.

@@ -851,8 +851,18 @@ def _cmd_members(args):
         ui.console.print(f"  [agent]@{m}[/]")
 
 
+def _message_text(args) -> str:
+    """The message as one string: a REMAINDER list from the CLI, a str from tests."""
+    msg = args.message
+    text = " ".join(msg) if isinstance(msg, list) else str(msg or "")
+    if not text.strip():
+        raise SystemExit("quorus: a message is required")
+    return text
+
+
 def _cmd_say(args):
     from quorus_cli import ui
+    args.message = _message_text(args)
     try:
         with ui.spinner(f"Sending to #{args.room}"):
             asyncio.run(_say(args.room, args.message))
@@ -861,7 +871,15 @@ def _cmd_say(args):
         if e.response.status_code == 404:
             ui.error(f"Room '{args.room}' not found", hint="list rooms: quorus rooms")
         elif e.response.status_code == 403:
-            ui.error(f"Not a member of #{args.room}", hint=f"join first: quorus join {args.room}")
+            try:
+                refusal = _room_refusal(str(e.response.json().get("detail") or ""))
+            except ValueError:
+                refusal = None
+            if refusal:
+                ui.error(refusal[0], hint=refusal[1])
+            else:
+                ui.error(f"Not a member of #{args.room}",
+                         hint=f"join first: quorus join {args.room}")
         else:
             ui.error("Send failed", hint=_http_hint(e.response))
         sys.exit(1)
@@ -872,6 +890,7 @@ def _cmd_say(args):
 
 def _cmd_dm(args):
     from quorus_cli import ui
+    args.message = _message_text(args)
     try:
         with ui.spinner(f"Sending DM to @{args.to}"):
             asyncio.run(_dm(args.to, args.message))
@@ -1231,6 +1250,12 @@ def _cmd_agent(args):
     cmd_agent(args, console)
 
 
+def _cmd_web(args):
+    from quorus_cli.web_cmd import cmd_web
+
+    cmd_web(args, console)
+
+
 def _cmd_phone(args):
     from quorus_cli.phone_cmd import cmd_phone
 
@@ -1279,10 +1304,30 @@ def _cmd_retro(args):
     cmd_retro(args, console)
 
 
+def _cmd_tune(args):
+    from quorus_cli.tune_cmd import cmd_tune
+
+    cmd_tune(args, console)
+
+
 def _cmd_scorecard(args):
     from quorus_cli.scorecard_cmd import cmd_scorecard
 
     cmd_scorecard(args, console)
+
+
+def _cmd_track_report(args):
+    from quorus_cli.track_report_cmd import cmd_track_report
+
+    sys.exit(cmd_track_report(args, console))
+
+
+def _cmd_invites(args):
+    from quorus_cli.invites_cmd import cmd_invites
+
+    rc = cmd_invites(args)
+    if rc:
+        sys.exit(rc)
 
 
 def _cmd_turnguard(args):
@@ -2407,7 +2452,7 @@ async def _history(room_name: str, limit: int = 50, *, as_json: bool = False):
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -2461,7 +2506,7 @@ async def _export(
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -2575,7 +2620,7 @@ async def _ps(*, as_json: bool = False) -> None:
     except httpx.HTTPStatusError as e:
         if as_json:
             raise
-        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+        _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -2633,7 +2678,7 @@ async def _search(
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -2795,7 +2840,7 @@ async def _metrics(room_name: str) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -3865,7 +3910,7 @@ async def _room_state(room_name: str, *, as_json: bool = False) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -3933,7 +3978,7 @@ async def _room_locks(room_name: str) -> None:
         if e.response.status_code == 404:
             _ui.error(f"Room \'{room_name}\' not found", hint="list rooms: quorus rooms")
         else:
-            _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+            _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -3994,7 +4039,7 @@ async def _usage() -> None:
     except httpx.ConnectError as exc:
         _relay_unreachable(exc=exc)
     except httpx.HTTPStatusError as e:
-        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+        _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -5338,9 +5383,26 @@ def _cmd_init(args):
     )
 
 
+def _secret_share_refused(args, what: str) -> bool:
+    """`invite-link` and `invite-token` hand over RELAY_SECRET, which is admin on the
+    relay. They run only with --with-secret, for the owner's own machines; anyone
+    else gets an invite from `quorus share`, which redeems into their own key."""
+    if getattr(args, "with_secret", False):
+        _ui.warn(f"This {what} holds your relay secret, which is admin: whoever has it can "
+                 "read every room and act as anyone. Use it only on your own machines.")
+        return False
+    _ui.error(f"`quorus {what}` would hand over your relay secret",
+              hint=f"invite a teammate with: quorus share {args.room} (their own key, "
+                   f"that room only). For your own machine: quorus {what} "
+                   f"{args.room} --with-secret")
+    return True
+
+
 def _cmd_invite_link(args):
     """Generate a one-liner join command to share with others."""
     room = args.room
+    if _secret_share_refused(args, "invite-link"):
+        sys.exit(2)
     console.print(f"[bold]Share this command to invite someone to '{room}':[/bold]")
     console.print("")
     from rich.markup import escape as _escape
@@ -5387,12 +5449,14 @@ def _parse_join_token(token: str) -> dict:
 def _cmd_invite_token(args):
     """Generate a compact, copy-pasteable join token for a room."""
     room = args.room
+    if _secret_share_refused(args, "invite-token"):
+        sys.exit(2)
     token = _make_join_token(room, RELAY_URL, RELAY_SECRET)
     console.print(f"[bold]Join token for room '{room}':[/bold]")
     console.print("")
     console.print(f"  {token}")
     console.print("")
-    console.print("[dim]Share this token with any agent. They run:[/dim]")
+    console.print("[dim]On your other machine, run:[/dim]")
     console.print("[dim]  quorus join <token> --name THEIR_NAME[/dim]")
 
 
@@ -5752,6 +5816,7 @@ def _cmd_share(args):
     """
     room = args.room
     ttl_days = getattr(args, "ttl", 1)
+    uses = getattr(args, "uses", 1)
     want_copy = getattr(args, "copy", None)
     # Default `--copy` behavior: on when stdout is a TTY, off otherwise.
     if want_copy is None:
@@ -5768,6 +5833,10 @@ def _cmd_share(args):
         _ui.error("No auth configured", hint="run: quorus init")
         return
 
+    if not 1 <= uses <= 20:
+        _ui.error("--uses must be 1 to 20")
+        return
+
     # Call the mint endpoint — admin-only, auth via our configured
     # relay secret or API key. The relay checks the room exists and
     # returns 404 if not, so we don't need a pre-flight /rooms call.
@@ -5775,7 +5844,8 @@ def _cmd_share(args):
         resp = httpx.post(
             f"{RELAY_URL}/v1/join/mint",
             headers=_auth_headers(),
-            json={"room": room, "ttl_days": ttl_days},
+            json={"room": room, "ttl_days": ttl_days, "max_uses": uses,
+                  "role": "observer" if getattr(args, "observer", False) else "member"},
             timeout=15,
             follow_redirects=True,
         )
@@ -5855,6 +5925,13 @@ def _cmd_share(args):
         ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
         ui.console.print(f"    [accent]{_escape(install_cmd)}[/]")
     ui.console.print()
+
+    if body.get("invite_id"):
+        admits = "1 person" if uses == 1 else f"up to {uses} people"
+        if getattr(args, "observer", False):
+            admits += " as an observer (reads the room, changes nothing)"
+        ui.console.print(f"  [muted]admits {admits} · revoke: "
+                         f"quorus invites --revoke {body['invite_id']}[/]\n")
 
     if want_copy:
         # Copy the join command minus the literal <their-name> placeholder
@@ -5941,6 +6018,38 @@ async def _join_agents_to_room(
         )
 
 
+def _redeem_invite(relay_url: str, code: str, name: str) -> str:
+    """Spend a v2 invite code for *name*; the participant key, or "" after
+    printing why not. Never follows a redirect: the code is a credential."""
+    try:
+        resp = httpx.post(f"{relay_url}/v1/join/redeem", json={"code": code, "name": name},
+                          timeout=15, follow_redirects=False)
+    except httpx.HTTPError:
+        _ui.error_with_retry("Can't reach relay", relay_url=relay_url)
+        return ""
+    detail = ""
+    try:
+        detail = (resp.json() or {}).get("detail", "") if resp.content else ""
+    except ValueError:
+        pass
+    if resp.status_code == 409:
+        _ui.error(f"The name {name!r} is taken on this relay",
+                  hint="pick another: quorus join <code> --name <your-name>")
+        return ""
+    if resp.status_code in (403, 404, 410):
+        _ui.error("This invite is invalid, expired or used up",
+                  hint="ask your teammate for a fresh one: quorus share <room>")
+        return ""
+    if resp.status_code != 200:
+        _ui.error(f"Joining failed (HTTP {resp.status_code})" + (f": {detail}" if detail else ""))
+        return ""
+    key = str((resp.json() or {}).get("participant_key") or "")
+    if not key.startswith("quorus_pk_"):
+        _ui.error("The relay answered without a key; ask for a fresh invite")
+        return ""
+    return key
+
+
 def _apply_join_payload(payload: dict, name: str) -> None:
     """Write config, register MCP, join room, print the welcome.
 
@@ -5963,6 +6072,16 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     console.print(f"  Relay: {relay_url}")
     console.print(f"  Name: {name}")
     console.print("")
+
+    # v2 invites (shared-secret relays, docs/design/invite-roles.md step 1):
+    # the code redeems into the joiner's OWN participant key and the relay adds
+    # them to the room. The shared secret is never sent and never written here.
+    redeemed = False
+    if payload.get("v") == 2 and payload.get("c"):
+        api_key = _redeem_invite(relay_url, str(payload["c"]), name)
+        if not api_key:
+            sys.exit(4)
+        secret, tenant_id, invite_token, redeemed = "", "", "", True
 
     # Auto-signup if no credentials provided in the join code.
     # JWT-admin minted codes don't embed credentials for security reasons,
@@ -6070,6 +6189,12 @@ def _apply_join_payload(payload: dict, name: str) -> None:
 
     # 3. Join the room (human + all registered agents)
     async def _do_join():
+        if redeemed:  # the relay already added us when the code was redeemed
+            console.print(f"[green]Joined '{room}' as '{name}'[/green]")
+            if agent_keys:
+                console.print("[dim]Your agents join separately: quorus agent add "
+                              f"<tool> --room {room}[/dim]")
+            return
         async with httpx.AsyncClient(follow_redirects=True) as client:
             try:
                 # Preferred path: use scoped invite token (no auth required).
@@ -7464,7 +7589,7 @@ def _cmd_logs(args):
     except httpx_mod.ConnectError as exc:
         _relay_unreachable(exc=exc)
     except httpx_mod.HTTPStatusError as e:
-        _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+        _report_http_error(e.response)
 
 
 def _cmd_brief(args):
@@ -8259,7 +8384,7 @@ Be direct and actionable. No pleasantries. This will be injected into the agent'
             if e.response.status_code == 404:
                 _ui.error(f"Room \'{target_room}\' not found", hint="list rooms: quorus rooms")
             else:
-                _ui.error_with_retry(_http_hint(e.response), relay_url=RELAY_URL)
+                _report_http_error(e.response)
     finally:
         await client.aclose()
 
@@ -8399,9 +8524,11 @@ def _print_grouped_help():
         ]),
         ("MEASURE", [
             ("scorecard",          "Whose work holds up in this repo, by agent/vendor"),
+            ("track-report",       "Loop A's shadow numbers per agent, last 24h"),
             ("duel",               "Two agents, one task; tests gate, blind judge picks"),
             ("retro <room>",       "What's going wrong in a room, ranked, with fixes"),
             ("replay <room>",      "Write a shareable page of how a room did a task"),
+            ("tune",               "What your Quorus learned; undo any of it"),
         ]),
         ("ROOMS & MESSAGING", [
             ("rooms",              "List all rooms"),
@@ -8967,11 +9094,13 @@ def main():
         help_text="Send message to a room (alias: s)",
     ))
     p_say.add_argument("room", help="Room name")
-    p_say.add_argument("message", help="Message content")
+    # REMAINDER: words like "--fps" inside an unquoted message are text, not
+    # flags (an agent's `quorus say room ✅ … --fps` failed, 2026-10-18).
+    p_say.add_argument("message", nargs=argparse.REMAINDER, help="Message content")
 
     p_dm = sub.add_parser("dm", help="Send direct message")
     p_dm.add_argument("to", help="Recipient name")
-    p_dm.add_argument("message", help="Message content")
+    p_dm.add_argument("message", nargs=argparse.REMAINDER, help="Message content")
 
     p_heartbeat = sub.add_parser("heartbeat", **_help_block(
         synopsis="Post an alive-signal heartbeat to your primary room.",
@@ -9106,9 +9235,11 @@ def main():
     )
 
     p_invite_link = sub.add_parser(
-        "invite-link", help="Generate a join command to share"
+        "invite-link", help="A join command holding the relay secret, for your own machines"
     )
     p_invite_link.add_argument("room", help="Room name")
+    p_invite_link.add_argument("--with-secret", action="store_true",
+                               help="Include the relay secret (admin): your own machines only")
 
     p_spawn = sub.add_parser(
         "spawn", help="Create agent workspace and launch an agent"
@@ -9483,9 +9614,11 @@ def main():
 
     p_invite_token = sub.add_parser(
         "invite-token",
-        help="Generate a one-line join token to share with agents",
+        help="A join token holding the relay secret, for your own machines",
     )
     p_invite_token.add_argument("room", help="Room name")
+    p_invite_token.add_argument("--with-secret", action="store_true",
+                                help="Include the relay secret (admin): your own machines only")
 
     p_share = sub.add_parser("share", **_help_block(
         synopsis="Generate a short invite code for a room.",
@@ -9503,6 +9636,14 @@ def main():
     p_share.add_argument(
         "--ttl", type=int, default=1,
         help="Code expiry in days (default: 1, max 7)",
+    )
+    p_share.add_argument(
+        "--uses", type=int, default=1,
+        help="How many people the code admits (default: 1, max 20)",
+    )
+    p_share.add_argument(
+        "--observer", action="store_true",
+        help="They can read the room but not post, claim or change anything",
     )
     _copy_group = p_share.add_mutually_exclusive_group()
     _copy_group.add_argument(
@@ -9687,10 +9828,21 @@ def main():
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")
 
+    p_web = sub.add_parser("web", help="Open your rooms and the needs-you board in this browser")
+    p_web.add_argument("room", nargs="?", help="Room to open (default: the room list)")
+    p_web.add_argument("--chat", action="store_true", help="Open the chat, not the board")
+    p_web.add_argument("--print-url", action="store_true", dest="print_url",
+                       help="Print the sign-in link instead of opening a browser")
+    p_web.add_argument("--fps", action="store_true",
+                       help="Show the Quorum view's fps / DPR / quality readout")
+
     p_phone = sub.add_parser("phone", help="Open your rooms on your phone (Tailscale by default)")
     p_phone.add_argument("--lan", action="store_true",
                          help="Share on this Wi-Fi instead of Tailscale (trusted networks only)")
     p_phone.add_argument("--port", type=int, default=None, help="Port to share on (default 8790)")
+    p_phone.add_argument("--with-secret", action="store_true",
+                         help="Put the relay's admin secret in the link instead of your own "
+                              "sign-in (shared-secret relays; anyone with it can act as anyone)")
 
     p_duel = sub.add_parser(
         "duel", help="Two agents solve the same task; tests gate, a blind judge picks the winner")
@@ -9745,6 +9897,16 @@ def main():
     p_replay.add_argument("--repo", help="Repo for the commits (default: the room's binding)")
     p_replay.add_argument("--out", help="Output file (default quorus-replay-<room>.html)")
 
+    p_invites = sub.add_parser(
+        "invites", help="List this relay's invites, or revoke one (relay owner only)")
+    p_invites.add_argument("--revoke", metavar="ID", help="Revoke an invite by its id")
+
+    p_tune = sub.add_parser("tune", help="What your Quorus learned; undo any of it")
+    p_tune.add_argument("action", nargs="?", default="list",
+                        choices=["list", "undo", "redo", "off", "on"])
+    p_tune.add_argument("id", nargs="?", help="Adaptation id for undo/redo, e.g. t3")
+    p_tune.add_argument("--json", action="store_true", help="Print the adaptations as JSON")
+
     p_score = sub.add_parser(
         "scorecard", help="Which agent and vendor's work holds up in this repo")
     p_score.add_argument("--repo", help="Repo path (default: current directory)")
@@ -9753,6 +9915,13 @@ def main():
     p_score.add_argument("--range", help="Explicit git range instead of --since, e.g. main..HEAD")
     p_score.add_argument("--by", choices=["agent", "vendor"], default="agent")
     p_score.add_argument("--json", action="store_true", help="One JSON row per commit")
+
+    p_track = sub.add_parser(
+        "track-report", help="Loop A's shadow numbers per agent, last 24h (read-only)")
+    p_track.add_argument("--agent", help="One agent (default: every agent on this machine)")
+    p_track.add_argument("--runtime-dir", help="Where the daemon keeps its logs "
+                         "(default: ~/.quorus/runtime)")
+    p_track.add_argument("--json", action="store_true", help="Print the report as JSON")
 
     p_agent = sub.add_parser("agent", **_help_block(
         synopsis="Add your AI agents (Claude, Codex, Gemini) to a room.",
@@ -10094,7 +10263,11 @@ def main():
         "room": _cmd_room,
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
+        "track-report": _cmd_track_report,
+        "tune": _cmd_tune,
+        "invites": _cmd_invites,
         "phone": _cmd_phone,
+        "web": _cmd_web,
         "retro": _cmd_retro,
         "share-branch": _cmd_share_branch,
         "fetch": _cmd_fetch,
@@ -10134,6 +10307,33 @@ class _RoomNotFound(ValueError):
     """A room name that doesn't exist on the relay (typo, wrong case)."""
 
 
+def _room_refusal(detail: str) -> "tuple[str, str] | None":
+    """A 403 about the room, not the credentials: an observer invite writing, or
+    someone whose invite was revoked. Both were reported as a bad secret, with a
+    hint to re-run init with a secret an invitee never had."""
+    if "observers can read" in detail:
+        return ("Your invite to this room is read-only: you can read it but not post, "
+                "claim or change anything", "ask the room's owner for a member invite")
+    if "room member" in detail:
+        return (f"You're not in that room ({detail})",
+                "your invite may have been revoked; ask for a new one, then `quorus join <code>`")
+    return None
+
+
+def _report_http_error(resp: "httpx.Response") -> None:
+    """Print why a relay request failed: the room refusal if it is one, else
+    the relay's reason with a reachability hint."""
+    try:
+        refusal = _room_refusal(str(resp.json().get("detail") or "")) \
+            if resp.status_code == 403 else None
+    except ValueError:
+        refusal = None
+    if refusal:
+        _ui.error(refusal[0], hint=refusal[1])
+    else:
+        _ui.error_with_retry(_http_hint(resp), relay_url=RELAY_URL)
+
+
 def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
     """One readable line for any relay error a command didn't handle itself.
     Before this, a wrong secret or missing room dumped a Python traceback."""
@@ -10145,6 +10345,10 @@ def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
     if isinstance(detail, list) and detail and isinstance(detail[0], dict):
         detail = detail[0].get("msg")  # pydantic validation errors
     detail = str(detail or exc.response.reason_phrase or "").strip()
+    refusal = _room_refusal(detail) if code == 403 else None
+    if refusal:
+        _ui.error(refusal[0], hint=refusal[1])
+        return 3
     if code in (401, 403):
         _ui.error("The relay rejected your credentials" + (f": {detail}" if detail else ""),
                   hint="check your secret/API key — re-run `quorus init <name> --secret -`")

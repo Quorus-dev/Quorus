@@ -174,6 +174,9 @@ def memory_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 async def test_wake_loads_memory_then_appends_summary(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch,
 ):
+    # The wake comes from the daemon's owner, so the turn is trusted (an untrusted
+    # sender gets a read-only turn in every mode: tests/test_owner_trust.py).
+    monkeypatch.setenv("REFLEXD_OWNER", "human-arav")
     # Pre-seed memory with a prior entry the daemon should pick up.
     await _mem.append(
         "stream-claude", "ops", "earlier work: filed PR-99",

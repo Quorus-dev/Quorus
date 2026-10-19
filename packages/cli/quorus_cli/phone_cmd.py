@@ -8,6 +8,8 @@ agent rooms. The relay serves a phone-ready page at `/`, but it only listens on
 * never on every interface (0.0.0.0);
 * the link puts the credential in the URL fragment, which browsers never send
   to servers, logs or Referer headers;
+* on a shared-secret relay the credential is your own participant JWT (it
+  expires, and the board's Approve/Deny need it), never the admin secret;
 * sharing stops when you press Ctrl-C.
 """
 
@@ -92,6 +94,25 @@ def _print_qr(console: Any, url: str) -> bool:
     return True
 
 
+def _participant_token(cfg: dict, me: str, *, with_secret: bool) -> str:
+    """The phone link's credential on a shared-secret relay: a JWT for *me* only.
+
+    The admin secret in a link let anyone holding it read every room and act as
+    anyone, and the board showed no Approve/Deny for it (overseer, 2026-10-17).
+    """
+    if with_secret:
+        return cfg["relay_secret"]
+    from quorus.bundle_client import BundleClientError, bearer
+
+    try:
+        return bearer(cfg["relay_url"], secret=cfg["relay_secret"], name=me)
+    except BundleClientError as exc:
+        raise SystemExit(
+            f"phone: couldn't sign in as {me} ({exc}). Update the relay to a build with "
+            "participant keys, or pass --with-secret to put the admin secret in the "
+            "link (anyone with it can act as anyone).") from None
+
+
 def cmd_phone(args: Any, console: Any) -> None:
     cfg = load_config()
     me = (cfg.get("instance_name") or "").strip()
@@ -100,7 +121,7 @@ def cmd_phone(args: Any, console: Any) -> None:
     if not me or not relay.hostname:
         raise SystemExit("phone: set up Quorus first: `quorus`")
     if legacy:
-        token = cfg["relay_secret"]
+        token = _participant_token(cfg, me, with_secret=getattr(args, "with_secret", False))
     else:
         from quorus_cli.agent_cmd import _bearer
         token = _bearer(cfg, cfg.get("api_key") or "", False)
@@ -125,7 +146,8 @@ def cmd_phone(args: Any, console: Any) -> None:
         server = await forward(host, port, relay.hostname or "127.0.0.1", relay.port or 80)
         where = "your Wi-Fi network" if args.lan else "your Tailscale network (your devices only)"
         console.print(f"[success]✓[/] Your rooms are reachable from {where} while this runs.")
-        console.print("Open this on your phone (it contains your secret, so don't share it):")
+        console.print("Open this on your phone. It signs you in as "
+                      f"{me}, so don't share it:", markup=False)
         console.print(url, markup=False, highlight=False, soft_wrap=True)
         if not _print_qr(console, url):
             console.print("[dim]For a QR code: pip install qrcode[/]")

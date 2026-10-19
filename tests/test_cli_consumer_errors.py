@@ -120,3 +120,25 @@ def test_agent_list_shows_only_my_agents(monkeypatch, capsys) -> None:
     agent_cmd._list(C())
     out = capsys.readouterr().out
     assert "arav-claude" in out and "arav-codex" in out and "bob-claude" not in out
+
+
+@pytest.mark.parametrize("argv", [
+    ["say", "dev", "✅", "quorus", "web", "--fps", "opens", "the", "readout"],
+    ["say", "dev", "✅ quorus web --fps opens the readout"],
+])
+def test_say_keeps_flag_like_words_as_message_text(argv, monkeypatch) -> None:
+    """An agent's unquoted `quorus say dev ✅ … --fps …` died with 'unrecognized
+    arguments: --fps' (2026-10-18). Words after the room are the message."""
+    import sys
+
+    import quorus_cli.cli as cli
+
+    sent: list[tuple[str, str]] = []
+
+    async def fake_say(room, msg):
+        sent.append((room, msg))
+
+    monkeypatch.setattr(cli, "_say", fake_say)
+    monkeypatch.setattr(sys, "argv", ["quorus", *argv])
+    cli.main()
+    assert sent == [("dev", "✅ quorus web --fps opens the readout")]

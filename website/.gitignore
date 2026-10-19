@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# copied from ../llms.txt at build time
+/public/llms.txt
+/public/agents.md
+/dist

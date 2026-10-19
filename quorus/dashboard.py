@@ -32,13 +32,17 @@ DASHBOARD_HTML = """\
 <style>
 :root{--bg:#f5f6f4;--panel:#fff;--ink:#17201c;--muted:#5f6b65;--rule:#dfe4e1;
 --accent:#0f7a63;--me:#e3f1ec;--warn:#9a5b00;--bad:#b3261e;--chip:#eef2f0;
+--on-accent:#fff;--glow:rgba(15,122,99,.22);
 --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 --mono:ui-monospace,SFMono-Regular,Menlo,monospace;color-scheme:light}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1412;--panel:#161d1a;--ink:#e5ebe8;
 --muted:#93a29b;--rule:#27322e;--accent:#3cc7a2;--me:#1d2e28;--warn:#e8a63a;--bad:#f2776e;
---chip:#1e2925;color-scheme:dark}}
+--chip:#1e2925;--on-accent:#0f1412;--glow:rgba(60,199,162,.25);color-scheme:dark}}
 *{box-sizing:border-box}html,body{height:100%}[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--font)}
+/* One explicit row of the full height: an implicit auto row sized itself to the
+   message list, so the chat grew with every message instead of scrolling. Pinned
+   to the window so only the messages scroll, not the page. */
 #app{display:grid;grid-template-columns:260px 1fr;grid-template-rows:minmax(0,1fr);height:100vh;height:100dvh;overflow:hidden}
 #rooms{border-right:1px solid var(--rule);background:var(--panel);overflow-y:auto;
 padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 12px}
@@ -73,7 +77,100 @@ border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
 background:var(--panel);color:var(--ink)}
 #signin button{font:inherit;padding:10px;border-radius:8px;border:0;background:var(--accent);color:#fff}
 .hint{color:var(--muted);font-size:13px}#err{color:var(--bad);font-size:13px}
-@media (max-width:720px){#app{grid-template-columns:1fr}#app.inroom #rooms{display:none}
+#viewToggle{font:inherit;font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid var(--rule);
+background:var(--chip);color:var(--ink);cursor:pointer}
+#board{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+#boardTop{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:center}
+#boardSummary{display:flex;flex-wrap:wrap;gap:6px}
+#boardModes{display:flex;gap:4px}#boardModes button{font:inherit;font-size:12px;padding:4px 12px;
+border-radius:999px;border:1px solid var(--rule);background:none;color:var(--muted);cursor:pointer}
+#boardModes button.on{background:var(--chip);color:var(--ink)}
+#quorum{position:relative;flex:1;min-height:520px;border-radius:12px;overflow:hidden;
+border:1px solid var(--rule)}#quorum canvas{position:absolute;inset:0;display:block;width:100%;height:100%}
+#board{position:relative}
+#quorumCard{position:absolute;right:28px;top:110px;width:min(440px,calc(100% - 56px));z-index:2;
+box-shadow:0 12px 40px rgba(0,0,0,.35);border-radius:12px}
+/* The seat card is the board's row on frosted glass over the stage. */
+#quorumCard .brow{background:rgba(22,29,26,.62);backdrop-filter:blur(16px) saturate(1.2);
+-webkit-backdrop-filter:blur(16px) saturate(1.2);border-color:rgba(255,255,255,.1)}
+.qtags{position:absolute;inset:0;pointer-events:none}
+/* The Quorum view's one web font, self-hosted (OFL, see web/vendor/fonts). */
+@font-face{font-family:"Plus Jakarta Sans";src:url(/vendor/fonts/plus-jakarta-sans.woff2) format("woff2");
+font-weight:200 800;font-display:swap}
+/* Seat plaques: frosted glass, fixed type size whatever the seat's depth, the vendor
+   as a 6px dot (no logos), the model in small caps, laid out apart by quorum.js. */
+.qtag{position:absolute;left:0;top:0;pointer-events:auto;display:grid;gap:1px;max-width:200px;
+padding:5px 10px 5px 20px;border-radius:8px;border:1px solid rgba(255,255,255,.1);
+background:rgba(16,20,18,.58);backdrop-filter:blur(12px) saturate(1.2);
+-webkit-backdrop-filter:blur(12px) saturate(1.2);will-change:transform;
+color:#eceeed;font:inherit;font-family:"Plus Jakarta Sans",var(--font);font-size:12px;
+line-height:1.25;text-align:left;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.28)}
+.qtag::before{content:"";position:absolute;left:8px;top:11px;width:6px;height:6px;border-radius:50%;
+background:var(--seat);box-shadow:0 0 6px var(--seat)}
+.qtag b{font-size:12px;font-weight:600;letter-spacing:.01em}
+.qtag .qm{color:#adb5b2;font-size:11.5px;font-variant-caps:all-small-caps;letter-spacing:.06em}
+.qtag .qs{font-size:11px;color:#cfd6d2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qtag .qs:empty,.qtag .qm:empty{display:none}
+.qtag[data-state=busy]{border-color:rgba(60,199,162,.45)}
+.qtag[data-state=needs]{border-color:#e8a63a;box-shadow:0 0 0 2px rgba(232,166,58,.4),0 6px 18px rgba(0,0,0,.28)}
+.qtag[data-state=needs] .qs{color:#ffca16}.qtag[data-state=stuck] .qs{color:#ff977d}
+.qtag[data-state=asleep],.qtag[data-state=pacing]{opacity:.78}
+@media (prefers-color-scheme:light){.qtag{background:rgba(255,255,255,.8);color:#1a211e;
+border-color:rgba(0,0,0,.08);box-shadow:0 6px 18px rgba(0,0,0,.1)}
+.qtag .qm{color:#5f6563}.qtag .qs{color:#3c4441}.qtag[data-state=needs] .qs{color:#4f3422}
+.qtag[data-state=stuck] .qs{color:#d13415}}
+.qtag:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Speech bubbles: the member's own latest message, shortened; DOM text. The "main" label over the wall screen. */
+.qbubble{position:absolute;left:0;top:0;max-width:250px;padding:7px 11px;border-radius:12px 12px 12px 3px;
+background:rgba(236,238,237,.94);color:#101513;font-family:"Plus Jakarta Sans",var(--font);font-size:12px;
+line-height:1.3;box-shadow:0 8px 24px rgba(0,0,0,.3);will-change:transform;overflow-wrap:anywhere}
+.qbubble[hidden]{display:none}
+/* In the office the plaque is a desk nameplate: name and status, the model in the card. */
+#quorum:not(.flat) .qtag{max-width:160px;padding:4px 9px 4px 18px}
+#quorum:not(.flat) .qtag .qm{display:none}
+#quorum:not(.flat) .qtag.qmain .qm{display:block}
+.qtag.qmain{background:rgba(16,20,18,.7);border-color:rgba(63,210,176,.4)}
+.qnote{position:absolute;left:12px;bottom:8px;margin:0}
+.qfps{position:absolute;right:12px;bottom:8px;margin:0;font:12px var(--mono);color:var(--muted);
+background:rgba(16,20,18,.6);padding:2px 8px;border-radius:6px}
+#quorum.flat{min-height:0;overflow:visible;border:0}
+#quorum.flat .qtags{position:static;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+#quorum.flat .qtag{position:static;max-width:none;transform:none!important}
+#quorum.flat .qnote{position:static;margin-top:8px}
+.chip{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--chip);color:var(--muted)}
+.chip.hot{background:var(--warn);color:var(--on-accent)}
+.brow{background:var(--panel);border:1px solid var(--rule);border-left:4px solid var(--rule);
+border-radius:10px;padding:10px 12px;display:grid;gap:6px}
+.brow.r1{border-left-color:var(--warn)}.brow.r2{border-left-color:var(--bad)}
+.brow.r4{border-left-color:var(--accent);box-shadow:0 0 0 1px var(--glow),0 6px 24px -10px var(--glow)}
+.brow.r6{opacity:.6}
+#boardRows{columns:320px;column-gap:10px}
+#boardRows>*{break-inside:avoid;margin-bottom:10px}
+.brow.r1,#boardRows>.hint{column-span:all}
+.btrail{list-style:none;margin:0;padding:6px 8px;border-radius:8px;background:var(--bg);
+font:12px/1.6 var(--mono);color:var(--muted);display:grid}
+.btrail li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btrail time{margin-right:8px}.btrail .now{color:var(--ink)}
+.bhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.bhead .tag{font:11px var(--mono);color:var(--muted)}.bline{color:var(--ink)}
+.bdetail,.bship{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.btune{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.btune code{font:12px var(--mono);color:var(--ink);background:var(--chip);padding:1px 6px;border-radius:6px}
+.bask,.bapproval{font-size:13px;background:var(--chip);border-radius:8px;padding:6px 8px;
+display:flex;flex-wrap:wrap;gap:8px;align-items:center;overflow-wrap:anywhere}
+.bapproval button{font:inherit;font-size:13px;padding:4px 12px;border-radius:8px;border:0;cursor:pointer}
+.bapproval .ok{background:var(--accent);color:var(--on-accent)}.bapproval .no{background:var(--rule);color:var(--ink)}
+.good{color:var(--accent)}.bad{color:var(--bad)}
+.bassign input{width:100%;font:inherit;font-size:13px;padding:6px 10px;border-radius:8px;
+border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
+@media (min-width:1100px){#chat.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,380px);
+grid-template-rows:auto minmax(0,1fr) auto auto;
+grid-template-areas:"bar bar" "board msgs" "board work" "board comp"}
+#chat.split #bar{grid-area:bar}#chat.split #board{grid-area:board;min-height:0}
+#chat.split #messages{grid-area:msgs;min-height:0;border-left:1px solid var(--rule)}
+#chat.split #working{grid-area:work;border-left:1px solid var(--rule)}
+#chat.split #composer{grid-area:comp;border-left:1px solid var(--rule)}}
+@media (max-width:720px){#app{grid-template-columns:minmax(0,1fr)}#app.inroom #rooms{display:none}
 #app:not(.inroom) #chat{display:none}#back{display:block}}
 </style>
 </head>
@@ -91,7 +188,13 @@ background:var(--panel);color:var(--ink)}
     <div id="roomList"></div><button id="newRoom" type="button">+ New room</button></nav>
   <main id="chat">
     <div id="bar"><button id="back" type="button">‹ Rooms</button><h2 id="roomName">Pick a room</h2>
-      <span id="who"></span></div>
+      <button id="viewToggle" type="button">Board</button><span id="who"></span></div>
+    <section id="board" hidden aria-live="polite">
+      <div id="boardTop"><div id="boardSummary"></div>
+        <div id="boardModes"><button id="modeList" class="on" type="button">List</button>
+          <button id="modeQuorum" type="button">Quorum</button></div></div>
+      <div id="boardRows"></div>
+      <div id="quorum" hidden></div><div id="quorumCard" hidden></div></section>
     <div id="messages" aria-live="polite"></div>
     <div id="working"></div>
     <form id="composer"><input id="msgInput" placeholder="Message the room…" autocomplete="off">
@@ -99,6 +202,8 @@ background:var(--panel);color:var(--ink)}
   </main>
 </div>
 <script src="/web.js"></script>
+<script src="/board.js"></script>
+<script type="module" src="/quorum.js"></script>
 </body>
 </html>
 """
@@ -116,6 +221,10 @@ if (frag.get("token")) {
   sessionStorage.setItem("qt", frag.get("token"));
   sessionStorage.setItem("qn", frag.get("name") || "web");
 }
+// `quorus web` can name the room and the view to land on.
+if (frag.get("room")) sessionStorage.setItem("qr", frag.get("room"));
+if (frag.get("view")) sessionStorage.setItem("qv", frag.get("view"));
+if (frag.get("fps")) sessionStorage.setItem("qfps", "1");  // `quorus web --fps`: Quorum fps readout
 if (new URLSearchParams(location.search).has("token")) {
   console.warn("Quorus: ?token= in a URL is deprecated and leaks via server logs. Use #token=.");
 }
@@ -167,7 +276,8 @@ function renderRooms(rooms) {
     const name = r.name || r.id;
     const b = el("button", "room" + (name === S.room ? " on" : ""));
     b.type = "button"; b.dataset.room = name;
-    b.append(el("span", "", "#" + name), el("small", "", (r.members || []).length + " members"));
+    b.append(el("span", "", "#" + name), el("small", "", (r.members || []).length
+      + ((r.members || []).length === 1 ? " member" : " members")));
     list.append(b);
   });
 }
@@ -186,6 +296,7 @@ $("newRoom").addEventListener("click", () => {
 function openRoom(name) {
   S.room = name; S.seen = new Set(); $("messages").replaceChildren();
   $("roomName").textContent = "#" + name; $("app").classList.add("inroom");
+  document.dispatchEvent(new CustomEvent("quorus:room", { detail: name }));  // the board
   loadRooms(); poll();
 }
 
@@ -206,12 +317,19 @@ function renderMessage(m) {
 }
 
 function renderWorking(presence) {
-  const live = presence.filter((p) => p.online && p.status === "busy" && p.room === S.room);
-  const now = Date.now(), busy = live.map((p) => p.name);
+  const now = Date.now();
+  // The relay says when the wake began (epoch seconds from the file backend, ISO
+  // text from Redis). A step older than 10 minutes is a stuck daemon, not work:
+  // it drops off the line (Arav saw "running tests · 7h 26m", 2026-10-18).
+  const began = (p) => { const w = p.last_wake_at;
+    const t = typeof w === "number" ? w * 1000 : Date.parse(w || ""); return t > 0 ? t : 0; };
+  const live = presence.filter((p) => p.online && p.status === "busy" && p.room === S.room
+    && now - (began(p) || S.workSince[p.name] || now) < 600000);
+  const busy = live.map((p) => p.name);
   const step = {};
   live.forEach((p) => { step[p.name] = p.activity || "working"; });
   Object.keys(S.workSince).forEach((n) => { if (!busy.includes(n)) delete S.workSince[n]; });
-  busy.forEach((n) => { if (!S.workSince[n]) S.workSince[n] = now; });
+  busy.forEach((n) => { if (!S.workSince[n]) S.workSince[n] = began(live.find((p) => p.name === n)) || now; });
   $("working").textContent = busy.map((n) => {
     const s = Math.round((now - S.workSince[n]) / 1000);
     return "⋯ @" + n + " " + step[n] + " " + (s < 60 ? s + "s" : Math.floor(s / 60) + "m");
@@ -248,10 +366,24 @@ $("composer").addEventListener("submit", (ev) => {
       $("msgInput").value = text; conn(false); });
 });
 
+// Keep the newest message in view when the box changes size: the board's split
+// layout shrinks it after the first render, which left the latest message below
+// the fold (review of 608f638b). Reading back up still sticks.
+if (typeof ResizeObserver !== "undefined") {
+  const box = $("messages");
+  let wasAtBottom = true;
+  box.addEventListener("scroll", () => {
+    wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  });
+  new ResizeObserver(() => { if (wasAtBottom) box.scrollTop = box.scrollHeight; }).observe(box);
+}
+
 function start() {
   if (!S.token) return showSignin();
   $("signin").hidden = true; $("app").hidden = false; $("who").textContent = "@" + S.name;
-  loadRooms();
+  const landing = sessionStorage.getItem("qr");  // `quorus web <room>`
+  sessionStorage.removeItem("qr");
+  loadRooms().then(() => { if (landing) openRoom(landing); });
   clearInterval(S.timer);
   S.timer = setInterval(() => { poll(); }, 3000);
   setInterval(loadRooms, 30000);

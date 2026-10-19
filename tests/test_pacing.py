@@ -85,6 +85,7 @@ def test_over_cap_parks_and_says_so_once_but_humans_go_first(monkeypatch) -> Non
         human = {"room": "build", "from_name": "arav", "message_id": "h"}
         assert await d._paced(relay, human)  # boss never waits
     asyncio.run(go())
+    assert d._waiting[0] == "pacing"  # the board shows "pacing", not "working"
 
 
 def test_skipped_messages_use_no_pace_turns(monkeypatch) -> None:

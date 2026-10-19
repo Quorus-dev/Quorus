@@ -7,11 +7,20 @@ import os
 from fastapi import APIRouter, Depends, Request
 
 from quorus.auth.middleware import AuthContext, require_identity, verify_auth
+from quorus.auth.name_reservations import reserve_names
 from quorus.routes.models import HeartbeatRequest
+from quorus.services import presence_trail
 
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
 HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "90"))
+
+
+def _float(value: object) -> float:
+    try:
+        return float(value or 0)  # Redis stores it as a string
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _tid(auth: AuthContext) -> str:
@@ -25,9 +34,12 @@ async def heartbeat(
     auth: AuthContext = Depends(verify_auth),
 ):
     require_identity(auth, req.instance_name)
+    await reserve_names(request, auth, _tid(auth), req.instance_name)
     svc = request.app.state.presence_service
     entry = await svc.heartbeat(_tid(auth), req.instance_name, req.status, req.room,
-                                reason=req.reason, activity=req.activity)
+                                reason=req.reason, activity=req.activity,
+                                waiting_on=req.waiting_on, waiting_until=req.waiting_until,
+                                model=req.model)
     await request.app.state.backends.participants.add(_tid(auth), req.instance_name)
     return {"status": "ok", "timestamp": entry.get("last_heartbeat", "")}
 
@@ -36,6 +48,7 @@ async def heartbeat(
 async def get_presence(
     request: Request,
     auth: AuthContext = Depends(verify_auth),
+    trail: bool = False,
 ):
     svc = request.app.state.presence_service
     # Single list_all call — the backend already returns every entry with
@@ -57,6 +70,12 @@ async def get_presence(
             "uptime_start": e.get("uptime_start", ""),
             "reason": e.get("reason", ""),
             "last_wake_at": e.get("last_wake_at", ""),
+            "waiting_on": (e.get("waiting_on") or "") if online else "",
+            "waiting_until": _float(e.get("waiting_until")) if online else 0.0,
+            "model": e.get("model") or "",
+            # ?trail=1: the last steps (mission-control panels), same field as
+            # `activity`, so no new exposure; off by default to keep it small.
+            **({"trail": presence_trail.public(e.get("trail"))} if trail else {}),
         })
     result.sort(key=lambda x: (not x["online"], x["name"]))
     return result

@@ -1,0 +1,135 @@
+{
+  "label": "v3-pages",
+  "recorded_at": "2026-10-18T22:05:51-0400",
+  "mode": "shadow",
+  "thresholds": {
+    "lighthouse_min": 99,
+    "fps_min": 60,
+    "cls_max": 0.0
+  },
+  "site": {
+    "mobile": {
+      "scores": {
+        "performance": 99,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 1800.888,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 1220.111
+    },
+    "desktop": {
+      "scores": {
+        "performance": 100,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 421.38,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 306.725
+    },
+    "install mobile": {
+      "scores": {
+        "performance": 100,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 1351.284,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 901.284
+    },
+    "install desktop": {
+      "scores": {
+        "performance": 100,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 321.153,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 241.153
+    },
+    "security mobile": {
+      "scores": {
+        "performance": 100,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 1350.736,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 900.736
+    },
+    "security desktop": {
+      "scores": {
+        "performance": 100,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 321.271,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 241.271
+    },
+    "deploy mobile": {
+      "scores": {
+        "performance": 100,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 1500.928,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 1050.928
+    },
+    "deploy desktop": {
+      "scores": {
+        "performance": 100,
+        "accessibility": 100,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "lcp_ms": 361.323,
+      "cls": 0.0,
+      "tbt_ms": 0.0,
+      "fcp_ms": 281.323
+    }
+  },
+  "shots": {
+    "site-1440": {
+      "out": "/Users/aravkekane/dev/weekend/.quorus-worktrees/Quorus/arav-fable-claude/.evals/v3-pages/site-1440.png",
+      "width": 1440,
+      "height": 2600,
+      "dsf": 1,
+      "canvas": false,
+      "tags": 0,
+      "title": "Quorus: Claude Code and Codex in one room with you"
+    },
+    "site-390": {
+      "out": "/Users/aravkekane/dev/weekend/.quorus-worktrees/Quorus/arav-fable-claude/.evals/v3-pages/site-390.png",
+      "width": 390,
+      "height": 3200,
+      "dsf": 2,
+      "canvas": false,
+      "tags": 0,
+      "title": "Quorus: Claude Code and Codex in one room with you"
+    }
+  },
+  "sizes_bytes": {
+    "copy-CKtjq2sb.css": 12375,
+    "copy-qftgAEhW.js": 1049,
+    "index-IrpgWX-w.js": 2171,
+    "motion-NE9koUgU.js": 3854,
+    "page-IT4ifPK1.js": 28
+  }
+}

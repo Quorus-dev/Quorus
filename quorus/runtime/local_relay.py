@@ -76,10 +76,32 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
         return False, f"couldn't start the local relay ({exc}); run `quorus relay` yourself"
     for _ in range(40):
         if _healthy(relay_url, 0.5):
+            if proc.poll() is not None:
+                # Ours exited (the port was taken) and another relay answers:
+                # it isn't ours to record, and maybe not ours to use.
+                ok = _accepts(relay_url, secret)
+                return ok, ("local relay is running" if ok else
+                            "a relay is already running on this computer with a different "
+                            "secret — stop it, or run `quorus init <name> --secret -` and "
+                            "paste its secret")
             _record(cfg, proc.pid, parsed.port or 8080)
             return True, f"started your local relay (log: {cfg / 'relay.log'})"
         time.sleep(0.25)
+    # Never answered: stop the process we spawned (by its own handle) rather than
+    # leave an untracked relay running (codex, review of e409ee1a).
+    _stop_spawned(proc)
     return False, f"the local relay didn't start — see {cfg / 'relay.log'}"
+
+
+def _stop_spawned(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
 
 
 RELAY_ARGV_TAIL = " -m quorus.relay_cli"

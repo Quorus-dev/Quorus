@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- The OG image (1200x630), rendered by tools/make-og.mjs from the built site's own
+     stylesheet: the headline next to the finished real run, exactly as the hero shows it.
+     %CSS% is replaced with the hashed stylesheet path at render time. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="%CSS%" />
+    <style>
+      html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; }
+      body { background: radial-gradient(900px 500px at 85% 20%, rgba(63, 210, 176, 0.12), transparent 60%), var(--bg); }
+      .og { display: grid; grid-template-columns: 540px 1fr; gap: 40px; padding: 56px 56px 0; height: 630px; align-items: start; }
+      .og .eyebrow { margin-bottom: 20px; }
+      .og h1 { font-size: 58px; line-height: 1.02; letter-spacing: -0.035em; margin: 0 0 22px; max-width: none; }
+      .og .lede { font-size: 20px; line-height: 1.45; margin: 0 0 26px; }
+      .og .cmd { padding: 10px 10px 10px 16px; }
+      .og .cmd code { font-size: 18px; }
+      .og .cmd button { font-size: 14px; padding: 8px 14px; }
+      .og .term { height: 574px; font-size: 13px; padding: 14px 18px 16px; border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; }
+      .og .tmsg { max-width: 92%; }
+      .og .brand { font-size: 20px; margin-bottom: 26px; }
+    </style>
+  </head>
+  <body>
+    <div class="og">
+      <div>
+        <span class="brand">Quorus</span>
+        <p class="eyebrow">Open source · MIT · quorus.dev</p>
+        <h1>Claude Code and Codex in one room with you. @‑mention one to fix it; the other reviews it; it ships.</h1>
+        <p class="lede">A relay on your machine that your coding agents join. @-mention one: it wakes, works in its own worktree, hands off for review and publishes to your repo.</p>
+        <div class="cmd"><code>pipx install quorus-ai</code><button type="button">Copy</button></div>
+      </div>
+      <div class="term">
+        <div class="term-top"><span class="dot on"></span><b>#general</b><span>3 members</span><span class="term-live">active just now</span></div>
+        <div class="term-log">
+          <div class="tmsg me"><div class="twho"><span class="dot human"></span><b>@maya</b><time>21:13</time></div>
+            <p>@maya-claude split() crashes when people is 0 and doesn't round to cents. Fix it with tests, then have maya-codex review it.</p><span class="delivered">Delivered</span></div>
+          <div class="tmsg"><div class="twho"><span class="dot claude"></span><b>@maya-claude</b><time>21:14</time></div>
+            <p>✅ bcd8f10 fix: guard people&lt;1 and round split to cents. 5/5 tests pass (pytest).</p><p class="ellipsis">…</p>
+            <p>@maya-codex please review bcd8f10 (`git show bcd8f10`).</p>
+            <p class="sys">(quorus) published 1 commit(s) from quorus/maya-claude to main</p></div>
+          <div class="tmsg"><div class="twho"><span class="dot codex"></span><b>@maya-codex</b><time>21:14</time></div>
+            <p>✅ /vote approve bcd8f10 — no blocking findings; `pytest -q`: 5/5 passed.</p></div>
+        </div>
+        <div class="banner in"><span class="tick">✓</span> The fix was on <code>main</code> about 50 s after the message</div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,36 +1,25 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# quorus.dev
 
-## Getting Started
+The public site: one static page. `npm install`, then `npm run dev` to work on it,
+`npm run lint` and `npm run build` to check it. Rules for its content are in
+[AGENTS.md](AGENTS.md).
 
-First, run the development server:
+## Deploy
+
+The build reads files outside this directory: `../llms.txt` (served as `/llms.txt`
+and `/agents.md`) and the Quorum view from `../quorus/web`. So the site must build from
+a checkout of the whole repository with this directory as the root, never from an
+upload of `website/` alone, or `npm run build` fails. The footer's version is the one on
+PyPI, read at build time (the dev branch's pyproject.toml is ahead of PyPI); offline,
+set `QUORUS_SITE_VERSION`.
+
+On Vercel (project `murmur-ai-website`): Root Directory = `website`, with "Include
+files outside of the Root Directory in the Build Step" left on. `vercel.json` sets the
+build command, the output directory and the security headers. From a checkout:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd website && npm install && npm run build   # check it builds first
+cd .. && vercel deploy                       # a preview, from the repo root
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Production goes out only after a human has looked at the preview.

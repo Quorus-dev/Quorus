@@ -148,6 +148,33 @@ def _os_environ_snapshot():
             os.environ[key] = value
 
 
+@pytest.fixture(autouse=True)
+def _relay_state_in_tmp(tmp_path):
+    """The relay's claims store and invites live in a per-test folder, never in
+    the developer's real ~/.quorus (mint and redeem now open it on first use)."""
+    if not (os.environ.get("QUORUS_HISTORY_DB") or os.environ.get("MESSAGES_FILE")):
+        os.environ["QUORUS_HISTORY_DB"] = str(tmp_path / "relay-state" / "history.db")
+    relay = sys.modules.get("quorus.relay")
+    if relay is not None:
+        relay.app.state.participant_keys = None
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _agent_memory_in_tmp(tmp_path):
+    """Agents' private memory (quorus/runtime/memory.py) defaults to
+    ~/.quorus/memory. Daemon tests that post a reply append to it, and they were
+    writing test rows into the real agents' files (found 2026-10-19: 23 fake
+    rows for arav-gemini). An explicit base_dir still wins."""
+    from quorus.runtime import memory as mem
+
+    real = mem.memory_dir
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(mem, "memory_dir",
+                   lambda *, base_dir=None: real(base_dir=base_dir or tmp_path / "agent-memory"))
+        yield
+
+
 _OPT_IN_MARKERS = {"real_harness", "cross_harness"}
 
 

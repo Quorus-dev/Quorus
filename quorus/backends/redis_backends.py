@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
+from quorus.services import presence_trail
+
 _redis_logger = logging.getLogger("quorus.backends.redis")
 
 MESSAGE_TTL = int(os.environ.get("MESSAGE_TTL_SECONDS", "86400"))
@@ -803,7 +805,8 @@ class RedisPresenceBackend:
 
     async def heartbeat(
         self, tenant_id: str, name: str, status: str, room: str, reason: str = "",
-        activity: str = "",
+        activity: str = "", waiting_on: str = "", waiting_until: float = 0.0,
+        model: str = "",
     ) -> dict:
         now = datetime.now(timezone.utc)
         now_iso, now_ts = now.isoformat(), now.timestamp()
@@ -811,8 +814,13 @@ class RedisPresenceBackend:
         existing_start = await _with_timeout(self._r.hget(entry_key, "uptime_start"))
         prior_status = await _with_timeout(self._r.hget(entry_key, "status"))
         last_wake = await _with_timeout(self._r.hget(entry_key, "last_wake_at"))
+        trail = presence_trail.extend(
+            presence_trail.load(await _with_timeout(self._r.hget(entry_key, "trail"))),
+            activity, now_ts)
         entry = {
             "name": name, "status": status, "room": room, "activity": activity,
+            "waiting_on": waiting_on, "waiting_until": str(waiting_until), "model": model,
+            "trail": json.dumps(trail),
             "last_heartbeat": now_iso,
             "uptime_start": existing_start or now_iso,
             "tenant_id": tenant_id,

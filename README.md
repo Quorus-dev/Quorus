@@ -46,7 +46,7 @@ On first run, Quorus walks you through picking a name and starting a local relay
 > Don't have `pipx`? Install it first: `brew install pipx && pipx ensurepath`
 > (or `python3 -m pip install --user pipx && python3 -m pipx ensurepath`).
 > If you really want raw pip instead, `pip install --user "quorus-ai @ git+..."` works too — just make sure `~/.local/bin` is on your PATH.
-> Installed an earlier version from git (package name `quorus`)? Run `pipx uninstall quorus` first.
+> To remove Quorus later: `pipx uninstall quorus-ai`. Only if you installed it from git before 0.5.0, when the package was still named `quorus`, run `pipx uninstall quorus` first.
 
 ## What is Quorus?
 
@@ -117,6 +117,23 @@ Measure and share the work:
 - `quorus replay <room>`: one local HTML page of the conversation and commits
   for a task, to share if you want. Nothing is uploaded.
 - `quorus phone`: your rooms on your phone, over Tailscale by default.
+- `quorus web`: your rooms in the browser, with each agent's live steps beside
+  the chat and anything that needs you on top.
+
+![The web board: agents' live steps beside the room chat, a question for you on top](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/board.gif)
+
+<sub>A demo scene on a test relay, to show the layout.</sub>
+
+The board's Quorum view is the room as an office: every present member sits at a desk
+facing you, one robot character per harness and a person in a cap for each human, with
+the wall screen `main` behind them. Working agents type at their monitors, an @-mention
+turns the sender toward the seat it names, a shipped commit bursts into `main`, and each
+member's latest message appears for a moment as a speech bubble over their head. The
+figures are drawn from primitives; no vendor logos or mascots.
+
+![The Quorum view: seven members at desks in two rows facing the camera, the wall screen main behind them, name plates on the desks and a speech bubble over one head](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/quorum.png)
+
+<sub>A demo scene on a test relay.</sub>
 
 Permission modes per room (`--mode`): `default` uses each tool's own
 settings. `manual` forwards Claude Code permission requests to you
@@ -143,18 +160,26 @@ profile in place — your other profiles, agent keys and push settings survive.
 
 Quorus runs coding agents that can edit files and run commands, so be clear about who can make them act.
 
-- **Only you can make your agents change code.** In `autonomous` and `manual` rooms, a message from you
-  or from your own agents (`<you>-*`) gets a full turn. Anyone else, including text pasted into the
-  room, gets a read-only turn: the agent answers or reviews and asks you before changing anything. For
-  a room you share with trusted teammates, opt in with `quorus agent add ... --trust members`.
+- **Only you can make your agents change code.** In every room mode, a message from you or from your
+  own agents (`<you>-*`) gets a full turn. Anyone else, including text pasted into the room, gets a
+  read-only turn: the agent answers or reviews and asks you before changing anything. For a room you
+  share with trusted teammates, opt in with `quorus agent add ... --trust members`: members who can
+  post get full turns, while observers, anyone no longer in the room, and agent requests that don't
+  trace back to a member who can post stay read-only.
 - **Autonomous agents are not sandboxed by Quorus.** Claude Code (`acceptEdits` + Bash), Gemini (`yolo`)
   and opencode run with your user's permissions in their own git worktree. Codex runs in its
   `workspace-write` sandbox. Use `autonomous` only on repos and machines you're comfortable with.
 - **The local relay trusts its secret.** On the default shared-secret relay, everyone holding the
   secret, every agent included, can post as anyone and approve requests. So `manual` approvals are
-  a speed bump there, not a security boundary, and an invite code from a shared-secret relay *is* the
-  secret: send it only to people you'd trust with every room. For separate identities per person and
-  per agent, use account mode (`quorus init --api-key ...`).
+  a speed bump there, not a security boundary. Never send the secret itself to anyone.
+- **Invites don't hand out the secret.** `quorus share <room>` makes a code that works once (or
+  `--uses N` times, up to 20) and expires after a day (`--ttl` up to 7 days). `quorus join <code>`
+  turns it into the teammate's own key: their name, in that room only. `quorus share <room>
+  --observer` makes a read-only invite: they can read the room but not post, claim or change
+  anything. `quorus invites` lists your invites, marking the read-only ones, and
+  `quorus invites --revoke <id>` stops one and removes whoever joined with it from that room,
+  effective on their next request. For separate identities per agent as well, use account mode
+  (`quorus init --api-key ...`).
 - **Agents inherit your environment.** The wake daemon passes its environment to the agent CLIs
   (minus Quorus's own secrets), so don't start agents from a shell holding keys they shouldn't see.
 - The relay binds to `127.0.0.1` by default. Room text is fenced as untrusted data in every agent
@@ -176,6 +201,21 @@ No SDK, no wrapper — just the agent using tools it already understands.
 Pointing an agent at Quorus? Give it [`llms.txt`](llms.txt): how to install, join a room
 over MCP and use every tool. It ships in the package and the MCP server serves it as the
 resource `quorus://llms.txt`.
+
+### Claude Code plugin
+
+Claude Code can install the MCP server and a Quorus skill as a plugin, with no
+`quorus init`. It runs the server with `uvx`, so [uv](https://docs.astral.sh/uv/) must be
+installed:
+
+```bash
+claude plugin marketplace add Quorus-dev/Quorus
+claude plugin install quorus@quorus
+```
+
+Then set your relay URL, your name and the relay secret (or an API key) under
+`/plugin` → Quorus → Configure. Any field you leave empty falls back to the profile
+`quorus init` saved.
 
 ## HTTP API
 

@@ -8,6 +8,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.auth.name_reservations import reserve_names
 from quorus.routes.helpers import _coerce_bool
 from quorus.routes.models import (
     CreateRoomRequest,
@@ -16,6 +17,7 @@ from quorus.routes.models import (
     KickRequest,
     RenameRoomRequest,
 )
+from quorus.routes.room_auth import require_not_observer_only
 
 router = APIRouter()
 logger = logging.getLogger("quorus.routes.rooms")
@@ -41,10 +43,12 @@ async def create_room(
 
     # Rate limit: 10/min — room creation is a heavyweight operation
     tid = _tid(auth)
+    await require_not_observer_only(request, auth, tid)
     rate_limit_svc = request.app.state.rate_limit_service
     if not await rate_limit_svc.check_with_limit(tid, f"create_room:{creator}", 10):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
+    await reserve_names(request, auth, tid, creator)
     svc = request.app.state.room_service
     result = await svc.create(tid, req.name, creator, private=req.private)
     await request.app.state.backends.participants.add(tid, creator)
@@ -152,6 +156,7 @@ async def join_room(
     if not await join_rate_svc.check_with_limit(join_tid, f"join:{join_caller}", 30):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
+    await reserve_names(request, auth, join_tid, participant)
     svc = request.app.state.room_service
     rid, _ = await svc.get(join_tid, room_id)
     await svc.join(join_tid, rid, participant, req.role, MAX_ROOM_MEMBERS)

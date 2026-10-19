@@ -302,6 +302,7 @@ def _decode_invite_token(token: str) -> dict | None:
                 "secret": payload.get("s", "") or "",
                 "api_key": payload.get("k", "") or "",
                 "room": payload.get("n", "") or "",
+                "code": payload.get("c", "") or "",
             }
         if raw.startswith("quorus_join_") or raw.startswith("murm_join_"):
             prefix = (
@@ -406,9 +407,13 @@ def _first_launch_setup(console: Console) -> dict:
 
     name = _prompt_name(console)
 
-    relay_url = DEFAULT_RELAY
+    # RELAY_URL is the same override load_config honours (quorus/config.py), so
+    # the wizard's own relay and the saved profile agree; the first-run pty tests
+    # use it to run on a free port instead of 8080.
+    relay_url = (os.environ.get("RELAY_URL") or DEFAULT_RELAY).rstrip("/")
     secret = ""
     api_key = ""
+    invited_room = ""
     relay_ok = False
 
     # There is no public relay: Enter runs Quorus on this computer (a local
@@ -433,10 +438,14 @@ def _first_launch_setup(console: Console) -> dict:
         relay_url = decoded["relay_url"]
         secret = decoded["secret"]
         api_key = decoded["api_key"]
+        invited_room = decoded.get("room", "")
         console.print(f"\n  [dim]Connecting to {relay_url}...[/] ", end="")
         if _try_connect(relay_url):
             console.print("[success]✓[/]")
             relay_ok = True
+            if decoded.get("code"):
+                api_key, secret = _redeem_in_wizard(relay_url, decoded["code"], name), ""
+                relay_ok = bool(api_key)
             if decoded.get("room"):
                 console.print(
                     f"  [muted]You'll land in [room]#{decoded['room']}[/] "
@@ -469,8 +478,13 @@ def _first_launch_setup(console: Console) -> dict:
                 relay_url = (payload.get("r") or relay_url).rstrip("/")
                 secret = payload.get("s", "") or ""
                 api_key = payload.get("k", "") or ""
+                invited_room = payload.get("n", "") or ""
                 console.print("[success]✓[/]")
                 relay_ok = True
+                if payload.get("c"):
+                    # A secret-free invite: spend it for this name's own key.
+                    api_key, secret = _redeem_in_wizard(relay_url, payload["c"], name), ""
+                    relay_ok = bool(api_key)
                 if payload.get("n"):
                     console.print(
                         f"  [muted]You'll land in [room]#{payload['n']}[/] "
@@ -481,7 +495,7 @@ def _first_launch_setup(console: Console) -> dict:
     else:
         secret = new_secret()
         console.print("\n  [dim]Setting up Quorus on this computer...[/] ", end="")
-        relay_ok, note = ensure_local_relay(DEFAULT_RELAY, secret)
+        relay_ok, note = ensure_local_relay(relay_url, secret)
         console.print("[success]✓[/]" if relay_ok else "[error]✗[/]")
         if note:
             console.print(f"  [dim]{note}[/]")
@@ -502,12 +516,15 @@ def _first_launch_setup(console: Console) -> dict:
     # "You're in as @name" is printed by the session once the relay has
     # actually answered — printing it here landed *before* "Connecting to …"
     # and made the happy path read like a race (finding #4).
-    return {
+    profile = {
         "relay_url": relay_url,
         "instance_name": name,
         "relay_secret": secret,
         "api_key": api_key,
     }
+    if invited_room:
+        profile["room"] = invited_room  # the room the invite was for
+    return profile
 
 
 # ── API helpers ───────────────────────────────────────────────────────────────
@@ -538,13 +555,22 @@ def _exchange_api_key_for_jwt(relay: str, api_key: str) -> str | None:
     return None
 
 
+def _redeem_in_wizard(relay_url: str, code: str, name: str) -> str:
+    """Spend a secret-free (v2) invite for *name*: its own ``quorus_pk_`` key, or ""
+    after saying why. It used to save the payload's empty secret and drop the
+    code, so an invited teammate landed unauthenticated (codex, first-run audit)."""
+    from quorus_cli.cli import _redeem_invite
+
+    return _redeem_invite(relay_url.rstrip("/"), code, name)
+
+
 def _get_auth_token(relay: str, secret: str) -> str:
     """Get the auth token to use. Exchanges API keys for JWTs if needed."""
     if not secret:
         return ""
 
-    # If it looks like an API key, exchange for JWT
-    if secret.startswith("mct_"):
+    # An API key or a participant key (from an invite) is exchanged for a JWT.
+    if secret.startswith(("mct_", "quorus_pk_")):
         jwt = _exchange_api_key_for_jwt(relay, secret)
         if jwt:
             return jwt
@@ -860,21 +886,12 @@ def _safe_detail(r: "httpx.Response") -> str:
 
 
 def _mint_join_token(relay_url: str, secret: str, room: str) -> str:
-    """Mint a portable join code for *room* via the server-side mint endpoint.
+    """Mint a join code for *room* through the relay's ``POST /v1/join/mint``.
 
-    SECURITY: the prior implementation built a local base64 envelope that
-    included the relay secret in plaintext — anyone seeing the resulting
-    `quorus_join_…` token gained admin-equivalent auth on the relay. This
-    is a hard ship-block (security audit Finding 26, CRITICAL).
-
-    The replacement calls `POST /v1/join/mint` so the relay issues a
-    short, single-use code bound to a *scoped invite token* (room-only,
-    time-limited). The relay secret never leaves the caller's machine.
-
-    Falls back to the legacy local envelope ONLY when the server returns
-    404 (very old relay without /v1/join/mint) — and in that fallback
-    the secret is still embedded; we log a warning so operators can
-    upgrade. New deployments must always hit the server path.
+    Returns the short code, or "" if the relay couldn't mint one. It used to fall
+    back to a local ``quorus_join_`` envelope holding the relay secret (admin) on
+    any failure, a 500 or a timeout included, so a hiccup handed the secret to
+    whoever got the invite. Now the share fails closed and the caller says why.
     """
     try:
         r = httpx.post(
@@ -882,39 +899,18 @@ def _mint_join_token(relay_url: str, secret: str, room: str) -> str:
             headers=_auth_headers(secret),
             json={"room": room, "ttl_days": 7},
             timeout=5,
-            follow_redirects=True,
+            follow_redirects=False,
         )
-        if r.status_code == 200:
-            data = r.json()
-            code = data.get("code") or data.get("display_code")
-            if code:
-                return code  # short server-issued code, no secret leak
-        if r.status_code == 404:
-            # Server too old to support /v1/join/mint — fall through to
-            # the legacy envelope and warn at the call site via stderr.
-            sys.stderr.write(
-                "[quorus] WARN: relay does not support /v1/join/mint — "
-                "falling back to legacy base64 envelope. Upgrade the "
-                "relay to avoid embedding the relay secret in invites.\n"
-            )
-        else:
-            sys.stderr.write(
-                f"[quorus] WARN: /v1/join/mint returned {r.status_code} — "
-                "falling back to legacy base64 envelope.\n"
-            )
-    except Exception as exc:
-        sys.stderr.write(
-            f"[quorus] WARN: /v1/join/mint failed ({exc!r}) — "
-            "falling back to legacy base64 envelope.\n"
-        )
+    except httpx.HTTPError:
+        return ""
+    if r.status_code != 200:
+        return ""
+    data = r.json()
+    return str(data.get("code") or data.get("display_code") or "")
 
-    # Legacy fallback (kept ONLY for compatibility with very old relays).
-    import base64 as _b64
 
-    payload = json.dumps(
-        {"relay_url": relay_url, "secret": secret, "room": room}
-    )
-    return "quorus_join_" + _b64.urlsafe_b64encode(payload.encode()).decode()
+_MINT_FAILED = ("Couldn't make an invite: the relay didn't issue a code. "
+                "Check it's running and up to date (quorus doctor).")
 
 
 def _create_error_msg(room: str, status: str, relay: str) -> str:
@@ -2125,6 +2121,9 @@ def _slash_share(arg, state, relay_url, secret, agent_name, console):
         state.set_status_bar(f"no room '{target}' — try /rooms")
         return True
     code = _mint_join_token(relay_url, secret, target)
+    if not code:
+        state.set_status_bar(_MINT_FAILED)
+        return True
     install_url = _share_install_url(code, relay_url)
     status = _slash.run_share_flow(
         console=console,
@@ -2900,6 +2899,12 @@ def _read_input(
                 elif key in (readchar.key.ENTER, "\r", "\n"):
                     _popover_action = popover.handle_key("ENTER")
                 elif key == readchar.key.ESC:
+                    # Esc on the / menu drops the half-typed command too: leaving
+                    # "/h" made the next "/help" into "/h/help" (new-user pass 3).
+                    if popover.kind == "slash" and buf[-len(popover.prefix):] == list(
+                            popover.prefix):
+                        del buf[-len(popover.prefix):]
+                        _redraw_line(buf)
                     _popover_action = popover.handle_key("ESC")
                 elif key in (readchar.key.BACKSPACE, "\x7f"):
                     # Backspace shrinks the buffer AND the popover prefix.
@@ -3516,14 +3521,16 @@ def _main_input_loop(
                     )
                 else:
                     code = _mint_join_token(relay_url, secret, target)
-                    install_url = _share_install_url(code, relay_url)
-                    status = _slash_mod.run_share_flow(
-                        console=console,
-                        room_name=target,
-                        code=code,
-                        install_url=install_url,
-                    )
-                    state.set_status_bar(status)
+                    if not code:
+                        state.set_status_bar(_MINT_FAILED)
+                    else:
+                        status = _slash_mod.run_share_flow(
+                            console=console,
+                            room_name=target,
+                            code=code,
+                            install_url=_share_install_url(code, relay_url),
+                        )
+                        state.set_status_bar(status)
                 last_render = 0
                 continue
 

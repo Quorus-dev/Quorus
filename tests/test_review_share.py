@@ -155,7 +155,8 @@ def test_daemon_attaches_the_bundle_to_a_review_request(room, tmp_path, monkeypa
 
     class _Relay:
         async def fetch_recent(self, *, room: str, limit: int = 10):
-            return []
+            # b-codex is handing over b's request (trust: members needs the chain).
+            return [{"id": "ask", "from_name": "b", "content": "@b-codex get a-claude on it"}]
 
         async def post_reply(self, **kw):
             posted.append(kw["content"])
@@ -164,8 +165,11 @@ def test_daemon_attaches_the_bundle_to_a_review_request(room, tmp_path, monkeypa
         async def bearer_jwt(self) -> str:
             return _bearer("a-claude")
 
+        async def fetch_member_roles(self, *, room: str):  # `trust: members`
+            return {"a-claude": "member", "b-codex": "member", "b": "member"}
+
     env = {"id": "e", "message_id": "m", "room": "rv", "from_name": "b-codex",
-           "content": "@a-claude fix it", "message_type": "chat"}
+           "content": "@a-claude fix it", "message_type": "chat", "reply_to": "ask"}
     triage = reflexd.classify_message(content=env["content"], sender="b-codex",
                                       self_name="a-claude")
     asyncio.run(d._wake_and_reply(_Relay(), env, triage=triage))

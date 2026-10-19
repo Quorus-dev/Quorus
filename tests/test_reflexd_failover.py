@@ -32,6 +32,9 @@ class Relay(_D7Relay):
     async def fetch_members(self, **kw):
         return [e["name"] for e in self.entries]
 
+    async def fetch_member_roles(self, **kw):  # `trust: members` asks the relay
+        return {e["name"]: "member" for e in self.entries} | {"arav": "member"}
+
     async def mission_task_for(self, **kw):
         return self.mission
 
@@ -47,6 +50,12 @@ class Relay(_D7Relay):
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
+    # These tests are about failover, not trust: every wake here is trusted. (An
+    # untrusted sender gets a read-only turn in every mode; tests/test_owner_trust.py.)
+    async def trusted(self, relay, envelope, history):
+        return True
+
+    monkeypatch.setattr(reflexd.Reflexd, "_trusted_wake", trusted)
     monkeypatch.setattr(reflexd, "workspace_for", lambda room: None)
     monkeypatch.setattr(reflexd, "mode_for", lambda room: "default")
     monkeypatch.setattr(reflexd, "lead_for", lambda room: None)

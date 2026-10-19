@@ -5,7 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from quorus.auth.middleware import AuthContext, verify_auth
+from quorus.auth.name_reservations import reserve_names
 from quorus.routes.models import RegisterWebhookRequest, RoomWebhookRequest
+from quorus.routes.room_auth import OBSERVER_DENIED, WRITER_ROLES, require_not_observer_only
 
 router = APIRouter()
 _LEGACY_TENANT = "_legacy"
@@ -25,6 +27,8 @@ async def register_webhook(
         raise HTTPException(
             status_code=403, detail="Cannot register webhook for another user",
         )
+    await require_not_observer_only(request, auth, _tid(auth))
+    await reserve_names(request, auth, _tid(auth), req.instance_name)
     svc = request.app.state.webhook_service
     await svc.register_dm(_tid(auth), req.instance_name, req.callback_url, req.secret)
     await request.app.state.backends.participants.add(_tid(auth), req.instance_name)
@@ -63,6 +67,8 @@ async def register_room_webhook(
     # Require room membership to manage webhooks
     if not auth.is_legacy:
         members = await room_svc.get_members(_tid(auth), rid)
+        if members.get(registered_by) not in WRITER_ROLES and registered_by in members:
+            raise HTTPException(status_code=403, detail=OBSERVER_DENIED)
         if registered_by not in members:
             raise HTTPException(
                 status_code=403, detail="Must be a room member to manage webhooks",

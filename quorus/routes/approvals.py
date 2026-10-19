@@ -17,7 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from quorus.auth.middleware import AuthContext, verify_auth
-from quorus.routes.room_auth import require_room_member
+from quorus.routes.room_auth import (
+    OBSERVER_DENIED,
+    WRITER_ROLES,
+    require_room_writer,
+)
 from quorus.services.approval_svc import (
     ApprovalError,
     ApprovalSvc,
@@ -58,7 +62,10 @@ def _notify_room(
     request: Request, tid: str, room_name: str, rec: dict,
     members: list[str],
 ) -> None:
-    """Broadcast the pending approval to every room member over SSE."""
+    """Push the pending approval, preview included, to the room's writers over SSE.
+
+    *members* must already exclude observers: the preview carries command lines
+    and file contents (codex, review of 416d2d55)."""
     sse = getattr(request.app.state, "sse_service", None)
     if sse is None:
         return
@@ -86,7 +93,7 @@ async def create_approval(
 ):
     """Agent-side: ask a human to allow a tool call."""
     tid = _tid(auth)
-    rid, room_data = await require_room_member(request, auth, tid, body.room_id)
+    rid, room_data = await require_room_writer(request, auth, tid, body.room_id)
     if not auth.is_legacy and auth.sub and body.agent != auth.sub:
         raise HTTPException(
             status_code=403, detail="Cannot request approval as another agent",
@@ -103,9 +110,8 @@ async def create_approval(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     members = await request.app.state.backends.rooms.get_members(tid, rid)
-    _notify_room(
-        request, tid, room_data.get("name", rid), rec, sorted(members.keys()),
-    )
+    writers = sorted(m for m, role in (members or {}).items() if role in WRITER_ROLES)
+    _notify_room(request, tid, room_data.get("name", rid), rec, writers)
 
     # Also drop a human-readable line in the room so the request is visible
     # in any client, not just SSE-aware ones.
@@ -117,8 +123,10 @@ async def create_approval(
                 (
                     # rec["tool_name"] is the SANITIZED value; body's is
                     # raw and let an agent forge extra lines in this notice.
-                    f"🔐 approval needed: `{rec['tool_name']}` — "
-                    f"{rec['input_preview']}\n"
+                    # No preview here: room history reaches observers too, and the
+                    # preview can hold command lines and file contents. Writers
+                    # see it in `quorus approvals` and the SSE event.
+                    f"🔐 approval needed: `{rec['tool_name']}` (details: `quorus approvals`)\n"
                     f"approve with `quorus approve {rec['id']}` "
                     f"or deny with `quorus deny {rec['id']}`"
                 ),
@@ -165,7 +173,9 @@ async def _visible(request: Request, auth: AuthContext, records: list[dict]) -> 
             )
         except Exception:
             continue
-        if auth.sub in (members or {}):
+        # Previews carry command lines and file contents: an observer may read the
+        # room, not these (codex's threat model).
+        if (members or {}).get(auth.sub) in WRITER_ROLES:
             visible.append(rec)
     return visible
 
@@ -228,6 +238,8 @@ async def decide_approval(
         raise HTTPException(
             status_code=403, detail="Only a room member can decide this",
         )
+    if (members or {}).get(decider) not in WRITER_ROLES:
+        raise HTTPException(status_code=403, detail=OBSERVER_DENIED)
     # (e) Agents belong to people. When the agent's owner is in the room,
     # only that owner speaks for it: in a room shared across teams, someone
     # else's human must not approve my agent's Bash call.
