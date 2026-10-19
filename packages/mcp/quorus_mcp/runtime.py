@@ -23,7 +23,9 @@ import asyncio
 import logging
 import os
 import re
+import sys
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -123,6 +125,55 @@ def _validate_relay_url(value: str) -> str:
     if not value or p.scheme not in {"http", "https"} or not p.hostname or p.username or p.password:
         raise SystemExit(f"Invalid relay_url: {value!r}. Must be an http(s) URL with a hostname.")
     return value
+
+
+SETUP_STEPS = (
+    "In Claude Code: /plugin, then Quorus, then Configure. Fill in Relay URL, Your name "
+    "in rooms, and the Relay secret (a relay you run) or your API key. Or run "
+    "`quorus init` in a terminal. Then restart this session."
+)
+
+
+def serving_as_main() -> bool:
+    """This process is the MCP server a host started (`quorus-mcp`, or `python -m
+    quorus_mcp.server`), not a program or test importing the module."""
+    return Path(sys.argv[0] if sys.argv else "").name in ("quorus-mcp", "server.py")
+
+
+def setup_problem(exc: SystemExit) -> str:
+    """What a host and its user see instead of "Connection closed" when this
+    session has no usable Quorus settings. Nothing is sent to any relay."""
+    reason = str(exc).strip().splitlines()[0] if str(exc).strip() else "no settings"
+    return f"Quorus isn't set up for this session yet ({reason}). {SETUP_STEPS}"
+
+
+def unconfigured_settings() -> dict[str, Any]:
+    return {"config_file": str(Path.home() / ".quorus" / "config.json"), "relay_url": "",
+            "relay_secret": "", "api_key": "", "instance_name": "", "sse_enabled": False,
+            "push_notification_method": "", "push_notification_channel": ""}
+
+
+def settings_or_setup_problem() -> tuple[dict[str, Any], str]:
+    """The server's settings, and "" for no problem. Started by a host with no
+    usable settings (a fresh plugin install), exiting showed only "Connection
+    closed". The server now serves instead, sends nothing anywhere, and answers
+    every tool with what to set and where. Importing the module still fails
+    closed as before."""
+    try:
+        return load_runtime_config(), ""
+    except SystemExit as exc:
+        if not serving_as_main():
+            raise
+        return unconfigured_settings(), setup_problem(exc)
+
+
+def refuse_if_not_set_up(problem: str) -> None:
+    """Every relay call gets its auth here: with no settings, the tool answers
+    with the setup steps instead of calling anything."""
+    if problem:
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        raise ToolError(problem)
 
 
 def load_runtime_config() -> dict[str, Any]:
@@ -339,6 +390,9 @@ async def _polling_fallback(stop_event: asyncio.Event) -> None:
 @asynccontextmanager
 async def _mcp_lifespan(server: "FastMCP"):
     s = _srv()
+    if s.SETUP_PROBLEM:  # not set up: no relay, no loops; tools explain what to set
+        yield {}
+        return
     s._http_client = httpx.AsyncClient()
     if s.API_KEY:
         try:
