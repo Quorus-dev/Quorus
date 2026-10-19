@@ -24,7 +24,8 @@ All notable changes to Quorus are documented here. This project follows
   motion gets a still, phones a flat grid, and the list stays the default view.
 - Invites that don't carry the secret: `quorus share <room>` makes a code that works once
   (`--uses N`, up to 20) and expires after a day (`--ttl`, up to 7 days). `quorus join
-  <code>` redeems it into the teammate's own key, their name, in that room only. Names
+  <code>` redeems it into the teammate's own key, which identifies them across the relay, and
+  makes them a member of that one room. Names
   already in use can't be taken. `quorus invites` lists your invites and `quorus invites
   --revoke <id>` stops one.
 - `quorus track-report [--agent NAME] [--json]` prints what the shadow track-record
