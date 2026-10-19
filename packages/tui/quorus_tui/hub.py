@@ -3994,6 +3994,18 @@ def _run_session(
                 "[dim]Is it running? Try: quorus relay[/]"
             )
         # Any other failure → render the empty-state hint from the panel.
+    elif announce_ready and profile.get("room") and api_key_val.startswith("quorus_pk_"):
+        # An invitee's first run: the teammate's relay already has rooms, so the
+        # blank-slate offer never ran and their agent CLIs went unmentioned (bet 1's
+        # invitee persona). Offer them for the room the invite was for.
+        try:
+            from quorus_cli.quickstart import offer
+
+            offer(console, profile["room"], invitee=True)
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+        except Exception as exc:  # never block the hub on the offer
+            console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
 
     if announce_ready and rooms:
         console.print(f"  [success]✓[/] [muted]You're in as[/] [agent]@{agent_name}[/].")

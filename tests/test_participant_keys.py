@@ -83,8 +83,12 @@ def test_claim_is_once_per_name_and_needs_the_shared_secret(client: TestClient) 
     bob = _jwt(client, _claim(client, "bob"))
     again = client.post("/v1/auth/claim-name", json={"name": "bob"}, headers=LEGACY)
     assert again.status_code == 409
+    # A key claims only its own agents (member_agents.py): never another name, and
+    # only a person's key, not a daemon's, can claim agents at all.
     as_bob = client.post("/v1/auth/claim-name", json={"name": "carol"}, headers=bob)
-    assert as_bob.status_code == 403
+    assert as_bob.status_code == 400
+    agent = client.post("/v1/auth/claim-name", json={"name": "bob-codex"}, headers=bob)
+    assert agent.status_code == 403
     assert client.post("/v1/auth/token", json={"api_key": "quorus_pk_nope"}).status_code == 401
 
 

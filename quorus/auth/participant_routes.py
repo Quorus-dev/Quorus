@@ -44,9 +44,13 @@ def _store(request: Request) -> ParticipantKeyStore:
 @router.post("/claim-name")
 async def claim_name(req: ClaimNameRequest, request: Request,
                      auth: AuthContext = Depends(verify_auth)) -> dict:
-    """Shared-secret holders claim a name once; the key is returned once."""
+    """Shared-secret holders claim a name once; the key is returned once. An
+    invited member's own key claims ``<member>-<tool>`` as an agent they own
+    (``quorus/auth/member_agents.py``)."""
     store = _store(request)
     if not auth.is_legacy:
+        if auth.claims.get(CLAIM_CLAIM) and auth.sub:
+            return await _claim_member_agent(req.name, request, auth, store)
         raise HTTPException(status_code=403, detail="only the relay's shared secret can claim")
     # Only claims that succeed count. A daemon whose name is already claimed
     # (its key lost to a reinstall or a localhost/127.0.0.1 alias) retried every
@@ -65,6 +69,25 @@ async def claim_name(req: ClaimNameRequest, request: Request,
             "its owner can release it with `quorus release-name`"))
     await limits.record("global", bucket, window=3600)
     return {"name": req.name, "participant_key": key}
+
+
+async def _claim_member_agent(name: str, request: Request, auth: AuthContext,
+                              store: ParticipantKeyStore) -> dict:
+    from quorus.auth import member_agents
+    from quorus.routes.join_redeem import _known_names
+
+    limits, bucket = request.app.state.rate_limit_service, f"claim-agent:{auth.sub}"
+    if await limits.is_rate_limited("global", bucket, CLAIMS_PER_HOUR, window=3600):
+        raise HTTPException(status_code=429, detail="too many agent claims; retry in an hour",
+                            headers={"Retry-After": "3600"})
+    known = await _known_names(request)
+    try:
+        key = await asyncio.to_thread(member_agents.mint, store, auth.sub,
+                                      auth.claims[CLAIM_CLAIM], name, known)
+    except member_agents.MintError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from None
+    await limits.record("global", bucket, window=3600)
+    return {"name": name, "participant_key": key, "owner": auth.sub}
 
 
 async def participant_token(request: Request, raw_key: str) -> dict:

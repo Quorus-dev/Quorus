@@ -22,6 +22,7 @@ from quorus.auth import invite_codes
 from quorus.auth.middleware import AuthContext, verify_auth
 from quorus.config import get_real_ip
 from quorus.routes.helpers import _validate_name
+from quorus.routes.room_auth import drop_owned_agents
 
 router = APIRouter(prefix="/v1/join", tags=["join-codes"])
 LEGACY_TENANT = "_legacy"
@@ -135,5 +136,6 @@ async def revoke_invite(invite_id: str, request: Request,
             break  # the room is gone, and its members with it
         if name in (data.get("members") or ()):
             await rooms.leave(LEGACY_TENANT, rid, name)
+            await drop_owned_agents(request, LEGACY_TENANT, rid, name)
             removed.append(name)
     return {"id": invite_id, "revoked": True, "removed": removed}

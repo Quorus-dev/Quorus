@@ -17,7 +17,7 @@ from quorus.routes.models import (
     KickRequest,
     RenameRoomRequest,
 )
-from quorus.routes.room_auth import require_not_observer_only
+from quorus.routes.room_auth import drop_owned_agents, require_not_observer_only
 
 router = APIRouter()
 logger = logging.getLogger("quorus.routes.rooms")
@@ -120,6 +120,26 @@ async def get_room(
     }
 
 
+async def _adds_own_agent(request: Request, auth: AuthContext, tid: str, rid: str,
+                         participant: str) -> bool:
+    """An invited member adds an agent they own to a room they may write in
+    (docs/weekend/invite-roles.md: owners add their own agents)."""
+    if not auth.sub or not auth.claims.get("pk_claim"):
+        return False
+    store = getattr(request.app.state, "participant_keys", None)
+    if store is None:
+        return False
+    import asyncio
+
+    from quorus.auth.member_agents import owner_of
+    from quorus.roles import WRITER_ROLES
+
+    if await asyncio.to_thread(owner_of, store, participant) != auth.sub:
+        return False
+    members = await request.app.state.room_service.get_members(tid, rid) or {}
+    return members.get(auth.sub) in WRITER_ROLES
+
+
 @router.post("/rooms/{room_id}/join")
 async def join_room(
     room_id: str,
@@ -138,6 +158,10 @@ async def join_room(
         rid, room_data = await room_svc.get(_tid(auth), room_id)
         is_creator = room_data.get("created_by") == auth.sub
         is_self_join = participant == auth.sub
+        if not is_creator and not is_self_join and await _adds_own_agent(
+                request, auth, _tid(auth), rid, participant):
+            req.role = "member"  # an agent never joins above its owner
+            is_creator = True
         if not is_creator and is_self_join:
             raise HTTPException(
                 status_code=403,
@@ -177,6 +201,7 @@ async def leave_room(
     svc = request.app.state.room_service
     rid, _ = await svc.get(_tid(auth), room_id)
     await svc.leave(_tid(auth), rid, participant)
+    await drop_owned_agents(request, _tid(auth), rid, participant)
     return {"status": "left"}
 
 
@@ -194,6 +219,7 @@ async def kick_from_room(
     rid, _ = await svc.get(_tid(auth), room_id)
     is_admin = not auth.is_legacy and auth.role == "admin"
     await svc.kick(_tid(auth), rid, req.participant, requested_by, is_admin)
+    await drop_owned_agents(request, _tid(auth), rid, req.participant)
     return {"status": "kicked", "participant": req.participant}
 
 
