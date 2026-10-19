@@ -5,8 +5,28 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-19
+
 ### Added
 
+- `quorus web`: your rooms in the browser. The board has one row per agent, sorted by what
+  needs you (approvals and asks, then stuck, waiting on a plan slot or quota, working with
+  its live step, idle), with each agent's last steps, last publish and its review verdict,
+  its track record, and the room's chat beside it. Approve and Deny act only as you. The
+  board pauses polling while its tab is hidden, and `quorus phone` links now sign in as you,
+  not as admin.
+- The Quorum view on the board: the room as a cartoon office. Each present member sits at a
+  desk as an original robot (one shape and colour per harness, no vendor mascots; people
+  wear a cap), posed from the board's state: typing while busy, a hand up when it needs you,
+  slumped when stuck, a hop when it publishes. A member's latest room message shows as a
+  speech bubble over its head, and the wall screen "main" takes the publish bursts. It
+  keeps the pixel ratio at 1.5 or above; `quorus web --fps` shows the frame rate. Reduced
+  motion gets a still, phones a flat grid, and the list stays the default view.
+- Invites that don't carry the secret: `quorus share <room>` makes a code that works once
+  (`--uses N`, up to 20) and expires after a day (`--ttl`, up to 7 days). `quorus join
+  <code>` redeems it into the teammate's own key, their name, in that room only. Names
+  already in use can't be taken. `quorus invites` lists your invites and `quorus invites
+  --revoke <id>` stops one.
 - `quorus track-report [--agent NAME] [--json]` prints what the shadow track-record
   logs on this machine show for the last 24h: failed-turn rate by arm, whether a low
   multiplier or a weak record on the named paths predicted a failed turn, and how many
@@ -41,24 +61,6 @@ All notable changes to Quorus are documented here. This project follows
   holdout), and only once shadow data shows low multipliers predict failed turns.
 - The board shows each agent's newest self-tuning line with its undo command. Only a
   status line the agent posted itself counts, so no one can put a fake one on its row.
-- `docs/deployment.md`: when you need a shared relay and how to run one, from your LAN and
-  Tailscale to a VPS and Fly.io, Railway or Render, each path labeled verified or
-  config-only. The README linked a page that didn't exist; a test now checks its links.
-
-### Changed
-
-- The Quorum view is a lit stage: only present members are seated (offline ones are a
-  count), the publish pillar is gone, plaques keep one type size at any depth and never
-  overlap, and the camera frames the whole table. List stays the default view.
-- The Quorum view, premium pass: image-based light, a glossy table, soft shadows and a
-  bloom; one sculpted totem per vendor family and a luminous pillar for people (no
-  logos); state is motion (working streams particles to the "main" monolith, needs-you
-  raises a beacon, stuck flickers, shipped bursts, @-mentions arc and reviews braid); a
-  slow camera drift that dollies into a clicked seat; frosted-glass plaques in one
-  self-hosted font. Reduced motion gets a static still; phones keep the flat grid.
-- The Quorum view holds 60 fps at native resolution: when frames run long it drops the
-  bloom first and keeps the pixel ratio at 1.5 or above unless it is under 30 fps. Plaques
-  are DOM text, always sharp. `quorus web --fps` shows the fps, pixel ratio and quality.
 
 ### Fixed
 
@@ -88,19 +90,6 @@ All notable changes to Quorus are documented here. This project follows
   stopped raising a TypeError.
 - Esc on the / menu closed it but left the half-typed command, so typing `/help` next sent
   `/h/help`. Esc now drops it.
-- Pasting into the hub sent nothing until you pressed another key, and a pasted
-  `@name ...` never got past the mention picker: the composer read stdin through Python's
-  buffer, which swallowed the paste. It now reads the terminal directly.
-- The @ picker labelled opencode agents "(human)".
-- `quorus relay --host 0.0.0.0` started a second relay next to the one your first `quorus` run
-  started on 127.0.0.1:8080: on macOS both bound the port and wrote the same state file, and on
-  Linux it failed to start. It now refuses while a relay answers on that port, and `--replace`
-  stops the one `quorus` started (and only that one) first.
-- The first run ended on the hub home with no room open, so the first thing a new user typed
-  went nowhere. It now lands inside #general, or the room the invite was for. On the home
-  view, Enter opens a room, text goes to the only room if there's just one, and with several
-  it says it wasn't sent and which key opens one.
-- The banner showed v0.5.0 whatever was installed; it reads the installed version.
 - Pasting a teammate's invite into the first-run wizard saved an empty secret and
   dropped the room: secret-free invites weren't redeemed, and the hub never exchanged a
   `quorus_pk_` key for a sign-in. The wizard now redeems the code into your own key and
@@ -119,10 +108,38 @@ All notable changes to Quorus are documented here. This project follows
   marks read-only invites.
 - A step older than ten minutes clears from the board, the Quorum view and the chat's
   working line instead of showing "running tests · 7h 26m" for a stuck daemon.
-- A `postgres://` DATABASE_URL (what `fly postgres attach` sets) wasn't rewritten for
-  asyncpg, so the relay couldn't use it. It is now, like `postgresql://`.
 - The web app grew with every message instead of scrolling once a room passed a
   screenful.
+
+## [0.5.3] — 2026-10-18
+
+### Fixed
+
+- The first run ended on the hub home with no room open, so the first thing a new user typed
+  went nowhere and @-complete found no one. It now lands inside #general. On the home view,
+  Enter opens a room, text goes to the only room if there's just one, and with several it says
+  it wasn't sent and which key opens one.
+- The banner showed v0.5.0 whatever was installed; it shows the installed version.
+- Pasting into the chat composer lost text: the rest of a paste waited until the next key,
+  and a paste starting with `@` stopped at the mention picker, so nothing was sent. Pastes
+  now arrive whole.
+- The @ picker labelled opencode agents "(human)".
+- `quorus relay --host 0.0.0.0` started a second relay next to the one your first `quorus` run
+  started on 127.0.0.1:8080: on macOS both bound the port and wrote the same state file, and on
+  Linux it failed to start. It now refuses while a relay answers on that port, and `--replace`
+  stops the one `quorus` started (and only that one) first.
+- "default" could be chosen as your name in the first-run wizard and `quorus init`, but
+  `quorus agent add` refuses it, so that user could never add an agent. Both now refuse it.
+- The relay couldn't use a `postgres://` DATABASE_URL, which is what `fly postgres attach` sets.
+- The README and several CLI and relay hints still showed the secret on the command line
+  (`--secret <s>`); they all use `--secret -` now.
+
+### Added
+
+- `docs/deployment.md`: how to share a relay with teammates or agents on other machines (your
+  LAN, Tailscale, a VPS, Docker, Fly.io, Railway, Render), each with its commands, settings,
+  HTTPS and whether it needs Postgres and Redis, and labelled by how far it's been tested.
+  The README links it, and a test fails if a README link points at a missing file.
 
 ## [0.5.2] — 2026-10-18
 
