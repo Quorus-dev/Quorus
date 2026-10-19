@@ -427,3 +427,44 @@ async def test_an_untouched_old_tombstone_is_still_pruned_on_redis(monkeypatch):
     await r.hset("p1mem:x", "k", json.dumps(_old_tombstone()))
     await p1_persistence.hydrate("p1mem:x")
     assert await r.hget("p1mem:x", "k") is None
+
+
+async def test_the_upgrade_holds_the_write_lock_until_stamps_are_filled(monkeypatch):
+    """Codex, review of b4c8d2d4: the ALTER committed on its own, so another
+    connection's write landed before the backfill and beat a newer tombstone."""
+    path = p1_sqlite.db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(path)) as conn:
+        conn.execute("CREATE TABLE p1_entries (ns_key TEXT NOT NULL, field TEXT NOT NULL,"
+                     " value TEXT NOT NULL, touched REAL NOT NULL, PRIMARY KEY (ns_key, field))")
+        conn.execute("INSERT INTO p1_entries VALUES (?, ?, ?, ?)",
+                     ("p1mem:x", "k", json.dumps(p1_persistence.tombstone(_NOW + 50.0)),
+                      time.time()))
+    raced: list[str] = []
+
+    class Interleaving(sqlite3.Connection):
+        def execute(self, sql, *args):
+            cursor = super().execute(sql, *args)
+            if sql.startswith("ALTER TABLE p1_entries"):
+                # Another relay process writes an older entry right after the ALTER.
+                other = sqlite3.connect(str(path), timeout=0.05)
+                try:
+                    other.execute(
+                        "UPDATE p1_entries SET value = ?, stamp = ? WHERE field = 'k' "
+                        "AND ? >= stamp", (json.dumps(_entry("room", 10.0)), _NOW + 10.0,
+                                           _NOW + 10.0))
+                    other.commit()
+                    raced.append("wrote")
+                except sqlite3.OperationalError:
+                    raced.append("locked")
+                finally:
+                    other.close()
+            return cursor
+
+    real = sqlite3.connect
+    monkeypatch.setattr(p1_sqlite.sqlite3, "connect",
+                        lambda *a, **kw: real(*a, **{**kw, "factory": Interleaving}))
+    stored, ok = await p1_persistence.hydrate("p1mem:x")
+    monkeypatch.setattr(p1_sqlite.sqlite3, "connect", real)
+    assert raced == ["locked"]
+    assert ok and p1_persistence.is_tombstone(stored["k"])

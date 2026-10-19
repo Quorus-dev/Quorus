@@ -91,22 +91,32 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 
 def _add_stamps(conn: sqlite3.Connection) -> None:
-    """Add the stamp column and fill it from each row's own timestamp, in one
-    transaction. Left at 0, an older write replaced a newer tombstone from
-    before the upgrade (codex, review of a86d9b76)."""
-    with conn:
-        conn.execute("ALTER TABLE p1_entries ADD COLUMN stamp REAL NOT NULL DEFAULT 0")
-        rows = conn.execute("SELECT ns_key, field, value FROM p1_entries").fetchall()
-        updates = []
-        for ns_key, field, value in rows:
-            try:
-                parsed = json.loads(value)
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if isinstance(parsed, dict) and written_at(parsed):
-                updates.append((written_at(parsed), ns_key, field))
-        conn.executemany("UPDATE p1_entries SET stamp = ? WHERE ns_key = ? AND field = ?",
-                         updates)
+    """Add the stamp column and fill it from each row's own timestamp, under
+    one write lock. Left at 0, an older write replaced a newer tombstone from
+    before the upgrade (codex, a86d9b76). sqlite3 doesn't open a transaction
+    before DDL, so the ALTER committed alone and another connection could
+    write before the backfill (codex, b4c8d2d4): BEGIN IMMEDIATE takes the
+    lock first, and the column check is repeated under it."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(p1_entries)")}
+        if "stamp" not in columns:
+            conn.execute("ALTER TABLE p1_entries ADD COLUMN stamp REAL NOT NULL DEFAULT 0")
+            rows = conn.execute("SELECT ns_key, field, value FROM p1_entries").fetchall()
+            updates = []
+            for ns_key, field, value in rows:
+                try:
+                    parsed = json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(parsed, dict) and written_at(parsed):
+                    updates.append((written_at(parsed), ns_key, field))
+            conn.executemany(
+                "UPDATE p1_entries SET stamp = ? WHERE ns_key = ? AND field = ?", updates)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def set_entry(ns_key: str, field: str, entry: dict[str, Any]) -> dict[str, Any]:
