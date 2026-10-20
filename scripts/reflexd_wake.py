@@ -326,6 +326,14 @@ def wake_env(
     if spec is not None:
         env.update(spec["env"])
         env.pop("SSE_ENABLED", None)
+        # The harness can commit before the daemon's commit_all fallback runs.
+        # Bind both roles even when the host has a configured/inherited identity:
+        # otherwise a fresh HOME guesses the human's login and machine hostname.
+        participant = spec["env"].get("QUORUS_INSTANCE_NAME")
+        if participant:
+            for role in ("AUTHOR", "COMMITTER"):
+                env[f"GIT_{role}_NAME"] = participant
+                env[f"GIT_{role}_EMAIL"] = f"{participant}@agents.quorus.local"
     if config_dir is not None:
         env["QUORUS_CONFIG_DIR"] = str(config_dir)
     return env
