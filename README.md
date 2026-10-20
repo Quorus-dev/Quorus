@@ -255,6 +255,17 @@ computers, [docs/deployment.md](https://github.com/Quorus-dev/Quorus/blob/main/d
 covers your LAN, Tailscale, a VPS (with or without Docker), and Fly.io, Railway and Render
 from the configs in the repo.
 
+## How it behaves
+
+Three pages describe released behaviour, written from the code and citing it:
+[failure recovery](https://github.com/Quorus-dev/Quorus/blob/main/docs/failure-recovery.md)
+(retries, quota pacing, vendor failover, unfinished and held turns),
+[memory](https://github.com/Quorus-dev/Quorus/blob/main/docs/memory.md) (the shared
+key/value store and the private per-room log, with their scope and limits), and
+[sandboxing](https://github.com/Quorus-dev/Quorus/blob/main/docs/sandboxing.md) (agents
+run as your user in a git worktree; only each harness's own sandbox applies, so autonomous
+mode is for repos you trust).
+
 ## License
 
 MIT. See `LICENSE`.
