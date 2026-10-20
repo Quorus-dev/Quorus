@@ -213,3 +213,61 @@ def test_cli_accepts_any_model_flags() -> None:
     )
     for flag in ("opencode", "--name", "--model"):
         assert flag in out.stdout, out.stderr[-300:]
+
+
+@pytest.fixture
+def invitee(env: dict, tmp_path: Path, monkeypatch) -> dict[str, Any]:
+    """bob on alice's relay: his own member key, no secret."""
+    env["cfg"].update(instance_name="bob", relay_secret="", api_key="quorus_pk_bob")
+    monkeypatch.setattr(agent_cmd, "_claim_member_agent", lambda c, name: "agent-key")
+    monkeypatch.setattr(agent_cmd, "_pin_owner", lambda c, name: None)
+    monkeypatch.setattr(agent_cmd, "_bearer", lambda c, cred, legacy: f"jwt:{cred}")
+    repo = tmp_path / "app"
+    repo.mkdir()
+    env["repo"] = repo
+    return env
+
+
+def _bound_mode(tmp_path: Path) -> str:
+    entry = json.loads((tmp_path / ".quorus" / "room-bindings.json").read_text())["build"]
+    return entry["mode"] if isinstance(entry, dict) else "default"  # a bare path: default
+
+
+@pytest.mark.parametrize(("answer", "mode"), [(False, "default"), (True, "autonomous")])
+def test_an_invitee_is_told_whose_relay_before_write_access(invitee, tmp_path, monkeypatch,
+                                                           answer, mode) -> None:
+    """codex, review of 0f9a90b7: the relay-owner note was only in the wizard. A
+    direct `agent add --mode autonomous` on a teammate's relay shows it first and
+    asks, and Enter keeps the tool's own permissions."""
+    import rich.prompt
+
+    monkeypatch.setattr(agent_cmd.sys.stdin, "isatty", lambda: True)
+    asked = []
+    monkeypatch.setattr(rich.prompt.Confirm, "ask",
+                        classmethod(lambda cls, q, default=None: asked.append(default) or answer))
+    console = _Console()
+    agent_cmd.cmd_agent(_Args(tool="codex", repo=str(invitee["repo"]), mode="autonomous"),
+                        console)
+    note = next(i for i, ln in enumerate(console.lines) if agent_cmd.TEAMMATE_RELAY_NOTE in ln)
+    joined = next(i for i, ln in enumerate(console.lines) if "joined #build" in ln)
+    assert note < joined and asked == [False]
+    assert _bound_mode(tmp_path) == mode
+
+
+def test_without_a_terminal_the_explicit_flag_is_the_consent(invitee, tmp_path,
+                                                             monkeypatch) -> None:
+    monkeypatch.setattr(agent_cmd.sys.stdin, "isatty", lambda: False)
+    console = _Console()
+    agent_cmd.cmd_agent(_Args(tool="codex", repo=str(invitee["repo"]), mode="autonomous"),
+                        console)
+    assert any(agent_cmd.TEAMMATE_RELAY_NOTE in ln for ln in console.lines)
+    assert _bound_mode(tmp_path) == "autonomous"
+
+
+def test_no_note_on_your_own_relay_or_without_write_access(env, invitee, tmp_path) -> None:
+    console = _Console()
+    agent_cmd.cmd_agent(_Args(tool="codex", repo=str(invitee["repo"]), mode="default"),
+                        console)
+    agent_cmd.cmd_agent(_Args(tool="claude", repo=str(invitee["repo"]), mode="autonomous",
+                              disclosed=True), console)  # the wizard already asked
+    assert not any(agent_cmd.TEAMMATE_RELAY_NOTE in ln for ln in console.lines)

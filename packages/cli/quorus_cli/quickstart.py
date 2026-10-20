@@ -99,7 +99,8 @@ def offer(console: Any, room: str, cwd: Path | None = None,
           ask: Callable[[str], bool] | None = None,
           add: Callable[[Any, Any], None] | None = None,
           which: Callable[[str], str | None] = shutil.which,
-          ask_write: Callable[[str], bool] | None = None) -> list[str]:
+          ask_write: Callable[[str], bool] | None = None,
+          invitee: bool = False) -> list[str]:
     """Offer to add every ready agent CLI to *room*; return the tools added.
 
     With a repo, a second question decides the room's permission mode. The
@@ -109,7 +110,12 @@ def offer(console: Any, room: str, cwd: Path | None = None,
     the task back and forth (0.6.0 stranger test). The choice is explicit, names
     the repo, and Enter keeps the existing permissions (codex, review of the
     plan). Yes binds `autonomous`: the owner's own requests get full turns in the
-    agent's worktree; anyone else's stay read-only, as in 0.6.0."""
+    agent's worktree; anyone else's stay read-only, as in 0.6.0.
+
+    *invitee*: the room is on a teammate's relay. The question also says who runs
+    it: the agent acts only on requests sent with the invitee's own key, and the
+    relay's owner is trusted to report senders honestly (Codex's trust call on
+    3212878c)."""
     found = detect(which)
     if not found:
         console.print("  [muted]No agent CLIs found. Install one (Claude Code, Codex, "
@@ -142,6 +148,10 @@ def offer(console: Any, room: str, cwd: Path | None = None,
             def ask_write(q: str) -> bool:
                 return Confirm.ask(q, default=False)
         console.print(f"\n  They'd work in [accent]{repo}[/].")
+        if invitee:
+            from quorus_cli.agent_cmd import TEAMMATE_RELAY_NOTE
+
+            console.print(f"  [dim]{TEAMMATE_RELAY_NOTE}[/]")
         if ask_write("  Let them edit files and run commands there when you ask? Commands "
                      "run with your account's permissions. Others in the room still only "
                      "get answers."):
@@ -160,7 +170,8 @@ def offer(console: Any, room: str, cwd: Path | None = None,
     for t in tools:
         args = SimpleNamespace(tool=t, room=room, repo=str(repo) if repo else None,
                                mode=mode, name=None, model=FREE_MODEL.get(t),
-                               lead=(t == lead), trust=None)
+                               lead=(t == lead), trust=None,
+                               disclosed=invitee)  # asked above, after the note
         try:
             add(args, console)
             added.append(t)

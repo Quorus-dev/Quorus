@@ -86,6 +86,7 @@ from quorus.roles import WRITER_ROLES  # noqa: E402
 from quorus.runtime import commit_evidence as _commit_evidence  # noqa: E402  audit F2
 from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
+from quorus.runtime import owner_pin as _owner_pin  # noqa: E402  invitee agents
 from quorus.runtime import review_share as _review_share  # noqa: E402
 from quorus.runtime import track_record as _track  # noqa: E402  L2 bids
 from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
@@ -3819,6 +3820,12 @@ class Reflexd:
     async def _trusted_wake(self, relay: Any, envelope: dict[str, Any],
                             history: list[dict[str, Any]]) -> bool:
         """Whether this wake may run write-capable (see :func:`trusted_origin`)."""
+        room = envelope.get("room") or ""
+        pin = _owner_pin.owner_pin(self.config.participant_name)
+        if pin is not None:
+            # An invitee's agent on a teammate's relay: the name proves nothing
+            # there, only the owner's own key does (quorus/runtime/owner_pin.py).
+            return await self._pinned_owner_wake(relay, envelope, history, room, pin)
         handoff = _failover.continuation(envelope)
         if handoff and not envelope.get("reply_to"):
             # A failover handoff carries no reply_to; it serves the request it names,
@@ -3838,6 +3845,21 @@ class Reflexd:
         except Exception:
             return False
         return trusted_origin(envelope, longer, owner)
+
+    async def _pinned_owner_wake(self, relay: Any, envelope: dict[str, Any],
+                                 history: list[dict[str, Any]], room: str,
+                                 pin: dict[str, str]) -> bool:
+        """Write-capable only for a request the pinned owner sent with their own
+        key, traced through the owner's agents; room trust settings don't widen it."""
+        owner = agent_owner(self.config.participant_name)
+        try:  # stamps live on stored messages: read them from the relay's history
+            stored = await relay.fetch_recent(room=room, limit=TRUST_CHAIN_LIMIT)
+        except Exception:
+            return False
+        ok = _owner_pin.pinned_owner_request(envelope, [*stored, *history], owner, pin)
+        if not ok:
+            logger.info("read-only turn: not the pinned owner's own key")
+        return ok
 
     async def _member_trusted(self, relay: Any, envelope: dict[str, Any],
                               history: list[dict[str, Any]]) -> bool:

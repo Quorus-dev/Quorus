@@ -116,14 +116,19 @@ def _record(cfg: Path, pid: int, port: int) -> None:
         "pid": pid, "port": port, "started": _started(pid), "command": _ps(pid, "command")}))
 
 
-def stop_started_relay(port: int, timeout: float = 5.0) -> bool:
+def stop_started_relay(port: int, timeout: float = 15.0) -> bool:
     """Stop the detached relay that `quorus` started on *port*, and only that one.
 
     The pid file names the process and its start time. It is signalled only if,
     right now, that pid's command line ends with exactly ``-m quorus.relay_cli``
     and it started at the recorded time, so a reused pid or an unrelated process
     that merely mentions quorus.relay_cli is never touched (codex, review of
-    857a5271). Returns True once nothing answers on *port*."""
+    857a5271). Returns True once nothing answers on *port* and the process is gone.
+
+    Not answering isn't enough: uvicorn stops accepting at once, but saves the
+    relay's state only after its open streams close (up to 5 s). A replacement
+    started in between loaded the old file, and the first run's rooms were lost
+    (`quorus relay --host 0.0.0.0 --replace`, the founding scenario test)."""
     import json
     import signal
 
@@ -143,7 +148,9 @@ def stop_started_relay(port: int, timeout: float = 5.0) -> bool:
     url = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not _healthy(url, 0.3):
+        # A zombie (exited, not yet reaped by the hub that spawned it) no longer
+        # shows the recorded command line, so it counts as gone.
+        if not _healthy(url, 0.3) and not _is_our_relay(pid, started, command):
             pid_file.unlink(missing_ok=True)
             return True
         time.sleep(0.2)

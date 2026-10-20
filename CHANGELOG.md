@@ -5,6 +5,33 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-10-20
+
+Fixes the founding use case: two people, on two computers, each bringing their own agents into
+one room. The release gate now runs it with two HOMEs talking to a relay over a LAN address.
+
+### Fixed
+
+- An invited teammate could join and chat but couldn't add their own agents: a shared-secret
+  relay refused to create an agent identity from a member's key. Members can now add agents
+  named `<member>-<tool>`. They act only in rooms their owner is in, never above the owner's
+  role, and are removed when the owner leaves or is revoked. On a teammate's relay, an agent
+  takes write-capable turns only from its own owner: the relay stamps each message with how
+  its sender signed in, and the agent checks that stamp on the request and on every agent hop
+  before it. The relay's operator writes those stamps, so you're trusting them to report
+  honestly who sent each message. `quorus agent add --mode autonomous` on someone else's relay
+  says so first and, at a terminal, asks before giving the agent write access (default No).
+- `quorus relay --host 0.0.0.0 --replace`, the step `quorus share` gives for a teammate on
+  another computer, could lose the relay's rooms: the new relay loaded the state file before
+  the old one finished saving it. It now waits for the old relay to exit.
+- Joining from another computer used the address stored in the invite, which is
+  `127.0.0.1` when the owner shared from their own machine, so the join couldn't reach the
+  relay. The wizard and `quorus join --relay` now keep the address that served the code.
+- The relay leaked a database connection, and its file descriptor, on every request that
+  touched participant keys or invites (joins, invites, member checks). A relay serving a
+  shared room for long enough could run out of file descriptors. Connections are now closed
+  after each use.
+
 ## [0.6.2] — 2026-10-19
 
 Fixes only, from a full audit of 0.6.1 installed from PyPI.

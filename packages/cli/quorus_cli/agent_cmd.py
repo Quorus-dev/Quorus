@@ -36,6 +36,12 @@ from quorus_cli import agent_proc
 # opencode = any model: Ollama (local), OpenRouter, DeepSeek, Qwen, Gemini...
 HARNESSES = ("claude", "codex", "gemini", "opencode")
 _LABEL_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+# Shown before an invited member gives an agent write access on a teammate's
+# relay, in the wizard and in `quorus agent add` (Codex's trust call on 3212878c,
+# review of 0f9a90b7): key stamps keep other members out, not the relay's owner.
+TEAMMATE_RELAY_NOTE = ("This room is on a teammate's relay. Your agents act only on requests "
+                       "sent with your own key, and its owner runs the relay, so you're "
+                       "trusting it to report who sent what.")
 LABEL_PREFIX = "dev.quorus.agent."
 _LA = Path.home() / "Library" / "LaunchAgents"
 MODES = ("default", "manual", "autonomous")
@@ -104,17 +110,56 @@ def _credentials(cfg: dict[str, Any], name: str, harness: str) -> tuple[str, boo
             key = json.loads(cache.read_text(encoding="utf-8")).get("api_key")
             if key:
                 return key, False
-        from quorus_cli.cli import _register_agent_identity
+        if cfg["api_key"].startswith("quorus_pk_"):
+            key = _claim_member_agent(cfg, name)
+        else:
+            from quorus_cli.cli import _register_agent_identity
 
-        key = _register_agent_identity(cfg["relay_url"], cfg["api_key"], harness)
-        if not key:
-            raise SystemExit("agent: the relay refused to create an agent identity "
-                             "(run `quorus doctor`)")
+            key = _register_agent_identity(cfg["relay_url"], cfg["api_key"], harness)
+            if not key:
+                raise SystemExit("agent: the relay refused to create an agent identity "
+                                 "(run `quorus doctor`)")
         _write_private(cache, json.dumps({"api_key": key}))
         return key, False
     if cfg.get("relay_secret"):
         return cfg["relay_secret"], True
     raise SystemExit("agent: not configured — run `quorus init` or `quorus join` first")
+
+
+def _claim_member_agent(cfg: dict[str, Any], name: str) -> str:
+    """An invited member's own key claims *name* as their agent on a teammate's
+    shared-secret relay (quorus/auth/member_agents.py). Before this, an invitee
+    couldn't add an agent at all (bet 1's invitee persona)."""
+    headers = {"Authorization": f"Bearer {_bearer(cfg, cfg['api_key'], False)}"}
+    resp = httpx.post(f"{cfg['relay_url']}/v1/auth/claim-name", json={"name": name},
+                      headers=headers, timeout=10)
+    if resp.status_code == 200:
+        return resp.json()["participant_key"]
+    try:
+        detail = resp.json().get("detail") or resp.text
+    except ValueError:
+        detail = resp.text
+    # A relay older than 0.6.3 refuses every non-secret claim with this detail.
+    if resp.status_code == 404 or detail == "only the relay's shared secret can claim":
+        raise SystemExit("agent: this relay doesn't let invited members add agents yet "
+                         "(it runs a Quorus older than 0.6.3). Ask its owner to update it, "
+                         "or add your agents to a relay you run yourself.")
+    raise SystemExit(f"agent: the relay refused @{name}: {detail}")
+
+
+def _pin_owner(cfg: dict[str, Any], name: str) -> None:
+    """On a teammate's relay, the agent trusts its owner's own key, not the name
+    (quorus/runtime/owner_pin.py): pin the claim this member's key signs in as."""
+    import base64
+
+    from quorus.runtime.owner_pin import save_pin
+
+    token = _bearer(cfg, cfg["api_key"], False)
+    body = token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    if not claims.get("pk_claim") or not claims.get("tenant_id"):
+        raise SystemExit("agent: couldn't read your own key's identity from the relay")
+    save_pin(name, claims["tenant_id"], claims["pk_claim"])
 
 
 def _bearer(cfg: dict[str, Any], cred: str, legacy: bool) -> str:
@@ -317,14 +362,28 @@ def _add(args: Any, console: Any) -> None:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
+    member = (cfg.get("api_key") or "").startswith("quorus_pk_")
+    mode = args.mode
+    if (member and repo is not None and mode == "autonomous"
+            and not getattr(args, "disclosed", False)):
+        console.print(f"[dim]{TEAMMATE_RELAY_NOTE}[/]")
+        if sys.stdin.isatty():
+            from rich.prompt import Confirm
+
+            if not Confirm.ask(f"Let @{name} edit files and run commands in {repo} when "
+                               "you ask?", default=False):
+                mode = None  # Enter keeps each tool's own permissions
+        # Not a terminal: the explicit --mode autonomous is the consent.
     cred, legacy = _credentials(cfg, name, suffix)
+    if member:
+        _pin_owner(cfg, name)
     # Adding members requires the room owner/admin, not the child agent
     # (self-join is deliberately forbidden even if it inherited membership).
     join_cred = cred if legacy else cfg["api_key"]
     _join(cfg, args.room, name, _bearer(cfg, join_cred, legacy))
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
-        mode = _bind(args.room, repo, args.mode, getattr(args, "trust", None))
+        mode = _bind(args.room, repo, mode, getattr(args, "trust", None))
         console.print(f"[success]✓[/] #{args.room} works in {repo} [dim]({mode})[/]")
     if getattr(args, "lead", False):
         previous = _read_leads().get(args.room)

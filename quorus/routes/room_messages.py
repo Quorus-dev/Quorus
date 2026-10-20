@@ -14,7 +14,12 @@ from quorus.auth.middleware import AuthContext, verify_auth
 from quorus.auth.name_reservations import reserve_names
 from quorus.backends.redis_backends import BackendError
 from quorus.routes.models import RoomMessageRequest
-from quorus.routes.room_auth import require_room_member, require_room_writer
+from quorus.routes.room_auth import (
+    agent_owner_claim,
+    require_room_member,
+    require_room_writer,
+)
+from quorus.services import sender_auth
 
 MAX_MESSAGE_SIZE = int(os.environ.get("MAX_MESSAGE_SIZE", "51200"))
 _IDEMPOTENCY_TTL = int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "300"))
@@ -112,10 +117,12 @@ async def send_room_message(
             return cached
 
     svc = request.app.state.room_msg_service
+    stamp = sender_auth.stamp(auth, tid, await agent_owner_claim(request, auth))
     try:
         result = await svc.send(
             tid, room_id, sender, msg.content,
             message_type=msg.message_type, reply_to=msg.reply_to,
+            stamp=stamp,
         )
     except (HTTPException, BackendError):
         # Release the pending key so retries aren't blocked by 409.

@@ -5532,7 +5532,10 @@ def _cmd_join(args):
             if not payload:
                 _ui.error("Server returned an empty payload — ask for a fresh code")
                 sys.exit(1)
-            _apply_join_payload(payload, args.name)
+            # The address that served the code, not the payload's "r": that is
+            # where it was minted, 127.0.0.1 when shared from the relay's own
+            # machine, and the joiner's own machine on theirs (founding scenario).
+            _apply_join_payload({**payload, "r": relay_for_lookup}, args.name)
             return
 
     # --- Portable quorus:// token (self-decoding) ---

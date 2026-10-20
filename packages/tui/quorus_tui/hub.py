@@ -478,7 +478,10 @@ def _first_launch_setup(console: Console) -> dict:
                     resp = None
             if resp is not None and resp.status_code == 200:
                 payload = (resp.json() or {}).get("payload") or {}
-                relay_url = (payload.get("r") or relay_url).rstrip("/")
+                # Keep the address that just answered. The payload's "r" is the
+                # address the code was minted on: 127.0.0.1 when alice shared
+                # from her own machine, which on bob's computer is bob's own
+                # (founding scenario test).
                 secret = payload.get("s", "") or ""
                 api_key = payload.get("k", "") or ""
                 invited_room = payload.get("n", "") or ""
@@ -3994,6 +3997,18 @@ def _run_session(
                 "[dim]Is it running? Try: quorus relay[/]"
             )
         # Any other failure → render the empty-state hint from the panel.
+    elif announce_ready and profile.get("room") and api_key_val.startswith("quorus_pk_"):
+        # An invitee's first run: the teammate's relay already has rooms, so the
+        # blank-slate offer never ran and their agent CLIs went unmentioned (bet 1's
+        # invitee persona). Offer them for the room the invite was for.
+        try:
+            from quorus_cli.quickstart import offer
+
+            offer(console, profile["room"], invitee=True)
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+        except Exception as exc:  # never block the hub on the offer
+            console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
 
     if announce_ready and rooms:
         console.print(f"  [success]✓[/] [muted]You're in as[/] [agent]@{agent_name}[/].")

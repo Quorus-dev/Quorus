@@ -72,8 +72,12 @@ class RoomMessageService:
         content: str,
         message_type: str = "chat",
         reply_to: str | None = None,
+        stamp: dict[str, str] | None = None,
     ) -> dict:
         """Send a message to a room, fan-out to all members.
+
+        *stamp* (``quorus.services.sender_auth``) records how the sender
+        authenticated; it is stored with the history message only.
 
         **Delivery model:**
 
@@ -91,10 +95,10 @@ class RoomMessageService:
         """
         if USE_OUTBOX:
             return await self._send_with_outbox(
-                tenant_id, room_id, sender, content, message_type, reply_to
+                tenant_id, room_id, sender, content, message_type, reply_to, stamp
             )
         return await self._send_inline(
-            tenant_id, room_id, sender, content, message_type, reply_to
+            tenant_id, room_id, sender, content, message_type, reply_to, stamp
         )
 
     async def _send_with_outbox(
@@ -105,6 +109,7 @@ class RoomMessageService:
         content: str,
         message_type: str = "chat",
         reply_to: str | None = None,
+        stamp: dict[str, str] | None = None,
     ) -> dict:
         """Send using the outbox pattern — transactional fan-out guarantee."""
         from quorus.models.outbox import MessageOutbox
@@ -143,6 +148,7 @@ class RoomMessageService:
             "message_type": message_type,
             "timestamp": timestamp,
             "reply_to": reply_to,
+            **(stamp or {}),
         }
 
         # Write history + outbox + audit atomically — all in one session so
@@ -214,6 +220,7 @@ class RoomMessageService:
         content: str,
         message_type: str = "chat",
         reply_to: str | None = None,
+        stamp: dict[str, str] | None = None,
     ) -> dict:
         """Send with inline fan-out (legacy mode, best-effort delivery)."""
         # Rate limit the sender
@@ -253,6 +260,7 @@ class RoomMessageService:
             "message_type": message_type,
             "timestamp": timestamp,
             "reply_to": reply_to,
+            **(stamp or {}),
         }
 
         # STEP 1: Persist to history FIRST (Postgres is source of truth)

@@ -20,6 +20,8 @@ import secrets
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 KEY_PREFIX = "quorus_pk_"
@@ -112,8 +114,22 @@ class ParticipantKeyStore:
             create_table(db)
         os.chmod(self._path, 0o600)
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._path, isolation_level="IMMEDIATE")
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """One transaction on a fresh connection, closed when it ends.
+
+        ``with sqlite3.connect(...)`` only commits or rolls back; it never
+        closes. Every request left a connection (and its file descriptor) for
+        the garbage collector: 1,202 "unclosed database" warnings in one CI
+        run, and once the runner's fds passed 1024, select() failed in
+        unrelated tests (0.6.3 PR #14).
+        """
+        db = sqlite3.connect(self._path, isolation_level="IMMEDIATE")
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def claim(self, name: str, kind: str = "unclassified", owner: str | None = None,
               owner_claim_id: str | None = None) -> str | None:
@@ -150,11 +166,28 @@ class ParticipantKeyStore:
         return found[0] if found else None
 
     def is_current(self, name: str, claim_id: str) -> bool:
-        """True while *claim_id* is still *name*'s claim (not released/reclaimed)."""
+        """True while *claim_id* is still *name*'s claim (not released/reclaimed),
+        and, for an agent a member owns, while that owner's claim is still the
+        generation it was minted under (invite-roles.md: agents belong to a person)."""
         with self._lock, self._connect() as db:
-            row = db.execute("SELECT claim_id FROM claims WHERE name = ?", (name,)).fetchone()
-        return bool(row and row[0] and claim_id and hmac.compare_digest(row[0], claim_id))
+            row = db.execute("SELECT claim_id, owner, owner_claim_id FROM claims "
+                             "WHERE name = ?", (name,)).fetchone()
+            if not (row and row[0] and claim_id and hmac.compare_digest(row[0], claim_id)):
+                return False
+            if row[1] is None:
+                return True
+            parent = db.execute("SELECT claim_id FROM claims WHERE name = ?",
+                                (row[1],)).fetchone()
+        return bool(parent and parent[0] and row[2]
+                    and hmac.compare_digest(parent[0], row[2]))
 
     def release(self, name: str) -> bool:
+        """Free *name*. The agents it owned go with it: their tokens already die
+        with the owner's generation, and their names become free again."""
         with self._lock, self._connect() as db:
+            row = db.execute("SELECT claim_id FROM claims WHERE name = ?", (name,)).fetchone()
+            if row is None:
+                return False
+            db.execute("DELETE FROM claims WHERE owner = ? AND owner_claim_id = ?",
+                       (name, row[0]))
             return db.execute("DELETE FROM claims WHERE name = ?", (name,)).rowcount > 0
