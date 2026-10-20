@@ -130,7 +130,8 @@ def _invitee(base: Path, add: str) -> tuple[PtySession, PtySession, Path, Path, 
     alice = PtySession(home_a)
     bob = None
     # Close what started if any step fails: the caller only sees sessions this
-    # returns, and a failure here once left alice's relay running overnight.
+    # returns, and a failure here once left alice's relay running overnight
+    # (overseer's orphan sweep, 2026-10-20: two invitee relays from 20:41).
     try:
         alice.expect(r"Your name", timeout=30)
         alice.type("alice" + ENTER)
@@ -160,8 +161,12 @@ def _invitee(base: Path, add: str) -> tuple[PtySession, PtySession, Path, Path, 
         return alice, bob, repo, bin_dir, plain(bob.text())
     except BaseException:
         for s in (bob, alice):
-            if s is not None:
+            if s is None:
+                continue
+            try:
                 s.close()
+            except Exception:
+                pass  # the original failure is the one to report; still close the other
         raise
 
 
@@ -228,3 +233,31 @@ def test_an_invitee_gets_a_tested_fix_in_their_own_repo(tmp_path_factory):
         for s in (bob, alice):
             if s is not None:
                 s.close()
+
+
+def test_a_failure_inside_the_invitee_setup_leaves_no_relay_behind(tmp_path_factory, monkeypatch):
+    """Overseer's orphan sweep (2026-10-20): two invitee relays from a 20:41 run were
+    still serving the next morning. `_invitee` starts alice's relay before any test
+    `try/finally` exists, so a failing share used to leak it. Now the helper closes
+    every session it opened before re-raising."""
+    from tests.firstrun import pty_session
+
+    base = tmp_path_factory.mktemp("invitee-leak")
+    monkeypatch.setattr(sys.modules[__name__], "_quorus",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "share broke"))
+    with pytest.raises(AssertionError, match="share broke"):
+        _invitee(base, "n")
+    started = pty_session.spawned_relays(base / "alice")
+    assert started, "the helper never got as far as starting alice's relay"
+    still_up = [pid for pid in started if _alive(pid)]
+    assert still_up == [], f"invitee relay(s) survived the failed setup: {still_up}"
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
