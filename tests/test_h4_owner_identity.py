@@ -6,6 +6,7 @@ the operator credential for share, revoke, kick and destroy.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -85,6 +86,10 @@ def _wizard(monkeypatch, tmp_path: Path, claim: _Resp, capsys):
 
     from quorus.runtime import local_relay
 
+    # Everything the wizard could write goes under tmp_path: HOME as well as the
+    # config dir (2026-10-20: this fixture once rewrote the overseer's real
+    # ~/.quorus because the hub resolved its config path at import time).
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
     monkeypatch.setenv("RELAY_URL", "http://127.0.0.1:1")
     monkeypatch.setattr(hub, "_prompt_name", lambda console: "alice")
@@ -97,13 +102,15 @@ def _wizard(monkeypatch, tmp_path: Path, claim: _Resp, capsys):
         return claim
 
     monkeypatch.setattr(hub.httpx, "post", fake_post)
-    saved: list[dict] = []
-    monkeypatch.setattr(hub, "_save_instance_config",
-                        lambda name, relay_url, secret="", api_key="": saved.append(
-                            {"name": name, "secret": secret, "api_key": api_key}))
     with open(tmp_path / "out.txt", "w") as fh:
         profile = hub._first_launch_setup(Console(file=fh, width=400))
     out = (tmp_path / "out.txt").read_text()
+    # What the wizard really saved, wherever ConfigManager put it under tmp_path.
+    saved = [{"name": d["instance_name"], "secret": d.get("relay_secret", ""),
+              "api_key": d.get("api_key", "")}
+             for f in sorted((tmp_path / ".quorus").rglob("*.json"))
+             for d in [json.loads(f.read_text())]
+             if isinstance(d, dict) and "instance_name" in d]
     return profile, calls, out, saved
 
 
