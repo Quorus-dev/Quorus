@@ -220,3 +220,38 @@ def test_refused_claims_dont_lock_the_machine_out(client: TestClient) -> None:
         _claim(client, f"agent{i}")
     over = client.post("/v1/auth/claim-name", json={"name": "one-too-many"}, headers=LEGACY)
     assert over.status_code == 429  # the cap still stops a runaway loop
+
+
+def _open_fds() -> int:
+    import os
+
+    for d in ("/proc/self/fd", "/dev/fd"):
+        try:
+            return len(os.listdir(d))
+        except OSError:
+            pass
+    pytest.skip("can't count open file descriptors here")
+
+
+def test_store_calls_close_their_connections(tmp_path: Path) -> None:
+    """0.6.3 PR #14: `with sqlite3.connect(...)` only commits, so every call left a
+    connection open until GC; on CI's Linux runner fds passed 1024 and select()
+    failed elsewhere. With the GC off, 60 calls must not grow the fd count."""
+    import gc
+
+    from quorus.auth.participant_keys import ParticipantKeyStore
+
+    store = ParticipantKeyStore(tmp_path / "relay")
+    key = store.claim("bob")
+    gc.collect()
+    gc.disable()
+    try:
+        before = _open_fds()
+        for _ in range(20):
+            store.lookup(key)
+            store.info("bob")
+            store.name_for(key)
+        after = _open_fds()
+    finally:
+        gc.enable()
+    assert after - before <= 2, (before, after)

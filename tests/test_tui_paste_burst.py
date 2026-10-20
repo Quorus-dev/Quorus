@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-import select
+import selectors
 import subprocess
 import sys
 import time
@@ -44,6 +44,14 @@ open(sys.argv[1], "w").write(json.dumps([line]))
 """
 
 
+def _readable(fd: int, timeout: float = 0.05) -> bool:
+    """select() refuses fds >= 1024 (CI hit that once fds leaked elsewhere);
+    the platform selector (epoll/kqueue) doesn't."""
+    with selectors.DefaultSelector() as sel:
+        sel.register(fd, selectors.EVENT_READ)
+        return bool(sel.select(timeout))
+
+
 def _paste(burst: "str | list[str]", tmp_path) -> list[str]:
     """Paste *burst* into `_read_input` over a pty and return what it submitted.
     A list is typed as separate bursts, 0.3 s apart (a lone Esc must not be read
@@ -58,14 +66,14 @@ def _paste(burst: "str | list[str]", tmp_path) -> list[str]:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             # The composer redraws its prompt once it has the tty in raw mode.
-            if select.select([primary], [], [], 0.05)[0] and b">" in os.read(primary, 4096):
+            if _readable(primary) and b">" in os.read(primary, 4096):
                 break
         for i, chunk in enumerate([burst] if isinstance(burst, str) else burst):
             if i:
                 time.sleep(0.3)
             os.write(primary, chunk.encode())
         while time.monotonic() < deadline and child.poll() is None:
-            if select.select([primary], [], [], 0.05)[0]:
+            if _readable(primary):
                 try:
                     os.read(primary, 4096)
                 except OSError:
