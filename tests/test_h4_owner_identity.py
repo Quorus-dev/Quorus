@@ -143,8 +143,10 @@ def test_session_credentials_split_identity_from_operator():
         ("quorus_pk_x", "s")
     assert hub.session_credentials({"relay_secret": "s"}) == ("s", "s")      # pre-0.6.4 setup
     assert hub.session_credentials({"api_key": "quorus_pk_x"}) == ("quorus_pk_x", "")  # invitee
+    # Codex, review of 2c0bc92a: a hosted login never falls back to a stale dev secret,
+    # not even for admin actions; the hosted relay would refuse it.
     hosted = {"api_key": "mct_h", "relay_secret": "stale"}
-    assert hub.session_credentials(hosted) == ("mct_h", "stale")
+    assert hub.session_credentials(hosted) == ("mct_h", "")
 
 
 def test_the_hub_mints_and_destroys_with_the_operator_credential(monkeypatch):
@@ -189,6 +191,12 @@ def test_cli_admin_headers_prefer_the_relay_secret(monkeypatch):
     assert cli._auth_headers() == {"Authorization": "Bearer jwt-for-key"}
     monkeypatch.setattr(cli, "RELAY_SECRET", "")
     assert cli._admin_headers() == {"Authorization": "Bearer jwt-for-key"}
+    # A hosted `mct_` login with a stale dev secret in the profile: the key's JWT
+    # is the admin credential, never the secret (Codex, review of 2c0bc92a).
+    monkeypatch.setattr(cli, "RELAY_SECRET", "quorus-dev")
+    monkeypatch.setattr(cli, "API_KEY", "mct_hosted")
+    monkeypatch.setattr(cli, "_cached_jwt", "jwt-for-hosted")
+    assert cli._admin_headers() == {"Authorization": "Bearer jwt-for-hosted"}
 
 
 def test_whoami_says_which_credential_signs_in(monkeypatch, capsys):
