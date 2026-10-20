@@ -128,32 +128,41 @@ def _invitee(base: Path, add: str) -> tuple[PtySession, PtySession, Path, Path, 
     home_a, home_b = base / "alice", base / "bob"
     repo, bin_dir = setup(home_b, ("codex",), owner="bob")
     alice = PtySession(home_a)
-    alice.expect(r"Your name", timeout=30)
-    alice.type("alice" + ENTER)
-    alice.expect(r"Invite, or Enter to run it here")
-    alice.type(ENTER)
-    alice.expect(r"You're in as @alice", timeout=90)
-    alice.secret = relay_secret(home_a)
-    shared = _quorus(alice, None, "quorus share general")
-    assert shared.returncode == 0, (shared.stdout, shared.stderr)
-    code = _CODE.search(shared.stdout)
-    assert code, shared.stdout
-    bob = PtySession(home_b, cwd=repo, extra_path=bin_dir, relay_url=alice.relay_url)
-    bob.expect(r"Your name", timeout=30)
-    bob.type("bob" + ENTER)
-    bob.expect(r"Invite, or Enter to run it here")
-    bob.type(code.group(1) + ENTER)
-    bob.expect(r"relay address", timeout=20)
-    bob.type(alice.relay_url + ENTER)
-    bob.expect(r"Add them to #general", timeout=60)
-    bob.type(add + ENTER)
-    if add == "y":
-        screen = bob.expect(r"\[y/n\] \(n\)", timeout=30)
-        assert "teammate's relay" in screen and "your own key" in screen, screen[-1500:]
-        bob.type("y" + ENTER)
-    bob.expect(r"You're in as @bob", timeout=90)
-    bob.settle(quiet=1.0, timeout=10)
-    return alice, bob, repo, bin_dir, plain(bob.text())
+    bob = None
+    # Close what started if any step fails: the caller only sees sessions this
+    # returns, and a failure here once left alice's relay running overnight.
+    try:
+        alice.expect(r"Your name", timeout=30)
+        alice.type("alice" + ENTER)
+        alice.expect(r"Invite, or Enter to run it here")
+        alice.type(ENTER)
+        alice.expect(r"You're in as @alice", timeout=90)
+        alice.secret = relay_secret(home_a)
+        shared = _quorus(alice, None, "quorus share general")
+        assert shared.returncode == 0, (shared.stdout, shared.stderr)
+        code = _CODE.search(shared.stdout)
+        assert code, shared.stdout
+        bob = PtySession(home_b, cwd=repo, extra_path=bin_dir, relay_url=alice.relay_url)
+        bob.expect(r"Your name", timeout=30)
+        bob.type("bob" + ENTER)
+        bob.expect(r"Invite, or Enter to run it here")
+        bob.type(code.group(1) + ENTER)
+        bob.expect(r"relay address", timeout=20)
+        bob.type(alice.relay_url + ENTER)
+        bob.expect(r"Add them to #general", timeout=60)
+        bob.type(add + ENTER)
+        if add == "y":
+            screen = bob.expect(r"\[y/n\] \(n\)", timeout=30)
+            assert "teammate's relay" in screen and "your own key" in screen, screen[-1500:]
+            bob.type("y" + ENTER)
+        bob.expect(r"You're in as @bob", timeout=90)
+        bob.settle(quiet=1.0, timeout=10)
+        return alice, bob, repo, bin_dir, plain(bob.text())
+    except BaseException:
+        for s in (bob, alice):
+            if s is not None:
+                s.close()
+        raise
 
 
 def test_an_invitee_adds_their_agent_from_the_wizard(tmp_path_factory):
