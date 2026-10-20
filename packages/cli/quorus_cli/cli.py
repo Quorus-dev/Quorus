@@ -343,17 +343,6 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
 
 
-def _admin_headers() -> dict[str, str]:
-    """The operator credential for admin routes (share, invites --revoke, kick,
-    destroy, rename, room add): the relay secret when this profile has one, else
-    the same login as everything else. Since 0.6.4 a local owner also holds a
-    participant key for everyday identity (H4); that key is a member, never an
-    admin, so these commands must not send it when the secret is at hand."""
-    if RELAY_SECRET:
-        return {"Authorization": f"Bearer {RELAY_SECRET}"}
-    return _auth_headers()
-
-
 def _get_sse_token(recipient: str) -> str:
     """Get a short-lived SSE stream token."""
     headers = _auth_headers()
@@ -3579,7 +3568,7 @@ async def _kick(room_name: str, participant: str) -> None:
         resp = await client.post(
             f"{RELAY_URL}/rooms/{room['id']}/kick",
             json={"participant": participant, "requested_by": INSTANCE_NAME},
-            headers=_admin_headers(),
+            headers=_auth_headers(),
         )
         resp.raise_for_status()
         console.print(f"[green]Kicked '{participant}' from {room_name}[/green]")
@@ -3605,7 +3594,7 @@ async def _destroy(room_name: str) -> None:
             "DELETE",
             f"{RELAY_URL}/rooms/{room['id']}",
             json={"requested_by": INSTANCE_NAME},
-            headers=_admin_headers(),
+            headers=_auth_headers(),
         )
         resp.raise_for_status()
         console.print(f"[green]Room '{room_name}' destroyed[/green]")
@@ -3630,7 +3619,7 @@ async def _rename(room_name: str, new_name: str) -> None:
         resp = await client.patch(
             f"{RELAY_URL}/rooms/{room['id']}",
             json={"new_name": new_name, "requested_by": INSTANCE_NAME},
-            headers=_admin_headers(),
+            headers=_auth_headers(),
         )
         resp.raise_for_status()
         console.print(f"[green]Room renamed: {room_name} -> {new_name}[/green]")
@@ -5896,7 +5885,7 @@ def _cmd_share(args):
     try:
         resp = httpx.post(
             f"{RELAY_URL}/v1/join/mint",
-            headers=_admin_headers(),
+            headers=_auth_headers(),
             json={"room": room, "ttl_days": ttl_days, "max_uses": uses,
                   "role": "observer" if getattr(args, "observer", False) else "member"},
             timeout=15,
@@ -8967,16 +8956,6 @@ def _cmd_whoami(args) -> None:
     _ui.console.print(f"  [bold]@{data.get('instance_name', '?')}[/]")
     _ui.console.print(f"  [dim]workspace:[/] {label}  [dim]({slug})[/]")
     _ui.console.print(f"  [dim]relay:[/]     {data.get('relay_url', '?')}")
-    has_key, has_secret = bool(data.get("api_key")), bool(data.get("relay_secret"))
-    if has_key and has_secret:
-        signs = "participant key (your identity) · relay secret (operator, for share/kick)"
-    elif has_key:
-        signs = "participant key"
-    elif has_secret:
-        signs = "relay secret only (no identity of your own: social verbs need one)"
-    else:
-        signs = "nothing yet"
-    _ui.console.print(f"  [dim]signs in with:[/] {signs}")
 
 
 def _force_utf8_output() -> None:

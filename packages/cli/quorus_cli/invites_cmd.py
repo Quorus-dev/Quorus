@@ -41,10 +41,10 @@ def cmd_invites(args) -> int:
     revoke = getattr(args, "revoke", None)
     try:
         if revoke:
-            resp = httpx.post(f"{base}/{revoke}/revoke", headers=cli._admin_headers(),
+            resp = httpx.post(f"{base}/{revoke}/revoke", headers=cli._auth_headers(),
                               timeout=15, follow_redirects=False)
         else:
-            resp = httpx.get(base, headers=cli._admin_headers(), timeout=15,
+            resp = httpx.get(base, headers=cli._auth_headers(), timeout=15,
                              follow_redirects=False)
     except httpx.HTTPError:
         ui.error_with_retry("Can't reach relay", relay_url=cli.RELAY_URL)

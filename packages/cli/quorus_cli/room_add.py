@@ -26,7 +26,7 @@ async def add_members(room: str, members: list[str]) -> int:
             try:
                 resp = await client.post(f"{cli.RELAY_URL}/rooms/{room}/join",
                                          json={"participant": name},
-                                         headers=cli._admin_headers())
+                                         headers=cli._auth_headers())
             except httpx.ConnectError as exc:
                 cli._relay_unreachable(exc=exc)
                 return len(members)
