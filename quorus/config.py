@@ -26,6 +26,19 @@ CONFIG_FILENAME = "config.json"
 # resolution re-evaluates Path.home() at call time.
 DEFAULT_CONFIG_DIR = Path.home() / ".quorus"
 LEGACY_CONFIG_DIR = Path.home() / "mcp-tunnel"
+_IMPORT_TIME_DEFAULT = DEFAULT_CONFIG_DIR
+
+
+def _default_config_dir() -> Path:
+    """``~/.quorus`` as of now, not as of import. A test that monkeypatches
+    ``DEFAULT_CONFIG_DIR`` still wins; otherwise ``Path.home()`` is re-read, so a
+    HOME faked after import (tests, wrappers) is honoured. The import-time value
+    used to be returned instead, which is how a `quorus join` test wrote a config
+    into the process's real HOME (2026-10-20, PR #15 CI)."""
+    current = globals().get("DEFAULT_CONFIG_DIR")
+    if current is not None and Path(current) != _IMPORT_TIME_DEFAULT:
+        return Path(current)
+    return Path.home() / ".quorus"
 
 
 def _trusted_proxy_count() -> int:
@@ -131,11 +144,7 @@ def resolve_config_dir() -> Path:
     # Re-evaluate at call time so HOME changes (sudo -E, test monkeypatch of
     # $HOME) are honoured — but respect test monkeypatch of the module-level
     # constants, too.
-    default_dir = (
-        DEFAULT_CONFIG_DIR
-        if "DEFAULT_CONFIG_DIR" in globals()
-        else Path.home() / ".quorus"
-    )
+    default_dir = _default_config_dir()
     legacy_murmur = Path.home() / _LEGACY_MURMUR_DIRNAME
     legacy_mcp = (
         LEGACY_CONFIG_DIR
