@@ -219,7 +219,10 @@ async def try_claim(
     credit_hash = _credit_key(tid)
     for participant in candidates:
         if participant != winner and read_only(bids[participant].get("reason")):
-            continue  # a read-only loser earns no credit toward work it can't do
+            # A read-only loser earns no credit toward work it can't do, but the
+            # claim still reports its standing, as the in-memory relay does.
+            credits[participant] = await get_credit(r, tid, participant)
+            continue
         delta = -1.0 if participant == winner else 0.25
         # HINCRBYFLOAT returns the post-increment value: authoritative for
         # THIS claim. Re-reading with HGET both doubled the round-trips and

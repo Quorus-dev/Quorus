@@ -397,8 +397,10 @@ async def claim_winner(
         claim_token=str(uuid.uuid4()),
         expires_at=expires_at.isoformat(),
         candidates=candidates,
+        # .get: a read-only loser is skipped above, so its first loss leaves no
+        # entry (live 500 on 54da38fe, KeyError at this line).
         fairness_credit={
-            participant: _fairness_credit[(tid, participant)]
+            participant: _fairness_credit.get((tid, participant), 0.0)
             for participant in candidates
         },
     )

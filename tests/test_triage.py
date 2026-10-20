@@ -357,3 +357,17 @@ async def test_a_read_only_bid_never_beats_one_that_can_do_the_work(
     assert claim["winner"] == winner
     if tagged:  # losing read-only earns no credit toward work it can't do
         assert claim["fairness_credit"]["bob"] == 3.0
+
+
+async def test_a_first_read_only_loss_does_not_crash_the_claim(client: AsyncClient) -> None:
+    """Live 500 on 54da38fe: a read-only loser with no credit entry yet made the claim
+    response raise KeyError, so nobody got the task. No credit is pre-loaded here."""
+    from quorus.routes import triage
+
+    room_id = await _setup_room(client)
+    triage._fairness_credit.pop(("_legacy", "sam2-opencode"), None)
+    claim = await _auction(client, room_id, "m-ro-first",
+                           {"sam2-opencode": (0.9, "open_any_agent+read-only"),
+                            "carol": (0.1, "open_any_agent")})
+    assert claim["winner"] == "carol"
+    assert claim["fairness_credit"]["sam2-opencode"] == 0.0
