@@ -253,3 +253,45 @@ def test_survival_is_measured_at_the_pinned_end_not_the_checkout(tmp_path: Path)
     at_end = {r.sha: r for r in ledger.outcomes(repo, f"{base}..{end}", end=end)}[sha]
     at_head = {r.sha: r for r in ledger.outcomes(repo, f"{base}..{end}")}[sha]
     assert at_end.survival == 1.0 and at_head.survival == 0.0
+
+
+def test_a_rename_with_edits_is_parsed_as_a_path_not_old_arrow_new(tmp_path: Path) -> None:
+    """Codex on f033a72d: numstat's `old.py => new.py` was read as one filename, so the
+    rename commit's intact added line reported 0% survival at 100% coverage."""
+    repo, base = _repo(tmp_path)
+    _commit(repo, "feat: old", {"old.py": "".join(f"line {i}\n" for i in range(20))})
+    _git(repo, "mv", "old.py", "new.py")
+    (repo / "new.py").write_text("".join(f"line {i}\n" for i in range(20)) + "added\n")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "rename + edit")
+    sha = _git(repo, "rev-parse", "HEAD")
+    o = {r.sha: r for r in ledger.outcomes(repo, f"{base}..HEAD")}[sha]
+    assert o.added == 1 and o.surviving == 1 and o.survival == 1.0 and o.coverage == 1.0
+
+
+def test_unusual_file_names_are_measured(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    sha = _commit(repo, "feat: odd", {'a b"cé.py': "x\ny\n"})
+    o = {r.sha: r for r in ledger.outcomes(repo, f"{base}..HEAD")}[sha]
+    assert o.added == 2 and o.surviving == 2 and o.survival == 1.0
+
+
+def test_a_failed_tree_read_or_blame_timeout_is_uncomputed_not_deleted(
+        tmp_path: Path, monkeypatch) -> None:
+    """Codex on f033a72d: a fatal tree error counted two lines as deleted at 100% coverage,
+    and a blame timeout escaped instead of becoming uncomputed."""
+    repo, base = _repo(tmp_path)
+    sha = _commit(repo, "feat: three", {"ok.py": "a\n", "tree.py": "b\nc\n", "slow.py": "d\n"})
+    real = ledger.subprocess.run
+
+    def broken(argv, *a, **kw):
+        if "ls-tree" in argv and argv[-1] == "tree.py":
+            return subprocess.CompletedProcess(argv, 128, "", "fatal: bad tree")
+        if "blame" in argv and argv[-1] == "slow.py":
+            raise subprocess.TimeoutExpired(argv, 60)
+        return real(argv, *a, **kw)
+
+    monkeypatch.setattr(ledger.subprocess, "run", broken)
+    o = {r.sha: r for r in ledger.outcomes(repo, f"{base}..HEAD")}[sha]
+    assert o.added == 4 and o.computed == 1 and o.surviving == 1
+    assert o.files_uncomputed == 2 and o.coverage == 0.25 and o.survival == 1.0
