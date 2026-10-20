@@ -275,11 +275,12 @@ def _drop_lead_everywhere(name: str) -> None:
 
 
 def bindings_path() -> Path:
-    """Where this machine's room → workspace bindings live. One function, resolved
-    at call time, so tests can point every reader and writer at a temp file: a CI
-    run found `test_account_owner_can_add_agent_to_room` passing only because the
-    developer's real ~/.quorus/room-bindings.json had a "build" room (2026-10-20)."""
-    return Path.home() / ".quorus" / "room-bindings.json"
+    """Where this machine's room → workspace bindings live: the shared resolver in
+    ``quorus.runtime.bindings``, looked up at call time so a test's isolation of it
+    (tests/conftest.py) covers every reader in this module too."""
+    from quorus.runtime import bindings
+
+    return bindings.bindings_path()
 
 
 def _bound_path(room: str) -> Path | None:

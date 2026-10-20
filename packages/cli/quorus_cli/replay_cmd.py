@@ -47,9 +47,10 @@ def _ts(value: Any) -> float | None:
 
 
 def bound_repo(room: str) -> Path | None:
+    from quorus.runtime.bindings import bindings_path
+
     try:
-        data = json.loads((Path.home() / ".quorus" / "room-bindings.json")
-                          .read_text(encoding="utf-8"))
+        data = json.loads(bindings_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     entry = data.get(room) if isinstance(data, dict) else None

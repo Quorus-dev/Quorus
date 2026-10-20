@@ -190,7 +190,7 @@ def _room_bindings_in_tmp(tmp_path):
     import os as _os
     from pathlib import Path as _Path
 
-    from quorus_cli import agent_cmd
+    from quorus.runtime import bindings
 
     real_home = _Path(_os.path.expanduser("~"))
     target = tmp_path / "room-bindings.json"
@@ -205,7 +205,9 @@ def _room_bindings_in_tmp(tmp_path):
         return target
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(agent_cmd, "bindings_path", isolated)
+        # The one resolver (quorus/runtime/bindings.py); agent_cmd, replay_cmd and
+        # the scorecard route all call it at run time, so this covers them all.
+        mp.setattr(bindings, "bindings_path", isolated)
         yield
 
 
