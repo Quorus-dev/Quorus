@@ -76,6 +76,27 @@ def test_trailing_agent_chain_counts_until_human() -> None:
     assert wake.trailing_agent_chain([], reflexd.is_agent_participant) == 0
 
 
+def test_plans_and_status_lines_are_not_chatter() -> None:
+    """Bug bash (ambient room): two agents answering one human question posted a
+    verdict, two `plan:` lines, a reply and a ✅, and the chatter limit (6) fired
+    with no loop. Bookkeeping doesn't count; replies and typed verbs do."""
+    hist = [
+        {"from_name": "alice", "content": "what do you all think of the retry change?"},
+        {"from_name": "alice-opencode", "message_type": "social", "content": '{"verb": "x"}'},
+        {"from_name": "alice-opencode", "content": "Approve 0f58a1f: all three pass"},
+        {"from_name": "alice-docs-opencode", "content": "plan: review the 2 gaps you flagged"},
+        {"from_name": "alice-opencode", "content": "Plan : 0f58a1f verified on main"},
+        {"from_name": "alice-opencode", "content": "@alice-docs-opencode I landed both"},
+        {"from_name": "alice-opencode", "content": "✅ af956b9 closed the two gaps"},
+        {"from_name": "alice-review-opencode", "message_type": "status",
+         "content": "(quorus) agents stopped answering unaddressed chatter"},
+        {"from_name": "alice-opencode", "content": "(quorus) published 1 commit(s)"},
+    ]
+    assert wake.trailing_agent_chain(hist, reflexd.is_agent_participant) == 4
+    assert wake.trailing_agent_chain(hist, reflexd.is_agent_participant) \
+        < wake.MAX_UNADDRESSED_AGENT_RUN
+
+
 def test_wake_flags_bind_identity_without_leaking_secret(tmp_path: Path) -> None:
     spec = wake.quorus_mcp_spec(
         relay_url="http://127.0.0.1:1", api_key="sk-SECRET", participant="qt-codex",

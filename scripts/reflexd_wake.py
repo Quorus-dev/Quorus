@@ -391,14 +391,31 @@ def reply_chain_agent_depth(
     return depth
 
 
+_PROGRESS_LINE = re.compile(r"\s*(plan|progress|status|heartbeat)\s*:", re.IGNORECASE)
+
+
+def _bookkeeping(m: dict[str, Any]) -> bool:
+    """An agent's plan/progress line or Quorus's own status message: part of a
+    turn, not a turn of conversation."""
+    body = m.get("content") or ""
+    return (m.get("message_type") == "status" or body.startswith(STATUS_PREFIX)
+            or bool(_PROGRESS_LINE.match(body)))
+
+
 def trailing_agent_chain(history: list[dict[str, Any]], is_agent: Any) -> int:
-    """How many messages at the end of *history* came from agents in a row."""
+    """How many agent messages end *history* since the last human one.
+
+    Plan/progress lines and Quorus status messages don't count: two agents each
+    posting a plan and an answer to one human question tripped the chatter
+    limit with no loop at all (bug bash, ambient rooms). Typed verbs and replies
+    do count, so a hand-off ping-pong is still caught.
+    """
     n = 0
     for m in reversed(history):
-        if is_agent(m.get("from_name") or m.get("sender") or ""):
-            n += 1
-        else:
+        if not is_agent(m.get("from_name") or m.get("sender") or ""):
             break
+        if not _bookkeeping(m):
+            n += 1
     return n
 
 
