@@ -118,3 +118,40 @@ def test_a_read_only_win_posts_a_notice_and_takes_no_turn(daemon, monkeypatch) -
     [notice] = daemon.posts
     assert notice["message_type"] == "status" and "@sam" in notice["content"]
     assert "no agent here can make changes" in notice["content"]
+
+
+def test_a_lost_bid_posts_no_defer_line(daemon) -> None:
+    """Arav's multi-owner run: one @open with four bidders posted four
+    '/defer → @winner' lines. A losing bidder now stays silent."""
+    daemon.bind({"mode": "autonomous"})
+    deferred: list[dict[str, Any]] = []
+    msg = {"id": "m2", "room": "dev", "from_name": "arav",
+           "content": "@open add a type hint", "message_type": "chat"}
+
+    class Relay:
+        async def submit_bid(self, **kw):
+            return {}
+
+        async def claim(self, *, room_id, message_id):
+            return {"claimed": True, "winner": "aarya-codex", "bid": 0.5,
+                    "candidates": ["arav-codex", "aarya-codex"]}
+
+        async def post_social_defer(self, **kw):
+            deferred.append(kw)
+            return {}
+
+        async def post_reply(self, **kw):
+            return {}
+
+        async def fetch_members(self, *, room):
+            return ["arav", "arav-codex", "aarya-codex"]
+
+        async def fetch_recent(self, *, room, limit=10):
+            return [msg]
+
+        async def fetch_member_roles(self, *, room):
+            return {"arav": "member", "arav-codex": "member", "aarya-codex": "member"}
+
+    asyncio.run(daemon.handle_room_message(
+        Relay(), {**msg, "id": "delivery-m2", "message_id": "m2"}))
+    assert deferred == []
