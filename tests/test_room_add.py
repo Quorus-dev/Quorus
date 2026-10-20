@@ -25,6 +25,7 @@ async def relay(tmp_path, monkeypatch):
     headers = dict(ADMIN)
     monkeypatch.setattr(cli, "RELAY_URL", "http://t")
     monkeypatch.setattr(cli, "_auth_headers", lambda: headers)
+    monkeypatch.setattr(cli, "_admin_headers", lambda: headers)  # room add sends this (H4)
     monkeypatch.setattr(cli, "_get_client", lambda: AsyncClient(
         transport=ASGITransport(app=app), base_url="http://t"))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:

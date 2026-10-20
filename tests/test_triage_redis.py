@@ -443,3 +443,25 @@ async def test_mirror_failures_are_counted(monkeypatch):
     before = p1_persistence.MIRROR_FAILURES
     await p1_persistence.mirror_set("ns", "field", {"a": 1})
     assert p1_persistence.MIRROR_FAILURES == before + 1
+
+
+async def test_redis_a_read_only_bid_never_beats_one_that_can_do_the_work(fake_redis):
+    """Bug 20 on the shared auction: banked credit can't carry a read-only bid past
+    a writable one, and losing read-only earns no credit."""
+    await fake_redis.hincrbyfloat(tr._credit_key("t"), "aarya-opencode", 3.0)
+    await tr.record_bid(fake_redis, tid="t", rid="room", mid="m1",
+                        participant="aarya-opencode", bid=0.05,
+                        reason="open_any_agent+read-only", ttl_seconds=30)
+    await tr.record_bid(fake_redis, tid="t", rid="room", mid="m1",
+                        participant="arav-codex", bid=0.5, reason="open_any_agent",
+                        ttl_seconds=30)
+
+    def factory(bids, winner, winner_bid, credits):
+        return {"claimed": True, "winner": winner, "bid": winner_bid, "ttl_seconds": 1,
+                "claim_token": "tok-" + winner, "expires_at": "x",
+                "candidates": sorted(bids), "fairness_credit": credits}
+
+    payload, _, _ = await tr.try_claim(fake_redis, tid="t", rid="room", mid="m1",
+                                       claim_payload_factory=factory)
+    assert payload["winner"] == "arav-codex"
+    assert await tr.get_credit(fake_redis, "t", "aarya-opencode") == 3.0

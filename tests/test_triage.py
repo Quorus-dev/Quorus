@@ -325,3 +325,35 @@ async def test_mention_bid_claim_flow_has_one_winner(client: AsyncClient):
     claim_bodies = [resp.json() for resp in claims]
     assert {body["winner"] for body in claim_bodies} == {"carol"}
     assert len({body["claim_token"] for body in claim_bodies}) == 1
+
+
+async def _auction(client: AsyncClient, room_id: str, mid: str,
+                   bids: dict[str, tuple[float, str]]) -> dict:
+    for who, (bid, reason) in bids.items():
+        r = await client.post("/v1/bid", json={
+            "room_id": room_id, "message_id": mid, "participant": who,
+            "bid": bid, "reason": reason, "ttl_seconds": 1}, headers=HEADERS)
+        assert r.status_code == 200, r.text
+    await asyncio.sleep(1.05)
+    claim = await client.post("/v1/claim", json={"room_id": room_id, "message_id": mid},
+                              headers=HEADERS)
+    assert claim.status_code == 200, claim.text
+    return claim.json()
+
+
+@pytest.mark.parametrize("tagged, winner", [(True, "carol"), (False, "bob")])
+async def test_a_read_only_bid_never_beats_one_that_can_do_the_work(
+        client: AsyncClient, tagged: bool, winner: str) -> None:
+    """Audit 0.6.3, bug 20, live: aarya's agent bid the 0.05 floor (read-only for
+    arav) but the credit it banked from earlier losses beat arav's writable 0.5,
+    and the @open stalled. Untagged, the same credit still wins (the control)."""
+    from quorus.routes import triage
+
+    room_id = await _setup_room(client)
+    triage._fairness_credit[("_legacy", "bob")] = 3.0
+    reason = "open_any_agent+read-only" if tagged else "open_any_agent"
+    claim = await _auction(client, room_id, "m-ro",
+                           {"bob": (0.05, reason), "carol": (0.5, "open_any_agent")})
+    assert claim["winner"] == winner
+    if tagged:  # losing read-only earns no credit toward work it can't do
+        assert claim["fairness_credit"]["bob"] == 3.0

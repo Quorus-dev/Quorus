@@ -311,6 +311,7 @@ async def submit_bid(
         window.bids.values(),
         key=lambda item: (
             item.bid >= MENTION_BID,
+            not _tr.read_only(item.reason),
             item.bid + _fairness_credit.get((tid, item.participant), 0.0),
             item.created_at,
         ),
@@ -372,6 +373,7 @@ async def claim_winner(
         window.bids.values(),
         key=lambda item: (
             item.bid >= MENTION_BID,
+            not _tr.read_only(item.reason),
             item.bid + _fairness_credit.get((tid, item.participant), 0.0),
             item.created_at,
         ),
@@ -379,6 +381,9 @@ async def claim_winner(
     candidates = sorted(window.bids)
     for participant in candidates:
         credit_key = (tid, participant)
+        if participant != winner.participant and _tr.read_only(
+                window.bids[participant].reason):
+            continue  # a read-only loser earns no credit toward work it can't do
         if participant == winner.participant:
             _fairness_credit[credit_key] = _fairness_credit.get(credit_key, 0.0) - 1.0
         else:
