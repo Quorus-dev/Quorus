@@ -93,6 +93,9 @@ class ClaimResponse(BaseModel):
     expires_at: str
     candidates: list[str]
     fairness_credit: dict[str, float]
+    # Every bid was read-only for the requester: the winner can't do the work and
+    # says so instead of taking a turn (audit 0.6.3, bug 20; Opus2 on 54da38fe).
+    read_only: bool = False
 
 
 @dataclass
@@ -403,6 +406,7 @@ async def claim_winner(
             participant: _fairness_credit.get((tid, participant), 0.0)
             for participant in candidates
         },
+        read_only=_tr.read_only(winner.reason),
     )
     window.claim = claim
 
@@ -450,6 +454,7 @@ async def _claim_via_redis(r, request, auth, tid, rid, room_data, body) -> Claim
             "expires_at": expires_at.isoformat(),
             "candidates": sorted(bids_now),
             "fairness_credit": credits,
+            "read_only": _tr.read_only((bids_now.get(winner) or {}).get("reason")),
         }
 
     payload, bids, is_fresh = await _tr.try_claim(

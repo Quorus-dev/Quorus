@@ -2896,6 +2896,7 @@ class Reflexd:
         # doesn't burn 8 retries on a permanent failure.
         deadline = time.time() + BID_WINDOW_SECONDS
         winner: str | None = None
+        won: dict[str, Any] = {}
         while time.time() < deadline:
             try:
                 claim = await relay.claim(room_id=room, message_id=message_id)
@@ -2925,7 +2926,7 @@ class Reflexd:
                 await asyncio.sleep(0.25)
                 continue
             if claim.get("claimed"):
-                winner = claim.get("winner")
+                winner, won = claim.get("winner"), claim
                 if triage.kind == "open_todo":
                     _track.record_claim(
                         self.config.runtime_dir, self.config.participant_name,
@@ -2959,6 +2960,24 @@ class Reflexd:
                     )
                 except Exception as exc:
                     logger.debug("defer-announce failed (non-fatal): %s", exc)
+            return True
+
+        if won.get("read_only") and triage.kind == "open_todo":
+            # Every bid was read-only for the requester: a turn here could only
+            # answer, so the task stalled (audit 0.6.3, bug 20). Say so once, from
+            # the one winner, and take no turn.
+            requester = envelope.get("from_name") or "the requester"
+            try:
+                await relay.post_reply(
+                    room=room, from_name=self.config.participant_name,
+                    message_type="status", reply_to=message_id or None,
+                    content=(f"{reflexd_wake.STATUS_PREFIX} no agent here can make changes "
+                             f"for @{requester} on this: every agent that bid would only "
+                             f"get read-only turns. @{requester}, add one of your own "
+                             "agents to this room, or ask its owner to set "
+                             "`trust: members`."))
+            except httpx.HTTPError as exc:
+                logger.warning("read-only @open notice failed: %s", exc)
             return True
 
         if self._wake_lock.locked():

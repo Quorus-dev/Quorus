@@ -42,8 +42,9 @@ def daemon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return d
 
 
-def _bid(daemon, sender: str) -> dict[str, Any]:
+def _bid(daemon, sender: str, claim: dict[str, Any] | None = None) -> dict[str, Any]:
     bids: list[dict[str, Any]] = []
+    daemon.posts = []
     msg = {"id": "m1", "room": "dev", "from_name": sender,
            "content": "@open please fix the tests", "message_type": "chat"}
 
@@ -53,13 +54,14 @@ def _bid(daemon, sender: str) -> dict[str, Any]:
             return {}
 
         async def claim(self, *, room_id, message_id):
-            return {"claimed": True, "winner": "aarya-codex", "bid": 0.5,
-                    "candidates": ["arav-codex", "aarya-codex"]}
+            return claim or {"claimed": True, "winner": "aarya-codex", "bid": 0.5,
+                             "candidates": ["arav-codex", "aarya-codex"]}
 
         async def post_social_defer(self, **kw):
             return {}
 
         async def post_reply(self, **kw):
+            daemon.posts.append(kw)
             return {}
 
         async def fetch_members(self, *, room):
@@ -97,3 +99,22 @@ def test_a_members_trust_room_bids_as_before_for_anyone(daemon) -> None:
     daemon.bind({"mode": "autonomous", "trust": "members"})
     bid = _bid(daemon, "sam")
     assert "read-only" not in bid["reason"], bid
+
+
+def test_a_read_only_win_posts_a_notice_and_takes_no_turn(daemon, monkeypatch) -> None:
+    """Opus2 on 54da38fe: when every bid was read-only, the winner said nothing
+    useful and the task stalled. It now says once that no agent can write for the
+    requester, and wakes no harness."""
+    daemon.bind({"mode": "autonomous"})
+    woke: list[Any] = []
+
+    async def wake(*a, **kw):
+        woke.append(kw)
+
+    monkeypatch.setattr(daemon, "_wake_and_reply", wake)
+    _bid(daemon, "sam", claim={"claimed": True, "winner": "arav-codex", "bid": 0.05,
+                               "candidates": ["arav-codex"], "read_only": True})
+    assert woke == []
+    [notice] = daemon.posts
+    assert notice["message_type"] == "status" and "@sam" in notice["content"]
+    assert "no agent here can make changes" in notice["content"]
