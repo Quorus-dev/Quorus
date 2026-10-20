@@ -104,3 +104,30 @@ def test_the_first_run_starts_one_relay_on_its_own_url(session) -> None:
     log = (session.home / ".quorus" / "relay.log").read_text()
     assert log.count("Uvicorn running on") == 1
     assert f"127.0.0.1:{session.port}" in log
+
+
+def test_wait_for_backs_off_when_the_relay_says_429(monkeypatch, tmp_path):
+    """Overseer, 0.6.3 wheel run: under a loaded suite wait_for's 0.5 s poll got 429 and
+    the test died; it now sleeps for the relay's Retry-After and keeps waiting."""
+    from tests.firstrun import stub_agents
+
+    replies = [stub_agents.RelayBusy(3.0), stub_agents.RelayBusy(3.0),
+               [{"from_name": "alice-codex", "content": "Hi: ready"}]]
+
+    def fake_history(s, room="general"):
+        r = replies.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(stub_agents, "history", fake_history)
+    monkeypatch.setattr(stub_agents.time, "sleep", sleeps.append)
+
+    class S:
+        home = tmp_path
+
+    assert stub_agents.wait_for(S(), "alice-codex", "Hi:", timeout=60) == "Hi: ready"
+    assert sleeps == [3.0, 3.0]
+    assert stub_agents.retry_after("120") == 10.0  # capped
+    assert stub_agents.retry_after(None) == 2.0 and stub_agents.retry_after("soon") == 2.0
