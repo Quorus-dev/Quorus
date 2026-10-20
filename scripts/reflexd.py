@@ -3496,6 +3496,12 @@ class Reflexd:
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
             reply = ""
+        elif reply:
+            # "NO_REPLY? No — …" leaked the protocol token into chat (BUG 10).
+            scrubbed = reflexd_wake.scrub_no_reply(reply)
+            if scrubbed != reply:
+                logger.info("scrubbed a NO_REPLY leak room=%s", room)
+            reply = scrubbed
         if worktree is not None and (await self._settle_readonly(
                 relay, room, worktree, readonly_snap, envelope) or readonly_turn):
             pass  # a read-only turn never publishes, whatever its harness wrote

@@ -250,7 +250,7 @@ class TestInstallScript:
         code, script = await self._served_script(client, tmp_path)
         run = subprocess.run(["/bin/bash", str(script)], stdin=subprocess.DEVNULL,
                              capture_output=True, text=True, env=self._env(tmp_path),
-                             timeout=30)
+                             timeout=30, start_new_session=True)  # no controlling tty
         assert run.returncode == 0, run.stderr
         calls = (tmp_path / "quorus-calls").read_text().splitlines()
         assert calls == [f'join {code} --relay http://test --name sam']
@@ -294,6 +294,11 @@ class TestInstallScript:
             if done:
                 break
         else:
+            import signal
+
+            os.kill(pid, signal.SIGKILL)  # Codex: reap the child before failing
+            os.waitpid(pid, 0)
+            os.close(fd)
             pytest.fail(f"installer did not finish; output:\n{out[-1500:]}")
         os.close(fd)
         assert answered, out

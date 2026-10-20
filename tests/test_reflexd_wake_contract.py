@@ -1100,3 +1100,25 @@ def test_codex_mcp_ignores_the_users_stale_quorus_secret(tmp_path: Path) -> None
     no_dir = wake.quorus_mcp_spec(relay_url="http://r", api_key="k", participant="qt-codex",
                                   legacy=True)
     assert not any(f.endswith('=""') for f in wake.codex_wake_flags(no_dir))
+
+
+def test_the_no_reply_token_never_reaches_the_room():
+    """0.6.3 multi-person audit, BUG 10: an agent posted "NO_REPLY? No — there is
+    one missing fact…". The fact posts; the deliberation and the token do not."""
+    scrub = wake.scrub_no_reply
+    assert scrub("NO_REPLY? No — there is one missing fact: the port.") == \
+        "There is one missing fact: the port."
+    assert scrub("`NO_REPLY`\nActually @arav the relay is on 8080.") == \
+        "Actually @arav the relay is on 8080."
+    assert scrub("NO_REPLY.") == "" and scrub("NO_REPLY") == ""
+    assert scrub("I would NO_REPLY here, but the hash is wrong.") == \
+        "I would here, but the hash is wrong."
+    assert scrub("✅ a1b2c3 done, tests green.") == "✅ a1b2c3 done, tests green."
+    assert scrub("") == ""
+
+
+def test_the_wake_intent_says_never_to_write_the_token_otherwise():
+    text = wake.wake_instructions(participant="x-claude", room="r", sender="x-codex",
+                                  kind="agent_room", teammates=[], has_workspace=False,
+                                  from_agent=True)
+    assert "exactly NO_REPLY and nothing else" in text and "protocol word" in text

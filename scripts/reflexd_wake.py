@@ -906,7 +906,9 @@ def wake_instructions(
         "hash, test status), or the answer. Write it like a chat message: 1-4 "
         "short lines, no headings, no bold, a list only when it saves words.\n"
         + (f"- If nothing here needs a reply from you, make your final message "
-           f"exactly {NO_REPLY} and nothing is posted.\n"
+           f"exactly {NO_REPLY} and nothing else, and nothing is posted. Never write "
+           f"that token in a message you do want posted: it is a protocol word, not "
+           f"a word for the room.\n"
            if kind == "agent_room" or from_agent else "")
     )
 
@@ -918,3 +920,36 @@ def is_no_reply(reply: str) -> bool:
     """True when the agent chose silence (its last line is the NO_REPLY token)."""
     lines = [ln.strip().strip("`*_.\"'") for ln in (reply or "").splitlines() if ln.strip()]
     return bool(lines) and lines[-1].upper() == NO_REPLY
+
+
+_LEAK_HEAD = re.compile(
+    r"^[`*_\"']*" + NO_REPLY + r"[`*_\"']*[\s?!.:,;—–-]*"   # the token and its punctuation
+    r"(?:no\b[\s?!.:,;—–-]*)?",                               # "NO_REPLY? No — …"
+    re.IGNORECASE,
+)
+_LEAK_INLINE = re.compile(r"[`*_\"']*\b" + NO_REPLY + r"\b[`*_\"']*")
+
+
+def scrub_no_reply(reply: str) -> str:
+    """The protocol token never reaches the room. An agent that deliberated in
+    its reply ("NO_REPLY? No — there is one missing fact…", 0.6.3 multi-person
+    audit, BUG 10) keeps the fact and loses the deliberation; a bare token line
+    anywhere is dropped; an inline mention is removed. Returns "" when nothing
+    worth posting is left, which the caller treats like NO_REPLY."""
+    text = (reply or "")
+    if not text.strip() or NO_REPLY not in text.upper():
+        return text
+    kept: list[str] = []
+    for line in text.splitlines():
+        if line.strip().strip("`*_.\"'").upper() == NO_REPLY:
+            continue
+        kept.append(line)
+    text = "\n".join(kept).strip()
+    head = _LEAK_HEAD.match(text)
+    if head and head.end() > 0:
+        text = text[head.end():].lstrip()
+        if text and text[0].islower():
+            text = text[0].upper() + text[1:]
+    text = _LEAK_INLINE.sub("", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
