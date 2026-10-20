@@ -29,13 +29,6 @@ agents in one room.
 
 ### Fixed
 
-- On the default local setup (Enter in the wizard) the human held only the relay secret,
-  so every social verb in the hub (`/vote`, `/claim`, `/disagree`, …) answered `403 legacy
-  auth not permitted`. The wizard now claims a normal participant key for you on your own
-  relay; the hub and CLI sign in with it, and the secret stays the operator credential for
-  share, invites --revoke, kick, destroy and rename (a hosted login keeps its own). A name
-  already claimed is never taken over: the wizard says how to recover. `quorus whoami` says
-  which credential signs in.
 - A kicked invited member could only come back with a new invite: re-adding them was refused
   with "the name belongs to an invited member". The room's creator or an admin can now put an
   invitee back in the room their own invite was for, at that invite's role, unless the invite
