@@ -196,7 +196,26 @@ def _join(cfg: dict[str, Any], room: str, name: str, bearer: str) -> None:
     if resp.status_code == 404:
         raise SystemExit(f"agent: room '{room}' not found — create it with "
                          f"`quorus create {room}`")
+    if resp.status_code == 403 and _role_in(cfg, room, bearer) == "observer":
+        # 0.6.3 audit: this said "the relay rejected your credentials, re-run init".
+        raise SystemExit(f"agent: you joined #{room} as an observer, so you can read it "
+                         "but not add agents. Ask the room's owner for a member invite.")
     resp.raise_for_status()
+
+
+def _role_in(cfg: dict[str, Any], room: str, bearer: str) -> str | None:
+    """This login's role in *room* (member, observer, ...), or None if unknown."""
+    try:
+        resp = httpx.get(f"{cfg['relay_url']}/rooms/{room}",
+                         headers={"Authorization": f"Bearer {bearer}"}, timeout=10)
+        if resp.status_code != 200:
+            return None
+        roles = resp.json().get("member_roles") or {}
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    me = cfg.get("instance_name")
+    role = roles.get(me) if isinstance(roles, dict) else None
+    return role if isinstance(role, str) else None
 
 
 def _pace(args: Any, console: Any) -> None:

@@ -6035,9 +6035,11 @@ async def _join_agents_to_room(
         )
 
 
-def _redeem_invite(relay_url: str, code: str, name: str) -> str:
+def _redeem_invite(relay_url: str, code: str, name: str,
+                   info: dict | None = None) -> str:
     """Spend a v2 invite code for *name*; the participant key, or "" after
-    printing why not. Never follows a redirect: the code is a credential."""
+    printing why not. Never follows a redirect: the code is a credential.
+    *info*, if given, gets the invite's ``role`` (member or observer)."""
     try:
         resp = httpx.post(f"{relay_url}/v1/join/redeem", json={"code": code, "name": name},
                           timeout=15, follow_redirects=False)
@@ -6060,7 +6062,10 @@ def _redeem_invite(relay_url: str, code: str, name: str) -> str:
     if resp.status_code != 200:
         _ui.error(f"Joining failed (HTTP {resp.status_code})" + (f": {detail}" if detail else ""))
         return ""
-    key = str((resp.json() or {}).get("participant_key") or "")
+    body = resp.json() or {}
+    key = str(body.get("participant_key") or "")
+    if info is not None:
+        info["role"] = str(body.get("role") or "member")
     if not key.startswith("quorus_pk_"):
         _ui.error("The relay answered without a key; ask for a fresh invite")
         return ""
@@ -6094,8 +6099,9 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     # the code redeems into the joiner's OWN participant key and the relay adds
     # them to the room. The shared secret is never sent and never written here.
     redeemed = False
+    invite: dict = {}
     if payload.get("v") == 2 and payload.get("c"):
-        api_key = _redeem_invite(relay_url, str(payload["c"]), name)
+        api_key = _redeem_invite(relay_url, str(payload["c"]), name, invite)
         if not api_key:
             sys.exit(4)
         secret, tenant_id, invite_token, redeemed = "", "", "", True
@@ -6360,12 +6366,25 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     ui.console.print(
         Panel(welcome, border_style="primary", padding=(0, 1))
     )
-    ui.hint_next_steps([
+    ui.hint_next_steps(_join_next_steps(room, invite.get("role") == "observer"))
+
+
+def _join_next_steps(room: str, observer: bool) -> list[str]:
+    """What a joiner can do next. An observer reads but can't post or add agents,
+    and the 0.6.3 audit found their welcome offering both."""
+    if observer:
+        return [
+            f"Read the room:          [accent]quorus history {room}[/]",
+            "See who's here:         [accent]quorus ps[/]",
+            "You joined as an observer: to post or add agents, ask the room's owner "
+            "for a member invite",
+        ]
+    return [
         "Open the hub:           [accent]quorus[/]",
         f"Send a message:         [accent]quorus say {room} 'hello'[/]",
         "See who's here:         [accent]quorus ps[/]",
         f"Add your AI agents:     [accent]quorus agent add claude --room {room}[/]",
-    ])
+    ]
 
 
 def _cmd_quickjoin(args):
