@@ -84,8 +84,14 @@ def mark_window(held_dir: Path, wt, started_at: float | None = None,
     window: its start and the ids it had in view (never mid-turn for it). Later
     turns change neither. Adding their context let a stand-down that a later
     wake happened to see excuse the older turn's commits (codex, review of
-    3ba308a4)."""
-    if _read_window(held_dir, wt) is not None:
+    3ba308a4).
+
+    A window whose turn left nothing behind (no commit ahead of main, a clean
+    tree: it crashed, or made no change) is stale, and this turn opens its own.
+    Left standing, it dated the window before the owner's one message, so the
+    retry wake for that very message held its commit as "wrote to me mid-turn"
+    (multi-person audit BUG 24, nadia-opencode, 2026-10-20)."""
+    if _read_window(held_dir, wt) is not None and _unpublished(wt):
         return
     ids = list(dict.fromkeys(i for i in seen if i))
     _write_json(_file(held_dir, wt.path, "window"),
@@ -112,6 +118,18 @@ def window(held_dir: Path, wt) -> float | None:
 def seen_ids(held_dir: Path, wt) -> set[str]:
     data = _read_window(held_dir, wt) or {}
     return {i for i in data.get("seen", []) if isinstance(i, str)}
+
+
+def _unpublished(wt) -> bool:
+    """Anything of an earlier turn still on the branch: commits ahead of main
+    or uncommitted changes. Unknown (git failed) counts as yes: keep the window."""
+    try:
+        if _ahead(wt):
+            return True
+    except OSError:
+        return True
+    status = _git(wt.path, "status", "--porcelain")
+    return status.returncode != 0 or bool(status.stdout.strip())
 
 
 def _ahead(wt) -> list[str]:
