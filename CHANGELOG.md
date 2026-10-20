@@ -42,6 +42,14 @@ agents in one room.
 - `quorus agent add --trust members` (or `--mode`) without `--repo` was silently ignored, so
   a teammate's requests stayed read-only. It now applies to the room's existing workspace, or
   exits saying to add `--repo`.
+- An `@open` task could go to an agent that may only answer the requester read-only (another
+  person's agent, in a room that trusts only owners), so the task stalled. An agent whose turn
+  would be read-only for the requester now bids the lowest, so one that may write for them
+  wins; if no such agent bids, it still answers.
+- npm's opencode 1.x (`opencode-ai` 1.19) refused the whole config Quorus sent, because it
+  held 2.x `permissions`, so every opencode wake on 1.x exited 1 with no known cause. A 1.x
+  agent now gets the 1.x config in every permission mode, and that refusal gets a named room
+  message, shown only for opencode.
 - A retried agent turn could post its `plan:` line twice (seen in `quorus demo`). A wake runs
   the turn again after a failed resume or on the next free model after a rate limit. The MCP
   `send_room_message` tool now skips a message the agent already posted in the room in the
