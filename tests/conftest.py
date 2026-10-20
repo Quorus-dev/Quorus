@@ -1,10 +1,33 @@
 """Set required environment variables before any test module imports."""
 
+import atexit
 import os
 import re
+import shutil
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
+
+# The real HOME is unreachable for the whole session (overseer, 2026-10-20).
+# Three rounds of per-API read guards (open, Path.read_*, bytes paths, "+"
+# modes, os.open) were an arms race against mmap, subprocess `cat` and the next
+# reader; redirecting HOME before any quorus import ends it: no read API,
+# subprocess or dynamically built path can reach ~/.quorus, ~/.claude or any
+# other host config. Tests that fake their own HOME still do, under this one.
+# REAL_HOME is kept only so the session guard below can prove nothing changed.
+REAL_HOME = Path(os.path.expanduser("~"))
+SESSION_HOME = Path(tempfile.mkdtemp(prefix="quorus-tests-home-"))
+os.environ["HOME"] = str(SESSION_HOME)
+os.environ["QUORUS_TESTS_REAL_HOME"] = str(REAL_HOME)
+# git subprocesses in tests lose the developer's global identity with HOME;
+# give them one, and nothing else of the developer's config.
+(SESSION_HOME / ".gitconfig").write_text(
+    "[user]\n\tname = quorus-tests\n\temail = tests@quorus.invalid\n", encoding="utf-8")
+if Path.home() == REAL_HOME or Path(os.path.expanduser("~")) == REAL_HOME:
+    raise RuntimeError(f"tests/conftest.py could not move HOME off {REAL_HOME}")
+atexit.register(shutil.rmtree, SESSION_HOME, ignore_errors=True)
 
 os.environ.setdefault("RELAY_SECRET", "test-secret")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-that-is-at-least-32-bytes-long")
@@ -192,15 +215,15 @@ def _room_bindings_in_tmp(tmp_path):
 
     from quorus.runtime import bindings
 
-    real_home = _Path(_os.path.expanduser("~"))
+    session_home = _Path(_os.path.expanduser("~"))  # the session tmp HOME, never the real one
     target = tmp_path / "room-bindings.json"
 
     def isolated() -> _Path:
         # A test that points HOME somewhere else (monkeypatch.setenv or a patched
         # Path.home) gets the file under that HOME, as the product would; only
-        # the real HOME is diverted.
+        # the shared session HOME is diverted to a per-test file.
         home = _Path.home()
-        if home != real_home:
+        if home != session_home:
             return home / ".quorus" / "room-bindings.json"
         return target
 
@@ -261,3 +284,35 @@ def _no_live_opencode_catalog():
                    subprocess.CompletedProcess(argv, 1, stdout="", stderr=""))
         yield
     opencode_free.reset_cache()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _the_real_home_config_is_never_touched():
+    """A test rewrote the overseer's real ``~/.quorus/config.json`` (2026-10-20:
+    the hub resolved its config path at import time, so a fixture's
+    ``QUORUS_CONFIG_DIR`` came too late). Snapshot the real config files before
+    the session and fail loudly at the end if any changed. HOME itself is moved
+    off the real one at import (top of this file); this is the proof."""
+    real = REAL_HOME / ".quorus"
+
+    def snapshot() -> dict[str, tuple[int, int]]:
+        files = [real / "config.json", *sorted((real / "profiles").glob("*.json"))]
+        out: dict[str, tuple[int, int]] = {}
+        for f in files:
+            try:
+                st = f.stat()
+            except FileNotFoundError:
+                continue
+            out[str(f)] = (st.st_mtime_ns, st.st_size)
+        return out
+
+    before = snapshot()
+    yield
+    after = snapshot()
+    if before != after:
+        changed = sorted(set(before) ^ set(after)
+                         | {k for k in before if k in after and before[k] != after[k]})
+        pytest.fail("a test touched the real ~/.quorus config: " + ", ".join(changed)
+                    + " (isolate HOME and QUORUS_CONFIG_DIR in that test)")
+
+

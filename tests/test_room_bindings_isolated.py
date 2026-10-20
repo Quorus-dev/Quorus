@@ -75,3 +75,24 @@ def test_no_module_spells_the_bindings_file_name_on_its_own():
             if isinstance(node, ast.Constant) and node.value == "room-bindings.json":
                 offenders.append(f"{rel}:{node.lineno}")
     assert offenders == [], f"spell the path through quorus.runtime.bindings: {offenders}"
+
+
+def test_the_whole_session_runs_in_a_throwaway_home():
+    """Overseer, 2026-10-20: instead of guarding each read API (open, Path.read_*,
+    bytes paths, "+" modes, os.open; mmap and `cat` next), tests/conftest.py moves
+    HOME off the real one before any quorus import. A dynamically built path, a
+    subprocess and the product's own resolver all land in the throwaway HOME."""
+    import subprocess
+    import tempfile
+
+    real_home = Path(os.environ["QUORUS_TESTS_REAL_HOME"])
+    home = Path.home()
+    assert home != real_home and real_home not in home.parents
+    assert Path(tempfile.gettempdir()).resolve() in home.resolve().parents
+
+    sneaky = Path(os.path.expanduser("~")) / ".quorus" / ("room-" + "bindings.json")
+    assert real_home not in sneaky.parents
+    assert real_home not in bindings.bindings_path().parents
+
+    child = subprocess.run(["sh", "-c", 'printf %s "$HOME"'], capture_output=True, text=True)
+    assert Path(child.stdout) == home, child
