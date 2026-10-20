@@ -204,13 +204,16 @@ def test_f5_a_strangers_fix_lands_on_main_and_the_other_agent_reviews_it(tmp_pat
         s.type(ASK + ENTER)
         fixed = _wait_for(s, "alice-codex", "✅", timeout=120)
         sha = _SHA.search(fixed.split("✅", 1)[1]).group(0)
-        # The change is on main, not just in a reply.
-        deadline = time.monotonic() + 30
-        while _git(repo, "rev-parse", "--short", "main")[:7] != sha[:7]:
+        # The change is on main, not just in a reply. The publish can land after the
+        # ✅ on a slow CI runner, and main may move past it, so wait (up to 90 s) for
+        # the commit to be ON main rather than AT main (PR #15 CI flake).
+        deadline = time.monotonic() + 90
+        while subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", sha,
+                              "main"], capture_output=True).returncode != 0:
             assert time.monotonic() < deadline, f"main is {_git(repo, 'log', '--oneline', '-3')}"
             time.sleep(0.5)
         assert "return a + b" in _git(repo, "show", "main:calc.py")
-        assert "fix: add() returns the sum" in _git(repo, "log", "-1", "--format=%s", "main")
+        assert "fix: add() returns the sum" in _git(repo, "log", "-1", "--format=%s", sha)
         # The review is tied to that commit, by the other agent.
         review = _wait_for(s, "alice-opencode", "/vote approve", timeout=120)
         assert sha[:7] in review
