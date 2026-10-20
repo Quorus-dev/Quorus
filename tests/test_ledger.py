@@ -185,3 +185,20 @@ def test_a_mixed_review_judges_each_commit_by_its_own_lines() -> None:
     shipped = [{"from_name": "b-codex", "timestamp": "2026-10-17T12:00:00Z",
                 "content": "✅ 6a947e63 merged into weekend"}]  # a ship line, not a review
     assert ledger._review(shipped, "6a947e63ab", "a-claude") == ("none", [])
+
+
+def test_scorecard_says_its_tests_column_counts_test_changes(tmp_path: Path) -> None:
+    """0.6.3 audit BUG 14: a fix whose tests ran green showed "tests 0%" because it
+    changed no test file; the table now says +tests and what that counts."""
+    from types import SimpleNamespace
+
+    from quorus_cli import scorecard_cmd
+    from rich.console import Console
+
+    repo, _ = _repo(tmp_path)
+    _commit(repo, "fix: a", {"app.py": "x = 3\n"})
+    console = Console(width=200, record=True, color_system=None)
+    scorecard_cmd.cmd_scorecard(SimpleNamespace(repo=str(repo), range=None, since="1.year",
+                                                room=None, json=False, by="agent"), console)
+    text = console.export_text()
+    assert "+tests" in text and "add or change a test (not whether tests ran)" in text

@@ -56,7 +56,7 @@ def cmd_scorecard(args: Any, console: Any) -> None:
     by = args.by
     table = Table(title=f"{repo.name}: whose work holds up ({len(rows)} commits)",
                   title_justify="left", header_style="bold")
-    for col in (by, "commits", "tests", "approved", "flagged", "reverted", "kept", "duels"):
+    for col in (by, "commits", "+tests", "approved", "flagged", "reverted", "kept", "duels"):
         table.add_column(col, justify="left" if col == by else "right", no_wrap=True)
     for r in ledger.scorecard(rows, key=by):
         surv = "-" if r["survival"] is None else f"{round(100 * r['survival'])}%"
@@ -66,7 +66,10 @@ def cmd_scorecard(args: Any, console: Any) -> None:
                       str(r["approved"]), str(r["flagged"]), str(r["reverted"]), surv, duels)
     console.print(table)
     inferred = sum(o.inferred for o in rows)
-    console.print("[dim]kept = share of the lines it added still in the code at HEAD"
+    # 0.6.3 audit BUG 14: "tests 0%" read as "its tests didn't run" for a fix whose
+    # tests were green; the column counts commits that add or change a test file.
+    console.print("[dim]+tests = share of its commits that add or change a test (not whether "
+                  "tests ran); kept = share of the lines it added still in the code at HEAD"
                   + (f"; {inferred} commits attributed from the room's publish lines "
                      "(made before provenance notes)" if inferred else "") + "[/]")
     flagged = [o for o in rows if o.review == "flagged" or o.reverted]
