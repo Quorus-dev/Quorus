@@ -230,3 +230,36 @@ def _no_live_opencode_catalog():
                    subprocess.CompletedProcess(argv, 1, stdout="", stderr=""))
         yield
     opencode_free.reset_cache()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _the_real_home_config_is_never_touched():
+    """A test rewrote the overseer's real ``~/.quorus/config.json`` (2026-10-20:
+    the hub resolved its config path at import time, so a fixture's
+    ``QUORUS_CONFIG_DIR`` came too late). Snapshot the real config files before
+    the session and fail loudly at the end if any changed. The real HOME is
+    captured here, before any test monkeypatches ``HOME``."""
+    import os as _os
+    from pathlib import Path as _Path
+
+    real = _Path(_os.path.expanduser("~")) / ".quorus"
+
+    def snapshot() -> dict[str, tuple[int, int]]:
+        files = [real / "config.json", *sorted((real / "profiles").glob("*.json"))]
+        out: dict[str, tuple[int, int]] = {}
+        for f in files:
+            try:
+                st = f.stat()
+            except FileNotFoundError:
+                continue
+            out[str(f)] = (st.st_mtime_ns, st.st_size)
+        return out
+
+    before = snapshot()
+    yield
+    after = snapshot()
+    if before != after:
+        changed = sorted(set(before) ^ set(after)
+                         | {k for k in before if k in after and before[k] != after[k]})
+        pytest.fail("a test touched the real ~/.quorus config: " + ", ".join(changed)
+                    + " (isolate HOME and QUORUS_CONFIG_DIR in that test)")
