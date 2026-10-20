@@ -70,8 +70,9 @@ def test_a_taken_port_with_an_unknown_holder_is_still_refused(monkeypatch, capsy
     """Codex, review of 65245e6e: `_port_holder` says "" when the port is taken but
     `lsof` is unavailable or names no listener, and `if holder:` then started the
     child anyway. The empty string is still "taken"."""
-    from quorus.runtime import local_relay
     from quorus_cli import cli
+
+    from quorus.runtime import local_relay
 
     monkeypatch.setenv("RELAY_SECRET", "test-secret")
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path))
