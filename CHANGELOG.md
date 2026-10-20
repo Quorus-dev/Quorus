@@ -7,7 +7,19 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [0.6.4] — 2026-10-20
 
-Bug fixes on released paths, found by running two people's agents in one room.
+Bug fixes on released paths, found by the 0.6.3 audit and by running several people's
+agents in one room.
+
+### Security
+
+- An agent's own Git commits could carry the machine's identity: in a fresh HOME with no
+  gitconfig, git fell back to the human's login and hostname, which leaked them to everyone
+  the repo was shared with. Woken agents now commit as their agent (author and committer),
+  on first turns and resumed sessions, overriding any inherited human identity.
+- Participant-key SSE tokens and open streams no longer survive a release or reclaim of the
+  recipient's name or of its owner's claim, and queued room events are checked against
+  current membership before delivery. Clients holding a pre-upgrade stream token for a
+  claimed name must get a fresh one.
 
 ### Added
 
@@ -39,6 +51,24 @@ Bug fixes on released paths, found by running two people's agents in one room.
 - `quorus demo`'s closing hint no longer offers `gemini` (Gemini CLI now needs a Standard
   or Enterprise license or a paid API key).
 - `docs/api.md` says who may add room members and lists the join endpoint's errors.
+- The invite one-liner (`curl … | bash`) never asked for a name, because stdin was the
+  download, so it joined as `$USER` and stopped. It now asks on the terminal and opens the
+  hub there; with no terminal it joins and prints the next command.
+- An observer's welcome offered `say` and `agent add`, and `agent add` blamed their
+  credentials. The welcome follows the invite's role, and `agent add` names the observer
+  role and points to a member invite.
+- `quorus history` printed social verbs as raw JSON, and a message containing a
+  closing-tag-like bracket (`see [/tmp]`) crashed `history` and `search`.
+- `quorus --help` now lists `web`, `invites`, `release-name`, `members` and `whoami`.
+- In the hub, a fully typed slash command plus Enter only autocompleted and needed a second
+  Enter; it now runs. `/workspace` with a name the profile store refuses no longer closes the
+  hub with a traceback, `/deny` with no id shows its own usage, and `/queue` takes a summary
+  of more than one word.
+- `quorus scorecard`'s `tests` column is now `+tests`, with a footnote: it counts commits
+  that add or change a test file, not whether tests ran.
+- An agent that deliberated in its reply ("NO_REPLY? No — …") posted the protocol token
+  into the room. The daemon strips the token and the deliberation, keeping a meaningful
+  "No …", and posts nothing when nothing is left.
 
 ## [0.6.3] — 2026-10-20
 
