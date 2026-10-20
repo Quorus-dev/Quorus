@@ -583,11 +583,38 @@ async def _status() -> None:
         await client.aclose()
 
 
+_VERB_TEXT_KEYS = ("reason", "task_summary", "scope", "option", "task_id")
+
+
+def _social_line(content: str) -> str | None:
+    """A social verb's JSON envelope as one readable line ("/disagree blocking:
+    tests missing"), or None for ordinary text. History printed the raw JSON
+    (0.6.3 audit, multi-person BUG 7)."""
+    if not content.startswith("{"):
+        return None
+    try:
+        data = json.loads(content)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("kind") != "social" or not data.get("verb"):
+        return None
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+    head = f"/{data['verb']}" + (f" {payload['mode']}" if payload.get("mode") else "")
+    text = next((str(payload[k]) for k in _VERB_TEXT_KEYS if payload.get(k)), "")
+    if payload.get("to"):
+        return f"{head} → @{payload['to']}" + (f": {text}" if text else "")
+    return f"{head}: {text}" if text else head
+
+
 def _format_chat_msg(msg: dict) -> str:
-    """Format a single chat message for display."""
+    """Format a single chat message for display. Sender and text are escaped:
+    a message like "see [/tmp]" is not Rich markup."""
+    from rich.markup import escape
+
     msg_type = msg.get("message_type", "chat")
-    sender = msg.get("from_name", "?")
-    content = msg.get("content", "")
+    sender = escape(str(msg.get("from_name", "?")))
+    raw = str(msg.get("content", "") or "")
+    content = escape(_social_line(raw) or raw)
     ts = msg.get("timestamp", "")[:19]
     type_color = {
         "claim": "yellow",
