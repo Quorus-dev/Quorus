@@ -180,6 +180,35 @@ def _agent_memory_in_tmp(tmp_path):
         yield
 
 
+@pytest.fixture(autouse=True)
+def _room_bindings_in_tmp(tmp_path):
+    """The CLI's room → workspace bindings (`quorus_cli.agent_cmd.bindings_path`)
+    default to ~/.quorus/room-bindings.json. A test that forgot to isolate them
+    passed on the developer's machine, where the real file had a "build" room, and
+    failed on every CI Python (2026-10-20, PR #15). Every test now sees an empty
+    temp file instead; a test that wants a binding writes it there."""
+    import os as _os
+    from pathlib import Path as _Path
+
+    from quorus_cli import agent_cmd
+
+    real_home = _Path(_os.path.expanduser("~"))
+    target = tmp_path / "room-bindings.json"
+
+    def isolated() -> _Path:
+        # A test that points HOME somewhere else (monkeypatch.setenv or a patched
+        # Path.home) gets the file under that HOME, as the product would; only
+        # the real HOME is diverted.
+        home = _Path.home()
+        if home != real_home:
+            return home / ".quorus" / "room-bindings.json"
+        return target
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(agent_cmd, "bindings_path", isolated)
+        yield
+
+
 _OPT_IN_MARKERS = {"real_harness", "cross_harness"}
 
 

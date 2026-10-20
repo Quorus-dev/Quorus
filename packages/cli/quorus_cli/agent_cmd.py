@@ -274,11 +274,18 @@ def _drop_lead_everywhere(name: str) -> None:
         _set_lead(room, None)
 
 
+def bindings_path() -> Path:
+    """Where this machine's room → workspace bindings live. One function, resolved
+    at call time, so tests can point every reader and writer at a temp file: a CI
+    run found `test_account_owner_can_add_agent_to_room` passing only because the
+    developer's real ~/.quorus/room-bindings.json had a "build" room (2026-10-20)."""
+    return Path.home() / ".quorus" / "room-bindings.json"
+
+
 def _bound_path(room: str) -> Path | None:
     """The workspace *room* is bound to on this machine, if it still exists."""
     try:
-        prev = json.loads((Path.home() / ".quorus" / "room-bindings.json")
-                          .read_text(encoding="utf-8")).get(room)
+        prev = json.loads(bindings_path().read_text(encoding="utf-8")).get(room)
     except (OSError, ValueError, AttributeError):
         return None
     raw = prev.get("path") if isinstance(prev, dict) else prev
@@ -289,7 +296,7 @@ def _bound_path(room: str) -> Path | None:
 
 
 def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> str:
-    path = Path.home() / ".quorus" / "room-bindings.json"
+    path = bindings_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -483,8 +490,7 @@ def _add(args: Any, console: Any) -> None:
 
 def _room_bound(room: str) -> bool:
     try:
-        data = json.loads((Path.home() / ".quorus" / "room-bindings.json")
-                          .read_text(encoding="utf-8"))
+        data = json.loads(bindings_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return isinstance(data, dict) and bool(data.get(room))

@@ -1197,7 +1197,9 @@ def _cmd_room(args):
     ~/.quorus/room-bindings.json (0600)."""
     import json as _json
 
-    bindings_path = Path.home() / ".quorus" / "room-bindings.json"
+    from quorus_cli.agent_cmd import bindings_path as _bindings_path
+
+    bindings_path = _bindings_path()
     action = getattr(args, "room_action", None)
     if action is None:
         _ui.error(
