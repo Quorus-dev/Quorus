@@ -186,13 +186,8 @@ def _save_instance_config(
     secret: str = "",
     api_key: str = "",
 ) -> None:
-    """Persist the TUI's instance config through the shared ConfigManager.
-
-    The path is resolved now, not at import: ``CONFIG_FILE`` is fixed when the
-    module loads, so a ``QUORUS_CONFIG_DIR`` set later (a test, a wrapper that
-    picks the dir before calling in) was ignored and the wizard wrote into the
-    real ``~/.quorus`` (2026-10-20: a test overwrote the overseer's config)."""
-    ConfigManager(resolve_config_dir() / "config.json").save(
+    """Persist the TUI's instance config through the shared ConfigManager."""
+    ConfigManager(CONFIG_FILE).save(
         {
             "relay_url": relay_url.rstrip("/"),
             "instance_name": name,

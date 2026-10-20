@@ -298,8 +298,8 @@ def test_save_instance_config(tmp_path, monkeypatch):
     """_save_instance_config writes config through ConfigManager."""
     cfg_dir = tmp_path / ".quorus"
     cfg_file = cfg_dir / "config.json"
-    # The save resolves its path at call time (never the import-time constant).
-    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(cfg_dir))
+    monkeypatch.setattr(tui_hub, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(tui_hub, "CONFIG_FILE", cfg_file)
 
     _save_instance_config("mybot", "http://relay:8080", "topsecret")
 
@@ -317,7 +317,8 @@ def test_save_instance_config_strips_trailing_slash(tmp_path, monkeypatch):
     """Trailing slash on relay URL is stripped before saving."""
     cfg_dir = tmp_path / ".quorus"
     cfg_file = cfg_dir / "config.json"
-    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(cfg_dir))
+    monkeypatch.setattr(tui_hub, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(tui_hub, "CONFIG_FILE", cfg_file)
 
     _save_instance_config("bot", "http://relay:8080/", "secret")
 
