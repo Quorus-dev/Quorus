@@ -27,6 +27,10 @@ one room. The release gate now runs it with two HOMEs talking to a relay over a 
 - Joining from another computer used the address stored in the invite, which is
   `127.0.0.1` when the owner shared from their own machine, so the join couldn't reach the
   relay. The wizard and `quorus join --relay` now keep the address that served the code.
+- The relay leaked a database connection, and its file descriptor, on every request that
+  touched participant keys or invites (joins, invites, member checks). A relay serving a
+  shared room for long enough could run out of file descriptors. Connections are now closed
+  after each use.
 
 ## [0.6.2] — 2026-10-19
 
