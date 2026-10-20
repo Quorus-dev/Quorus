@@ -923,8 +923,8 @@ def is_no_reply(reply: str) -> bool:
 
 
 _LEAK_HEAD = re.compile(
-    r"^[`*\"']*" + NO_REPLY + r"(?![A-Za-z0-9_])[`*\"']*[\s?!.:,;—–-]*"  # the token
-    r"(?:no\s*[—–:,;-]+\s*)?",   # a bare "No —" / "No:" connective; "No tests passed" stays
+    r"^[`*\"']*" + NO_REPLY + r"(?![A-Za-z0-9_])[`*\"']*[\s?!.:,;—–>→-]*"  # token + "→"/"->"
+    r"(?:no\s*[—–:,;>→-]+\s*)?",   # a bare "No —" / "No:" connective; "No tests passed" stays
     re.IGNORECASE,
 )
 _LEAK_INLINE = re.compile(r"[`*\"']*\b" + NO_REPLY + r"\b[`*\"']*", re.IGNORECASE)

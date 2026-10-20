@@ -1127,6 +1127,11 @@ def test_the_no_reply_token_never_reaches_the_room():
     assert scrub("I would no_reply here, but the hash is wrong.") == \
         "I would here, but the hash is wrong."
     assert scrub("is_no_reply() returns True") == "is_no_reply() returns True"
+    # Live variant from the 0.6.3 multi-person run: "NO_REPLY → changed my mind …".
+    assert scrub("NO_REPLY → changed my mind after checking: the store is not shared.") == \
+        "Changed my mind after checking: the store is not shared."
+    assert scrub("NO_REPLY -> fine, the port is 8080.") == "Fine, the port is 8080."
+    assert scrub("NO_REPLY — no, it was never shared.") == "It was never shared."
 
 
 def test_the_wake_intent_says_never_to_write_the_token_otherwise():
