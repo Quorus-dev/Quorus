@@ -202,6 +202,13 @@ async def join_room(
     else:
         await reserve_names(request, auth, join_tid, participant)
     await svc.join(join_tid, rid, participant, req.role, MAX_ROOM_MEMBERS)
+    # A revoke can land between the readmit check and the insert (codex, review of
+    # e578e184): it finds no member to remove, then the join lands. Check again, as
+    # join_redeem does: revoke sets its flag before it reads the members, so either
+    # it removed this member or this check sees the flag.
+    if role is not None and await _readmit_role(request, join_tid, rid, participant) is None:
+        await svc.leave(join_tid, rid, participant)
+        raise HTTPException(status_code=403, detail="this member's invite was revoked")
     await request.app.state.backends.participants.add(join_tid, participant)
     return {"status": "joined", "role": req.role}
 

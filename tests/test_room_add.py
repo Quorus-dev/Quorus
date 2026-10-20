@@ -158,3 +158,42 @@ async def test_a_revoked_invitee_needs_a_new_invite(relay) -> None:
     assert revoked.status_code == 200, revoked.text
     assert await room_add.add_members("build", ["erin"]) == 1
     assert "erin" not in await _roles(c)
+
+
+async def test_a_revoke_during_a_readmit_takes_the_member_back_out(relay, monkeypatch) -> None:
+    """Codex on e578e184: pause the join after the readmit check passes, revoke the
+    invite, resume. The join must not land: the route checks again after inserting,
+    as join_redeem does, and takes the member back out."""
+    import asyncio
+
+    from quorus.routes import rooms
+
+    c, _ = relay
+    r = await c.post("/v1/join/mint", json={"room": "build"}, headers=ADMIN)
+    inv_id = r.json()["invite_id"]
+    payload = (await c.get(f"/v1/join/resolve/{r.json()['code']}")).json()["payload"]
+    key = (await c.post("/v1/join/redeem", json={"code": payload["c"], "name": "bob"})
+           ).json()["participant_key"]
+    token = (await c.post("/v1/auth/token", json={"api_key": key})).json()["token"]
+    bob = {"Authorization": f"Bearer {token}"}
+    await c.post("/rooms/build/kick", json={"participant": "bob", "requested_by": "alice"},
+                 headers=ADMIN)
+
+    real, checked, resume = rooms._readmit_role, asyncio.Event(), asyncio.Event()
+
+    async def paused(*a):
+        role = await real(*a)
+        if not checked.is_set():
+            checked.set()
+            await resume.wait()
+        return role
+
+    monkeypatch.setattr(rooms, "_readmit_role", paused)
+    join = asyncio.create_task(c.post("/rooms/build/join", json={"participant": "bob"},
+                                      headers=ADMIN))
+    await checked.wait()
+    assert (await c.post(f"/v1/join/invites/{inv_id}/revoke", headers=ADMIN)).status_code == 200
+    resume.set()
+    assert (await join).status_code == 403
+    assert "bob" not in await _roles(c)
+    assert (await c.get("/rooms/build/history", headers=bob)).status_code == 403
