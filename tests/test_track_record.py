@@ -275,6 +275,7 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     _turn(tmp_path, "vendor_failure", scope="http://relay.test|a|")
     bids: list[dict[str, Any]] = []
     posts: list[dict[str, Any]] = []
+    dms: list[dict[str, Any]] = []
 
     class BidRelay:
         async def submit_bid(self, **kw):
@@ -292,8 +293,9 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
             posts.append(kw)
             return {}
 
-        async def fetch_members(self, *, room):
-            return ["a", "a-gemini"]  # the owner's own room: the line stays a status post
+        async def post_agent_dm(self, **kw):
+            dms.append(kw)
+            return {}
 
     monkeypatch.setattr(reflexd, "BID_WINDOW_SECONDS", 0.2)
     envelope = {"id": "f", "message_id": _not_holdout(), "room": "dev", "from_name": "arav",
@@ -310,9 +312,10 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     [auction] = tr.load_claims(tmp_path, "a-gemini", scope="http://relay.test|a|")
     assert auction["winner"] == "x-codex" and auction["candidates"] == ["a-gemini", "x-codex"]
     assert auction["message_id"] == envelope["message_id"] and auction["winning_bid"] == 0.5
-    [line] = posts
-    assert line["message_type"] == "status" and line["room"] == "dev"
-    assert line["content"].startswith("(quorus) adapted a.t1: @open bids x0.")
+    assert posts == []  # the tuning line is the owner's business, never the room's (BUG 18)
+    [line] = dms
+    assert line["recipient"] == "a" and line["sender"] == "a-gemini"
+    assert line["content"].startswith("[#dev] (quorus) adapted a.t1: @open bids x0.")
 
 
 def test_failed_harness_exits_and_slow_starts_are_not_clean():

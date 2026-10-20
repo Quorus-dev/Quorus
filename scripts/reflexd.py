@@ -3780,17 +3780,14 @@ class Reflexd:
     async def _announce_adaptation(
         self, relay: RelayClient, room: str, envelope: dict[str, Any], text: str,
     ) -> None:
-        """A self-tuning line is its owner's business. In a room the owner shares
-        with other people it goes to the owner as a DM (0.6.3 multi-person audit,
-        BUG 18: three daemons' "(shadow, not applied)" notes reached friends); in
-        a room of the owner's own agents it stays a status line, which is where
-        the board reads it. Unknown membership counts as shared."""
+        """A self-tuning line is its owner's business, so it never goes to a room
+        (0.6.3 multi-person audit, BUG 18: three daemons' "(shadow, not applied)"
+        notes reached friends; Codex: a member list can't prove a room is private,
+        "arav-friend" is a human). It goes to the owner as a DM, which the hub
+        shows, and `quorus tune list` always has it. The board's tune row reads
+        status lines, so it no longer shows these; `quorus tune` is the affordance."""
+        del envelope
         owner = agent_owner(self.config.participant_name)
-        members = await relay.fetch_members(room=room)
-        shared = not members or any(not trusted_sender(m, owner) for m in members)
-        if not shared:
-            await self._post_status(relay, room, envelope, text)
-            return
         try:
             await relay.post_agent_dm(sender=self.config.participant_name, recipient=owner,
                                       content=f"[#{room}] {text}")

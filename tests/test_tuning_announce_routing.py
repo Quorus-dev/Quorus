@@ -1,9 +1,10 @@
-"""Self-tuning lines stay out of shared rooms (0.6.3 multi-person audit, BUG 18).
+"""Self-tuning lines never reach a room (0.6.3 multi-person audit, BUG 18).
 
 Three daemons posted "(quorus) t1 (shadow, not applied): would set @open bids …" into
-a room with other owners' people in it. The note is the owner's business: in a shared
-room it goes to the owner as a DM; in a room of the owner's own agents it stays a
-status line, which is where the board reads it.
+a room with other owners' people in it. The note is the owner's business: it goes to
+the owner as a DM (the hub shows it) and `quorus tune list` always has it. Codex, review
+of af4fad72: a member list cannot prove a room is private, since a human may be called
+"arav-friend", so there is no room post even when every member looks like the owner's.
 """
 from __future__ import annotations
 
@@ -52,13 +53,28 @@ def test_a_shared_room_gets_no_tuning_line_and_the_owner_gets_a_dm(tmp_path, mon
     assert dm["content"].startswith("[#build] (quorus) arav.t1 (shadow, not applied)")
 
 
-def test_a_room_of_the_owners_own_agents_keeps_the_status_line(tmp_path, monkeypatch):
-    relay = _announce(tmp_path, ["arav", "arav-claude", "arav-codex"], monkeypatch)
-    assert relay.dms == []
-    [post] = relay.posted
-    assert post["message_type"] == "status" and post["room"] == "build"
-
-
-def test_unknown_membership_counts_as_shared(tmp_path, monkeypatch):
-    relay = _announce(tmp_path, [], monkeypatch)
+def test_a_human_whose_name_starts_with_the_owners_is_still_someone_else(tmp_path, monkeypatch):
+    """Codex's case: members arav, arav-claude, arav-friend. No room post."""
+    relay = _announce(tmp_path, ["arav", "arav-claude", "arav-friend"], monkeypatch)
     assert relay.posted == [] and len(relay.dms) == 1
+
+
+def test_even_a_room_of_the_owners_own_agents_gets_no_room_post(tmp_path, monkeypatch):
+    relay = _announce(tmp_path, ["arav", "arav-claude", "arav-codex"], monkeypatch)
+    assert relay.posted == [] and len(relay.dms) == 1
+
+
+def test_a_failed_dm_is_swallowed(tmp_path, monkeypatch):
+    class _Broken(_Relay):
+        async def post_agent_dm(self, **kw: Any) -> dict[str, Any]:
+            raise RuntimeError("403")
+
+    monkeypatch.setattr(reflexd, "RelayClient", _Broken, raising=False)
+    monkeypatch.setenv("REFLEXD_OWNER", "arav")
+    cfg = reflexd.ReflexdConfig(relay_url="http://test", api_key="k",
+                                participant_name="arav-claude", runtime_dir=tmp_path,
+                                log_path=tmp_path / "l.log")
+    d = reflexd.Reflexd(cfg)
+    relay = _Broken([])
+    asyncio.run(d._announce_adaptation(relay, "build", {}, "(quorus) arav.t1 …"))
+    assert relay.posted == []
