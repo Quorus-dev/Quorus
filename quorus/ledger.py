@@ -7,7 +7,11 @@ id. ``quorus scorecard`` then reads outcomes per commit:
 * tests: did the commit touch tests?
 * review: did a teammate approve it or flag it in the room?
 * reverted: did a later commit revert it?
-* survival: how much of what it added is still in the code at HEAD?
+* survival: how much of what it added is still in the code at the end rev? Every file
+  the commit touched is blamed at one pinned end commit. A renamed file is followed to its
+  new path, a deleted file's lines count as gone, and a file that can't be blamed is
+  "uncomputed": it stays out of the denominator and shows in ``coverage``, never as
+  deleted lines.
 
 Why: the weekend agents' commits mostly carried the human's git identity, so
 nobody could tell which model's work held up (2026-10-17 research: no tool
@@ -99,13 +103,20 @@ class Outcome:
     reverted: bool = False
     added: int = 0
     surviving: int = 0
+    computed: int = 0       # added lines in files whose fate is known (the denominator)
+    files_uncomputed: int = 0
     reviewers: list[str] = field(default_factory=list)
     duel_id: str | None = None        # set on a duel winner's commits
     duel_against: str | None = None
 
     @property
     def survival(self) -> float | None:
-        return self.surviving / self.added if self.added else None
+        return self.surviving / self.computed if self.computed else None
+
+    @property
+    def coverage(self) -> float | None:
+        """Share of the added lines whose survival was computed."""
+        return self.computed / self.added if self.added else None
 
 
 def _commits(repo: Path, rev_range: str) -> list[tuple[str, str, int]]:
@@ -129,12 +140,56 @@ def _files_and_added(repo: Path, sha: str) -> tuple[list[str], int, dict[str, in
     return files, total, per_file
 
 
-def _surviving(repo: Path, sha: str, per_file: dict[str, int], max_files: int = 25) -> int:
-    alive = 0
-    for path in list(per_file)[:max_files]:
-        blame = _git(repo, "blame", "--line-porcelain", "HEAD", "--", path)
-        alive += sum(1 for ln in blame.splitlines() if ln.startswith(sha + " "))
-    return alive
+MAX_BLAME_FILES = 500  # beyond this a commit's other files are reported uncomputed
+
+
+def _renames(repo: Path, sha: str, end: str) -> dict[str, str]:
+    """Paths a commit touched that live under another name at *end*."""
+    out = {}
+    for line in _git(repo, "diff", "--name-status", "-M", sha, end).splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[0].startswith("R"):
+            out[parts[1]] = parts[2]
+    return out
+
+
+def _surviving(repo: Path, sha: str, per_file: dict[str, int],
+               end: str) -> tuple[int, int, dict[str, str]]:
+    """(lines still present at *end*, added lines whose fate is known, per-file status).
+
+    Status is "counted" (blamed at *end*), "deleted" (no longer at *end*, so its lines
+    are gone) or "uncomputed" (blame failed or the cap was hit: excluded from the
+    denominator, never read as deleted)."""
+    alive, computed, status = 0, 0, {}
+    renames: dict[str, str] | None = None
+    for i, (path, added) in enumerate(per_file.items()):
+        if i >= MAX_BLAME_FILES:
+            status[path] = "uncomputed"
+            continue
+        target = path
+        if _git_ok(repo, "cat-file", "-e", f"{end}:{path}") is False:
+            if renames is None:
+                renames = _renames(repo, sha, end)
+            target = renames.get(path, "")
+            if not target:
+                status[path] = "deleted"
+                computed += added
+                continue
+        blame = subprocess.run(
+            ["git", "-c", "core.hooksPath=/dev/null", "blame", "--line-porcelain", end,
+             "--", target], cwd=repo, capture_output=True, text=True, timeout=60)
+        if blame.returncode != 0:
+            status[path] = "uncomputed"
+            continue
+        alive += sum(1 for ln in blame.stdout.splitlines() if ln.startswith(sha + " "))
+        computed += added
+        status[path] = "counted"
+    return alive, computed, status
+
+
+def _git_ok(repo: Path, *args: str) -> bool:
+    return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args], cwd=repo,
+                          capture_output=True, timeout=60).returncode == 0
 
 
 def _reverted(repo: Path, rev_range: str) -> set[str]:
@@ -228,8 +283,12 @@ def _branches_in_line(repo: Path, history: list[dict[str, Any]]) -> set[str]:
 
 
 def outcomes(repo: Path, rev_range: str,
-             history: list[dict[str, Any]] | None = None) -> list[Outcome]:
+             history: list[dict[str, Any]] | None = None,
+             end: str = "HEAD") -> list[Outcome]:
+    """Outcomes for *rev_range*, with survival measured at *end*, resolved once to a
+    commit so a checkout moving mid-run can't change the answer."""
     history = history or []
+    end = _git(repo, "rev-parse", "--verify", f"{end}^{{commit}}", check=True).strip()
     commits = _commits(repo, rev_range)
     inferred = infer_from_room(history, commits, _branches_in_line(repo, history))
     reverted = _reverted(repo, rev_range)
@@ -250,7 +309,8 @@ def outcomes(repo: Path, rev_range: str,
         files, o.added, per_file = _files_and_added(repo, sha)
         o.has_tests = any(_TEST_PATH.search(f) for f in files)
         o.reverted = any(sha.startswith(r) or r.startswith(sha) for r in reverted)
-        o.surviving = _surviving(repo, sha, per_file)
+        o.surviving, o.computed, status = _surviving(repo, sha, per_file, end)
+        o.files_uncomputed = sum(v == "uncomputed" for v in status.values())
         o.review, o.reviewers = _review(history, sha, o.agent)
         out.append(o)
     return out
@@ -273,9 +333,11 @@ def scorecard(rows: list[Outcome], key: str = "agent") -> list[dict[str, Any]]:
     table = []
     for name, items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
         added = sum(o.added for o in items)
+        computed = sum(o.computed for o in items)
         if not items:  # only lost duels in this range
             table.append({key: name, "commits": 0, "with_tests": 0, "approved": 0, "flagged": 0,
-                          "reverted": 0, "survival": None, "inferred": 0, "duels_won": 0,
+                          "reverted": 0, "survival": None, "coverage": None, "inferred": 0,
+                          "duels_won": 0,
                           "duels_lost": len(lost.get(name, ()))})
             continue
         table.append({
@@ -285,7 +347,8 @@ def scorecard(rows: list[Outcome], key: str = "agent") -> list[dict[str, Any]]:
             "approved": sum(o.review == "approved" for o in items),
             "flagged": sum(o.review == "flagged" for o in items),
             "reverted": sum(o.reverted for o in items),
-            "survival": round(sum(o.surviving for o in items) / added, 3) if added else None,
+            "survival": round(sum(o.surviving for o in items) / computed, 3) if computed else None,
+            "coverage": round(computed / added, 3) if added else None,
             "inferred": sum(o.inferred for o in items),
             "duels_won": len(won.get(name, ())),
             "duels_lost": len(lost.get(name, ())),
@@ -294,4 +357,5 @@ def scorecard(rows: list[Outcome], key: str = "agent") -> list[dict[str, Any]]:
 
 
 def to_json(rows: list[Outcome]) -> str:
-    return json.dumps([{**asdict(o), "survival": o.survival} for o in rows], indent=2)
+    return json.dumps([{**asdict(o), "survival": o.survival, "coverage": o.coverage}
+                       for o in rows], indent=2)

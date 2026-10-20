@@ -202,3 +202,54 @@ def test_scorecard_says_its_tests_column_counts_test_changes(tmp_path: Path) -> 
                                                 room=None, json=False, by="agent"), console)
     text = console.export_text()
     assert "+tests" in text and "add or change a test (not whether tests ran)" in text
+
+
+# ── survival: every file, one pinned end, renames followed (Codex, 2026-10-20) ──
+
+def test_survival_counts_every_file_not_just_the_first_25(tmp_path: Path) -> None:
+    """Codex's probe: 26 files with one intact line each reported 25 of 26 surviving."""
+    repo, base = _repo(tmp_path)
+    sha = _commit(repo, "feat: wide", {f"f{i:02}.py": f"line {i}\n" for i in range(26)})
+    [o] = ledger.outcomes(repo, f"{base}..HEAD")
+    assert o.sha == sha and o.added == 26 and o.surviving == 26
+    assert o.computed == 26 and o.survival == 1.0 and o.coverage == 1.0
+
+
+def test_a_renamed_file_is_followed_and_a_deleted_one_counts_as_gone(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    sha = _commit(repo, "feat: two files", {"keep.py": "a\nb\n", "drop.py": "c\nd\n"})
+    _git(repo, "mv", "keep.py", "kept.py")
+    _git(repo, "rm", "-q", "drop.py")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "move + delete")
+    o = {r.sha: r for r in ledger.outcomes(repo, f"{base}..HEAD")}[sha]
+    assert o.added == 4 and o.surviving == 2 and o.computed == 4  # renamed lines kept
+    assert o.survival == 0.5 and o.files_uncomputed == 0
+
+
+def test_an_unblameable_file_is_uncomputed_not_deleted(tmp_path: Path, monkeypatch) -> None:
+    """Codex: renamed or uncomputed lines must never silently become deleted lines."""
+    repo, base = _repo(tmp_path)
+    sha = _commit(repo, "feat: two", {"ok.py": "a\nb\n", "bad.py": "c\nd\n"})
+    real = ledger.subprocess.run
+
+    def flaky(argv, *a, **kw):
+        if "blame" in argv and argv[-1] == "bad.py":
+            return subprocess.CompletedProcess(argv, 128, "", "fatal: boom")
+        return real(argv, *a, **kw)
+
+    monkeypatch.setattr(ledger.subprocess, "run", flaky)
+    o = {r.sha: r for r in ledger.outcomes(repo, f"{base}..HEAD")}[sha]
+    assert o.added == 4 and o.computed == 2 and o.surviving == 2
+    assert o.survival == 1.0 and o.coverage == 0.5 and o.files_uncomputed == 1
+    card = ledger.scorecard([o])[0]
+    assert card["survival"] == 1.0 and card["coverage"] == 0.5
+
+
+def test_survival_is_measured_at_the_pinned_end_not_the_checkout(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    sha = _commit(repo, "feat: x", {"x.py": "1\n2\n"})
+    end = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "refactor: gone", {"x.py": "z\n"})
+    at_end = {r.sha: r for r in ledger.outcomes(repo, f"{base}..{end}", end=end)}[sha]
+    at_head = {r.sha: r for r in ledger.outcomes(repo, f"{base}..{end}")}[sha]
+    assert at_end.survival == 1.0 and at_head.survival == 0.0
