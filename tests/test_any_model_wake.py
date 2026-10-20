@@ -682,3 +682,27 @@ def test_opencode_1x_refusing_its_config_is_named_not_unknown() -> None:
     msg = reflexd.diagnose_harness_failure("opencode", stderr)
     assert msg and "1.x" in str(msg) and "@opencode/cli" in str(msg)
     assert "OPENCODE_CONFIG_CONTENT" not in str(msg)  # named, never quoted
+
+
+@pytest.mark.parametrize("mode", ["manual", "readonly", "autonomous"])
+def test_every_permissioned_mode_fits_the_opencode_version(mode: str) -> None:
+    """Overseer on BUG 22: read-only is what every cross-owner wake uses, so 1.x
+    failed those too, not only autonomous ones."""
+    v1 = models.opencode_config(None, mode=mode, v1=True)
+    assert "permissions" not in v1
+    assert v1["permission"] == models._OPENCODE_PERMS[mode]
+    v2 = models.opencode_config(None, mode=mode, v1=False)
+    assert v2["permission"] == models._OPENCODE_PERMS[mode] and v2["permissions"]
+    if mode != "autonomous":  # read-only stays read-only on both versions
+        assert set(v1["permission"].values()) == {"deny"}
+        assert {r["effect"] for r in v2["permissions"]} == {"deny"}
+
+
+def test_a_v1_read_only_wake_sends_deny_rules_it_can_read(
+    adapter: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter.opencode_v1 = True
+    calls = _capture(monkeypatch, [OPENCODE_OUT])
+    asyncio.run(adapter.run("opencode", context="ctx", mode="readonly"))
+    sent = json.loads(calls[0]["env"]["OPENCODE_CONFIG_CONTENT"])
+    assert "permissions" not in sent and sent["permission"]["edit"] == "deny"
