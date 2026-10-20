@@ -496,8 +496,18 @@ async def stream_agent_dms(
     ``POST /stream/token`` round-trip is sufficient — clients don't have to
     mint a second token type.
     """
+    from quorus.services import sse_identity
+
     sse_svc = request.app.state.sse_service
-    valid, tid = await sse_svc.verify_token(token, participant)
+    # Same check as /stream/{recipient} (4e036f88): a participant key's token is
+    # bound to its claim generation. Verifying the wrapped token as-is refused
+    # every agent's DM stream with 401 (live replay, f9984702).
+    claim, opaque = sse_identity.unwrap(token)
+    valid, tid = await sse_svc.verify_token(
+        opaque, sse_identity.recipient_key(participant, claim))
+    if valid and not await sse_identity.current(request, tid, participant, claim):
+        raise HTTPException(status_code=401,
+                            detail="Stream identity was released; sign in again")
     if not valid:
         # Optional legacy fallback — kept symmetric with /stream/{recipient}.
         import hmac as _hmac
@@ -537,10 +547,16 @@ async def stream_agent_dms(
             while True:
                 try:
                     envelope = await asyncio.wait_for(q.get(), timeout=30)
+                    if valid and not await sse_identity.current(
+                            request, tid, participant, claim):
+                        return  # the name was released or reclaimed mid-stream
                     yield (
                         f"event: agent_dm\ndata: {json.dumps(envelope)}\n\n"
                     )
                 except asyncio.TimeoutError:
+                    if valid and not await sse_identity.current(
+                            request, tid, participant, claim):
+                        return
                     yield ": keepalive\n\n"
         except asyncio.CancelledError:
             pass

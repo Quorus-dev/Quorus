@@ -130,3 +130,50 @@ async def test_unclaimed_operator_token_does_not_inherit_a_later_claim(client):
     with pytest.raises(HTTPException) as exc:
         await stream_messages("fresh", _request(), token)
     assert exc.value.status_code == 401
+
+
+# ── the agent-DM stream checks the same generation (live replay on f9984702) ──
+
+
+async def _dm_opened(c, auth, name="bob"):
+    from quorus.routes.agent_dm import stream_agent_dms
+
+    response = await stream_agent_dms(name, _request(), await _token(c, auth, name))
+    iterator = response.body_iterator
+    assert "event: connected" in await anext(iterator)
+    return iterator
+
+
+async def test_a_key_bound_token_opens_both_streams(client):
+    """Every agent's /stream/dm was 401 'Invalid token' while /stream/<name> took the
+    same kind of token: only the room route unwrapped the generation-bound token."""
+    _, bob = await _join(client, "build", "bob")
+    agent = await _agent(client, bob, "bob-codex")
+    await _opened(client, agent, "bob-codex")
+    await _dm_opened(client, agent, "bob-codex")
+
+
+async def test_a_dm_token_from_before_a_reclaim_is_refused(client):
+    from quorus.routes.agent_dm import stream_agent_dms
+
+    _, bob = await _join(client, "build", "bob")
+    token = await _token(client, bob)
+    store = app.state.participant_keys
+    assert store.release("bob")
+    assert store.claim("bob", kind="human")
+    with pytest.raises(HTTPException) as exc:
+        await stream_agent_dms("bob", _request(), token)
+    assert exc.value.status_code == 401
+
+
+async def test_an_open_dm_stream_closes_when_the_name_is_released(client, monkeypatch):
+    from quorus.routes import agent_dm
+
+    _, bob = await _join(client, "build", "bob")
+    agent = await _agent(client, bob, "bob-codex")
+    iterator = await _dm_opened(client, agent, "bob-codex")
+    assert app.state.participant_keys.release("bob")  # the agent's parent claim
+    for q in agent_dm._get_dm_queues(_request()).get(("_legacy", "bob-codex"), ()):
+        q.put_nowait({"content": "private canary"})
+    with pytest.raises(StopAsyncIteration):
+        await anext(iterator)
