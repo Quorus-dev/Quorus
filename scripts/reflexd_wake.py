@@ -927,7 +927,8 @@ _LEAK_HEAD = re.compile(
     # "->", "—", spaces). Never a word: three rounds of "No — …" heuristics each
     # flipped a meaning somewhere ("No-go", "no-write", "No tests passed"), so the
     # rule is now the overseer's: delete no letters other than the token's.
-    r"^[`*\"']*" + NO_REPLY + r"(?![A-Za-z0-9_])[^A-Za-z0-9_\n]*",
+    # Unicode-aware: `\w` keeps É, α and 未 (Codex, review of 0261a67c).
+    r"^[`*\"']*" + NO_REPLY + r"(?!\w)[^\w\n]*",
     re.IGNORECASE,
 )
 _LEAK_INLINE = re.compile(r"[`*\"']*\b" + NO_REPLY + r"\b[`*\"']*", re.IGNORECASE)
@@ -954,9 +955,7 @@ def scrub_no_reply(reply: str) -> str:
     text = "\n".join(kept).strip()
     head = _LEAK_HEAD.match(text)
     if head and head.end() > 0:
-        text = text[head.end():].lstrip()
-        if text and text[0].islower():
-            text = text[0].upper() + text[1:]
+        text = text[head.end():].lstrip()  # remainder verbatim: no case change either
     text = _LEAK_INLINE.sub("", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip()

@@ -1119,7 +1119,7 @@ def test_the_no_reply_token_never_reaches_the_room():
     # Codex, review of 3f97de5d: a meaningful "No" keeps its negation.
     assert scrub("NO_REPLY? No tests passed.") == "No tests passed."
     assert scrub("NO_REPLY. No owner approval was given.") == "No owner approval was given."
-    assert scrub("NO_REPLY: no, the port is 8080.") == "No, the port is 8080."
+    assert scrub("NO_REPLY: no, the port is 8080.") == "no, the port is 8080."
     # Identifiers that merely start with the token are not the token.
     assert scrub("NO_REPLY_TIMEOUT is 30s in reflexd.") == "NO_REPLY_TIMEOUT is 30s in reflexd."
     assert scrub("set NO_REPLY_TIMEOUT=30") == "set NO_REPLY_TIMEOUT=30"
@@ -1129,18 +1129,25 @@ def test_the_no_reply_token_never_reaches_the_room():
     assert scrub("is_no_reply() returns True") == "is_no_reply() returns True"
     # Live variant from the 0.6.3 multi-person run: "NO_REPLY → changed my mind …".
     assert scrub("NO_REPLY → changed my mind after checking: the store is not shared.") == \
-        "Changed my mind after checking: the store is not shared."
-    assert scrub("NO_REPLY -> fine, the port is 8080.") == "Fine, the port is 8080."
-    assert scrub("NO_REPLY — no, it was never shared.") == "No, it was never shared."
+        "changed my mind after checking: the store is not shared."
+    assert scrub("NO_REPLY -> fine, the port is 8080.") == "fine, the port is 8080."
+    assert scrub("NO_REPLY — no, it was never shared.") == "no, it was never shared."
     # Codex, review of 1b8bc9df: hyphenated "no-" words are content.
     assert scrub("NO_REPLY? No-go for release.") == "No-go for release."
-    assert scrub("NO_REPLY -> no-write access for Bob.") == "No-write access for Bob."
-    assert scrub("NO_REPLY: no-op here, nothing changed.") == "No-op here, nothing changed."
-    # The invariant behind all of the above: only the token's letters ever go.
+    assert scrub("NO_REPLY -> no-write access for Bob.") == "no-write access for Bob."
+    assert scrub("NO_REPLY: no-op here, nothing changed.") == "no-op here, nothing changed."
+    # Codex, review of 0261a67c: Unicode letters are letters too, and the remainder
+    # keeps its case.
+    assert scrub("NO_REPLY → 未获授权。") == "未获授权。"
+    assert scrub("NO_REPLY: Échec des tests.") == "Échec des tests."
+    assert scrub("NO_REPLYα is a name") == "NO_REPLYα is a name"
+    # The invariant behind all of the above: only the token's letters ever go, and
+    # every other character keeps its case.
     import re as _re
-    for text in ("NO_REPLY? No — x", "NO_REPLY -> no-write y", "NO_REPLY: No tests z"):
-        kept = _re.sub(r"[^A-Za-z]", "", scrub(text)).lower()
-        assert kept == _re.sub(r"[^A-Za-z]", "", text.replace("NO_REPLY", "")).lower()
+    for text in ("NO_REPLY? No — x", "NO_REPLY -> no-write y", "NO_REPLY: No tests z",
+                 "NO_REPLY → 未获授权。", "NO_REPLY: Échec des tests."):
+        kept = _re.sub(r"\W", "", scrub(text))
+        assert kept == _re.sub(r"\W", "", text.replace("NO_REPLY", ""))
 
 
 def test_the_wake_intent_says_never_to_write_the_token_otherwise():
