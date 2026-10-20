@@ -64,6 +64,48 @@ def test_a_bound_port_is_refused_before_the_child_starts(monkeypatch, capsys, tm
     assert f"Port {port}" in text and "already in use" in text and "--port" in text
 
 
+@pytest.mark.parametrize("lsof", ["missing", "silent"])
+def test_a_taken_port_with_an_unknown_holder_is_still_refused(monkeypatch, capsys, tmp_path,
+                                                             lsof):
+    """Codex, review of 65245e6e: `_port_holder` says "" when the port is taken but
+    `lsof` is unavailable or names no listener, and `if holder:` then started the
+    child anyway. The empty string is still "taken"."""
+    from quorus.runtime import local_relay
+    from quorus_cli import cli
+
+    monkeypatch.setenv("RELAY_SECRET", "test-secret")
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(local_relay, "_healthy", lambda url, timeout=2.0: False)
+    started: list = []
+    monkeypatch.setattr(cli, "_run_relay_child", lambda env: started.append(env) or 0)
+
+    def fake_lsof(*a, **kw):
+        if lsof == "missing":
+            raise FileNotFoundError("lsof")
+        return subprocess.CompletedProcess(a, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_lsof)
+    holder = socket.socket()
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    try:
+        assert cli._port_holder("127.0.0.1", port) == ""
+        with pytest.raises(SystemExit) as exc:
+            cli._cmd_relay(SimpleNamespace(port=port, host="127.0.0.1", replace=False))
+    finally:
+        holder.close()
+    assert exc.value.code == 1 and started == []
+    captured = capsys.readouterr()
+    assert f"Port {port}" in captured.out + captured.err
+
+
+def test_a_free_port_reports_no_holder():
+    from quorus_cli import cli
+
+    assert cli._port_holder("127.0.0.1", _free_port()) is None
+
+
 def test_a_child_that_exits_nonzero_is_reported_not_swallowed(monkeypatch, capsys, tmp_path):
     from quorus_cli import cli
 

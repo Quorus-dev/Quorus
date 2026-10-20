@@ -7561,7 +7561,7 @@ def _cmd_relay(args):
     # orphan, another program). The child would die on bind and this wrapper used
     # to exit 0 saying nothing, while the old process kept serving (BUG 30).
     holder = _port_holder(host, args.port)
-    if holder:
+    if holder is not None:  # "" means taken by an unknown holder: still refuse (Codex)
         _ui.error(f"Port {args.port} on {host} is already in use{holder}",
                   hint="stop that process, or start this relay with another --port")
         sys.exit(1)
@@ -7579,8 +7579,10 @@ def _cmd_relay(args):
 
 
 def _port_holder(host: str, port: int) -> str | None:
-    """"" when the port can be bound, else a short note about who holds it (or
-    "" when nothing more is known), so `quorus relay` can refuse before forking."""
+    """None when the port can be bound; otherwise a short note about who holds it,
+    or "" when the port is taken but nothing more is known (no `lsof`, or it found
+    no listener), so `quorus relay` can refuse before forking. Callers must test
+    `is not None`: the empty string is still "taken"."""
     import errno
     import socket
 
