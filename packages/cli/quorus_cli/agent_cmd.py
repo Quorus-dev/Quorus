@@ -419,7 +419,7 @@ def _add(args: Any, console: Any) -> None:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
-    wants = getattr(args, "trust", None) or args.mode not in (None, "default")
+    wants = getattr(args, "trust", None) or args.mode is not None
     if repo is None and wants:
         # --trust/--mode live on the room's workspace binding: without --repo they
         # were dropped silently, so a friend's asks stayed read-only (audit 0.6.3,
