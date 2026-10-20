@@ -53,7 +53,11 @@ def git(*a):
 def from_agent(prompt):
     return "Your teammate agent `" in prompt and "@-mentioned you" in prompt
 def act(prompt, can_write, me, other):
-    sha = re.search(r"review ([0-9a-f]{7,40})", prompt)
+    # Review the commit the triggering message names, not the first sha anywhere in
+    # the transcript: with each agent's own git identity, two independent fixes no
+    # longer share one sha, and the earliest "review <sha>" was often the wrong one.
+    asked = prompt.rsplit("# Triggering message", 1)[-1]
+    sha = re.search(r"review ([0-9a-f]{7,40})", asked)
     if sha:
         return "✅ /vote approve %s: add() returns a + b now; reviewed." % sha.group(1)
     if "without addressing anyone, and you were picked" in prompt:
