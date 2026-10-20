@@ -2868,6 +2868,11 @@ class Reflexd:
                     await self._post_status(relay, room, envelope, decision.announce)
             except Exception as exc:  # a bad track record must never stop a bid
                 logger.debug("track-record bid skipped: %s", exc)
+            if await self._read_only_for(relay, envelope, room):
+                # It would win and then only answer read-only, so the task stalled
+                # (audit 0.6.3, bug 20). Bid the floor: an agent that may write for
+                # this person wins; if none bids, this one still answers.
+                bid, bid_reason = min(bid, 0.05), f"{bid_reason}+read-only"
         if self._wake_lock.locked() and triage.kind != "mention":
             # Busy on another job: still bid (so the work never goes
             # ownerless when everyone is busy) but low, so an idle teammate
@@ -3843,6 +3848,22 @@ class Reflexd:
             envelope, history, triage=triage, memory_entries=memory_entries,
             **kw,
         )
+
+    async def _read_only_for(self, relay: Any, envelope: dict[str, Any], room: str) -> bool:
+        """This request would get a read-only turn here: the same trust check a
+        wake makes (every mode, `default` included; `trust: members`, owner pins
+        and signatures as in :meth:`_trusted_wake`). Unknown (history unreadable)
+        is not read-only: never lower a bid on a guess."""
+        if not room:
+            return False
+        fetch = getattr(relay, "fetch_recent", None)
+        if fetch is None:
+            return False
+        try:
+            history = await fetch(room=room, limit=TRUST_CHAIN_LIMIT)
+        except Exception:
+            return False
+        return not await self._trusted_wake(relay, envelope, history)
 
     async def _trusted_wake(self, relay: Any, envelope: dict[str, Any],
                             history: list[dict[str, Any]]) -> bool:
