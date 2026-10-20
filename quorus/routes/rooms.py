@@ -140,6 +140,20 @@ async def _adds_own_agent(request: Request, auth: AuthContext, tid: str, rid: st
     return members.get(auth.sub) in WRITER_ROLES
 
 
+async def _readmit_role(request: Request, tid: str, rid: str, participant: str) -> str | None:
+    """An invitee re-added to the room their own invite was for: its role."""
+    if tid != "_legacy":
+        return None
+    store = getattr(request.app.state, "participant_keys", None)
+    if store is None:
+        return None
+    import asyncio
+
+    from quorus.auth.invite_codes import readmit_role
+
+    return await asyncio.to_thread(readmit_role, store, participant, rid)
+
+
 @router.post("/rooms/{room_id}/join")
 async def join_room(
     room_id: str,
@@ -180,9 +194,13 @@ async def join_room(
     if not await join_rate_svc.check_with_limit(join_tid, f"join:{join_caller}", 30):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
-    await reserve_names(request, auth, join_tid, participant)
     svc = request.app.state.room_service
     rid, _ = await svc.get(join_tid, room_id)
+    role = await _readmit_role(request, join_tid, rid, participant)
+    if role is not None:
+        req.role = role  # back where their own invite let them in, at its role
+    else:
+        await reserve_names(request, auth, join_tid, participant)
     await svc.join(join_tid, rid, participant, req.role, MAX_ROOM_MEMBERS)
     await request.app.state.backends.participants.add(join_tid, participant)
     return {"status": "joined", "role": req.role}

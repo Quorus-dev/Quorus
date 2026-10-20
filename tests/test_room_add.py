@@ -90,3 +90,71 @@ def test_the_cli_exposes_room_add() -> None:
     assert out.returncode == 0, out.stderr[-400:]
     for word in ("room", "members"):
         assert word in out.stdout
+
+
+async def _invitee(c: AsyncClient, name: str, **mint) -> dict:
+    r = await c.post("/v1/join/mint", json={"room": "build", **mint}, headers=ADMIN)
+    payload = (await c.get(f"/v1/join/resolve/{r.json()['code']}")).json()["payload"]
+    key = (await c.post("/v1/join/redeem", json={"code": payload["c"], "name": name})
+           ).json()["participant_key"]
+    token = (await c.post("/v1/auth/token", json={"api_key": key})).json()["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def test_the_creator_re_adds_a_kicked_invitee(relay) -> None:
+    """Fable's bug bash: re-adding kicked bob got 409 "the name 'bob' belongs to an
+    invited member", so the only way back was a new invite. Putting him back in the
+    room his own invite was for is allowed; posting as him stays refused."""
+    c, _ = relay
+    bob = await _invitee(c, "bob")
+    r = await c.post("/rooms/build/kick", json={"participant": "bob", "requested_by": "alice"},
+                     headers=ADMIN)
+    assert r.status_code == 200, r.text
+    assert (await c.get("/rooms/build/history", headers=bob)).status_code == 403
+    assert await room_add.add_members("build", ["bob"]) == 0
+    assert (await c.get("/rooms/build/history", headers=bob)).status_code == 200
+    forged = await c.post("/rooms/build/messages", headers=ADMIN,
+                          json={"from_name": "bob", "content": "hi, it's bob"})
+    assert forged.status_code == 409, forged.text
+
+
+async def test_adding_an_unclaimed_name_still_reserves_it(relay) -> None:
+    """The secret holder adds "zed": no later invite can claim zed and read the room."""
+    c, _ = relay
+    assert await room_add.add_members("build", ["zed"]) == 0
+    r = await c.post("/v1/join/mint", json={"room": "build"}, headers=ADMIN)
+    payload = (await c.get(f"/v1/join/resolve/{r.json()['code']}")).json()["payload"]
+    taken = await c.post("/v1/join/redeem", json={"code": payload["c"], "name": "zed"})
+    assert taken.status_code == 409, taken.text
+
+
+async def test_an_invitee_isnt_granted_a_room_their_invite_wasnt_for(relay, capsys) -> None:
+    """Codex on 8e6fa5c2: a grant meant for someone else must never land on an
+    invitee's name. Only the room their own invite was for readmits them."""
+    c, _ = relay
+    await _invitee(c, "bob")
+    r = await c.post("/rooms", json={"name": "ops", "created_by": "alice"}, headers=ADMIN)
+    assert r.status_code == 200, r.text
+    assert await room_add.add_members("ops", ["bob"]) == 1
+    assert "belongs to an invited member" in capsys.readouterr().out
+
+
+async def test_a_readmitted_observer_is_still_an_observer(relay) -> None:
+    c, _ = relay
+    await _invitee(c, "dana", role="observer")
+    await c.post("/rooms/build/kick", json={"participant": "dana", "requested_by": "alice"},
+                 headers=ADMIN)
+    assert await room_add.add_members("build", ["dana"]) == 0
+    assert (await _roles(c))["dana"] == "observer"
+
+
+async def test_a_revoked_invitee_needs_a_new_invite(relay) -> None:
+    c, _ = relay
+    r = await c.post("/v1/join/mint", json={"room": "build"}, headers=ADMIN)
+    inv_id = r.json()["invite_id"]
+    payload = (await c.get(f"/v1/join/resolve/{r.json()['code']}")).json()["payload"]
+    await c.post("/v1/join/redeem", json={"code": payload["c"], "name": "erin"})
+    revoked = await c.post(f"/v1/join/invites/{inv_id}/revoke", headers=ADMIN)
+    assert revoked.status_code == 200, revoked.text
+    assert await room_add.add_members("build", ["erin"]) == 1
+    assert "erin" not in await _roles(c)
