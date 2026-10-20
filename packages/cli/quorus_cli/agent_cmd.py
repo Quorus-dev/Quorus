@@ -123,6 +123,13 @@ def _serves_relay(pid: str, relay_url: str) -> bool:
 def _credentials(cfg: dict[str, Any], name: str, harness: str) -> tuple[str, bool]:
     """(credential, legacy) for the agent. Account relays mint a key per agent
     (cached 0600 so re-runs reuse it); shared-secret relays use the secret."""
+    if (cfg.get("relay_secret") and (cfg.get("api_key") or "").startswith("quorus_pk_")
+            and not _on_teammates_relay(cfg)):
+        # H4: on their own relay the owner holds a participant key for who they
+        # are and the secret for running the relay. Their agents keep the secret,
+        # as before H4: the key path is for invited members' agents, and the
+        # relay refused it here ("only an invited person's own key can add agents").
+        return cfg["relay_secret"], True
     if cfg.get("api_key"):
         cache = _agents_dir() / f"{name}.json"
         if cache.exists():
@@ -143,6 +150,19 @@ def _credentials(cfg: dict[str, Any], name: str, harness: str) -> tuple[str, boo
     if cfg.get("relay_secret"):
         return cfg["relay_secret"], True
     raise SystemExit("agent: not configured — run `quorus init` or `quorus join` first")
+
+
+def _on_teammates_relay(cfg: dict[str, Any]) -> bool:
+    """This profile signs in with a participant key to a relay this machine
+    didn't start. The key alone no longer says so: since H4 the relay's own
+    owner signs in with one too, and was shown the teammate note and pinned
+    as an invitee on their own relay (0.6.3 audit replay)."""
+    if not (cfg.get("api_key") or "").startswith("quorus_pk_"):
+        return False
+    from quorus.runtime import own_relays
+
+    mine = own_relays.normalize_relay(cfg.get("relay_url") or "")
+    return not (mine and mine in own_relays.own_relays(own_relays.own_relays_path()))
 
 
 def _claim_member_agent(cfg: dict[str, Any], name: str) -> str:
@@ -438,7 +458,7 @@ def _add(args: Any, console: Any) -> None:
             raise SystemExit(f"agent: {flag} applies to the room's workspace, and "
                              f"#{args.room} has none on this machine yet; add "
                              f"--repo <path>")
-    member = (cfg.get("api_key") or "").startswith("quorus_pk_")
+    member = _on_teammates_relay(cfg)
     mode = args.mode
     if (member and repo is not None and mode == "autonomous"
             and not getattr(args, "disclosed", False)):

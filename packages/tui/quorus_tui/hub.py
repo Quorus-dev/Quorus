@@ -631,6 +631,14 @@ def _exchange_api_key_for_jwt(relay: str, api_key: str) -> str | None:
     return None
 
 
+def _invited_elsewhere(api_key: str, relay_url: str) -> bool:
+    """A participant key on a relay this machine didn't start: an invitee. Since
+    H4 the relay's own owner holds a key too, so the key alone doesn't say."""
+    from quorus_cli.agent_cmd import _on_teammates_relay
+
+    return _on_teammates_relay({"api_key": api_key, "relay_url": relay_url})
+
+
 def _ask_relay_address(console: Console, tries: int = 3) -> str:
     """Ask for the teammate's relay address until it looks like one
     (http(s)://host[:port]); empty after *tries* bad answers."""
@@ -4079,7 +4087,7 @@ def _run_session(
                 "[dim]Is it running? Try: quorus relay[/]"
             )
         # Any other failure → render the empty-state hint from the panel.
-    elif announce_ready and profile.get("room") and api_key_val.startswith("quorus_pk_"):
+    elif announce_ready and profile.get("room") and _invited_elsewhere(api_key_val, relay_url):
         # An invitee's first run: the teammate's relay already has rooms, so the
         # blank-slate offer never ran and their agent CLIs went unmentioned (bet 1's
         # invitee persona). Offer them for the room the invite was for.

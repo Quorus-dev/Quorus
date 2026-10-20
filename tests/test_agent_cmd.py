@@ -236,7 +236,14 @@ def invitee(env: dict, tmp_path: Path, monkeypatch) -> dict[str, Any]:
     """bob on alice's relay: his own member key, no secret."""
     env["cfg"].update(instance_name="bob", relay_secret="", api_key="quorus_pk_bob")
     monkeypatch.setattr(agent_cmd, "_claim_member_agent", lambda c, name: "agent-key")
-    monkeypatch.setattr(agent_cmd, "_pin_owner", lambda c, name: None)
+    pins: list[str] = []
+    monkeypatch.setattr(agent_cmd, "_pin_owner", lambda c, name: pins.append(name))
+    env["pins"] = pins
+    from quorus.runtime import own_relays
+
+    own = tmp_path / "own_relays.json"  # never the real HOME's record
+    monkeypatch.setattr(own_relays, "own_relays_path", lambda: own)
+    env["own_relays"] = own
     monkeypatch.setattr(agent_cmd, "_bearer", lambda c, cred, legacy: f"jwt:{cred}")
     repo = tmp_path / "app"
     repo.mkdir()
@@ -331,3 +338,23 @@ def test_mode_with_no_workspace_says_to_add_repo(env: dict, tmp_path: Path) -> N
         agent_cmd.cmd_agent(_Args(tool="codex", mode="default"), _Console())
     assert "--mode" in str(exc.value) and "--repo" in str(exc.value)
     assert env["joins"] == [] and env["daemons"] == []
+
+
+def test_the_relay_owner_with_a_key_isnt_treated_as_an_invitee(invitee, tmp_path,
+                                                               monkeypatch) -> None:
+    """0.6.3 audit replay: since H4 the relay's own owner signs in with a participant
+    key, so the key alone made her own relay look like a teammate's: the note, an
+    extra question, and an invitee's owner pin. Her own relays are recorded."""
+    invitee["own_relays"].write_text(json.dumps([invitee["cfg"]["relay_url"]]))
+    monkeypatch.setattr(agent_cmd.sys.stdin, "isatty", lambda: True)
+    console = _Console()
+    agent_cmd.cmd_agent(_Args(tool="codex", repo=str(invitee["repo"]), mode="autonomous"),
+                        console)
+    assert not any(agent_cmd.TEAMMATE_RELAY_NOTE in ln for ln in console.lines)
+    assert invitee["pins"] == [] and _bound_mode(tmp_path) == "autonomous"
+
+
+def test_an_invitee_on_a_teammates_relay_is_still_pinned(invitee, tmp_path) -> None:
+    agent_cmd.cmd_agent(_Args(tool="codex", repo=str(invitee["repo"]), mode="default"),
+                        _Console())
+    assert invitee["pins"] == ["bob-codex"]
