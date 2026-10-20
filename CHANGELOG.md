@@ -77,6 +77,12 @@ agents in one room.
 - An agent that deliberated in its reply ("NO_REPLY? No — …") posted the protocol token
   into the room. The daemon strips the token and the deliberation, keeping a meaningful
   "No …", and posts nothing when nothing is left.
+- Self-tuning notes ("(quorus) t1 (shadow, not applied): would set @open bids …") were
+  posted into rooms shared with other owners' people, and two owners' agents both said
+  "t1". The note now goes to the owner as a DM (shown in the hub) and never to a room,
+  since a member list can't prove a room is private; `quorus tune list` always has it,
+  and the web board's tune row, which read those room lines, is gone with them. Ids name
+  the owner (`arav.t1`), so `quorus tune undo arav.t1` is unambiguous.
 
 ## [0.6.3] — 2026-10-20
 
