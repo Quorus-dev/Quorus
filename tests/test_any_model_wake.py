@@ -651,3 +651,34 @@ def test_an_unavailable_paid_model_is_still_reported() -> None:
     out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert out.startswith("⚠ opencode: Model unavailable")
     assert adapter.model == "xai/grok-code-fast-1"  # a paid pick is never swapped
+
+
+# ── opencode 1.x vs 2.x permissions (0.6.3 audit, BUG 22) ──────────────────
+
+
+def test_opencode_1x_gets_only_the_permission_key_it_reads() -> None:
+    """npm's `opencode-ai` is 1.19.3, which refuses the whole config when it holds
+    2.x `permissions`: every autonomous wake exited 1."""
+    v1 = models.opencode_config(None, mode="autonomous", v1=models.is_opencode_v1("1.19.3"))
+    assert "permission" in v1 and "permissions" not in v1
+    v2 = models.opencode_config(None, mode="autonomous",
+                                v1=models.is_opencode_v1("opencode v2.0.30"))
+    assert "permission" in v2 and "permissions" in v2  # 2.x unchanged
+    ollama = models.opencode_config(None, mode="autonomous", model="ollama/qwen3:4b", v1=True)
+    assert "ollama" in ollama["provider"] and "permissions" not in ollama
+
+
+def test_the_v1_daemon_sends_the_v1_config(adapter: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter.opencode_v1 = True
+    calls = _capture(monkeypatch, [OPENCODE_OUT])
+    asyncio.run(adapter.run("opencode", context="ctx", mode="autonomous"))
+    sent = json.loads(calls[0]["env"]["OPENCODE_CONFIG_CONTENT"])
+    assert "permission" in sent and "permissions" not in sent
+
+
+def test_opencode_1x_refusing_its_config_is_named_not_unknown() -> None:
+    stderr = ("Error: Configuration is invalid at OPENCODE_CONFIG_CONTENT\n"
+              "↳ V2 permissions are not supported by OpenCode V1\n")
+    msg = reflexd.diagnose_harness_failure("opencode", stderr)
+    assert msg and "1.x" in str(msg) and "@opencode/cli" in str(msg)
+    assert "OPENCODE_CONFIG_CONTENT" not in str(msg)  # named, never quoted

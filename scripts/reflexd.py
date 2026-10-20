@@ -1061,6 +1061,20 @@ def is_agent_participant(participant: str) -> bool:
 # stderr — deliberately narrow so an unknown failure stays generic rather
 # than being mislabelled.
 _HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
+    # opencode 1.x refusing the 2.x permission key: every autonomous wake "exited 1
+    # with no known cause" (0.6.3 audit, BUG 22). Named here instead of quoting
+    # stderr, which can echo secrets.
+    (
+        "v2 permissions are not supported",
+        "this opencode is 1.x and refused Quorus's permission settings. Upgrade to "
+        "opencode 2 (`brew install opencode` or `npm i -g @opencode/cli`; npm's "
+        "`opencode-ai` package is still 1.x), then mention me again",
+    ),
+    (
+        "configuration is invalid",
+        "opencode refused its configuration. Check `opencode --version` (Quorus is "
+        "tested on opencode 2) and any opencode.json in this repo, then mention me again",
+    ),
     (
         "ineligibletiererror",
         "Gemini CLI is no longer supported on this account tier "
@@ -1796,7 +1810,7 @@ class HeadlessAdapter:
     ) -> str:
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         env["OPENCODE_CONFIG_CONTENT"] = json.dumps(reflexd_models.opencode_config(
-            self.wake_spec, mode=mode, model=self.model))
+            self.wake_spec, mode=mode, model=self.model, v1=self.opencode_v1))
         return await self._run_with_resume(
             lambda sid: build_opencode_argv(context, extra=reflexd_models.opencode_flags(
                 model=self.model, resume=sid, standalone=not self.opencode_v1)),
