@@ -7557,15 +7557,82 @@ def _cmd_relay(args):
                       "wasn't stopped", hint="stop it yourself, or use another --port")
             sys.exit(1)
         console.print(f"[dim]stopped the relay quorus started on port {args.port}[/]")
+    # Something that is not a healthy relay may hold the port (a crashed relay's
+    # orphan, another program). The child would die on bind and this wrapper used
+    # to exit 0 saying nothing, while the old process kept serving (BUG 30).
+    holder = _port_holder(host, args.port)
+    if holder:
+        _ui.error(f"Port {args.port} on {host} is already in use{holder}",
+                  hint="stop that process, or start this relay with another --port")
+        sys.exit(1)
     state = os.environ.get("MESSAGES_FILE") or str(resolve_config_dir() / "relay-state.json")
     env = {**os.environ, "RELAY_SECRET": secret, "PORT": str(args.port), "HOST": host,
            "ALLOW_LEGACY_AUTH": "1", "MESSAGES_FILE": state}
     console.print(f"[bold]Starting Quorus relay on http://{host}:{args.port}[/bold]")
     console.print(f"  [dim]state: {state} · Ctrl+C to stop[/]\n")
+    code = _run_relay_child(env)
+    if code:
+        _ui.error(f"The relay exited with code {code}",
+                  hint=f"if the port was taken meanwhile, free it or use another --port "
+                       f"({host}:{args.port})")
+        sys.exit(code)
+
+
+def _port_holder(host: str, port: int) -> str | None:
+    """"" when the port can be bound, else a short note about who holds it (or
+    "" when nothing more is known), so `quorus relay` can refuse before forking."""
+    import errno
+    import socket
+
     try:
-        subprocess.run([sys.executable, "-m", "quorus.relay_cli"], env=env, check=False)
-    except KeyboardInterrupt:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, port))
+    except OSError as exc:
+        if exc.errno not in (errno.EADDRINUSE, errno.EACCES):
+            return None
+        try:
+            out = subprocess.run(["lsof", "-nP", "-iTCP:%d" % port, "-sTCP:LISTEN", "-Fcp"],
+                                 capture_output=True, text=True, timeout=3).stdout
+            pid = next((ln[1:] for ln in out.splitlines() if ln.startswith("p")), "")
+            cmd = next((ln[1:] for ln in out.splitlines() if ln.startswith("c")), "")
+            return f" by pid {pid} ({cmd})" if pid else ""
+        except Exception:
+            return ""
+    return None
+
+
+def _run_relay_child(env: dict) -> int:
+    """Run `python -m quorus.relay_cli` in the foreground and return its exit code.
+
+    SIGTERM and SIGINT sent to this wrapper are forwarded to the child and the
+    wrapper waits for it, so `kill <wrapper pid>` frees the port instead of
+    leaving an orphan relay serving (BUG 30, 0.6.3 multi-person audit)."""
+    import signal
+
+    child = subprocess.Popen([sys.executable, "-m", "quorus.relay_cli"], env=env)
+
+    def forward(signum, _frame):
+        try:
+            child.send_signal(signum)
+        except ProcessLookupError:
+            pass
+
+    previous = {sig: signal.signal(sig, forward) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        while True:
+            try:
+                code = child.wait()
+                break
+            except KeyboardInterrupt:  # the signal handler already forwarded it
+                continue
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    if code in (-signal.SIGTERM, -signal.SIGINT, 0):
         console.print("\n[dim]relay stopped[/]")
+        return 0
+    return int(code)
 
 def _cmd_version(args):
     from quorus import __version__
