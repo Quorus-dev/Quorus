@@ -43,6 +43,7 @@ from quorus.auth.policy import (
 )
 from quorus.routes.helpers import _validate_name
 from quorus.routes.room_auth import require_not_observer_only
+from quorus.services import sse_identity
 
 router = APIRouter()
 
@@ -497,7 +498,15 @@ async def stream_agent_dms(
     mint a second token type.
     """
     sse_svc = request.app.state.sse_service
-    valid, tid = await sse_svc.verify_token(token, participant)
+    # Same identity binding as /stream/{recipient} (4e036f88): POST /stream/token
+    # now mints a claim-generation-bound token, so the bare verify here refused
+    # every agent's DM stream with 401 and owner alerts never arrived live.
+    claim, opaque = sse_identity.unwrap(token)
+    valid, tid = await sse_svc.verify_token(
+        opaque, sse_identity.recipient_key(participant, claim))
+    if valid and not await sse_identity.current(request, tid, participant, claim):
+        raise HTTPException(status_code=401,
+                            detail="Stream identity was released; sign in again")
     if not valid:
         # Optional legacy fallback — kept symmetric with /stream/{recipient}.
         import hmac as _hmac
@@ -533,14 +542,26 @@ async def stream_agent_dms(
                 # mutate the inbox here (the inbox is the durable copy).
             inbox = _get_inbox(request)
             for env in list(inbox.get(key, [])):
+                # Codex on e0f6e3ac: the name can be released and reclaimed between
+                # `connected` and the replay, so the old stream must not replay the
+                # successor's mail. Recheck before every entry, as the live loop does.
+                if valid and not await sse_identity.current(
+                        request, tid, participant, claim):
+                    return
                 yield f"event: agent_dm\ndata: {json.dumps(env)}\n\n"
             while True:
                 try:
                     envelope = await asyncio.wait_for(q.get(), timeout=30)
+                    if valid and not await sse_identity.current(
+                            request, tid, participant, claim):
+                        return  # the name was released or reclaimed mid-stream
                     yield (
                         f"event: agent_dm\ndata: {json.dumps(envelope)}\n\n"
                     )
                 except asyncio.TimeoutError:
+                    if valid and not await sse_identity.current(
+                            request, tid, participant, claim):
+                        return
                     yield ": keepalive\n\n"
         except asyncio.CancelledError:
             pass

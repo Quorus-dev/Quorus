@@ -277,10 +277,19 @@ fi
 # 2. Install (or upgrade) Quorus from the repo.
 pipx install --force quorus-ai >/dev/null
 
-# 3. Figure out a reasonable default name — can be overridden interactively.
+# 3. Ask for a name on the terminal. With `curl … | bash` stdin is the
+#    download, not the keyboard, so the question goes to /dev/tty when there
+#    is one (0.6.3 audit, multi-person lane: the one-liner silently joined
+#    as $USER and then died on "the hub needs a terminal").
 DEFAULT_NAME="${{USER:-user}}"
+TTY=""
 if [[ -t 0 ]]; then
-  read -r -p "Your name [${{DEFAULT_NAME}}]: " NAME_INPUT || true
+  TTY=/dev/stdin
+elif ( : </dev/tty ) 2>/dev/null; then
+  TTY=/dev/tty
+fi
+if [[ -n "$TTY" ]]; then
+  read -r -p "Your name [${{DEFAULT_NAME}}]: " NAME_INPUT <"$TTY" || true
   NAME="${{NAME_INPUT:-$DEFAULT_NAME}}"
 else
   NAME="$DEFAULT_NAME"
@@ -291,8 +300,13 @@ fi
 #    install otherwise falls back to the public default and can't resolve it.
 quorus join "{code}" --relay "{relay_url}" --name "$NAME"
 
-# 5. Open the hub.
-exec quorus
+# 5. Open the hub on the terminal; without one, say what to run next.
+if [[ "$TTY" == /dev/tty ]]; then
+  exec quorus </dev/tty >/dev/tty 2>&1
+elif [[ -n "$TTY" ]]; then
+  exec quorus
+fi
+echo "✓ Joined as $NAME. Next: run  quorus  in a terminal to open the hub."
 """
 
 

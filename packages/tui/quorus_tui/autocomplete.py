@@ -9,6 +9,7 @@ State machine:
     HIDDEN ── user types `@` after word boundary ──> OPEN_MENTION
     OPEN_*  ── prefix grows / shrinks ──> filter() re-runs, popover redraws
     OPEN_*  ── Tab/Enter ──> ACCEPTING (caller commits the replacement)
+    OPEN_SLASH ── Enter on an exact command ──> SUBMIT (caller commits + sends)
     OPEN_*  ── Esc / space-after-word / non-matching char ──> HIDDEN
 
 Render contract:
@@ -19,8 +20,12 @@ Render contract:
       ``@arav``; description is a short one-liner shown in muted text.
 
 Keystroke contract:
-    * ``handle_key(key)`` returns ``"accept" | "dismiss" | "next" | "prev"
-      | "consume" | None``. None means "not handled — pass through".
+    * ``handle_key(key)`` returns ``"accept" | "submit" | "dismiss" | "next"
+      | "prev" | "consume" | None``. None means "not handled — pass through".
+    * ``"submit"``: Enter while the typed text already IS the selected slash
+      command (``/rooms`` + Enter). The caller commits the label and then
+      runs the line, instead of only adding a trailing space and making the
+      user press Enter twice (0.6.3 audit, HUB lane).
     * ``"consume"`` means the popover swallowed the key (e.g., the user
       typed a letter that grew the prefix); caller does NOT echo it
       separately — the popover already updated its own state and the
@@ -46,7 +51,7 @@ _MAX_WIDTH = 60
 # State kinds. HIDDEN means the popover is dormant; the two OPEN_* variants
 # distinguish which item-source to filter against.
 PopoverKind = Literal["hidden", "slash", "mention"]
-PopoverAction = Literal["accept", "dismiss", "next", "prev", "consume"]
+PopoverAction = Literal["accept", "submit", "dismiss", "next", "prev", "consume"]
 
 
 class AutocompletePopover:
@@ -203,6 +208,9 @@ class AutocompletePopover:
             if not self.items:
                 self.dismiss()
                 return "dismiss"
+            if k == "ENTER" and self.kind == "slash" and \
+                    (self.selected_label() or "").lower() == self.prefix.lower():
+                return "submit"
             return "accept"
         if k == "ESC":
             self.dismiss()

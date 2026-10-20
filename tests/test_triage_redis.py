@@ -443,3 +443,76 @@ async def test_mirror_failures_are_counted(monkeypatch):
     before = p1_persistence.MIRROR_FAILURES
     await p1_persistence.mirror_set("ns", "field", {"a": 1})
     assert p1_persistence.MIRROR_FAILURES == before + 1
+
+
+async def test_redis_a_read_only_bid_never_beats_one_that_can_do_the_work(fake_redis):
+    """Bug 20 on the shared auction: banked credit can't carry a read-only bid past
+    a writable one, and losing read-only earns no credit."""
+    await fake_redis.hincrbyfloat(tr._credit_key("t"), "aarya-opencode", 3.0)
+    await tr.record_bid(fake_redis, tid="t", rid="room", mid="m1",
+                        participant="aarya-opencode", bid=0.05,
+                        reason="open_any_agent+read-only", ttl_seconds=30)
+    await tr.record_bid(fake_redis, tid="t", rid="room", mid="m1",
+                        participant="arav-codex", bid=0.5, reason="open_any_agent",
+                        ttl_seconds=30)
+
+    def factory(bids, winner, winner_bid, credits):
+        return {"claimed": True, "winner": winner, "bid": winner_bid, "ttl_seconds": 1,
+                "claim_token": "tok-" + winner, "expires_at": "x",
+                "candidates": sorted(bids), "fairness_credit": credits}
+
+    payload, _, _ = await tr.try_claim(fake_redis, tid="t", rid="room", mid="m1",
+                                       claim_payload_factory=factory)
+    assert payload["winner"] == "arav-codex"
+    assert await tr.get_credit(fake_redis, "t", "aarya-opencode") == 3.0
+
+
+async def test_route_level_claim_says_when_every_bid_is_read_only(client, fake_redis):
+    rid = await _room_with(client, ["arav", "a-claude", "b-claude"])
+    for who in ("a-claude", "b-claude"):
+        resp = await client.post("/v1/bid", json={
+            "room_id": rid, "message_id": "m-ro", "participant": who, "bid": 0.05,
+            "reason": "open_any_agent+read-only", "ttl_seconds": 1}, headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+    await asyncio.sleep(1.05)
+    claim = await client.post("/v1/claim", json={"room_id": rid, "message_id": "m-ro"},
+                              headers=HEADERS)
+    assert claim.status_code == 200, claim.text
+    assert claim.json()["read_only"] is True
+
+
+async def test_redis_reports_a_read_only_losers_unchanged_credit(fake_redis):
+    for who, bid, reason in (("a", 0.05, "x+read-only"), ("b", 0.5, "x")):
+        await tr.record_bid(fake_redis, tid="t", rid="room", mid="m2", participant=who,
+                            bid=bid, reason=reason, ttl_seconds=30)
+
+    def factory(bids, winner, winner_bid, credits):
+        return {"claimed": True, "winner": winner, "bid": winner_bid, "claim_token": "t",
+                "expires_at": "x", "candidates": sorted(bids), "fairness_credit": credits}
+
+    payload, _, _ = await tr.try_claim(fake_redis, tid="t", rid="room", mid="m2",
+                                       claim_payload_factory=factory)
+    assert payload["winner"] == "b"
+    assert payload["fairness_credit"] == {"a": 0.0, "b": -1.0}
+
+
+async def test_redis_a_first_read_only_loss_is_reported_without_credit(fake_redis):
+    """Same live case on the shared auction: the read-only loser has no credit yet;
+    the claim reports it at 0.0 and gives it none."""
+    await tr.record_bid(fake_redis, tid="t", rid="room", mid="m2",
+                        participant="sam2-opencode", bid=0.9,
+                        reason="open_any_agent+read-only", ttl_seconds=30)
+    await tr.record_bid(fake_redis, tid="t", rid="room", mid="m2",
+                        participant="arav-codex", bid=0.1, reason="open_any_agent",
+                        ttl_seconds=30)
+
+    def factory(bids, winner, winner_bid, credits):
+        return {"claimed": True, "winner": winner, "bid": winner_bid, "ttl_seconds": 1,
+                "claim_token": "tok-" + winner, "expires_at": "x",
+                "candidates": sorted(bids), "fairness_credit": credits}
+
+    payload, _, _ = await tr.try_claim(fake_redis, tid="t", rid="room", mid="m2",
+                                       claim_payload_factory=factory)
+    assert payload["winner"] == "arav-codex"
+    assert payload["fairness_credit"]["sam2-opencode"] == 0.0
+    assert await tr.get_credit(fake_redis, "t", "sam2-opencode") == 0.0

@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -206,6 +206,10 @@ async def send_room_message(
             mutating=True,
             required=True,
         )
+        repeat = await _already_posted(s, room_id, content)
+        if repeat is not None:
+            return (f"Already posted in this room (id: {repeat.get('id')}), so it wasn't "
+                    "sent again. Carry on with the task.")
         resp = await s._get_http_client().post(
             f"{s.RELAY_URL}/rooms/{room_id}/messages",
             json={
@@ -219,6 +223,26 @@ async def send_room_message(
         return f"Room message sent (id: {resp.json()['id']})"
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return s._relay_error_message(e)
+
+
+async def _already_posted(s: Any, room_id: str, content: str) -> dict | None:
+    """This agent's message that *content* would repeat (quorus_mcp/repost.py). If
+    the history can't be read, post: a rare duplicate beats a lost message."""
+    from quorus_mcp.repost import duplicate_of
+
+    try:
+        resp = await s._get_http_client().get(
+            f"{s.RELAY_URL}/rooms/{room_id}/history", params={"limit": 30},
+            headers=await s._auth_headers_async())
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    msgs = data if isinstance(data, list) else (
+        data.get("messages") if isinstance(data, dict) else None)
+    if not isinstance(msgs, list):  # not a history we can read: post
+        return None
+    return duplicate_of([m for m in msgs if isinstance(m, dict)], s.INSTANCE_NAME, content)
 
 
 async def join_room(room_id: str, context: "Context | None" = None) -> str:

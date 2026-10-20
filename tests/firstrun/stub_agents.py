@@ -153,10 +153,30 @@ def relay_secret(home: Path) -> str:
         "relay_secret"]
 
 
+POLL_S = 1.5  # the test relay rate-limits: a 0.5 s poll under a loaded suite got 429s
+
+
+class RelayBusy(Exception):
+    """The test relay answered 429; *wait* is its Retry-After, capped."""
+
+    def __init__(self, wait: float) -> None:
+        super().__init__(f"relay busy, retry in {wait:g}s")
+        self.wait = wait
+
+
+def retry_after(value: str | None, default: float = 2.0, cap: float = 10.0) -> float:
+    try:
+        return min(max(float(value), 0.0), cap) if value is not None else default
+    except ValueError:
+        return default
+
+
 def history(s, room: str = "general") -> list[dict]:
     with httpx.Client(trust_env=False, timeout=5) as c:
         r = c.get(f"{s.relay_url}/rooms/{room}/history", params={"limit": 200},
                   headers={"Authorization": f"Bearer {s.secret}"})
+    if r.status_code == 429:
+        raise RelayBusy(retry_after(r.headers.get("Retry-After")))
     r.raise_for_status()
     data = r.json()
     return data if isinstance(data, list) else data.get("messages", [])
@@ -165,11 +185,18 @@ def history(s, room: str = "general") -> list[dict]:
 def wait_for(s, sender: str, marker: str, timeout: float) -> str:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        for m in history(s):
-            if m.get("from_name") == sender and marker in (m.get("content") or ""):
-                return m["content"]
-        time.sleep(0.5)
-    seen = [(m.get("from_name"), (m.get("content") or "")[:80]) for m in history(s)]
+        try:
+            for m in history(s):
+                if m.get("from_name") == sender and marker in (m.get("content") or ""):
+                    return m["content"]
+            pause = POLL_S
+        except RelayBusy as busy:  # back off as the relay asks, never hammer it
+            pause = max(busy.wait, POLL_S)
+        time.sleep(max(0.0, min(pause, deadline - time.monotonic())))
+    try:
+        seen = [(m.get("from_name"), (m.get("content") or "")[:80]) for m in history(s)]
+    except RelayBusy:
+        seen = "(relay busy: 429)"
     raise AssertionError(f"no message from {sender} with {marker!r} within {timeout}s; "
                          f"history: {seen}")
 

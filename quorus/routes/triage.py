@@ -93,6 +93,9 @@ class ClaimResponse(BaseModel):
     expires_at: str
     candidates: list[str]
     fairness_credit: dict[str, float]
+    # Every bid was read-only for the requester: the winner can't do the work and
+    # says so instead of taking a turn (audit 0.6.3, bug 20; Opus2 on 54da38fe).
+    read_only: bool = False
 
 
 @dataclass
@@ -311,6 +314,7 @@ async def submit_bid(
         window.bids.values(),
         key=lambda item: (
             item.bid >= MENTION_BID,
+            not _tr.read_only(item.reason),
             item.bid + _fairness_credit.get((tid, item.participant), 0.0),
             item.created_at,
         ),
@@ -372,6 +376,7 @@ async def claim_winner(
         window.bids.values(),
         key=lambda item: (
             item.bid >= MENTION_BID,
+            not _tr.read_only(item.reason),
             item.bid + _fairness_credit.get((tid, item.participant), 0.0),
             item.created_at,
         ),
@@ -379,6 +384,9 @@ async def claim_winner(
     candidates = sorted(window.bids)
     for participant in candidates:
         credit_key = (tid, participant)
+        if participant != winner.participant and _tr.read_only(
+                window.bids[participant].reason):
+            continue  # a read-only loser earns no credit toward work it can't do
         if participant == winner.participant:
             _fairness_credit[credit_key] = _fairness_credit.get(credit_key, 0.0) - 1.0
         else:
@@ -392,10 +400,13 @@ async def claim_winner(
         claim_token=str(uuid.uuid4()),
         expires_at=expires_at.isoformat(),
         candidates=candidates,
+        # .get: a read-only loser is skipped above, so its first loss leaves no
+        # entry (live 500 on 54da38fe, KeyError at this line).
         fairness_credit={
-            participant: _fairness_credit[(tid, participant)]
+            participant: _fairness_credit.get((tid, participant), 0.0)
             for participant in candidates
         },
+        read_only=_tr.read_only(winner.reason),
     )
     window.claim = claim
 
@@ -443,6 +454,7 @@ async def _claim_via_redis(r, request, auth, tid, rid, room_data, body) -> Claim
             "expires_at": expires_at.isoformat(),
             "candidates": sorted(bids_now),
             "fairness_credit": credits,
+            "read_only": _tr.read_only((bids_now.get(winner) or {}).get("reason")),
         }
 
     payload, bids, is_fresh = await _tr.try_claim(

@@ -135,7 +135,7 @@ def test_add_on_linux_does_not_claim_it_restarts_at_login(linux: Path,
     monkeypatch.setattr(agent_cmd.shutil, "which", lambda b: f"/usr/bin/{b}")
     monkeypatch.setattr(agent_cmd, "_readiness_warnings", lambda h, m: [])
     monkeypatch.setattr(agent_cmd, "_join", lambda *a: None)
-    monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda name: None)
+    monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda *a, **k: None)
     monkeypatch.setattr(agent_cmd, "_start_daemon", lambda *a, **k: "pid 42")
     console = _Console()
     agent_cmd.cmd_agent(_Args(agent_action="add", tool="codex", room="build", repo=None,
@@ -152,3 +152,22 @@ def test_warns_when_opencode_is_version_1(monkeypatch) -> None:
     assert any("@opencode/cli" in w for w in warnings)
     monkeypatch.setattr(agent_cmd, "_opencode_version", lambda: "2.0.32")
     assert agent_cmd._readiness_warnings("opencode", "opencode/x-free") == []
+
+
+@posix_only
+def test_a_daemon_for_another_relay_is_not_this_agent(linux: Path, monkeypatch) -> None:
+    """An orphaned reflexd for alice-opencode on a dead relay (a bug bash's) made every
+    later `agent add alice-opencode`, on any relay, say "already running" and start
+    nothing: the opencode first-run tests then waited 90 s for an agent that never ran."""
+    monkeypatch.setattr(agent_cmd, "_launchd_labels", lambda: [])
+    name = f"orphan-{time.monotonic_ns()}-opencode"  # unique: pgrep is machine-wide
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)",
+                              "reflexd.py", "start", "--participant", name,
+                              "--relay-url", "http://127.0.0.1:59577"], start_new_session=True)
+    try:
+        time.sleep(0.3)
+        assert agent_cmd._running_daemon_for(name, "http://127.0.0.1:8080") is None
+        assert agent_cmd._running_daemon_for(name, "http://127.0.0.1:59577/") == f"pid {other.pid}"
+        assert agent_cmd._running_daemon_for(name) == f"pid {other.pid}"  # no relay: any counts
+    finally:
+        other.kill()

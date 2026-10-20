@@ -326,6 +326,14 @@ def wake_env(
     if spec is not None:
         env.update(spec["env"])
         env.pop("SSE_ENABLED", None)
+        # The harness can commit before the daemon's commit_all fallback runs.
+        # Bind both roles even when the host has a configured/inherited identity:
+        # otherwise a fresh HOME guesses the human's login and machine hostname.
+        participant = spec["env"].get("QUORUS_INSTANCE_NAME")
+        if participant:
+            for role in ("AUTHOR", "COMMITTER"):
+                env[f"GIT_{role}_NAME"] = participant
+                env[f"GIT_{role}_EMAIL"] = f"{participant}@agents.quorus.local"
     if config_dir is not None:
         env["QUORUS_CONFIG_DIR"] = str(config_dir)
     return env
@@ -391,14 +399,31 @@ def reply_chain_agent_depth(
     return depth
 
 
+_PROGRESS_LINE = re.compile(r"\s*(plan|progress|status|heartbeat)\s*:", re.IGNORECASE)
+
+
+def _bookkeeping(m: dict[str, Any]) -> bool:
+    """An agent's plan/progress line or Quorus's own status message: part of a
+    turn, not a turn of conversation."""
+    body = m.get("content") or ""
+    return (m.get("message_type") == "status" or body.startswith(STATUS_PREFIX)
+            or bool(_PROGRESS_LINE.match(body)))
+
+
 def trailing_agent_chain(history: list[dict[str, Any]], is_agent: Any) -> int:
-    """How many messages at the end of *history* came from agents in a row."""
+    """How many agent messages end *history* since the last human one.
+
+    Plan/progress lines and Quorus status messages don't count: two agents each
+    posting a plan and an answer to one human question tripped the chatter
+    limit with no loop at all (bug bash, ambient rooms). Typed verbs and replies
+    do count, so a hand-off ping-pong is still caught.
+    """
     n = 0
     for m in reversed(history):
-        if is_agent(m.get("from_name") or m.get("sender") or ""):
-            n += 1
-        else:
+        if not is_agent(m.get("from_name") or m.get("sender") or ""):
             break
+        if not _bookkeeping(m):
+            n += 1
     return n
 
 
@@ -881,7 +906,9 @@ def wake_instructions(
         "hash, test status), or the answer. Write it like a chat message: 1-4 "
         "short lines, no headings, no bold, a list only when it saves words.\n"
         + (f"- If nothing here needs a reply from you, make your final message "
-           f"exactly {NO_REPLY} and nothing is posted.\n"
+           f"exactly {NO_REPLY} and nothing else, and nothing is posted. Never write "
+           f"that token in a message you do want posted: it is a protocol word, not "
+           f"a word for the room.\n"
            if kind == "agent_room" or from_agent else "")
     )
 
@@ -893,3 +920,42 @@ def is_no_reply(reply: str) -> bool:
     """True when the agent chose silence (its last line is the NO_REPLY token)."""
     lines = [ln.strip().strip("`*_.\"'") for ln in (reply or "").splitlines() if ln.strip()]
     return bool(lines) and lines[-1].upper() == NO_REPLY
+
+
+_LEAK_HEAD = re.compile(
+    # Only the token and the non-word characters right after it ("? ", ": ", "→",
+    # "->", "—", spaces). Never a word: three rounds of "No — …" heuristics each
+    # flipped a meaning somewhere ("No-go", "no-write", "No tests passed"), so the
+    # rule is now the overseer's: delete no letters other than the token's.
+    # Unicode-aware: `\w` keeps É, α and 未 (Codex, review of 0261a67c).
+    r"^[`*\"']*" + NO_REPLY + r"(?!\w)[^\w\n]*",
+    re.IGNORECASE,
+)
+_LEAK_INLINE = re.compile(r"[`*\"']*\b" + NO_REPLY + r"\b[`*\"']*", re.IGNORECASE)
+
+
+def scrub_no_reply(reply: str) -> str:
+    """The protocol token never reaches the room. An agent that deliberated in
+    its reply ("NO_REPLY? No — there is one missing fact…", 0.6.3 multi-person
+    audit, BUG 10) keeps every word after the token, deliberation included
+    ("No — there is one missing fact" posts as written, a little awkward but
+    never wrong); a bare token line anywhere is dropped; an inline mention, any
+    case, is removed. No other letters are ever deleted, so "No-go", "no-write"
+    and "No tests passed" survive by construction, and identifiers that merely
+    start with the token (NO_REPLY_TIMEOUT) are left alone. Returns "" when
+    nothing worth posting is left, which the caller treats like NO_REPLY."""
+    text = (reply or "")
+    if not text.strip() or NO_REPLY not in text.upper():
+        return text
+    kept: list[str] = []
+    for line in text.splitlines():
+        if line.strip().strip("`*.\"'").upper() == NO_REPLY:
+            continue
+        kept.append(line)
+    text = "\n".join(kept).strip()
+    head = _LEAK_HEAD.match(text)
+    if head and head.end() > 0:
+        text = text[head.end():].lstrip()  # remainder verbatim: no case change either
+    text = _LEAK_INLINE.sub("", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()

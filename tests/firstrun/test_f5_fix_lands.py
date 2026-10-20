@@ -53,7 +53,11 @@ def git(*a):
 def from_agent(prompt):
     return "Your teammate agent `" in prompt and "@-mentioned you" in prompt
 def act(prompt, can_write, me, other):
-    sha = re.search(r"review ([0-9a-f]{7,40})", prompt)
+    # Review the commit the triggering message names, not the first sha anywhere in
+    # the transcript: with each agent's own git identity, two independent fixes no
+    # longer share one sha, and the earliest "review <sha>" was often the wrong one.
+    asked = prompt.rsplit("# Triggering message", 1)[-1]
+    sha = re.search(r"review ([0-9a-f]{7,40})", asked)
     if sha:
         return "✅ /vote approve %s: add() returns a + b now; reviewed." % sha.group(1)
     if "without addressing anyone, and you were picked" in prompt:
@@ -200,13 +204,16 @@ def test_f5_a_strangers_fix_lands_on_main_and_the_other_agent_reviews_it(tmp_pat
         s.type(ASK + ENTER)
         fixed = _wait_for(s, "alice-codex", "✅", timeout=120)
         sha = _SHA.search(fixed.split("✅", 1)[1]).group(0)
-        # The change is on main, not just in a reply.
-        deadline = time.monotonic() + 30
-        while _git(repo, "rev-parse", "--short", "main")[:7] != sha[:7]:
+        # The change is on main, not just in a reply. The publish can land after the
+        # ✅ on a slow CI runner, and main may move past it, so wait (up to 90 s) for
+        # the commit to be ON main rather than AT main (PR #15 CI flake).
+        deadline = time.monotonic() + 90
+        while subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", sha,
+                              "main"], capture_output=True).returncode != 0:
             assert time.monotonic() < deadline, f"main is {_git(repo, 'log', '--oneline', '-3')}"
             time.sleep(0.5)
         assert "return a + b" in _git(repo, "show", "main:calc.py")
-        assert "fix: add() returns the sum" in _git(repo, "log", "-1", "--format=%s", "main")
+        assert "fix: add() returns the sum" in _git(repo, "log", "-1", "--format=%s", sha)
         # The review is tied to that commit, by the other agent.
         review = _wait_for(s, "alice-opencode", "/vote approve", timeout=120)
         assert sha[:7] in review

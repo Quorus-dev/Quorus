@@ -1060,6 +1060,23 @@ def is_agent_participant(participant: str) -> bool:
 # line a human can act on. Patterns are lowercase substrings matched against
 # stderr — deliberately narrow so an unknown failure stays generic rather
 # than being mislabelled.
+# opencode only (Codex: other harnesses must not get opencode advice). 1.x refusing
+# the 2.x permission key made every wake "exit 1 with no known cause" (0.6.3 audit,
+# BUG 22). Named here instead of quoting stderr, which can echo secrets.
+_OPENCODE_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
+    (
+        "v2 permissions are not supported",
+        "this opencode is 1.x and refused Quorus's permission settings. Upgrade to "
+        "opencode 2 (`brew install opencode` or `npm i -g @opencode/cli`; npm's "
+        "`opencode-ai` package is still 1.x), then mention me again",
+    ),
+    (
+        "configuration is invalid",
+        "opencode refused its configuration. Check `opencode --version` (Quorus is "
+        "tested on opencode 2) and any opencode.json in this repo, then mention me again",
+    ),
+)
+
 _HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
     (
         "ineligibletiererror",
@@ -1142,6 +1159,10 @@ def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
     generic sentinel rather than inventing a cause.
     """
     low = (stderr or "").lower()
+    if Path(harness or "").name == "opencode":
+        for needle, message in _OPENCODE_DIAGNOSTICS:
+            if needle in low:
+                return f"⚠ {harness}: {message}"
     for needle, message in _HARNESS_DIAGNOSTICS:
         if needle in low:
             text = f"⚠ {harness}: {message}"
@@ -1796,7 +1817,7 @@ class HeadlessAdapter:
     ) -> str:
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         env["OPENCODE_CONFIG_CONTENT"] = json.dumps(reflexd_models.opencode_config(
-            self.wake_spec, mode=mode, model=self.model))
+            self.wake_spec, mode=mode, model=self.model, v1=self.opencode_v1))
         return await self._run_with_resume(
             lambda sid: build_opencode_argv(context, extra=reflexd_models.opencode_flags(
                 model=self.model, resume=sid, standalone=not self.opencode_v1)),
@@ -2844,9 +2865,14 @@ class Reflexd:
                     while len(self._predictions) > 256:
                         self._predictions.pop(next(iter(self._predictions)))
                 if decision.announce:
-                    await self._post_status(relay, room, envelope, decision.announce)
+                    await self._announce_adaptation(relay, room, envelope, decision.announce)
             except Exception as exc:  # a bad track record must never stop a bid
                 logger.debug("track-record bid skipped: %s", exc)
+            if await self._read_only_for(relay, envelope, room):
+                # It would win and then only answer read-only, so the task stalled
+                # (audit 0.6.3, bug 20). Bid the floor: an agent that may write for
+                # this person wins; if none bids, this one still answers.
+                bid, bid_reason = min(bid, 0.05), f"{bid_reason}+read-only"
         if self._wake_lock.locked() and triage.kind != "mention":
             # Busy on another job: still bid (so the work never goes
             # ownerless when everyone is busy) but low, so an idle teammate
@@ -2870,6 +2896,7 @@ class Reflexd:
         # doesn't burn 8 retries on a permanent failure.
         deadline = time.time() + BID_WINDOW_SECONDS
         winner: str | None = None
+        won: dict[str, Any] = {}
         while time.time() < deadline:
             try:
                 claim = await relay.claim(room_id=room, message_id=message_id)
@@ -2899,7 +2926,7 @@ class Reflexd:
                 await asyncio.sleep(0.25)
                 continue
             if claim.get("claimed"):
-                winner = claim.get("winner")
+                winner, won = claim.get("winner"), claim
                 if triage.kind == "open_todo":
                     _track.record_claim(
                         self.config.runtime_dir, self.config.participant_name,
@@ -2933,6 +2960,24 @@ class Reflexd:
                     )
                 except Exception as exc:
                     logger.debug("defer-announce failed (non-fatal): %s", exc)
+            return True
+
+        if won.get("read_only") and triage.kind == "open_todo":
+            # Every bid was read-only for the requester: a turn here could only
+            # answer, so the task stalled (audit 0.6.3, bug 20). Say so once, from
+            # the one winner, and take no turn.
+            requester = envelope.get("from_name") or "the requester"
+            try:
+                await relay.post_reply(
+                    room=room, from_name=self.config.participant_name,
+                    message_type="status", reply_to=message_id or None,
+                    content=(f"{reflexd_wake.STATUS_PREFIX} no agent here can make changes "
+                             f"for @{requester} on this: every agent that bid would only "
+                             f"get read-only turns. @{requester}, add one of your own "
+                             "agents to this room, or ask its owner to set "
+                             "`trust: members`."))
+            except httpx.HTTPError as exc:
+                logger.warning("read-only @open notice failed: %s", exc)
             return True
 
         if self._wake_lock.locked():
@@ -3496,6 +3541,12 @@ class Reflexd:
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
             reply = ""
+        elif reply:
+            # "NO_REPLY? No — …" leaked the protocol token into chat (BUG 10).
+            scrubbed = reflexd_wake.scrub_no_reply(reply)
+            if scrubbed != reply:
+                logger.info("scrubbed a NO_REPLY leak room=%s", room)
+            reply = scrubbed
         if worktree is not None and (await self._settle_readonly(
                 relay, room, worktree, readonly_snap, envelope) or readonly_turn):
             pass  # a read-only turn never publishes, whatever its harness wrote
@@ -3745,6 +3796,23 @@ class Reflexd:
         return "|".join((relay,
                          agent_owner(self.config.participant_name), str(repo or "")))
 
+    async def _announce_adaptation(
+        self, relay: RelayClient, room: str, envelope: dict[str, Any], text: str,
+    ) -> None:
+        """A self-tuning line is its owner's business, so it never goes to a room
+        (0.6.3 multi-person audit, BUG 18: three daemons' "(shadow, not applied)"
+        notes reached friends; Codex: a member list can't prove a room is private,
+        "arav-friend" is a human). It goes to the owner as a DM, which the hub
+        shows, and `quorus tune list` always has it. The board's tune row reads
+        status lines, so it no longer shows these; `quorus tune` is the affordance."""
+        del envelope
+        owner = agent_owner(self.config.participant_name)
+        try:
+            await relay.post_agent_dm(sender=self.config.participant_name, recipient=owner,
+                                      content=f"[#{room}] {text}")
+        except Exception as exc:  # the line is also in `quorus tune list`
+            logger.debug("tuning note to owner failed: %s", exc)
+
     async def _post_status(
         self, relay: RelayClient, room: str, envelope: dict[str, Any], text: str,
     ) -> None:
@@ -3816,6 +3884,22 @@ class Reflexd:
             envelope, history, triage=triage, memory_entries=memory_entries,
             **kw,
         )
+
+    async def _read_only_for(self, relay: Any, envelope: dict[str, Any], room: str) -> bool:
+        """This request would get a read-only turn here: the same trust check a
+        wake makes (every mode, `default` included; `trust: members`, owner pins
+        and signatures as in :meth:`_trusted_wake`). Unknown (history unreadable)
+        is not read-only: never lower a bid on a guess."""
+        if not room:
+            return False
+        fetch = getattr(relay, "fetch_recent", None)
+        if fetch is None:
+            return False
+        try:
+            history = await fetch(room=room, limit=TRUST_CHAIN_LIMIT)
+        except Exception:
+            return False
+        return not await self._trusted_wake(relay, envelope, history)
 
     async def _trusted_wake(self, relay: Any, envelope: dict[str, Any],
                             history: list[dict[str, Any]]) -> bool:

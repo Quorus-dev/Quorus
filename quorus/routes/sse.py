@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from quorus.auth.middleware import ALLOW_LEGACY_AUTH, AuthContext, verify_auth
+from quorus.services import sse_identity
 
 router = APIRouter()
 logger = structlog.get_logger("quorus.routes.sse")
@@ -55,7 +56,12 @@ async def create_sse_token(
             detail="Legacy auth without admin cannot mint SSE tokens",
         )
     svc = request.app.state.sse_service
-    token = await svc.create_token(_tid(auth), recipient, SSE_TOKEN_TTL)
+    claim = auth.claims.get("pk_claim")
+    if auth.is_legacy:
+        claim = await sse_identity.current_claim(request, recipient)
+    token = await svc.create_token(
+        _tid(auth), sse_identity.recipient_key(recipient, claim), SSE_TOKEN_TTL)
+    token = sse_identity.wrap(token, claim)
 
     # 2026-05-16 hardening: set the SSE token as an HttpOnly, Secure, SameSite
     # cookie scoped to /stream so the browser auto-attaches it on the
@@ -89,7 +95,8 @@ async def stream_messages(
     # jar; new browser flows must use the cookie path (see dashboard.js).
     if not token:
         token = request.cookies.get(_SSE_COOKIE_NAME, "")
-    valid, tid = await svc.verify_token(token, recipient)
+    claim, opaque = sse_identity.unwrap(token)
+    valid, tid = await svc.verify_token(opaque, sse_identity.recipient_key(recipient, claim))
     # Wave-5 Fix 6 — tighten the legacy bypass.
     #
     # Allow RELAY_SECRET as a fallback ONLY when:
@@ -112,6 +119,8 @@ async def stream_messages(
         raise HTTPException(status_code=401, detail="Invalid token")
     if not valid:
         tid = _LEGACY_TENANT
+    elif not await sse_identity.current(request, tid, recipient, claim):
+        raise HTTPException(status_code=401, detail="Stream identity was released; sign in again")
 
     q = svc.register_queue(tid, recipient)
     logger.info("SSE client connected for %s", recipient)
@@ -126,8 +135,15 @@ async def stream_messages(
             while True:
                 try:
                     msg = await asyncio.wait_for(q.get(), timeout=30)
+                    if valid:
+                        if not await sse_identity.visible_message(request, tid, recipient, msg):
+                            continue
+                        if not await sse_identity.current(request, tid, recipient, claim):
+                            return
                     yield f"event: message\ndata: {json.dumps(msg)}\n\n"
                 except asyncio.TimeoutError:
+                    if valid and not await sse_identity.current(request, tid, recipient, claim):
+                        return
                     yield ": keepalive\n\n"
         except asyncio.CancelledError:
             pass

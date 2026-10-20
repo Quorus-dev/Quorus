@@ -57,10 +57,14 @@ _OPENCODE_V2_ACTIONS = {"edit": ("edit", "write"), "bash": ("bash", "shell"),
 
 def opencode_config(
     spec: dict[str, Any] | None, *, mode: str = "default", model: str | None = None,
+    v1: bool = False,
 ) -> dict[str, Any]:
     """Passed as OPENCODE_CONFIG_CONTENT, which outranks every config file. A
     project or parent-folder opencode.json beats OPENCODE_CONFIG: a stale
-    `quorus` entry there pointed the agent's room tools at a dead relay."""
+    `quorus` entry there pointed the agent's room tools at a dead relay.
+    *v1*: opencode 1.x (npm's `opencode-ai`) rejects the whole config if it holds
+    2.x ``permissions`` ("V2 permissions are not supported by OpenCode V1"), so
+    every autonomous wake exited 1 (0.6.3 audit, BUG 22); it gets only its own key."""
     cfg: dict[str, Any] = {"$schema": "https://opencode.ai/config.json"}
     if spec is not None:
         cfg["mcp"] = {"quorus": {
@@ -71,11 +75,17 @@ def opencode_config(
         }}
     if mode in _OPENCODE_PERMS:
         perms = _OPENCODE_PERMS[mode]
-        cfg["permission"] = dict(perms)  # opencode 1.x
+        cfg["permission"] = dict(perms)  # opencode 1.x; 2.x has always been sent both
+        if v1:
+            return _with_provider(cfg, model)
         cfg["permissions"] = [  # opencode 2.x
             {"action": action, "resource": "*", "effect": effect}
             for key, effect in perms.items() for action in _OPENCODE_V2_ACTIONS[key]
         ]
+    return _with_provider(cfg, model)
+
+
+def _with_provider(cfg: dict[str, Any], model: str | None) -> dict[str, Any]:
     if model and model.startswith(OLLAMA_PREFIX):
         # opencode has no built-in Ollama provider: declare the local server.
         name = model[len(OLLAMA_PREFIX):]

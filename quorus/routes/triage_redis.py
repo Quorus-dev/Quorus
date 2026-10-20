@@ -30,6 +30,15 @@ from typing import Any
 _CLAIM_TTL_S = 3600
 # Bids at/above this are explicit @-mentions — see routes/triage.py.
 MENTION_BID = 1.0
+READ_ONLY_TAG = "+read-only"
+
+
+def read_only(reason: str | None) -> bool:
+    """The bidder said it would only answer read-only (reflexd tags the reason).
+    Such a bid ranks below every bid that can do the work, and losing it earns
+    no fairness credit: credit had let a read-only agent win an @open it then
+    couldn't do (audit 0.6.3, bug 20, live replay)."""
+    return READ_ONLY_TAG in (reason or "")
 _EXPIRES_FIELD = "__expires_at"
 
 
@@ -101,7 +110,7 @@ async def _leader(
     every credit-adjusted bid: fairness rotates UNADDRESSED work, it must
     never hand your mention to a teammate.
     """
-    best: tuple[bool, float, str, str] | None = None
+    best: tuple[bool, bool, float, str, str] | None = None
     best_bid = 0.0
     for name, item in bids.items():
         try:
@@ -110,13 +119,13 @@ async def _leader(
             continue
         score = bid + await get_credit(r, tid, name)
         created = str(item.get("created_at", ""))
-        cand = (bid >= MENTION_BID, score, created, name)
+        cand = (bid >= MENTION_BID, not read_only(item.get("reason")), score, created, name)
         if best is None or cand > best:
             best = cand
             best_bid = bid
     if best is None:
         return None
-    return best[3], best_bid
+    return best[4], best_bid
 
 
 async def record_bid(
@@ -209,6 +218,11 @@ async def try_claim(
     # We won the race: apply fairness credits exactly once.
     credit_hash = _credit_key(tid)
     for participant in candidates:
+        if participant != winner and read_only(bids[participant].get("reason")):
+            # A read-only loser earns no credit toward work it can't do, but the
+            # claim still reports its standing, as the in-memory relay does.
+            credits[participant] = await get_credit(r, tid, participant)
+            continue
         delta = -1.0 if participant == winner else 0.25
         # HINCRBYFLOAT returns the post-increment value: authoritative for
         # THIS claim. Re-reading with HGET both doubled the round-trips and

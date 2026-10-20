@@ -76,6 +76,27 @@ def test_trailing_agent_chain_counts_until_human() -> None:
     assert wake.trailing_agent_chain([], reflexd.is_agent_participant) == 0
 
 
+def test_plans_and_status_lines_are_not_chatter() -> None:
+    """Bug bash (ambient room): two agents answering one human question posted a
+    verdict, two `plan:` lines, a reply and a ✅, and the chatter limit (6) fired
+    with no loop. Bookkeeping doesn't count; replies and typed verbs do."""
+    hist = [
+        {"from_name": "alice", "content": "what do you all think of the retry change?"},
+        {"from_name": "alice-opencode", "message_type": "social", "content": '{"verb": "x"}'},
+        {"from_name": "alice-opencode", "content": "Approve 0f58a1f: all three pass"},
+        {"from_name": "alice-docs-opencode", "content": "plan: review the 2 gaps you flagged"},
+        {"from_name": "alice-opencode", "content": "Plan : 0f58a1f verified on main"},
+        {"from_name": "alice-opencode", "content": "@alice-docs-opencode I landed both"},
+        {"from_name": "alice-opencode", "content": "✅ af956b9 closed the two gaps"},
+        {"from_name": "alice-review-opencode", "message_type": "status",
+         "content": "(quorus) agents stopped answering unaddressed chatter"},
+        {"from_name": "alice-opencode", "content": "(quorus) published 1 commit(s)"},
+    ]
+    assert wake.trailing_agent_chain(hist, reflexd.is_agent_participant) == 4
+    assert wake.trailing_agent_chain(hist, reflexd.is_agent_participant) \
+        < wake.MAX_UNADDRESSED_AGENT_RUN
+
+
 def test_wake_flags_bind_identity_without_leaking_secret(tmp_path: Path) -> None:
     spec = wake.quorus_mcp_spec(
         relay_url="http://127.0.0.1:1", api_key="sk-SECRET", participant="qt-codex",
@@ -1079,3 +1100,58 @@ def test_codex_mcp_ignores_the_users_stale_quorus_secret(tmp_path: Path) -> None
     no_dir = wake.quorus_mcp_spec(relay_url="http://r", api_key="k", participant="qt-codex",
                                   legacy=True)
     assert not any(f.endswith('=""') for f in wake.codex_wake_flags(no_dir))
+
+
+def test_the_no_reply_token_never_reaches_the_room():
+    """0.6.3 multi-person audit, BUG 10: an agent posted "NO_REPLY? No — there is
+    one missing fact…". The rule (overseer, after three rounds of meaning flips):
+    delete the token and the punctuation right after it, never another letter."""
+    scrub = wake.scrub_no_reply
+    assert scrub("NO_REPLY? No — there is one missing fact: the port.") == \
+        "No — there is one missing fact: the port."
+    assert scrub("`NO_REPLY`\nActually @arav the relay is on 8080.") == \
+        "Actually @arav the relay is on 8080."
+    assert scrub("NO_REPLY.") == "" and scrub("NO_REPLY") == ""
+    assert scrub("I would NO_REPLY here, but the hash is wrong.") == \
+        "I would here, but the hash is wrong."
+    assert scrub("✅ a1b2c3 done, tests green.") == "✅ a1b2c3 done, tests green."
+    assert scrub("") == ""
+    # Codex, review of 3f97de5d: a meaningful "No" keeps its negation.
+    assert scrub("NO_REPLY? No tests passed.") == "No tests passed."
+    assert scrub("NO_REPLY. No owner approval was given.") == "No owner approval was given."
+    assert scrub("NO_REPLY: no, the port is 8080.") == "no, the port is 8080."
+    # Identifiers that merely start with the token are not the token.
+    assert scrub("NO_REPLY_TIMEOUT is 30s in reflexd.") == "NO_REPLY_TIMEOUT is 30s in reflexd."
+    assert scrub("set NO_REPLY_TIMEOUT=30") == "set NO_REPLY_TIMEOUT=30"
+    # Lowercase inline mentions are scrubbed too; snake_case identifiers survive.
+    assert scrub("I would no_reply here, but the hash is wrong.") == \
+        "I would here, but the hash is wrong."
+    assert scrub("is_no_reply() returns True") == "is_no_reply() returns True"
+    # Live variant from the 0.6.3 multi-person run: "NO_REPLY → changed my mind …".
+    assert scrub("NO_REPLY → changed my mind after checking: the store is not shared.") == \
+        "changed my mind after checking: the store is not shared."
+    assert scrub("NO_REPLY -> fine, the port is 8080.") == "fine, the port is 8080."
+    assert scrub("NO_REPLY — no, it was never shared.") == "no, it was never shared."
+    # Codex, review of 1b8bc9df: hyphenated "no-" words are content.
+    assert scrub("NO_REPLY? No-go for release.") == "No-go for release."
+    assert scrub("NO_REPLY -> no-write access for Bob.") == "no-write access for Bob."
+    assert scrub("NO_REPLY: no-op here, nothing changed.") == "no-op here, nothing changed."
+    # Codex, review of 0261a67c: Unicode letters are letters too, and the remainder
+    # keeps its case.
+    assert scrub("NO_REPLY → 未获授权。") == "未获授权。"
+    assert scrub("NO_REPLY: Échec des tests.") == "Échec des tests."
+    assert scrub("NO_REPLYα is a name") == "NO_REPLYα is a name"
+    # The invariant behind all of the above: only the token's letters ever go, and
+    # every other character keeps its case.
+    import re as _re
+    for text in ("NO_REPLY? No — x", "NO_REPLY -> no-write y", "NO_REPLY: No tests z",
+                 "NO_REPLY → 未获授权。", "NO_REPLY: Échec des tests."):
+        kept = _re.sub(r"\W", "", scrub(text))
+        assert kept == _re.sub(r"\W", "", text.replace("NO_REPLY", ""))
+
+
+def test_the_wake_intent_says_never_to_write_the_token_otherwise():
+    text = wake.wake_instructions(participant="x-claude", room="r", sender="x-codex",
+                                  kind="agent_room", teammates=[], has_workspace=False,
+                                  from_agent=True)
+    assert "exactly NO_REPLY and nothing else" in text and "protocol word" in text

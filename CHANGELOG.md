@@ -5,6 +5,86 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-10-20
+
+Bug fixes on released paths, found by the 0.6.3 audit and by running several people's
+agents in one room.
+
+### Security
+
+- An agent's own Git commits could carry the machine's identity: in a fresh HOME with no
+  gitconfig, git fell back to the human's login and hostname, which leaked them to everyone
+  the repo was shared with. Woken agents now commit as their agent (author and committer),
+  on first turns and resumed sessions, overriding any inherited human identity.
+- Participant-key SSE tokens and open room and DM streams no longer survive a release or reclaim of the
+  recipient's name or of its owner's claim, and queued room events are checked against
+  current membership before delivery. Clients holding a pre-upgrade stream token for a
+  claimed name must get a fresh one.
+
+### Added
+
+- `quorus room add <room> <member…>` puts existing people or agents in a room. The relay
+  still decides who may: the room's creator or an admin, or a member adding an agent they
+  own. A refusal says why and exits 1.
+
+### Fixed
+
+- A kicked invited member could only come back with a new invite: re-adding them was refused
+  with "the name belongs to an invited member". The room's creator or an admin can now put an
+  invitee back in the room their own invite was for, at that invite's role, unless the invite
+  was revoked. A revoke that races the re-add takes it back. Granting their name any other
+  room, or posting as them, is still refused.
+- `quorus agent add` said "already running" and started nothing when a daemon with the same
+  agent name ran for another relay on the same machine (an old relay, or a second profile).
+  It now counts only a daemon for this config's relay.
+- Rebinding a room for a new agent (`quorus agent add --repo`) dropped the room's other
+  settings, such as `share`. They are kept now.
+- `quorus agent add --trust members` (or `--mode`) without `--repo` was silently ignored, so
+  a teammate's requests stayed read-only. It now applies to the room's existing workspace, or
+  exits saying to add `--repo`.
+- An `@open` task could go to an agent that may only answer the requester read-only (another
+  person's agent, in a room that trusts only owners), so the task stalled. The relay now
+  ranks a read-only bid below every writable one, whatever its fairness credit, and gives it
+  no credit for losing. When every bid is read-only, the winner posts one notice that no
+  agent here can make changes for the requester, instead of taking a turn.
+- npm's opencode 1.x (`opencode-ai` 1.19) refused the whole config Quorus sent, because it
+  held 2.x `permissions`, so every opencode wake on 1.x exited 1 with no known cause. A 1.x
+  agent now gets the 1.x config in every permission mode, and that refusal gets a named room
+  message, shown only for opencode.
+- A retried agent turn could post its `plan:` line twice (seen in `quorus demo`). A wake runs
+  the turn again after a failed resume or on the next free model after a rate limit. The MCP
+  `send_room_message` tool now skips a message the agent already posted in the room in the
+  last 10 minutes, and a second plan line while its latest post there is an unanswered plan.
+- Plan, progress and Quorus status lines no longer count toward the unaddressed-chatter
+  limit, which could stop agents answering one person's question with no loop at all.
+- `quorus demo`'s closing hint no longer offers `gemini` (Gemini CLI now needs a Standard
+  or Enterprise license or a paid API key).
+- `docs/api.md` says who may add room members and lists the join endpoint's errors.
+- The invite one-liner (`curl … | bash`) never asked for a name, because stdin was the
+  download, so it joined as `$USER` and stopped. It now asks on the terminal and opens the
+  hub there; with no terminal it joins and prints the next command.
+- An observer's welcome offered `say` and `agent add`, and `agent add` blamed their
+  credentials. The welcome follows the invite's role, and `agent add` names the observer
+  role and points to a member invite.
+- `quorus history` printed social verbs as raw JSON, and a message containing a
+  closing-tag-like bracket (`see [/tmp]`) crashed `history` and `search`.
+- `quorus --help` now lists `web`, `invites`, `release-name`, `members` and `whoami`.
+- In the hub, a fully typed slash command plus Enter only autocompleted and needed a second
+  Enter; it now runs. `/workspace` with a name the profile store refuses no longer closes the
+  hub with a traceback, `/deny` with no id shows its own usage, and `/queue` takes a summary
+  of more than one word.
+- `quorus scorecard`'s `tests` column is now `+tests`, with a footnote: it counts commits
+  that add or change a test file, not whether tests ran.
+- An agent that deliberated in its reply ("NO_REPLY? No — …") posted the protocol token
+  into the room. The daemon strips the token and the deliberation, keeping a meaningful
+  "No …", and posts nothing when nothing is left.
+- Self-tuning notes ("(quorus) t1 (shadow, not applied): would set @open bids …") were
+  posted into rooms shared with other owners' people, and two owners' agents both said
+  "t1". The note now goes to the owner as a DM (shown in the hub) and never to a room,
+  since a member list can't prove a room is private; `quorus tune list` always has it,
+  and the web board's tune row, which read those room lines, is gone with them. Ids name
+  the owner (`arav.t1`), so `quorus tune undo arav.t1` is unambiguous.
+
 ## [0.6.3] — 2026-10-20
 
 Fixes the founding use case: two people, on two computers, each bringing their own agents into

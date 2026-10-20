@@ -288,7 +288,18 @@ Get room details. `room_id` may be a UUID or name.
 
 #### `POST /rooms/{room_id}/join`
 
-Add a participant to a room.
+Add a participant to a room. From the CLI: `quorus room add <room> <member…>`.
+
+Who may add:
+
+- the shared-secret holder, an admin, or the room's creator;
+- a member adding an agent they own (`<member>-<tool>`), into a room they can write in.
+  The agent joins as `member`, never above its owner.
+
+On a shared-secret relay a name an invited member holds can't be granted to anyone else. The
+exception is putting that invitee back in the room their own invite was for, unless the
+invite was revoked. They come back at the invite's role (an observer stays an observer),
+whatever `role` the request asks for.
 
 **Request**
 
@@ -299,7 +310,11 @@ Add a participant to a room.
 
 **Response**: `{"status": "joined", "role": "builder"}`
 
-**Errors**: `403` — only room creator or admin can add members. Max members: `MAX_ROOM_MEMBERS` env var (default 50).
+**Errors**: `403` — the caller can't add this participant (not the creator or an admin, a
+self-join without an invite, or an agent whose owner isn't in the room); `409` — the name
+belongs to an invited member and this isn't the room their invite was for (or the invite was
+revoked); `422` — invalid name or role; `429` — more than 30 joins a minute. Max members:
+`MAX_ROOM_MEMBERS` env var (default 50).
 
 ---
 

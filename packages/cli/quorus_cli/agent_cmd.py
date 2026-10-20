@@ -80,12 +80,14 @@ def _launchd_labels() -> list[str]:
     return [line.split()[-1] for line in out.splitlines() if "quorus" in line]
 
 
-def _running_daemon_for(name: str) -> str | None:
+def _running_daemon_for(name: str, relay_url: str | None = None) -> str | None:
     """An already-running wake daemon for *name*: a launchd job (ours or
     dogfood's) OR any reflexd process for it (e.g. started by the legacy
     reflexd-manager or `quorus reflexd start`). Two daemons for one agent
     answer every message twice. The pid file comes first: minimal Linux
-    images ship without pgrep."""
+    images ship without pgrep. With *relay_url*, a reflexd process for the same
+    name on another relay doesn't count: an orphan from an old run on a dead
+    relay made every later `agent add` of that name start nothing."""
     pid = agent_proc.live_pid(_agents_dir(), name)
     if pid is not None:
         return f"pid {pid}"
@@ -98,7 +100,24 @@ def _running_daemon_for(name: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     pids = out.stdout.split()
+    if relay_url:
+        pids = [p for p in pids if _serves_relay(p, relay_url)]
     return f"pid {pids[0]}" if pids else None
+
+
+def _serves_relay(pid: str, relay_url: str) -> bool:
+    """Whether reflexd *pid* serves *relay_url*. If its command line can't be
+    read, count it: a duplicate daemon is worse than a missed one."""
+    try:
+        out = subprocess.run(["ps", "-ww", "-o", "command=", "-p", pid],
+                             capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    argv = out.stdout.split()
+    if out.returncode != 0 or "--relay-url" not in argv:
+        return True
+    i = argv.index("--relay-url")
+    return i + 1 < len(argv) and argv[i + 1].rstrip("/") == relay_url.rstrip("/")
 
 
 def _credentials(cfg: dict[str, Any], name: str, harness: str) -> tuple[str, bool]:
@@ -177,7 +196,26 @@ def _join(cfg: dict[str, Any], room: str, name: str, bearer: str) -> None:
     if resp.status_code == 404:
         raise SystemExit(f"agent: room '{room}' not found — create it with "
                          f"`quorus create {room}`")
+    if resp.status_code == 403 and _role_in(cfg, room, bearer) == "observer":
+        # 0.6.3 audit: this said "the relay rejected your credentials, re-run init".
+        raise SystemExit(f"agent: you joined #{room} as an observer, so you can read it "
+                         "but not add agents. Ask the room's owner for a member invite.")
     resp.raise_for_status()
+
+
+def _role_in(cfg: dict[str, Any], room: str, bearer: str) -> str | None:
+    """This login's role in *room* (member, observer, ...), or None if unknown."""
+    try:
+        resp = httpx.get(f"{cfg['relay_url']}/rooms/{room}",
+                         headers={"Authorization": f"Bearer {bearer}"}, timeout=10)
+        if resp.status_code != 200:
+            return None
+        roles = resp.json().get("member_roles") or {}
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    me = cfg.get("instance_name")
+    role = roles.get(me) if isinstance(roles, dict) else None
+    return role if isinstance(role, str) else None
 
 
 def _pace(args: Any, console: Any) -> None:
@@ -236,6 +274,20 @@ def _drop_lead_everywhere(name: str) -> None:
         _set_lead(room, None)
 
 
+def _bound_path(room: str) -> Path | None:
+    """The workspace *room* is bound to on this machine, if it still exists."""
+    try:
+        prev = json.loads((Path.home() / ".quorus" / "room-bindings.json")
+                          .read_text(encoding="utf-8")).get(room)
+    except (OSError, ValueError, AttributeError):
+        return None
+    raw = prev.get("path") if isinstance(prev, dict) else prev
+    if not isinstance(raw, str) or not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_dir() else None
+
+
 def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> str:
     path = Path.home() / ".quorus" / "room-bindings.json"
     try:
@@ -247,7 +299,12 @@ def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> 
         mode = prev.get("mode", "default") if isinstance(prev, dict) else "default"
     if trust is None and isinstance(prev, dict):
         trust = prev.get("trust")
-    entry: dict[str, str] = {"path": str(repo), "mode": mode}
+    # Keep the room's other settings (listen, judge, share, ...): rebinding to add
+    # an agent silently turned an ambient room back to the rules (bug bash).
+    entry: dict[str, Any] = {k: v for k, v in prev.items()
+                             if k not in ("path", "mode", "trust")} \
+        if isinstance(prev, dict) else {}
+    entry.update(path=str(repo), mode=mode)
     if trust == "members":  # anyone in the room may trigger write-capable turns
         entry["trust"] = "members"
     data[room] = str(repo) if entry == {"path": str(repo), "mode": "default"} else entry
@@ -362,6 +419,17 @@ def _add(args: Any, console: Any) -> None:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
+    wants = getattr(args, "trust", None) or args.mode is not None
+    if repo is None and wants:
+        # --trust/--mode live on the room's workspace binding: without --repo they
+        # were dropped silently, so a friend's asks stayed read-only (audit 0.6.3,
+        # bug 9). Use the room's existing workspace, or say what's missing.
+        repo = _bound_path(args.room)
+        if repo is None:
+            flag = "--trust" if getattr(args, "trust", None) else "--mode"
+            raise SystemExit(f"agent: {flag} applies to the room's workspace, and "
+                             f"#{args.room} has none on this machine yet; add "
+                             f"--repo <path>")
     member = (cfg.get("api_key") or "").startswith("quorus_pk_")
     mode = args.mode
     if (member and repo is not None and mode == "autonomous"
@@ -391,7 +459,7 @@ def _add(args: Any, console: Any) -> None:
         swap = f" [dim](was @{previous})[/]" if previous and previous != name else ""
         console.print(f"[success]✓[/] @{name} leads #{args.room}: it splits your requests "
                       f"into tasks and assigns them{swap}")
-    existing = _running_daemon_for(name)
+    existing = _running_daemon_for(name, cfg.get("relay_url"))
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "
                       "— it now also listens to this room")

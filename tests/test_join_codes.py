@@ -9,6 +9,8 @@ that we'd regress via integration tests elsewhere.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -212,6 +214,97 @@ class TestInstallScript:
                 break
         else:
             pytest.fail("installer has no `quorus join` line")
+
+    async def _served_script(self, client: AsyncClient, tmp_path) -> tuple[str, "Path"]:
+        """The installer for a fresh code, written next to stub `pipx` and `quorus`
+        commands that only record their arguments."""
+        await _create_room(client)
+        mint = await client.post(
+            "/v1/join/mint", headers=ADMIN_HEADERS, json={"room": "general"},
+        )
+        code = mint.json()["code"]
+        resp = await client.get(f"/v1/join/install/{code}.sh")
+        script = tmp_path / "install.sh"
+        script.write_text(resp.text)
+        stubs = tmp_path / "bin"
+        stubs.mkdir()
+        (stubs / "pipx").write_text("#!/bin/sh\nexit 0\n")
+        (stubs / "quorus").write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/quorus-calls"\necho "quorus-stub $*"\n')
+        for f in stubs.iterdir():
+            f.chmod(0o755)
+        return code, script
+
+    @staticmethod
+    def _env(tmp_path) -> dict[str, str]:
+        return {"PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin", "HOME": str(tmp_path),
+                "USER": "sam", "TERM": "dumb"}
+
+    async def test_piped_install_without_a_terminal_joins_and_says_what_is_next(
+        self, client: AsyncClient, tmp_path,
+    ):
+        """0.6.3 audit (multi-person lane): `curl … | bash` in a context with no
+        terminal used to end with "the interactive hub needs a terminal", exit 2."""
+        import subprocess
+
+        code, script = await self._served_script(client, tmp_path)
+        run = subprocess.run(["/bin/bash", str(script)], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, env=self._env(tmp_path),
+                             timeout=30, start_new_session=True)  # no controlling tty
+        assert run.returncode == 0, run.stderr
+        calls = (tmp_path / "quorus-calls").read_text().splitlines()
+        assert calls == [f'join {code} --relay http://test --name sam']
+        assert "Next: run  quorus" in run.stdout
+
+    async def test_piped_install_asks_the_name_on_the_terminal_and_opens_the_hub(
+        self, client: AsyncClient, tmp_path,
+    ):
+        """Same one-liner in a real terminal: stdin is the pipe but /dev/tty exists,
+        so the script asks for the name there and execs the hub on it."""
+        import os
+        import pty
+        import select
+        import time
+
+        code, script = await self._served_script(client, tmp_path)
+        pid, fd = pty.fork()
+        if pid == 0:  # child: a terminal, but stdin is not it (the curl pipe)
+            try:
+                null = os.open(os.devnull, os.O_RDONLY)
+                os.dup2(null, 0)
+                os.execve("/bin/bash", ["bash", str(script)], self._env(tmp_path))
+            finally:
+                os._exit(127)
+        out, answered = "", False
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([fd], [], [], 0.2)
+            if ready:
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                out += chunk.decode("utf-8", "replace")
+            if "Your name" in out and not answered:
+                os.write(fd, b"aarya\n")
+                answered = True
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                break
+        else:
+            import signal
+
+            os.kill(pid, signal.SIGKILL)  # Codex: reap the child before failing
+            os.waitpid(pid, 0)
+            os.close(fd)
+            pytest.fail(f"installer did not finish; output:\n{out[-1500:]}")
+        os.close(fd)
+        assert answered, out
+        calls = (tmp_path / "quorus-calls").read_text().splitlines()
+        assert calls == [f'join {code} --relay http://test --name aarya', ""]
+        assert "quorus-stub" in out  # the hub (stub) ran on the terminal
 
     async def test_404_on_unknown_code(self, client: AsyncClient):
         resp = await client.get("/v1/join/install/AAAA-BBBB.sh")

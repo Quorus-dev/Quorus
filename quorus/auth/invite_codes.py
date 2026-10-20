@@ -229,6 +229,24 @@ def invited_as(store, name: str) -> str | None:
     return row[0] if row else None
 
 
+def readmit_role(store, name: str, room_id: str) -> str | None:
+    """The role to re-add *name* to *room_id* with, or None (refuse as before).
+
+    Granting an invitee's name stays refused (codex, review of 8e6fa5c2: the
+    invitee must never inherit a grant meant for someone else), except to put
+    them back where their own invite already let them in: the exact name's
+    current claim was redeemed with an unrevoked invite for this room. They
+    come back at that invite's role (Fable's bug bash: a kicked invitee
+    couldn't be re-added, only re-invited)."""
+    with store._lock, store._connect() as db:
+        row = db.execute(
+            "SELECT i.role FROM invite_redemptions r JOIN invites i ON i.id = r.invite_id "
+            "JOIN claims c ON c.name = r.name AND c.claim_id = r.claim_id "
+            "WHERE r.name = ? AND i.room_id = ? AND i.revoked = 0 "
+            "ORDER BY r.redeemed_at DESC LIMIT 1", (name, room_id)).fetchone()
+    return row[0] if row else None
+
+
 def is_revoked(store, invite_id: str) -> bool:
     with store._lock, store._connect() as db:
         row = db.execute("SELECT revoked FROM invites WHERE id = ?", (invite_id,)).fetchone()

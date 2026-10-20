@@ -583,11 +583,38 @@ async def _status() -> None:
         await client.aclose()
 
 
+_VERB_TEXT_KEYS = ("reason", "task_summary", "scope", "option", "task_id")
+
+
+def _social_line(content: str) -> str | None:
+    """A social verb's JSON envelope as one readable line ("/disagree blocking:
+    tests missing"), or None for ordinary text. History printed the raw JSON
+    (0.6.3 audit, multi-person BUG 7)."""
+    if not content.startswith("{"):
+        return None
+    try:
+        data = json.loads(content)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("kind") != "social" or not data.get("verb"):
+        return None
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+    head = f"/{data['verb']}" + (f" {payload['mode']}" if payload.get("mode") else "")
+    text = next((str(payload[k]) for k in _VERB_TEXT_KEYS if payload.get(k)), "")
+    if payload.get("to"):
+        return f"{head} → @{payload['to']}" + (f": {text}" if text else "")
+    return f"{head}: {text}" if text else head
+
+
 def _format_chat_msg(msg: dict) -> str:
-    """Format a single chat message for display."""
+    """Format a single chat message for display. Sender and text are escaped:
+    a message like "see [/tmp]" is not Rich markup."""
+    from rich.markup import escape
+
     msg_type = msg.get("message_type", "chat")
-    sender = msg.get("from_name", "?")
-    content = msg.get("content", "")
+    sender = escape(str(msg.get("from_name", "?")))
+    raw = str(msg.get("content", "") or "")
+    content = escape(_social_line(raw) or raw)
     ts = msg.get("timestamp", "")[:19]
     type_color = {
         "claim": "yellow",
@@ -1177,6 +1204,7 @@ def _cmd_room(args):
             "room: missing subcommand.",
             hint=(
                 "usage: [accent]quorus room bind <room> <path>[/] "
+                "| [accent]quorus room add <room> <member…>[/] "
                 "| [accent]quorus room bindings[/]"
             ),
         )
@@ -1243,6 +1271,12 @@ def _cmd_room(args):
             f"[success]bound[/] [primary]{args.room}[/] → {ws} [dim]({mode})[/]\n"
             f"[dim]agents woken for this room run inside that directory {how}[/]"
         )
+        return
+
+    if action == "add":
+        from quorus_cli.room_add import cmd_room_add
+
+        cmd_room_add(args)
         return
 
     _ui.error(f"room: unknown subcommand {action!r}")
@@ -6028,9 +6062,11 @@ async def _join_agents_to_room(
         )
 
 
-def _redeem_invite(relay_url: str, code: str, name: str) -> str:
+def _redeem_invite(relay_url: str, code: str, name: str,
+                   info: dict | None = None) -> str:
     """Spend a v2 invite code for *name*; the participant key, or "" after
-    printing why not. Never follows a redirect: the code is a credential."""
+    printing why not. Never follows a redirect: the code is a credential.
+    *info*, if given, gets the invite's ``role`` (member or observer)."""
     try:
         resp = httpx.post(f"{relay_url}/v1/join/redeem", json={"code": code, "name": name},
                           timeout=15, follow_redirects=False)
@@ -6053,7 +6089,10 @@ def _redeem_invite(relay_url: str, code: str, name: str) -> str:
     if resp.status_code != 200:
         _ui.error(f"Joining failed (HTTP {resp.status_code})" + (f": {detail}" if detail else ""))
         return ""
-    key = str((resp.json() or {}).get("participant_key") or "")
+    body = resp.json() or {}
+    key = str(body.get("participant_key") or "")
+    if info is not None:
+        info["role"] = str(body.get("role") or "member")
     if not key.startswith("quorus_pk_"):
         _ui.error("The relay answered without a key; ask for a fresh invite")
         return ""
@@ -6087,8 +6126,9 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     # the code redeems into the joiner's OWN participant key and the relay adds
     # them to the room. The shared secret is never sent and never written here.
     redeemed = False
+    invite: dict = {}
     if payload.get("v") == 2 and payload.get("c"):
-        api_key = _redeem_invite(relay_url, str(payload["c"]), name)
+        api_key = _redeem_invite(relay_url, str(payload["c"]), name, invite)
         if not api_key:
             sys.exit(4)
         secret, tenant_id, invite_token, redeemed = "", "", "", True
@@ -6353,12 +6393,25 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     ui.console.print(
         Panel(welcome, border_style="primary", padding=(0, 1))
     )
-    ui.hint_next_steps([
+    ui.hint_next_steps(_join_next_steps(room, invite.get("role") == "observer"))
+
+
+def _join_next_steps(room: str, observer: bool) -> list[str]:
+    """What a joiner can do next. An observer reads but can't post or add agents,
+    and the 0.6.3 audit found their welcome offering both."""
+    if observer:
+        return [
+            f"Read the room:          [accent]quorus history {room}[/]",
+            "See who's here:         [accent]quorus ps[/]",
+            "You joined as an observer: to post or add agents, ask the room's owner "
+            "for a member invite",
+        ]
+    return [
         "Open the hub:           [accent]quorus[/]",
         f"Send a message:         [accent]quorus say {room} 'hello'[/]",
         "See who's here:         [accent]quorus ps[/]",
         f"Add your AI agents:     [accent]quorus agent add claude --room {room}[/]",
-    ])
+    ]
 
 
 def _cmd_quickjoin(args):
@@ -8535,6 +8588,8 @@ def _print_grouped_help():
             ("version",            "Show version, relay, and config"),
             ("demo",               "Watch two free agents fix a bug (no keys)"),
             ("phone",              "Open your rooms on your phone"),
+            ("web [room]",         "Your rooms and the needs-you board in this browser"),
+            ("whoami",             "Your name, workspace and relay"),
         ]),
         ("MEASURE", [
             ("scorecard",          "Whose work holds up in this repo, by agent/vendor"),
@@ -8549,6 +8604,8 @@ def _print_grouped_help():
             ("create <name>",      "Create a room"),
             ("join <room>",        "Join a room"),
             ("invite <room> <who>","Add participants to a room"),
+            ("members <room>",     "Who is in a room"),
+            ("invites",            "Invites you made; --revoke ID cancels one"),
             ("chat <room>",        "Interactive chat in a room"),
             ("say <room> <msg>",   "Send a message to a room"),
             ("dm <name> <msg>",    "Direct message another agent"),
@@ -8592,6 +8649,7 @@ def _print_grouped_help():
             ("stats",              "Admin analytics (signups, DAU, top workspaces)"),
             ("export <room>",      "Export room history (json/md)"),
             ("kick <room> <who>",  "Remove a member from a room"),
+            ("release-name <name>","Free a departed member's name (on the relay host)"),
             ("rename <room> <new>","Rename a room"),
             ("destroy <room>",     "Delete a room"),
             ("hook enable",        "Auto-inject inbox on UserPromptSubmit"),
@@ -9838,6 +9896,10 @@ def main():
               "their owner before risky actions; autonomous: agents edit and "
               "run commands in the repo without asking"),
     )
+    p_room_add = room_sub.add_parser(
+        "add", help="Add existing participants (people or agents) to a room")
+    p_room_add.add_argument("room", help="Room name or id")
+    p_room_add.add_argument("members", nargs="+", help="Names to add, e.g. arav-codex")
     p_room_unbind = room_sub.add_parser("unbind", help="Remove a binding")
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")

@@ -98,9 +98,46 @@ def test_esc_on_the_slash_menu_drops_the_half_typed_command(session) -> None:
     assert _sent(session, "loopc-esc") == ["loopc-esc after escape"]
 
 
+def test_an_exact_slash_command_runs_on_the_first_enter(session) -> None:
+    """0.6.3 audit (HUB lane): `/rooms` + Enter only autocompleted to `/rooms `;
+    the command ran on the second Enter, and `/quit` never quit."""
+    session.type("/rooms" + ENTER)
+    session.expect(r"Rooms|#general", timeout=8)
+    time.sleep(0.5)
+    session.type("loopc-one-enter after rooms" + ENTER)
+    assert _sent(session, "loopc-one-enter") == ["loopc-one-enter after rooms"]
+
+
 def test_the_first_run_starts_one_relay_on_its_own_url(session) -> None:
     """Found building loop C: the wizard set its relay URL but started the relay
     on the hard-coded default (8080); the hub then started a second one."""
     log = (session.home / ".quorus" / "relay.log").read_text()
     assert log.count("Uvicorn running on") == 1
     assert f"127.0.0.1:{session.port}" in log
+
+
+def test_wait_for_backs_off_when_the_relay_says_429(monkeypatch, tmp_path):
+    """Overseer, 0.6.3 wheel run: under a loaded suite wait_for's 0.5 s poll got 429 and
+    the test died; it now sleeps for the relay's Retry-After and keeps waiting."""
+    from tests.firstrun import stub_agents
+
+    replies = [stub_agents.RelayBusy(3.0), stub_agents.RelayBusy(3.0),
+               [{"from_name": "alice-codex", "content": "Hi: ready"}]]
+
+    def fake_history(s, room="general"):
+        r = replies.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(stub_agents, "history", fake_history)
+    monkeypatch.setattr(stub_agents.time, "sleep", sleeps.append)
+
+    class S:
+        home = tmp_path
+
+    assert stub_agents.wait_for(S(), "alice-codex", "Hi:", timeout=60) == "Hi: ready"
+    assert sleeps == [3.0, 3.0]
+    assert stub_agents.retry_after("120") == 10.0  # capped
+    assert stub_agents.retry_after(None) == 2.0 and stub_agents.retry_after("soon") == 2.0

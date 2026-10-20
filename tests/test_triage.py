@@ -325,3 +325,61 @@ async def test_mention_bid_claim_flow_has_one_winner(client: AsyncClient):
     claim_bodies = [resp.json() for resp in claims]
     assert {body["winner"] for body in claim_bodies} == {"carol"}
     assert len({body["claim_token"] for body in claim_bodies}) == 1
+
+
+async def _auction(client: AsyncClient, room_id: str, mid: str,
+                   bids: dict[str, tuple[float, str]]) -> dict:
+    for who, (bid, reason) in bids.items():
+        r = await client.post("/v1/bid", json={
+            "room_id": room_id, "message_id": mid, "participant": who,
+            "bid": bid, "reason": reason, "ttl_seconds": 1}, headers=HEADERS)
+        assert r.status_code == 200, r.text
+    await asyncio.sleep(1.05)
+    claim = await client.post("/v1/claim", json={"room_id": room_id, "message_id": mid},
+                              headers=HEADERS)
+    assert claim.status_code == 200, claim.text
+    return claim.json()
+
+
+@pytest.mark.parametrize("tagged, winner", [(True, "carol"), (False, "bob")])
+async def test_a_read_only_bid_never_beats_one_that_can_do_the_work(
+        client: AsyncClient, tagged: bool, winner: str) -> None:
+    """Audit 0.6.3, bug 20, live: aarya's agent bid the 0.05 floor (read-only for
+    arav) but the credit it banked from earlier losses beat arav's writable 0.5,
+    and the @open stalled. Untagged, the same credit still wins (the control)."""
+    from quorus.routes import triage
+
+    room_id = await _setup_room(client)
+    triage._fairness_credit[("_legacy", "bob")] = 3.0
+    reason = "open_any_agent+read-only" if tagged else "open_any_agent"
+    claim = await _auction(client, room_id, "m-ro",
+                           {"bob": (0.05, reason), "carol": (0.5, "open_any_agent")})
+    assert claim["winner"] == winner
+    if tagged:  # losing read-only earns no credit toward work it can't do
+        assert claim["fairness_credit"]["bob"] == 3.0
+
+
+@pytest.mark.parametrize("carol_reason, read_only", [
+    ("open_any_agent+read-only", True), ("open_any_agent", False)])
+async def test_the_claim_says_when_nobody_can_write_for_the_requester(
+        client: AsyncClient, carol_reason: str, read_only: bool) -> None:
+    """Opus2 on 54da38fe: with every bid read-only, a read-only agent still won and
+    the @open stalled. The claim now says so; one writable bid is enough to clear it."""
+    room_id = await _setup_room(client)
+    claim = await _auction(client, room_id, "m-all-ro", {
+        "bob": (0.05, "open_any_agent+read-only"), "carol": (0.05, carol_reason)})
+    assert claim["read_only"] is read_only
+
+
+async def test_a_first_read_only_loss_does_not_crash_the_claim(client: AsyncClient) -> None:
+    """Live 500 on 54da38fe: a read-only loser with no credit entry yet made the claim
+    response raise KeyError, so nobody got the task. No credit is pre-loaded here."""
+    from quorus.routes import triage
+
+    room_id = await _setup_room(client)
+    triage._fairness_credit.pop(("_legacy", "sam2-opencode"), None)
+    claim = await _auction(client, room_id, "m-ro-first",
+                           {"sam2-opencode": (0.9, "open_any_agent+read-only"),
+                            "carol": (0.1, "open_any_agent")})
+    assert claim["winner"] == "carol"
+    assert claim["fairness_credit"]["sam2-opencode"] == 0.0

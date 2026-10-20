@@ -154,10 +154,11 @@ def latest(kind: str, subject: str, scope: str) -> Adaptation | None:
 
 
 def adapt(kind: str, *, subject: str, scope: str, change: str, because: str,
-          evidence: dict[str, Any] | None = None) -> Adaptation | None:
+          evidence: dict[str, Any] | None = None, owner: str = "") -> Adaptation | None:
     """Record a new active adaptation, or None if tuning is off or the newest
     one for this subject and scope is still active or undone (an undo holds
-    until ``redo``)."""
+    until ``redo``). With *owner*, the id is ``<owner>.t<n>``: two owners' agents
+    in one room both announced "t1" (0.6.3 audit, BUG 18)."""
     if kind not in KINDS:
         raise ValueError(f"unknown adaptation kind: {kind!r}")
     with _locked() as data:
@@ -167,7 +168,8 @@ def adapt(kind: str, *, subject: str, scope: str, change: str, because: str,
                 if a.kind == kind and a.subject == subject and a.scope == scope]
         if mine and mine[-1].state in ("active", "undone"):
             return None
-        new = Adaptation(id=f"t{int(data['next'])}", kind=kind, subject=subject,
+        prefix = f"{owner.strip()}." if owner and owner.strip() else ""
+        new = Adaptation(id=f"{prefix}t{int(data['next'])}", kind=kind, subject=subject,
                          scope=scope, change=_clip(change), because=_clip(because),
                          evidence=dict(evidence or {}),
                          created_at=datetime.now(timezone.utc).isoformat())
