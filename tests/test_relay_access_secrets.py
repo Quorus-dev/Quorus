@@ -26,7 +26,8 @@ def run(*args, **kwargs):
         '/stream/alice?token=PRIVATE-stream-key&other=ok', '1.1', 200)
 """
     if entry == "cli":
-        script += "\nwith patch.object(uvicorn, 'run', run):\n    relay.main()\n"
+        script += ("\nasync def serve(self, sockets=None):\n    run()\n"
+                   "\nwith patch.object(uvicorn.Server, 'serve', serve):\n    relay.main()\n")
     else:
         script += "\nrun()\n"
     # Other tests leave DATABASE_URL set; production mode then demands Redis.
