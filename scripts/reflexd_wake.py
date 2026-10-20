@@ -582,8 +582,13 @@ def worktree_instructions(wt: Worktree, *, dirty: bool = False) -> str:
         "That is normal: don't mention it in the room. "
         "Do NOT run git rebase, merge, reset or push: Quorus rebases your branch "
         f"onto `{wt.main}` and publishes it when you finish, and wakes you if "
-        "there is a conflict. Reviewers: inspect a commit with `git show "
-        "<hash>` (all worktrees share one object store)."
+        "there is a conflict. Reviewing a commit: it is on this machine only if "
+        "`git cat-file -e <hash>` succeeds in your worktree (the worktrees here "
+        "share one object store); otherwise it came from another owner's "
+        "machine, so run the `quorus fetch <bundle> --room <room>` line that "
+        "was posted with it (or the fetch_bundle tool) before `git show`. Never "
+        "tell a reviewer that you share a store with them: when you ask another "
+        "owner for a review, give them the fetch line, not a hash."
     )
 
 
