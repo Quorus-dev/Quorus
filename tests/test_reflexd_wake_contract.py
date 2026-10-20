@@ -1115,6 +1115,18 @@ def test_the_no_reply_token_never_reaches_the_room():
         "I would here, but the hash is wrong."
     assert scrub("✅ a1b2c3 done, tests green.") == "✅ a1b2c3 done, tests green."
     assert scrub("") == ""
+    # Codex, review of 3f97de5d: a meaningful "No" keeps its negation; only the bare
+    # "No —" / "No:" connective after the token goes.
+    assert scrub("NO_REPLY? No tests passed.") == "No tests passed."
+    assert scrub("NO_REPLY. No owner approval was given.") == "No owner approval was given."
+    assert scrub("NO_REPLY: no, the port is 8080.") == "The port is 8080."
+    # Identifiers that merely start with the token are not the token.
+    assert scrub("NO_REPLY_TIMEOUT is 30s in reflexd.") == "NO_REPLY_TIMEOUT is 30s in reflexd."
+    assert scrub("set NO_REPLY_TIMEOUT=30") == "set NO_REPLY_TIMEOUT=30"
+    # Lowercase inline mentions are scrubbed too; snake_case identifiers survive.
+    assert scrub("I would no_reply here, but the hash is wrong.") == \
+        "I would here, but the hash is wrong."
+    assert scrub("is_no_reply() returns True") == "is_no_reply() returns True"
 
 
 def test_the_wake_intent_says_never_to_write_the_token_otherwise():

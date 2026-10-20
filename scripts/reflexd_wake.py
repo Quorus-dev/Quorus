@@ -923,25 +923,28 @@ def is_no_reply(reply: str) -> bool:
 
 
 _LEAK_HEAD = re.compile(
-    r"^[`*_\"']*" + NO_REPLY + r"[`*_\"']*[\s?!.:,;—–-]*"   # the token and its punctuation
-    r"(?:no\b[\s?!.:,;—–-]*)?",                               # "NO_REPLY? No — …"
+    r"^[`*\"']*" + NO_REPLY + r"(?![A-Za-z0-9_])[`*\"']*[\s?!.:,;—–-]*"  # the token
+    r"(?:no\s*[—–:,;-]+\s*)?",   # a bare "No —" / "No:" connective; "No tests passed" stays
     re.IGNORECASE,
 )
-_LEAK_INLINE = re.compile(r"[`*_\"']*\b" + NO_REPLY + r"\b[`*_\"']*")
+_LEAK_INLINE = re.compile(r"[`*\"']*\b" + NO_REPLY + r"\b[`*\"']*", re.IGNORECASE)
 
 
 def scrub_no_reply(reply: str) -> str:
     """The protocol token never reaches the room. An agent that deliberated in
     its reply ("NO_REPLY? No — there is one missing fact…", 0.6.3 multi-person
     audit, BUG 10) keeps the fact and loses the deliberation; a bare token line
-    anywhere is dropped; an inline mention is removed. Returns "" when nothing
-    worth posting is left, which the caller treats like NO_REPLY."""
+    anywhere is dropped; an inline mention, any case, is removed. A meaningful
+    "No" survives ("NO_REPLY? No tests passed." keeps its negation) and other
+    identifiers that merely start with the token (NO_REPLY_TIMEOUT) are left
+    alone (Codex, review of 3f97de5d). Returns "" when nothing worth posting is
+    left, which the caller treats like NO_REPLY."""
     text = (reply or "")
     if not text.strip() or NO_REPLY not in text.upper():
         return text
     kept: list[str] = []
     for line in text.splitlines():
-        if line.strip().strip("`*_.\"'").upper() == NO_REPLY:
+        if line.strip().strip("`*.\"'").upper() == NO_REPLY:
             continue
         kept.append(line)
     text = "\n".join(kept).strip()
