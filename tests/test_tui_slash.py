@@ -209,3 +209,32 @@ def test_slash_workspace_with_a_name_the_store_refuses_does_not_crash(tmp_path, 
     assert _hub._slash_workspace("/create audit-room", state, "http://relay", "s", "arav",
                                  console) is True
     assert "no such workspace" in state.get_status_bar()
+
+
+# ── /deny and /queue (0.6.3 hub audit) ──────────────────────────────────────
+
+
+def test_slash_deny_usage_names_deny_not_approve():
+    from quorus_tui import hub as _hub
+
+    state = HubState()
+    console, _ = _console()
+    _hub._slash_deny("", state, "http://relay", "s", "arav", console)
+    assert state.get_status_bar() == "usage: /deny <apr_id>"
+    _hub._slash_approve("", state, "http://relay", "s", "arav", console)
+    assert state.get_status_bar() == "usage: /approve <apr_id>"
+
+
+def test_slash_queue_takes_a_multi_word_summary(monkeypatch):
+    from quorus_tui import hub as _hub
+
+    posted: list[tuple] = []
+    monkeypatch.setattr(_hub, "_post_social_verb",
+                        lambda verb, payload, *rest: posted.append((verb, payload)) or True)
+    state = HubState()
+    console, _ = _console()
+    _hub._slash_queue("after=t1 next thing to do 5", state, "http://relay", "s", "arav", console)
+    assert posted == [("queue", {"after": "t1", "task_summary": "next thing to do",
+                                 "eta_seconds": 300})]
+    _hub._slash_queue("after=t1 only-summary", state, "http://relay", "s", "arav", console)
+    assert "usage: /queue" in state.get_status_bar()

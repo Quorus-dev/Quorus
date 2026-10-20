@@ -2270,6 +2270,7 @@ def _slash_deny(arg, state, relay_url, secret, agent_name, console):
 
 
 def _slash_decide(arg, state, relay_url, secret, *, approve: bool):
+    verb = "/approve" if approve else "/deny"  # the usage line named /approve for both
     approval_id = (arg or "").strip().split()[0] if (arg or "").strip() else ""
     if not approval_id:
         pending = state.get_pending_approvals()
@@ -2278,8 +2279,8 @@ def _slash_decide(arg, state, relay_url, secret, *, approve: bool):
             approval_id = str(pending[0].get("id", ""))
         else:
             state.set_status_bar(
-                "usage: /approve <apr_id>" if not pending
-                else f"{len(pending)} pending — name one: /approve <apr_id>"
+                f"usage: {verb} <apr_id>" if not pending
+                else f"{len(pending)} pending — name one: {verb} <apr_id>"
             )
             return True
     ok, msg = _decide_approval(relay_url, secret, approval_id, approve)
@@ -2586,7 +2587,9 @@ def _slash_defer(arg, state, relay_url, secret, agent_name, console):
 
 
 def _slash_queue(arg, state, relay_url, secret, agent_name, console):
-    parts = (arg or "").split(maxsplit=2)
+    # The summary may be several words; the eta is the last token (0.6.3 audit:
+    # `/queue after=t1 next thing 5` failed with "<eta_minutes> must be a number").
+    parts = (arg or "").split()
     if len(parts) < 3:
         state.set_status_bar(
             "usage: /queue after=<id> <summary> <eta_minutes>",
@@ -2597,9 +2600,9 @@ def _slash_queue(arg, state, relay_url, secret, agent_name, console):
         after = after_token[len("after="):]
     else:
         after = after_token
-    summary = parts[1]
+    summary = " ".join(parts[1:-1])
     try:
-        eta_seconds = int(float(parts[2]) * 60)
+        eta_seconds = int(float(parts[-1]) * 60)
     except ValueError:
         state.set_status_bar("/queue: <eta_minutes> must be a number")
         return True
