@@ -542,6 +542,12 @@ async def stream_agent_dms(
                 # mutate the inbox here (the inbox is the durable copy).
             inbox = _get_inbox(request)
             for env in list(inbox.get(key, [])):
+                # Codex on e0f6e3ac: the name can be released and reclaimed between
+                # `connected` and the replay, so the old stream must not replay the
+                # successor's mail. Recheck before every entry, as the live loop does.
+                if valid and not await sse_identity.current(
+                        request, tid, participant, claim):
+                    return
                 yield f"event: agent_dm\ndata: {json.dumps(env)}\n\n"
             while True:
                 try:

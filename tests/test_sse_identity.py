@@ -190,3 +190,24 @@ async def test_an_open_dm_stream_closes_when_the_name_is_released(client, monkey
         q.put_nowait({"content": "private canary"})
     with pytest.raises(StopAsyncIteration):
         await anext(iterator)
+
+
+async def test_dm_replay_never_reaches_a_released_streams_old_holder(client):
+    """Codex on e0f6e3ac: open through `connected`, release and reclaim bob, then a
+    DM to the new bob lands in the inbox; the old stream's replay must not yield it."""
+    from quorus.routes.agent_dm import stream_agent_dms
+
+    _, bob = await _join(client, "build", "bob")
+    _, carol = await _join(client, "build", "carol")
+    dm = await stream_agent_dms("bob", _request(), await _token(client, bob))
+    iterator = dm.body_iterator
+    assert "event: connected" in await anext(iterator)
+    store = app.state.participant_keys
+    assert store.release("bob")
+    assert store.claim("bob", kind="human")
+    sent = await client.post("/v1/dm", json={"from": "carol", "to": "bob",
+                                              "content": "successor-only canary"},
+                             headers=carol)
+    assert sent.status_code == 200, sent.text
+    with pytest.raises(StopAsyncIteration):
+        await anext(iterator)
