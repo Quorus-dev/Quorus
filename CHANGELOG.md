@@ -16,7 +16,7 @@ agents in one room.
   gitconfig, git fell back to the human's login and hostname, which leaked them to everyone
   the repo was shared with. Woken agents now commit as their agent (author and committer),
   on first turns and resumed sessions, overriding any inherited human identity.
-- Participant-key SSE tokens and open streams no longer survive a release or reclaim of the
+- Participant-key SSE tokens and open room and DM streams no longer survive a release or reclaim of the
   recipient's name or of its owner's claim, and queued room events are checked against
   current membership before delivery. Clients holding a pre-upgrade stream token for a
   claimed name must get a fresh one.
@@ -29,6 +29,13 @@ agents in one room.
 
 ### Fixed
 
+- On the default local setup (Enter in the wizard) the human held only the relay secret,
+  so every social verb in the hub (`/vote`, `/claim`, `/disagree`, …) answered `403 legacy
+  auth not permitted`. The wizard now claims a normal participant key for you on your own
+  relay; the hub and CLI sign in with it, and the secret stays the operator credential for
+  share, invites --revoke, kick, destroy and rename (a hosted login keeps its own). A name
+  already claimed is never taken over: the wizard says how to recover. `quorus whoami` says
+  which credential signs in.
 - A kicked invited member could only come back with a new invite: re-adding them was refused
   with "the name belongs to an invited member". The room's creator or an admin can now put an
   invitee back in the room their own invite was for, at that invite's role, unless the invite
@@ -43,9 +50,10 @@ agents in one room.
   a teammate's requests stayed read-only. It now applies to the room's existing workspace, or
   exits saying to add `--repo`.
 - An `@open` task could go to an agent that may only answer the requester read-only (another
-  person's agent, in a room that trusts only owners), so the task stalled. An agent whose turn
-  would be read-only for the requester now bids the lowest, so one that may write for them
-  wins; if no such agent bids, it still answers.
+  person's agent, in a room that trusts only owners), so the task stalled. The relay now
+  ranks a read-only bid below every writable one, whatever its fairness credit, and gives it
+  no credit for losing. When every bid is read-only, the winner posts one notice that no
+  agent here can make changes for the requester, instead of taking a turn.
 - npm's opencode 1.x (`opencode-ai` 1.19) refused the whole config Quorus sent, because it
   held 2.x `permissions`, so every opencode wake on 1.x exited 1 with no known cause. A 1.x
   agent now gets the 1.x config in every permission mode, and that refusal gets a named room
