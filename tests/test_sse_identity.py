@@ -153,7 +153,20 @@ async def test_a_key_bound_token_opens_both_streams(client):
     await _dm_opened(client, agent, "bob-codex")
 
 
-async def test_a_dm_token_from_before_a_reclaim_is_refused(client):
+async def test_bound_tokens_open_both_the_room_and_the_dm_stream(client):
+    """Live replay of 4e036f88: /stream/token mints identity-bound tokens, but the DM
+    stream still verified them bare, so every agent's DM stream answered 401 and owner
+    alerts and tuning notes never arrived live."""
+    from quorus.routes.agent_dm import stream_agent_dms
+
+    _, bob = await _join(client, "build", "bob")
+    room = await stream_messages("bob", _request(), await _token(client, bob))
+    assert "event: connected" in await anext(room.body_iterator)
+    dm = await stream_agent_dms("bob", _request(), await _token(client, bob))
+    assert "event: connected" in await anext(dm.body_iterator)
+
+
+async def test_a_dm_token_is_refused_after_release_and_reclaim(client):
     from quorus.routes.agent_dm import stream_agent_dms
 
     _, bob = await _join(client, "build", "bob")

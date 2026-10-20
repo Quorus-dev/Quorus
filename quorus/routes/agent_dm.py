@@ -43,6 +43,7 @@ from quorus.auth.policy import (
 )
 from quorus.routes.helpers import _validate_name
 from quorus.routes.room_auth import require_not_observer_only
+from quorus.services import sse_identity
 
 router = APIRouter()
 
@@ -496,12 +497,10 @@ async def stream_agent_dms(
     ``POST /stream/token`` round-trip is sufficient — clients don't have to
     mint a second token type.
     """
-    from quorus.services import sse_identity
-
     sse_svc = request.app.state.sse_service
-    # Same check as /stream/{recipient} (4e036f88): a participant key's token is
-    # bound to its claim generation. Verifying the wrapped token as-is refused
-    # every agent's DM stream with 401 (live replay, f9984702).
+    # Same identity binding as /stream/{recipient} (4e036f88): POST /stream/token
+    # now mints a claim-generation-bound token, so the bare verify here refused
+    # every agent's DM stream with 401 and owner alerts never arrived live.
     claim, opaque = sse_identity.unwrap(token)
     valid, tid = await sse_svc.verify_token(
         opaque, sse_identity.recipient_key(participant, claim))
