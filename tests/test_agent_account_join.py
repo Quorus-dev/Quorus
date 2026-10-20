@@ -12,7 +12,12 @@ from quorus.relay import _reset_state, app
 
 
 @pytest.mark.parametrize("harness", ["claude", "codex"])
-def test_account_owner_can_add_agent_to_room(monkeypatch, harness):
+def test_account_owner_can_add_agent_to_room(monkeypatch, tmp_path, harness):
+    """No --mode and no --repo: the agent joins. The test owns its HOME and has no
+    room binding: it used to pass only on machines whose real ~/.quorus bound #build
+    (PR #15 CI, 0.6.4)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(agent_cmd, "_bound_path", lambda room: None)
     _reset_state()
     cfg = {"instance_name": "alice", "relay_url": "http://test", "api_key": "parent-key"}
 
@@ -41,7 +46,7 @@ def test_account_owner_can_add_agent_to_room(monkeypatch, harness):
     monkeypatch.setattr(agent_cmd.httpx, "post", lambda url, **kw: asyncio.run(
         request("POST", url, **kw),
     ))
-    args = SimpleNamespace(tool=harness, room="build", repo=None, mode="default")
+    args = SimpleNamespace(tool=harness, room="build", repo=None, mode=None)
     console = SimpleNamespace(print=lambda *a, **kw: None)
     try:
         agent_cmd._add(args, console)
@@ -51,3 +56,26 @@ def test_account_owner_can_add_agent_to_room(monkeypatch, harness):
         assert f"alice-{harness}" in members
     finally:
         _reset_state()
+
+
+def test_mode_without_repo_or_binding_says_what_is_missing(monkeypatch, tmp_path):
+    """--mode lives on the room's workspace binding (bug 9): with no --repo and no
+    binding on this machine, `agent add` stops with a clear message before anything
+    is claimed or joined."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(agent_cmd, "_bound_path", lambda room: None)
+    monkeypatch.setattr(agent_cmd, "load_config", lambda: {
+        "instance_name": "alice", "relay_url": "http://test", "api_key": "parent-key"})
+    monkeypatch.setattr(agent_cmd.shutil, "which", lambda _: "/fake/harness")
+    monkeypatch.setattr(agent_cmd, "_readiness_warnings", lambda *a: [])
+
+    def no_network(*a, **kw):
+        raise AssertionError("agent add reached the relay before refusing")
+
+    monkeypatch.setattr(agent_cmd.httpx, "post", no_network)
+    monkeypatch.setattr(agent_cmd, "_credentials", no_network)
+    args = SimpleNamespace(tool="claude", room="build", repo=None, mode="default")
+    with pytest.raises(SystemExit) as exc:
+        agent_cmd._add(args, SimpleNamespace(print=lambda *a, **kw: None))
+    assert "--mode applies to the room's workspace" in str(exc.value)
+    assert "#build has none on this machine yet" in str(exc.value)
