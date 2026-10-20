@@ -59,6 +59,11 @@ def act(prompt, can_write):
         return "I can't edit here: %%s" %% (cmd.group(1) if cmd else "no write access")
     if "fix the bug in calc.py" not in asked:
         return "Hi: I work in this repo. Ask me to fix or build something."
+    me = re.search(r"You are `([^`]+)`", prompt)
+    if me and re.search(r"ask @%%s to review" %% re.escape(me.group(1)), asked):
+        # Named as the reviewer in the human's ask, which wakes this agent too: wait
+        # for the fix. Fixing it as well raced the other agent's publish (PR #15 F5).
+        return "I'll review it once the fix is posted."
     if can_write:
         p = "calc.py"
         src = open(p).read().replace("return a - b", "return a + b")
