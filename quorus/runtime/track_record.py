@@ -384,7 +384,9 @@ def _sync(track: Track, participant: str, scope: str, now: float) -> tuple[bool,
         return False, None
     if last is not None and now - last.created_ts < COOLDOWN_S:
         return False, None
+    parts = scope.split("|")
     new = tuning.adapt("bid", subject=participant, scope=scope,
+                       owner=parts[1] if len(parts) >= 3 else "",
                        change=f"@open bids x{m:.2f} for @{participant}",
                        because=counts(track),
                        evidence={"direction": "down" if m <= ENTER_DOWN else "up",

@@ -108,3 +108,14 @@ def test_cli_lists_undoes_redoes_and_switches_off(store):
     assert "tuning is off" in _run()
     assert json.loads(_run(json=True))["enabled"] is False
     assert "adapt to you again" in _run(action="on")
+
+
+def test_ids_name_the_owner_when_given(store):
+    """0.6.3 multi-person audit, BUG 18: two owners' agents both announced "t1" in a
+    shared room, so `quorus tune undo t1` was ambiguous to read."""
+    a = tuning.adapt("bid", subject="a-gemini", scope=SCOPE, change="c", because="b",
+                     owner="arav")
+    assert a.id == "arav.t1"
+    assert tuning.undo("arav.t1").state == "undone"
+    b = tuning.adapt("bid", subject="b-codex", scope=SCOPE, change="c", because="b")
+    assert b.id == "t2"  # no owner: the plain form still works

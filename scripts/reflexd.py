@@ -2865,7 +2865,7 @@ class Reflexd:
                     while len(self._predictions) > 256:
                         self._predictions.pop(next(iter(self._predictions)))
                 if decision.announce:
-                    await self._post_status(relay, room, envelope, decision.announce)
+                    await self._announce_adaptation(relay, room, envelope, decision.announce)
             except Exception as exc:  # a bad track record must never stop a bid
                 logger.debug("track-record bid skipped: %s", exc)
             if await self._read_only_for(relay, envelope, room):
@@ -3776,6 +3776,26 @@ class Reflexd:
         relay = f"{url.scheme}://{url.netloc}{url.path.rstrip('/')}"
         return "|".join((relay,
                          agent_owner(self.config.participant_name), str(repo or "")))
+
+    async def _announce_adaptation(
+        self, relay: RelayClient, room: str, envelope: dict[str, Any], text: str,
+    ) -> None:
+        """A self-tuning line is its owner's business. In a room the owner shares
+        with other people it goes to the owner as a DM (0.6.3 multi-person audit,
+        BUG 18: three daemons' "(shadow, not applied)" notes reached friends); in
+        a room of the owner's own agents it stays a status line, which is where
+        the board reads it. Unknown membership counts as shared."""
+        owner = agent_owner(self.config.participant_name)
+        members = await relay.fetch_members(room=room)
+        shared = not members or any(not trusted_sender(m, owner) for m in members)
+        if not shared:
+            await self._post_status(relay, room, envelope, text)
+            return
+        try:
+            await relay.post_agent_dm(sender=self.config.participant_name, recipient=owner,
+                                      content=f"[#{room}] {text}")
+        except Exception as exc:  # the line is also in `quorus tune list`
+            logger.debug("tuning note to owner failed: %s", exc)
 
     async def _post_status(
         self, relay: RelayClient, room: str, envelope: dict[str, Any], text: str,

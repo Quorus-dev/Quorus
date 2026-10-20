@@ -206,8 +206,8 @@ def test_the_newest_tuning_line_becomes_a_board_row(tmp_path: Path) -> None:
                          "@x-gemini · x0.75 · 2 errors, 0 clean/24h · undo: quorus tune undo t1"}
     applied = {"from_name": "x-gemini", "message_type": "status",
                "timestamp": "2026-10-18T08:05:00Z",
-               "content": "(quorus) adapted t2: @open bids x0.60 for @x-gemini · 3 errors, "
-                          "0 clean/24h · undo: quorus tune undo t2"}
+               "content": "(quorus) adapted arav.t2: @open bids x0.60 for @x-gemini · 3 errors, "
+                          "0 clean/24h · undo: quorus tune undo arav.t2"}  # owner-prefixed id
     # Neither of these may land on a row: a line about x-gemini posted by someone
     # else, and a plain chat message from x-gemini (its daemon posts `status`).
     spoof = dict(applied, from_name="x-gemini-2", timestamp="2026-10-18T08:09:00Z",
@@ -231,7 +231,7 @@ def test_the_newest_tuning_line_becomes_a_board_row(tmp_path: Path) -> None:
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout)
     assert got["both"]["x-gemini"] == {  # the newest line wins
-        "id": "t2", "shadow": False, "undo": "quorus tune undo t2",
+        "id": "arav.t2", "shadow": False, "undo": "quorus tune undo arav.t2",
         "text": "adapted: @open bids x0.60 for @x-gemini · 3 errors, 0 clean/24h"}
     assert got["one"]["x-gemini"] == {
         "id": "t1", "shadow": True, "undo": "quorus tune undo t1",

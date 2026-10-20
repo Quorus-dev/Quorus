@@ -116,9 +116,9 @@ def test_shadow_keeps_the_bid_raw_but_logs_and_announces_the_would_be_bid(tmp_pa
     assert d.bid == 0.5
     assert d.reason.startswith("open_capability_match+track(shadow) x0.")
     assert "avail 0✓ 2✗/24h (timeout 1, vendor 1)" in d.reason
-    assert d.announce.startswith("(quorus) t1 (shadow, not applied): would set @open bids x0.")
+    assert d.announce.startswith("(quorus) a.t1 (shadow, not applied): would set @open bids x0.")
     assert "1 vendor fail, 1 timeout, 0 clean/24h" in d.announce
-    assert d.announce.endswith("undo: quorus tune undo t1")
+    assert d.announce.endswith("undo: quorus tune undo a.t1")  # id names the owner (BUG 18)
     [logged] = tr.load_bids(tmp_path, "a-gemini")
     assert logged["arm"] == "shadow" and logged["raw"] == 0.5 and logged["applies"]
     assert logged["message_id"] == mid and logged["harness"] == "gemini"
@@ -130,7 +130,7 @@ def test_on_applies_except_on_holdout_and_announces_once(tmp_path, monkeypatch):
     kw = _two_failures(tmp_path)
     d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
     assert d.bid < 0.5 and d.reason.startswith("r+track x0.")
-    assert d.announce.startswith("(quorus) adapted t1: @open bids x0.")
+    assert d.announce.startswith("(quorus) adapted a.t1: @open bids x0.")
     d = tr.decide_bid(0.5, "r", message_id=_holdout(), **kw)
     assert d.bid == 0.5 and d.reason.startswith("r+track(holdout) x0.") and d.announce is None
     assert [b["arm"] for b in tr.load_bids(tmp_path, "a-gemini")] == ["routed", "holdout"]
@@ -165,12 +165,12 @@ def test_undo_holds_until_redo_and_tune_off_is_immediate(tmp_path, monkeypatch):
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
     kw = _two_failures(tmp_path)
     tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
-    assert tuning.undo("t1") is not None
+    assert tuning.undo("a.t1") is not None
     for _ in range(5):
         _turn(tmp_path, "errored")
     d = tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
     assert d.bid == 0.5 and d.announce is None and len(tuning.adaptations()) == 1
-    assert tuning.redo("t1") is not None
+    assert tuning.redo("a.t1") is not None
     assert tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw).bid < 0.5
     tuning.set_enabled(False)
     assert tr.mode() == "off"
@@ -183,7 +183,7 @@ def test_scope_keeps_adaptations_apart(tmp_path, monkeypatch):
     monkeypatch.setenv("QUORUS_TRACK_BIDS", "on")
     kw = _two_failures(tmp_path)
     tr.decide_bid(0.5, "r", message_id=_not_holdout(), **kw)
-    tuning.undo("t1")
+    tuning.undo("a.t1")
     other = {**kw, "scope": "other-relay|a|/repo"}
     _turn(tmp_path, "vendor_failure", scope=other["scope"])
     _turn(tmp_path, "timed_out", scope=other["scope"])
@@ -292,6 +292,9 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
             posts.append(kw)
             return {}
 
+        async def fetch_members(self, *, room):
+            return ["a", "a-gemini"]  # the owner's own room: the line stays a status post
+
     monkeypatch.setattr(reflexd, "BID_WINDOW_SECONDS", 0.2)
     envelope = {"id": "f", "message_id": _not_holdout(), "room": "dev", "from_name": "arav",
                 "content": "@open please fix the tests", "message_type": "chat"}
@@ -309,7 +312,7 @@ def test_daemon_open_bid_carries_track_record(tmp_path, monkeypatch):
     assert auction["message_id"] == envelope["message_id"] and auction["winning_bid"] == 0.5
     [line] = posts
     assert line["message_type"] == "status" and line["room"] == "dev"
-    assert line["content"].startswith("(quorus) adapted t1: @open bids x0.")
+    assert line["content"].startswith("(quorus) adapted a.t1: @open bids x0.")
 
 
 def test_failed_harness_exits_and_slow_starts_are_not_clean():
