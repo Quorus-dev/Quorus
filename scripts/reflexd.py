@@ -1060,10 +1060,10 @@ def is_agent_participant(participant: str) -> bool:
 # line a human can act on. Patterns are lowercase substrings matched against
 # stderr — deliberately narrow so an unknown failure stays generic rather
 # than being mislabelled.
-_HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
-    # opencode 1.x refusing the 2.x permission key: every autonomous wake "exited 1
-    # with no known cause" (0.6.3 audit, BUG 22). Named here instead of quoting
-    # stderr, which can echo secrets.
+# opencode only (Codex: other harnesses must not get opencode advice). 1.x refusing
+# the 2.x permission key made every wake "exit 1 with no known cause" (0.6.3 audit,
+# BUG 22). Named here instead of quoting stderr, which can echo secrets.
+_OPENCODE_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
     (
         "v2 permissions are not supported",
         "this opencode is 1.x and refused Quorus's permission settings. Upgrade to "
@@ -1075,6 +1075,9 @@ _HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
         "opencode refused its configuration. Check `opencode --version` (Quorus is "
         "tested on opencode 2) and any opencode.json in this repo, then mention me again",
     ),
+)
+
+_HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
     (
         "ineligibletiererror",
         "Gemini CLI is no longer supported on this account tier "
@@ -1156,6 +1159,10 @@ def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
     generic sentinel rather than inventing a cause.
     """
     low = (stderr or "").lower()
+    if Path(harness or "").name == "opencode":
+        for needle, message in _OPENCODE_DIAGNOSTICS:
+            if needle in low:
+                return f"⚠ {harness}: {message}"
     for needle, message in _HARNESS_DIAGNOSTICS:
         if needle in low:
             text = f"⚠ {harness}: {message}"

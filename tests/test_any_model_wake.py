@@ -706,3 +706,11 @@ def test_a_v1_read_only_wake_sends_deny_rules_it_can_read(
     asyncio.run(adapter.run("opencode", context="ctx", mode="readonly"))
     sent = json.loads(calls[0]["env"]["OPENCODE_CONFIG_CONTENT"])
     assert "permissions" not in sent and sent["permission"]["edit"] == "deny"
+
+
+def test_opencode_config_advice_goes_only_to_opencode() -> None:
+    """Codex on 6da07dc2: other harnesses got opencode-specific advice."""
+    stderr = "Error: Configuration is invalid at line 3\n"
+    assert "opencode" in str(reflexd.diagnose_harness_failure("/usr/local/bin/opencode", stderr))
+    for other in ("claude", "codex", "gemini"):
+        assert reflexd.diagnose_harness_failure(other, stderr) is None
