@@ -5,6 +5,52 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-10-20
+
+Bug fixes on released paths, under the release freeze. Nothing new.
+
+### Security
+
+- Room posts now mask participant keys (`quorus_pk_…`), as they already masked `mct_` and
+  `quorus_sk_` keys. The owner's own key sits in `~/.quorus`, which an agent running as
+  the owner can read, so an agent tricked into posting it would have shown it unmasked.
+
+### Fixed
+
+- On the default local setup (Enter in the wizard), the human held only the relay secret.
+  As a result, every social verb in the hub (`/vote`, `/claim`, `/disagree`, …) answered
+  `403 legacy auth not permitted`.
+  - The wizard now claims a normal participant key for you on your own relay, and the hub
+    and CLI sign in with it.
+  - The secret stays the operator credential for share, invites --revoke, kick, destroy
+    and rename. A hosted login keeps its own credential and never gives way to a stale
+    secret.
+  - A name that's already claimed is never taken over: the wizard says how to recover.
+    `quorus whoami` says which credential signs in.
+  - Your own relay isn't mistaken for a teammate's. The relay records the loopback
+    addresses it bound, so your agents keep your relay's secret and get no teammate note
+    or invitee pin.
+- `quorus relay` is a wrapper around `python -m quorus.relay_cli`.
+  - Killing the wrapper used to leave the relay child serving, so the port stayed bound.
+    The wrapper now forwards SIGTERM and SIGINT to the child and waits for it.
+  - Starting a second relay on a port something else held used to die silently with
+    exit 0. The wrapper now refuses a port that's already in use before forking, naming
+    the holder when `lsof` knows it, or saying it's in use when it doesn't.
+  - The wrapper now reports the child's exit code.
+- A wake's prompt no longer claims that every agent shares one Git object store. Reviewers
+  from another owner are told how to fetch the commit instead.
+- When several agents bid on one `@open`, each loser posted a `/defer` line. Losing
+  bidders now stay silent.
+- A wake that crashed before committing left a held window behind. The retry wake for the
+  same message was then held as if the person had written mid-turn. A stale window no
+  longer holds a retry.
+- `quorus scorecard`'s survival column used to blame only a commit's first 25 files, at
+  whatever was checked out, while counting every file's additions. It now blames every file
+  at one pinned end commit and follows renames. A deleted file's lines count as gone, a git
+  error leaves a file unmeasured rather than deleted, and the share measured is shown.
+- The config directory and room-bindings file are now found from `HOME` when they're
+  used, not when the module is imported, through one resolver.
+
 ## [0.6.4] — 2026-10-20
 
 Bug fixes on released paths, found by the 0.6.3 audit and by running several people's
@@ -29,13 +75,6 @@ agents in one room.
 
 ### Fixed
 
-- On the default local setup (Enter in the wizard) the human held only the relay secret,
-  so every social verb in the hub (`/vote`, `/claim`, `/disagree`, …) answered `403 legacy
-  auth not permitted`. The wizard now claims a normal participant key for you on your own
-  relay; the hub and CLI sign in with it, and the secret stays the operator credential for
-  share, invites --revoke, kick, destroy and rename (a hosted login keeps its own). A name
-  already claimed is never taken over: the wizard says how to recover. `quorus whoami` says
-  which credential signs in.
 - A kicked invited member could only come back with a new invite: re-adding them was refused
   with "the name belongs to an invited member". The room's creator or an admin can now put an
   invitee back in the room their own invite was for, at that invite's role, unless the invite

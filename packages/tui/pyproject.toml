@@ -1,6 +1,6 @@
 [project]
 name = "quorus-tui"
-version = "0.6.4"
+version = "0.6.5"
 description = "Quorus TUI — full-screen terminal hub for managing rooms, agents, and live chat"
 requires-python = ">=3.10"
 license = "MIT"
