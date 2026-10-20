@@ -2384,7 +2384,13 @@ def _slash_workspace(arg, state, relay_url, secret, agent_name, console):
         )
         return True
 
-    if pm.get(target) is None:
+    try:
+        known = pm.get(target) is not None
+    except ValueError:
+        # A name the profile store refuses (spaces, a stray "/command"): the
+        # error used to escape and close the hub (0.6.3 audit, HUB lane).
+        known = False
+    if not known:
         state.set_status_bar(f"no such workspace: {target} — /workspace to list")
         return True
 
@@ -2975,7 +2981,22 @@ def _read_input(
                     if on_popover_change is not None:
                         on_popover_change(buf, popover)
                     continue
-                if _popover_action in ("next", "prev", "consume", "dismiss"):
+                if _popover_action == "submit":
+                    # The line already is the command (`/rooms` + Enter): commit
+                    # the label and fall through to the normal Enter handling,
+                    # which runs it. Before, Enter only added a trailing space
+                    # and a second Enter was needed (0.6.3 audit, HUB lane).
+                    label = popover.selected_label() or ""
+                    prefix_len = len(popover.prefix)
+                    if prefix_len > 0 and len(buf) >= prefix_len:
+                        del buf[-prefix_len:]
+                    buf.extend(label)
+                    popover.dismiss()
+                    _redraw_line(buf)
+                    if on_popover_change is not None:
+                        on_popover_change(buf, popover)
+                    key = readchar.key.ENTER
+                elif _popover_action in ("next", "prev", "consume", "dismiss"):
                     if on_popover_change is not None:
                         on_popover_change(buf, popover)
                     continue

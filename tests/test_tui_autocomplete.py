@@ -358,3 +358,25 @@ def test_render_returns_rich_text_rows():
     rows = pop.render(console_width=80)
     for row in rows:
         assert isinstance(row, Text)
+
+
+def test_enter_on_an_exact_slash_command_submits():
+    """0.6.3 audit (HUB lane): `/rooms` + Enter only added a trailing space, so
+    every argument-less command needed Enter twice, and `/workspace` + Enter
+    then `/create x` ran `/workspace /create x`. Enter on an exact match submits."""
+    pop = _make_slash()
+    pop.open_slash()
+    for ch in "rooms":
+        pop.handle_key(ch)
+    assert pop.selected_label() == "/rooms"
+    assert pop.handle_key("ENTER") == "submit"
+    pop = _make_slash()
+    pop.open_slash()
+    for ch in "roo":
+        pop.handle_key(ch)
+    assert pop.handle_key("ENTER") == "accept"   # a prefix still completes
+    pop = _make_slash()
+    pop.open_slash()
+    for ch in "rooms":
+        pop.handle_key(ch)
+    assert pop.handle_key("TAB") == "accept"     # Tab keeps inserting

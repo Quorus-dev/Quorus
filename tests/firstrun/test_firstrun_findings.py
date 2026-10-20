@@ -98,6 +98,16 @@ def test_esc_on_the_slash_menu_drops_the_half_typed_command(session) -> None:
     assert _sent(session, "loopc-esc") == ["loopc-esc after escape"]
 
 
+def test_an_exact_slash_command_runs_on_the_first_enter(session) -> None:
+    """0.6.3 audit (HUB lane): `/rooms` + Enter only autocompleted to `/rooms `;
+    the command ran on the second Enter, and `/quit` never quit."""
+    session.type("/rooms" + ENTER)
+    session.expect(r"Rooms|#general", timeout=8)
+    time.sleep(0.5)
+    session.type("loopc-one-enter after rooms" + ENTER)
+    assert _sent(session, "loopc-one-enter") == ["loopc-one-enter after rooms"]
+
+
 def test_the_first_run_starts_one_relay_on_its_own_url(session) -> None:
     """Found building loop C: the wizard set its relay URL but started the relay
     on the hard-coded default (8080); the hub then started a second one."""

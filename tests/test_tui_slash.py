@@ -193,3 +193,19 @@ def test_no_install_one_liner_pipes_to_sh_or_names_a_foreign_domain():
         text = src.read_text(encoding="utf-8")
         assert "q.dev/" not in text, src
         assert not re.search(r"curl [^\n\"']*\| sh\b", text), src
+
+
+# ── /workspace ───────────────────────────────────────────────────────────────
+
+
+def test_slash_workspace_with_a_name_the_store_refuses_does_not_crash(tmp_path, monkeypatch):
+    """0.6.3 audit (HUB lane): `/workspace /create x` raised ValueError from the
+    profile store and closed the hub with a traceback."""
+    from quorus_tui import hub as _hub
+
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
+    state = HubState()
+    console, _ = _console()
+    assert _hub._slash_workspace("/create audit-room", state, "http://relay", "s", "arav",
+                                 console) is True
+    assert "no such workspace" in state.get_status_bar()
