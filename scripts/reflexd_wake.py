@@ -923,11 +923,11 @@ def is_no_reply(reply: str) -> bool:
 
 
 _LEAK_HEAD = re.compile(
-    r"^[`*\"']*" + NO_REPLY + r"(?![A-Za-z0-9_])[`*\"']*[\s?!.:,;—–>→-]*"  # token + "→"/"->"
-    # a bare "No —" / "No:" / "No," connective, nothing else: the punctuation must be
-    # followed by a space or the end, so "No-go for release" and "no-write access"
-    # keep their words (Codex, review of 1b8bc9df), as does "No tests passed".
-    r"(?:no\s*[—–:,;>→-]+(?=\s|$)\s*)?",
+    # Only the token and the non-word characters right after it ("? ", ": ", "→",
+    # "->", "—", spaces). Never a word: three rounds of "No — …" heuristics each
+    # flipped a meaning somewhere ("No-go", "no-write", "No tests passed"), so the
+    # rule is now the overseer's: delete no letters other than the token's.
+    r"^[`*\"']*" + NO_REPLY + r"(?![A-Za-z0-9_])[^A-Za-z0-9_\n]*",
     re.IGNORECASE,
 )
 _LEAK_INLINE = re.compile(r"[`*\"']*\b" + NO_REPLY + r"\b[`*\"']*", re.IGNORECASE)
@@ -936,12 +936,13 @@ _LEAK_INLINE = re.compile(r"[`*\"']*\b" + NO_REPLY + r"\b[`*\"']*", re.IGNORECAS
 def scrub_no_reply(reply: str) -> str:
     """The protocol token never reaches the room. An agent that deliberated in
     its reply ("NO_REPLY? No — there is one missing fact…", 0.6.3 multi-person
-    audit, BUG 10) keeps the fact and loses the deliberation; a bare token line
-    anywhere is dropped; an inline mention, any case, is removed. A meaningful
-    "No" survives ("NO_REPLY? No tests passed." keeps its negation) and other
-    identifiers that merely start with the token (NO_REPLY_TIMEOUT) are left
-    alone (Codex, review of 3f97de5d). Returns "" when nothing worth posting is
-    left, which the caller treats like NO_REPLY."""
+    audit, BUG 10) keeps every word after the token, deliberation included
+    ("No — there is one missing fact" posts as written, a little awkward but
+    never wrong); a bare token line anywhere is dropped; an inline mention, any
+    case, is removed. No other letters are ever deleted, so "No-go", "no-write"
+    and "No tests passed" survive by construction, and identifiers that merely
+    start with the token (NO_REPLY_TIMEOUT) are left alone. Returns "" when
+    nothing worth posting is left, which the caller treats like NO_REPLY."""
     text = (reply or "")
     if not text.strip() or NO_REPLY not in text.upper():
         return text
