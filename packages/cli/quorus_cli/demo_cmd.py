@@ -325,7 +325,7 @@ def cmd_demo(args: Any, console: Any) -> None:
                           highlight=False)
             console.print(f"[dim]{subprocess.run(['git', 'log', '--oneline', '-3', 'main'], cwd=repo, capture_output=True, text=True).stdout.strip()}[/]")  # noqa: E501
             console.print("\nYour turn: run [accent]quorus[/] to make a room, then "
-                          "[accent]quorus agent add claude|codex|gemini|opencode --room general "
+                          "[accent]quorus agent add claude|codex|opencode --room general "
                           "--repo <your project>[/].")
         else:
             console.print(f"\n[warning]![/] The agents didn't finish in {args.timeout}s. "

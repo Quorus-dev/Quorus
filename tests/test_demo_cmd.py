@@ -206,3 +206,13 @@ def test_a_probe_slower_than_the_limit_counts_as_no_answer(monkeypatch, tmp_path
 
     monkeypatch.setattr(demo_cmd.subprocess, "run", run)
     assert demo_cmd.model_answers("opencode/nemotron-3.5-lightning-free", tmp_path) is None
+
+
+def test_closing_hint_offers_only_tested_wakes():
+    """Stranger pass of 0.6.2: the hint still offered gemini, which Google ended for
+    individual accounts; the README calls it a note, not a tested wake."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "packages/cli/quorus_cli/demo_cmd.py").read_text()
+    assert "quorus agent add claude|codex|opencode --room general" in src
+    assert "claude|codex|gemini|opencode" not in src
