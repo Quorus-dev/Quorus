@@ -37,7 +37,7 @@ def test_account_owner_can_add_agent_to_room(monkeypatch, harness):
     monkeypatch.setattr(agent_cmd.shutil, "which", lambda _: "/fake/harness")
     monkeypatch.setattr(agent_cmd, "_credentials", lambda *a: ("child-key", False))
     monkeypatch.setattr(agent_cmd, "_bearer", bearer)
-    monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda _: "already-running")
+    monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda *a, **k: "already-running")
     monkeypatch.setattr(agent_cmd.httpx, "post", lambda url, **kw: asyncio.run(
         request("POST", url, **kw),
     ))

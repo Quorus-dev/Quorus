@@ -48,7 +48,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(agent_cmd, "_start_daemon",
                         lambda c, name, cred, legacy, model=None: calls["daemons"].append(
                             (name, cred, legacy)) or "label")
-    monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda name: None)
+    monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda *a, **k: None)
     calls["cfg"] = cfg
     return calls
 
@@ -65,7 +65,7 @@ def test_add_joins_starts_daemon_and_binds_with_mode(env: dict, tmp_path: Path) 
 
 def test_existing_daemon_is_reused_never_duplicated(env: dict, monkeypatch) -> None:
     monkeypatch.setattr(agent_cmd, "_running_daemon_for",
-                        lambda name: "dev.quorus.dogfood.reflexd.arav-claude")
+                        lambda *a, **k: "dev.quorus.dogfood.reflexd.arav-claude")
     console = _Console()
     agent_cmd.cmd_agent(_Args(), console)
     assert env["daemons"] == []  # two daemons would answer every message twice

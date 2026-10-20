@@ -80,12 +80,14 @@ def _launchd_labels() -> list[str]:
     return [line.split()[-1] for line in out.splitlines() if "quorus" in line]
 
 
-def _running_daemon_for(name: str) -> str | None:
+def _running_daemon_for(name: str, relay_url: str | None = None) -> str | None:
     """An already-running wake daemon for *name*: a launchd job (ours or
     dogfood's) OR any reflexd process for it (e.g. started by the legacy
     reflexd-manager or `quorus reflexd start`). Two daemons for one agent
     answer every message twice. The pid file comes first: minimal Linux
-    images ship without pgrep."""
+    images ship without pgrep. With *relay_url*, a reflexd process for the same
+    name on another relay doesn't count: an orphan from an old run on a dead
+    relay made every later `agent add` of that name start nothing."""
     pid = agent_proc.live_pid(_agents_dir(), name)
     if pid is not None:
         return f"pid {pid}"
@@ -98,7 +100,24 @@ def _running_daemon_for(name: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     pids = out.stdout.split()
+    if relay_url:
+        pids = [p for p in pids if _serves_relay(p, relay_url)]
     return f"pid {pids[0]}" if pids else None
+
+
+def _serves_relay(pid: str, relay_url: str) -> bool:
+    """Whether reflexd *pid* serves *relay_url*. If its command line can't be
+    read, count it: a duplicate daemon is worse than a missed one."""
+    try:
+        out = subprocess.run(["ps", "-ww", "-o", "command=", "-p", pid],
+                             capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    argv = out.stdout.split()
+    if out.returncode != 0 or "--relay-url" not in argv:
+        return True
+    i = argv.index("--relay-url")
+    return i + 1 < len(argv) and argv[i + 1].rstrip("/") == relay_url.rstrip("/")
 
 
 def _credentials(cfg: dict[str, Any], name: str, harness: str) -> tuple[str, bool]:
@@ -391,7 +410,7 @@ def _add(args: Any, console: Any) -> None:
         swap = f" [dim](was @{previous})[/]" if previous and previous != name else ""
         console.print(f"[success]✓[/] @{name} leads #{args.room}: it splits your requests "
                       f"into tasks and assigns them{swap}")
-    existing = _running_daemon_for(name)
+    existing = _running_daemon_for(name, cfg.get("relay_url"))
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "
                       "— it now also listens to this room")
