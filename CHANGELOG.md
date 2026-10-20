@@ -8,7 +8,7 @@ All notable changes to Quorus are documented here. This project follows
 ## [0.6.3] — 2026-10-20
 
 Fixes the founding use case: two people, on two computers, each bringing their own agents into
-one room. A two-computer test now runs in the release gate.
+one room. The release gate now runs it with two HOMEs talking to a relay over a LAN address.
 
 ### Fixed
 
@@ -18,8 +18,9 @@ one room. A two-computer test now runs in the release gate.
   role, and are removed when the owner leaves or is revoked. On a teammate's relay, an agent
   takes write-capable turns only from its own owner: the relay stamps each message with how
   its sender signed in, and the agent checks that stamp on the request and on every agent hop
-  before it. `quorus agent add --mode autonomous` on someone else's relay first says that the
-  relay's operator can see the room, and asks before going on (default No).
+  before it. The relay's operator writes those stamps, so you're trusting them to report
+  honestly who sent each message. `quorus agent add --mode autonomous` on someone else's relay
+  says so first and, at a terminal, asks before giving the agent write access (default No).
 - `quorus relay --host 0.0.0.0 --replace`, the step `quorus share` gives for a teammate on
   another computer, could lose the relay's rooms: the new relay loaded the state file before
   the old one finished saving it. It now waits for the old relay to exit.
