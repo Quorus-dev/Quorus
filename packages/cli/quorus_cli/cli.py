@@ -348,11 +348,8 @@ def _admin_headers() -> dict[str, str]:
     destroy, rename, room add): the relay secret when this profile has one, else
     the same login as everything else. Since 0.6.4 a local owner also holds a
     participant key for everyday identity (H4); that key is a member, never an
-    admin, so these commands must not send it when the secret is at hand. A hosted
-    login (`mct_` API key) is the exception: its role carries the admin right and
-    the hosted relay refuses a legacy secret, so a stale dev secret left in the
-    profile must never win over it (Codex, review of 2c0bc92a)."""
-    if RELAY_SECRET and not API_KEY.startswith("mct_"):
+    admin, so these commands must not send it when the secret is at hand."""
+    if RELAY_SECRET:
         return {"Authorization": f"Bearer {RELAY_SECRET}"}
     return _auth_headers()
 

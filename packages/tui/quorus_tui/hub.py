@@ -585,10 +585,6 @@ def session_credentials(profile: dict) -> tuple[str, str]:
     and the secret is not proof of authorship)."""
     api_key_val = (profile.get("api_key") or "").strip()
     legacy_secret = (profile.get("relay_secret") or "").strip()
-    if api_key_val.startswith("mct_"):
-        # A hosted login carries its own role; a stale dev secret next to it would
-        # only be refused by the hosted relay (Codex, review of 2c0bc92a).
-        return (api_key_val, "")
     return (api_key_val or legacy_secret, legacy_secret)
 
 
