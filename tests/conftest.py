@@ -10,13 +10,15 @@ from pathlib import Path
 
 import pytest
 
-# The real HOME is unreachable for the whole session (overseer, 2026-10-20).
+# HOME-based test isolation for the whole session (overseer, 2026-10-20).
 # Three rounds of per-API read guards (open, Path.read_*, bytes paths, "+"
 # modes, os.open) were an arms race against mmap, subprocess `cat` and the next
-# reader; redirecting HOME before any quorus import ends it: no read API,
-# subprocess or dynamically built path can reach ~/.quorus, ~/.claude or any
-# other host config. Tests that fake their own HOME still do, under this one.
-# REAL_HOME is kept only so the session guard below can prove nothing changed.
+# reader; redirecting HOME before any quorus import ends it: no HOME-relative
+# read, subprocess or dynamically built path lands in ~/.quorus, ~/.claude or
+# any other host config. An explicit absolute path still can (Codex), which is
+# why the resolver + AST invariant stay. Tests that fake their own HOME still
+# do, under this one. REAL_HOME is kept only so the session guard below can
+# prove nothing changed.
 REAL_HOME = Path(os.path.expanduser("~"))
 SESSION_HOME = Path(tempfile.mkdtemp(prefix="quorus-tests-home-"))
 os.environ["HOME"] = str(SESSION_HOME)
@@ -43,9 +45,12 @@ os.environ["QUORUS_NOTIFY"] = "0"
 # relay instead of their defaults, and the daemon's REFLEXD_* settings (e.g.
 # REFLEXD_CODEX_SANDBOX) change the argv tests pin (found 2026-10-17). Tests
 # that need these set them with monkeypatch.
+# MCP_TUNNEL_CONFIG_DIR is the legacy alias of QUORUS_CONFIG_DIR that config.py still
+# honours; inherited, it overrode the session HOME (Codex, review of 18ace002).
 AMBIENT_IDENTITY_VARS = (
-    "QUORUS_API_KEY", "QUORUS_RELAY_SECRET", "QUORUS_CONFIG_DIR", "QUORUS_RELAY_URL",
-    "QUORUS_INSTANCE_NAME", "QUORUS_PROFILE", "QUORUS_PARTICIPANT", "QUORUS_APPROVAL_ROOM",
+    "QUORUS_API_KEY", "QUORUS_RELAY_SECRET", "QUORUS_CONFIG_DIR", "MCP_TUNNEL_CONFIG_DIR",
+    "QUORUS_RELAY_URL", "QUORUS_INSTANCE_NAME", "QUORUS_PROFILE", "QUORUS_PARTICIPANT",
+    "QUORUS_APPROVAL_ROOM",
 )
 for _var in [*AMBIENT_IDENTITY_VARS, *(v for v in os.environ if v.startswith("REFLEXD_"))]:
     os.environ.pop(_var, None)

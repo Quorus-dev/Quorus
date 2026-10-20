@@ -80,8 +80,9 @@ def test_no_module_spells_the_bindings_file_name_on_its_own():
 def test_the_whole_session_runs_in_a_throwaway_home():
     """Overseer, 2026-10-20: instead of guarding each read API (open, Path.read_*,
     bytes paths, "+" modes, os.open; mmap and `cat` next), tests/conftest.py moves
-    HOME off the real one before any quorus import. A dynamically built path, a
-    subprocess and the product's own resolver all land in the throwaway HOME."""
+    HOME off the real one before any quorus import: HOME-based test isolation, not
+    a wall against explicit absolute paths. A dynamically built path, a subprocess
+    and the product's own resolver all land in the throwaway HOME."""
     import subprocess
     import tempfile
 
@@ -96,3 +97,22 @@ def test_the_whole_session_runs_in_a_throwaway_home():
 
     child = subprocess.run(["sh", "-c", 'printf %s "$HOME"'], capture_output=True, text=True)
     assert Path(child.stdout) == home, child
+
+
+def test_no_inherited_config_dir_alias_overrides_the_session_home():
+    """Codex, review of 18ace002: an inherited MCP_TUNNEL_CONFIG_DIR (the legacy alias
+    config.py still honours) survived the ambient-variable scrub and pointed every
+    config read back at a planted baseline. Every env var config.py consults for the
+    config dir must be in conftest's scrub list, and none may be set now."""
+    import re
+
+    from quorus import config
+    from tests.conftest import AMBIENT_IDENTITY_VARS
+
+    src = (ROOT / "quorus" / "config.py").read_text(encoding="utf-8")
+    aliases = set(re.findall(r'os\.environ\.get\("([A-Z_]*CONFIG_DIR)"', src))
+    assert "MCP_TUNNEL_CONFIG_DIR" in aliases  # the finding; the regex sees it
+    missing = sorted(aliases - set(AMBIENT_IDENTITY_VARS))
+    assert missing == [], f"add to tests/conftest.py AMBIENT_IDENTITY_VARS: {missing}"
+    assert not [a for a in aliases if a in os.environ]
+    assert Path.home() in config.resolve_config_dir().parents
