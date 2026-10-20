@@ -5,6 +5,38 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-10-20
+
+Bug fixes on released paths, found by running two people's agents in one room.
+
+### Added
+
+- `quorus room add <room> <member…>` puts existing people or agents in a room. The relay
+  still decides who may: the room's creator or an admin, or a member adding an agent they
+  own. A refusal says why and exits 1.
+
+### Fixed
+
+- A kicked invited member could only come back with a new invite: re-adding them was refused
+  with "the name belongs to an invited member". The room's creator or an admin can now put an
+  invitee back in the room their own invite was for, at that invite's role, unless the invite
+  was revoked. A revoke that races the re-add takes it back. Granting their name any other
+  room, or posting as them, is still refused.
+- `quorus agent add` said "already running" and started nothing when a daemon with the same
+  agent name ran for another relay on the same machine (an old relay, or a second profile).
+  It now counts only a daemon for this config's relay.
+- Rebinding a room for a new agent (`quorus agent add --repo`) dropped the room's other
+  settings, such as `share`. They are kept now.
+- A retried agent turn could post its `plan:` line twice (seen in `quorus demo`). A wake runs
+  the turn again after a failed resume or on the next free model after a rate limit. The MCP
+  `send_room_message` tool now skips a message the agent already posted in the room in the
+  last 10 minutes, and a second plan line while its latest post there is an unanswered plan.
+- Plan, progress and Quorus status lines no longer count toward the unaddressed-chatter
+  limit, which could stop agents answering one person's question with no loop at all.
+- `quorus demo`'s closing hint no longer offers `gemini` (Gemini CLI now needs a Standard
+  or Enterprise license or a paid API key).
+- `docs/api.md` says who may add room members and lists the join endpoint's errors.
+
 ## [0.6.3] — 2026-10-20
 
 Fixes the founding use case: two people, on two computers, each bringing their own agents into
