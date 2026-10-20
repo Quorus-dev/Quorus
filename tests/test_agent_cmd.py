@@ -63,6 +63,22 @@ def test_add_joins_starts_daemon_and_binds_with_mode(env: dict, tmp_path: Path) 
     assert bindings["build"] == {"path": str(repo.resolve()), "mode": "autonomous"}
 
 
+def test_adding_an_agent_keeps_the_rooms_other_settings(env: dict, tmp_path: Path) -> None:
+    """Bug bash: binding the room for a new agent dropped `listen`, `judge` and
+    `share`, so an ambient room quietly went back to the rules."""
+    repo = tmp_path / "app"
+    repo.mkdir()
+    path = tmp_path / ".quorus" / "room-bindings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"build": {
+        "path": str(repo.resolve()), "mode": "autonomous", "listen": "ambient",
+        "judge": ["j"], "judge_per_hour": 5, "share": True}}))
+    agent_cmd.cmd_agent(_Args(repo=str(repo), mode=None, name="docs"), _Console())
+    assert json.loads(path.read_text())["build"] == {
+        "path": str(repo.resolve()), "mode": "autonomous", "listen": "ambient",
+        "judge": ["j"], "judge_per_hour": 5, "share": True}
+
+
 def test_existing_daemon_is_reused_never_duplicated(env: dict, monkeypatch) -> None:
     monkeypatch.setattr(agent_cmd, "_running_daemon_for",
                         lambda *a, **k: "dev.quorus.dogfood.reflexd.arav-claude")

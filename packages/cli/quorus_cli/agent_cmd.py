@@ -266,13 +266,55 @@ def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> 
         mode = prev.get("mode", "default") if isinstance(prev, dict) else "default"
     if trust is None and isinstance(prev, dict):
         trust = prev.get("trust")
-    entry: dict[str, str] = {"path": str(repo), "mode": mode}
+    # Keep the room's other settings (listen, judge, share, ...): rebinding to add
+    # an agent silently turned an ambient room back to the rules (bug bash).
+    entry: dict[str, Any] = {k: v for k, v in prev.items()
+                             if k not in ("path", "mode", "trust")} \
+        if isinstance(prev, dict) else {}
+    entry.update(path=str(repo), mode=mode)
     if trust == "members":  # anyone in the room may trigger write-capable turns
         entry["trust"] = "members"
     data[room] = str(repo) if entry == {"path": str(repo), "mode": "default"} else entry
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_private(path, json.dumps(data, indent=2))
     return mode
+
+
+def _set_owner_sig(name: str, required: bool) -> None:
+    """Turn `--require-owner-sig` on or off for one agent. Its daemon reads this on
+    every wake (scripts/reflexd.py `owner_sig_required`)."""
+    path = Path.home() / ".quorus" / "owner-sig-agents.json"
+    try:
+        names = set(json.loads(path.read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        names = set()
+    except (OSError, ValueError, TypeError) as exc:
+        raise SystemExit(f"agent: can't read {path} ({exc}); fix or remove it") from None
+    names = names | {name} if required else names - {name}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_private(path, json.dumps(sorted(names)))
+
+
+def _install_owner_pubkey(src: Path) -> None:
+    """Keep the owner's P-256 public key where the daemons read it. Only a public
+    key is accepted; a private key is refused and never copied."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        PublicFormat,
+        load_pem_public_key,
+    )
+
+    try:
+        key = load_pem_public_key(src.read_bytes())
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"agent: {src} isn't a PEM public key ({exc})") from None
+    if not isinstance(key, ec.EllipticCurvePublicKey) or key.curve.name != "secp256r1":
+        raise SystemExit("agent: the owner key must be a P-256 public key")
+    pem = key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode("ascii")
+    dest = Path.home() / ".quorus" / "owner_pub.pem"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _write_private(dest, pem)
 
 
 def _harness_path() -> str:
@@ -381,6 +423,10 @@ def _add(args: Any, console: Any) -> None:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
+    if getattr(args, "owner_pubkey", None):
+        _install_owner_pubkey(Path(args.owner_pubkey).expanduser())
+    if getattr(args, "require_owner_sig", None) is not None:
+        _set_owner_sig(name, args.require_owner_sig)
     member = (cfg.get("api_key") or "").startswith("quorus_pk_")
     mode = args.mode
     if (member and repo is not None and mode == "autonomous"
