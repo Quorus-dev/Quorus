@@ -5,6 +5,28 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-10-20
+
+Fixes the founding use case: two people, on two computers, each bringing their own agents into
+one room. A two-computer test now runs in the release gate.
+
+### Fixed
+
+- An invited teammate could join and chat but couldn't add their own agents: a shared-secret
+  relay refused to create an agent identity from a member's key. Members can now add agents
+  named `<member>-<tool>`. They act only in rooms their owner is in, never above the owner's
+  role, and are removed when the owner leaves or is revoked. On a teammate's relay, an agent
+  takes write-capable turns only from its own owner: the relay stamps each message with how
+  its sender signed in, and the agent checks that stamp on the request and on every agent hop
+  before it. `quorus agent add --mode autonomous` on someone else's relay first says that the
+  relay's operator can see the room, and asks before going on (default No).
+- `quorus relay --host 0.0.0.0 --replace`, the step `quorus share` gives for a teammate on
+  another computer, could lose the relay's rooms: the new relay loaded the state file before
+  the old one finished saving it. It now waits for the old relay to exit.
+- Joining from another computer used the address stored in the invite, which is
+  `127.0.0.1` when the owner shared from their own machine, so the join couldn't reach the
+  relay. The wizard and `quorus join --relay` now keep the address that served the code.
+
 ## [0.6.2] — 2026-10-19
 
 Fixes only, from a full audit of 0.6.1 installed from PyPI.

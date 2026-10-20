@@ -1,6 +1,6 @@
 [project]
 name = "quorus-sdk"
-version = "0.6.2"
+version = "0.6.3"
 description = "Quorus SDK — lightweight client for the Quorus relay (rooms, messaging, coordination)"
 requires-python = ">=3.10"
 license = "MIT"
