@@ -101,6 +101,9 @@ def test_manifest_names_this_release_the_site_and_a_square_icon():
     manifest = _json(PLUGIN / ".claude-plugin" / "plugin.json")
     assert manifest["version"] == VERSION
     assert manifest["homepage"] == "https://www.quorus.dev/"
+    # Anthropic's directory asks for a privacy policy that matches the plugin.
+    assert manifest["privacyPolicyUrl"] == "https://www.quorus.dev/privacy"
+    # The page itself is deployed from weekend/quorus; main's site tree lags it.
     icon = (PLUGIN / ".claude-plugin" / "icon.png").read_bytes()
     assert icon[:8] == b"\x89PNG\r\n\x1a\n" and icon[12:16] == b"IHDR"
     width, height = int.from_bytes(icon[16:20], "big"), int.from_bytes(icon[20:24], "big")

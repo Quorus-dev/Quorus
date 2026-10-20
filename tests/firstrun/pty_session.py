@@ -10,7 +10,11 @@ pty, with a tmp HOME and a scrubbed environment:
   there and never touches 8080 or the dogfood relay;
 * ``QUORUS_NO_LAUNCHD=1``: launchd isn't scoped to HOME, so nothing may register
   with the real login session;
-* a dead proxy for http(s), loopback exempt, so any network call fails fast.
+* a dead proxy for http(s), loopback exempt, so any network call fails fast;
+* ``QUORUS_NOTIFY=0``, and stub ``osascript`` / ``notify-send`` first on PATH
+  that only record their argv: a banner meant for the test's alice must never
+  reach the real desktop (it did, 2026-10-19). Teardown fails the test if a
+  stub was asked for a banner.
 
 ``expect`` only reads output produced after a mark (by default, the last
 action), so an earlier screen can never satisfy a later check. Teardown kills
@@ -52,18 +56,51 @@ def plain(text: str) -> str:
     return _ANSI.sub("", text).replace("\r", "")
 
 
+NOTIFIER_STUBS = ("osascript", "notify-send")
+# One line per call: an AppleScript argv spans several lines.
+_NOTIFIER_STUB = """#!/bin/sh
+{ printf '%s ' "$(basename "$0")" "$@" | tr '\\n' ' '; echo; } >> "$HOME/.notifier-calls"
+"""
+
+
+def notifier_stub_dir(home: Path) -> Path:
+    """A directory of no-op ``osascript`` / ``notify-send`` that append their
+    argv to ``HOME/.notifier-calls``. First on PATH, so even a wheel that
+    ignores ``QUORUS_NOTIFY`` (0.6.0, run by stranger_nightly) can't reach the
+    real desktop."""
+    stubs = home / ".notifier-stubs"
+    stubs.mkdir(parents=True, exist_ok=True)
+    for name in NOTIFIER_STUBS:
+        path = stubs / name
+        path.write_text(_NOTIFIER_STUB)
+        path.chmod(0o755)
+    return stubs
+
+
+def banner_calls(home: Path) -> list[str]:
+    """Every stub call that asked for a desktop banner (other osascript use,
+    such as opening a Terminal window, doesn't count)."""
+    try:
+        lines = (home / ".notifier-calls").read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    return [line for line in lines
+            if line.startswith("notify-send") or "display notification" in line]
+
+
 def child_env(home: Path, relay_url: str, extra_path: Path | None = None) -> dict[str, str]:
     # Absolute: the child runs in the tmp HOME, where a relative entry like "."
     # would load some other copy of quorus than the one under test.
     code = [str(Path(p).resolve()) for p in sys.path if p and Path(p).is_dir()]
     dead = "http://127.0.0.1:9"
     # *extra_path* holds a test's stub agent CLIs (F5): still no real vendor CLI.
-    path = f"{Path(sys.executable).parent}:/usr/bin:/bin"
+    path = f"{notifier_stub_dir(home)}:{Path(sys.executable).parent}:/usr/bin:/bin"
     return {
         "HOME": str(home), "PATH": f"{extra_path}:{path}" if extra_path else path,
         "PYTHONPATH": os.pathsep.join(code), "PYTHONDONTWRITEBYTECODE": "1",
         "TERM": "xterm-256color", "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8",
         "COLUMNS": "120", "LINES": "40", "RELAY_URL": relay_url, "QUORUS_NO_LAUNCHD": "1",
+        "QUORUS_NOTIFY": "0",
         "HTTP_PROXY": dead, "HTTPS_PROXY": dead, "ALL_PROXY": dead,
         "http_proxy": dead, "https_proxy": dead, "all_proxy": dead,
         "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
@@ -185,9 +222,21 @@ class PtySession:
         os.close(self.fd)
         stop_home_agents(self.home)
         self._stop_relay()
+        assert_no_banners(self.home)
 
     def _stop_relay(self) -> None:
         stop_home_relays(self.home, self.port)
+
+
+def assert_no_banners(home: Path) -> None:
+    """The session asked no stub for a desktop banner. A wheel from before
+    ``QUORUS_NOTIFY`` gated every banner (no ``native.enabled``) still has its
+    banners swallowed by the stubs; it just isn't failed for them."""
+    from quorus.notifications import native
+
+    calls = banner_calls(home)
+    if calls and hasattr(native, "enabled"):
+        raise AssertionError(f"desktop banner(s) despite QUORUS_NOTIFY=0: {calls}")
 
 
 def stop_home_agents(home: Path) -> None:

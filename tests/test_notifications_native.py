@@ -37,6 +37,12 @@ def state_dir(tmp_path: Path) -> Path:
     return d
 
 
+@pytest.fixture(autouse=True)
+def _notifications_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """conftest turns banners off suite-wide; these tests mock the dispatch."""
+    monkeypatch.setenv("QUORUS_NOTIFY", "1")
+
+
 @pytest.fixture
 def fake_run() -> MagicMock:
     """A subprocess.run mock that always returns rc=0."""
@@ -379,3 +385,34 @@ def test_corrupt_state_file_recovers(
             "t", "b", sender="a", room="r", state_dir=state_dir,
         )
     assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# QUORUS_NOTIFY=0 silences every banner
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["0", "false", "OFF", " no "])
+def test_quorus_notify_off_dispatches_nothing(
+    state_dir: Path, fake_run: MagicMock, monkeypatch: pytest.MonkeyPatch, value: str,
+) -> None:
+    monkeypatch.setenv("QUORUS_NOTIFY", value)
+    for platform in ("darwin", "linux", "win32"):
+        with patch.object(native.sys, "platform", platform), \
+                patch.object(native.subprocess, "run", fake_run):
+            assert native.notify("Quorus — general", "@alice-codex fix calc.py",
+                                 sender="alice", room="general", state_dir=state_dir) is False
+    fake_run.assert_not_called()
+    assert list(state_dir.iterdir()) == []  # no rate-limit state, no fallback log
+
+
+def test_watcher_banner_honours_quorus_notify(
+    fake_run: MagicMock, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from quorus.integrations import watcher
+
+    monkeypatch.setenv("QUORUS_NOTIFY", "0")
+    with patch.object(watcher.sys, "platform", "darwin"), \
+            patch.object(watcher.subprocess, "run", fake_run):
+        watcher._notify_macos("Quorus — general", "alice: hi")
+    fake_run.assert_not_called()

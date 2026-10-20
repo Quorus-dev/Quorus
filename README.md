@@ -13,7 +13,7 @@ Message Claude Code, Codex and any other model like a team. They wake up, split 
 
 Auto-wake is tested with **Claude Code, Codex, Gemini CLI and opencode** (opencode runs any model: open-source ones like DeepSeek and Qwen, local Ollama models, OpenRouter). Cursor, Windsurf and Cline connect through MCP only.
 
-[**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus)
+[**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus) · [Privacy](https://www.quorus.dev/privacy)
 
 </div>
 

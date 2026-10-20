@@ -61,6 +61,17 @@ SUBPROCESS_TIMEOUT_S = 5.0
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
+def enabled() -> bool:
+    """``QUORUS_NOTIFY=0`` (or false/no/off) silences every desktop banner.
+
+    One switch for every surface: the TUI's mention banner, reflexd's, the
+    watcher's and the owner pings. Test harnesses set it in their tmp HOMEs.
+    """
+    return os.environ.get("QUORUS_NOTIFY", "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sanitisation
 # ---------------------------------------------------------------------------
@@ -299,8 +310,9 @@ def notify(
     Returns
     -------
     bool
-        True iff a banner was successfully dispatched. False on rate-limit,
-        unsupported platform, or subprocess failure. Never raises.
+        True iff a banner was successfully dispatched. False when
+        ``QUORUS_NOTIFY=0``, on rate-limit, unsupported platform, or
+        subprocess failure. Never raises.
     """
     safe_title = _sanitize(title, max_len=MAX_TITLE_LEN)
     safe_body = _sanitize(body, max_len=MAX_BODY_LEN)
@@ -308,6 +320,8 @@ def notify(
     safe_room = _sanitize(room, max_len=MAX_TITLE_LEN)
 
     if not safe_title and not safe_body:
+        return False
+    if not enabled():
         return False
 
     clock = now if now is not None else time.time()

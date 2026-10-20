@@ -9,15 +9,16 @@ agent needs its owner, or the agent is stuck. Plain chat stays quiet.
 
 from __future__ import annotations
 
-import os
 import re
+
+from quorus.notifications import native
 
 PUBLISHED_MARK = "published "
 _STUCK_PREFIXES = ("⚠", "[reflexd] harness", "[reflexd] ")
 
 
 def enabled() -> bool:
-    return os.environ.get("QUORUS_NOTIFY", "1").strip().lower() not in ("0", "false", "no", "off")
+    return native.enabled()
 
 
 def _first_line(text: str) -> str:

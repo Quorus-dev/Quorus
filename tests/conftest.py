@@ -9,6 +9,11 @@ import pytest
 os.environ.setdefault("RELAY_SECRET", "test-secret")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-that-is-at-least-32-bytes-long")
 os.environ.setdefault("BOOTSTRAP_SECRET", "test-bootstrap-secret")
+# No test may put a banner on the real desktop (a firstrun run did, 2026-10-19):
+# forced, not defaulted, because a woken agent's own env may say 1. Spawned
+# relays, daemons and pty sessions inherit it. Tests of the dispatch itself
+# set it back to 1 and mock subprocess.
+os.environ["QUORUS_NOTIFY"] = "0"
 
 # An agent woken by reflexd runs the suite with its live identity in the
 # environment (QUORUS_RELAY_URL etc.), and config tests then resolve the real
