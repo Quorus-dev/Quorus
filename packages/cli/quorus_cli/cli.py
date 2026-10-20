@@ -1177,6 +1177,7 @@ def _cmd_room(args):
             "room: missing subcommand.",
             hint=(
                 "usage: [accent]quorus room bind <room> <path>[/] "
+                "| [accent]quorus room add <room> <member…>[/] "
                 "| [accent]quorus room bindings[/]"
             ),
         )
@@ -1243,6 +1244,12 @@ def _cmd_room(args):
             f"[success]bound[/] [primary]{args.room}[/] → {ws} [dim]({mode})[/]\n"
             f"[dim]agents woken for this room run inside that directory {how}[/]"
         )
+        return
+
+    if action == "add":
+        from quorus_cli.room_add import cmd_room_add
+
+        cmd_room_add(args)
         return
 
     _ui.error(f"room: unknown subcommand {action!r}")
@@ -9838,6 +9845,10 @@ def main():
               "their owner before risky actions; autonomous: agents edit and "
               "run commands in the repo without asking"),
     )
+    p_room_add = room_sub.add_parser(
+        "add", help="Add existing participants (people or agents) to a room")
+    p_room_add.add_argument("room", help="Room name or id")
+    p_room_add.add_argument("members", nargs="+", help="Names to add, e.g. arav-codex")
     p_room_unbind = room_sub.add_parser("unbind", help="Remove a binding")
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")
