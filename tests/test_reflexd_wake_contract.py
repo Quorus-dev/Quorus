@@ -1132,6 +1132,10 @@ def test_the_no_reply_token_never_reaches_the_room():
         "Changed my mind after checking: the store is not shared."
     assert scrub("NO_REPLY -> fine, the port is 8080.") == "Fine, the port is 8080."
     assert scrub("NO_REPLY — no, it was never shared.") == "It was never shared."
+    # Codex, review of 1b8bc9df: a hyphenated "no-" word is content, not a connective.
+    assert scrub("NO_REPLY? No-go for release.") == "No-go for release."
+    assert scrub("NO_REPLY -> no-write access for Bob.") == "No-write access for Bob."
+    assert scrub("NO_REPLY: no-op here, nothing changed.") == "No-op here, nothing changed."
 
 
 def test_the_wake_intent_says_never_to_write_the_token_otherwise():

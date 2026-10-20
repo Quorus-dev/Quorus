@@ -924,7 +924,10 @@ def is_no_reply(reply: str) -> bool:
 
 _LEAK_HEAD = re.compile(
     r"^[`*\"']*" + NO_REPLY + r"(?![A-Za-z0-9_])[`*\"']*[\s?!.:,;—–>→-]*"  # token + "→"/"->"
-    r"(?:no\s*[—–:,;>→-]+\s*)?",   # a bare "No —" / "No:" connective; "No tests passed" stays
+    # a bare "No —" / "No:" / "No," connective, nothing else: the punctuation must be
+    # followed by a space or the end, so "No-go for release" and "no-write access"
+    # keep their words (Codex, review of 1b8bc9df), as does "No tests passed".
+    r"(?:no\s*[—–:,;>→-]+(?=\s|$)\s*)?",
     re.IGNORECASE,
 )
 _LEAK_INLINE = re.compile(r"[`*\"']*\b" + NO_REPLY + r"\b[`*\"']*", re.IGNORECASE)
