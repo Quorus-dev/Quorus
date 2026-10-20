@@ -294,43 +294,6 @@ def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> 
     return mode
 
 
-def _set_owner_sig(name: str, required: bool) -> None:
-    """Turn `--require-owner-sig` on or off for one agent. Its daemon reads this on
-    every wake (scripts/reflexd.py `owner_sig_required`)."""
-    path = Path.home() / ".quorus" / "owner-sig-agents.json"
-    try:
-        names = set(json.loads(path.read_text(encoding="utf-8")))
-    except FileNotFoundError:
-        names = set()
-    except (OSError, ValueError, TypeError) as exc:
-        raise SystemExit(f"agent: can't read {path} ({exc}); fix or remove it") from None
-    names = names | {name} if required else names - {name}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _write_private(path, json.dumps(sorted(names)))
-
-
-def _install_owner_pubkey(src: Path) -> None:
-    """Keep the owner's P-256 public key where the daemons read it. Only a public
-    key is accepted; a private key is refused and never copied."""
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives.serialization import (
-        Encoding,
-        PublicFormat,
-        load_pem_public_key,
-    )
-
-    try:
-        key = load_pem_public_key(src.read_bytes())
-    except (OSError, ValueError) as exc:
-        raise SystemExit(f"agent: {src} isn't a PEM public key ({exc})") from None
-    if not isinstance(key, ec.EllipticCurvePublicKey) or key.curve.name != "secp256r1":
-        raise SystemExit("agent: the owner key must be a P-256 public key")
-    pem = key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode("ascii")
-    dest = Path.home() / ".quorus" / "owner_pub.pem"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    _write_private(dest, pem)
-
-
 def _harness_path() -> str:
     parts = [str(Path(sys.executable).parent), "/usr/bin", "/bin", "/usr/sbin", "/sbin",
              "/opt/homebrew/bin", "/usr/local/bin"]
@@ -448,10 +411,6 @@ def _add(args: Any, console: Any) -> None:
             raise SystemExit(f"agent: {flag} applies to the room's workspace, and "
                              f"#{args.room} has none on this machine yet; add "
                              f"--repo <path>")
-    if getattr(args, "owner_pubkey", None):
-        _install_owner_pubkey(Path(args.owner_pubkey).expanduser())
-    if getattr(args, "require_owner_sig", None) is not None:
-        _set_owner_sig(name, args.require_owner_sig)
     member = (cfg.get("api_key") or "").startswith("quorus_pk_")
     mode = args.mode
     if (member and repo is not None and mode == "autonomous"
