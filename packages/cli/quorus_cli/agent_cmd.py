@@ -255,6 +255,20 @@ def _drop_lead_everywhere(name: str) -> None:
         _set_lead(room, None)
 
 
+def _bound_path(room: str) -> Path | None:
+    """The workspace *room* is bound to on this machine, if it still exists."""
+    try:
+        prev = json.loads((Path.home() / ".quorus" / "room-bindings.json")
+                          .read_text(encoding="utf-8")).get(room)
+    except (OSError, ValueError, AttributeError):
+        return None
+    raw = prev.get("path") if isinstance(prev, dict) else prev
+    if not isinstance(raw, str) or not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_dir() else None
+
+
 def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> str:
     path = Path.home() / ".quorus" / "room-bindings.json"
     try:
@@ -423,6 +437,17 @@ def _add(args: Any, console: Any) -> None:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
+    wants = getattr(args, "trust", None) or args.mode not in (None, "default")
+    if repo is None and wants:
+        # --trust/--mode live on the room's workspace binding: without --repo they
+        # were dropped silently, so a friend's asks stayed read-only (audit 0.6.3,
+        # bug 9). Use the room's existing workspace, or say what's missing.
+        repo = _bound_path(args.room)
+        if repo is None:
+            flag = "--trust" if getattr(args, "trust", None) else "--mode"
+            raise SystemExit(f"agent: {flag} applies to the room's workspace, and "
+                             f"#{args.room} has none on this machine yet; add "
+                             f"--repo <path>")
     if getattr(args, "owner_pubkey", None):
         _install_owner_pubkey(Path(args.owner_pubkey).expanduser())
     if getattr(args, "require_owner_sig", None) is not None:

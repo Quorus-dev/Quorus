@@ -287,3 +287,26 @@ def test_no_note_on_your_own_relay_or_without_write_access(env, invitee, tmp_pat
     agent_cmd.cmd_agent(_Args(tool="claude", repo=str(invitee["repo"]), mode="autonomous",
                               disclosed=True), console)  # the wizard already asked
     assert not any(agent_cmd.TEAMMATE_RELAY_NOTE in ln for ln in console.lines)
+
+
+def test_trust_without_repo_lands_on_the_rooms_binding(env: dict, tmp_path: Path) -> None:
+    """Audit 0.6.3, bug 9: `agent add --trust members` without --repo was dropped
+    (only --repo bound the room), so a friend's asks stayed read-only."""
+    repo = tmp_path / "app"
+    repo.mkdir()
+    bindings = tmp_path / ".quorus" / "room-bindings.json"
+    bindings.parent.mkdir(parents=True, exist_ok=True)
+    bindings.write_text(json.dumps({"build": {"path": str(repo), "mode": "autonomous",
+                                              "share": True}}))
+    agent_cmd.cmd_agent(_Args(tool="codex", mode=None, trust="members"), _Console())
+    entry = json.loads(bindings.read_text())["build"]
+    assert entry == {"path": str(repo), "mode": "autonomous", "share": True,
+                     "trust": "members"}
+
+
+def test_trust_with_no_workspace_says_to_add_repo(env: dict, tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as exc:
+        agent_cmd.cmd_agent(_Args(tool="codex", mode=None, trust="members"), _Console())
+    assert "--repo" in str(exc.value) and "--trust" in str(exc.value)
+    assert env["joins"] == [] and env["daemons"] == []  # refused before anything ran
+    assert not (tmp_path / ".quorus" / "room-bindings.json").exists()

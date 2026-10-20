@@ -27,6 +27,9 @@ Bug fixes on released paths, found by running two people's agents in one room.
   It now counts only a daemon for this config's relay.
 - Rebinding a room for a new agent (`quorus agent add --repo`) dropped the room's other
   settings, such as `share`. They are kept now.
+- `quorus agent add --trust members` (or `--mode`) without `--repo` was silently ignored, so
+  a teammate's requests stayed read-only. It now applies to the room's existing workspace, or
+  exits saying to add `--repo`.
 - A retried agent turn could post its `plan:` line twice (seen in `quorus demo`). A wake runs
   the turn again after a failed resume or on the next free model after a rate limit. The MCP
   `send_room_message` tool now skips a message the agent already posted in the room in the
