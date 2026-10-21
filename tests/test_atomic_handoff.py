@@ -147,9 +147,9 @@ async def test_new_client_uses_health_and_atomic_relay(client, room_id, real_ref
     assert accepted["ok"] and await owner(client, room_id) == "bob"
 
 
-@pytest.mark.parametrize("status", [400, 422])
+@pytest.mark.parametrize("status", [400, 404, 405, 422])
 async def test_rejecting_atomic_route_never_falls_back_to_release(status):
-    from quorus.runtime.handoff_transport import RelayTooOld
+    from quorus.runtime.handoff_transport import HandoffRejected, RelayTooOld
 
     calls = []
 
@@ -157,7 +157,7 @@ async def test_rejecting_atomic_route_never_falls_back_to_release(status):
         calls.append((request.method, request.url.path))
         if request.url.path == "/health":
             return httpx.Response(200, json={"atomic_capsule_handoff": 1})
-        return httpx.Response(status)
+        return httpx.Response(status, json={"detail": "target left the room"})
 
     relay = reflexd.RelayClient(relay_url="http://reject", api_key="synthetic")
     async with httpx.AsyncClient(transport=httpx.MockTransport(reject),
@@ -169,10 +169,49 @@ async def test_rejecting_atomic_route_never_falls_back_to_release(status):
 
         relay._headers = headers
         for _ in range(2):
-            with pytest.raises(RelayTooOld):
+            with pytest.raises(RelayTooOld if status in (404, 405) else HandoffRejected):
                 await relay.post_social_defer(room_id="room", actor="alice", target="bob",
                                              failover=body("room", "root")["payload"]["failover"])
-    assert calls == [("GET", "/health"), ("POST", "/v1/handoff")]
+    assert calls == [("GET", "/health"), ("POST", "/v1/handoff")] + (
+        [("POST", "/v1/handoff")] if status in (400, 422) else [])
+    assert relay._atomic_handoff is (status in (400, 422))
+
+
+@pytest.mark.parametrize("status", [400, 422])
+async def test_valid_rejection_does_not_disable_next_handoff(status):
+    from quorus.runtime.handoff_transport import HandoffRejected
+
+    posts = []
+
+    def respond(request):
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"atomic_capsule_handoff": 1})
+        assert request.url.path == "/v1/handoff"
+        posts.append(request)
+        return (httpx.Response(status, json={"detail": "target left the room"})
+                if len(posts) == 1 else httpx.Response(200, json={"ok": True}))
+
+    relay = reflexd.RelayClient(relay_url="http://reject", api_key="synthetic")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond),
+                                 base_url="http://reject") as c:
+        relay._client = c
+
+        async def headers():
+            return {}
+
+        relay._headers = headers
+        kwargs = dict(room_id="room", actor="alice", target="bob",
+                      failover=body("room", "root")["payload"]["failover"])
+        with pytest.raises(HandoffRejected, match="target left the room"):
+            await relay.post_social_defer(**kwargs)
+        assert await relay.post_social_defer(**kwargs) == {"ok": True}
+        assert relay._atomic_handoff is True
+
+
+def test_validation_rejection_does_not_echo_capsule_input():
+    from quorus.runtime.handoff_transport import HandoffRejected
+
+    assert "private-input" not in str(HandoffRejected([{"input": "private-input"}]))
 
 
 async def test_busy_decline_returns_claim_atomically_and_cannot_replay_original_send(
@@ -243,16 +282,25 @@ def test_old_relay_alerts_owner_before_checkpoint_without_claim_change(wiring, m
     assert "Relay too old for handoff" in relay.posted[-1]["content"]
 
 
-def test_defer_rejection_after_probe_does_not_release_claim(wiring, monkeypatch):
+@pytest.mark.parametrize("busy", [False, True])
+def test_defer_rejection_after_probe_does_not_release_claim(wiring, monkeypatch, busy):
     from quorus.runtime import handoff_sender
-    from quorus.runtime.handoff_transport import RelayTooOld
-    from tests.test_handoff_retry import Candidates, policy
+    from quorus.runtime.handoff_transport import HandoffRejected
+    from tests.test_handoff_retry import policy
+    from tests.test_handoff_selection import Receiver
+    from tests.test_unfinished_wakes import reflexd as runtime_reflexd
 
     _, daemon, wt, cap, _, _ = wiring
-    relay, alerts = Candidates(), []
+    relay, alerts = Receiver(), []
+    relay.status = "busy" if busy else "active"
+
+    async def sleep(delay):
+        relay.status = "active"
+
+    monkeypatch.setattr(asyncio, "sleep", sleep)
 
     async def reject(**kw):
-        raise RelayTooOld()
+        raise HandoffRejected("target left the room")
 
     async def no_release(**kw):
         pytest.fail("capsule path must never release before acceptance")
@@ -260,9 +308,16 @@ def test_defer_rejection_after_probe_does_not_release_claim(wiring, monkeypatch)
     monkeypatch.setattr(relay, "post_social_defer", reject)
     monkeypatch.setattr(relay, "release_for_failover", no_release)
     monkeypatch.setattr(daemon, "_alert_owner", lambda *a: alerts.append(a))
-    monkeypatch.setattr(handoff_sender, "snapshot", lambda *a: cap)
-    result = asyncio.run(handoff_sender.attempt(daemon, relay,
-        dict(room="build", message_id=cap.root), reason="quota", mission={"task_id": "task"},
-        worktree=wt, **policy()))
-    assert result == "stopped" and relay.holder == daemon.config.participant_name
-    assert alerts and "relay too old for handoff" in alerts[-1][1]
+    async def run():
+        result = await handoff_sender.attempt(daemon, relay,
+            dict(room="build", message_id=cap.root), reason="quota", mission={"task_id": "task"},
+            worktree=wt, bindings=runtime_reflexd.ROOM_BINDINGS_PATH, **policy())
+        if daemon._bg_tasks:
+            await asyncio.gather(*list(daemon._bg_tasks))
+        return result
+
+    result = asyncio.run(run())
+    assert result == ("waiting" if busy else "stopped")
+    assert relay.holder == daemon.config.participant_name
+    assert alerts and "handoff_rejected" in alerts[-1][1]
+    assert "target left the room" in relay.posted[-1]["content"]

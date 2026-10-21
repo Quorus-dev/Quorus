@@ -23,7 +23,7 @@ from quorus.runtime.handoff_adoption import Git
 from quorus.runtime.handoff_capsule import build_capsule
 from quorus.runtime.handoff_ownership import owns_claim
 from quorus.runtime.handoff_state import fingerprint
-from quorus.runtime.handoff_transport import RelayTooOld
+from quorus.runtime.handoff_transport import HandoffRejected, RelayTooOld
 
 
 def enabled(room: str, bindings) -> bool:
@@ -196,6 +196,10 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree,
             return "waiting"
         await deliver(target)
         return "sent"
+    except HandoffRejected as rejection:
+        answer = failed("handoff_rejected", None)
+        await waits.rejection_notice(daemon, relay, envelope, rejection)
+        return answer
     except RelayTooOld:
         answer = failed("relay_too_old", None)
         await waits.compatibility_notice(daemon, relay, envelope)
@@ -259,6 +263,9 @@ async def retry(daemon, relay, envelope, worktree, *, detect, capabilities, scor
         if target is None:
             raise ValueError("no more receivers")
         await _send(daemon, relay, room, store, capsule, entry["data"], target, declines)
+    except HandoffRejected as rejection:
+        waits.alert(daemon, room, "handoff_rejected")
+        await waits.rejection_notice(daemon, relay, envelope, rejection)
     except RelayTooOld:
         waits.alert(daemon, room, "relay_too_old")
         await waits.compatibility_notice(daemon, relay, envelope)

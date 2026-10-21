@@ -8,8 +8,11 @@ The client reads the relay's existing `/health` endpoint and requires
 `atomic_capsule_handoff: 1`. A missing capability produces **relay too old for
 handoff**, alerts the owner and leaves the claim unchanged. Unsupported results
 are cached for the connection's lifetime, with no fallback to release/defer.
-Discovery generates no requests to missing routes on older relays. A 400, 404,
-405 or 422 from the handoff operation also fails closed with that notice.
+Discovery generates no requests to missing routes on older relays. A 404 or 405
+from the handoff operation also fails closed with that notice. A 400 or 422
+from a compatible relay is reported as `handoff_rejected`, with a bounded textual
+reason; it leaves the capability enabled for later attempts. Validation arrays
+are not displayed because they may echo capsule input.
 
 `POST /v1/handoff` validates the typed capsule or busy decline, authenticates its
 actor, checks room membership/policy and verifies the currently owned task. Under

@@ -2487,11 +2487,19 @@ class RelayClient:
             await self.require_handoff()
         resp = await self.client.post(
             "/v1/handoff" if atomic else "/v1/social/defer", headers=headers, json=body)
-        if atomic and resp.status_code in (400, 404, 405, 422):
+        if atomic and resp.status_code in (404, 405):
             from quorus.runtime.handoff_transport import RelayTooOld
 
             self._atomic_handoff = False
             raise RelayTooOld()
+        if atomic and resp.status_code in (400, 422):
+            from quorus.runtime.handoff_transport import HandoffRejected
+
+            try:
+                detail = resp.json().get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            raise HandoffRejected(detail)
         resp.raise_for_status()
         return resp.json()
 

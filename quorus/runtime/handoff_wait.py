@@ -12,7 +12,7 @@ from quorus.protocol.handoff_capsule import HandoffCapsule
 from quorus.runtime import handoff_runtime as runtime
 from quorus.runtime.handoff_adoption import Git
 from quorus.runtime.handoff_state import Journal
-from quorus.runtime.handoff_transport import RelayTooOld
+from quorus.runtime.handoff_transport import HandoffRejected, RelayTooOld
 
 
 def alert(daemon, room, cause):
@@ -29,6 +29,15 @@ async def compatibility_notice(daemon, relay, envelope):
             "Work kept unpublished; owner resolution required; no automatic takeover.")
     except Exception:
         pass  # the owner alert and durable failed-attempt record still apply
+
+
+async def rejection_notice(daemon, relay, envelope, rejection):
+    try:
+        await daemon._post_status(relay, envelope.get("room") or "", envelope,
+            f"Handoff rejected: {rejection.detail}. Work kept unpublished; "
+            "owner resolution required; no automatic takeover.")
+    except Exception:
+        pass  # durable cause and owner alert remain even if room delivery fails
 
 
 def unchanged(worktree, capsule):
@@ -112,6 +121,9 @@ async def start(daemon, relay, envelope, worktree, store, capsule, data, target,
             raise
         except (TimeoutError, asyncio.TimeoutError):
             stop("busy_timeout")
+        except HandoffRejected as rejection:
+            stop("handoff_rejected")
+            await rejection_notice(daemon, relay, envelope, rejection)
         except RelayTooOld:
             stop("relay_too_old")
             await compatibility_notice(daemon, relay, envelope)
