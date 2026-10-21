@@ -252,6 +252,24 @@ async def test_mcp_bridge_denies_without_room(monkeypatch):
     assert decision["behavior"] == "deny"
 
 
+async def test_mcp_bridge_denies_at_once_where_nobody_can_approve(monkeypatch):
+    """`quorus demo` sets QUORUS_APPROVALS=deny: no approval request is posted and
+    nothing waits, even when the agent names a room itself (0.6.6 stranger pass)."""
+    import sys
+    sys.path.insert(0, "packages/mcp")
+    from quorus_mcp import phase1_tools as p1
+
+    async def never(*_a, **_k):
+        raise AssertionError("an approval was requested")
+
+    monkeypatch.setattr(p1, "request_approval", never)
+    monkeypatch.setenv("QUORUS_APPROVALS", "deny")
+    monkeypatch.setenv("QUORUS_APPROVAL_ROOM", "demo")
+    decision = await p1.approve("bash", "pytest -q", room_id="demo")
+    assert decision["behavior"] == "deny"
+    assert "demo" in decision["message"] and "Don't wait" in decision["message"]
+
+
 # ── adversarial-review regressions (2026-08-21) ─────────────────────────────
 # A gate an agent can open is not a gate. Each of these was a working
 # bypass before the review.
