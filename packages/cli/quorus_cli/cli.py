@@ -1271,7 +1271,18 @@ def _cmd_room(args):
         # room silently dropped it to default — review 2026-10-09).
         mode = getattr(args, "mode", None) or (
             prev.get("mode", "default") if isinstance(prev, dict) else "default")
-        data[args.room] = str(ws) if mode == "default" else {"path": str(ws), "mode": mode}
+        # Keep the room's other settings (trust, check) across a rebind.
+        extra = {k: v for k, v in prev.items() if k not in ("path", "mode")} \
+            if isinstance(prev, dict) else {}
+        data[args.room] = (str(ws) if mode == "default" and not extra
+                           else {"path": str(ws), "mode": mode, **extra})
+        from quorus.runtime.check_config import configure_binding
+
+        try:
+            data[args.room] = configure_binding(data[args.room], prev, args, ws)
+        except ValueError as exc:
+            _ui.error(str(exc))
+            raise SystemExit(2) from exc
         bindings_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(bindings_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -9994,6 +10005,12 @@ def main():
     p_room_bind = room_sub.add_parser("bind", help="Bind room → workspace dir")
     p_room_bind.add_argument("room", help="Room name or id")
     p_room_bind.add_argument("path", help="Workspace directory (repo root)")
+    p_room_bind.add_argument("--check", default=None,
+                             help="Checkpoint command (argv, no shell); empty disables")
+    p_room_bind.add_argument("--check-timeout", type=float, default=None,
+                             help="Checkpoint seconds (default 45, maximum 300)")
+    p_room_bind.add_argument("--check-output-kb", type=int, default=None,
+                             help="Checkpoint output cap in KiB (default 64, maximum 1024)")
     p_room_bind.add_argument(
         "--mode", choices=["default", "manual", "autonomous"], default=None,
         help=("default: your own CLI permission settings; manual: agents ask "
