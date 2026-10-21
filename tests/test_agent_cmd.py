@@ -14,6 +14,10 @@ import pytest
 from quorus_cli import agent_cmd
 
 
+def _no_spawn(*a: Any, **k: Any) -> None:
+    raise AssertionError("a test tried to start a real daemon")
+
+
 class _Console:
     def __init__(self) -> None:
         self.lines: list[str] = []
@@ -158,6 +162,10 @@ def test_each_agent_daemon_gets_its_own_log(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
     monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(_sys, "platform", "darwin")
+    # The plist branch only: with QUORUS_NO_LAUNCHD set it used to Popen a real
+    # reflexd against http://r, which outlived the test (overseer, 2026-10-21).
+    monkeypatch.setattr(agent_cmd, "_launchd_ok", lambda: True)
+    monkeypatch.setattr(agent_cmd.subprocess, "Popen", _no_spawn)
     agent_cmd._start_daemon({"relay_url": "http://r"}, "a-claude", "k", True)
     xml = (tmp_path / "LA" / "dev.quorus.agent.a-claude.plist").read_text()
     assert "<key>REFLEXD_LOG_PATH</key>" in xml and "a-claude.log</string>" in xml
@@ -194,6 +202,10 @@ def test_model_is_passed_to_the_daemon(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
     monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(_sys, "platform", "darwin")
+    # The plist branch only: with QUORUS_NO_LAUNCHD set it used to Popen a real
+    # reflexd against http://r, which outlived the test (overseer, 2026-10-21).
+    monkeypatch.setattr(agent_cmd, "_launchd_ok", lambda: True)
+    monkeypatch.setattr(agent_cmd.subprocess, "Popen", _no_spawn)
     agent_cmd._start_daemon({"relay_url": "http://r"}, "a-opencode", "k", True,
                             "ollama/qwen3:4b")
     xml = (tmp_path / "LA" / "dev.quorus.agent.a-opencode.plist").read_text()

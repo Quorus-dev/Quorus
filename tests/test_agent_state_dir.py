@@ -15,7 +15,7 @@ import sys
 import pytest
 from quorus_cli import agent_cmd
 
-from tests.test_agent_cmd import _Args, _Console, env  # noqa: F401  (fixture)
+from tests.test_agent_cmd import _Args, _Console, _no_spawn, env  # noqa: F401  (fixture)
 
 
 def test_the_binding_lands_in_the_state_dir_not_the_owners(env, tmp_path):  # noqa: F811
@@ -56,6 +56,10 @@ def test_the_daemon_gets_the_state_dir_as_its_config_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
     monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(sys, "platform", "darwin")
+    # The plist branch only: with QUORUS_NO_LAUNCHD set it used to Popen a real
+    # reflexd against http://r, which outlived the test (overseer, 2026-10-21).
+    monkeypatch.setattr(agent_cmd, "_launchd_ok", lambda: True)
+    monkeypatch.setattr(agent_cmd.subprocess, "Popen", _no_spawn)
     agent_cmd._start_daemon({"relay_url": "http://r"}, "arav-handoff-claude", "k", True,
                             None, tmp_path / "qd" / "claude")
     xml = (tmp_path / "LA" / "dev.quorus.agent.arav-handoff-claude.plist").read_text()
@@ -131,6 +135,10 @@ def test_starting_and_removing_keep_the_state_record(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
     monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(sys, "platform", "darwin")
+    # The plist branch only: with QUORUS_NO_LAUNCHD set it used to Popen a real
+    # reflexd against http://r, which outlived the test (overseer, 2026-10-21).
+    monkeypatch.setattr(agent_cmd, "_launchd_ok", lambda: True)
+    monkeypatch.setattr(agent_cmd.subprocess, "Popen", _no_spawn)
     state = tmp_path / "qd" / "claude"
     agent_cmd._start_daemon({"relay_url": "http://r"}, "arav-handoff-claude", "k", True,
                             None, state)
