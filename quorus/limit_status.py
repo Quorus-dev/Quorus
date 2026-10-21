@@ -34,12 +34,20 @@ SOURCE_KIND = {
 READING_KEYS = frozenset({"window", "kind", "source", "used_pct", "resets_at", "seen_at"})
 
 
-def _epoch(value: Any) -> float | None:
-    """A finite epoch in range, or None. Bools are not numbers here."""
+def _number(value: Any, lo: float, hi: float) -> float | None:
+    """A finite number in [lo, hi], or None. Bools are not numbers here, and
+    an int too big for a float (JSON allows ``1e400``-sized integers) is out
+    of range rather than an OverflowError."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
+    if isinstance(value, int) and not lo <= value <= hi:
+        return None  # compared as ints: float() of a huge int would overflow
     value = float(value)
-    return value if math.isfinite(value) and 0.0 <= value <= EPOCH_MAX else None
+    return value if math.isfinite(value) and lo <= value <= hi else None
+
+
+def _epoch(value: Any) -> float | None:
+    return _number(value, 0.0, EPOCH_MAX)
 
 
 def clean_pause(raw: Any, now: float) -> dict[str, Any] | None:
@@ -47,16 +55,21 @@ def clean_pause(raw: Any, now: float) -> dict[str, Any] | None:
     if not isinstance(raw, dict) or set(raw) != {"reason", "until"}:
         return None
     until = _epoch(raw["until"])
-    if raw["reason"] not in PAUSE_REASONS or until is None or until <= now:
+    reason = raw["reason"]
+    if not isinstance(reason, str) or reason not in PAUSE_REASONS or until is None \
+            or until <= now:
         return None
-    return {"reason": raw["reason"], "until": until}
+    return {"reason": reason, "until": until}
 
 
 def _clean_reading(raw: Any, now: float, pause: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(raw, dict) or not set(raw) <= READING_KEYS:
         return None
     window, kind, source = raw.get("window"), raw.get("kind"), raw.get("source")
-    if window not in WINDOWS or not isinstance(source, str) or SOURCE_KIND.get(source) != kind:
+    # Strings first: a list or object can't be looked up in a set (TypeError).
+    if not (isinstance(window, str) and isinstance(kind, str) and isinstance(source, str)):
+        return None
+    if window not in WINDOWS or SOURCE_KIND.get(source) != kind:
         return None
     if (window == "limit") != (kind in ("observed", "guess")):
         return None  # usage windows come from reports; limit messages fill "limit"
@@ -65,10 +78,9 @@ def _clean_reading(raw: Any, now: float, pause: dict[str, Any] | None) -> dict[s
         return None
     used_pct = raw.get("used_pct")
     if kind == "reported":
-        if (isinstance(used_pct, bool) or not isinstance(used_pct, (int, float))
-                or not math.isfinite(used_pct) or not 0.0 <= used_pct <= 100.0):
+        used_pct = _number(used_pct, 0.0, 100.0)
+        if used_pct is None:
             return None
-        used_pct = float(used_pct)
     elif used_pct is not None:
         return None
     resets_at = raw.get("resets_at")

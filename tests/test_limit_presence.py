@@ -225,3 +225,66 @@ def test_heartbeat_body_omits_empty_limit_fields() -> None:
                                      readings=[_observed()]))
     assert "pause" not in sent[0] and "readings" not in sent[0]
     assert sent[1]["pause"] == QUOTA and sent[1]["readings"][0]["source"] == "msg.retry_in"
+
+
+# ── Codex on 70083186: wrong types and huge numbers must not raise ──────
+
+HUGE = 10 ** 400  # valid JSON; float() of it raises OverflowError
+
+
+@pytest.mark.parametrize("bad", [
+    _observed(window=["limit"]), _observed(window={"w": 1}), _observed(kind=["observed"]),
+    _observed(source={"id": "msg.retry_in"}), _observed(seen_at=HUGE),
+    _observed(resets_at=HUGE), _observed(seen_at=-HUGE), _usage(used_pct=HUGE),
+    _usage(used_pct=-HUGE),
+])
+def test_wrong_types_and_huge_numbers_are_dropped_not_raised(bad: Any) -> None:
+    out = limit_status.clean(QUOTA, [bad, _usage()], NOW)
+    assert [r["window"] for r in out["readings"]] == ["5h"]
+
+
+@pytest.mark.parametrize("bad", [
+    {"reason": ["quota"], "until": NOW + 60}, {"reason": {"q": 1}, "until": NOW + 60},
+    {"reason": "quota", "until": HUGE}, {"reason": "quota", "until": -HUGE},
+])
+def test_a_pause_with_wrong_types_or_huge_numbers_is_dropped(bad: Any) -> None:
+    assert limit_status.clean(bad, [_usage()], NOW).get("pause") is None
+
+
+def test_the_validator_never_raises_on_any_json_shape() -> None:
+    import random
+
+    rng = random.Random(7)
+    leaves: list[Any] = [None, True, 0, -1, 1.5, HUGE, -HUGE, "", "quota", "limit", "5h",
+                         "observed", "msg.retry_in", NOW, NOW + 60]
+
+    def value(depth: int) -> Any:
+        if depth > 2 or rng.random() < 0.6:
+            return rng.choice(leaves)
+        if rng.random() < 0.5:
+            return [value(depth + 1) for _ in range(rng.randint(0, 3))]
+        keys = ["window", "kind", "source", "used_pct", "resets_at", "seen_at", "reason",
+                "until"]
+        return {k: value(depth + 1) for k in rng.sample(keys, rng.randint(0, len(keys)))}
+
+    for _ in range(3000):
+        limit_status.clean(value(0), value(0), NOW)
+        limit_status.clean(value(0), [value(1) for _ in range(rng.randint(0, 3))], NOW)
+
+
+async def test_relay_drops_wrong_types_and_huge_numbers_and_keeps_the_rest(
+        client: AsyncClient) -> None:
+    now = time.time()
+    good = {"window": "limit", "kind": "observed", "source": "msg.retry_in",
+            "resets_at": now + 7200, "seen_at": now}
+    r = await client.post("/heartbeat", headers=H, json={
+        "instance_name": "a-codex", "status": "idle", "waiting_on": "quota",
+        "waiting_until": now + 1800, "model": "gpt-5.5",
+        "pause": {"reason": ["quota"], "until": HUGE},
+        "readings": [good, {**good, "window": {"w": 1}},
+                     {"window": "5h", "kind": "reported", "source": "codex.token_count",
+                      "used_pct": HUGE, "seen_at": now}]})
+    assert r.status_code == 200, r.text
+    p = await _presence(client, "a-codex")
+    assert (p["status"], p["waiting_on"], p["model"]) == ("idle", "quota", "gpt-5.5")
+    assert "pause" not in p and [x["window"] for x in p["readings"]] == ["limit"]
