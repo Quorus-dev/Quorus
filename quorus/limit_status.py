@@ -11,8 +11,9 @@ it was stored is not shown.
 
 from __future__ import annotations
 
-import math
 from typing import Any
+
+from quorus.bounded import bounded
 
 EPOCH_MAX = 4102444800.0  # same bound as ``waiting_until``
 FUTURE_SKEW_S = 300.0  # a daemon clock this far ahead is still accepted
@@ -34,20 +35,8 @@ SOURCE_KIND = {
 READING_KEYS = frozenset({"window", "kind", "source", "used_pct", "resets_at", "seen_at"})
 
 
-def _number(value: Any, lo: float, hi: float) -> float | None:
-    """A finite number in [lo, hi], or None. Bools are not numbers here, and
-    an int too big for a float (JSON allows ``1e400``-sized integers) is out
-    of range rather than an OverflowError."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if isinstance(value, int) and not lo <= value <= hi:
-        return None  # compared as ints: float() of a huge int would overflow
-    value = float(value)
-    return value if math.isfinite(value) and lo <= value <= hi else None
-
-
 def _epoch(value: Any) -> float | None:
-    return _number(value, 0.0, EPOCH_MAX)
+    return bounded(value, 0.0, EPOCH_MAX)
 
 
 def clean_pause(raw: Any, now: float) -> dict[str, Any] | None:
@@ -78,7 +67,7 @@ def _clean_reading(raw: Any, now: float, pause: dict[str, Any] | None) -> dict[s
         return None
     used_pct = raw.get("used_pct")
     if kind == "reported":
-        used_pct = _number(used_pct, 0.0, 100.0)
+        used_pct = bounded(used_pct, 0.0, 100.0)
         if used_pct is None:
             return None
     elif used_pct is not None:

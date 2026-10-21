@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import shlex
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from quorus.bounded import bounded
 
 
 @dataclass(frozen=True)
@@ -25,10 +26,10 @@ class CheckConfig:
         if (not isinstance(self.cwd, str) or "\0" in self.cwd or len(self.cwd) > 512
                 or Path(self.cwd).is_absolute() or ".." in Path(self.cwd).parts):
             raise ValueError("check cwd must be relative and inside the workspace")
-        # Bounds before isfinite: a huge int (JSON allows 10**400) would overflow
-        # float conversion instead of failing as out of range (Codex on 2921ac4e).
-        if (type(self.timeout_s) not in (int, float) or not 0 < self.timeout_s <= 300
-                or not math.isfinite(self.timeout_s)):
+        # quorus.bounded: a huge int (JSON allows 10**400) is out of range, never an
+        # OverflowError (Codex on 2921ac4e).
+        timeout = bounded(self.timeout_s, 0, 300)
+        if type(self.timeout_s) not in (int, float) or timeout is None or timeout <= 0:
             raise ValueError("check timeout must be finite, positive and at most 300 seconds")
         if type(self.max_output_bytes) is not int or not 1024 <= self.max_output_bytes <= 1048576:
             raise ValueError("check output cap must be 1–1024 KiB")

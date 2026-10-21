@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from quorus.bounded import bounded
 from quorus.limit_status import RESET_MAX_AHEAD_S as MAX_RESET_AHEAD_S
 from quorus.limit_status import SOURCE_KIND  # the relay validates against the same ids
 
@@ -122,16 +123,16 @@ def _window_reading(raw: object, window: str, now: float) -> LimitReading | None
     """One ``{"utilization", "resetsAt"}`` window, or None if it's malformed."""
     if not isinstance(raw, dict):
         return None
-    used, reset = raw.get("utilization"), raw.get("resetsAt")
-    if isinstance(used, bool) or not isinstance(used, (int, float)) or not 0 <= used <= 1:
-        return None  # also rejects NaN; a huge int compares without overflowing
+    used, reset = bounded(raw.get("utilization"), 0, 1), raw.get("resetsAt")
+    if used is None:
+        return None
     if reset is not None:
         if isinstance(reset, bool) or not isinstance(reset, (int, float)):
             return None
-        if not now < reset <= now + MAX_RESET_AHEAD_S:
+        reset = bounded(reset, now, now + MAX_RESET_AHEAD_S)
+        if reset is not None and reset <= now:
             reset = None  # a reset we can't trust: keep the usage, drop the time
-    return LimitReading(window, "reported", "claude.stream", now,
-                        float(reset) if reset is not None else None, round(used * 100, 1))
+    return LimitReading(window, "reported", "claude.stream", now, reset, round(used * 100, 1))
 
 
 def read_claude_usage(stdout: str, now: float) -> dict[str, LimitReading] | None:

@@ -8,6 +8,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from quorus.bounded import bounded
+
 SHA = Annotated[str, Field(pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Text = Annotated[str, Field(min_length=1, max_length=200)]
@@ -108,9 +110,10 @@ class LimitContext(Data):
             epoch = value.get(name)
             if epoch is None and name == "resets_at":
                 continue
-            if type(epoch) not in (int, float) or not 0 <= epoch <= 4102444800:
+            seconds = bounded(epoch, 0, 4102444800)  # never OverflowError on 10**400
+            if seconds is None:
                 raise ValueError("invalid presence epoch")
-            value[name] = datetime.fromtimestamp(epoch, timezone.utc).isoformat()
+            value[name] = datetime.fromtimestamp(seconds, timezone.utc).isoformat()
         return cls.model_validate({**value, "vendor": vendor, "reason": reason})
 
     @model_validator(mode="after")
