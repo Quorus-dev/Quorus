@@ -1321,7 +1321,8 @@ def _cmd_room(args):
         }[mode]
         console.print(
             f"[success]bound[/] [primary]{args.room}[/] → {ws} [dim]({mode})[/]\n"
-            f"[dim]agents woken for this room run inside that directory {how}[/]"
+            f"[dim]agents woken for this room run inside that directory {how}[/]\n"
+            f"[dim]saved in {bindings_path}[/]"
         )
         return
 
@@ -1494,11 +1495,13 @@ def _cmd_turnguard(args):
 # reflexd — start/stop/status/logs wrapper around scripts/reflexd.py
 # ---------------------------------------------------------------------------
 
-# Same dirs the daemon uses (quorus.runtime.bindings.config_dir).
-from quorus.runtime.bindings import config_dir as _config_dir  # noqa: E402
+# Same dirs the daemon uses (quorus.runtime.bindings.config_dir). A distinct name:
+# `_config_dir` above is the CLI's config resolver, legacy dirs included, and
+# shadowing it sent reads and writes to different dirs (Codex on 90321f74).
+from quorus.runtime.bindings import config_dir as _daemon_state_dir  # noqa: E402
 
-_REFLEXD_DEFAULT_LOG = _config_dir() / "reflexd.log"
-_REFLEXD_RUNTIME_DIR = _config_dir() / "runtime"
+_REFLEXD_DEFAULT_LOG = _daemon_state_dir() / "reflexd.log"
+_REFLEXD_RUNTIME_DIR = _daemon_state_dir() / "runtime"
 
 
 def _resolve_reflexd_participant(explicit: str | None) -> str:

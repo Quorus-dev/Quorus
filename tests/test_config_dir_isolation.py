@@ -70,3 +70,37 @@ def test_two_daemons_with_different_config_dirs_share_nothing(monkeypatch, tmp_p
         assert mod._sessions_path(daemon.config.participant_name).is_relative_to(mine)
         assert mod.DEFAULT_LOG_PATH.is_relative_to(mine)
     assert not team.config.runtime_dir.is_relative_to(tmp_path / "dogfood")
+
+
+def test_the_cli_config_resolver_keeps_its_legacy_fallback(monkeypatch, tmp_path) -> None:
+    """Codex on 90321f74: importing ``config_dir as _config_dir`` into cli.py replaced
+    the CLI's own resolver, so with only a legacy ~/.murmur config, reads went to
+    .murmur and writes to .quorus. The daemon-state helper has its own name now."""
+    import quorus_cli.cli as cli
+
+    from quorus.runtime import bindings
+
+    assert cli._config_dir is not bindings.config_dir
+    home = tmp_path / "home"
+    (home / ".murmur").mkdir(parents=True)
+    (home / ".murmur" / "config.json").write_text("{}")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("QUORUS_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("MCP_TUNNEL_CONFIG_DIR", raising=False)
+    from quorus import config
+
+    monkeypatch.setattr(config, "_default_config_dir", lambda: home / ".quorus",
+                        raising=False)
+    assert cli._config_dir() == home / ".murmur"  # the CLI's legacy resolution, unchanged
+
+
+def test_an_agent_session_never_writes_the_owners_bindings(monkeypatch, tmp_path) -> None:
+    """Claude on 90321f74: agent turns run with QUORUS_CONFIG_DIR set to the agent's
+    own dir, so `quorus room bind --handoff on` there lands in the agent's file."""
+    bindings = _fresh("bindings_agent", ROOT / "quorus" / "runtime" / "bindings.py")
+    owner = tmp_path / "home" / ".quorus"
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(owner / "runtime" / "agents" / "arav-claude"))
+    path = bindings.bindings_path()
+    assert path.is_relative_to(owner / "runtime" / "agents" / "arav-claude")
+    assert path != owner / "room-bindings.json"

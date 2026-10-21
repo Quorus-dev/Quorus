@@ -28,7 +28,10 @@ def _runtime_dir(args) -> Path:
 
 
 def cmd_holds(args) -> None:
-    held = handoff_release.holds(_runtime_dir(args))
+    runtime = _runtime_dir(args)
+    # Which state dir: an agent session has its own QUORUS_CONFIG_DIR (Claude on 90321f74).
+    console.print(f"  [dim]holds in {escape(str(runtime))}[/]")
+    held = handoff_release.holds(runtime)
     if not held:
         console.print("  [muted]no handoff holds: nothing is waiting on you[/]")
         return
@@ -69,7 +72,8 @@ def cmd_release(args) -> None:
         raise SystemExit(2)
     action = "publish" if args.publish else "discard"
     console.print(f"[warning]{action}[/] @{escape(args.agent)}'s held work in "
-                  f"[primary]{escape(args.room)}[/] at {escape(args.head[:12])}")
+                  f"[primary]{escape(args.room)}[/] at {escape(args.head[:12])} "
+                  f"[dim](state in {escape(str(_runtime_dir(args)))})[/]")
     if input(f"  type the room name ({args.room}) to go on: ").strip() != args.room:
         _ui.error("nothing changed: the name didn't match")
         raise SystemExit(2)
