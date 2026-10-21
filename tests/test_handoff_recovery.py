@@ -13,7 +13,8 @@ pytest_plugins = ["tests.test_handoff_delivery"]
 
 
 @pytest.mark.parametrize(
-    "refusal", [None, "claim", "late_claim", "wrong_thread", "unrelated", "passing"])
+    "refusal", [None, "claim", "late_claim", "wrong_thread", "unrelated",
+                "passing", "changed_exit"])
 def test_cut_off_continuation_recovers_on_explicit_owner_retry_after_restart(
         wiring, monkeypatch, refusal):
     repo, daemon, wt, cap, _, delivery = wiring
@@ -33,6 +34,8 @@ def test_cut_off_continuation_recovers_on_explicit_owner_retry_after_restart(
     assert PublicationHold(wt.path, store, cap).owned()
 
     restarted = reflexd.Reflexd(daemon.config)
+    alerts = []
+    monkeypatch.setattr(restarted, "_alert_owner", lambda room, text, **kw: alerts.append(text))
     modes = []
 
     async def finish(*a, cwd, mode="default", **kw):
@@ -56,10 +59,11 @@ def test_cut_off_continuation_recovers_on_explicit_owner_retry_after_restart(
         retry["thread_root_id"] = "another-task"
     elif refusal == "unrelated":
         retry["from_name"] = "arav-claude"  # agents cannot authorize owner recovery
-    elif refusal == "passing":
+    elif refusal in {"passing", "changed_exit"}:
         from quorus.runtime import handoff_recovery
-        monkeypatch.setattr(handoff_recovery, "run_checkpoint",
-                            lambda *a, **kw: {"status": "passing", "exit": 0})
+        result = ({"status": "passing", "exit": 0} if refusal == "passing"
+                  else {"status": "ran", "exit": 2})
+        monkeypatch.setattr(handoff_recovery, "run_checkpoint", lambda *a, **kw: result)
     asyncio.run(restarted._wake_and_reply(relay, retry))
     if refusal is None:
         assert modes == ["autonomous"]
@@ -74,6 +78,12 @@ def test_cut_off_continuation_recovers_on_explicit_owner_retry_after_restart(
         assert _git(repo, "rev-parse", "main") == base
         assert _git(wt.path, "rev-parse", "HEAD") == partial
         assert PublicationHold(wt.path, store, cap).owned()
+        if refusal in {"passing", "changed_exit"}:
+            expected = ("check now passes; publish or review?" if refusal == "passing"
+                        else "check failure changed; review before continuing")
+            assert any(expected in text for text in alerts)
+            assert any(expected in post["content"] for post in relay.posted
+                       if post.get("message_type") == "status")
 
 
 def test_crashed_owner_retry_is_not_relaunched_by_duplicate_delivery(wiring, monkeypatch):

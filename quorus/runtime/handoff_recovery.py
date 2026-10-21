@@ -18,6 +18,14 @@ from quorus.runtime.handoff_receiver import classify, complete
 from quorus.runtime.handoff_state import Duplicate, StateError
 
 
+class CheckRefusal(StateError):
+    """A fixed proof classification, never tool output or exception text."""
+
+    def __init__(self, outcome: str):
+        super().__init__("current check does not authorize continuation")
+        self.outcome = outcome
+
+
 @dataclass(frozen=True)
 class Candidate:
     turn: Continuation
@@ -53,7 +61,7 @@ def _prepare(daemon, room, worktree, thread, bindings):
                                known_secrets=(daemon.config.api_key,))
         proof = classify(cap.check, rerun)
         if not proof.writable:
-            raise StateError("current descendant no longer reproduces the failing check")
+            raise CheckRefusal(proof.outcome)
         _tree(Git(worktree.path), worktree.branch, head, store, cap)
         return Candidate(Continuation(cap, store, worktree.path, room, task_id), head,
                          worktree.branch, proof.outcome)
@@ -136,6 +144,15 @@ async def recover(daemon, relay, envelope, worktree, *, owner_retry, mode, bindi
                         + quoted(candidate.turn.capsule))
     except Duplicate:
         return Decision(drop=True)
+    except CheckRefusal as exc:
+        reason = {
+            "already_passing": "check now passes; publish or review?",
+            "stale": "check failure changed; review before continuing",
+        }.get(exc.outcome, "check could not verify the failure; review the check")
+        text = f"continuation retry: {reason} Work remains held and read-only."
+        daemon._alert_owner(room, f"⚠ {text}")
+        await daemon._post_status(relay, room, envelope, text)
+        return Decision()
     except Exception:
         daemon._alert_owner(room, "⚠ continuation retry not authorized; work remains held")
         await daemon._post_status(relay, room, envelope,
