@@ -4979,6 +4979,17 @@ async def cmd_start(args: argparse.Namespace) -> int:
     if detect_harness(cfg.participant_name) == "claude":
         log_claude_adapter_status()
 
+    # Held for the daemon's whole life. `quorus handoff release` takes the same
+    # lock, so a release never runs beside this daemon and this daemon never
+    # starts in the middle of one (Codex on ac0bc90b).
+    from quorus.runtime import handoff_release as _handoff_release
+
+    lock_path = _handoff_release.daemon_lock_path(cfg.runtime_dir, cfg.participant_name)
+    daemon_lock = _handoff_release.hold_daemon_lock(lock_path)
+    if daemon_lock is None:
+        logger.error("another daemon or a handoff release holds %s; not starting", lock_path)
+        return 1
+
     if args.once:
         return await _run_once(cfg, args.once)
 

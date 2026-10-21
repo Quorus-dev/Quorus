@@ -19,8 +19,10 @@ sweep publishes on its next start, through the normal path. Neither ever pushes.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -96,15 +98,49 @@ def holds(runtime_dir: Path) -> list[HeldWork]:
     return out
 
 
+def daemon_lock_path(runtime_dir: Path, agent: str) -> Path:
+    """Held by *agent*'s daemon for its whole life, and by a release while it runs:
+    while one holds it, the other can't start (Codex on ac0bc90b)."""
+    return runtime_dir / f"daemon-{hashlib.sha256(agent.encode()).hexdigest()[:24]}.lock"
+
+
+def hold_daemon_lock(path: Path) -> int | None:
+    """An open fd holding the lock, or None if someone else holds it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
 def release(runtime_dir: Path, *, agent: str, room: str, capsule_id: str, head: str,
-            action: str, daemon_running: bool) -> str:
-    """Release one hold after the owner looked at *head*. Raises Refused."""
+            action: str, daemon_running: bool | None) -> str:
+    """Release one hold after the owner looked at *head*. Raises Refused.
+
+    *daemon_running* is the caller's process check: None (couldn't tell) refuses,
+    like True. The daemon lock below is the authority for daemons that hold it."""
     if action not in ("publish", "discard"):
         raise Refused("choose --publish or --discard")
+    if daemon_running is None:
+        raise Refused(f"couldn't tell whether @{agent}'s daemon is running; nothing changed")
     if daemon_running:
         raise Refused(f"stop @{agent}'s daemon first; a running daemon may be writing")
     if not FULL_SHA.fullmatch(head):
         raise Refused("--head must be the full 40-character commit you reviewed")
+    lock = hold_daemon_lock(daemon_lock_path(runtime_dir, agent))
+    if lock is None:
+        raise Refused(f"@{agent}'s daemon (or another release) holds its lock; stop it first")
+    try:
+        return _release(runtime_dir, agent, room, capsule_id, head, action)
+    finally:
+        os.close(lock)  # held for the whole release: no daemon starts mid-way
+
+
+def _release(runtime_dir: Path, agent: str, room: str, capsule_id: str, head: str,
+             action: str) -> str:
     mine = journal_path(runtime_dir, agent)
     found = [h for h in holds(runtime_dir)
              if h.journal == mine and h.room == room and h.capsule_id == capsule_id]
@@ -118,6 +154,8 @@ def release(runtime_dir: Path, *, agent: str, room: str, capsule_id: str, head: 
         raise Refused("the journal entry has no readable capsule; resolve by hand") from exc
     repo = Path(str(held.entry.get("scope", "")).partition(":")[2])
     journal = Journal(mine, room, repo, hold_dir=runtime_dir / "unfinished-wakes")
+    record = {"agent": agent, "room": room, "capsule": capsule_id, "head": head,
+              "action": action, "backup": backup_ref(capsule_id)}
     try:
         with journal.locked():  # a daemon mid-gate holds this lock
             entry = journal.read(capsule)
@@ -126,34 +164,59 @@ def release(runtime_dir: Path, *, agent: str, room: str, capsule_id: str, head: 
             hold = PublicationHold(held.worktree, journal, capsule)
             if not hold.owned():
                 raise Refused("the hold marker no longer matches this capsule")
-            note = _move(Git(held.worktree), held, entry, head, action)
+            resuming = _decided(runtime_dir, record)
+            # The decision is on disk before anything moves, so a crash at any later
+            # step leaves a record the owner's rerun resumes from.
+            if not resuming:
+                _log(runtime_dir, {**record, "at": time.time(), "step": "decided"})
+            note = _move(Git(held.worktree), held, entry, head, action, resuming)
             hold.release()
     except StateError as exc:
         raise Refused(str(exc)) from exc
-    _log(runtime_dir, {"at": time.time(), "agent": agent, "room": room,
-                       "capsule": capsule_id, "head": head, "action": action,
-                       "backup": backup_ref(capsule_id)})
+    _log(runtime_dir, {**record, "at": time.time(), "step": "done"})
     return note
 
 
-def _move(git: Git, held: HeldWork, entry: dict, head: str, action: str) -> str:
+def _decided(runtime_dir: Path, record: dict) -> bool:
+    """A decision for exactly this release was recorded and never finished."""
+    path = runtime_dir / RELEASE_LOG
+    try:
+        lines = path.read_text().splitlines()
+    except FileNotFoundError:
+        return False
+    steps = [json.loads(x).get("step") for x in lines if x.strip()
+             and {k: json.loads(x).get(k) for k in record} == record]
+    return bool(steps) and steps[-1] == "decided"
+
+
+def _move(git: Git, held: HeldWork, entry: dict, head: str, action: str,
+          resuming: bool) -> str:
     branch_ref = f"refs/heads/{held.branch}"
+    ref = backup_ref(held.capsule_id)
+    prev = entry.get("prev")
     if git.text("symbolic-ref", "-q", "HEAD") != branch_ref:
         raise Refused(f"the worktree isn't on {held.branch}")
-    if git.text("rev-parse", "HEAD") != head:
-        raise Refused("the branch moved since you reviewed it; look again")
     if not git.clean():
         raise Refused("the worktree has uncommitted changes")
-    ref = backup_ref(held.capsule_id)
     existing = git.run("for-each-ref", "--format=%(objectname)", ref).decode().strip()
+    current = git.text("rev-parse", "HEAD")
+    if (resuming and action == "discard" and current == prev and existing == head):
+        # A discard that moved the branch, then crashed before lifting the hold.
+        return f"discarded: {held.branch} back at {str(prev)[:12]}; {head[:12]} kept at {ref}"
+    if current != head:
+        raise Refused("the branch moved since you reviewed it; look again")
     if existing and existing != head:
         raise Refused(f"{ref} already points elsewhere; resolve by hand")
     if not existing:
         git.run("update-ref", ref, head, "")  # create only
     if action == "publish":
+        # Look again right before the hold goes: the head lifted is the head reviewed
+        # (Codex on ac0bc90b: a commit landing after the backup was released).
+        if (git.text("rev-parse", branch_ref) != head or git.text("rev-parse", "HEAD") != head
+                or not git.clean()):
+            raise Refused("the branch changed during the release; nothing was lifted")
         return (f"hold lifted at {head[:12]} (backup {ref}); @{held.agent}'s publish "
                 "sweep publishes it when its daemon starts")
-    prev = entry.get("prev")
     if not isinstance(prev, str) or not FULL_SHA.fullmatch(prev):
         raise Refused("the journal has no previous head to go back to; resolve by hand")
     git.run("update-ref", branch_ref, prev, head)  # compare-and-swap from the approved head
@@ -164,7 +227,17 @@ def _move(git: Git, held: HeldWork, entry: dict, head: str, action: str) -> str:
 
 
 def _log(runtime_dir: Path, record: dict) -> None:
+    """Append and fsync: the decision must reach disk before the hold goes."""
     path = runtime_dir / RELEASE_LOG
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(record, sort_keys=True) + "\n")
-    path.chmod(0o600)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, (json.dumps(record, sort_keys=True) + "\n").encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)

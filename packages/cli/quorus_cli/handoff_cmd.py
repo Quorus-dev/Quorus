@@ -9,6 +9,7 @@ for every refusal.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,6 +44,23 @@ def cmd_holds(args) -> None:
                   "--publish|--discard")
 
 
+def daemon_running(agent: str) -> bool | None:
+    """True, False, or None when it can't be told. None refuses the release: a
+    failed lookup is never read as "stopped" (Codex on ac0bc90b)."""
+    from quorus_cli.agent_cmd import _running_daemon_for
+
+    try:
+        if _running_daemon_for(agent) is not None:
+            return True
+        # _running_daemon_for also returns None when pgrep itself failed; ask again
+        # and read its exit code: 1 is "no match", anything else is "don't know".
+        out = subprocess.run(["pgrep", "-f", f"reflexd.py start.*--participant {agent}( |$)"],
+                             capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {0: True, 1: False}.get(out.returncode)
+
+
 def cmd_release(args) -> None:
     if not sys.stdin.isatty():
         _ui.error("quorus handoff release must be typed at a terminal")
@@ -53,9 +71,7 @@ def cmd_release(args) -> None:
     if input(f"  type the room name ({args.room}) to go on: ").strip() != args.room:
         _ui.error("nothing changed: the name didn't match")
         raise SystemExit(2)
-    from quorus_cli.agent_cmd import _running_daemon_for
-
-    running = _running_daemon_for(args.agent) is not None
+    running = daemon_running(args.agent)
     try:
         note = handoff_release.release(
             _runtime_dir(args), agent=args.agent, room=args.room, capsule_id=args.capsule,

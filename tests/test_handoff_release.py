@@ -165,6 +165,100 @@ def test_the_cli_needs_a_terminal_and_the_typed_room(held, monkeypatch):
         cmd.cmd_release(args)
     _assert_untouched(held)
     monkeypatch.setattr("builtins.input", lambda _p: "room")
-    monkeypatch.setattr("quorus_cli.agent_cmd._running_daemon_for", lambda name: None)
+    monkeypatch.setattr(cmd, "daemon_running", lambda name: False)
     cmd.cmd_release(args)
     assert held.c.git("rev-parse", "HEAD") == held.c.base
+
+
+# ── Codex on ac0bc90b ───────────────────────────────────────────────────
+
+
+def test_an_unknown_daemon_status_refuses(held):
+    with pytest.raises(hr.Refused, match="couldn't tell"):
+        _release(held, daemon_running=None)
+    _assert_untouched(held)
+
+
+def test_a_failed_process_lookup_is_unknown_not_stopped(monkeypatch):
+    import quorus_cli.handoff_cmd as cmd
+
+    monkeypatch.setattr("quorus_cli.agent_cmd._running_daemon_for", lambda name: None)
+
+    def broken(*_a, **_k):
+        raise OSError("no pgrep")
+
+    monkeypatch.setattr(cmd.subprocess, "run", broken)
+    assert cmd.daemon_running("a-codex") is None
+
+
+def test_a_daemon_holding_its_lock_blocks_the_release_and_vice_versa(held):
+    path = hr.daemon_lock_path(held.runtime, AGENT)
+    fd = hr.hold_daemon_lock(path)  # what reflexd takes at startup
+    try:
+        with pytest.raises(hr.Refused, match="holds its lock"):
+            _release(held)
+        _assert_untouched(held)
+    finally:
+        import os
+
+        os.close(fd)
+    original = hr._release
+
+    def check_lock_held(*a, **kw):
+        assert hr.hold_daemon_lock(path) is None  # a daemon starting now can't
+        return original(*a, **kw)
+
+    hr._release = check_lock_held
+    try:
+        _release(held, action="publish")
+    finally:
+        hr._release = original
+    fd = hr.hold_daemon_lock(path)  # released afterwards
+    assert fd is not None
+
+
+def test_a_commit_landing_after_the_backup_is_never_lifted(held, monkeypatch):
+    c = held.c
+    original = Git.run
+
+    def commit_after_backup(self, *args):
+        out = original(self, *args)
+        if args[:2] == ("update-ref", hr.backup_ref(c.capsule.id)):
+            (c.root / "tracked").write_text("sneaky")
+            c.git("commit", "-qam", "landed mid-release")
+        return out
+
+    monkeypatch.setattr(Git, "run", commit_after_backup)
+    with pytest.raises(hr.Refused, match="changed during the release"):
+        _release(held, action="publish")
+    assert PublicationHold(c.root, c.journal, c.capsule).owned()
+
+
+def test_the_decision_is_on_disk_before_the_hold_goes(held, monkeypatch):
+    def disk_full(runtime_dir, record):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(hr, "_log", disk_full)
+    with pytest.raises(OSError):
+        _release(held, action="publish")
+    _assert_untouched(held)  # nothing moved, hold kept, no backup
+
+
+def test_a_discard_that_crashed_before_lifting_the_hold_resumes(held, monkeypatch):
+    c = held.c
+    original = PublicationHold.release
+
+    def crash(self):
+        raise StateError("crashed after the branch moved")
+
+    monkeypatch.setattr(PublicationHold, "release", crash)
+    with pytest.raises(hr.Refused, match="crashed"):
+        _release(held)
+    assert c.git("rev-parse", "HEAD") == c.base  # moved, still held
+    assert PublicationHold(c.root, c.journal, c.capsule).owned()
+    monkeypatch.setattr(PublicationHold, "release", original)
+    assert "discarded" in _release(held)  # the owner's rerun finishes it
+    assert not PublicationHold(c.root, c.journal, c.capsule).owned()
+    steps = [json.loads(x)["step"]
+             for x in (held.runtime / hr.RELEASE_LOG).read_text().splitlines()]
+    assert steps == ["decided", "done"]
