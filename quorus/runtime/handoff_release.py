@@ -196,13 +196,19 @@ def _move(git: Git, held: HeldWork, entry: dict, head: str, action: str,
     prev = entry.get("prev")
     if git.text("symbolic-ref", "-q", "HEAD") != branch_ref:
         raise Refused(f"the worktree isn't on {held.branch}")
-    if not git.clean():
-        raise Refused("the worktree has uncommitted changes")
     existing = git.run("for-each-ref", "--format=%(objectname)", ref).decode().strip()
     current = git.text("rev-parse", "HEAD")
-    if (resuming and action == "discard" and current == prev and existing == head):
-        # A discard that moved the branch, then crashed before lifting the hold.
-        return f"discarded: {held.branch} back at {str(prev)[:12]}; {head[:12]} kept at {ref}"
+    discarded = f"discarded: {held.branch} back at {str(prev)[:12]}; {head[:12]} kept at {ref}"
+    if resuming and action == "discard" and existing == head and _valid(prev):
+        if current == head and _tree_is(git, prev):
+            # Crashed after the tree went back but before the branch moved: finish
+            # the compare-and-swap (Codex on a9a1ca67). Any other edit isn't this.
+            git.run("update-ref", branch_ref, prev, head)
+            return _settled(git, prev, discarded)
+        if current == prev:
+            return _settled(git, prev, discarded)  # crashed after the branch moved
+    if not git.clean():
+        raise Refused("the worktree has uncommitted changes")
     if current != head:
         raise Refused("the branch moved since you reviewed it; look again")
     if existing and existing != head:
@@ -217,13 +223,39 @@ def _move(git: Git, held: HeldWork, entry: dict, head: str, action: str,
             raise Refused("the branch changed during the release; nothing was lifted")
         return (f"hold lifted at {head[:12]} (backup {ref}); @{held.agent}'s publish "
                 "sweep publishes it when its daemon starts")
-    if not isinstance(prev, str) or not FULL_SHA.fullmatch(prev):
+    if not _valid(prev):
         raise Refused("the journal has no previous head to go back to; resolve by hand")
-    git.run("update-ref", branch_ref, prev, head)  # compare-and-swap from the approved head
-    git.run("reset", "--hard", "-q", "HEAD")
+    # Tree first, with a two-way merge that refuses to overwrite a local edit (no
+    # reset --hard: Codex on a9a1ca67), then the branch by compare-and-swap.
+    try:
+        git.run("read-tree", "-u", "-m", head, prev)
+    except StateError as exc:
+        raise Refused("an edit made during the release is in the way; it's kept, and "
+                      "so is the hold") from exc
+    git.run("update-ref", branch_ref, prev, head)
+    return _settled(git, prev, discarded)
+
+
+def _valid(sha) -> bool:
+    return isinstance(sha, str) and bool(FULL_SHA.fullmatch(sha))
+
+
+def _tree_is(git: Git, commit: str) -> bool:
+    """Index and worktree are exactly *commit*'s tree, with nothing untracked."""
+    return (git.text("write-tree") == git.text("rev-parse", f"{commit}^{{tree}}")
+            and not git.run("diff", "--name-only")
+            and not git.run("ls-files", "--others", "--exclude-standard"))
+
+
+def _settled(git: Git, prev: str, note: str) -> str:
+    """The branch is at prev; only a clean tree lets the hold go. An edit that
+    landed during the release survives, and the hold stays for the owner."""
     if git.text("rev-parse", "HEAD") != prev:
         raise Refused("the branch didn't land on its previous head; check it by hand")
-    return f"discarded: {held.branch} back at {prev[:12]}; {head[:12]} kept at {ref}"
+    if not git.clean():
+        raise Refused("the branch is back at its previous head, but an edit made during "
+                      "the release is kept; the hold stays until you resolve it")
+    return note
 
 
 def _log(runtime_dir: Path, record: dict) -> None:

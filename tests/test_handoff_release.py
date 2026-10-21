@@ -262,3 +262,66 @@ def test_a_discard_that_crashed_before_lifting_the_hold_resumes(held, monkeypatc
     steps = [json.loads(x)["step"]
              for x in (held.runtime / hr.RELEASE_LOG).read_text().splitlines()]
     assert steps == ["decided", "done"]
+
+
+# ── Codex on a9a1ca67: discard never erases an edit ─────────────────────
+
+
+def _inject_after_backup(monkeypatch, c, action):
+    original = Git.run
+
+    def run(self, *args):
+        out = original(self, *args)
+        if args[:2] == ("update-ref", hr.backup_ref(c.capsule.id)):
+            action()
+        return out
+
+    monkeypatch.setattr(Git, "run", run)
+    return original
+
+
+def test_an_edit_in_the_way_of_the_discard_is_kept_with_the_hold(held, monkeypatch):
+    c = held.c
+    _inject_after_backup(monkeypatch, c, lambda: (c.root / "tracked").write_text("my edit"))
+    with pytest.raises(hr.Refused, match="in the way"):
+        _release(held)
+    assert (c.root / "tracked").read_text() == "my edit"
+    assert c.git("rev-parse", "HEAD") == held.head
+    assert PublicationHold(c.root, c.journal, c.capsule).owned()
+
+
+def test_an_edit_beside_the_discard_survives_and_the_hold_stays(held, monkeypatch):
+    c = held.c
+    original = _inject_after_backup(monkeypatch, c,
+                                    lambda: (c.root / "notes.txt").write_text("keep me"))
+    with pytest.raises(hr.Refused, match="hold stays"):
+        _release(held)
+    assert (c.root / "notes.txt").read_text() == "keep me"
+    assert c.git("rev-parse", "HEAD") == c.base
+    assert PublicationHold(c.root, c.journal, c.capsule).owned()
+    monkeypatch.setattr(Git, "run", original)
+    (c.root / "notes.txt").unlink()  # the owner deals with it, then reruns
+    assert "discarded" in _release(held)
+    assert not PublicationHold(c.root, c.journal, c.capsule).owned()
+
+
+def test_a_crash_after_the_tree_went_back_but_before_the_branch_moved_resumes(
+        held, monkeypatch):
+    c = held.c
+    original = Git.run
+    branch_ref = "refs/heads/quorus/receiver-codex"
+
+    def crash_at_cas(self, *args):
+        if args[:2] == ("update-ref", branch_ref):
+            raise StateError("crashed before the branch moved")
+        return original(self, *args)
+
+    monkeypatch.setattr(Git, "run", crash_at_cas)
+    with pytest.raises(hr.Refused, match="crashed"):
+        _release(held)
+    assert c.git("rev-parse", "HEAD") == held.head  # branch not moved, tree back
+    assert PublicationHold(c.root, c.journal, c.capsule).owned()
+    monkeypatch.setattr(Git, "run", original)
+    assert "discarded" in _release(held)  # the rerun finishes, no false "uncommitted"
+    assert c.git("rev-parse", "HEAD") == c.base and c.git("status", "--porcelain") == ""
+    assert not PublicationHold(c.root, c.journal, c.capsule).owned()
