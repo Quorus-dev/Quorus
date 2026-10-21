@@ -637,12 +637,23 @@ def test_main_runs_uvicorn(monkeypatch):
 
     calls = []
 
-    def fake_run(app_arg, host: str, port: int, **kw):
-        calls.append((app_arg, host, port, kw))
+    class FakeConfig:
+        def __init__(self, app_arg, host: str, port: int, **kw):
+            calls.append((app_arg, host, port, kw))
+
+    class FakeServer:  # never starts listening, so nothing is recorded as ours
+        started = False
+
+        def __init__(self, config):
+            self.config = config
+
+        async def serve(self):
+            return None
 
     monkeypatch.setenv("PORT", "9090")
     monkeypatch.delenv("HOST", raising=False)
-    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(run=fake_run))
+    monkeypatch.setitem(sys.modules, "uvicorn",
+                        types.SimpleNamespace(Config=FakeConfig, Server=FakeServer))
 
     main()
 

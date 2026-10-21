@@ -113,6 +113,7 @@ def test_every_wake_carries_guard_rails(tmp_path: Path, monkeypatch) -> None:
     "ghp_" + "c" * 36,
     "AKIA" + "ABCDEFGHIJKLMNOP",
     "mct_abcd1234_" + "z" * 32,
+    "quorus_pk_" + "Q" * 43,  # a participant key
     "AIza" + "d" * 35,
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGljZSJ9.c2lnbmF0dXJlc2lnbmF0dXJl",
     "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----",

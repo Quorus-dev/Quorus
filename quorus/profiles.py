@@ -175,9 +175,7 @@ class ProfileManager:
                 # (~/.murmur, ~/mcp-tunnel) — always land it in the modern
                 # config dir (~/.quorus), even when resolve_config_dir()
                 # returned the legacy path this manager was built from.
-                modern = getattr(_config, "DEFAULT_CONFIG_DIR", None) or (
-                    Path.home() / ".quorus"
-                )
+                modern = _config._default_config_dir()
                 target = ProfileManager(config_dir=Path(modern))
             target.save(slug, raw)
             target.set_current(slug)

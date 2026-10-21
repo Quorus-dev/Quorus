@@ -60,6 +60,8 @@ def cmd_scorecard(args: Any, console: Any) -> None:
         table.add_column(col, justify="left" if col == by else "right", no_wrap=True)
     for r in ledger.scorecard(rows, key=by):
         surv = "-" if r["survival"] is None else f"{round(100 * r['survival'])}%"
+        if r["survival"] is not None and r.get("coverage") is not None and r["coverage"] < 1:
+            surv += f" ({round(100 * r['coverage'])}% measured)"
         duels = (f"{r['duels_won']}-{r['duels_lost']}"
                  if r["duels_won"] or r["duels_lost"] else "-")
         table.add_row(r[by], str(r["commits"]), _pct(r["with_tests"], r["commits"]),
@@ -69,7 +71,9 @@ def cmd_scorecard(args: Any, console: Any) -> None:
     # 0.6.3 audit BUG 14: "tests 0%" read as "its tests didn't run" for a fix whose
     # tests were green; the column counts commits that add or change a test file.
     console.print("[dim]+tests = share of its commits that add or change a test (not whether "
-                  "tests ran); kept = share of the lines it added still in the code at HEAD"
+                  "tests ran); kept = share of the lines it added still in the code at HEAD, over "
+                  "the files that could be measured (renames followed; \"measured\" shows "
+                  "when some couldn't be)"
                   + (f"; {inferred} commits attributed from the room's publish lines "
                      "(made before provenance notes)" if inferred else "") + "[/]")
     flagged = [o for o in rows if o.review == "flagged" or o.reverted]

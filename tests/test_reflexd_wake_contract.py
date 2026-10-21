@@ -1012,7 +1012,9 @@ def test_commit_all_skips_generated_files(tmp_path: Path) -> None:
     assert files == ["tip.py"]
 
 
-def test_losing_an_auction_on_agent_chatter_posts_no_defer(tmp_path: Path) -> None:
+def test_losing_an_auction_posts_no_defer(tmp_path: Path) -> None:
+    """Neither agent chatter nor a lost @open posts `/defer → @winner`: one @open
+    with four bidders posted four of them (b9052a77); the claim names the winner."""
     d = _daemon(tmp_path, "x-claude")
     defers: list[dict[str, Any]] = []
 
@@ -1029,11 +1031,11 @@ def test_losing_an_auction_on_agent_chatter_posts_no_defer(tmp_path: Path) -> No
         async def fetch_recent(self, **kw: Any) -> list:
             return []
 
-    for content, expected in (("pushed the fix", 0), ("@open add csv export", 1)):
-        env = {"from_name": "x-gemini" if expected == 0 else "arav", "room": "r",
+    for content, sender in (("pushed the fix", "x-gemini"), ("@open add csv export", "arav")):
+        env = {"from_name": sender, "room": "r",
                "message_id": content, "content": content, "message_type": "chat"}
         asyncio.run(d.handle_room_message(Relay(), env))
-        assert len(defers) == expected, content
+        assert defers == [], content
 
 
 def test_agent_mention_may_be_ignored_but_human_mention_may_not() -> None:
@@ -1155,3 +1157,16 @@ def test_the_wake_intent_says_never_to_write_the_token_otherwise():
                                   kind="agent_room", teammates=[], has_workspace=False,
                                   from_agent=True)
     assert "exactly NO_REPLY and nothing else" in text and "protocol word" in text
+
+
+def test_the_worktree_text_never_claims_a_shared_store_across_owners(tmp_path: Path) -> None:
+    """0.6.3 multi-person audit, BUG 23: an agent on another laptop told its reviewer
+    "a plain git show works since we share the object store", which is false across
+    machines. The text now gives the test (`git cat-file -e`) and the cross-owner path
+    (`quorus fetch <bundle> --room <room>`), and says to hand out fetch lines, not hashes."""
+    wt = wake.Worktree(path=tmp_path / "wt", branch="quorus/x", main="weekend/quorus",
+                       repo=tmp_path / "repo")
+    text = wake.worktree_instructions(wt)
+    assert "all worktrees share one object store" not in text
+    assert "git cat-file -e <hash>" in text and "quorus fetch <bundle> --room <room>" in text
+    assert "Never tell a reviewer that you share a store" in text

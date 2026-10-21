@@ -338,3 +338,40 @@ def test_a_later_wakes_context_doesnt_excuse_the_oldest_turn(monkeypatch, tmp_pa
     assert "s1" not in held.seen_ids(d._held_dir, wt)
     asyncio.run(d._publish_sweep(_Relay([stand_down])))
     assert _main_log(repo) == "init" and len(_held_refs(repo)) == 1
+
+
+def test_a_crashed_turn_that_left_nothing_doesnt_hold_the_next_turns_trigger(
+        monkeypatch, tmp_path):
+    """Multi-person audit BUG 24: nadia's only message woke nadia-opencode; that
+    wake crashed before committing, leaving its window file behind with a start
+    before her message and no sight of it. The retry wake for the same message
+    committed, and the guard held the commit: "@nadia wrote to me mid-turn". A
+    window from a turn that left nothing unpublished is stale: the next turn
+    opens its own."""
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+    wt = reflexd.reflexd_wake.agent_worktree(repo, ME)
+    held.mark_window(d._held_dir, wt, started_at=time.time() - 120, seen={"older"})
+    only_message = datetime.fromtimestamp(time.time() - 60, timezone.utc).isoformat()
+    relay = _Relay([{"id": "e-m", "from_name": "arav", "content": f"@{ME} write the notes",
+                     "timestamp": only_message}])
+    _wake(monkeypatch, d, relay, reply="✅", edit="mine\n")
+    assert _main_log(repo).splitlines()[0] == "docs: notes"
+    assert _held_refs(repo) == [] and not [p for p in _posts(relay) if "held" in p]
+
+
+def test_a_crashed_turns_unpublished_commit_keeps_its_window(monkeypatch, tmp_path):
+    """The other half of BUG 24's fix: when the earlier turn did leave a commit,
+    its window stands (codex, review of 3ba308a4), and an owner message after
+    it still holds everything."""
+    repo = _repo(tmp_path)
+    d = _daemon(monkeypatch, tmp_path, repo)
+    wt = reflexd.reflexd_wake.agent_worktree(repo, ME)
+    held.mark_window(d._held_dir, wt, started_at=time.time() - 120, seen={"older"})
+    (wt.path / "notes.md").write_text("unpublished\n")
+    _git(wt.path, "commit", "-qam", "docs: unpublished")
+    relay = _Relay([{"id": "e-m", "from_name": "arav", "content": f"@{ME} write the notes",
+                     "timestamp": datetime.fromtimestamp(time.time() - 60,
+                                                         timezone.utc).isoformat()}])
+    _wake(monkeypatch, d, relay, reply="✅", edit="mine\n")
+    assert _main_log(repo) == "init" and len(_held_refs(repo)) == 1

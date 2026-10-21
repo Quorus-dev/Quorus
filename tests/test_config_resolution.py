@@ -164,3 +164,23 @@ def test_profile_migration_writes_to_modern_dir_not_legacy(tmp_path):
     assert not (tmp_path / ".murmur" / "profiles").exists()
     legacy_raw = json.loads((tmp_path / ".murmur" / CONFIG_FILENAME).read_text())
     assert legacy_raw["api_key"] == "k"
+
+
+def test_the_default_dir_follows_path_home_at_call_time(tmp_path, monkeypatch):
+    """A HOME faked after import (what tests and wrappers do) must move the default
+    config dir. The import-time constant used to win, so a `quorus join` test wrote a
+    config into the process's real HOME (2026-10-20, PR #15 CI)."""
+    import quorus.config as config_mod
+
+    monkeypatch.delenv("QUORUS_CONFIG_DIR", raising=False)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    assert config_mod._default_config_dir() == tmp_path / ".quorus"
+    assert config_mod.resolve_config_dir() == tmp_path / ".quorus"
+
+
+def test_a_monkeypatched_default_dir_still_wins(tmp_path, monkeypatch):
+    import quorus.config as config_mod
+
+    monkeypatch.delenv("QUORUS_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(config_mod, "DEFAULT_CONFIG_DIR", tmp_path / "patched")
+    assert config_mod.resolve_config_dir() == tmp_path / "patched"

@@ -343,6 +343,20 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
 
 
+def _admin_headers() -> dict[str, str]:
+    """The operator credential for admin routes (share, invites --revoke, kick,
+    destroy, rename, room add): the relay secret when this profile has one, else
+    the same login as everything else. Since 0.6.4 a local owner also holds a
+    participant key for everyday identity (H4); that key is a member, never an
+    admin, so these commands must not send it when the secret is at hand. A hosted
+    login (`mct_` API key) is the exception: its role carries the admin right and
+    the hosted relay refuses a legacy secret, so a stale dev secret left in the
+    profile must never win over it (Codex, review of 2c0bc92a)."""
+    if RELAY_SECRET and not API_KEY.startswith("mct_"):
+        return {"Authorization": f"Bearer {RELAY_SECRET}"}
+    return _auth_headers()
+
+
 def _get_sse_token(recipient: str) -> str:
     """Get a short-lived SSE stream token."""
     headers = _auth_headers()
@@ -1197,7 +1211,9 @@ def _cmd_room(args):
     ~/.quorus/room-bindings.json (0600)."""
     import json as _json
 
-    bindings_path = Path.home() / ".quorus" / "room-bindings.json"
+    from quorus_cli.agent_cmd import bindings_path as _bindings_path
+
+    bindings_path = _bindings_path()
     action = getattr(args, "room_action", None)
     if action is None:
         _ui.error(
@@ -3568,7 +3584,7 @@ async def _kick(room_name: str, participant: str) -> None:
         resp = await client.post(
             f"{RELAY_URL}/rooms/{room['id']}/kick",
             json={"participant": participant, "requested_by": INSTANCE_NAME},
-            headers=_auth_headers(),
+            headers=_admin_headers(),
         )
         resp.raise_for_status()
         console.print(f"[green]Kicked '{participant}' from {room_name}[/green]")
@@ -3594,7 +3610,7 @@ async def _destroy(room_name: str) -> None:
             "DELETE",
             f"{RELAY_URL}/rooms/{room['id']}",
             json={"requested_by": INSTANCE_NAME},
-            headers=_auth_headers(),
+            headers=_admin_headers(),
         )
         resp.raise_for_status()
         console.print(f"[green]Room '{room_name}' destroyed[/green]")
@@ -3619,7 +3635,7 @@ async def _rename(room_name: str, new_name: str) -> None:
         resp = await client.patch(
             f"{RELAY_URL}/rooms/{room['id']}",
             json={"new_name": new_name, "requested_by": INSTANCE_NAME},
-            headers=_auth_headers(),
+            headers=_admin_headers(),
         )
         resp.raise_for_status()
         console.print(f"[green]Room renamed: {room_name} -> {new_name}[/green]")
@@ -5885,7 +5901,7 @@ def _cmd_share(args):
     try:
         resp = httpx.post(
             f"{RELAY_URL}/v1/join/mint",
-            headers=_auth_headers(),
+            headers=_admin_headers(),
             json={"room": room, "ttl_days": ttl_days, "max_uses": uses,
                   "role": "observer" if getattr(args, "observer", False) else "member"},
             timeout=15,
@@ -7555,15 +7571,84 @@ def _cmd_relay(args):
                       "wasn't stopped", hint="stop it yourself, or use another --port")
             sys.exit(1)
         console.print(f"[dim]stopped the relay quorus started on port {args.port}[/]")
+    # Something that is not a healthy relay may hold the port (a crashed relay's
+    # orphan, another program). The child would die on bind and this wrapper used
+    # to exit 0 saying nothing, while the old process kept serving (BUG 30).
+    holder = _port_holder(host, args.port)
+    if holder is not None:  # "" means taken by an unknown holder: still refuse (Codex)
+        _ui.error(f"Port {args.port} on {host} is already in use{holder}",
+                  hint="stop that process, or start this relay with another --port")
+        sys.exit(1)
     state = os.environ.get("MESSAGES_FILE") or str(resolve_config_dir() / "relay-state.json")
     env = {**os.environ, "RELAY_SECRET": secret, "PORT": str(args.port), "HOST": host,
            "ALLOW_LEGACY_AUTH": "1", "MESSAGES_FILE": state}
     console.print(f"[bold]Starting Quorus relay on http://{host}:{args.port}[/bold]")
     console.print(f"  [dim]state: {state} · Ctrl+C to stop[/]\n")
+    code = _run_relay_child(env)
+    if code:
+        _ui.error(f"The relay exited with code {code}",
+                  hint=f"if the port was taken meanwhile, free it or use another --port "
+                       f"({host}:{args.port})")
+        sys.exit(code)
+
+
+def _port_holder(host: str, port: int) -> str | None:
+    """None when the port can be bound; otherwise a short note about who holds it,
+    or "" when the port is taken but nothing more is known (no `lsof`, or it found
+    no listener), so `quorus relay` can refuse before forking. Callers must test
+    `is not None`: the empty string is still "taken"."""
+    import errno
+    import socket
+
     try:
-        subprocess.run([sys.executable, "-m", "quorus.relay_cli"], env=env, check=False)
-    except KeyboardInterrupt:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, port))
+    except OSError as exc:
+        if exc.errno not in (errno.EADDRINUSE, errno.EACCES):
+            return None
+        try:
+            out = subprocess.run(["lsof", "-nP", "-iTCP:%d" % port, "-sTCP:LISTEN", "-Fcp"],
+                                 capture_output=True, text=True, timeout=3).stdout
+            pid = next((ln[1:] for ln in out.splitlines() if ln.startswith("p")), "")
+            cmd = next((ln[1:] for ln in out.splitlines() if ln.startswith("c")), "")
+            return f" by pid {pid} ({cmd})" if pid else ""
+        except Exception:
+            return ""
+    return None
+
+
+def _run_relay_child(env: dict) -> int:
+    """Run `python -m quorus.relay_cli` in the foreground and return its exit code.
+
+    SIGTERM and SIGINT sent to this wrapper are forwarded to the child and the
+    wrapper waits for it, so `kill <wrapper pid>` frees the port instead of
+    leaving an orphan relay serving (BUG 30, 0.6.3 multi-person audit)."""
+    import signal
+
+    child = subprocess.Popen([sys.executable, "-m", "quorus.relay_cli"], env=env)
+
+    def forward(signum, _frame):
+        try:
+            child.send_signal(signum)
+        except ProcessLookupError:
+            pass
+
+    previous = {sig: signal.signal(sig, forward) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        while True:
+            try:
+                code = child.wait()
+                break
+            except KeyboardInterrupt:  # the signal handler already forwarded it
+                continue
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    if code in (-signal.SIGTERM, -signal.SIGINT, 0):
         console.print("\n[dim]relay stopped[/]")
+        return 0
+    return int(code)
 
 def _cmd_version(args):
     from quorus import __version__
@@ -8956,6 +9041,16 @@ def _cmd_whoami(args) -> None:
     _ui.console.print(f"  [bold]@{data.get('instance_name', '?')}[/]")
     _ui.console.print(f"  [dim]workspace:[/] {label}  [dim]({slug})[/]")
     _ui.console.print(f"  [dim]relay:[/]     {data.get('relay_url', '?')}")
+    has_key, has_secret = bool(data.get("api_key")), bool(data.get("relay_secret"))
+    if has_key and has_secret:
+        signs = "participant key (your identity) · relay secret (operator, for share/kick)"
+    elif has_key:
+        signs = "participant key"
+    elif has_secret:
+        signs = "relay secret only (no identity of your own: social verbs need one)"
+    else:
+        signs = "nothing yet"
+    _ui.console.print(f"  [dim]signs in with:[/] {signs}")
 
 
 def _force_utf8_output() -> None:

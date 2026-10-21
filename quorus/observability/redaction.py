@@ -16,6 +16,9 @@ _SECRET_SHAPES = re.compile(
     r"|\bAIza[0-9A-Za-z_-]{35}"
     r"|\bxox[abposr]-[A-Za-z0-9-]{10,}"
     r"|\b(?:mct|quorus_sk)_[A-Za-z0-9_-]{16,}"
+    # Participant keys (H4: the owner's own key now lives in ~/.quorus, where a
+    # prompt-injected agent running as the owner can read it).
+    r"|\bquorus_pk_[A-Za-z0-9_-]{16,}"
     r"|\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
 )
 _SECRET_ENV = re.compile(r"(?i)(SECRET|TOKEN|PASSWORD|API_?KEY|PRIVATE_KEY|CREDENTIAL)")

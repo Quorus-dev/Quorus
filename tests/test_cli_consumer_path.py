@@ -30,11 +30,20 @@ def test_relay_uses_profile_secret_installed_entrypoint_and_safe_defaults(
     monkeypatch.setattr(cli, "load_config", lambda: {"relay_secret": "from-profile"})
     seen: dict[str, Any] = {}
 
-    def fake_run(argv, env=None, check=False):
-        seen["argv"], seen["env"] = argv, env
-        return subprocess.CompletedProcess(argv, 0)
+    class FakeChild:
+        """The relay child as `_run_relay_child` sees it (BUG 30 made the wrapper
+        use Popen and wait, so a stubbed subprocess.run would spawn a real relay)."""
+        def __init__(self, argv, env=None):
+            seen["argv"], seen["env"] = argv, env
 
-    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+        def wait(self):
+            return 0
+
+        def send_signal(self, signum):
+            pass
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakeChild)
+    monkeypatch.setattr(cli, "_port_holder", lambda host, port: None)  # port 9123 is free
     cli._cmd_relay(SimpleNamespace(port=9123, host=None))
     assert seen["argv"] == [sys.executable, "-m", "quorus.relay_cli"]  # no uv, no checkout
     env = seen["env"]

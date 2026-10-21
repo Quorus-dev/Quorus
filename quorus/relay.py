@@ -608,7 +608,7 @@ app = FastAPI(
         "Any agent that speaks HTTP can join rooms, send messages, "
         "and coordinate work through this API."
     ),
-    version="0.6.4",
+    version="0.6.5",
     lifespan=lifespan,
 )
 
@@ -948,7 +948,46 @@ def main() -> None:
     # SSE clients (wake daemons, MCP servers) never close on their own, so a
     # graceful shutdown with no cap waited forever and a launchd/systemd
     # restart of the relay hung (found 2026-10-08). Cap it.
-    uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=5)
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port,
+                                           timeout_graceful_shutdown=5))
+
+    async def serve() -> None:
+        task = asyncio.ensure_future(server.serve())
+        while not server.started and not task.done():
+            await asyncio.sleep(0.05)
+        if server.started:
+            bound = [sock.getsockname()[:2] for srv in getattr(server, "servers", [])
+                     for sock in (srv.sockets or [])]
+            await asyncio.to_thread(record_own_relay, bound)
+        await task
+
+    asyncio.run(serve())
+
+
+def own_relay_urls(bound: list[tuple[str, int]]) -> set[str]:
+    """The loopback URLs that reach *only* the sockets this relay bound: an exact
+    127.0.0.1 or ::1 bind. A wildcard bind proves nothing, because another process's
+    specific loopback bind on the same port wins its connections (BSD semantics), and
+    neither does a bind to another interface (codex, review of 380372e6). `localhost`
+    counts only when both loopbacks are bound, since it can resolve to either."""
+    v4 = {p for h, p in bound if h == "127.0.0.1"}
+    v6 = {p for h, p in bound if h == "::1"}
+    urls = {f"http://127.0.0.1:{p}" for p in v4} | {f"http://[::1]:{p}" for p in v6}
+    return urls | {f"http://localhost:{p}" for p in v4 & v6}
+
+
+def record_own_relay(bound: list[tuple[str, int]]) -> None:
+    """This machine's relay is now listening on *bound*: record the loopback URLs
+    those sockets serve, so the owner's own relay isn't mistaken for a teammate's
+    (quorus/runtime/own_relays.py). Only a relay this process started gets here;
+    finding someone else's listener, or joining a remote relay, never does (codex)."""
+    from quorus.runtime import own_relays
+
+    for url in sorted(own_relay_urls(bound)):
+        try:
+            own_relays.add_own_relay(own_relays.own_relays_path(), url)
+        except Exception as exc:  # never stop a relay over its trust note
+            logger.warning("couldn't record own relay", url=url, error=str(exc))
 
 
 # ---------------------------------------------------------------------------

@@ -2940,26 +2940,10 @@ class Reflexd:
                 "lost or no claim room=%s id=%s winner=%s",
                 room, message_id, winner,
             )
-            # Stream B defer-announce: post `defer(to=<winner>)` so the
-            # room state machine records who took an open task. Best-effort.
-            # Only for open tasks: on agent chatter it was a stray "/ defer"
-            # line after every message (fresh-user run, 2026-10-16).
-            if (winner and winner != self.config.participant_name
-                    and triage.kind == "open_todo"):
-                try:
-                    await relay.post_social_defer(
-                        room_id=room,
-                        actor=self.config.participant_name,
-                        target=winner,
-                        ref_message_id=message_id or None,
-                        ttl_seconds=300,
-                    )
-                    logger.info(
-                        "posted defer to=%s ref=%s after bid loss",
-                        winner, message_id,
-                    )
-                except Exception as exc:
-                    logger.debug("defer-announce failed (non-fatal): %s", exc)
+            # No `/defer → @winner` post on a lost bid: with four agents in a room every
+            # @open produced four such lines (multi-owner audit, Arav), and the winner's
+            # claim already tells the room who took the task. Nothing reads these edges
+            # for routing; a failover handoff still posts its own defer.
             return True
 
         if won.get("read_only") and triage.kind == "open_todo":

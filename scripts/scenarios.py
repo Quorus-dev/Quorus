@@ -39,7 +39,9 @@ ROOM = f"qa-{os.urandom(2).hex()}"          # main room
 ROOM2 = ROOM + "-b"                          # second project room
 ROOM3 = ROOM + "-safe"                       # manual-mode room
 ROOM4 = ROOM + "-nobind"                     # unbound room
-BINDINGS = Path.home() / ".quorus" / "room-bindings.json"
+from quorus.runtime.bindings import bindings_path as _bindings_path  # noqa: E402
+
+BINDINGS = _bindings_path()
 RESULTS: list[dict[str, Any]] = []
 
 

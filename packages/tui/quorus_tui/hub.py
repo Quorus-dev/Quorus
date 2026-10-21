@@ -186,8 +186,13 @@ def _save_instance_config(
     secret: str = "",
     api_key: str = "",
 ) -> None:
-    """Persist the TUI's instance config through the shared ConfigManager."""
-    ConfigManager(CONFIG_FILE).save(
+    """Persist the TUI's instance config through the shared ConfigManager.
+
+    The path is resolved now, not at import: ``CONFIG_FILE`` is fixed when the
+    module loads, so a ``QUORUS_CONFIG_DIR`` set later (a test, a wrapper that
+    picks the dir before calling in) was ignored and the wizard wrote into the
+    real ``~/.quorus`` (2026-10-20: a test overwrote the overseer's config)."""
+    ConfigManager(resolve_config_dir() / "config.json").save(
         {
             "relay_url": relay_url.rstrip("/"),
             "instance_name": name,
@@ -505,6 +510,12 @@ def _first_launch_setup(console: Console) -> dict:
         console.print("[success]✓[/]" if relay_ok else "[error]✗[/]")
         if note:
             console.print(f"  [dim]{note}[/]")
+        if relay_ok:
+            # The human gets a normal participant claim, like every invitee: the
+            # secret alone names nobody, so social verbs, owner memory and whoami
+            # had no identity to work with (0.6.3 audit, BUG H4). The secret stays
+            # the operator credential for share, revoke, kick and destroy.
+            api_key = _claim_human_key(relay_url, secret, name, console)
 
     if not relay_ok:
         if raw:
@@ -541,6 +552,57 @@ def _first_launch_setup(console: Console) -> dict:
     return profile
 
 
+def _claim_human_key(relay_url: str, secret: str, name: str, console: Console) -> str:
+    """Claim *name* for the human on their own relay and return its participant
+    key, or "" when the claim fails. A name already claimed is never taken over
+    (Codex, H4 design): the wizard says how to recover and goes on with the
+    operator credential, so nothing that worked before stops working."""
+    try:
+        r = httpx.post(f"{relay_url}/v1/auth/claim-name", json={"name": name},
+                       headers={"Authorization": f"Bearer {secret}"}, timeout=10,
+                       follow_redirects=False)
+    except Exception:
+        return ""
+    if r.status_code == 200:
+        return str((r.json() or {}).get("participant_key") or "")
+    if r.status_code == 409:
+        console.print(
+            f"  [warning]The name @{name} is already claimed on this relay.[/] [dim]Its "
+            f"owner can free it with [accent]quorus release-name {name}[/]; until then "
+            "you can read and post, but /vote, /claim and the other verbs need a "
+            "name of your own.[/]"
+        )
+    return ""
+
+
+def session_credentials(profile: dict) -> tuple[str, str]:
+    """(everyday identity, operator secret) for a hub session.
+
+    The identity is the profile's participant or API key when it has one, else
+    the relay secret (a pre-0.6.4 local setup). The operator secret is the relay
+    secret or "", and only share, delete and other admin actions use it (H4,
+    Codex's design: a participant key must never carry implicit admin authority,
+    and the secret is not proof of authorship)."""
+    api_key_val = (profile.get("api_key") or "").strip()
+    legacy_secret = (profile.get("relay_secret") or "").strip()
+    if api_key_val.startswith("mct_"):
+        # A hosted login carries its own role; a stale dev secret next to it would
+        # only be refused by the hosted relay (Codex, review of 2c0bc92a).
+        return (api_key_val, "")
+    return (api_key_val or legacy_secret, legacy_secret)
+
+
+# The operator credential of the running session, for admin actions only.
+_ADMIN_SECRET = ""
+
+
+def _operator_credential(secret: str) -> str:
+    """The credential for an admin route: the session's relay secret when it has
+    one, else whatever the caller holds (an invitee's key, which the relay then
+    refuses with a clear 403)."""
+    return _ADMIN_SECRET or secret
+
+
 # ── API helpers ───────────────────────────────────────────────────────────────
 
 # Cache for exchanged JWT tokens (api_key -> jwt)
@@ -567,6 +629,14 @@ def _exchange_api_key_for_jwt(relay: str, api_key: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+def _invited_elsewhere(api_key: str, relay_url: str) -> bool:
+    """A participant key on a relay this machine didn't start: an invitee. Since
+    H4 the relay's own owner holds a key too, so the key alone doesn't say."""
+    from quorus_cli.agent_cmd import _on_teammates_relay
+
+    return _on_teammates_relay({"api_key": api_key, "relay_url": relay_url})
 
 
 def _ask_relay_address(console: Console, tries: int = 3) -> str:
@@ -896,7 +966,8 @@ def _destroy_room(
         r = httpx.request(
             "DELETE",
             f"{relay}/rooms/{room}",
-            headers={**_auth_headers(secret), "Content-Type": "application/json"},
+            headers={**_auth_headers(_operator_credential(secret)),
+                     "Content-Type": "application/json"},
             content=json.dumps({"requested_by": requested_by}),
             timeout=5,
             follow_redirects=True,
@@ -934,7 +1005,7 @@ def _mint_join_token(relay_url: str, secret: str, room: str) -> str:
     try:
         r = httpx.post(
             f"{relay_url.rstrip('/')}/v1/join/mint",
-            headers=_auth_headers(secret),
+            headers=_auth_headers(_operator_credential(secret)),
             json={"room": room, "ttl_days": 7},
             timeout=5,
             follow_redirects=False,
@@ -3935,19 +4006,14 @@ def _run_session(
 
     relay_url: str = profile.get("relay_url", DEFAULT_RELAY).rstrip("/")
     agent_name: str = profile.get("instance_name", "agent")
-    # Auth precedence: prefer api_key over legacy relay_secret. The
-    # opposite order silently breaks the TUI when a profile carries
-    # BOTH (common when a fresh `quorus init --api-key` runs against a
-    # profile that still has an old dev `relay_secret: "quorus-dev"`).
-    # Production relay rejects the legacy secret and the user sees
-    # "No rooms yet" with no error. Production api_keys are prefixed
-    # `mct_` and `_get_auth_token` exchanges them for a JWT.
+    # Auth precedence: the key (participant or API) is the everyday identity;
+    # the relay secret, when the profile has one, is kept apart as the operator
+    # credential for admin actions (H4). A profile with only a secret works as
+    # before. A hosted `mct_` key next to a stale dev secret used to break the
+    # TUI silently when the secret won.
+    global _ADMIN_SECRET
+    raw_secret, _ADMIN_SECRET = session_credentials(profile)
     api_key_val = (profile.get("api_key") or "").strip()
-    legacy_secret = (profile.get("relay_secret") or "").strip()
-    if api_key_val.startswith("mct_"):
-        raw_secret: str = api_key_val
-    else:
-        raw_secret = legacy_secret or api_key_val
     workspace_label: str = profile.get("workspace_label") or ""
 
     # Identity disambiguation: when the active profile is for an AGENT
@@ -4021,7 +4087,7 @@ def _run_session(
                 "[dim]Is it running? Try: quorus relay[/]"
             )
         # Any other failure → render the empty-state hint from the panel.
-    elif announce_ready and profile.get("room") and api_key_val.startswith("quorus_pk_"):
+    elif announce_ready and profile.get("room") and _invited_elsewhere(api_key_val, relay_url):
         # An invitee's first run: the teammate's relay already has rooms, so the
         # blank-slate offer never ran and their agent CLIs went unmentioned (bet 1's
         # invitee persona). Offer them for the room the invite was for.

@@ -31,9 +31,10 @@ _cache: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
 
 def bound_repo(room: str) -> Path | None:
     """The repo this machine's agents work in for *room*, if any."""
+    from quorus.runtime.bindings import bindings_path
+
     try:
-        data = json.loads((Path.home() / ".quorus" / "room-bindings.json")
-                          .read_text(encoding="utf-8"))
+        data = json.loads(bindings_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     entry = data.get(room) if isinstance(data, dict) else None
