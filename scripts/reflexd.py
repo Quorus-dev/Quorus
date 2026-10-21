@@ -85,6 +85,7 @@ from quorus.private_files import write_private_json, write_private_text  # noqa:
 from quorus.roles import WRITER_ROLES  # noqa: E402
 from quorus.runtime import commit_evidence as _commit_evidence  # noqa: E402  audit F2
 from quorus.runtime import failover as _failover  # noqa: E402
+from quorus.runtime import handoff_completion as _handoff_completion  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime import owner_pin as _owner_pin  # noqa: E402  invitee agents
 from quorus.runtime import review_share as _review_share  # noqa: E402
@@ -2643,6 +2644,10 @@ class Reflexd:
         reflexd_wake.validate_participant(config.participant_name)
         self.config = config
         self.adapter = adapter or HeadlessAdapter()
+        # Populated only by the local receiver gate AFTER proof + launch. Never
+        # read from an envelope field. Capsule reception remains disabled until
+        # the sender/receiver wiring has its own review.
+        self._handoff_turns: dict[str, _handoff_completion.Continuation] = {}
         if getattr(self.adapter, "wake_spec", None) is None and hasattr(
             self.adapter, "wake_spec",
         ):
@@ -3461,6 +3466,7 @@ class Reflexd:
         failure_reason = None
         readonly_snap: dict[str, str] | None = None
         readonly_turn = False
+        handoff_turn = self._handoff_turns.pop(wake_id, None)
         try:
             # Only pass worktree extras when used: adapters written against
             # the older run() signature keep working.
@@ -3640,6 +3646,10 @@ class Reflexd:
                                         reflexd_unfinished.notice(parked))
         elif worktree is not None:
             try:
+                if handoff_turn is not None:
+                    await _handoff_completion.finish(
+                        handoff_turn, relay, participant=self.config.participant_name,
+                        room=room, root=worktree.path)
                 # A clean finish lifts an unfinished turn's hold. If that fails,
                 # the except below keeps the work on its branch, unpublished.
                 await asyncio.to_thread(reflexd_unfinished.clear, self._unfinished_dir,

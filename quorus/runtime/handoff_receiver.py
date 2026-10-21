@@ -117,3 +117,35 @@ def launch(root: Path, journal: Journal, capsule: HandoffCapsule, *, claimed: bo
             return _refuse_launch(root, journal, capsule, "proof tree changed before launch")
         journal.write(capsule, "continuing")
         return True
+
+
+def complete(root: Path, journal: Journal, capsule: HandoffCapsule, *, claimed: bool) -> bool:
+    """Finish ONLY the launched continuation and release only its own hold.
+
+    Called after a clean harness return, with a fresh relay claim lookup. Failed
+    turns never call this. Persist done before release; a retry after a crash is
+    allowed only at the exact completed head, with the same still-owned claim.
+    """
+    with journal.locked():
+        entry = journal.read(capsule)
+        if not claimed or entry is None or entry["state"] not in {"continuing", "done"}:
+            return False
+        hold = PublicationHold(root, journal, capsule)
+        if not hold.owned():
+            return False
+        try:
+            git = Git(root)
+            head = git.text("rev-parse", "HEAD")
+            if (git.text("symbolic-ref", "HEAD") != f"refs/heads/{entry.get('branch')}"
+                    or not git.clean()):
+                return False
+            git.run("merge-base", "--is-ancestor", capsule.repo.head, head)
+        except StateError:
+            return False
+        if entry["state"] == "done":
+            if entry.get("completed_head") != head:
+                return False
+        else:
+            journal.finish(capsule, completed_head=head)
+        hold.release()
+        return True

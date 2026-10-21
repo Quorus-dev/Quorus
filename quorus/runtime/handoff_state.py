@@ -117,11 +117,11 @@ class Journal:
         self._save(data)
         return entry
 
-    def finish(self, capsule: HandoffCapsule) -> None:
+    def finish(self, capsule: HandoffCapsule, *, completed_head: str | None = None) -> None:
         """Only a turn already recorded as continuing may finish."""
         data = self._load()
         entry = self.read(capsule)
         if entry is None or entry["state"] != "continuing":
             raise StateError("handoff has no continuing turn")
-        data[self.key(capsule)] = {**entry, "state": "done"}
+        data[self.key(capsule)] = {**entry, "state": "done", "completed_head": completed_head}
         self._save(data)
