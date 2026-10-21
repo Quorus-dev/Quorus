@@ -11,6 +11,7 @@ can echo credentials or tool inputs.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -28,11 +29,12 @@ _AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AP]M)?", re.IGNORECAS
 
 @dataclass(frozen=True)
 class LimitReading:
-    window: str  # "limit" here; "5h" / "7d" come with reported usage (slice 3)
-    kind: str  # "observed" | "guess"
+    window: str  # "limit" (a limit message) | "5h" / "7d" (reported usage)
+    kind: str  # "reported" | "observed" | "guess"
     source: str  # a SOURCE_KIND key
     seen_at: float  # epoch seconds
     resets_at: float | None = None  # epoch seconds, exact (no padding, no cap)
+    used_pct: float | None = None  # reported usage only, 0..100
 
 
 def _at_target(match: re.Match[str], local_now: datetime) -> datetime | None:
@@ -101,3 +103,67 @@ def live(reading: LimitReading | None, now: float, pause_until: float,
     if reading.resets_at is not None:
         return reading if reading.resets_at > now else None
     return reading if pause_reason == "quota" and pause_until > now else None
+
+
+# ── reported usage (slice 3) ────────────────────────────────────────────
+#
+# Spike 2026-10-21: headless `claude -p --output-format stream-json --verbose`
+# (2.1.304) prints {"type": "rate_limit_event", "rate_limit_info": {...}} with
+# "unifiedWindows": {"five_hour": {"utilization": 0.75, "resetsAt": <epoch s>},
+# "seven_day": {...}}; utilization is a 0..1 fraction. `codex exec --json`
+# (0.160.1) carries token usage only, so Codex stays observed / guess.
+
+USAGE_STALE_S = 15 * 60  # older usage is shown with its age
+USAGE_MAX_AGE_S = 3600  # older usage is dropped
+_CLAUDE_WINDOWS = {"five_hour": "5h", "seven_day": "7d"}
+
+
+def _window_reading(raw: object, window: str, now: float) -> LimitReading | None:
+    """One ``{"utilization", "resetsAt"}`` window, or None if it's malformed."""
+    if not isinstance(raw, dict):
+        return None
+    used, reset = raw.get("utilization"), raw.get("resetsAt")
+    if isinstance(used, bool) or not isinstance(used, (int, float)) or not 0 <= used <= 1:
+        return None  # also rejects NaN; a huge int compares without overflowing
+    if reset is not None:
+        if isinstance(reset, bool) or not isinstance(reset, (int, float)):
+            return None
+        if not now < reset <= now + MAX_RESET_AHEAD_S:
+            reset = None  # a reset we can't trust: keep the usage, drop the time
+    return LimitReading(window, "reported", "claude.stream", now,
+                        float(reset) if reset is not None else None, round(used * 100, 1))
+
+
+def read_claude_usage(stdout: str, now: float) -> dict[str, LimitReading]:
+    """The 5h / 7d usage in the last ``rate_limit_event`` of a Claude stream.
+
+    Missing windows, malformed fields and lines that aren't JSON are skipped,
+    never raised. Only the numbers are kept: no other field of the event."""
+    for line in reversed((stdout or "").splitlines()):
+        if '"rate_limit_event"' not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "rate_limit_event":
+            continue
+        info = event.get("rate_limit_info")
+        windows = info.get("unifiedWindows") if isinstance(info, dict) else None
+        if not isinstance(windows, dict):
+            return {}
+        out = {}
+        for name, window in _CLAUDE_WINDOWS.items():
+            reading = _window_reading(windows.get(name), window, now)
+            if reading is not None:
+                out[window] = reading
+        return out
+    return {}
+
+
+def live_usage(usage: dict[str, LimitReading], now: float) -> dict[str, LimitReading]:
+    """Usage still worth showing: under an hour old and before its reset.
+    After a reset, usage is unknown, not 0%."""
+    return {w: r for w, r in usage.items()
+            if r.seen_at >= now - USAGE_MAX_AGE_S
+            and (r.resets_at is None or r.resets_at > now)}

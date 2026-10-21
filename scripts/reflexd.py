@@ -1459,6 +1459,9 @@ class HeadlessAdapter:
         # What the vendor said: its exact reset and source (reflexd_limits).
         # Memory only, so a restart starts with none.
         self.limit: Any = None
+        # Usage the vendor's CLI reported, by window ("5h" / "7d"). Claude
+        # only: `codex exec --json` doesn't carry it (spike, 2026-10-21).
+        self.usage: dict[str, Any] = {}
         # Set by Reflexd: called with "editing relay.py"-style steps parsed
         # from the harness's JSON stream while a wake runs.
         self.on_step: Callable[[str], None] | None = None
@@ -1821,6 +1824,20 @@ class HeadlessAdapter:
         self.limited_until, self.pause_reason = now + retry, "quota"
         self.limit = reflexd_limits.merge(self.limit, reading, now)
 
+    def _note_usage(self, binary: str, stdout: bytes | None) -> None:
+        """Claude's rate_limit_event: each window it reports replaces ours."""
+        if Path(binary).name != CLAUDE_BIN or not stdout or b"rate_limit_event" not in stdout:
+            return
+        usage = reflexd_limits.read_claude_usage(
+            stdout.decode("utf-8", errors="replace"), time.time())
+        self.usage = {**self.usage, **usage}
+
+    def current_usage(self, now: float | None = None) -> dict[str, Any]:
+        """Reported usage still worth showing; older or reset windows dropped."""
+        now = time.time() if now is None else now
+        self.usage = reflexd_limits.live_usage(self.usage, now)
+        return self.usage
+
     def current_limit(self, now: float | None = None) -> Any:
         """The vendor reading if it still holds; an expired one is dropped."""
         now = time.time() if now is None else now
@@ -1972,6 +1989,7 @@ class HeadlessAdapter:
             await _reap(proc)
             logger.warning("harness %s timed out", argv[0])
             return "[reflexd] harness timed out"
+        self._note_usage(argv[0], stdout)
         if proc.returncode != 0:
             raw = (stderr or b"").decode("utf-8", errors="replace")
             # opencode reports failures as JSON error events on STDOUT with an
@@ -3091,10 +3109,13 @@ class Reflexd:
                             "until": until}
         current = getattr(self.adapter, "current_limit", None)
         reading = current(now) if current else None
-        if reading is not None:
-            out["readings"] = [{"window": reading.window, "kind": reading.kind,
-                                "source": reading.source, "used_pct": None,
-                                "resets_at": reading.resets_at, "seen_at": reading.seen_at}]
+        usage = getattr(self.adapter, "current_usage", None)
+        readings = ([reading] if reading is not None else []) + (
+            list(usage(now).values()) if usage else [])
+        if readings:
+            out["readings"] = [{"window": r.window, "kind": r.kind, "source": r.source,
+                                "used_pct": r.used_pct, "resets_at": r.resets_at,
+                                "seen_at": r.seen_at} for r in readings]
         return out
 
     def _waiting_now(self) -> tuple[str, float]:
