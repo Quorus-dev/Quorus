@@ -230,8 +230,8 @@ def test_the_report_joins_both_sides_and_keeps_rehearsals_apart(tmp_path):
         "snapshot": {"repo": {"base": base, "head": head}}}}))
     out = _report(sender, receiver)
     real, _, rehearsal = out.partition("## rehearsal")
-    assert ("| a1 | weekend-handoff | reproduced | reproduced | 0 | 63.5 | 2100 | 2600 "
-            "| observed | 1 |") in real
+    assert ("| a1 | weekend-handoff | reproduced | not recorded | reproduced | "
+            "0 | 63.5 | 2100 | 2600 | observed | 1 |") in real
     assert "repeated commits" in real
     assert "receiver check differs from binding" in real  # codex binding says -x
     assert "failed (no_target)" in real and "totals: failed 1, reproduced 1" in real
@@ -280,7 +280,7 @@ def test_every_receiver_is_kept_and_order_doesnt_matter(tmp_path):
     sender, first, second = _two_receivers(tmp_path)
     one, two = _report(sender, first, second), _report(second, first, sender)
     assert one == two
-    assert "| a1 | weekend-handoff | reproduced | reproduced, declined | 1 |" in one
+    assert "| a1 | weekend-handoff | reproduced | not recorded | reproduced, declined | 1 |" in one
     assert "totals: reproduced 1" in one
 
 

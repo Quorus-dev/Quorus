@@ -321,3 +321,10 @@ def test_defer_rejection_after_probe_does_not_release_claim(wiring, monkeypatch,
     assert relay.holder == daemon.config.participant_name
     assert alerts and "handoff_rejected" in alerts[-1][1]
     assert "target left the room" in relay.posted[-1]["content"]
+
+
+def test_relay_rejection_detail_cannot_introduce_room_mentions():
+    from quorus.runtime.handoff_transport import HandoffRejected
+
+    detail = HandoffRejected("target @teammate left; @all retry").detail
+    assert "@" not in detail and "teammate" in detail

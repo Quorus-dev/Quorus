@@ -3779,6 +3779,7 @@ class Reflexd:
             if scrubbed != reply:
                 logger.info("scrubbed a NO_REPLY leak room=%s", room)
             reply = scrubbed
+        completion_published, completion_cause = False, "turn_failed" if turn_failed else "readonly"
         if worktree is not None and (await self._settle_readonly(
                 relay, room, worktree, readonly_snap, envelope) or readonly_turn):
             pass  # a read-only turn never publishes, whatever its harness wrote
@@ -3808,9 +3809,19 @@ class Reflexd:
         elif worktree is not None:
             try:
                 if handoff_turn is not None:
+                    completion_cause = "publish_held"
+                    if await self._guard_publish(relay, room, worktree) is not None:
+                        raise OSError("handoff publication held; kept unpublished")
+                    completion_cause = "completion_failed"
+                    def commit_continuation():
+                        message = reflexd_wake.commit_message_from(
+                            reply or "", self.config.participant_name)
+                        reflexd_wake.commit_all(worktree, self.config.participant_name, message)
+
                     await _handoff_completion.finish(
                         handoff_turn, relay, participant=self.config.participant_name,
-                        room=room, root=worktree.path)
+                        room=room, root=worktree.path, commit=commit_continuation)
+                completion_cause = "publish_failed"
                 # A clean finish lifts an unfinished turn's hold. If that fails,
                 # the except below keeps the work on its branch, unpublished.
                 await asyncio.to_thread(reflexd_unfinished.clear, self._unfinished_dir,
@@ -3823,6 +3834,8 @@ class Reflexd:
                 main_before = (await asyncio.to_thread(
                     _task_capture.head, worktree.repo, worktree.main) if task_turn else "")
                 published = await self._guard_publish(relay, room, worktree)
+                if published is not None:
+                    completion_cause = "publish_held"
                 if published is None:
                     published = await self._publish_with_resolution(
                         worktree, harness=harness, resume=prior_session,
@@ -3832,6 +3845,7 @@ class Reflexd:
                         approval_room=room if room_mode == "manual" else None,
                         room=room, relay=relay, task=task_turn,
                     )
+                    completion_published = True
                     await asyncio.to_thread(reflexd_held.settle_window, self._held_dir,
                                             worktree)
                     if task_turn:
@@ -3853,6 +3867,15 @@ class Reflexd:
             if published:
                 logger.info("%s", published)
                 reply = f"{reply}\n{published}" if reply else published
+        if handoff_turn is not None and worktree is not None:
+            try:
+                await asyncio.to_thread(_handoff_completion.record, handoff_turn, worktree,
+                    self.config.participant_name, published=completion_published,
+                    cause=completion_cause)
+            except Exception:
+                logger.exception("handoff completion evidence unavailable")
+                self._alert_owner(room, "handoff completion evidence unavailable; "
+                                  "inspect before publishing")
         if pre_head and reply:
             try:
                 bearer = await relay.bearer_jwt()

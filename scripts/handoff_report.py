@@ -127,9 +127,23 @@ def repeats(entry: dict) -> int | None:
     return len(_patch_ids(repo, f"{base}..{head}") & _patch_ids(repo, f"{head}..{done}"))
 
 
+def completion_label(record: dict | None) -> str:
+    if not record:
+        return "not recorded"
+    result = record.get("result", "unknown")
+    return ("published" if result == "published" else
+            f"kept unpublished ({record.get('cause') or 'unknown'})")
+
+
 def rows(events: list[dict], entries: dict[str, dict], bindings: dict) -> list[dict]:
     by_attempt: dict[str, dict] = {}
+    completions: dict[str, dict] = {}
     for e in events:
+        if e.get("event") == "completion":
+            key = e.get("fingerprint", "")
+            if str(e.get("at", "")) >= str(completions.get(key, {}).get("at", "")):
+                completions[key] = e
+            continue  # receiver events are not new sender attempts
         row = by_attempt.setdefault(e.get("attempt_id", "?"), {
             "attempt": str(e.get("attempt_id", "?"))[:8], "room": e.get("room", ""),
             "result": "attempted", "flags": []})
@@ -148,8 +162,11 @@ def rows(events: list[dict], entries: dict[str, dict], bindings: dict) -> list[d
             row.update(result="sent", envelope_bytes=e.get("envelope_bytes"))
     for row in by_attempt.values():
         found = sorted(entries.get(row.get("fingerprint") or "", []), key=_rank)
+        row["completion"] = completion_label(completions.get(row.get("fingerprint")))
         if not found:
             continue
+        row["completion"] = ", ".join(sorted({completion_label(
+            e.get("completion") or completions.get(row.get("fingerprint"))) for e in found}))
         entry = found[0]
         row["result"] = entry.get("outcome") or entry.get("state")
         row["receivers"] = ", ".join(e.get("outcome") or e.get("state") or "?" for e in found)
@@ -168,13 +185,14 @@ def rows(events: list[dict], entries: dict[str, dict], bindings: dict) -> list[d
 
 def render(table: list[dict], title: str) -> str:
     lines = [f"## {title}", "",
-             "| attempt | room | result | receivers | retries | resume s | capsule B "
+             "| attempt | room | result | completion | receivers | retries | resume s | capsule B "
              "| envelope B | seen_at kind | repeats | flags |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in table:
         resume = r.get("resume_s")
         lines.append(" | ".join([
-            f"| {r['attempt']}", r["room"], str(r["result"]), r.get("receivers", "-"),
+            f"| {r['attempt']}", r["room"], str(r["result"]),
+            r.get("completion", "not recorded"), r.get("receivers", "-"),
             str(r.get("retries", "-")), "-" if resume is None else f"{resume:.1f}",
             str(r.get("capsule_bytes", "-")), str(r.get("envelope_bytes", "-")),
             str(r.get("seen_kind", "-")), str(r.get("repeats", "-")),
@@ -182,6 +200,9 @@ def render(table: list[dict], title: str) -> str:
     counts = Counter(str(r["result"]).split(" ")[0] for r in table)
     lines += ["", "totals: " + (", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
                                 or "none")]
+    done = Counter(r.get("completion", "not recorded") for r in table)
+    lines += ["completion totals: " + (", ".join(f"{k}: {v}" for k, v in sorted(done.items()))
+                                       or "none")]
     return "\n".join(lines)
 
 

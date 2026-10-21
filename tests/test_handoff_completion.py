@@ -1,6 +1,7 @@
 """Only a clean proof-authorized continuation can release its publication hold."""
 
 import asyncio
+import json
 import os
 import sys
 
@@ -35,7 +36,7 @@ def _continuation(monkeypatch, tmp_path):
         limit={"vendor": "claude", "reason": "quota", "kind": "guess",
                "source": "msg.no_time", "seen_at": "2026-10-21T14:00:00Z"})
     wt = reflexd.reflexd_wake.agent_worktree(repo, daemon.config.participant_name)
-    journal = Journal(daemon.config.runtime_dir / "handoffs.json", "build", repo,
+    journal = Journal(daemon.config.runtime_dir / "handoffs-test.json", "build", repo,
                       hold_dir=daemon._unfinished_dir)
     assert verify(wt.path, journal, capsule, branch=wt.branch, integration=wt.main,
                   config=config, claimed=True, held=False, env={"PATH": os.defpath}).writable
@@ -45,11 +46,22 @@ def _continuation(monkeypatch, tmp_path):
     return repo, daemon, wt, turn
 
 
-@pytest.mark.parametrize("failure", [None, "harness", "claim", "uncommitted"])
+@pytest.mark.parametrize("failure", [None, "harness", "claim", "uncommitted", "commit", "held"])
 def test_real_daemon_completion_publishes_only_the_verified_clean_turn(
         monkeypatch, tmp_path, failure):
     repo, daemon, wt, turn = _continuation(monkeypatch, tmp_path)
     main_before = _git(repo, "rev-parse", "main")
+    from quorus.runtime.handoff_state import fingerprint
+    turn.journal.event(dict(event="attempt", attempt_id="a", room="build"))
+    turn.journal.event(dict(event="capsule_built", attempt_id="a", room="build",
+                            fingerprint=fingerprint(turn.capsule)))
+    if failure == "commit":
+        monkeypatch.setattr(reflexd.reflexd_wake, "commit_all", lambda *a: False)
+    if failure == "held":
+        async def held(*a, **kw):
+            return "owner held publication"
+        monkeypatch.setattr(daemon, "_guard_publish", held)
+
 
     class Relay(_Relay):
         holder = daemon.config.participant_name
@@ -62,8 +74,11 @@ def test_real_daemon_completion_publishes_only_the_verified_clean_turn(
     async def run(*_args, cwd=None, **_kwargs):
         assert PublicationHold(wt.path, turn.journal, turn.capsule).owned()
         (cwd / "CHANGELOG.md").write_text("finished by receiver\n")
-        if failure != "uncommitted":
-            _git(cwd, "commit", "-qam", "finish continued task")
+        (cwd / "shop").mkdir(exist_ok=True)
+        (cwd / "shop" / "inventory.py").write_text("stock = 1\n")
+        if failure is None:
+            _git(cwd, "add", "-A")
+            _git(cwd, "commit", "-qm", "finish continued task")
         if failure == "claim":
             relay.holder = "someone-else"
         return "[reflexd] harness timed out" if failure == "harness" else "✅ task finished"
@@ -76,11 +91,15 @@ def test_real_daemon_completion_publishes_only_the_verified_clean_turn(
                                       self_name=daemon.config.participant_name)
     asyncio.run(daemon._wake_and_reply(relay, envelope, triage=triage))
     hold = PublicationHold(wt.path, turn.journal, turn.capsule)
-    if failure is None:
+    if failure in (None, "uncommitted"):
         assert _git(repo, "rev-parse", "main") != main_before
         assert (repo / "CHANGELOG.md").read_text() == "finished by receiver\n"
+        assert (repo / "shop" / "inventory.py").read_text() == "stock = 1\n"
         assert turn.journal.read(turn.capsule)["state"] == "done"
+        if failure == "uncommitted":
+            assert _git(wt.path, "log", "-1", "--format=%an") == daemon.config.participant_name
         assert not hold.path.exists()
+        assert _git(repo, "rev-list", "--count", f"{main_before}..main") == "2"
         assert any("published 2 commit(s)" in x["content"] for x in relay.posted)
     else:
         assert _git(repo, "rev-parse", "main") == main_before
@@ -88,6 +107,23 @@ def test_real_daemon_completion_publishes_only_the_verified_clean_turn(
         assert hold.owned()
         asyncio.run(daemon._publish_sweep(relay))
         assert _git(repo, "rev-parse", "main") == main_before
+        if failure != "harness":
+            assert _git(wt.path, "rev-parse", "HEAD") == turn.capsule.repo.head
+    entry = turn.journal.read(turn.capsule)
+    expected = "published" if failure in (None, "uncommitted") else "kept_unpublished"
+    assert entry["completion"]["result"] == expected
+    events = [json.loads(line) for line in turn.journal.events_path.read_text().splitlines()]
+    assert events[-1]["event"] == "completion" and events[-1]["result"] == expected
+    from scripts.handoff_report import load, render, rows
+    table = rows(*load([daemon.config.runtime_dir.parent]))
+    assert len(table) == 1  # a receiver completion is not another sender attempt
+    assert table[0]["completion"].startswith(expected.replace("_", " "))
+    assert "| completion |" in render(table, "rehearsal")
+    # The durable receiver record survives a crash before its event append.
+    turn.journal.events_path.write_text("".join(json.dumps(e) + "\n" for e in events
+                                                if e["event"] != "completion"))
+    recovered = rows(*load([daemon.config.runtime_dir.parent]))
+    assert recovered[0]["completion"] == table[0]["completion"]
 
 
 def test_crash_after_durable_finish_releases_only_at_exact_completed_head(monkeypatch, tmp_path):
@@ -118,3 +154,51 @@ def test_a_finished_record_cannot_release_a_later_turns_work(monkeypatch, tmp_pa
     _git(wt.path, "commit", "--allow-empty", "-qm", "another turn's work")
     assert not complete(wt.path, turn.journal, turn.capsule, claimed=True)
     assert PublicationHold(wt.path, turn.journal, turn.capsule).owned()
+
+
+def test_commit_then_crash_before_finish_retries_without_another_commit(monkeypatch, tmp_path):
+    from quorus.runtime import handoff_completion
+
+    _, daemon, wt, turn = _continuation(monkeypatch, tmp_path)
+    (wt.path / "CHANGELOG.md").write_text("dirty codex result\n")
+    calls = []
+
+    def commit():
+        calls.append(1)
+        message = reflexd.reflexd_wake.commit_message_from(
+            "finished", daemon.config.participant_name)
+        reflexd.reflexd_wake.commit_all(wt, daemon.config.participant_name, message)
+
+    class Relay:
+        async def mission_task_for(self, **kw):
+            return {"task_id": "task", "claimed_by": daemon.config.participant_name}
+
+    async def finish():
+        await handoff_completion.finish(turn, Relay(), participant=daemon.config.participant_name,
+                                        room="build", root=wt.path, commit=commit)
+
+    def crash(*a, **kw):
+        raise OSError("crash after commit")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(handoff_completion, "complete", crash)
+        with pytest.raises(OSError):
+            asyncio.run(finish())
+    head = _git(wt.path, "rev-parse", "HEAD")
+    assert head != turn.capsule.repo.head and len(calls) == 1
+    assert turn.journal.read(turn.capsule)["state"] == "continuing"
+    assert PublicationHold(wt.path, turn.journal, turn.capsule).owned()
+    asyncio.run(finish())
+    assert _git(wt.path, "rev-parse", "HEAD") == head and len(calls) == 1
+    assert turn.journal.read(turn.capsule)["state"] == "done"
+    assert not PublicationHold(wt.path, turn.journal, turn.capsule).path.exists()
+
+
+def test_done_proof_without_integration_cannot_be_reported_published(monkeypatch, tmp_path):
+    from quorus.runtime.handoff_completion import record
+
+    _, daemon, wt, turn = _continuation(monkeypatch, tmp_path)
+    assert complete(wt.path, turn.journal, turn.capsule, claimed=True)
+    record(turn, wt, daemon.config.participant_name, published=True, cause="publish_failed")
+    result = turn.journal.read(turn.capsule)["completion"]
+    assert result["result"] == "kept_unpublished" and result["cause"] == "publish_unverified"

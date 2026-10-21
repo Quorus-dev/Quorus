@@ -31,3 +31,11 @@ ambiguous outcome keeps the sender fence and requires owner resolution.
 
 For dogfood, use the reviewed client **and relay** build with its own port and
 data directory. Do not upgrade or repoint the team's relay as a rehearsal step.
+
+A proof receipt records reproduction, not publication. On a successful receiver
+turn the daemon commits any dirty edits as that receiver, while retaining its
+handoff hold, then authorizes completion using the strict clean-tree/ancestry and
+claim checks. Only then may it publish. Completion evidence records `published`
+only after checking integration; a failed/held publication records
+`kept_unpublished` with a fixed cause. The report's `completion` column shows
+`not recorded` for older or interrupted runs with no completion evidence.

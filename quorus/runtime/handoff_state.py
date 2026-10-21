@@ -216,6 +216,15 @@ class Journal:
         data[self.key(capsule)] = {**entry, "receipt": text, "check_finished": finished}
         self._save(data)
 
+    def record_completion(self, capsule: HandoffCapsule, result: dict) -> None:
+        """Attach publication evidence without changing continuation authority."""
+        data = self._load()
+        entry = self.read(capsule)
+        if entry is None:
+            raise StateError("completion without registered delivery")
+        data[self.key(capsule)] = {**entry, "completion": result}
+        self._save(data)
+
     def finish(self, capsule: HandoffCapsule, *, completed_head: str | None = None) -> None:
         """Only a turn already recorded as continuing may finish."""
         data = self._load()
