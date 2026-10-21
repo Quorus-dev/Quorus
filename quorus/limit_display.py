@@ -41,6 +41,14 @@ def duration(seconds: float) -> str:
     return f"{days}d {hours}h" if hours else f"{days}d"
 
 
+def _said(reading: dict[str, Any], now: float) -> str:
+    """Each window's own source, and its own age once it's stale (Codex on
+    128ec59a: a 30-minute-old 7d beside a fresh 5h read as current)."""
+    said = SOURCE_SAYS.get(reading["source"], "reported")
+    age = now - reading["seen_at"]
+    return f"({said}, {duration(age)} ago)" if age > USAGE_STALE_S else f"({said})"
+
+
 def _usage_line(usage: list[dict[str, Any]], now: float) -> str:
     # Closest to the wall first: highest use, then the earlier reset.
     usage = sorted(usage, key=lambda r: (-r["used_pct"], r["resets_at"] or float("inf")))
@@ -48,11 +56,10 @@ def _usage_line(usage: list[dict[str, Any]], now: float) -> str:
     line = f"{WINDOW_NAMES[top['window']]} {top['used_pct']:.0f}% used"
     if top["resets_at"]:
         line += f" · resets in {duration(top['resets_at'] - now)}"
+    line += " " + _said(top, now)
     for other in usage[1:]:
-        line += f" · {other['window']} {other['used_pct']:.0f}%"
-    age = now - top["seen_at"]
-    said = SOURCE_SAYS.get(top["source"], "reported")
-    return line + (f" ({said}, {duration(age)} ago)" if age > USAGE_STALE_S else f" ({said})")
+        line += f" · {other['window']} {other['used_pct']:.0f}% {_said(other, now)}"
+    return line
 
 
 def describe(limits: dict[str, Any], now: float) -> str:

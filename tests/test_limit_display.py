@@ -68,10 +68,30 @@ def test_a_cooldown_is_paused_by_quorus_never_quota() -> None:
 
 def test_usage_shows_the_window_nearest_the_wall_and_its_source() -> None:
     line = describe({"readings": [_usage("7d", 40.0), _usage("5h", 72.0)]}, NOW)
-    assert line == ("5-hour window 72% used · resets in 1h 05m · 7d 40% "
-                    "(Claude Code reported)")
+    assert line == ("5-hour window 72% used · resets in 1h 05m (Claude Code reported)"
+                    " · 7d 40% (Claude Code reported)")
     stale = describe({"readings": [_usage(seen_at=NOW - 20 * 60)]}, NOW)
     assert stale.endswith("(Claude Code reported, 20m ago)")
+
+
+def test_each_window_carries_its_own_age_and_source() -> None:
+    """Codex on 128ec59a: only the top window's age was shown, so a fresh 5h
+    80% beside a 30-minute-old 7d 70% read as if both were current."""
+    mixed = describe({"readings": [_usage("5h", 80.0),
+                                   _usage("7d", 70.0, seen_at=NOW - 30 * 60)]}, NOW)
+    assert mixed == ("5-hour window 80% used · resets in 1h 05m (Claude Code reported)"
+                     " · 7d 70% (Claude Code reported, 30m ago)")
+    # the stale window is the top one: its age is on it, the fresh one has none
+    top_stale = describe({"readings": [_usage("5h", 60.0),
+                                       _usage("7d", 90.0, seen_at=NOW - 40 * 60)]}, NOW)
+    assert top_stale.startswith("7-day window 90% used · resets in 1h 05m "
+                                "(Claude Code reported, 40m ago)")
+    assert top_stale.endswith(" · 5h 60% (Claude Code reported)")
+    # different sources are named per window
+    two = describe({"readings": [_usage("5h", 50.0),
+                                 _usage("7d", 30.0, source="codex.token_count")]}, NOW)
+    assert "5-hour window 50% used" in two and "(Claude Code reported)" in two
+    assert two.endswith(" · 7d 30% (Codex reported)")
 
 
 def test_nothing_known_says_nothing_not_zero() -> None:
