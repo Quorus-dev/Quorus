@@ -25,8 +25,10 @@ class CheckConfig:
         if (not isinstance(self.cwd, str) or "\0" in self.cwd or len(self.cwd) > 512
                 or Path(self.cwd).is_absolute() or ".." in Path(self.cwd).parts):
             raise ValueError("check cwd must be relative and inside the workspace")
-        if (type(self.timeout_s) not in (int, float) or not math.isfinite(self.timeout_s)
-                or not 0 < self.timeout_s <= 300):
+        # Bounds before isfinite: a huge int (JSON allows 10**400) would overflow
+        # float conversion instead of failing as out of range (Codex on 2921ac4e).
+        if (type(self.timeout_s) not in (int, float) or not 0 < self.timeout_s <= 300
+                or not math.isfinite(self.timeout_s)):
             raise ValueError("check timeout must be finite, positive and at most 300 seconds")
         if type(self.max_output_bytes) is not int or not 1024 <= self.max_output_bytes <= 1048576:
             raise ValueError("check output cap must be 1–1024 KiB")
@@ -57,7 +59,8 @@ def configure_binding(entry, previous, args, workspace: Path):
     check or moving the room to another repo turns it off too."""
     result = dict(entry) if isinstance(entry, dict) else {"path": entry, "mode": "default"}
     old_path = previous.get("path") if isinstance(previous, dict) else previous
-    if old_path and Path(old_path).expanduser().resolve() != workspace:
+    moved = bool(old_path) and Path(old_path).expanduser().resolve() != workspace
+    if moved:
         result.pop("check", None)
     command = getattr(args, "check", None)
     timeout = getattr(args, "check_timeout", None)
@@ -77,6 +80,8 @@ def configure_binding(entry, previous, args, workspace: Path):
         if not result.get("check"):
             raise ValueError("--handoff on needs a check: add --check \"<command>\"")
         result["handoff"] = True
-    elif handoff == "off" or not result.get("check"):
+    elif handoff == "off" or not result.get("check") or moved:
+        # Another repo is another decision: a new check there doesn't carry the
+        # old room's ON over (Codex on 2921ac4e). Only an explicit --handoff on.
         result.pop("handoff", None)
     return result if result.get("check") or isinstance(entry, dict) else entry

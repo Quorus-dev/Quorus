@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 import time
@@ -31,6 +32,15 @@ def _state(root: Path):
             _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all"))
 
 
+def _account_home() -> str | None:
+    try:
+        import pwd
+
+        return pwd.getpwuid(os.getuid()).pw_dir
+    except (ImportError, KeyError, OSError):  # no pwd on Windows
+        return None
+
+
 def local_paths(text: str, root: Path, home: str | None) -> str:
     """Machine paths out of the check output, before it is trimmed and hashed.
 
@@ -38,7 +48,9 @@ def local_paths(text: str, root: Path, home: str | None) -> str:
     sender and the receiver: tracebacks print absolute paths, and the tail is
     posted in receipts (dogfood plan §1, Claude on rev 1). The worktree goes
     first because it usually sits under home."""
-    homes = {home, str(Path(home).resolve())} if home else set()
+    # The check's HOME, and the account's real home: an isolated HOME still runs a
+    # venv under the real one, whose paths show up in tracebacks (Codex on 2921ac4e).
+    homes = {h for x in (home, _account_home()) if x for h in (x, str(Path(x).resolve()))}
     for paths, short in (({str(root), str(root.resolve())}, "."), (homes, "~")):
         for path in sorted(paths, key=len, reverse=True):
             path = path.rstrip("/")

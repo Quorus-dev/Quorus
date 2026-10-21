@@ -165,3 +165,40 @@ def test_only_whole_path_components_are_replaced() -> None:
                       "/Users/al")
     assert out == "/Users/alice/x and ~/y and (~)"
     assert local_paths("/x/y", Path("/repo"), None) == "/x/y"  # no HOME: nothing guessed
+
+
+def test_moving_to_another_repo_with_a_new_check_does_not_carry_on_over(tmp_path) -> None:
+    """Codex on 2921ac4e: rebinding to another repo WITH a new check kept handoff ON."""
+    a = _args(handoff="on")
+    a.check = "pytest -q"
+    on = check_config.configure_binding({"path": str(tmp_path)}, None, a, tmp_path)
+    other = tmp_path / "other"
+    new_check = _args()
+    new_check.check = "pytest -x"
+    moved = check_config.configure_binding({**on, "path": str(other)}, on, new_check, other)
+    assert moved["check"]["argv"] == ["pytest", "-x"] and "handoff" not in moved
+    again = _args(handoff="on")
+    again.check = "pytest -x"
+    assert check_config.configure_binding({**on, "path": str(other)}, on, again,
+                                          other)["handoff"] is True  # only if said again
+
+
+@pytest.mark.parametrize("bad", [{"timeout_s": 10 ** 400}, {"timeout_s": -(10 ** 400)},
+                                 {"max_output_bytes": 10 ** 400}, {"timeout_s": float("nan")},
+                                 {"timeout_s": True}])
+def test_huge_or_odd_numbers_in_the_binding_read_off_not_raise(tmp_path, bad) -> None:
+    """Codex on 2921ac4e: timeout_s=10**400 raised OverflowError out of the gate."""
+    path = _bindings(tmp_path, {"path": "/repo", "handoff": True, "check": {**CHECK, **bad}})
+    assert handoff_sender.enabled("build", path) is False
+    assert handoff_runtime.switch_state(path, "build") == (False, "")
+
+
+def test_the_accounts_real_home_is_replaced_even_under_an_isolated_home(monkeypatch) -> None:
+    """Codex advisory on 2921ac4e: a dogfood daemon with its own HOME still runs a venv
+    under the real home, and those paths would stay in the tail."""
+    from quorus.runtime import checkpoint
+
+    monkeypatch.setattr(checkpoint, "_account_home", lambda: "/Users/real")
+    out = local_paths("/Users/real/dev/Quorus/.venv/lib/x.py:9\n/tmp/iso/.cache/y",
+                      Path("/tmp/iso/wt"), "/tmp/iso")
+    assert out == "~/dev/Quorus/.venv/lib/x.py:9\n~/.cache/y"

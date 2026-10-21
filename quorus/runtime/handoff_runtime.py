@@ -44,7 +44,7 @@ def handoff_enabled(bindings: Path | None, room: str) -> bool:
         return False
     try:
         CheckConfig.from_record(value.get("check"))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return False
     return True
 
