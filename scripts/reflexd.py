@@ -2482,11 +2482,36 @@ class RelayClient:
         }
         if ref_message_id:
             body["ref_message_id"] = ref_message_id
+        atomic = decline is not None or bool((failover or {}).get("capsule"))
+        if atomic:
+            await self.require_handoff()
         resp = await self.client.post(
-            "/v1/social/defer", headers=headers, json=body,
-        )
+            "/v1/handoff" if atomic else "/v1/social/defer", headers=headers, json=body)
+        if atomic and resp.status_code in (400, 404, 405, 422):
+            from quorus.runtime.handoff_transport import RelayTooOld
+
+            self._atomic_handoff = False
+            raise RelayTooOld()
         resp.raise_for_status()
         return resp.json()
+
+    async def require_handoff(self):
+        from quorus.runtime.handoff_transport import RelayTooOld
+
+        if getattr(self, "_atomic_handoff", None) is None:
+            # /health exists on old relays: discovery must not itself trigger
+            # their shared-IP 404 limiter when many local agents try to hand off.
+            resp = await self.client.get("/health", headers=await self._headers())
+            if resp.status_code in (400, 404, 405, 422):
+                self._atomic_handoff = False
+            else:
+                resp.raise_for_status()
+                try:
+                    self._atomic_handoff = resp.json().get("atomic_capsule_handoff") == 1
+                except (ValueError, AttributeError):
+                    self._atomic_handoff = False
+        if not self._atomic_handoff:
+            raise RelayTooOld()
 
     async def fetch_presence(self) -> list[dict]:
         resp = await self.client.get("/presence", headers=await self._headers())

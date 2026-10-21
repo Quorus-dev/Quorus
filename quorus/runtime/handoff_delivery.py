@@ -59,10 +59,8 @@ async def busy(daemon, relay, envelope, data, worktree):
             elif old["state"] != "declined":
                 return
             recorded = True
-    if await owns_claim(relay, room=room, participant=actor, task_id=data["task_id"]):
-        await relay.release_for_failover(room=room, actor=actor, target=data["actor"],
-                                         task_id=data["task_id"])
-    elif not (recorded and await owns_claim(
+    if not await owns_claim(relay, room=room, participant=actor, task_id=data["task_id"]) and not (
+            recorded and await owns_claim(
             relay, room=room, participant=data["actor"], task_id=data["task_id"])):
         daemon._alert_owner(room, "⚠ handoff busy but claim changed; owner needed")
         return

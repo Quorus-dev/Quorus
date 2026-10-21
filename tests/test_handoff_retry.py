@@ -72,7 +72,7 @@ def test_partial_busy_transfer_can_replay_its_typed_decline(wiring, monkeypatch)
     monkeypatch.setattr(relay, "post_social_defer", fail)
     with pytest.raises(OSError):
         asyncio.run(handoff_delivery.busy(daemon, relay, env, failover.continuation(env), wt))
-    assert relay.holder == cap.by
+    assert relay.holder == daemon.config.participant_name  # rejected delivery retains claim
     monkeypatch.setattr(relay, "post_social_defer", original)
     asyncio.run(handoff_delivery.busy(daemon, relay, env, failover.continuation(env), wt))
     assert len(relay.defers) == 1
@@ -82,12 +82,12 @@ def test_sender_fence_precedes_claim_transfer_and_blocks_an_ordinary_turn(wiring
     repo, daemon, wt, cap, data, env = wiring
     relay = Candidates()
     monkeypatch.setattr(handoff_sender, "snapshot", lambda *a: cap)
-    release = relay.release_for_failover
+    send = relay.post_social_defer
 
-    async def fenced_release(**kw):
+    async def fenced_send(**kw):
         assert handoff_runtime.blocked(daemon, "build", wt)
-        await release(**kw)
-    monkeypatch.setattr(relay, "release_for_failover", fenced_release)
+        await send(**kw)
+    monkeypatch.setattr(relay, "post_social_defer", fenced_send)
     asyncio.run(handoff_sender.attempt(
         daemon, relay, {"room": "build", "message_id": cap.root}, reason="quota",
         mission={"task_id": "task"}, worktree=wt, **policy()))

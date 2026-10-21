@@ -95,6 +95,13 @@ def _room_members(room_data: dict[str, Any]) -> list[str]:
     return list(raw)
 
 
+@router.post("/v1/handoff")
+async def atomic_handoff(body: SocialVerbBody, request: Request,
+                         auth: AuthContext = Depends(verify_auth)):
+    request.state.atomic_handoff = True
+    return await post_social_verb("defer", body, request, auth)
+
+
 @router.post("/v1/social/{verb}")
 async def post_social_verb(
     verb: str,
@@ -244,6 +251,27 @@ async def post_social_verb(
             raise HTTPException(429, detail="social verb rate limit")
 
     svc = _social_svc(request)
+    if getattr(request.state, "atomic_handoff", False):
+        from quorus.services.handoff_transaction import accept
+
+        async def deliver():
+            return await request.app.state.room_msg_service.send(
+                tid, rid, actor, json.dumps(sv.to_envelope()),
+                message_type="social", reply_to=sv.ref_message_id)
+
+        receipt = await accept(request.app.state.work_queue_service, svc, tid, rid, sv,
+                               members, deliver)
+        audit = getattr(request.app.state, "audit_service", None)
+        if audit is not None and not receipt.get("duplicate"):
+            try:
+                await audit.record(tenant_id=tid, message_id=_uuid.UUID(receipt["message_id"]),
+                    event_type="social:defer", actor=actor, target=rid, room_id=rid,
+                    room_name=room_data.get("name"), details=dict(
+                        atomic_handoff=True, task_id=receipt["task_id"],
+                        broadcast_id=receipt["message_id"]))
+            except Exception:
+                pass  # auditing never reopens ownership or repeats delivery
+        return {"ok": True, "envelope": sv.to_envelope(), "state_change": receipt}
     try:
         result = await svc.apply(
             tid, rid, sv, room_member_count=len(members),

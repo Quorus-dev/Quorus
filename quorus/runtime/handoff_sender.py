@@ -23,6 +23,7 @@ from quorus.runtime.handoff_adoption import Git
 from quorus.runtime.handoff_capsule import build_capsule
 from quorus.runtime.handoff_ownership import owns_claim
 from quorus.runtime.handoff_state import fingerprint
+from quorus.runtime.handoff_transport import RelayTooOld
 
 
 def enabled(room: str, bindings) -> bool:
@@ -91,8 +92,6 @@ async def _send(daemon, relay, room, store, capsule, data, target, declines):
             store.write(capsule, "sent", snapshot=capsule.model_dump(), data=data,
                         target=target, declines=declines)
     await asyncio.to_thread(persist)  # fence BEFORE either external side effect
-    await relay.release_for_failover(room=room, actor=actor, target=target,
-                                     task_id=data["task_id"])
     await relay.post_social_defer(room_id=room, actor=actor, target=target,
                                   ref_message_id=capsule.root, failover=data)
     try:
@@ -140,6 +139,8 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree,
         return failed("hop_limit", "Handoff limit reached; owner needed.")
     task_id = (mission or {}).get("task_id") or previous.get("task_id")
     try:
+        stage = "compatibility"
+        await relay.require_handoff()
         stage = "claim"
         if not await owns_claim(relay, room=room, participant=actor, task_id=task_id):
             return failed("no_claim", "No owned claim; owner needs to reassign.")
@@ -195,6 +196,10 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree,
             return "waiting"
         await deliver(target)
         return "sent"
+    except RelayTooOld:
+        answer = failed("relay_too_old", None)
+        await waits.compatibility_notice(daemon, relay, envelope)
+        return answer
     except Exception:
         # State/transfer/post failures can be ambiguous; the durable fence survives.
         try:
@@ -254,5 +259,8 @@ async def retry(daemon, relay, envelope, worktree, *, detect, capabilities, scor
         if target is None:
             raise ValueError("no more receivers")
         await _send(daemon, relay, room, store, capsule, entry["data"], target, declines)
+    except RelayTooOld:
+        waits.alert(daemon, room, "relay_too_old")
+        await waits.compatibility_notice(daemon, relay, envelope)
     except Exception:
         daemon._alert_owner(room, "⚠ handoff busy/retry stopped; work kept unpublished")

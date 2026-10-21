@@ -110,6 +110,15 @@ def _now_epoch() -> float:
     return time.time()
 
 
+# Metadata only the relay writes: atomic handoff receipts. Stripped from every
+# caller-supplied metadata, on add and on every update (0.7.0 port of 666399cc).
+RESERVED_METADATA: frozenset[str] = frozenset({"handoff_receipts"})
+
+
+def _caller_metadata(meta: dict[str, Any] | None) -> dict[str, Any]:
+    return {k: v for k, v in (meta or {}).items() if k not in RESERVED_METADATA}
+
+
 def _new_task(
     *,
     task_id: str,
@@ -301,7 +310,7 @@ class WorkQueueSvc:
             task = _new_task(
                 task_id=task_id, summary=summary,
                 requested_by=requested_by, eta_seconds=eta_seconds,
-                metadata=metadata,
+                metadata=_caller_metadata(metadata),
             )
             task["created_at"] = self._clock_iso()
             task["updated_at"] = task["created_at"]
@@ -414,7 +423,7 @@ class WorkQueueSvc:
                 task["eta_seconds"] = max(0, int(eta_seconds))
             if metadata_patch:
                 meta = dict(task.get("metadata", {}))
-                meta.update(metadata_patch)
+                meta.update(_caller_metadata(metadata_patch))
                 task["metadata"] = meta
             task["updated_at"] = self._clock_iso()
             await self._redis_persist(tid, rid, task)

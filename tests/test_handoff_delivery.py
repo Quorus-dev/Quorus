@@ -33,7 +33,12 @@ class Relay(_Relay):
         self.holder = target
 
     async def post_social_defer(self, **kw):
+        assert self.holder in (kw["actor"], kw["target"])
         self.defers.append(kw)
+        self.holder = kw["target"]  # accepted defer and ownership move are one operation
+
+    async def require_handoff(self):
+        pass
 
 
 @pytest.fixture
