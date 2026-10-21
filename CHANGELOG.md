@@ -5,6 +5,24 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.6.6] — 2026-10-21
+
+Bug fixes on released paths, under the release freeze. Nothing new.
+
+### Fixed
+
+- The Claude Code, Cursor and Gemini hooks no longer show the same room messages again on
+  every prompt. They used to fetch without acknowledging, so the relay re-sent everything
+  after 60 seconds, and the repeat filter let almost every message through. Now a hook
+  and `quorus inbox` acknowledge only the messages they actually displayed, and remember
+  what they've shown.
+- A hook running inside one of your agents no longer reads that agent's queue. The agent's
+  daemon owns its messages, so the hook can't take or acknowledge them and the agent
+  doesn't miss a wake.
+- Running more than one agent no longer fills the daemon logs with
+  `notifications-state.json.tmp: [Errno 2]`. Daemons that share `~/.quorus` used to write
+  the same temporary file; each save now uses its own.
+
 ## [0.6.5] — 2026-10-20
 
 Bug fixes on released paths, under the release freeze. Nothing new.
