@@ -3852,7 +3852,7 @@ class Reflexd:
                 spent={"turns": 1, "attempts": 1,
                        "wall_s": (datetime.now(timezone.utc) - wake_started).total_seconds()},
             )
-            if outcome == "sent":
+            if outcome in {"sent", "waiting", "stopped"}:
                 return
             if outcome:
                 reply += " " + outcome
@@ -4403,6 +4403,9 @@ class Reflexd:
 
             # Publish work stranded by a crash/restart or a sandbox that
             # couldn't rebase: rebase + fast-forward each bound repo's branch.
+            from quorus.runtime.handoff_wait import interrupt_pending
+
+            await asyncio.to_thread(interrupt_pending, self)
             await self._publish_sweep(relay)
 
             # Stream B: subscribe to the agent-DM stream in parallel with

@@ -41,11 +41,20 @@ def load(state_dirs: list[Path]) -> tuple[list[dict], dict[str, list[dict]], dic
     A capsule declined by one receiver and taken by the next has an entry on each
     side: all of them are kept, never one overwriting another (Codex on 93a0cb85),
     and the result below doesn't depend on the order of --state."""
-    events, entries, bindings = [], {}, {}
+    events, entries, bindings, resolved_waits = [], {}, {}, []
     for state in state_dirs:
         bindings[state] = _json(state / BINDINGS_FILE) or {}
         for journal in sorted((state / "runtime").glob("handoffs-*.json")):
             for entry in (_json(journal) or {}).values():
+                if isinstance(entry, dict) and "data" in entry:
+                    # Starter wait/send records are not receiver proof outcomes.
+                    # The durable state also closes a crash between terminal state
+                    # fsync and its event append, without the report writing files.
+                    if entry.get("state") == "failed" and entry.get("attempt_id"):
+                        resolved_waits.append(dict(event="attempt_failed",
+                            attempt_id=entry["attempt_id"], cause=entry.get("cause", "wait_failed"),
+                            room=str(entry.get("scope", "")).partition(":")[0]))
+                    continue
                 if isinstance(entry, dict) and entry.get("state") not in (None, "sent"):
                     entries.setdefault(entry.get("fingerprint", ""), []).append(
                         {**entry, "_state_dir": state})
@@ -55,7 +64,7 @@ def load(state_dirs: list[Path]) -> tuple[list[dict], dict[str, list[dict]], dic
                     events.append({**json.loads(line), "_state_dir": state})
                 except ValueError:
                     continue
-    return events, entries, bindings
+    return [*events, *resolved_waits], entries, bindings
 
 
 def _seconds(start: str | None, end: str | None) -> float | None:
@@ -126,7 +135,10 @@ def rows(events: list[dict], entries: dict[str, dict], bindings: dict) -> list[d
             "result": "attempted", "flags": []})
         kind = e.get("event")
         if kind == "attempt_failed":
-            row["result"] = f"failed ({e.get('cause', '?')})"
+            row["result"] = ("interrupted" if e.get("cause") == "interrupted"
+                             else f"failed ({e.get('cause', '?')})")
+        elif kind == "wait_started":
+            row["result"] = "waiting"
         elif kind == "capsule_built":
             row.update(fingerprint=e.get("fingerprint"), capsule_bytes=e.get("capsule_bytes"),
                        seen_at=e.get("seen_at"), seen_kind=e.get("limit_kind"))

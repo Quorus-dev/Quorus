@@ -10053,6 +10053,8 @@ def main():
                              help="Checkpoint seconds (default 45, maximum 300)")
     p_room_bind.add_argument("--check-output-kb", type=int, default=None,
                              help="Checkpoint output cap in KiB (default 64, maximum 1024)")
+    p_room_bind.add_argument("--handoff-wait-minutes", type=float, default=None,
+                             help="Busy receiver wait cap: 1–60 minutes (default 15)")
     p_room_bind.add_argument(
         "--handoff", choices=["on", "off"], default=None,
         help=("live handoff for this room: when an agent hits its vendor limit, a "

@@ -12,7 +12,8 @@ from quorus.private_files import write_private_json
 from quorus.protocol.handoff_capsule import HandoffCapsule
 
 STATES = frozenset({"received", "adopting", "adopted", "verified", "continuing", "done",
-                    "declined", "stale", "unverifiable", "already_passing", "sent", "failed"})
+                    "declined", "stale", "unverifiable", "already_passing", "sent", "failed",
+                    "waiting"})
 TERMINAL = frozenset({"done", "declined", "stale", "unverifiable", "already_passing"})
 
 

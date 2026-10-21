@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 
+from quorus.bounded import bounded
 from quorus.runtime.check_config import CheckConfig
 from quorus.runtime.handoff_adoption import Git
 from quorus.runtime.handoff_ownership import fenced
@@ -49,6 +50,15 @@ def handoff_enabled(bindings: Path | None, room: str) -> bool:
     return True
 
 
+def wait_seconds(bindings: Path | None, room: str) -> float:
+    """Owner-set cap, default 15 minutes; malformed settings fail closed."""
+    value = json.loads(bindings.read_text())[room]
+    minutes = bounded(value.get("handoff_wait_minutes", 15), 1, 60)
+    if minutes is None:
+        raise ValueError("invalid handoff wait cap")
+    return minutes * 60
+
+
 def switch_state(bindings: Path | None, room: str) -> tuple[bool, str]:
     """``(on, config_id)`` for the room, so a daemon can say when either changes."""
     if not handoff_enabled(bindings, room):
@@ -74,8 +84,8 @@ def skip_sync(daemon, room, worktree) -> bool:
             if not isinstance(value, dict) or "handoff" in value:
                 return True
         with store.locked():
-            return any(e["state"] in {"sent", "received", "adopting", "adopted", "verified",
-                                      "continuing"}
+            return any(e["state"] in {"waiting", "sent", "received", "adopting", "adopted",
+                                      "verified", "continuing"}
                        and str(e.get("scope", "")).endswith(f":{store.repo}")
                        for e in store._load().values())
     except (OSError, ValueError):
@@ -86,6 +96,10 @@ def blocked(daemon, room, worktree) -> bool:
     """Quota returning and unrelated asks cannot release transferred ownership."""
     try:
         store = journal(daemon, room, worktree)
+        with store.locked():
+            if any(e["state"] == "waiting" and str(e.get("scope", "")).endswith(
+                    f":{store.repo}") for e in store._load().values()):
+                return True
         if fenced(store, Git(worktree.path), worktree.main):
             return True
         path = marker_path(daemon._unfinished_dir, worktree.path)

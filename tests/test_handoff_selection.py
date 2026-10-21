@@ -6,7 +6,7 @@ import json
 import pytest
 
 from quorus.protocol import SocialVerb
-from quorus.runtime import failover, handoff_delivery, handoff_runtime, handoff_sender
+from quorus.runtime import failover, handoff_delivery, handoff_runtime, handoff_sender, handoff_wait
 from tests.test_handoff_delivery import Relay
 from tests.test_handoff_retry import policy
 from tests.test_unfinished_wakes import reflexd
@@ -44,11 +44,24 @@ class Receiver(Relay):
 def attempt(wiring, monkeypatch, relay):
     _, daemon, wt, cap, _, _ = wiring
     snapshots = []
-    monkeypatch.setattr(handoff_sender, "snapshot", lambda *a: snapshots.append(1) or cap)
-    result = asyncio.run(handoff_sender.attempt(
-        daemon, relay, {"room": "build", "message_id": cap.root, "content": "fix task 2"},
-        reason="quota", mission={"task_id": "task"}, worktree=wt,
-        bindings=reflexd.ROOM_BINDINGS_PATH, **policy()))
+    original = handoff_sender.snapshot
+
+    def snapshot(*a):
+        snapshots.append(1)
+        return original(*a)
+
+    monkeypatch.setattr(handoff_sender, "snapshot", snapshot)
+
+    async def run():
+        result = await handoff_sender.attempt(
+            daemon, relay, {"room": "build", "message_id": cap.root, "content": "fix task 2"},
+            reason="quota", mission={"task_id": "task"}, worktree=wt,
+            bindings=reflexd.ROOM_BINDINGS_PATH, **policy())
+        if daemon._bg_tasks:
+            await asyncio.gather(*list(daemon._bg_tasks))
+        return result
+
+    result = asyncio.run(run())
     store = handoff_runtime.journal(daemon, "build", wt)
     events = [json.loads(line) for line in store.events_path.read_text().splitlines()]
     return result, snapshots, events
@@ -64,7 +77,7 @@ def test_busy_then_active_checkpoints_and_sends_once_with_original_claim(wiring,
 
     monkeypatch.setattr(handoff_sender.asyncio, "sleep", sleep)
     result, snapshots, events = attempt(wiring, monkeypatch, relay)
-    assert result == "sent" and snapshots == [1] and delays == [2]
+    assert result == "waiting" and snapshots == [1] and delays == [30]
     assert len(relay.defers) == 1
     assert relay.defers[0]["failover"]["handoffs"] == 1
     selections = [e for e in events if e["event"] == "selection"]
@@ -72,20 +85,27 @@ def test_busy_then_active_checkpoints_and_sends_once_with_original_claim(wiring,
     assert selections[1]["target"] == "b-codex"
 
 
-def test_busy_budget_expires_without_checkpoint_or_claim_transfer(wiring, monkeypatch):
+def test_busy_budget_expires_without_claim_transfer(wiring, monkeypatch):
     relay, delays = Receiver(), []
+    clock = [1000.0]
+    alerts = []
+    monkeypatch.setattr(handoff_wait.time, "time", lambda: clock[0])
+    monkeypatch.setattr(handoff_wait, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(wiring[1], "_alert_owner", lambda *a: alerts.append(a))
 
     async def sleep(delay):
         delays.append(delay)
+        clock[0] += delay
 
     monkeypatch.setattr(handoff_sender.asyncio, "sleep", sleep)
     result, snapshots, events = attempt(wiring, monkeypatch, relay)
-    assert "owner needed" in result and snapshots == [] and relay.defers == []
+    assert result == "waiting" and snapshots == [1] and relay.defers == []
     assert relay.holder == wiring[1].config.participant_name
-    assert tuple(delays) == handoff_sender.SELECTION_BACKOFF
-    assert sum(delays) == 57
+    assert sum(delays) == 900 and delays[:2] == [30, 60]
     assert events[-1]["cause"] == "busy_timeout"
     assert sum(e["event"] == "attempt" for e in events) == 1
+    assert len(relay.posted) == 1 and "up to 15 min" in relay.posted[0]["content"]
+    assert alerts and "busy_timeout" in alerts[-1][1]
 
 
 @pytest.mark.parametrize("stop", ["claim", "switch"])
@@ -101,7 +121,7 @@ def test_wait_rechecks_claim_and_live_switch(wiring, monkeypatch, stop):
 
     monkeypatch.setattr(handoff_sender.asyncio, "sleep", sleep)
     _, snapshots, events = attempt(wiring, monkeypatch, relay)
-    assert snapshots == [] and relay.defers == []
+    assert snapshots == [1] and relay.defers == []
     assert events[-1]["cause"] == ("no_claim" if stop == "claim" else "gate_closed")
 
 
@@ -158,12 +178,17 @@ def test_real_checkpoint_and_receiver_proof_after_busy_selection(wiring, monkeyp
         relay.status = "active"
 
     monkeypatch.setattr(handoff_sender.asyncio, "sleep", sleep)
-    result = asyncio.run(handoff_sender.attempt(
-        sender, relay, {"room": "build", "message_id": "real-root", "content": "fix task 2"},
-        reason="quota", mission={"task_id": "task"}, worktree=wt,
-        bindings=reflexd.ROOM_BINDINGS_PATH, detect=reflexd.detect_harness,
-        capabilities=reflexd.capabilities_for, score=reflexd.compute_bid_v2))
-    assert result == "sent" and len(relay.defers) == 1
+    async def run():
+        result = await handoff_sender.attempt(
+            sender, relay, {"room": "build", "message_id": "real-root", "content": "fix task 2"},
+            reason="quota", mission={"task_id": "task"}, worktree=wt,
+            bindings=reflexd.ROOM_BINDINGS_PATH, detect=reflexd.detect_harness,
+            capabilities=reflexd.capabilities_for, score=reflexd.compute_bid_v2)
+        await asyncio.gather(*list(sender._bg_tasks))
+        return result
+
+    result = asyncio.run(run())
+    assert result == "waiting" and len(relay.defers) == 1
     sent = relay.defers[0]
     assert sent["failover"]["capsule"]["check"]["status"] == "ran"
     receiver = reflexd.Reflexd(reflexd.ReflexdConfig(

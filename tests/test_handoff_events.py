@@ -91,7 +91,7 @@ def test_no_event_on_disk_means_no_checkpoint_and_no_send(wiring, monkeypatch):
 
     monkeypatch.setattr(Journal, "event", full)
     relay = Candidates()
-    assert "could not complete" in _attempt(daemon, relay, wt, cap)
+    assert _attempt(daemon, relay, wt, cap) == "stopped"
     assert ran == [] and relay.defers == []
 
 

@@ -17,16 +17,12 @@ from quorus.protocol import SocialVerb
 from quorus.protocol.handoff_capsule import HandoffCapsule, LimitContext
 from quorus.runtime import failover
 from quorus.runtime import handoff_runtime as runtime
+from quorus.runtime import handoff_wait as waits
 from quorus.runtime.checkpoint import run_checkpoint
 from quorus.runtime.handoff_adoption import Git
 from quorus.runtime.handoff_capsule import build_capsule
 from quorus.runtime.handoff_ownership import owns_claim
 from quorus.runtime.handoff_state import fingerprint
-
-# Spend at most 57 seconds in backoff for a capable busy receiver, without
-# transferring the claim or waking a harness. Relay requests have their own
-# timeouts. Legacy (switch OFF) failover still selects once.
-SELECTION_BACKOFF = (2, 5, 10, 20, 20)
 
 
 def enabled(room: str, bindings) -> bool:
@@ -44,29 +40,20 @@ async def select_target(relay, *, room, actor, task_id, failed_agents, task,
     """
     policy = dict(actor=actor, failed=failed_agents, task=task, detect=detect,
                   capabilities=capabilities, score=score)
-    for poll in range(len(SELECTION_BACKOFF) + 1):
-        if not enabled(room, bindings):
-            return None, "gate_closed"
-        if not await owns_claim(relay, room=room, participant=actor, task_id=task_id):
-            return None, "no_claim"
-        entries = await relay.fetch_presence()
-        members = await relay.fetch_members(room=room)
-        target = failover.choose_candidate(entries, members, **policy)
-        busy = failover.choose_candidate(entries, members, statuses=("busy",), **policy)
-        # Retain the selection evidence that was missing from rehearsal run 1.
-        # Never store raw presence, harness output, or exception text.
-        event("selection", poll=poll, target=target, busy_target=busy,
-              active=[e["name"] for e in entries if e.get("name") in members
-                      and e.get("online") and e.get("status") == "active"],
-              busy=[e["name"] for e in entries if e.get("name") in members
-                    and e.get("online") and e.get("status") == "busy"])
-        if target:
-            return target, None
-        if not busy:
-            return None, "no_target"
-        if poll == len(SELECTION_BACKOFF):
-            return None, "busy_timeout"
-        await asyncio.sleep(SELECTION_BACKOFF[poll])
+    if not enabled(room, bindings):
+        return None, "gate_closed"
+    if not await owns_claim(relay, room=room, participant=actor, task_id=task_id):
+        return None, "no_claim"
+    entries = await relay.fetch_presence()
+    members = await relay.fetch_members(room=room)
+    target = failover.choose_candidate(entries, members, **policy)
+    busy = failover.choose_candidate(entries, members, statuses=("busy",), **policy)
+    event("selection", target=target, busy_target=busy,
+          active=[e["name"] for e in entries if e.get("name") in members
+                  and e.get("online") and e.get("status") == "active"],
+          busy=[e["name"] for e in entries if e.get("name") in members
+                and e.get("online") and e.get("status") == "busy"])
+    return (target, None) if target else (busy, "busy" if busy else "no_target")
 
 
 def snapshot(daemon, room, worktree, data, bindings):
@@ -135,14 +122,15 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree,
 
     def failed(cause: str, answer: str) -> str:
         event("attempt_failed", cause=cause)
-        return answer
+        waits.alert(daemon, room, cause)
+        return "stopped"  # no ambient chat invitation to take over unverified work
 
     try:
         store = runtime.journal(daemon, room, worktree)
         event("attempt", reason=reason)
     except Exception:
         daemon._alert_owner(room, "⚠ handoff did not complete; work kept unpublished")
-        return "Handoff could not complete; owner needed."
+        return "stopped"
     previous = failover.continuation(envelope) or {}
     original = previous.get("root") or envelope.get("message_id") or envelope.get("id")
     failed_agents = list(dict.fromkeys([*previous.get("failed_agents", []), actor]))
@@ -164,6 +152,8 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree,
             bindings=bindings, event=event)
         if not target:
             return failed(cause, "No available handoff receiver; owner needed.")
+        budget = (await waits.notice(daemon, relay, envelope, target, bindings)
+                  if cause == "busy" else None)
         data = {"original_message_id": original, "task_id": task_id, "task": task,
                 "reason": reason, "branch": worktree.branch, "last_commit": "",
                 "failed_agents": failed_agents, "handoffs": previous.get("handoffs", 0) + 1}
@@ -185,9 +175,25 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree,
             if store.read(capsule) is not None:
                 return failed("duplicate", None)
         stage = "send"
-        await _send(daemon, relay, room, store, capsule, data, target, [])
-        event("sent", capsule_id=capsule.id,
-              envelope_bytes=len(json.dumps(data, sort_keys=True).encode()))
+        async def deliver(chosen):
+            if not enabled(room, bindings):
+                raise ValueError("handoff authority changed")
+            await _send(daemon, relay, room, store, capsule, data, chosen, [])
+            event("sent", capsule_id=capsule.id,
+                  envelope_bytes=len(json.dumps(data, sort_keys=True).encode()))
+
+        if cause == "busy":
+            async def select():
+                chosen, why = await select_target(
+                    relay, room=room, actor=actor, task_id=task_id, failed_agents=failed_agents,
+                    task=task, detect=detect, capabilities=capabilities, score=score,
+                    bindings=bindings, event=event)
+                return (None, why) if why else (chosen, None)
+
+            await waits.start(daemon, relay, envelope, worktree, store, capsule, data, target,
+                              attempt_id, budget, event, select, deliver)
+            return "waiting"
+        await deliver(target)
         return "sent"
     except Exception:
         # State/transfer/post failures can be ambiguous; the durable fence survives.
@@ -196,7 +202,7 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree,
         except Exception:
             pass  # the owner alert below still goes out
         daemon._alert_owner(room, "⚠ handoff did not complete; work kept unpublished")
-        return "Handoff could not complete; owner needed."
+        return "stopped"
 
 
 def decline(envelope):

@@ -8,6 +8,7 @@ import json
 import subprocess
 from datetime import datetime, timezone
 
+from quorus.bounded import bounded
 from quorus.private_files import write_private_json
 from quorus.protocol import SocialVerb
 
@@ -89,6 +90,7 @@ def choose_candidate(entries, members, *, actor, failed, task, detect, capabilit
         name = entry.get("name") or ""
         if (name not in members or name == actor or name in failed
                 or not entry.get("online") or entry.get("status") not in statuses
+                or paused(entry)
                 or not name.endswith(("-claude", "-codex", "-gemini", "-cursor",
                                       "-opencode", "-cline"))
                 or detect(name) == detect(actor)):
@@ -98,6 +100,17 @@ def choose_candidate(entries, members, *, actor, failed, task, detect, capabilit
         if bid > 0:
             ranked.append((-bid, timestamp(entry.get("last_wake_at")), name))
     return min(ranked)[2] if ranked else None
+
+
+def paused(entry):
+    """Presence may still say active while Quorus is pausing the harness."""
+    import time
+
+    pause = entry.get("pause")
+    if not isinstance(pause, dict):
+        return False
+    until = bounded(pause.get("until"), 0, 4102444800)
+    return until is not None and until > time.time()
 
 
 def _last_commit(worktree) -> str:

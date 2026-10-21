@@ -77,6 +77,12 @@ def configure_binding(entry, previous, args, workspace: Path):
                              max_output_bytes=65536 if cap is None else cap * 1024)
         result["check"] = config.record()
     handoff = getattr(args, "handoff", None)
+    wait = getattr(args, "handoff_wait_minutes", None)
+    if wait is not None:
+        minutes = bounded(wait, 1, 60)
+        if minutes is None:
+            raise ValueError("--handoff-wait-minutes must be between 1 and 60")
+        result["handoff_wait_minutes"] = minutes
     if handoff == "on":
         if not result.get("check"):
             raise ValueError("--handoff on needs a check: add --check \"<command>\"")
@@ -85,4 +91,4 @@ def configure_binding(entry, previous, args, workspace: Path):
         # Another repo is another decision: a new check there doesn't carry the
         # old room's ON over (Codex on 2921ac4e). Only an explicit --handoff on.
         result.pop("handoff", None)
-    return result if result.get("check") or isinstance(entry, dict) else entry
+    return result if result.get("check") or isinstance(entry, dict) or wait is not None else entry
