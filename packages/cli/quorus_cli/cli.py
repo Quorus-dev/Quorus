@@ -1201,6 +1201,12 @@ def _resolve_turnguard_participant(explicit: str | None) -> str:
     return name
 
 
+def _cmd_handoff(args):
+    from quorus_cli.handoff_cmd import cmd_handoff
+
+    cmd_handoff(args)
+
+
 def _confirm_handoff_on(room: str) -> None:
     """Turning live handoff on is typed at a terminal, never done by accident.
 
@@ -10011,6 +10017,9 @@ def main():
     p_deny.add_argument("approval_id", help="Approval id (apr_...)")
     p_deny.add_argument("--reason", default="", help="Optional note")
 
+    from quorus_cli.handoff_cmd import add_parser as _add_handoff_parser
+
+    _add_handoff_parser(sub, _help_block)
     p_room = sub.add_parser("room", **_help_block(
         synopsis="Host-local room utilities (workspace binding).",
         description=(
@@ -10484,6 +10493,7 @@ def main():
         "approve": _cmd_approve,
         "deny": _cmd_deny,
         "room": _cmd_room,
+        "handoff": _cmd_handoff,
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
         "track-report": _cmd_track_report,
