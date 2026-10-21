@@ -83,6 +83,26 @@ def test_no_time_or_an_untrusted_time_is_a_guess_with_no_reset() -> None:
     assert limits.read_limit_message("retry in 999h", T)[1] == limits.LIMIT_MAX_S
 
 
+def test_malformed_reset_times_are_guesses_and_never_raise() -> None:
+    """Codex on 64ff1588: "1:99 AM" and "retry in .s" raised ValueError, and
+    "25:00" became an observed 01:00 reset."""
+    local = datetime(2026, 10, 17, 0, 50)
+    for msg in ("usage limit, try again at 1:99 AM", "rate limit, retry in .s",
+                "usage limit, try again at 25:00", "try again at 0:30 PM",
+                "try again at 13:05 AM", "retry in 1..5s"):
+        reading, retry = limits.read_limit_message(msg, T, local_now=local)
+        assert (reading.kind, reading.resets_at) == ("guess", None), msg
+        assert retry == limits.LIMIT_DEFAULT_S, msg
+    # real clock times still parse, 12- and 24-hour
+    for msg, ahead in (("try again at 12:00 AM", 23 * 3600 + 10 * 60),
+                       ("try again at 23:59", 23 * 3600 + 9 * 60),
+                       ("retry in 1.5s", 1.5)):
+        reading, _ = limits.read_limit_message(msg, T, local_now=local)
+        assert reading.kind == "observed" and reading.resets_at == T + ahead, msg
+    for junk in ("try again at 99:99 PM", "retry in 9" * 40 + "h", "\x00retry in s"):
+        limits.read_limit_message(junk, T, local_now=local)  # must not raise
+
+
 def test_the_source_is_an_id_never_the_vendors_text() -> None:
     secret = "quota exceeded for key sk-live-abc123, retry in 5m"
     reading, _ = limits.read_limit_message(secret, T)

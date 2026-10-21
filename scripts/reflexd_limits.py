@@ -26,7 +26,8 @@ SOURCE_KIND = {
     "msg.no_time": "guess",
 }
 
-_RETRY_RE = re.compile(r"retry in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?", re.IGNORECASE)
+_RETRY_RE = re.compile(r"retry in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+(?:\.\d+)?)s)?",
+                       re.IGNORECASE)
 _AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AP]M)?", re.IGNORECASE)
 
 
@@ -39,13 +40,17 @@ class LimitReading:
     resets_at: float | None = None  # epoch seconds, exact (no padding, no cap)
 
 
-def _at_target(match: re.Match[str], local_now: datetime) -> datetime:
+def _at_target(match: re.Match[str], local_now: datetime) -> datetime | None:
+    """The next local time matching "1:46 AM" / "13:46", or None if it isn't a
+    real clock time ("1:99 AM", "25:00", "0:30 PM")."""
     hour, minute, ampm = int(match.group(1)), int(match.group(2)), (match.group(3) or "").upper()
+    if minute > 59 or (hour > 23 if not ampm else not 1 <= hour <= 12):
+        return None
     if ampm == "PM" and hour < 12:
         hour += 12
     if ampm == "AM" and hour == 12:
         hour = 0
-    target = local_now.replace(hour=hour % 24, minute=minute, second=0, microsecond=0)
+    target = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return target if target > local_now else target + timedelta(days=1)
 
 
@@ -55,8 +60,10 @@ def read_limit_message(text: str, now: float,
 
     "retry in 21h39m46s" and Codex's "try again at 1:46 AM" give an exact
     reset; anything else, or a reset in the past or more than 8 days out,
-    is a guess with no reset time. The pause keeps 0.6.5's numbers: at
-    least 60 s, at most 24 h, +60 s after a clock time, 30 min if unknown.
+    is a guess with no reset time; so is a clock time that isn't one
+    ("1:99 AM", "25:00"). It never raises on what the vendor printed. The
+    pause keeps 0.6.5's numbers: at least 60 s, at most 24 h, +60 s after a
+    clock time, 30 min if unknown.
     """
     text = text or ""
     reset: float | None = None
@@ -65,9 +72,11 @@ def read_limit_message(text: str, now: float,
     m = _RETRY_RE.search(text)
     if at:
         local_now = local_now or datetime.now()
-        ahead = (_at_target(at, local_now) - local_now).total_seconds()
-        reset, source = now + ahead, "msg.try_again_at"
-        retry = max(60.0, min(LIMIT_MAX_S, ahead + 60))
+        target = _at_target(at, local_now)
+        if target is not None:
+            ahead = (target - local_now).total_seconds()
+            reset, source = now + ahead, "msg.try_again_at"
+            retry = max(60.0, min(LIMIT_MAX_S, ahead + 60))
     elif m and any(m.groups()):
         h, mi, se = (float(g) if g else 0.0 for g in m.groups())
         ahead = h * 3600 + mi * 60 + se
