@@ -15,6 +15,7 @@ from quorus.runtime.check_config import CheckConfig
 from quorus.runtime.checkpoint import run_checkpoint
 from quorus.runtime.handoff_adoption import Git
 from quorus.runtime.handoff_capsule import build_capsule
+from quorus.runtime.handoff_hold import PublicationHold
 from quorus.runtime.handoff_state import Duplicate, Journal, StateError
 
 SOURCE = ("import os,sys,time; from pathlib import Path; "
@@ -58,7 +59,8 @@ def case(tmp_path):
                "source": "msg.no_time", "seen_at": "2026-10-21T14:00:00Z"},
         spent={"turns": 1, "wall_s": 10.0, "attempts": 1})
     git("checkout", "-q", "quorus/receiver-codex")
-    journal = Journal(tmp_path / "runtime" / "handoffs.json", "room", root)
+    journal = Journal(tmp_path / "runtime" / "handoffs.json", "room", root,
+                      hold_dir=tmp_path / "runtime" / "unfinished-wakes")
     args = dict(branch="quorus/receiver-codex", integration="main", config=config,
                 claimed=True, held=False, env=env)
     return SimpleNamespace(root=root, git=git, base=base, capsule=capsule,
@@ -99,6 +101,11 @@ def test_real_receiver_outcomes_enforce_mode(case, env, outcome):
     assert receiver.launch(c.root, c.journal, c.capsule, claimed=True) == proof.writable
     if "EDIT" in env:
         assert (c.root / "tracked").read_text() == "changed"  # owner recovery, not discarded
+        assert PublicationHold(c.root, c.journal, c.capsule).owned()
+    elif not proof.writable:
+        assert c.git("rev-parse", "HEAD") == c.base
+        assert c.git("rev-list", "--count", "main..HEAD") == "0"
+        assert not PublicationHold(c.root, c.journal, c.capsule).path.exists()
 
 
 @pytest.mark.parametrize("how", ["dirty", "untracked", "ahead", "held"])
@@ -200,6 +207,11 @@ def test_claim_or_tree_change_after_proof_cannot_launch(case, change):
         (c.root / "tracked").write_text("later edits")
     assert not receiver.launch(c.root, c.journal, c.capsule, claimed=change != "claim")
     assert c.journal.read(c.capsule)["state"] == "unverifiable"
+    if change == "claim":
+        assert c.git("rev-parse", "HEAD") == c.base
+        assert not PublicationHold(c.root, c.journal, c.capsule).path.exists()
+    else:
+        assert PublicationHold(c.root, c.journal, c.capsule).owned()
 
 
 def test_duplicate_dropped_but_restart_before_turn_repeats_proof(case):
@@ -313,7 +325,7 @@ def test_restart_rechecks_proof_before_continuing(case, monkeypatch, state):
 def test_journal_lock_refuses_another_process_gate(case):
     c = case
     with c.journal.locked():
-        with pytest.raises(BlockingIOError):
+        with pytest.raises(StateError, match="lock unavailable"):
             verify(c)
     assert c.git("rev-parse", "HEAD") == c.base
 
@@ -323,3 +335,95 @@ def test_detached_receiver_does_not_adopt(case):
     c.git("checkout", "-q", "--detach")
     assert verify(c).outcome == "unverifiable"
     assert c.git("rev-parse", "HEAD") == c.base
+
+
+def test_hold_is_present_before_the_adopting_ref_moves(case, monkeypatch):
+    c = case
+    original = Git.run
+    seen = []
+
+    def observe(self, *args):
+        if args[0] == "update-ref":
+            seen.append(PublicationHold(c.root, c.journal, c.capsule).owned())
+        return original(self, *args)
+
+    monkeypatch.setattr(Git, "run", observe)
+    assert verify(c).writable
+    assert seen == [True]
+
+
+def test_modified_receiver_remains_blocked_from_real_daemon_publish_sweep(case, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from tests.test_unfinished_wakes import _Relay, reflexd
+
+    c = case
+    assert verify(c, env={**c.args["env"], "EDIT": "1"}).outcome == "unverifiable"
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(
+        relay_url="http://r", api_key="k", participant_name="receiver-codex",
+        runtime_dir=c.journal.path.parent))
+    assert reflexd.reflexd_unfinished.pending(d._unfinished_dir, c.root)
+    bindings = c.root.parent / "bindings.json"
+    bindings.write_text(json.dumps({"room": str(c.root)}))
+    monkeypatch.setattr(reflexd, "ROOM_BINDINGS_PATH", bindings)
+    monkeypatch.setattr(reflexd.reflexd_wake, "WORKTREES_ENABLED", True)
+    wt = SimpleNamespace(path=c.root, repo=c.root, branch="quorus/receiver-codex", main="main")
+    monkeypatch.setattr(reflexd.reflexd_wake, "existing_worktree", lambda *_: wt)
+    publish = AsyncMock(side_effect=AssertionError("must not attempt publication"))
+    monkeypatch.setattr(d, "_guard_publish", publish)
+    asyncio.run(d._publish_sweep(_Relay()))
+    publish.assert_not_awaited()
+    assert c.git("rev-parse", "main") == c.base
+    assert (c.root / "tracked").read_text() == "changed"
+
+
+def test_failed_rollback_retains_publication_hold(case, monkeypatch):
+    c = case
+    original = Git.run
+
+    def fail(self, *args):
+        if args[0] == "update-ref" and "quorus restore handoff" in args:
+            raise StateError("simulated git failure")
+        return original(self, *args)
+
+    monkeypatch.setattr(Git, "run", fail)
+    assert verify(c, env={**c.args["env"], "EXIT": "0"}).outcome == "already_passing"
+    assert c.git("rev-parse", "HEAD") == c.capsule.repo.head
+    assert PublicationHold(c.root, c.journal, c.capsule).owned()
+
+
+def test_preexisting_unfinished_marker_is_never_overwritten(case):
+    from quorus.runtime.worktree_hold import marker_path
+
+    c = case
+    marker = marker_path(c.journal.hold_dir, c.root)
+    marker.parent.mkdir(parents=True)
+    old = '{"path":"another turn"}'
+    marker.write_text(old)
+    assert verify(c).outcome == "declined"
+    assert marker.read_text() == old
+    assert c.git("rev-parse", "HEAD") == c.base
+
+
+@pytest.mark.parametrize("operation", ["update-ref", "read-tree"])
+def test_crash_during_rollback_keeps_hold_and_can_recover(case, monkeypatch, operation):
+    c = case
+    original = Git.run
+    restoring = []
+
+    def crash(self, *args):
+        if args[0] == "update-ref" and "quorus restore handoff" in args:
+            restoring.append(True)
+        if restoring and args[0] == operation:
+            raise RuntimeError("crash during rollback")
+        return original(self, *args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Git, "run", crash)
+        with pytest.raises(RuntimeError, match="rollback"):
+            verify(c, env={**c.args["env"], "EXIT": "0"})
+    assert PublicationHold(c.root, c.journal, c.capsule).owned()
+    assert verify(c, recovering=True, held=True,
+                  env={**c.args["env"], "EXIT": "0"}).outcome == "already_passing"
+    assert c.git("rev-parse", "HEAD") == c.base
+    assert not PublicationHold(c.root, c.journal, c.capsule).path.exists()

@@ -9,6 +9,7 @@ from quorus.protocol.handoff_capsule import HandoffCapsule
 from quorus.runtime.check_config import CheckConfig
 from quorus.runtime.checkpoint import run_checkpoint
 from quorus.runtime.handoff_adoption import Declined, Git, adopt
+from quorus.runtime.handoff_hold import PublicationHold, restore
 from quorus.runtime.handoff_state import TERMINAL, Duplicate, Journal, StateError
 
 
@@ -53,6 +54,7 @@ def verify(root: Path, journal: Journal, capsule: HandoffCapsule, *,
     A restart explicitly invokes recovery; duplicate network deliveries do not.
     """
     with journal.locked():
+        hold = PublicationHold(root, journal, capsule)
         entry = journal.read(capsule)
         if entry is not None:
             if not recovering or entry["state"] in TERMINAL | {"continuing"}:
@@ -78,9 +80,22 @@ def verify(root: Path, journal: Journal, capsule: HandoffCapsule, *,
             except StateError:
                 # Never persist exception text (git/tool errors can echo data).
                 result = Proof("unverifiable", "snapshot adoption failed; owner needed")
+        restored = (not result.writable and hold.owned()
+                    and restore(Git(root), journal, capsule, hold))
         state = "verified" if result.writable else result.outcome
         journal.write(capsule, state, outcome=result.outcome, cause=result.cause)
+        if restored:
+            hold.release()  # terminal journal is durable before publishing is unblocked
         return result
+
+
+def _refuse_launch(root, journal, capsule, cause) -> bool:
+    hold = PublicationHold(root, journal, capsule)
+    restored = restore(Git(root), journal, capsule, hold)
+    journal.write(capsule, "unverifiable", cause=cause)
+    if restored:
+        hold.release()
+    return False
 
 
 def launch(root: Path, journal: Journal, capsule: HandoffCapsule, *, claimed: bool) -> bool:
@@ -90,17 +105,15 @@ def launch(root: Path, journal: Journal, capsule: HandoffCapsule, *, claimed: bo
         if entry is None or entry["state"] != "verified":
             return False
         if not claimed:
-            journal.write(capsule, "unverifiable", cause="relay claim changed before launch")
-            return False
+            return _refuse_launch(root, journal, capsule, "relay claim changed before launch")
         try:
             git = Git(root)
             if (git.text("symbolic-ref", "HEAD") != f"refs/heads/{entry.get('branch')}"
                     or git.text("rev-parse", "HEAD") != capsule.repo.head
                     or git.text("rev-parse", "HEAD^{tree}") != capsule.repo.tree
-                    or not git.clean()):
+                    or not git.clean() or not PublicationHold(root, journal, capsule).owned()):
                 raise StateError("proof tree changed before launch")
         except StateError:
-            journal.write(capsule, "unverifiable", cause="proof tree changed before launch")
-            return False
+            return _refuse_launch(root, journal, capsule, "proof tree changed before launch")
         journal.write(capsule, "continuing")
         return True

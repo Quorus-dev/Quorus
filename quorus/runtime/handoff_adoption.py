@@ -52,8 +52,14 @@ def adopt(git: Git, journal: Journal, capsule: HandoffCapsule, *,
     one), and tracked/untracked files must be unchanged relative to that index.
     Otherwise read-tree would destroy new work: leave it intact and ask the owner.
     """
-    if held:
+    from quorus.runtime.handoff_hold import PublicationHold
+
+    hold = PublicationHold(git.root, journal, capsule)
+    ours = hold.owned()
+    if held and not (recovering and ours):
         raise Declined("receiver has an unfinished turn")
+    if hold.path.exists() and not ours:
+        raise Declined("receiver has another turn's publication hold")
     expected = f"refs/heads/{branch}"
     if git.text("symbolic-ref", "HEAD") != expected:
         raise StateError("receiver branch is not checked out")
@@ -85,6 +91,9 @@ def adopt(git: Git, journal: Journal, capsule: HandoffCapsule, *,
         git.run("merge-base", "--is-ancestor", current, integration)
         prev = current
         journal.write(capsule, "adopting", prev=prev, branch=branch)
+    # The existing daemon sweep sees this marker BEFORE the ref can move. Keep it
+    # through proof and launch; only rollback or a normal completed turn lifts it.
+    hold.acquire(branch)
     if current == prev:
         git.run("update-ref", "-m", "quorus adopt handoff", expected, capsule.repo.head, prev)
     if (git.text("symbolic-ref", "HEAD") != expected

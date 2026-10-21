@@ -36,9 +36,10 @@ class Journal:
     The caller supplies the daemon-owned private path, never a capsule path.
     """
 
-    def __init__(self, path: Path, room: str, repo: Path):
+    def __init__(self, path: Path, room: str, repo: Path, *, hold_dir: Path | None = None):
         self.path = path
         self.scope = f"{room}:{repo.resolve()}"
+        self.hold_dir = hold_dir
 
     def key(self, capsule: HandoffCapsule) -> str:
         return hashlib.sha256(f"{self.scope}:{capsule.id}".encode()).hexdigest()
@@ -53,7 +54,10 @@ class Journal:
         fd = os.open(self.path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR
                      | getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise StateError("handoff journal lock unavailable; keep work fenced") from exc
             yield
         finally:
             os.close(fd)

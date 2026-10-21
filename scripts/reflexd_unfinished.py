@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import tempfile
 from pathlib import Path
+
+from quorus.runtime.worktree_hold import marker_path
 
 SUFFIX = "-unfinished"
 
@@ -34,8 +35,7 @@ def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _marker(marker_dir: Path, path: Path) -> Path:
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(Path(path).resolve()))[-150:]
-    return marker_dir / f"{safe}.json"
+    return marker_path(marker_dir, path)
 
 
 def branch_for(branch: str) -> str:
