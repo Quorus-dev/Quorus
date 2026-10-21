@@ -46,6 +46,21 @@ def pending(marker_dir: Path, path: Path) -> bool:
     return _marker(marker_dir, path).exists()
 
 
+def _handoff_held(marker: Path) -> bool:
+    """A proof/owner decision owns this hold, never an unrelated finishing turn.
+
+    Corrupt markers also fail closed: a parse failure cannot authorize publication.
+    Presence of the reserved key is enough, even if its value is malformed.
+    """
+    try:
+        value = json.loads(marker.read_text())
+    except (OSError, ValueError) as exc:
+        raise OSError("unfinished marker unreadable; owner must resolve it") from exc
+    if not isinstance(value, dict):
+        raise OSError("unfinished marker invalid; owner must resolve it")
+    return "handoff" in value
+
+
 def hold(marker_dir: Path, wt) -> None:
     """Block publishing *wt* until a turn finishes cleanly. Written first, so
     nothing that fails afterwards can leave the worktree publishable."""
@@ -78,7 +93,9 @@ def park(marker_dir: Path, wt, participant: str, message: str) -> str | None:
     if ahead.returncode != 0:
         raise OSError(f"couldn't compare {wt.branch} with {wt.main}")
     if ahead.stdout.strip() in ("", "0"):
-        _marker(marker_dir, wt.path).unlink(missing_ok=True)
+        marker = _marker(marker_dir, wt.path)
+        if marker.exists() and not _handoff_held(marker):
+            marker.unlink(missing_ok=True)
         return None
     unfinished = branch_for(wt.branch)
     if _git(wt.repo, "branch", "-f", unfinished, wt.branch).returncode != 0:
@@ -92,6 +109,10 @@ def clear(marker_dir: Path, wt) -> None:
     marker = _marker(marker_dir, wt.path)
     if not marker.exists():
         return
+    if _handoff_held(marker):
+        # Returning here would still let the caller publish. Raise before any
+        # cleanup so both the ordinary completion path and its sweep stay blocked.
+        raise OSError("handoff proof hold requires handoff or owner resolution")
     unfinished = branch_for(wt.branch)
     if _git(wt.repo, "merge-base", "--is-ancestor", unfinished, wt.branch).returncode == 0:
         _git(wt.repo, "branch", "-D", unfinished)
