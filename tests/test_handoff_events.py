@@ -314,3 +314,43 @@ def test_a_short_write_still_lands_the_whole_event(tmp_path, monkeypatch):
     assert synced == [False, True, False]
     lines = journal.events_path.read_text().splitlines()
     assert [json.loads(x)["attempt_id"] for x in lines] == ["a1", "a2"]
+
+
+def test_a_failed_append_never_corrupts_the_next_event(tmp_path, monkeypatch):
+    """Codex on b4d3c8ed: a short write then ENOSPC left half a line, and the next
+    event was appended onto it, so the report dropped that attempt."""
+    import errno
+    import os
+
+    journal = Journal(tmp_path / "rt" / "handoffs-x.json", "room", tmp_path)
+    journal.event({"event": "attempt", "attempt_id": "a0"})
+    real_write, calls = os.write, []
+
+    def short_then_full(fd, data):
+        calls.append(1)
+        if len(calls) == 1:
+            return real_write(fd, bytes(data[:5]))
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(os, "write", short_then_full)
+    with pytest.raises(OSError):
+        journal.event({"event": "attempt", "attempt_id": "a1"})
+    monkeypatch.setattr(os, "write", real_write)
+    journal.event({"event": "attempt", "attempt_id": "a2"})
+    lines = journal.events_path.read_text().splitlines()
+    assert [json.loads(x)["attempt_id"] for x in lines] == ["a0", "a2"]
+
+
+def test_a_crash_mid_line_is_repaired_before_the_next_event(tmp_path):
+    journal = Journal(tmp_path / "rt" / "handoffs-x.json", "room", tmp_path)
+    journal.event({"event": "attempt", "attempt_id": "a0"})
+    with journal.events_path.open("a") as stream:
+        stream.write('{"event": "attempt", "attempt_id": "half')  # the process died here
+    journal.event({"event": "attempt", "attempt_id": "a1"})
+    lines = journal.events_path.read_text().splitlines()
+    assert [json.loads(x)["attempt_id"] for x in lines] == ["a0", "a1"]
+    only_partial = Journal(tmp_path / "rt2" / "handoffs-y.json", "room", tmp_path)
+    only_partial.events_path.parent.mkdir(parents=True)
+    only_partial.events_path.write_text('{"event": "att')
+    only_partial.event({"event": "attempt", "attempt_id": "b1"})
+    assert json.loads(only_partial.events_path.read_text())["attempt_id"] == "b1"

@@ -28,6 +28,27 @@ def fingerprint(capsule: HandoffCapsule) -> str:
     return hashlib.sha256(capsule.model_dump_json().encode()).hexdigest()
 
 
+def _whole_lines(fd: int) -> int:
+    """Cut an unfinished last line (a failed or crashed append; its event() never
+    returned) so the next event starts on a line of its own. Returns the size."""
+    size = os.fstat(fd).st_size
+    if not size or os.pread(fd, 1, size - 1) == b"\n":
+        return size
+    keep, step = 0, 65536
+    end = size
+    while end > 0:  # find the last newline, reading backwards
+        start = max(0, end - step)
+        chunk = os.pread(fd, end - start, start)
+        cut = chunk.rfind(b"\n")
+        if cut >= 0:
+            keep = start + cut + 1
+            break
+        end = start
+    os.ftruncate(fd, keep)
+    os.fsync(fd)
+    return keep
+
+
 class Journal:
     """One journal per receiver, with a cross-process lock around each gate.
 
@@ -152,19 +173,30 @@ class Journal:
         except FileNotFoundError:
             pass
         line = (json.dumps({**record, "scope": self.scope}, sort_keys=True) + "\n").encode()
-        flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_RDWR | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
         try:
             fd, created = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600), True
         except FileExistsError:
             fd, created = os.open(path, flags), False
         try:
+            start = _whole_lines(fd)
             view = memoryview(line)
-            while view:  # a short write is not a written event (Codex on 93a0cb85)
-                written = os.write(fd, view)
-                if written <= 0:
-                    raise StateError("handoff event not written")
-                view = view[written:]
-            os.fsync(fd)
+            try:
+                while view:  # a short write is not a written event (Codex on 93a0cb85)
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        raise StateError("handoff event not written")
+                    view = view[written:]
+                os.fsync(fd)
+            except BaseException:
+                # This call fails, so its partial line must not survive to corrupt
+                # the next event (Codex on b4d3c8ed). Best effort here; the next call
+                # repairs whatever a crash left behind.
+                try:
+                    os.ftruncate(fd, start)
+                except OSError:
+                    pass
+                raise
         finally:
             os.close(fd)
         if created:  # a new file's name must be durable too, before the checkpoint
