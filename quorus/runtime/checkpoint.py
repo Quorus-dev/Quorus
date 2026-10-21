@@ -59,14 +59,19 @@ def local_paths(text: str, root: Path, home: str | None) -> str:
     return text
 
 
-_DURATION = re.compile(r"\bin \d+(?:\.\d+)?s(?: \(\d+:\d{2}:\d{2}\))?")
+_COUNT = r"\d+ (?:passed|failed|errors?|skipped|deselected|xfailed|xpassed|warnings?|rerun)"
+# A whole pytest summary line only, -q or not: "== 5 failed, 2 passed in 0.03s ==".
+_SUMMARY = re.compile(rf"^(=+ )?({_COUNT}(?:, {_COUNT})*|no tests ran) "
+                      r"in \d+(?:\.\d+)?s(?: \(\d+:\d{2}:\d{2}\))?( =+)?$", re.M)
 
 
 def without_timings(text: str) -> str:
     """Run times out of the tail before it is hashed: pytest ends "5 failed in 0.03s",
     and the same failure reruns in 0.02s, so the sender's and receiver's tails never
-    hashed the same and every handoff read `weak` (Codex on 826faa27)."""
-    return _DURATION.sub("in <t>s", text)
+    hashed the same and every handoff read `weak` (Codex on 826faa27). Only pytest's
+    summary line: "expected retry in 1s" vs "in 2s" is a real difference (Codex on
+    3e0f4351)."""
+    return _SUMMARY.sub(lambda m: f"{m[1] or ''}{m[2]} in <t>s{m[3] or ''}", text)
 
 
 def run_checkpoint(root: Path, head: str, config: CheckConfig | None, *,

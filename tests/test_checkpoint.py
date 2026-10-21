@@ -153,3 +153,21 @@ def test_cli_bind_stores_check_and_invalid_update_preserves_file(tmp_path, monke
     with pytest.raises(SystemExit) as error:
         cli._cmd_room(args)
     assert error.value.code == 2 and path.read_bytes() == before
+
+
+def test_only_pytests_summary_timing_is_dropped():
+    """Codex on 3e0f4351: dropping every "in Ns" made "expected retry in 1s" and
+    "in 2s" hash the same, so two different failures could read `reproduced`."""
+    from quorus.runtime.checkpoint import without_timings
+
+    one, two = (without_timings(f"E   AssertionError: expected retry in {n}s\n"
+                                "1 failed, 1 passed in 0.03s\n") for n in (1, 2))
+    assert one != two and "retry in 1s" in one and "1 failed, 1 passed in <t>s" in one
+    for line, want in (
+            ("==== 5 failed, 4 passed, 2 warnings in 12.50s (0:00:12) ====",
+             "==== 5 failed, 4 passed, 2 warnings in <t>s ===="),
+            ("1 error in 0.01s", "1 error in <t>s"),
+            ("no tests ran in 0.00s", "no tests ran in <t>s"),
+            ("3 passed in 0.02s and more", "3 passed in 0.02s and more"),  # not a summary
+            ("    1 failed in 2s", "    1 failed in 2s")):  # indented: part of output
+        assert without_timings(line) == want, line
