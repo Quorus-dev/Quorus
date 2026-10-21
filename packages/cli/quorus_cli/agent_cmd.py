@@ -294,19 +294,38 @@ def _drop_lead_everywhere(name: str) -> None:
         _set_lead(room, None)
 
 
-def bindings_path() -> Path:
+def bindings_path(state_dir: Path | None = None) -> Path:
     """Where this machine's room → workspace bindings live: the shared resolver in
     ``quorus.runtime.bindings``, looked up at call time so a test's isolation of it
-    (tests/conftest.py) covers every reader in this module too."""
+    (tests/conftest.py) covers every reader in this module too. With *state_dir*
+    (`agent add --state-dir`), that agent's own bindings file instead."""
     from quorus.runtime import bindings
 
-    return bindings.bindings_path()
+    return state_dir / bindings.FILENAME if state_dir else bindings.bindings_path()
 
 
-def _bound_path(room: str) -> Path | None:
+def _state_dir(raw: str | None) -> Path | None:
+    """`agent add --state-dir DIR`: an absolute, private dir for the daemon's own state
+    (created 0700). Never the owner's own config dir: that is the default anyway."""
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise SystemExit("agent: --state-dir must be an absolute path")
+    path = path.resolve()
+    from quorus.runtime.bindings import config_dir
+
+    if path == config_dir().resolve():
+        raise SystemExit("agent: --state-dir is for a separate dir; leave it off to use "
+                         f"{path}")
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return path
+
+
+def _bound_path(room: str, state_dir: Path | None = None) -> Path | None:
     """The workspace *room* is bound to on this machine, if it still exists."""
     try:
-        prev = json.loads(bindings_path().read_text(encoding="utf-8")).get(room)
+        prev = json.loads(bindings_path(state_dir).read_text(encoding="utf-8")).get(room)
     except (OSError, ValueError, AttributeError):
         return None
     raw = prev.get("path") if isinstance(prev, dict) else prev
@@ -316,8 +335,9 @@ def _bound_path(room: str) -> Path | None:
     return path if path.is_dir() else None
 
 
-def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> str:
-    path = bindings_path()
+def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None,
+          state_dir: Path | None = None) -> str:
+    path = bindings_path(state_dir)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -371,7 +391,7 @@ def _plist(label: str, argv: list[str], env: dict[str, str], log: Path) -> str:
 
 
 def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
-                  model: str | None = None) -> str:
+                  model: str | None = None, state_dir: Path | None = None) -> str:
     from quorus.runtime.supervisor import _reflexd_script_path
 
     label = LABEL_PREFIX + name
@@ -389,6 +409,10 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
         env["REFLEXD_LEGACY_BEARER"] = "1"
     if model:
         env["REFLEXD_MODEL"] = model
+    if state_dir is not None:
+        # The daemon's own bindings, runtime, journals and holds live here, apart from
+        # the owner's ~/.quorus (dogfood plan §2). The CLI keeps the owner's config.
+        env["QUORUS_CONFIG_DIR"] = str(state_dir)
     argv = [sys.executable, str(_reflexd_script_path()), "start",
             "--participant", name, "--relay-url", cfg["relay_url"]]
     if not _launchd_ok():
@@ -447,12 +471,13 @@ def _add(args: Any, console: Any) -> None:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
+    state_dir = _state_dir(getattr(args, "state_dir", None))
     wants = getattr(args, "trust", None) or args.mode is not None
     if repo is None and wants:
         # --trust/--mode live on the room's workspace binding: without --repo they
         # were dropped silently, so a friend's asks stayed read-only (audit 0.6.3,
         # bug 9). Use the room's existing workspace, or say what's missing.
-        repo = _bound_path(args.room)
+        repo = _bound_path(args.room, state_dir)
         if repo is None:
             flag = "--trust" if getattr(args, "trust", None) else "--mode"
             raise SystemExit(f"agent: {flag} applies to the room's workspace, and "
@@ -479,7 +504,7 @@ def _add(args: Any, console: Any) -> None:
     _join(cfg, args.room, name, _bearer(cfg, join_cred, legacy))
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
-        mode = _bind(args.room, repo, mode, getattr(args, "trust", None))
+        mode = _bind(args.room, repo, mode, getattr(args, "trust", None), state_dir)
         console.print(f"[success]✓[/] #{args.room} works in {repo} [dim]({mode})[/]")
     if getattr(args, "lead", False):
         previous = _read_leads().get(args.room)
@@ -495,13 +520,13 @@ def _add(args: Any, console: Any) -> None:
             console.print(f"[dim]--model only applies to a new agent: run `quorus agent "
                           f"remove {name}` and add it again to switch models[/]")
     else:
-        where = _start_daemon(cfg, name, cred, legacy, model)
+        where = _start_daemon(cfg, name, cred, legacy, model, state_dir)
         # Only launchd brings it back; elsewhere it is a plain detached process.
         lasts = ("restarts at login" if sys.platform == "darwin" else
                  "keeps running after you close this terminal, but not after a "
                  "reboot: run this command again then")
         console.print(f"[success]✓[/] @{name} is running [dim]({where}; {lasts})[/]")
-    if repo is not None or _room_bound(args.room):
+    if repo is not None or _room_bound(args.room, state_dir):
         console.print(f"\n[dim]Try it:[/] quorus say {args.room} \"@{name} hello, what "
                       "can you do in this repo\"")
     else:
@@ -509,9 +534,9 @@ def _add(args: Any, console: Any) -> None:
                       f"{args.room} <path>")
 
 
-def _room_bound(room: str) -> bool:
+def _room_bound(room: str, state_dir: Path | None = None) -> bool:
     try:
-        data = json.loads(bindings_path().read_text(encoding="utf-8"))
+        data = json.loads(bindings_path(state_dir).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return isinstance(data, dict) and bool(data.get(room))

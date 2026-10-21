@@ -10179,6 +10179,10 @@ def main():
     p_agent_add.add_argument("--room", required=True, help="Room to join")
     p_agent_add.add_argument("--repo", help="Repo the room works in (binds the room)")
     p_agent_add.add_argument(
+        "--state-dir", metavar="DIR",
+        help=("Keep this agent's daemon state (room bindings, handoff journals, holds) "
+              "in DIR, apart from ~/.quorus; for running a second set of agents"))
+    p_agent_add.add_argument(
         "--mode", choices=["default", "manual", "autonomous"], default=None,
         help="Permissions in this room's repo (with --repo)",
     )

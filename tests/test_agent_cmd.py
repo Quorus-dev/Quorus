@@ -46,8 +46,9 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(agent_cmd, "_join",
                         lambda c, room, name, bearer: calls["joins"].append((room, name, bearer)))
     monkeypatch.setattr(agent_cmd, "_start_daemon",
-                        lambda c, name, cred, legacy, model=None: calls["daemons"].append(
-                            (name, cred, legacy)) or "label")
+                        lambda c, name, cred, legacy, model=None, state_dir=None:
+                        calls["daemons"].append((name, cred, legacy)) or calls.__setitem__(
+                            "state_dir", state_dir) or "label")
     monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda *a, **k: None)
     calls["cfg"] = cfg
     return calls
