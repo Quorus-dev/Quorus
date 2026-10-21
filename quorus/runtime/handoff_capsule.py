@@ -28,6 +28,8 @@ def build_capsule(*, root: str, hop: int, actor: str, task: str, repo: dict,
     Snapshot/limit identity is validated, not replaced with plausible defaults.
     """
     check = CheckpointRecord.model_validate(checkpoint).model_dump()
+    if check["tail_trimmed"]:
+        raise ValueError("capsule writer requires an untrimmed checkpoint record")
     if check.get("status") in ("ran", "passing"):
         if config is None or check.get("config_id") != config.config_id:
             raise ValueError("checkpoint does not match local check configuration")
@@ -51,13 +53,13 @@ def build_capsule(*, root: str, hop: int, actor: str, task: str, repo: dict,
     if redact_secrets(wire(), known_secrets) != wire():
         raise ValueError("credential in capsule identity or check metadata")
     while len(wire().encode()) > CAPSULE_BYTES:
-        if check["tail"]:
-            check["tail"] = "\n".join(check["tail"].splitlines()[1:])
-            check["tail_sha256"] = hashlib.sha256(check["tail"].encode()).hexdigest()
+        if value["repo"]["dirty_files"]:
+            value["repo"]["dirty_files"].pop()
         elif value["tried"]:
             value["tried"].pop()
-        elif value["repo"]["dirty_files"]:
-            value["repo"]["dirty_files"].pop()
+        elif check["tail"]:
+            check["tail"] = "\n".join(check["tail"].splitlines()[1:])
+            check["tail_trimmed"] = True
         else:
             raise ValueError("required capsule fields exceed 4096 bytes")
     return HandoffCapsule.model_validate(value)

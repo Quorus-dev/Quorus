@@ -69,6 +69,28 @@ def test_wire_size_budget_trims_info_and_preserves_tail_end():
     assert len(value.model_dump_json().encode()) <= 4096
     assert value.repo.head == "b" * 40 and value.check.head == "b" * 40
     assert len(value.repo.dirty_files) < 32
+    assert value.check.tail == args["checkpoint"]["tail"]
+    assert value.check.tail_sha256 == args["checkpoint"]["tail_sha256"]
+    assert value.check.tail_trimmed is False
+
+
+def test_last_resort_tail_trim_keeps_checkpoint_proof_digest():
+    args = arguments()
+    config = CheckConfig(("pytest", "x" * 2200))
+    args["config"] = config
+    tail = "noise line\n" * 80 + "FAILED test_x"
+    args["checkpoint"].update(config.record(), config_id=config.config_id, tail=tail,
+                              tail_sha256=hashlib.sha256(tail.encode()).hexdigest())
+    args["repo"]["dirty_files"] = ["path" * 40] * 20
+    value = build_capsule(**args)
+    assert not value.repo.dirty_files and not value.tried
+    assert value.check.tail_trimmed and value.check.tail.endswith("FAILED test_x")
+    assert value.check.tail_sha256 == args["checkpoint"]["tail_sha256"]
+    assert len(value.model_dump_json().encode()) <= 4096
+    assert HandoffCapsule.model_validate_json(value.model_dump_json()) == value
+    args["checkpoint"]["tail_trimmed"] = True
+    with pytest.raises(ValueError, match="untrimmed"):
+        build_capsule(**args)
 
 
 def test_redacts_descriptive_text_without_mutating_inputs():

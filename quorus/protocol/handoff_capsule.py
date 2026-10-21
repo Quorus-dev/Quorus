@@ -45,13 +45,17 @@ class CheckpointRecord(Data):
     wall_s: float | None = Field(default=None, ge=0)
     tail: str = Field(default="", max_length=1500)
     tail_sha256: Digest | None = None
+    # Digest always names the full redacted checkpoint tail, not its display excerpt.
+    tail_trimmed: bool = False
 
     @model_validator(mode="after")
     def validate_evidence(self):
         if len(self.tail.encode()) > 1500:
             raise ValueError("checkpoint tail exceeds 1500 bytes")
         digest = hashlib.sha256(self.tail.encode()).hexdigest()
-        if self.tail_sha256 is not None and self.tail_sha256 != digest:
+        if self.tail_trimmed and self.tail_sha256 is None:
+            raise ValueError("trimmed tail requires the original checkpoint digest")
+        if not self.tail_trimmed and self.tail_sha256 is not None and self.tail_sha256 != digest:
             raise ValueError("checkpoint tail hash mismatch")
         if self.status in ("ran", "passing"):
             required = (self.tree, self.argv, self.cwd, self.timeout_s, self.max_output_bytes,
