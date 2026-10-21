@@ -1494,8 +1494,11 @@ def _cmd_turnguard(args):
 # reflexd — start/stop/status/logs wrapper around scripts/reflexd.py
 # ---------------------------------------------------------------------------
 
-_REFLEXD_DEFAULT_LOG = Path.home() / ".quorus" / "reflexd.log"
-_REFLEXD_RUNTIME_DIR = Path.home() / ".quorus" / "runtime"
+# Same dirs the daemon uses (quorus.runtime.bindings.config_dir).
+from quorus.runtime.bindings import config_dir as _config_dir  # noqa: E402
+
+_REFLEXD_DEFAULT_LOG = _config_dir() / "reflexd.log"
+_REFLEXD_RUNTIME_DIR = _config_dir() / "runtime"
 
 
 def _resolve_reflexd_participant(explicit: str | None) -> str:

@@ -22,7 +22,9 @@ console = _ui.console
 
 
 def _runtime_dir(args) -> Path:
-    return Path(getattr(args, "runtime_dir", None) or Path.home() / ".quorus" / "runtime")
+    from quorus.runtime.bindings import config_dir
+
+    return Path(getattr(args, "runtime_dir", None) or config_dir() / "runtime")
 
 
 def cmd_holds(args) -> None:

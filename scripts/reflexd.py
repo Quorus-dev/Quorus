@@ -83,6 +83,7 @@ from quorus.observability.redaction import env_secret_values, redact_secrets  # 
 from quorus.operating_discipline import render_qod_for_agent_loop  # noqa: E402
 from quorus.private_files import write_private_json, write_private_text  # noqa: E402
 from quorus.roles import WRITER_ROLES  # noqa: E402
+from quorus.runtime import bindings as _bindings  # noqa: E402
 from quorus.runtime import commit_evidence as _commit_evidence  # noqa: E402  audit F2
 from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import handoff_completion as _handoff_completion  # noqa: E402
@@ -121,12 +122,14 @@ CAPABILITIES_CURSOR = reflexd_triage.CAPABILITIES_CURSOR
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_RUNTIME_DIR = Path.home() / ".quorus" / "runtime"
-DEFAULT_LOG_PATH = Path.home() / ".quorus" / "reflexd.log"
+# $QUORUS_CONFIG_DIR, else ~/.quorus (quorus.runtime.bindings.config_dir): two
+# daemons with different config dirs share no runtime state (dogfood plan §2).
+DEFAULT_RUNTIME_DIR = _bindings.config_dir() / "runtime"
+DEFAULT_LOG_PATH = _bindings.config_dir() / "reflexd.log"
 # D1 (WAKE_REBUILD_SPEC): room → workspace bindings. Host-local by design —
 # a filesystem path only means something on THIS machine, so bindings are
 # daemon-local, not shared room state. Written by `quorus room bind`.
-ROOM_BINDINGS_PATH = Path.home() / ".quorus" / "room-bindings.json"
+ROOM_BINDINGS_PATH = _bindings.bindings_path()
 
 
 def workspace_for(room: str, *, bindings_path: Path | None = None) -> Path | None:
@@ -305,7 +308,7 @@ def live_session_for_workspace(ws: Path | None) -> dict[str, Any] | None:
 # and daemon restarts. One file per participant, 0600.
 
 def _sessions_path(participant: str) -> Path:
-    return Path.home() / ".quorus" / f"sessions-{participant}.json"
+    return _bindings.config_dir() / f"sessions-{participant}.json"
 
 
 def session_for(participant: str, room: str, harness: str | None = None) -> str | None:
