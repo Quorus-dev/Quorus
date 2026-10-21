@@ -61,6 +61,7 @@ def verify(root: Path, journal: Journal, capsule: HandoffCapsule, *,
                 raise Duplicate("handoff already received")
         else:
             journal.write(capsule, "received")
+        ran = None  # what the receiver's own check actually ran (dogfood plan §1)
         if not claimed:
             result = Proof("unverifiable", "relay claim is not held by receiver")
         elif config is None or capsule.check.status != "ran":
@@ -74,6 +75,8 @@ def verify(root: Path, journal: Journal, capsule: HandoffCapsule, *,
                       held=held, recovering=recovering)
                 rerun = run_checkpoint(root, capsule.repo.head, config, env=env,
                                        known_secrets=known_secrets)
+                ran = {k: rerun.get(k) for k in ("argv", "config_id", "status", "exit",
+                                                 "wall_s")}
                 result = classify(capsule.check, rerun)
             except Declined:
                 result = Proof("declined", "receiver has unfinished or unpublished work")
@@ -83,7 +86,8 @@ def verify(root: Path, journal: Journal, capsule: HandoffCapsule, *,
         restored = (not result.writable and hold.owned()
                     and restore(Git(root), journal, capsule, hold))
         state = "verified" if result.writable else result.outcome
-        journal.write(capsule, state, outcome=result.outcome, cause=result.cause)
+        journal.write(capsule, state, outcome=result.outcome, cause=result.cause,
+                      **({"check_ran": ran} if ran else {}))
         if restored:
             hold.release()  # terminal journal is durable before publishing is unblocked
         return result

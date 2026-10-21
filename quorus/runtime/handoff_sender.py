@@ -8,6 +8,8 @@ and no environment override.
 from __future__ import annotations
 
 import asyncio
+import json
+import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 
@@ -73,39 +75,77 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree,
     if worktree is None:
         return "No isolated handoff workspace; owner needs to reassign."
     room, actor = envelope.get("room") or "", daemon.config.participant_name
+    # Durable attempt events (dogfood plan §1): written before the checkpoint runs, so
+    # an attempt that never reaches a capsule is still counted. Causes are fixed
+    # words, never exception text.
+    attempt_id, stage = uuid.uuid4().hex, "attempt"
+
+    def event(kind: str, **fields) -> None:
+        store.event({"event": kind, "attempt_id": attempt_id, "agent": actor, "room": room,
+                     "at": datetime.now(timezone.utc).isoformat(), **fields})
+
+    def failed(cause: str, answer: str) -> str:
+        event("attempt_failed", cause=cause)
+        return answer
+
+    try:
+        store = runtime.journal(daemon, room, worktree)
+        event("attempt", reason=reason)
+    except Exception:
+        daemon._alert_owner(room, "⚠ handoff did not complete; work kept unpublished")
+        return "Handoff could not complete; owner needed."
     previous = failover.continuation(envelope) or {}
     original = previous.get("root") or envelope.get("message_id") or envelope.get("id")
-    failed = list(dict.fromkeys([*previous.get("failed_agents", []), actor]))
+    failed_agents = list(dict.fromkeys([*previous.get("failed_agents", []), actor]))
     if (not original or previous.get("handoffs", 0) >= 2
             or actor in previous.get("failed_agents", [])):
         daemon._alert_owner(room, "⚠ stuck: handoff limit reached; needs you")
-        return "Handoff limit reached; owner needed."
+        return failed("hop_limit", "Handoff limit reached; owner needed.")
     task_id = (mission or {}).get("task_id") or previous.get("task_id")
     try:
+        stage = "claim"
         if not await owns_claim(relay, room=room, participant=actor, task_id=task_id):
-            return "No owned claim; owner needs to reassign."
+            return failed("no_claim", "No owned claim; owner needs to reassign.")
         task = " ".join(str((mission or {}).get("summary") or previous.get("task")
                             or envelope.get("content") or "Continue task").split())[:120]
+        stage = "target"
         target = failover.choose_candidate(
             await relay.fetch_presence(), await relay.fetch_members(room=room), actor=actor,
-            failed=failed, task=task, detect=detect, capabilities=capabilities, score=score)
+            failed=failed_agents, task=task, detect=detect, capabilities=capabilities,
+            score=score)
         if not target:
-            return "No available handoff receiver; owner needed."
+            return failed("no_target", "No available handoff receiver; owner needed.")
         data = {"original_message_id": original, "task_id": task_id, "task": task,
                 "reason": reason, "branch": worktree.branch, "last_commit": "",
-                "failed_agents": failed, "handoffs": previous.get("handoffs", 0) + 1}
+                "failed_agents": failed_agents, "handoffs": previous.get("handoffs", 0) + 1}
+        stage = "checkpoint"
         capsule = await asyncio.to_thread(snapshot, daemon, room, worktree,
                                            {**data, "vendor": detect(actor), "spent": spent},
                                            bindings)
+        check = capsule.check
+        event("capsule_built", target=target, capsule_id=capsule.id,
+              fingerprint=fingerprint(capsule),
+              capsule_bytes=len(capsule.model_dump_json().encode()),
+              seen_at=capsule.limit.seen_at, limit_kind=capsule.limit.kind,
+              check={"argv": list(getattr(check, "argv", None) or []),
+                     "config_id": getattr(check, "config_id", None),
+                     "status": check.status, "exit": getattr(check, "exit", None),
+                     "wall_s": getattr(check, "wall_s", None)})
         data.update(capsule=capsule.model_dump(), last_commit=capsule.repo.head[:12])
-        store = runtime.journal(daemon, room, worktree)
         with store.locked():
             if store.read(capsule) is not None:
-                return None
+                return failed("duplicate", None)
+        stage = "send"
         await _send(daemon, relay, room, store, capsule, data, target, [])
+        event("sent", capsule_id=capsule.id,
+              envelope_bytes=len(json.dumps(data, sort_keys=True).encode()))
         return "sent"
     except Exception:
         # State/transfer/post failures can be ambiguous; the durable fence survives.
+        try:
+            event("attempt_failed", cause=f"{stage}_failed")
+        except Exception:
+            pass  # the owner alert below still goes out
         daemon._alert_owner(room, "⚠ handoff did not complete; work kept unpublished")
         return "Handoff could not complete; owner needed."
 
