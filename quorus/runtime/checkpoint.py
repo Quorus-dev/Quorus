@@ -11,6 +11,7 @@ from pathlib import Path
 from quorus.observability.redaction import redact_secrets
 from quorus.runtime import commit_evidence as evidence
 from quorus.runtime.check_config import CheckConfig
+from quorus.runtime.checkpoint_output import capture
 
 
 def _git(root: Path, *args: str) -> bytes:
@@ -40,7 +41,7 @@ def run_checkpoint(root: Path, head: str, config: CheckConfig | None, *,
     result = {"status": "none", "head": head}
     if config is None:
         return result
-    result.update(config.record(), config_id=config.config_id, exit=None, cut=False,
+    result.update(config.record(), config_id=config.config_id, exit=None, truncated=False,
                   ran_at=datetime.now(timezone.utc).isoformat(), tail="")
     if not evidence.FULL_SHA_RE.fullmatch(head):
         return {**result, "status": "error"}
@@ -53,21 +54,13 @@ def run_checkpoint(root: Path, head: str, config: CheckConfig | None, *,
         cwd = (root / config.cwd).resolve()
         if not cwd.is_relative_to(root.resolve()) or not cwd.is_dir():
             return {**result, "status": "error"}
-        out = b""
-        try:
-            code, out, cut = evidence.collect(list(config.argv), cwd, config.max_output_bytes,
-                                               config.timeout_s, env=env, stderr=subprocess.STDOUT)
-            status = ("cut" if cut else "passing" if code == 0
-                      else "ran" if code and code > 0 else "error")
-            result.update(exit=code if status in ("ran", "passing") else None, cut=cut)
-        except subprocess.TimeoutExpired:
-            status = "timed_out"
-        except OSError:
-            status = "error"
-        # Redact BEFORE truncating: a partial credential must not evade the mask.
-        # A cap can bisect an unknown credential. Never publish a cut fragment.
-        redacted = "" if result["cut"] else redact_secrets(
-            out.decode("utf-8", "replace"), known_secrets)
+        output = capture(list(config.argv), cwd, config.max_output_bytes, config.timeout_s, env)
+        status = output.status
+        if status == "completed":
+            status = "passing" if output.code == 0 else "ran"
+        result.update(exit=output.code, truncated=output.truncated)
+        # Capture removed any bisected first line. Redact before the receipt cap.
+        redacted = redact_secrets(output.output.decode("utf-8", "replace"), known_secrets)
         tail = "\n".join(redacted.splitlines()[-40:])
         tail = tail.encode()[-1500:].decode("utf-8", "ignore")
         result.update(tail=tail, tail_sha256=hashlib.sha256(tail.encode()).hexdigest())

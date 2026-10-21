@@ -41,7 +41,6 @@ def test_actual_failure_records_stderr_and_redacts_before_tail(repo):
 @pytest.mark.parametrize("source,status", [
     ("print('ok')", "passing"),
     ("import time; time.sleep(2)", "timed_out"),
-    ("print('x'*20000)", "cut"),
     ("import os,signal; os.kill(os.getpid(),signal.SIGTERM)", "error"),
 ])
 def test_only_completed_failure_qualifies(repo, source, status):
@@ -78,9 +77,25 @@ def test_cwd_symlink_cannot_escape_repo(repo, tmp_path):
     assert run_checkpoint(root, head, config, env={})["status"] == "error"
 
 
-def test_cut_output_cannot_publish_partial_credentials(repo):
+def test_truncated_output_cannot_publish_partial_credentials(repo):
     result = run(repo, "print('prefix-' + 'x'*20000)", max_output_bytes=1024)
-    assert result["status"] == "cut" and result["tail"] == ""
+    assert result["status"] == "passing" and result["tail"] == ""
+    assert result["truncated"] is True
+
+
+def test_large_failing_output_keeps_failure_at_end_and_actual_exit(repo):
+    record = run(repo, "import sys; print('noise\\n'*10000,flush=True); "
+                 "print('FAILED test_example',file=sys.stderr); sys.exit(7)", max_output_bytes=1024)
+    assert record["status"] == "ran" and record["exit"] == 7
+    assert record["truncated"] and record["tail"].endswith("FAILED test_example")
+
+
+def test_continuous_output_timeout_keeps_bounded_partial_tail(repo):
+    record = run(repo, "import os\nwhile True: os.write(1,b'whole line\\n'*100)",
+                 timeout_s=.2, max_output_bytes=1024)
+    assert record["status"] == "timed_out" and record["exit"] is None
+    assert record["truncated"] and len(record["tail"].encode()) <= 1024
+    assert set(record["tail"].splitlines()) == {"whole line"}
 
 
 def test_timeout_kills_descendants(repo):
