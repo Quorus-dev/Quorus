@@ -7,7 +7,7 @@ def test_readme_states_tested_auto_wake_scope():
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
     assert "Auto-wake is tested with **Claude Code, Codex and opencode**" in readme
     # Google ended Gemini CLI for individual accounts (June 2026): a note, not a tested wake.
-    assert "Gemini CLI now needs a Standard or Enterprise license or a paid API key" in readme
+    assert "Gemini CLI wakes with a Google AI Studio API key" in readme
     # Clients without a validated wake are named as MCP-only, never implied to wake.
     assert "Cursor, Windsurf and Cline connect through MCP only" in readme
     assert "Zero config." not in readme

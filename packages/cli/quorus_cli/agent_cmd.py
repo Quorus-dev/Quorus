@@ -619,13 +619,13 @@ def _readiness_warnings(harness: str, model: str | None) -> list[str]:
     if harness == "codex" and not _codex_logged_in():
         out.append("Codex isn't signed in, so every wake would fail. Run `codex login` first")
     if harness == "gemini" and not _gemini_has_key():
-        out.append("Gemini CLI needs a Standard or Enterprise license or a paid API key: "
-                   "Google no longer lets it sign in with a personal Google account. Get a "
-                   "key at https://aistudio.google.com/apikey and put GEMINI_API_KEY=<key> "
+        out.append("Gemini CLI needs an API key: Quorus runs it in its own Gemini home and "
+                   "doesn't use your Google sign-in. Get a key at "
+                   "https://aistudio.google.com/apikey and put GEMINI_API_KEY=<key> "
                    "in ~/.gemini/.env")
     if harness == "gemini" and not model:
-        out.append("Gemini's free tier allows only about 20 requests a day on its default "
-                   "model, and one agent turn can use a dozen. For an always-on agent, add "
+        out.append("Free Gemini API keys have a low daily request limit, and one agent "
+                   "turn can use a dozen requests. For an always-on agent, add "
                    "`--model gemini-3.5-flash-lite`")
     if harness == "opencode":
         version = _opencode_version()
