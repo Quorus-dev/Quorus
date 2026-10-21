@@ -134,11 +134,14 @@ def _window_reading(raw: object, window: str, now: float) -> LimitReading | None
                         float(reset) if reset is not None else None, round(used * 100, 1))
 
 
-def read_claude_usage(stdout: str, now: float) -> dict[str, LimitReading]:
+def read_claude_usage(stdout: str, now: float) -> dict[str, LimitReading] | None:
     """The 5h / 7d usage in the last ``rate_limit_event`` of a Claude stream.
 
-    Missing windows, malformed fields and lines that aren't JSON are skipped,
-    never raised. Only the numbers are kept: no other field of the event."""
+    None means the stream had no such event: keep what we knew. A dict, even an
+    empty one, is the vendor's latest snapshot and replaces it whole, so a
+    window it no longer reports (or reports malformed) is gone, not carried
+    over. Lines that aren't JSON are skipped, never raised. Only the numbers
+    are kept: no other field of the event."""
     for line in reversed((stdout or "").splitlines()):
         if '"rate_limit_event"' not in line:
             continue
@@ -158,7 +161,7 @@ def read_claude_usage(stdout: str, now: float) -> dict[str, LimitReading]:
             if reading is not None:
                 out[window] = reading
         return out
-    return {}
+    return None
 
 
 def live_usage(usage: dict[str, LimitReading], now: float) -> dict[str, LimitReading]:

@@ -1825,12 +1825,15 @@ class HeadlessAdapter:
         self.limit = reflexd_limits.merge(self.limit, reading, now)
 
     def _note_usage(self, binary: str, stdout: bytes | None) -> None:
-        """Claude's rate_limit_event: each window it reports replaces ours."""
+        """Claude's latest rate_limit_event replaces our usage snapshot whole
+        (Codex on 20cee4b4: merging kept windows the vendor no longer reported).
+        A turn with no event leaves it as it was."""
         if Path(binary).name != CLAUDE_BIN or not stdout or b"rate_limit_event" not in stdout:
             return
         usage = reflexd_limits.read_claude_usage(
             stdout.decode("utf-8", errors="replace"), time.time())
-        self.usage = {**self.usage, **usage}
+        if usage is not None:
+            self.usage = usage
 
     def current_usage(self, now: float | None = None) -> dict[str, Any]:
         """Reported usage still worth showing; older or reset windows dropped."""

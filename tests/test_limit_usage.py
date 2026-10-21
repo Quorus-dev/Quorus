@@ -69,11 +69,18 @@ def test_the_last_event_in_the_stream_wins() -> None:
 @pytest.mark.parametrize("stream", [
     "", "no json here", '{"type":"result","result":"ok"}',
     '{"type":"rate_limit_event", broken',
-    _event(windows="five_hour"), _event(windows=[]),
-    json.dumps({"type": "rate_limit_event", "rate_limit_info": "rejected"}),
     json.dumps({"type": "assistant", "text": "the rate_limit_event said 99%"}),
 ])
-def test_no_usable_event_means_no_usage(stream: str) -> None:
+def test_no_event_is_none_so_the_snapshot_is_kept(stream: str) -> None:
+    assert limits.read_claude_usage(stream, NOW) is None
+
+
+@pytest.mark.parametrize("stream", [
+    _event(windows="five_hour"), _event(windows=[]), _event(windows={}),
+    _event({"five_hour": {"utilization": 7}, "seven_day": "x"}),
+    json.dumps({"type": "rate_limit_event", "rate_limit_info": "rejected"}),
+])
+def test_an_event_with_no_valid_window_is_an_empty_snapshot(stream: str) -> None:
     assert limits.read_claude_usage(stream, NOW) == {}
 
 
@@ -156,3 +163,31 @@ def test_presence_sends_usage_the_relay_accepts() -> None:
     cleaned = limit_status.clean(extra["pause"], extra["readings"], time.time())
     assert [(r["window"], r["used_pct"]) for r in cleaned["readings"]] == [
         ("limit", None), ("5h", 42.0), ("7d", 75.0)]
+
+
+def test_sequential_turns_replace_the_snapshot_whole(monkeypatch) -> None:
+    """Codex on 20cee4b4: a later 5h-only event kept the old 7d reading, and a
+    malformed event kept both. The latest event is the whole truth; a turn
+    with no event changes nothing."""
+    now = int(time.time())
+    both = _event({"five_hour": {"utilization": 0.4, "resetsAt": now + 3600},
+                   "seven_day": {"utilization": 0.7, "resetsAt": now + 86400}})
+    five_only = _event({"five_hour": {"utilization": 0.5, "resetsAt": now + 3600}})
+    malformed = _event({"five_hour": {"utilization": "high"}})
+
+    async def fake_exec(*_a: Any, **_k: Any) -> _Proc:
+        return _Proc(turns.pop(0))
+
+    monkeypatch.setattr(reflexd.shutil, "which", lambda b: f"/bin/{b}")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = reflexd.HeadlessAdapter(timeout_s=5)
+    turns = [both, five_only, '{"type":"result","result":"ok"}', malformed, both]
+    seen = []
+    for _ in range(5):
+        asyncio.run(adapter._run_subprocess(["claude", "-p", "x"], parser=str))
+        seen.append({w: r.used_pct for w, r in adapter.usage.items()})
+    assert seen == [{"5h": 40.0, "7d": 70.0},
+                    {"5h": 50.0},  # 7d no longer reported: gone, not carried over
+                    {"5h": 50.0},  # no event this turn: unchanged
+                    {},  # an event with nothing valid: nothing known
+                    {"5h": 40.0, "7d": 70.0}]
