@@ -1,0 +1,16 @@
+{
+ "cutoff_utc": "2026-10-21T05:45:03+00:00",
+ "end": "b945bb44caec0c84311be0d55a26593bc6e2f8c0",
+ "extractor_sha256": "b00426cadcdc55373ed516c2e193b63cf2ecc34f78346a7f28b5a68078861f0e",
+ "git_version": "git version 2.50.1 (Apple Git-155)",
+ "inputs": {
+  "notes-export.jsonl": "debf9c17f94d8c9d3c24a08e586187bdf84beafedcb3ad6ba4d2a598b5c998a5",
+  "review-events.jsonl": "c599f388442f5b6dc899b40fa24c1b7b13fed735cf6f2d1de08779b29884291f"
+ },
+ "ledger_sha256": "7511e3122da554454e821d79a12f90b6fd79d1bc5e09d765097c9fb9253ac51f",
+ "notes_mapped": true,
+ "public_scrub": true,
+ "review_parser_sha256": "b4c1a7e9210801feb4e58fdd16e182d3ab218ca9979b8c67d3f6188fdfb3f465",
+ "review_window": "2026-10-20T12:40:18Z..2026-10-20T16:52:00Z",
+ "start": "cc65e0863c0f9df2488b41153b6aded483e59f2c"
+}
