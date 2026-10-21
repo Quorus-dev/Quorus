@@ -119,6 +119,21 @@ class Journal:
         self._save(data)
         return entry
 
+    def authorize_retry(self, capsule: HandoffCapsule, wake_id: str, head: str) -> None:
+        """A continuing record may authorize each explicit owner retry only once."""
+        data = self._load()
+        entry = self.read(capsule)
+        if entry is None or entry["state"] != "continuing":
+            raise StateError("no interrupted continuation")
+        retries = entry.get("retry_wakes", [])
+        if not isinstance(retries, list) or len(retries) >= 16:
+            raise StateError("invalid/full retry ledger")
+        if wake_id in retries:
+            raise Duplicate("owner retry already launched")
+        data[self.key(capsule)] = {**entry, "retry_wakes": [*retries, wake_id],
+                                   "retry_head": head}
+        self._save(data)
+
     def record_receipt(self, capsule: HandoffCapsule, text: str, finished: str) -> None:
         """Attach observed evidence without reopening a terminal authority state."""
         data = self._load()

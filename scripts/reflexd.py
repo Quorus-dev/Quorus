@@ -87,6 +87,7 @@ from quorus.runtime import commit_evidence as _commit_evidence  # noqa: E402  au
 from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import handoff_completion as _handoff_completion  # noqa: E402
 from quorus.runtime import handoff_delivery as _handoff_delivery  # noqa: E402
+from quorus.runtime import handoff_recovery as _handoff_recovery  # noqa: E402
 from quorus.runtime import handoff_runtime as _handoff_runtime  # noqa: E402
 from quorus.runtime import handoff_sender as _handoff_sender  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
@@ -3531,7 +3532,20 @@ class Reflexd:
                 if not decision.writable:
                     room_mode = "readonly"
                 prior_session, _persist_session = None, None
-            elif worktree is not None and handoff_turn is None and await asyncio.to_thread(
+            elif handoff_turn is None:
+                recovery = await _handoff_recovery.recover(
+                    self, relay, envelope, worktree, mode=room_mode, bindings=ROOM_BINDINGS_PATH,
+                    owner_retry=(trusted and envelope.get("from_name")
+                                 == agent_owner(self.config.participant_name)))
+                if recovery is not None:
+                    if recovery.drop:
+                        return
+                    handoff_turn = recovery.turn
+                    prompt = recovery.context + prompt
+                    if not recovery.writable:
+                        room_mode = "readonly"
+                    prior_session, _persist_session = None, None
+            if worktree is not None and handoff_turn is None and await asyncio.to_thread(
                     _handoff_runtime.blocked, self, room, worktree):
                 room_mode = "readonly"
                 prior_session, _persist_session = None, None
