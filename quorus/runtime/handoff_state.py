@@ -38,7 +38,8 @@ class Journal:
 
     def __init__(self, path: Path, room: str, repo: Path, *, hold_dir: Path | None = None):
         self.path = path
-        self.scope = f"{room}:{repo.resolve()}"
+        self.repo = repo.resolve()
+        self.scope = f"{room}:{self.repo}"
         self.hold_dir = hold_dir
 
     def key(self, capsule: HandoffCapsule) -> str:
@@ -86,9 +87,10 @@ class Journal:
             raise StateError("capsule id reused with different data")
         return dict(entry) if entry is not None else None
 
-    def pending_sends(self) -> list[dict]:
+    def pending_sends(self, *, all_rooms: bool = False) -> list[dict]:
         return [dict(e) for e in self._load().values()
-                if e.get("scope") == self.scope and e["state"] == "sent"]
+                if e["state"] == "sent" and (e.get("scope") == self.scope
+                    or (all_rooms and str(e.get("scope", "")).endswith(f":{self.repo}")))]
 
     def _save(self, data: dict) -> None:
         write_private_json(self.path, data)
@@ -116,6 +118,15 @@ class Journal:
         data[self.key(capsule)] = entry
         self._save(data)
         return entry
+
+    def record_receipt(self, capsule: HandoffCapsule, text: str, finished: str) -> None:
+        """Attach observed evidence without reopening a terminal authority state."""
+        data = self._load()
+        entry = self.read(capsule)
+        if entry is None:
+            raise StateError("receipt without registered delivery")
+        data[self.key(capsule)] = {**entry, "receipt": text, "check_finished": finished}
+        self._save(data)
 
     def finish(self, capsule: HandoffCapsule, *, completed_head: str | None = None) -> None:
         """Only a turn already recorded as continuing may finish."""

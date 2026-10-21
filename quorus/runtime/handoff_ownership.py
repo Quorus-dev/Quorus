@@ -37,12 +37,14 @@ def fenced(journal: Journal, git: Git, integration: str) -> bool:
     """
     with journal.locked():
         blocked = False
-        for entry in journal.pending_sends():
+        for entry in journal.pending_sends(all_rooms=True):
             capsule = HandoffCapsule.model_validate(entry["snapshot"])
             try:
                 git.run("merge-base", "--is-ancestor", capsule.repo.head, integration)
             except StateError:
                 blocked = True
             else:
-                journal.write(capsule, "done")
+                room = entry["scope"][:-len(f":{journal.repo}")]
+                scoped = Journal(journal.path, room, journal.repo, hold_dir=journal.hold_dir)
+                scoped.write(capsule, "done")
         return blocked

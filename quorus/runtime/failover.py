@@ -40,6 +40,12 @@ def continuation(envelope: dict) -> dict | None:
             or payload["to"] in data["failed_agents"]
             or sv.ref_message_id != data["original_message_id"]):
         return None
+    capsule = data.get("capsule")
+    if capsule and (capsule["root"] != sv.ref_message_id
+                    or capsule["hop"] != data["handoffs"] or capsule["by"] != sv.actor
+                    or capsule["repo"]["branch"] != data["branch"]
+                    or not capsule["repo"]["head"].startswith(data["last_commit"])):
+        return None
     return {**payload["failover"], "to": payload["to"], "actor": sv.actor,
             "root": sv.ref_message_id}
 
@@ -102,10 +108,15 @@ def _last_commit(worktree) -> str:
 
 
 async def attempt(daemon, relay, envelope, *, reason, mission, worktree, mode,
-                  detect, capabilities, score) -> str | None:
+                  detect, capabilities, score, bindings=None, spent=None) -> str | None:
     """Transfer a claim, then send one typed wake. Return a fallback diagnosis suffix."""
     if mode in ("manual", "readonly"):  # read-only rooms post the diagnosis only (spec)
         return None
+    from quorus.runtime import handoff_sender
+    if handoff_sender.ENABLED:
+        return await handoff_sender.attempt(
+            daemon, relay, envelope, reason=reason, mission=mission, worktree=worktree,
+            detect=detect, capabilities=capabilities, score=score, bindings=bindings, spent=spent)
     actor = daemon.config.participant_name
     room = envelope.get("room") or ""
     previous = continuation(envelope) or {}

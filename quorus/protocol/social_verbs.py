@@ -30,6 +30,8 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
+from quorus.protocol.handoff_capsule import HandoffCapsule
+
 VERBS: tuple[str, ...] = (
     "claim", "release", "disagree", "defer", "queue", "vote", "interrupt",
 )
@@ -84,6 +86,17 @@ class VendorHandoff(BaseModel):
         min_length=1, max_length=2,
     )
     handoffs: int = Field(ge=1, le=2)
+    capsule: HandoffCapsule | None = None
+
+
+class HandoffDecline(BaseModel):
+    """A busy receiver returns the exact delivery; retries do not add a hop."""
+
+    model_config = {"extra": "forbid", "strict": True}
+    capsule_id: str = Field(min_length=1, max_length=210)
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    task_id: str = Field(min_length=1, max_length=200)
+    reason: Literal["busy"] = "busy"
 
 
 class DeferPayload(BaseModel):
@@ -95,6 +108,7 @@ class DeferPayload(BaseModel):
     ref_message_id: str | None = Field(default=None, max_length=200)
     ttl_seconds: int = Field(default=300, ge=10, le=3600)
     failover: VendorHandoff | None = None
+    decline: HandoffDecline | None = None
 
 
 class QueuePayload(BaseModel):

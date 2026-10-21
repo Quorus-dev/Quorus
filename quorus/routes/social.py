@@ -291,7 +291,8 @@ async def post_social_verb(
     envelope = sv.to_envelope()
     broadcast_id = _uuid.uuid4()
     broadcast_id_str = str(broadcast_id)
-    durable_failover = verb == "defer" and payload_dict.get("failover") is not None
+    durable_failover = verb == "defer" and (payload_dict.get("failover") is not None
+                                           or payload_dict.get("decline") is not None)
     if durable_failover:
         # One durable fanout supplies canonical reply ids and restart delivery.
         # Avoid the separate transient social push, which would wake twice.

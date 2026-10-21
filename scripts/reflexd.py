@@ -86,6 +86,9 @@ from quorus.roles import WRITER_ROLES  # noqa: E402
 from quorus.runtime import commit_evidence as _commit_evidence  # noqa: E402  audit F2
 from quorus.runtime import failover as _failover  # noqa: E402
 from quorus.runtime import handoff_completion as _handoff_completion  # noqa: E402
+from quorus.runtime import handoff_delivery as _handoff_delivery  # noqa: E402
+from quorus.runtime import handoff_runtime as _handoff_runtime  # noqa: E402
+from quorus.runtime import handoff_sender as _handoff_sender  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime import owner_pin as _owner_pin  # noqa: E402  invitee agents
 from quorus.runtime import review_share as _review_share  # noqa: E402
@@ -2443,7 +2446,7 @@ class RelayClient:
     async def post_social_defer(
         self, *, room_id: str, actor: str, target: str,
         ref_message_id: str | None = None, ttl_seconds: int = 300,
-        failover: dict | None = None,
+        failover: dict | None = None, decline: dict | None = None,
     ) -> dict[str, Any]:
         """Post a Stream-A `defer` social verb. Used by reflexd on bid-loss
         to broadcast "I deferred to @<winner>" through the social
@@ -2451,6 +2454,8 @@ class RelayClient:
         """
         headers = await self._headers()
         payload: dict[str, Any] = {"to": target, "ttl_seconds": ttl_seconds}
+        if decline is not None:
+            payload["decline"] = decline
         if failover is not None:
             payload["failover"] = failover
         if ref_message_id:
@@ -3345,6 +3350,14 @@ class Reflexd:
             logger.info("spawn disabled (test mode); skipping harness call")
             return
         if await self._limited(relay, envelope):
+            incoming = _failover.continuation(envelope)
+            if _handoff_sender.ENABLED and incoming and incoming.get("capsule"):
+                ws = workspace_for(room)
+                wt = (await asyncio.to_thread(reflexd_wake.existing_worktree, ws,
+                                              self.config.participant_name) if ws else None)
+                if await self._trusted_wake(
+                        relay, envelope, await relay.fetch_recent(room=room, limit=100)):
+                    await _handoff_delivery.busy(self, relay, envelope, incoming, wt)
             return
         wake_id = envelope_canonical_id(envelope)
         if wake_id and wake_id in self._answered.get(room, {}):
@@ -3381,7 +3394,10 @@ class Reflexd:
                 worktree = await asyncio.to_thread(
                     reflexd_wake.agent_worktree, ws, self.config.participant_name,
                 )
-                if worktree is not None:
+                if worktree is not None and not (
+                        (_failover.continuation(envelope) or {}).get("capsule")
+                        or await asyncio.to_thread(
+                            _handoff_runtime.skip_sync, self, room, worktree)):
                     await asyncio.to_thread(reflexd_wake.sync_worktree, worktree)
             except (OSError, subprocess.SubprocessError) as exc:
                 logger.warning("worktree setup failed, using %s: %s", ws, exc)
@@ -3436,6 +3452,10 @@ class Reflexd:
         # may never fire Stop, so those still get a headless wake.
         live = live_session_for_workspace(ws)
         if live is not None and is_busy(self.config.participant_name):
+            incoming = _failover.continuation(envelope)
+            if (_handoff_sender.ENABLED and trusted and incoming and incoming.get("capsule")):
+                await _handoff_delivery.busy(self, relay, envelope, incoming, worktree)
+                return
             logger.info(
                 "deferring to live session pid=%s cwd=%s (Stop hook delivers)",
                 live.get("pid"), live.get("cwd"),
@@ -3499,6 +3519,23 @@ class Reflexd:
                             envelope.get("from_name") or "")
                 room_mode = "readonly"
                 prior_session, _persist_session = None, None
+            incoming = _failover.continuation(envelope)
+            if incoming and incoming.get("capsule"):
+                decision = await _handoff_delivery.receive(
+                    self, relay, envelope, incoming, worktree, trusted=trusted,
+                    mode=room_mode, bindings=ROOM_BINDINGS_PATH)
+                if decision.drop:
+                    return
+                prompt = decision.context + prompt
+                handoff_turn = decision.turn
+                if not decision.writable:
+                    room_mode = "readonly"
+                prior_session, _persist_session = None, None
+            elif worktree is not None and handoff_turn is None and await asyncio.to_thread(
+                    _handoff_runtime.blocked, self, room, worktree):
+                room_mode = "readonly"
+                prior_session, _persist_session = None, None
+                prompt = "Ownership was transferred; this tree is fenced. Report only.\n" + prompt
             if room_mode != "default":
                 extra_kw["mode"] = room_mode
             if (worktree is None and ws is not None
@@ -3709,7 +3746,9 @@ class Reflexd:
             outcome = await _failover.attempt(
                 self, relay, envelope, reason=vendor_failure.reason, mission=mission,
                 worktree=worktree, mode=room_mode, detect=detect_harness,
-                capabilities=capabilities_for, score=compute_bid_v2,
+                capabilities=capabilities_for, score=compute_bid_v2, bindings=ROOM_BINDINGS_PATH,
+                spent={"turns": 1, "attempts": 1,
+                       "wall_s": (datetime.now(timezone.utc) - wake_started).total_seconds()},
             )
             if outcome == "sent":
                 return
@@ -4696,7 +4735,33 @@ class Reflexd:
             return
         if event_name != "message":
             return
+        if _handoff_sender.decline(data):
+            ws = workspace_for(data.get("room") or "")
+            wt = (await asyncio.to_thread(reflexd_wake.existing_worktree, ws,
+                                          self.config.participant_name) if ws else None)
+            if _handoff_sender.ENABLED:
+                await _handoff_sender.retry(
+                    self, relay, data, wt, detect=detect_harness,
+                    capabilities=capabilities_for, score=compute_bid_v2)
+            self._mark_handled(canonical)
+            return
         handoff = _failover.continuation(data)
+        if handoff and handoff.get("capsule") and handoff["to"] == self.config.participant_name:
+            if _handoff_sender.ENABLED and (self._wake_lock.locked()
+                    or self.adapter.limited_until > time.time()):
+                ws = workspace_for(data.get("room") or "")
+                wt = (await asyncio.to_thread(reflexd_wake.existing_worktree, ws,
+                                              self.config.participant_name) if ws else None)
+                try:
+                    trusted = await self._trusted_wake(
+                        relay, data, await relay.fetch_recent(room=data["room"], limit=100))
+                    if trusted:
+                        await _handoff_delivery.busy(self, relay, data, handoff, wt)
+                except Exception:
+                    self._alert_owner(data.get("room") or "",
+                                      "⚠ handoff decline interrupted; owner needed")
+                self._mark_handled(canonical)
+                return
         if data.get("message_type") not in (None, "chat", "request", "question") and not handoff:
             self._mark_handled(canonical)
         message_type = data.get("message_type") or "chat"

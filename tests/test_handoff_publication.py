@@ -45,8 +45,9 @@ def test_retained_hold_survives_clean_ordinary_turn_and_restart_sweep(monkeypatc
     asyncio.run(restarted._publish_sweep(_Relay()))
     assert _git(repo, "rev-parse", "main") == before
     assert hold.path.read_bytes() == marker
-    # Keep both tasks' work for the owner, rather than silently reverting either.
-    assert _git(wt.path, "rev-list", "--count", "main..HEAD") == "2"
+    # Wiring now fences unrelated turns read-only; its attempted edit is quarantined.
+    assert _git(wt.path, "rev-list", "--count", "main..HEAD") == "1"
+    assert _git(wt.path, "for-each-ref", "--format=%(refname)", "refs/quorus/discarded/")
 
 
 def test_no_op_park_does_not_drop_a_handoff_hold(monkeypatch, tmp_path):
