@@ -230,7 +230,8 @@ def test_the_report_joins_both_sides_and_keeps_rehearsals_apart(tmp_path):
         "snapshot": {"repo": {"base": base, "head": head}}}}))
     out = _report(sender, receiver)
     real, _, rehearsal = out.partition("## rehearsal")
-    assert "| a1 | weekend-handoff | reproduced | 63.5 | 2100 | 2600 | observed | 1 |" in real
+    assert ("| a1 | weekend-handoff | reproduced | reproduced | 0 | 63.5 | 2100 | 2600 "
+            "| observed | 1 |") in real
     assert "repeated commits" in real
     assert "receiver check differs from binding" in real  # codex binding says -x
     assert "failed (no_target)" in real and "totals: failed 1, reproduced 1" in real
@@ -249,3 +250,67 @@ def test_the_report_survives_odd_event_lines(tmp_path, line):
     state = _state(tmp_path, "s", {})
     (state / "runtime" / "handoffs-x-events.jsonl").write_text(line + "\n")
     _report(state)
+
+
+
+# ── Codex on 93a0cb85 ───────────────────────────────────────────────────
+
+
+def _two_receivers(tmp_path):
+    binding = {"path": str(tmp_path), "handoff": True, "check": CHECK}
+    sender = _state(tmp_path, "claude", {"weekend-handoff": binding})
+    first = _state(tmp_path, "codex", {"weekend-handoff": binding})
+    second = _state(tmp_path, "gemini", {"weekend-handoff": binding})
+    log = sender / "runtime" / "handoffs-s-events.jsonl"
+    log.write_text("".join(json.dumps(e) + "\n" for e in [
+        {"event": "attempt", "attempt_id": "a1", "room": "weekend-handoff"},
+        {"event": "capsule_built", "attempt_id": "a1", "room": "weekend-handoff",
+         "fingerprint": "f1", "check": {"argv": CHECK["argv"], "config_id": CID}},
+        {"event": "sent", "attempt_id": "a1", "room": "weekend-handoff"}]))
+    (first / "runtime" / "handoffs-r.json").write_text(json.dumps({"k": {
+        "fingerprint": "f1", "state": "declined", "scope": "weekend-handoff:/x"}}))
+    (second / "runtime" / "handoffs-r.json").write_text(json.dumps({"k": {
+        "fingerprint": "f1", "state": "verified", "outcome": "reproduced",
+        "scope": "weekend-handoff:/x", "retry_wakes": ["w1"],
+        "check_ran": {"argv": ["pytest", "-x"], "config_id": CID}}}))  # id matches, argv not
+    return sender, first, second
+
+
+def test_every_receiver_is_kept_and_order_doesnt_matter(tmp_path):
+    sender, first, second = _two_receivers(tmp_path)
+    one, two = _report(sender, first, second), _report(second, first, sender)
+    assert one == two
+    assert "| a1 | weekend-handoff | reproduced | reproduced, declined | 1 |" in one
+    assert "totals: reproduced 1" in one
+
+
+def test_a_receiver_argv_that_differs_is_flagged_even_with_a_matching_id(tmp_path):
+    sender, first, second = _two_receivers(tmp_path)
+    assert "receiver check differs from binding" in _report(sender, first, second)
+
+
+def test_a_short_write_still_lands_the_whole_event(tmp_path, monkeypatch):
+    import os
+
+    journal = Journal(tmp_path / "rt" / "handoffs-x.json", "room", tmp_path)
+    real_write, synced = os.write, []
+
+    def one_byte(fd, data):
+        return real_write(fd, bytes(data[:1]))
+
+    real_fsync = os.fsync
+
+    def fsync(fd):
+        import stat
+
+        synced.append(stat.S_ISDIR(os.fstat(fd).st_mode))
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "write", one_byte)
+    monkeypatch.setattr(os, "fsync", fsync)
+    journal.event({"event": "attempt", "attempt_id": "a1"})
+    assert synced == [False, True]  # the file, then (new file) its directory
+    journal.event({"event": "attempt", "attempt_id": "a2"})
+    assert synced == [False, True, False]
+    lines = journal.events_path.read_text().splitlines()
+    assert [json.loads(x)["attempt_id"] for x in lines] == ["a1", "a2"]

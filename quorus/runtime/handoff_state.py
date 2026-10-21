@@ -141,8 +141,9 @@ class Journal:
     def event(self, record: dict) -> None:
         """Append one event and fsync it before returning (dogfood plan §1). Events
         are what the read-only report counts, including attempts that never got a
-        capsule. No lock: one O_APPEND write is atomic, and callers may already hold
-        the journal lock. A full file fails closed, like a full journal."""
+        capsule. No lock (callers may already hold the journal lock): the file is
+        O_APPEND, a short write is continued until the whole line is down, and a
+        new file's directory entry is fsynced too. A full file fails closed."""
         path = self.events_path
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -151,13 +152,27 @@ class Journal:
         except FileNotFoundError:
             pass
         line = (json.dumps({**record, "scope": self.scope}, sort_keys=True) + "\n").encode()
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-                     0o600)
+        flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
         try:
-            os.write(fd, line)
+            fd, created = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600), True
+        except FileExistsError:
+            fd, created = os.open(path, flags), False
+        try:
+            view = memoryview(line)
+            while view:  # a short write is not a written event (Codex on 93a0cb85)
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise StateError("handoff event not written")
+                view = view[written:]
             os.fsync(fd)
         finally:
             os.close(fd)
+        if created:  # a new file's name must be durable too, before the checkpoint
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
 
     def record_receipt(self, capsule: HandoffCapsule, text: str, finished: str) -> None:
         """Attach observed evidence without reopening a terminal authority state."""

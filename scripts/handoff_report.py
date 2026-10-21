@@ -35,15 +35,20 @@ def _json(path: Path):
         return None
 
 
-def load(state_dirs: list[Path]) -> tuple[list[dict], dict[str, dict], dict]:
-    """(sender events, receiver entries by fingerprint, bindings by state dir)."""
+def load(state_dirs: list[Path]) -> tuple[list[dict], dict[str, list[dict]], dict]:
+    """(sender events, every receiver entry by fingerprint, bindings by state dir).
+
+    A capsule declined by one receiver and taken by the next has an entry on each
+    side: all of them are kept, never one overwriting another (Codex on 93a0cb85),
+    and the result below doesn't depend on the order of --state."""
     events, entries, bindings = [], {}, {}
     for state in state_dirs:
         bindings[state] = _json(state / BINDINGS_FILE) or {}
         for journal in sorted((state / "runtime").glob("handoffs-*.json")):
             for entry in (_json(journal) or {}).values():
                 if isinstance(entry, dict) and entry.get("state") not in (None, "sent"):
-                    entries[entry.get("fingerprint", "")] = {**entry, "_state_dir": state}
+                    entries.setdefault(entry.get("fingerprint", ""), []).append(
+                        {**entry, "_state_dir": state})
         for log in sorted((state / "runtime").glob("handoffs-*-events.jsonl")):
             for line in log.read_text().splitlines():
                 try:
@@ -61,13 +66,28 @@ def _seconds(start: str | None, end: str | None) -> float | None:
         return None
 
 
-def _config_id(bindings: dict, room: str) -> str | None:
+# Best outcome first: a handoff that a later receiver reproduced counts as reproduced.
+RANK = ("reproduced", "weak", "already_passing", "stale", "unverifiable", "declined")
+
+
+def _rank(entry: dict) -> tuple:
+    outcome = entry.get("outcome") or entry.get("state") or ""
+    return (RANK.index(outcome) if outcome in RANK else len(RANK), outcome,
+            str(entry.get("check_finished") or ""), str(entry["_state_dir"]))
+
+
+def _check_differs(ran: dict | None, bindings: dict, room: str) -> bool:
+    """Both the argv and the config_id that ran must equal the room's binding
+    (Codex on 93a0cb85: a matching id beside different argv went unflagged)."""
     from quorus.runtime.check_config import CheckConfig
 
     try:
-        return CheckConfig.from_record(bindings[room]["check"]).config_id
+        want = CheckConfig.from_record(bindings[room]["check"])
     except (KeyError, TypeError, ValueError, OverflowError):
-        return None
+        return True
+    ran = ran or {}
+    return ran.get("config_id") != want.config_id or list(ran.get("argv") or []) != list(
+        want.argv)
 
 
 def _patch_ids(repo: Path, rng: str) -> set[str]:
@@ -110,37 +130,40 @@ def rows(events: list[dict], entries: dict[str, dict], bindings: dict) -> list[d
         elif kind == "capsule_built":
             row.update(fingerprint=e.get("fingerprint"), capsule_bytes=e.get("capsule_bytes"),
                        seen_at=e.get("seen_at"), seen_kind=e.get("limit_kind"))
-            ran = (e.get("check") or {}).get("config_id")
-            want = _config_id(bindings.get(e["_state_dir"], {}), row["room"])
-            if ran != want:
+            if _check_differs(e.get("check"), bindings.get(e["_state_dir"], {}), row["room"]):
                 row["flags"].append("sender check differs from binding")
         elif kind == "sent":
             row.update(result="sent", envelope_bytes=e.get("envelope_bytes"))
     for row in by_attempt.values():
-        entry = entries.get(row.get("fingerprint") or "")
-        if entry is None:
+        found = sorted(entries.get(row.get("fingerprint") or "", []), key=_rank)
+        if not found:
             continue
+        entry = found[0]
         row["result"] = entry.get("outcome") or entry.get("state")
+        row["receivers"] = ", ".join(e.get("outcome") or e.get("state") or "?" for e in found)
+        row["retries"] = sum(len(e.get("retry_wakes") or []) for e in found)
         row["resume_s"] = _seconds(row.get("seen_at"), entry.get("check_finished"))
-        ran = (entry.get("check_ran") or {}).get("config_id")
-        want = _config_id(bindings.get(entry["_state_dir"], {}), row["room"])
-        if ran is not None and ran != want:
-            row["flags"].append("receiver check differs from binding")
+        for e in found:
+            if e.get("check_ran") and _check_differs(
+                    e["check_ran"], bindings.get(e["_state_dir"], {}), row["room"]):
+                row["flags"].append("receiver check differs from binding")
+                break
         row["repeats"] = repeats(entry)
         if row["repeats"]:
             row["flags"].append("repeated commits")
-    return list(by_attempt.values())
+    return sorted(by_attempt.values(), key=lambda r: (r["room"], r["attempt"]))
 
 
 def render(table: list[dict], title: str) -> str:
     lines = [f"## {title}", "",
-             "| attempt | room | result | resume s | capsule B | envelope B | seen_at kind "
-             "| repeats | flags |", "|---|---|---|---|---|---|---|---|---|"]
+             "| attempt | room | result | receivers | retries | resume s | capsule B "
+             "| envelope B | seen_at kind | repeats | flags |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in table:
         resume = r.get("resume_s")
         lines.append(" | ".join([
-            f"| {r['attempt']}", r["room"], str(r["result"]),
-            "-" if resume is None else f"{resume:.1f}",
+            f"| {r['attempt']}", r["room"], str(r["result"]), r.get("receivers", "-"),
+            str(r.get("retries", "-")), "-" if resume is None else f"{resume:.1f}",
             str(r.get("capsule_bytes", "-")), str(r.get("envelope_bytes", "-")),
             str(r.get("seen_kind", "-")), str(r.get("repeats", "-")),
             "; ".join(r["flags"]) or "-"]) + " |")
