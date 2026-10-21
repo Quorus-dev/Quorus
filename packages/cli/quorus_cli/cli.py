@@ -2598,6 +2598,7 @@ async def _ps(*, as_json: bool = False) -> None:
         console.print()
 
         from rich import box as _box
+        from rich.markup import escape as rich_escape
 
         table = Table(
             box=_box.SIMPLE_HEAD,
@@ -2611,6 +2612,9 @@ async def _ps(*, as_json: bool = False) -> None:
         table.add_column("ROOM", style="dim")
         table.add_column("LAST SEEN", style="dim", no_wrap=True)
         table.add_column("UPTIME", justify="right", style="dim", no_wrap=True)
+        # The relay's limit line (quorus/limit_display.py): vendor reset and its
+        # source, "?" on guesses, our own cooldowns never called quota.
+        table.add_column("LIMITS", style="dim")
 
         from datetime import datetime, timezone
 
@@ -2653,12 +2657,19 @@ async def _ps(*, as_json: bool = False) -> None:
             room_label = a.get("room", "")
             if room_label:
                 room_label = f"#{room_label}"
+            if online:
+                limits = str(a.get("limit_line") or "no limit data")
+                if a.get("limit_hint"):
+                    limits += f" → {a['limit_hint']}"
+            else:
+                limits = "—"
             table.add_row(
                 f"@{a['name']}",
                 status_display,
                 room_label or "—",
                 hb_str,
                 uptime,
+                rich_escape(limits),
             )
 
         console.print(table)

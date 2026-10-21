@@ -101,13 +101,19 @@ function rowState(name, presence, history, approvals, now) {
     r.line = "stuck" + (last ? " since " + clock(ts(last)) : "");
     if (last) r.detail = (last.content || "").split("\n")[0].slice(0, 160);
   } else if (p.waiting_on === "quota") {
+    // limit_line (quorus/limit_display.py): the vendor's reset with its source,
+    // or our retry marked "?", never our padded retry passed off as the reset.
     r.rank = 3;
-    r.line = "out of quota" + (p.waiting_until ? " · back about " + clock(p.waiting_until) : "");
+    r.line = p.limit_line
+      || "out of quota" + (p.waiting_until ? " · back about " + clock(p.waiting_until) : "");
   } else if (p.waiting_on === "pacing") {
     r.rank = 3;
     r.line = "waiting for its plan slot"
       + (p.waiting_until ? " · next turn in " + ago(p.waiting_until - now) : "");
-  } else { r.rank = 5; r.line = "idle"; }
+  } else if (/^paused by Quorus/.test(p.limit_line || "")) {
+    r.rank = 3; r.line = p.limit_line;  // a free-model cooldown: ours, not quota
+  } else { r.rank = 5; r.line = "idle" + (p.limit_line ? " · " + p.limit_line : ""); }
+  if (p.online && p.limit_hint) r.line += " → " + p.limit_hint;  // a suggestion only
   if (r.approvals.length || r.asks.length) r.rank = 1;
   const pub = mine.slice().reverse().find((m) => PUBLISHED.test(m.content || ""));
   if (pub) {

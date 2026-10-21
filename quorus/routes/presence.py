@@ -8,7 +8,7 @@ import time
 
 from fastapi import APIRouter, Depends, Request
 
-from quorus import limit_status
+from quorus import limit_display, limit_status
 from quorus.auth.middleware import AuthContext, require_identity, verify_auth
 from quorus.auth.name_reservations import reserve_names
 from quorus.routes.models import HeartbeatRequest
@@ -97,5 +97,22 @@ async def get_presence(
             # `activity`, so no new exposure; off by default to keep it small.
             **({"trail": presence_trail.public(e.get("trail"))} if trail else {}),
         })
+    _add_limit_lines(result, time.time())
     result.sort(key=lambda x: (not x["online"], x["name"]))
     return result
+
+
+def _add_limit_lines(result: list[dict], now: float) -> None:
+    """``limit_line`` / ``limit_hint`` from the cleaned limits, built here once so
+    every surface says the same thing (quorus.limit_display). Absent when empty."""
+    agents = []
+    for p in result:
+        limits = {k: p[k] for k in ("pause", "readings") if k in p}
+        if not limits:
+            continue
+        line = limit_display.describe(limits, now)
+        if line:
+            p["limit_line"] = line
+        agents.append({"name": p["name"], "room": p["room"], "limits": limits})
+    for name, hint in limit_display.prewall_hints(agents, now).items():
+        next(p for p in result if p["name"] == name)["limit_hint"] = hint
