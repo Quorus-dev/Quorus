@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -615,6 +615,12 @@ assert _models_spec is not None and _models_spec.loader is not None
 reflexd_models = _ilu.module_from_spec(_models_spec)
 sys.modules.setdefault("reflexd_models", reflexd_models)
 _models_spec.loader.exec_module(reflexd_models)
+_LIMITS_PATH = Path(__file__).resolve().parent / "reflexd_limits.py"
+_limits_spec = _ilu.spec_from_file_location("reflexd_limits", _LIMITS_PATH)
+assert _limits_spec is not None and _limits_spec.loader is not None
+reflexd_limits = _ilu.module_from_spec(_limits_spec)
+sys.modules.setdefault("reflexd_limits", reflexd_limits)
+_limits_spec.loader.exec_module(reflexd_limits)
 _STEPS_PATH = Path(__file__).resolve().parent / "reflexd_steps.py"
 _steps_spec = _ilu.spec_from_file_location("reflexd_steps", _STEPS_PATH)
 assert _steps_spec is not None and _steps_spec.loader is not None
@@ -1110,9 +1116,8 @@ _HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
 
 
 _LIMIT_RE = re.compile(r"quota|rate.?limit|usage limit|resource_exhausted", re.IGNORECASE)
-_RETRY_RE = re.compile(r"retry in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?", re.IGNORECASE)
-LIMIT_DEFAULT_S = 30 * 60
-LIMIT_MAX_S = 24 * 3600
+LIMIT_DEFAULT_S = reflexd_limits.LIMIT_DEFAULT_S
+LIMIT_MAX_S = reflexd_limits.LIMIT_MAX_S
 
 
 def _human_wait(seconds: float) -> str:
@@ -1127,29 +1132,11 @@ def _is_limit(stderr: str) -> bool:
     return bool(_LIMIT_RE.search(stderr or ""))
 
 
-_AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AP]M)?", re.IGNORECASE)
-
-
 def _retry_after_s(stderr: str, now: datetime | None = None) -> float:
     """Vendor's "retry in 21h39m46s" or Codex's "try again at 1:46 AM" →
-    seconds (capped); default 30 min."""
-    at = _AT_RE.search(stderr or "")
-    if at:
-        hour, minute, ampm = int(at.group(1)), int(at.group(2)), (at.group(3) or "").upper()
-        if ampm == "PM" and hour < 12:
-            hour += 12
-        if ampm == "AM" and hour == 12:
-            hour = 0
-        now = now or datetime.now()
-        target = now.replace(hour=hour % 24, minute=minute, second=0, microsecond=0)
-        if target <= now:
-            target += timedelta(days=1)
-        return max(60.0, min(LIMIT_MAX_S, (target - now).total_seconds() + 60))
-    m = _RETRY_RE.search(stderr or "")
-    if not m or not any(m.groups()):
-        return LIMIT_DEFAULT_S
-    h, mi, se = (float(g) if g else 0.0 for g in m.groups())
-    return max(60.0, min(LIMIT_MAX_S, h * 3600 + mi * 60 + se))
+    how long Quorus pauses (capped); default 30 min. The vendor's exact
+    reset is the reading `reflexd_limits.read_limit_message` returns with it."""
+    return reflexd_limits.read_limit_message(stderr, time.time(), local_now=now)[1]
 
 
 def diagnose_harness_failure(harness: str, stderr: str) -> str | None:
@@ -1464,8 +1451,14 @@ class HeadlessAdapter:
         # opencode 1.x rejects `run --standalone` (help text, exit 1): every
         # wake failed for users on the `opencode-ai` npm package (still 1.x).
         self.opencode_v1 = False
-        # Epoch seconds until which the vendor said "out of quota".
+        # The pause: epoch seconds until which reflexd won't wake the agent,
+        # and why ("quota": a vendor limit; "slow_start" / "no_route": a free
+        # model we cooled down ourselves, never shown as quota).
         self.limited_until = 0.0
+        self.pause_reason = "quota"
+        # What the vendor said: its exact reset and source (reflexd_limits).
+        # Memory only, so a restart starts with none.
+        self.limit: Any = None
         # Set by Reflexd: called with "editing relay.py"-style steps parsed
         # from the harness's JSON stream while a wake runs.
         self.on_step: Callable[[str], None] | None = None
@@ -1744,7 +1737,7 @@ class HeadlessAdapter:
         moves the agent to the next free model at once instead of dropping
         the wake. A model the user picked and pays for is never swapped."""
         if self._rotated_at and time.time() - self._rotated_at > reflexd_models.ROTATE_BACK_S:
-            self.model, self._rotated_at = self._home_model, 0.0
+            self.model, self._rotated_at, self.limit = self._home_model, 0.0, None
         if (self.model or "").startswith("ollama/"):
             problem = await ollama_problem(self.model.split("/", 1)[1])
             if problem:  # say so now, not "exited 1 with no known cause" 3 min later
@@ -1772,14 +1765,18 @@ class HeadlessAdapter:
                            alt)
             if not self._rotated_at:
                 self._home_model, self._rotated_at = first, time.time()
-            self.model, self.limited_until = alt, 0.0
+            # Another model: the old one's pause and reading don't apply.
+            self.model, self.limited_until, self.pause_reason, self.limit = (
+                alt, 0.0, "quota", None)
             reply = await self._opencode_once(context, cwd=cwd, resume=resume,
                                               on_session=on_session, timeout_s=timeout_s,
                                               mode=mode)
             self._note_slow(reply)
             self._note_no_route(reply)
         if self.limited_until > time.time():
-            self.model = first  # every free model is busy: cool down as before
+            # Every free model is busy: cool down as before, on the original
+            # model. The last one's reading was about another model.
+            self.model, self.limit = first, None
             if first == self._home_model:
                 self._rotated_at = 0.0
         return reply
@@ -1792,7 +1789,7 @@ class HeadlessAdapter:
         from quorus.runtime.opencode_free import mark_slow
 
         mark_slow(self.model)
-        self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S)
+        self._cool_down("slow_start")
         if self.on_step is not None:  # one live line, not a room post per model
             self.on_step(f"{(self.model or 'default').split('/')[-1]} is slow to start; "
                          "trying another free model")
@@ -1806,10 +1803,30 @@ class HeadlessAdapter:
         from quorus.runtime.opencode_free import mark_slow
 
         mark_slow(self.model)
-        self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S)
+        self._cool_down("no_route")
         if self.on_step is not None:
             self.on_step(f"{(self.model or 'default').split('/')[-1]} is unavailable; "
                          "trying another free model")
+
+    def _cool_down(self, reason: str) -> None:
+        """Our own pause for a free model: not a vendor quota, and no reading."""
+        until = time.time() + SLOW_COOLDOWN_S
+        if until > self.limited_until:
+            self.limited_until, self.pause_reason = until, reason
+
+    def note_limit(self, raw: str) -> None:
+        """A vendor limit message: the vendor's reading, and our quota pause."""
+        now = time.time()
+        reading, retry = reflexd_limits.read_limit_message(raw, now)
+        self.limited_until, self.pause_reason = now + retry, "quota"
+        self.limit = reflexd_limits.merge(self.limit, reading, now)
+
+    def current_limit(self, now: float | None = None) -> Any:
+        """The vendor reading if it still holds; an expired one is dropped."""
+        now = time.time() if now is None else now
+        self.limit = reflexd_limits.live(self.limit, now, self.limited_until,
+                                         self.pause_reason)
+        return self.limit
 
     async def _opencode_once(
         self, context: str, *, cwd: Path | None, resume: str | None,
@@ -1973,7 +1990,7 @@ class HeadlessAdapter:
             if diagnosis and _is_limit(raw):
                 # Out of quota: stop waking this agent until it resets instead
                 # of posting the same ⚠ on every message (gemini, 2026-10-17).
-                self.limited_until = time.time() + _retry_after_s(raw)
+                self.note_limit(raw)
             if diagnosis:
                 # Actionable > generic: the room learns WHY nobody answered.
                 logger.error("harness %s: %s", argv[0], diagnosis)
@@ -3059,7 +3076,9 @@ class Reflexd:
 
     def _waiting_now(self) -> tuple[str, float]:
         until = getattr(self.adapter, "limited_until", 0.0) or 0.0
-        if until > time.time():
+        # A free-model cooldown is our pause, not the vendor's quota: old
+        # relays show nothing for it rather than "out of quota".
+        if until > time.time() and getattr(self.adapter, "pause_reason", "quota") == "quota":
             return "quota", until
         kind, until = self._waiting
         if kind == "pacing" and until and until < time.time():
@@ -3073,6 +3092,8 @@ class Reflexd:
             self._waiting = ("stuck", 0.0)
         elif not failed and self._waiting[0] == "stuck":
             self._waiting = ("", 0.0)
+        if not failed and hasattr(self.adapter, "limit"):
+            self.adapter.limit = None  # a good turn: whatever wall there was is gone
 
     def _on_step(self, step: str) -> None:
         """A step from the harness stream: show it on the working line soon."""
@@ -3236,12 +3257,25 @@ class Reflexd:
             self._limit_announced.add((room, until))
             # Relative, not a clock time: laptop 2 (UTC) said "until about Sat
             # 04:33" to a room reading it in Toronto (2026-10-17).
-            await self._post_status(
-                relay, room, envelope,
-                f"@{self.config.participant_name} is out of quota for about "
-                f"{_human_wait(until - time.time())} and will pick up again then")
-        logger.info("skipping wake: harness out of quota until %s", until)
+            await self._post_status(relay, room, envelope, self._pause_line(until))
+        logger.info("skipping wake: harness paused until %s", until)
         return True
+
+    def _pause_line(self, until: float) -> str:
+        """The vendor's reset when it gave one; our retry, marked "?", when not;
+        and never "out of quota" for a free-model cooldown (limit-status rev 3)."""
+        name, now = self.config.participant_name, time.time()
+        if getattr(self.adapter, "pause_reason", "quota") != "quota":
+            return (f"@{name} is paused by Quorus for about {_human_wait(until - now)} "
+                    "(its free models are slow to start or unavailable) and will pick up "
+                    "again then")
+        current = getattr(self.adapter, "current_limit", None)
+        reading = current(now) if current else None
+        if reading is not None and reading.resets_at is not None:
+            return (f"@{name} is out of quota for about {_human_wait(reading.resets_at - now)} "
+                    "(the vendor's reset time) and will pick up again then")
+        return (f"@{name} is out of quota for about {_human_wait(until - now)}? (no reset "
+                "time in the vendor's message, so that's when it tries again)")
 
     async def _wake_and_reply_inner(
         self, relay: RelayClient, envelope: dict[str, Any], *,
