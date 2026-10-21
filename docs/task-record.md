@@ -8,7 +8,9 @@ aggregate cells. The command is read-only, like the board's agent-card table.
 Each cell is one agent, configured model, harness version and task kind in this
 owner's repository over 30 days. Unknown model/version information is labelled
 `unknown`. Kinds are `test`, `fix`, `feature`, `refactor`, `docs`, `config` or
-`unknown`; put `kind:fix` in an ask to resolve ambiguity before assignment.
+`unknown`; the owner can put `kind:fix` in an ask to resolve ambiguity before
+assignment. The same token from an agent or other trusted member is ignored;
+the remaining ask text is still classified by the deterministic keyword rules.
 
 The unit is a task, not a commit. Follow-ups and rescue attempts stay on the
 original assignment. Its work deadline is 48 hours; its observation time is nine
@@ -18,9 +20,16 @@ Rebased changes and contiguous squashes are reconciled by patch-id. A git error,
 excessive history or exhausted observation budget gives unknown evidence.
 Failures, abandonment, escalation and vendor limits have separate counts.
 
-Rates appear only with at least five settled tasks, alongside a 95% Wilson
-interval. Pending/unknown tasks never become successes. Time and reported tokens
+Rates appear only with at least five rate-eligible settled tasks, alongside a
+95% Wilson interval. Quota is availability and never enters that denominator.
+Escalated original assignments do enter it, as non-kept assignments; their rescue
+attempts do not create a separate task for the rescuer. Both counts remain visible,
+and the display states this policy. Pending/unknown tasks never become successes.
+Time and reported tokens
 include rescue attempts and stay separate; missing usage is shown as unknown.
+Per-kept costs are shown only when all settled tasks have the corresponding
+measurement. Otherwise the measured portion is labelled a partial total, never
+an average divided by unmeasured kept tasks.
 Commit survival and observed cross-vendor/human approvals are separate measures.
 Everything is labelled **observed in this repo, not a ranking**. No routing,
 suggestion, assignment probability or permission changes are made.

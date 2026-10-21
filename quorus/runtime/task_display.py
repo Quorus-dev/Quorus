@@ -8,6 +8,7 @@ from collections import Counter, defaultdict
 LABEL = "observed in this repo, not a ranking"
 WINDOW_S = 30 * 86400
 OUTCOMES = ("kept", "reverted", "failed", "abandoned", "escalated", "quota", "pending", "unknown")
+RATE_OUTCOMES = ("kept", "reverted", "failed", "abandoned", "escalated")
 
 
 def wilson(kept: int, settled: int) -> tuple[float, float]:
@@ -38,6 +39,9 @@ def cells(tasks: list[dict], now: float | None = None) -> list[dict]:
     for key, rows in sorted(groups.items()):
         counts = Counter(t.get("outcome", "unknown") for t in rows)
         settled = sum(counts[k] for k in OUTCOMES if k not in ("pending", "unknown"))
+        # Quota describes availability. Escalation is still a non-kept original
+        # assignment, as in the plan's 9 kept / 2 failed / 1 escalated example.
+        rate_tasks = sum(counts[k] for k in RATE_OUTCOMES)
         kept = counts["kept"]
         done = [t for t in rows if t.get("outcome") not in ("pending", "unknown")]
         duration_unknown = sum(bool(t.get("duration_unknown")) or t.get("wall_s") is None
@@ -50,8 +54,9 @@ def cells(tasks: list[dict], now: float | None = None) -> list[dict]:
                       or t.get("attempt_count") == 0 for t in done)
         row = dict(zip(("agent", "model", "version", "kind"), key))
         row.update({k: counts[k] for k in OUTCOMES})
-        row.update(tasks=len(rows), settled=settled, rate=kept / settled if settled >= 5 else None,
-                   interval=wilson(kept, settled) if settled >= 5 else None,
+        row.update(tasks=len(rows), settled=settled, rate_tasks=rate_tasks,
+                   rate=kept / rate_tasks if rate_tasks >= 5 else None,
+                   interval=wilson(kept, rate_tasks) if rate_tasks >= 5 else None,
                    approved=sum(bool(t.get("approved")) for t in rows),
                    commits_published=sum(t.get("commits_published", 0) for t in rows),
                    commits_kept=sum(t.get("commits_kept", 0) for t in rows),
@@ -65,21 +70,28 @@ def cells(tasks: list[dict], now: float | None = None) -> list[dict]:
 
 
 def summary(cell: dict) -> str:
-    n = cell["settled"]
+    n = cell["rate_tasks"]
     if cell["rate"] is None:
         text = f"{cell['kept']} kept · not enough history ({n})"
     else:
         lo, hi = cell["interval"]
         text = f"{cell['kept']} of {n} kept ({100 * lo:.0f}–{100 * hi:.0f}%)"
     text += ", " + ", ".join(f"{cell[k]} {k}" for k in OUTCOMES if k != "kept")
+    text += " · rate excludes quota; includes escalated original assignments"
     text += (f" · {cell['commits_kept']}/{cell['commits_published']} commits kept"
              f" · {cell['approved']} approved")
     if cell["kept"] and cell["duration_measured"]:
-        text += f" · {cell['wall_s'] / cell['kept'] / 60:.1f} known min per kept"
+        if cell["duration_unknown"]:
+            text += f" · {cell['wall_s'] / 60:.1f} recorded attempt min (partial total)"
+        else:
+            text += f" · {cell['wall_s'] / cell['kept'] / 60:.1f} min per kept"
     if cell["kept"] and cell["usage_measured"]:
-        text += f" · {cell['tokens'] / cell['kept']:,.0f} known tokens per kept"
-    text += f" · time unknown for {cell['duration_unknown']} of {n} settled"
-    text += f" · tokens unknown for {cell['unknown_usage']} of {n} settled"
+        if cell["unknown_usage"]:
+            text += f" · {cell['tokens']:,.0f} recorded tokens (partial total)"
+        else:
+            text += f" · {cell['tokens'] / cell['kept']:,.0f} tokens per kept"
+    text += f" · time unknown for {cell['duration_unknown']} of {cell['settled']} settled"
+    text += f" · tokens unknown for {cell['unknown_usage']} of {cell['settled']} settled"
     return text
 
 

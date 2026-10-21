@@ -54,6 +54,21 @@ def test_kind_ambiguity_and_explicit_override():
     assert records.kind("fix the tests") == "unknown"
     assert records.kind("kind:feature fix the tests") == "feature"
     assert records.kind("kind:feature kind:docs") == "unknown"
+    assert records.kind("kind:feature fix the crash", allow_override=False) == "fix"
+    assert records.kind("kind:fix", allow_override=False) == "unknown"
+
+
+@pytest.mark.parametrize("sender, expected", [
+    ("owner", "docs"), ("owner-claude", "fix"), ("member", "fix"),
+])
+def test_only_owner_can_override_kind_even_when_other_sender_is_trusted(store, sender, expected):
+    turn = begin(store, {"id": "new", "from_name": sender,
+                        "content": "kind:docs repair crash"})
+    row = next(r for r in records.read(*store) if r["type"] == "claim")
+    assert row["kind"] == expected and turn["kind"] == expected
+    later = begin(store, {"id": "followup", "reply_to": "new", "from_name": "owner",
+                         "content": "kind:feature implement something"}, now=110)
+    assert later["task"] == "new" and later["kind"] == expected
 
 
 def test_read_only_reader_does_not_create_log(store):

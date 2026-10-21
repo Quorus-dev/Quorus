@@ -67,4 +67,36 @@ def test_unknown_time_and_no_attempt_tokens_are_not_displayed_as_safe_zero():
 def test_a_reported_zero_token_measurement_remains_distinct_from_unknown():
     cell, = display.cells([task(1, tokens=0, wall_s=0, attempt_count=1)], NOW)
     assert cell["unknown_usage"] == cell["duration_unknown"] == 0
-    assert "0 known tokens per kept" in cell["summary"]
+    assert "0 tokens per kept" in cell["summary"]
+
+
+def test_quota_is_visible_but_does_not_change_kept_rate_or_interval():
+    kept = [task(i) for i in range(5)]
+    before, = display.cells(kept, NOW)
+    after, = display.cells(kept + [task(f"q{i}", outcome="quota") for i in range(5)], NOW)
+    assert (after["settled"], after["rate_tasks"], after["quota"]) == (10, 5, 5)
+    assert after["rate"] == before["rate"] == 1
+    assert after["interval"] == before["interval"]
+    assert "5 of 5 kept" in after["summary"] and "5 quota" in after["summary"]
+    assert "rate excludes quota" in after["summary"]
+    sparse, = display.cells(kept[:4] + [task("q", outcome="quota")], NOW)
+    assert sparse["interval"] is None and "not enough history (4)" in sparse["summary"]
+
+
+def test_escalation_stays_in_original_assignment_denominator_with_explicit_label():
+    rows = [task(i) for i in range(9)] + [task("f1", outcome="failed"),
+            task("f2", outcome="failed"), task("rescue", outcome="escalated")]
+    cell, = display.cells(rows, NOW)
+    assert cell["rate_tasks"] == 12 and cell["rate"] == .75
+    assert "9 of 12 kept" in cell["summary"] and "1 escalated" in cell["summary"]
+    assert "includes escalated original assignments" in cell["summary"]
+
+
+def test_partial_costs_are_totals_not_a_mean_over_unmeasured_kept_tasks():
+    rows = [task("known", wall_s=180, tokens=500, attempt_count=1),
+            task("missing", wall_s=0, tokens=None, duration_unknown=1, attempt_count=1)]
+    cell, = display.cells(rows, NOW)
+    assert "3.0 recorded attempt min (partial total)" in cell["summary"]
+    assert "500 recorded tokens (partial total)" in cell["summary"]
+    assert "per kept" not in cell["summary"]
+    assert "time unknown for 1 of 2 settled" in cell["summary"]

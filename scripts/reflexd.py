@@ -3672,7 +3672,7 @@ class Reflexd:
                                                        worktree.main, task_scope)
                         await self._post_status(relay, room, envelope,
                             f"@{self.config.participant_name} claimed this · "
-                            + notice(tasks, _task_record.kind(envelope.get("content") or "")))
+                            + notice(tasks, task_turn["kind"]))
                 except Exception as exc:
                     logger.warning("task evidence unavailable (%s)", type(exc).__name__)
             self._record_turn()  # only a turn that runs counts against the pace

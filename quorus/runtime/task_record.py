@@ -89,11 +89,12 @@ def _append(file: Path, row: dict) -> None:
         os.close(directory)
 
 
-def kind(text: str) -> str:
+def kind(text: str, *, allow_override: bool = True) -> str:
     overrides = set(re.findall(r"\bkind:(\w+)\b", text.lower()))
-    if overrides:
+    if overrides and allow_override:
         valid = len(overrides) == 1 and overrides <= set(KINDS)
         return next(iter(overrides)) if valid else "unknown"
+    text = re.sub(r"\bkind:\w+\b", "", text, flags=re.I)
     rules = {
         "fix": r"\b(fix|bug|crash|regression|repair)\b",
         "test": r"\b(tests?|pytest|coverage)\b|(?:^|\s)tests/",
@@ -114,7 +115,8 @@ def append(repo: Path, key: str, row: dict) -> None:
 
 
 def claim(repo: Path, key: str, task: str, *, agent: str, vendor: str, model: str,
-          version: str, text: str, now: float | None = None) -> dict:
+          version: str, text: str, now: float | None = None,
+          allow_kind_override: bool = True) -> dict:
     at = time.time() if now is None else now
     file = path(repo, key)
     with _locked(file):
@@ -123,7 +125,8 @@ def claim(repo: Path, key: str, task: str, *, agent: str, vendor: str, model: st
         if old:
             return old
         row = dict(type="claim", task=task, agent=agent, vendor=vendor, model=model,
-                   version=version, kind=kind(text), claimed_at=at, deadline=at + WORK_S,
+                   version=version, kind=kind(text, allow_override=allow_kind_override),
+                   claimed_at=at, deadline=at + WORK_S,
                    read_at=at + READ_S)
         _append(file, row)
         return row

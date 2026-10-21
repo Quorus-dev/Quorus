@@ -72,12 +72,16 @@ def begin(repo: Path, key: str, envelope: dict, history: list[dict], *, agent: s
         if envelope.get("message_type") in {"status", "social"}:
             return None
         task = mid
-        records.claim(repo, key, task, agent=agent, vendor=vendor, model=model,
-                      version=version, text=envelope.get("content") or "", now=at)
+        from quorus.services.approval_svc import agent_owner
+
+        owner = agent_owner(agent)
+        claims[task] = records.claim(repo, key, task, agent=agent, vendor=vendor, model=model,
+                      version=version, text=envelope.get("content") or "", now=at,
+                      allow_kind_override=bool(owner and envelope.get("from_name") == owner))
     attempt = uuid.uuid4().hex
     records.append(repo, key, dict(type="attempt_start", task=task, attempt=attempt,
                                    at=at, agent=agent))
-    return dict(task=task, attempt=attempt, started=at, new=new,
+    return dict(task=task, attempt=attempt, started=at, new=new, kind=claims[task]["kind"],
                 handoff=bool(handoff or claims.get(task, {}).get("agent", agent) != agent))
 
 
