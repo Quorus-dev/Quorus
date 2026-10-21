@@ -619,9 +619,9 @@ def _readiness_warnings(harness: str, model: str | None) -> list[str]:
     if harness == "codex" and not _codex_logged_in():
         out.append("Codex isn't signed in, so every wake would fail. Run `codex login` first")
     if harness == "gemini" and not _gemini_has_key():
-        out.append("Gemini CLI needs an API key: Google no longer lets it sign in with "
-                   "a personal Google account. Get a free key at "
-                   "https://aistudio.google.com/apikey and put GEMINI_API_KEY=<key> "
+        out.append("Gemini CLI needs a Standard or Enterprise license or a paid API key: "
+                   "Google no longer lets it sign in with a personal Google account. Get a "
+                   "key at https://aistudio.google.com/apikey and put GEMINI_API_KEY=<key> "
                    "in ~/.gemini/.env")
     if harness == "gemini" and not model:
         out.append("Gemini's free tier allows only about 20 requests a day on its default "
