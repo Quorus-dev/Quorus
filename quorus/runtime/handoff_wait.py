@@ -110,7 +110,7 @@ async def start(daemon, relay, envelope, worktree, store, capsule, data, target,
         except asyncio.CancelledError:
             stop("interrupted")
             raise
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             stop("busy_timeout")
         except RelayTooOld:
             stop("relay_too_old")

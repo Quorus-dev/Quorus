@@ -14,6 +14,26 @@ from tests.test_unfinished_wakes import _git, reflexd
 pytest_plugins = ["tests.test_handoff_delivery"]
 
 
+def test_legacy_asyncio_timeout_is_reported_as_busy_timeout(wiring, monkeypatch):
+    class LegacyTimeout(Exception):
+        pass
+
+    relay = Receiver()
+    alerts = []
+    monkeypatch.setattr(handoff_wait.asyncio, "TimeoutError", LegacyTimeout)
+    monkeypatch.setattr(wiring[1], "_alert_owner", lambda *a: alerts.append(a))
+
+    async def sleep(delay):
+        raise LegacyTimeout
+
+    monkeypatch.setattr(handoff_wait.asyncio, "sleep", sleep)
+    result, _, events = attempt(wiring, monkeypatch, relay)
+    assert result == "waiting" and not relay.defers
+    assert relay.holder == wiring[1].config.participant_name
+    assert events[-1]["cause"] == "busy_timeout"
+    assert alerts and "busy_timeout" in alerts[-1][1]
+
+
 @pytest.mark.parametrize("status", ["active", "busy"])
 def test_future_quorus_pause_excludes_receiver(wiring, monkeypatch, status):
     relay = Receiver()
