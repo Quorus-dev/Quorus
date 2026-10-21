@@ -76,8 +76,8 @@ async def receive(daemon, relay, envelope, data, worktree, *, trusted, mode, bin
     cap = HandoffCapsule.model_validate(data["capsule"])
     room, actor = envelope["room"], daemon.config.participant_name
     context = quoted(cap)
-    if (not handoff_sender.ENABLED or not trusted or mode in {"readonly", "manual"}
-            or worktree is None or data["to"] != actor):
+    if (not handoff_sender.enabled(room, bindings) or not trusted
+            or mode in {"readonly", "manual"} or worktree is None or data["to"] != actor):
         await daemon._post_status(
             relay, room, envelope, "handoff unverifiable: runtime gate closed; owner needed")
         return Decision(context=context)

@@ -1,6 +1,8 @@
 """Checkpoint, durable starter fence and bounded busy-receiver retries.
 
-ENABLED deliberately has no environment/room override before the wiring review.
+Live handoff is off unless the owner switched it on for that room (`quorus room
+bind <room> <path> --handoff on`, dogfood plan §1). There is no global switch
+and no environment override.
 """
 
 from __future__ import annotations
@@ -19,7 +21,10 @@ from quorus.runtime.handoff_capsule import build_capsule
 from quorus.runtime.handoff_ownership import owns_claim
 from quorus.runtime.handoff_state import fingerprint
 
-ENABLED = False
+
+def enabled(room: str, bindings) -> bool:
+    """Is live handoff on for *room*? The owner's per-room flag, read every call."""
+    return runtime.handoff_enabled(bindings, room)
 
 
 def snapshot(daemon, room, worktree, data, bindings):

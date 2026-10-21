@@ -11,9 +11,9 @@ from tests.test_unfinished_wakes import TIMED_OUT, _daemon, _git, _repo, _wake, 
 
 def test_ordinary_unfinished_turn_syncs_before_harness_when_handoffs_are_off(
         monkeypatch, tmp_path):
-    assert handoff_sender.ENABLED is False
     repo = _repo(tmp_path)
     daemon = _daemon(monkeypatch, tmp_path, repo)
+    assert handoff_sender.enabled("build", reflexd.ROOM_BINDINGS_PATH) is False
     _wake(monkeypatch, daemon, reply=TIMED_OUT, edit="unfinished ordinary work\n")
     wt = reflexd.reflexd_wake.existing_worktree(repo, daemon.config.participant_name)
     assert reflexd.reflexd_unfinished.pending(daemon._unfinished_dir, wt.path)

@@ -111,7 +111,8 @@ def test_crashed_owner_retry_is_not_relaunched_by_duplicate_delivery(wiring, mon
 
 def test_recovery_has_no_environment_opt_in(monkeypatch):
     monkeypatch.setenv("REFLEXD_HANDOFFS", "1")
-    assert handoff_sender.ENABLED is False
+    assert not hasattr(handoff_sender, "ENABLED")  # no global switch at all
+    assert handoff_sender.enabled("build", None) is False
 
 
 def test_completed_retry_crash_releases_only_its_finished_hold_without_another_turn(

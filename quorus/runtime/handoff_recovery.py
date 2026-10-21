@@ -98,8 +98,8 @@ async def recover(daemon, relay, envelope, worktree, *, owner_retry, mode, bindi
     Fresh relay ownership is checked before that check AND immediately before the
     durable retry authorization. No branch moves or partial commits are discarded.
     """
-    if (not handoff_sender.ENABLED or not owner_retry or worktree is None
-            or mode in {"manual", "readonly"}):
+    if (not handoff_sender.enabled(envelope.get("room") or "", bindings) or not owner_retry
+            or worktree is None or mode in {"manual", "readonly"}):
         return None
     room = envelope.get("room") or ""
     threads = {x for x in (envelope.get("reply_to"), envelope.get("thread_root_id"))

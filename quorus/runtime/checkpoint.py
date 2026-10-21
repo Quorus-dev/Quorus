@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -28,6 +29,22 @@ def _state(root: Path):
     return (_git(root, "rev-parse", "HEAD").decode().strip(),
             _git(root, "rev-parse", "HEAD^{tree}").decode().strip(),
             _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all"))
+
+
+def local_paths(text: str, root: Path, home: str | None) -> str:
+    """Machine paths out of the check output, before it is trimmed and hashed.
+
+    The worktree becomes ``.`` and the home directory ``~``, the same way on the
+    sender and the receiver: tracebacks print absolute paths, and the tail is
+    posted in receipts (dogfood plan §1, Claude on rev 1). The worktree goes
+    first because it usually sits under home."""
+    homes = {home, str(Path(home).resolve())} if home else set()
+    for paths, short in (({str(root), str(root.resolve())}, "."), (homes, "~")):
+        for path in sorted(paths, key=len, reverse=True):
+            path = path.rstrip("/")
+            if path:  # whole path components only: /Users/al is not /Users/alice
+                text = re.sub(re.escape(path) + r"(?![^/\s:'\"),\]])", short, text)
+    return text
 
 
 def run_checkpoint(root: Path, head: str, config: CheckConfig | None, *,
@@ -60,7 +77,9 @@ def run_checkpoint(root: Path, head: str, config: CheckConfig | None, *,
             status = "passing" if output.code == 0 else "ran"
         result.update(exit=output.code, truncated=output.truncated)
         # Capture removed any bisected first line. Redact before the receipt cap.
-        redacted = redact_secrets(output.output.decode("utf-8", "replace"), known_secrets)
+        redacted = local_paths(
+            redact_secrets(output.output.decode("utf-8", "replace"), known_secrets),
+            root, env.get("HOME"))
         tail = "\n".join(redacted.splitlines()[-40:])
         tail = tail.encode()[-1500:].decode("utf-8", "ignore")
         result.update(tail=tail, tail_sha256=hashlib.sha256(tail.encode()).hexdigest())

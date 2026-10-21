@@ -2684,6 +2684,8 @@ class Reflexd:
         if hasattr(self.adapter, "on_step"):
             self.adapter.on_step = self._on_step
         self._limit_announced: set[tuple[str, float]] = set()
+        # room -> (handoff on, check config_id) last seen, so a flip is said once.
+        self._handoff_seen: dict[str, tuple[bool, str]] = {}
         # room -> ordered ids the agent saw in a wake it then answered.
         self._answered: dict[str, dict[str, None]] = {}
         self._turns: list[float] = []  # harness run start times, for pacing
@@ -3335,6 +3337,27 @@ class Reflexd:
         return (f"@{name} is out of quota for about {_human_wait(until - now)}? (no reset "
                 "time in the vendor's message, so that's when it tries again)")
 
+    async def _note_handoff_switch(self, relay: RelayClient, room: str,
+                                   envelope: dict[str, Any]) -> None:
+        """Say in the room when its live-handoff switch or check changes (dogfood
+        plan §1): a flip nobody asked for is visible. Silent while it stays off."""
+        if not room:
+            return
+        try:
+            state = await asyncio.to_thread(_handoff_runtime.switch_state,
+                                            ROOM_BINDINGS_PATH, room)
+        except Exception:  # a broken bindings file reads as off, never as on
+            state = (False, "")
+        seen = self._handoff_seen.get(room)
+        self._handoff_seen[room] = state
+        if seen == state or (seen is None and not state[0]):
+            return
+        on, config_id = state
+        await self._post_status(
+            relay, room, envelope,
+            f"handoff is ON for this room (check {config_id[:12]})" if on
+            else "handoff is OFF for this room")
+
     async def _wake_and_reply_inner(
         self, relay: RelayClient, envelope: dict[str, Any], *,
         triage: "TriageResult | None" = None, reason: str | None = None,
@@ -3347,12 +3370,14 @@ class Reflexd:
         * appends a 1-sentence memory entry after a successful POST
         """
         room = envelope.get("room") or ""
+        await self._note_handoff_switch(relay, room, envelope)
         if not self.config.spawn_enabled:
             logger.info("spawn disabled (test mode); skipping harness call")
             return
         if await self._limited(relay, envelope):
             incoming = _failover.continuation(envelope)
-            if _handoff_sender.ENABLED and incoming and incoming.get("capsule"):
+            if (_handoff_sender.enabled(room, ROOM_BINDINGS_PATH) and incoming
+                    and incoming.get("capsule")):
                 ws = workspace_for(room)
                 wt = (await asyncio.to_thread(reflexd_wake.existing_worktree, ws,
                                               self.config.participant_name) if ws else None)
@@ -3454,7 +3479,8 @@ class Reflexd:
         live = live_session_for_workspace(ws)
         if live is not None and is_busy(self.config.participant_name):
             incoming = _failover.continuation(envelope)
-            if (_handoff_sender.ENABLED and trusted and incoming and incoming.get("capsule")):
+            if (_handoff_sender.enabled(room, ROOM_BINDINGS_PATH) and trusted and incoming
+                    and incoming.get("capsule")):
                 await _handoff_delivery.busy(self, relay, envelope, incoming, worktree)
                 return
             logger.info(
@@ -4753,7 +4779,7 @@ class Reflexd:
             ws = workspace_for(data.get("room") or "")
             wt = (await asyncio.to_thread(reflexd_wake.existing_worktree, ws,
                                           self.config.participant_name) if ws else None)
-            if _handoff_sender.ENABLED:
+            if _handoff_sender.enabled(data.get("room") or "", ROOM_BINDINGS_PATH):
                 await _handoff_sender.retry(
                     self, relay, data, wt, detect=detect_harness,
                     capabilities=capabilities_for, score=compute_bid_v2)
@@ -4761,7 +4787,8 @@ class Reflexd:
             return
         handoff = _failover.continuation(data)
         if handoff and handoff.get("capsule") and handoff["to"] == self.config.participant_name:
-            if _handoff_sender.ENABLED and (self._wake_lock.locked()
+            if _handoff_sender.enabled(data.get("room") or "", ROOM_BINDINGS_PATH) and (
+                    self._wake_lock.locked()
                     or self.adapter.limited_until > time.time()):
                 ws = workspace_for(data.get("room") or "")
                 wt = (await asyncio.to_thread(reflexd_wake.existing_worktree, ws,

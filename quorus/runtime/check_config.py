@@ -50,7 +50,11 @@ class CheckConfig:
 
 
 def configure_binding(entry, previous, args, workspace: Path):
-    """Rebinding a different repo revokes its check; no implicit check defaults."""
+    """Rebinding a different repo revokes its check; no implicit check defaults.
+
+    ``--handoff on|off`` is the room's live-handoff switch (dogfood plan §1). It
+    can only be on beside a check, and goes off with the check: removing the
+    check or moving the room to another repo turns it off too."""
     result = dict(entry) if isinstance(entry, dict) else {"path": entry, "mode": "default"}
     old_path = previous.get("path") if isinstance(previous, dict) else previous
     if old_path and Path(old_path).expanduser().resolve() != workspace:
@@ -68,4 +72,11 @@ def configure_binding(entry, previous, args, workspace: Path):
                              timeout_s=45 if timeout is None else timeout,
                              max_output_bytes=65536 if cap is None else cap * 1024)
         result["check"] = config.record()
+    handoff = getattr(args, "handoff", None)
+    if handoff == "on":
+        if not result.get("check"):
+            raise ValueError("--handoff on needs a check: add --check \"<command>\"")
+        result["handoff"] = True
+    elif handoff == "off" or not result.get("check"):
+        result.pop("handoff", None)
     return result if result.get("check") or isinstance(entry, dict) else entry

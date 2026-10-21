@@ -113,7 +113,7 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree, mode,
     if mode in ("manual", "readonly"):  # read-only rooms post the diagnosis only (spec)
         return None
     from quorus.runtime import handoff_sender
-    if handoff_sender.ENABLED:
+    if handoff_sender.enabled(envelope.get("room") or "", bindings):
         return await handoff_sender.attempt(
             daemon, relay, envelope, reason=reason, mission=mission, worktree=worktree,
             detect=detect, capabilities=capabilities, score=score, bindings=bindings, spent=spent)

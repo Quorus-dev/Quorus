@@ -1201,6 +1201,25 @@ def _resolve_turnguard_participant(explicit: str | None) -> str:
     return name
 
 
+def _confirm_handoff_on(room: str) -> None:
+    """Turning live handoff on is typed at a terminal, never done by accident.
+
+    An operator safeguard, not authentication: an agent running as the same user
+    could allocate a PTY (dogfood plan §1, accepted risk). Turning it off needs
+    no confirmation, because off never publishes or moves anything."""
+    if not sys.stdin.isatty():
+        _ui.error("--handoff on must be typed at a terminal",
+                  hint=f"run it yourself: quorus room bind {room} <path> --handoff on")
+        raise SystemExit(2)
+    console.print(f"[warning]live handoff:[/] when an agent in [primary]{room}[/] hits its "
+                  "vendor limit, a teammate on another vendor reruns the room's check and "
+                  "continues its branch.")
+    typed = input(f"  type the room name ({room}) to turn it on: ").strip()
+    if typed != room:
+        _ui.error("not turned on: the name didn't match")
+        raise SystemExit(2)
+
+
 def _cmd_room(args):
     """Host-local room utilities. `quorus room bind <room> <path>` binds a
     room to a workspace directory so reflexd wakes agents INSIDE the repo
@@ -1283,6 +1302,8 @@ def _cmd_room(args):
         except ValueError as exc:
             _ui.error(str(exc))
             raise SystemExit(2) from exc
+        if getattr(args, "handoff", None) == "on":
+            _confirm_handoff_on(args.room)
         bindings_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(bindings_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -10011,6 +10032,11 @@ def main():
                              help="Checkpoint seconds (default 45, maximum 300)")
     p_room_bind.add_argument("--check-output-kb", type=int, default=None,
                              help="Checkpoint output cap in KiB (default 64, maximum 1024)")
+    p_room_bind.add_argument(
+        "--handoff", choices=["on", "off"], default=None,
+        help=("live handoff for this room: when an agent hits its vendor limit, a "
+              "teammate on another vendor reruns the room's check and continues "
+              "(needs --check; asks you to type the room name to turn it on)"))
     p_room_bind.add_argument(
         "--mode", choices=["default", "manual", "autonomous"], default=None,
         help=("default: your own CLI permission settings; manual: agents ask "

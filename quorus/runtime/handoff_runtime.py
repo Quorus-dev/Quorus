@@ -29,6 +29,34 @@ def config(bindings: Path | None, room: str, repo: Path) -> CheckConfig | None:
     return CheckConfig.from_record(value["check"]) if value.get("check") else None
 
 
+def handoff_enabled(bindings: Path | None, room: str) -> bool:
+    """The owner's per-room switch (dogfood plan §1): ``"handoff": true`` on the
+    room's binding, next to a valid check. Read on every call, so `quorus room
+    bind --handoff off` takes effect at the next wake. Anything missing,
+    unreadable or malformed is off."""
+    if bindings is None or not room:
+        return False
+    try:
+        value = json.loads(bindings.read_text()).get(room)
+    except (OSError, ValueError, AttributeError):
+        return False
+    if not isinstance(value, dict) or value.get("handoff") is not True:
+        return False
+    try:
+        CheckConfig.from_record(value.get("check"))
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def switch_state(bindings: Path | None, room: str) -> tuple[bool, str]:
+    """``(on, config_id)`` for the room, so a daemon can say when either changes."""
+    if not handoff_enabled(bindings, room):
+        return False, ""
+    value = json.loads(bindings.read_text())[room]  # type: ignore[union-attr]
+    return True, CheckConfig.from_record(value["check"]).config_id
+
+
 def check_env() -> dict[str, str]:
     # Owner-configured checks do not inherit daemon/agent relay or vendor secrets.
     # An allowlist also excludes GIT_CONFIG_*, Python injection and loader variables.

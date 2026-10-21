@@ -66,7 +66,7 @@ def wiring(monkeypatch, tmp_path):
     env = {"message_id": "delivery", "room": "build", "from_name": cap.by,
            "message_type": "social", "content": verb.model_dump_json()}
     wt = reflexd.reflexd_wake.agent_worktree(repo, daemon.config.participant_name)
-    monkeypatch.setattr(handoff_sender, "ENABLED", True)
+    monkeypatch.setattr(handoff_sender, "enabled", lambda room, bindings: True)
 
     async def trusted(*a, **kw):
         return True
@@ -85,7 +85,7 @@ def test_real_delivery_receipt_precedes_harness_and_only_proof_can_publish(
     if outcome == "claim_lost":
         relay.change_at = 3  # mission lookup, verify lookup, pre-launch lookup
     if outcome == "disabled":
-        monkeypatch.setattr(handoff_sender, "ENABLED", False)
+        monkeypatch.setattr(handoff_sender, "enabled", lambda room, bindings: False)
 
     async def run(*a, cwd, mode="default", context, **kw):
         seen.append(mode)
