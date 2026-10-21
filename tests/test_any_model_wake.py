@@ -163,8 +163,8 @@ def test_gemini_wake_gets_room_tools_and_approval_mode(
     assert argv[argv.index("--approval-mode") + 1] == "yolo"
     assert argv[argv.index("--model") + 1] == "gemini-2.5-pro"
     assert "--skip-trust" in argv
-    # The agent's own Gemini home: the user's ~/.gemini (retired Google
-    # login, stale hooks) is never read.
+    # The agent's own Gemini home: the user's ~/.gemini (its Google login,
+    # stale hooks) is never read.
     settings_path = Path(env["GEMINI_CLI_HOME"]) / ".gemini" / "settings.json"
     assert stat.S_IMODE(os.stat(settings_path).st_mode) == 0o600
     settings = json.loads(settings_path.read_text())

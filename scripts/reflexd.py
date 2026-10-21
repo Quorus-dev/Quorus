@@ -1886,18 +1886,17 @@ class HeadlessAdapter:
     ) -> str:
         """Gemini CLI wake in the agent's own Gemini home (GEMINI_CLI_HOME).
 
-        The user's ~/.gemini pins whatever they set up by hand: on most
-        machines a Google login that Google retired for the CLI
-        (IneligibleTierError even with an API key present, verified on
-        gemini-cli 0.64.0), plus stale hooks and MCP entries. The agent's
-        home holds only its Quorus tools and API-key sign-in.
+        The user's ~/.gemini pins whatever they set up by hand: a Google
+        login that failed with IneligibleTierError even with an API key
+        present (seen on gemini-cli 0.64.0), plus stale hooks and MCP entries.
+        The agent's home holds only its Quorus tools and API-key sign-in.
         """
         env = reflexd_wake.wake_env(self.wake_spec, self.agent_config_dir)
         key = reflexd_models.gemini_api_key(env)
         if key:
             env["GEMINI_API_KEY"] = key  # env, never argv
         # Outside a daemon (e.g. `quorus duel`'s judge) there's no agent dir: still
-        # isolate from ~/.gemini, whose retired Google login fails every call.
+        # isolate from ~/.gemini, whose Google login failed every call on 0.64.0.
         from quorus.config import resolve_config_dir
         home = (self.agent_config_dir / "gemini-home" if self.agent_config_dir is not None
                 else resolve_config_dir() / "gemini-home")

@@ -209,8 +209,8 @@ def test_a_probe_slower_than_the_limit_counts_as_no_answer(monkeypatch, tmp_path
 
 
 def test_closing_hint_offers_only_tested_wakes():
-    """Stranger pass of 0.6.2: the hint still offered gemini, which Google ended for
-    individual accounts; the README calls it a note, not a tested wake."""
+    """Stranger pass of 0.6.2: the hint still offered gemini, which needs an AI Studio
+    API key; the README calls it a note, not a tested wake."""
     from pathlib import Path
 
     src = (Path(__file__).resolve().parents[1] / "packages/cli/quorus_cli/demo_cmd.py").read_text()

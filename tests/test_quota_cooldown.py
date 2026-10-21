@@ -1,6 +1,6 @@
 """Out of quota → stop waking that agent until it resets (gemini, 2026-10-17).
 
-Gemini's free tier allows ~20 requests a day on its default model; the daemon
+A free Gemini API key ran out of daily requests within minutes; the daemon
 kept waking it and posted the same ⚠ on every message.
 """
 
