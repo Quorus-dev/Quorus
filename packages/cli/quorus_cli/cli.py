@@ -1408,6 +1408,12 @@ def _cmd_scorecard(args):
     cmd_scorecard(args, console)
 
 
+def _cmd_track(args):
+    from quorus_cli.track_cmd import cmd_track
+
+    cmd_track(args, console)
+
+
 def _cmd_track_report(args):
     from quorus_cli.track_report_cmd import cmd_track_report
 
@@ -10154,6 +10160,13 @@ def main():
     p_score.add_argument("--by", choices=["agent", "vendor"], default="agent")
     p_score.add_argument("--json", action="store_true", help="One JSON row per commit")
 
+    p_track = sub.add_parser("track", help="Observed repo-local task history (read-only)")
+    p_track.add_argument("--repo", help="Repo path (default: current directory)")
+    p_track.add_argument("--main", default="main", help="Room's integration branch")
+    p_track.add_argument("--owner", help="Whose task history to read")
+    p_track.add_argument("--relay", help="Relay URL (default: active config)")
+    p_track.add_argument("--json", action="store_true", help="Print task cells as JSON")
+
     p_track = sub.add_parser(
         "track-report", help="Loop A's shadow numbers per agent, last 24h (read-only)")
     p_track.add_argument("--agent", help="One agent (default: every agent on this machine)")
@@ -10506,6 +10519,7 @@ def main():
         "handoff": _cmd_handoff,
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
+        "track": _cmd_track,
         "track-report": _cmd_track_report,
         "tune": _cmd_tune,
         "invites": _cmd_invites,

@@ -68,6 +68,15 @@ async def _send(daemon, relay, room, store, capsule, data, target, declines):
                                      task_id=data["task_id"])
     await relay.post_social_defer(room_id=room, actor=actor, target=target,
                                   ref_message_id=capsule.root, failover=data)
+    try:
+        from quorus.runtime import task_capture, task_record
+        from quorus.services.approval_svc import agent_owner
+
+        await asyncio.to_thread(task_capture.escalation, store.repo,
+            task_record.scope(daemon.config.relay_url, agent_owner(actor), store.repo),
+            capsule.root, target)
+    except Exception:
+        pass  # the transfer already succeeded; display evidence never changes it
 
 
 async def attempt(daemon, relay, envelope, *, reason, mission, worktree,

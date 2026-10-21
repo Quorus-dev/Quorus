@@ -168,6 +168,16 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree, mode,
                                              task_id=data["task_id"])
         await relay.post_social_defer(room_id=room, actor=actor, target=target,
                                       ref_message_id=original, failover=data)
+        if worktree:
+            try:
+                from quorus.runtime import task_capture, task_record
+                from quorus.services.approval_svc import agent_owner
+
+                await asyncio.to_thread(task_capture.escalation, worktree.repo,
+                    task_record.scope(daemon.config.relay_url, agent_owner(actor), worktree.repo),
+                    original, target)
+            except Exception:
+                pass  # observational evidence cannot change a handoff
     except Exception as exc:
         return f"Failover could not complete ({type(exc).__name__}); owner needs to reassign."
     return "sent"

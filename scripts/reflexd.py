@@ -94,6 +94,8 @@ from quorus.runtime import handoff_sender as _handoff_sender  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime import owner_pin as _owner_pin  # noqa: E402  invitee agents
 from quorus.runtime import review_share as _review_share  # noqa: E402
+from quorus.runtime import task_capture as _task_capture  # noqa: E402  W4 display only
+from quorus.runtime import task_record as _task_record  # noqa: E402
 from quorus.runtime import track_record as _track  # noqa: E402  L2 bids
 from quorus.runtime.turnguard import busy_path as _tg_busy_path  # noqa: E402
 from quorus.runtime.turnguard import is_busy as _tg_is_busy  # noqa: E402
@@ -1470,6 +1472,9 @@ class HeadlessAdapter:
         # Usage the vendor's CLI reported, by window ("5h" / "7d"). Claude
         # only: `codex exec --json` doesn't carry it (spike, 2026-10-21).
         self.usage: dict[str, Any] = {}
+        self.turn_tokens: int | None = None
+        self._turn_usage_unknown = False
+        self.harness_versions: dict[str, str | None] = {}
         # Set by Reflexd: called with "editing relay.py"-style steps parsed
         # from the harness's JSON stream while a wake runs.
         self.on_step: Callable[[str], None] | None = None
@@ -1527,6 +1532,8 @@ class HeadlessAdapter:
         # the regular path. Triggered by an explicit env var OR by the
         # module-level auto-fallback flag set when the claude binary is
         # missing at startup. ``is_stub_mode`` consults both.
+        self.turn_tokens = None
+        self._turn_usage_unknown = False
         if is_stub_mode():
             return self._stub_reply(context)
         if self.dry_run:
@@ -2001,6 +2008,11 @@ class HeadlessAdapter:
             logger.warning("harness %s timed out", argv[0])
             return "[reflexd] harness timed out"
         self._note_usage(argv[0], stdout)
+        reported = _task_capture.tokens(stdout or b"", Path(argv[0]).name)
+        if reported is not None:
+            self.turn_tokens = (self.turn_tokens or 0) + reported
+        else:
+            self._turn_usage_unknown = True
         if proc.returncode != 0:
             raw = (stderr or b"").decode("utf-8", errors="replace")
             # opencode reports failures as JSON error events on STDOUT with an
@@ -3517,6 +3529,10 @@ class Reflexd:
         readonly_snap: dict[str, str] | None = None
         readonly_turn = False
         handoff_turn = self._handoff_turns.pop(wake_id, None)
+        task_turn = None
+        task_scope = (_task_record.scope(self.config.relay_url,
+                      agent_owner(self.config.participant_name), worktree.repo)
+                      if worktree is not None else "")
         try:
             # Only pass worktree extras when used: adapters written against
             # the older run() signature keep working.
@@ -3636,6 +3652,29 @@ class Reflexd:
                                                     self._held_dir, worktree)
                 if held_note:
                     prompt = f"{prompt}\n\n{held_note}"
+            if worktree is not None:
+                try:
+                    await asyncio.to_thread(_task_capture.approvals, worktree.repo, task_scope,
+                                            history, agent_owner(self.config.participant_name))
+                    await asyncio.to_thread(_task_record.settle, worktree.repo, task_scope,
+                                            worktree.main)
+                    task_turn = await asyncio.to_thread(
+                        _task_capture.begin, worktree.repo, task_scope, envelope, history,
+                        agent=self.config.participant_name, vendor=harness,
+                        model=str(getattr(self.adapter, "model", None) or "unknown"),
+                        version=str(getattr(self.adapter, "harness_versions", {}).get(harness)
+                                    or "unknown"), writable=not readonly_turn, authorized=trusted,
+                        handoff=_failover.continuation(envelope))
+                    if task_turn and task_turn["new"] and triage and triage.kind == "open_todo":
+                        from quorus.runtime.task_display import notice
+
+                        tasks = await asyncio.to_thread(_task_record.report, worktree.repo,
+                                                       worktree.main, task_scope)
+                        await self._post_status(relay, room, envelope,
+                            f"@{self.config.participant_name} claimed this · "
+                            + notice(tasks, _task_record.kind(envelope.get("content") or "")))
+                except Exception as exc:
+                    logger.warning("task evidence unavailable (%s)", type(exc).__name__)
             self._record_turn()  # only a turn that runs counts against the pace
             reply = await self.adapter.run(
                 harness, context=prompt,
@@ -3675,6 +3714,16 @@ class Reflexd:
             prediction_id=prediction_id if kind == "open_todo" else "",
             message_id=(envelope.get("message_id") or envelope.get("id") or "")
             if kind == "open_todo" else "")
+        if task_turn and worktree is not None:
+            try:
+                await asyncio.to_thread(_task_capture.finish, worktree.repo, task_scope,
+                    task_turn, agent=self.config.participant_name,
+                    outcome=("quota" if vendor_failure
+                             else _task_capture.outcome(reply, turn_outcome)),
+                    tokens=(None if getattr(self.adapter, "_turn_usage_unknown", False)
+                            else getattr(self.adapter, "turn_tokens", None)))
+            except Exception as exc:
+                logger.warning("task attempt unavailable (%s)", type(exc).__name__)
         # Didn't finish cleanly: its commits are held back, not published.
         turn_failed = bool(vendor_failure or failure_reason or exit_code != "unknown"
                            or reply.startswith(("[reflexd]", "⚠")))
@@ -3739,6 +3788,8 @@ class Reflexd:
                         reflexd_held.resolve, self._held_dir, worktree, reply or "",
                         self.config.participant_name):
                     await self._post_status(relay, room, envelope, line)
+                main_before = (await asyncio.to_thread(
+                    _task_capture.head, worktree.repo, worktree.main) if task_turn else "")
                 published = await self._guard_publish(relay, room, worktree)
                 if published is None:
                     published = await self._publish_with_resolution(
@@ -3747,10 +3798,19 @@ class Reflexd:
                         max_turns=wake_max_turns, writable_root=ws, summary=reply,
                         mode=room_mode,
                         approval_room=room if room_mode == "manual" else None,
-                        room=room, relay=relay,
+                        room=room, relay=relay, task=task_turn,
                     )
                     await asyncio.to_thread(reflexd_held.settle_window, self._held_dir,
                                             worktree)
+                    if task_turn:
+                        try:
+                            turn_commits = await asyncio.to_thread(
+                                _task_capture.mine, worktree.repo, main_before,
+                                worktree.main, self.config.participant_name)
+                            await asyncio.to_thread(_task_capture.published, worktree.repo,
+                                                    task_scope, task_turn, turn_commits)
+                        except Exception as exc:
+                            logger.warning("task publish unavailable (%s)", type(exc).__name__)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # never lose the agent's reply over git
@@ -4411,17 +4471,20 @@ class Reflexd:
         max_turns: int | None, writable_root: Path | None,
         summary: str | None = None, mode: str = "default",
         approval_room: str | None = None, room: str = "",
-        relay: "RelayClient | None" = None,
+        relay: "RelayClient | None" = None, task: dict | None = None,
     ) -> str | None:
         """Publish the agent's branch; on a conflict, wake the SAME agent (same
         session) to resolve the merge left in its worktree, then retry once.
         Overnight, nobody is there to resolve it by hand."""
+        # W4: the task and handoff this publish belongs to, in its provenance note.
+        asked = {"task": task["task"], "handoff": task["handoff"]} if task else {}
+
         async def publish() -> str | None:
             try:
                 return await asyncio.to_thread(
                     reflexd_wake.publish_worktree, wt, self.config.participant_name,
                     {"agent": self.config.participant_name, "vendor": harness,
-                     "model": getattr(self.adapter, "model", None), "room": room})
+                     "model": getattr(self.adapter, "model", None), "room": room, **asked})
             except (OSError, subprocess.SubprocessError) as exc:
                 return f"{reflexd_wake.STATUS_PREFIX} publish check failed: {exc}"
 
@@ -4999,6 +5062,7 @@ async def cmd_start(args: argparse.Namespace) -> int:
     pidfile = _pidfile()
     pidfile.write_text(str(os.getpid()), encoding="utf-8")
     adapter = HeadlessAdapter(dry_run=cfg.dry_run)
+    adapter.harness_versions = versions
     adapter.opencode_v1 = reflexd_models.is_opencode_v1(versions.get("opencode"))
     daemon = Reflexd(cfg, adapter=adapter)
 
