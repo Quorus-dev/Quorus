@@ -82,12 +82,13 @@ def timestamp(value) -> float:
             return 0.0
 
 
-def choose_candidate(entries, members, *, actor, failed, task, detect, capabilities, score):
+def choose_candidate(entries, members, *, actor, failed, task, detect, capabilities, score,
+                     statuses=("active",)):
     ranked = []
     for entry in entries:
         name = entry.get("name") or ""
         if (name not in members or name == actor or name in failed
-                or not entry.get("online") or entry.get("status") != "active"
+                or not entry.get("online") or entry.get("status") not in statuses
                 or not name.endswith(("-claude", "-codex", "-gemini", "-cursor",
                                       "-opencode", "-cline"))
                 or detect(name) == detect(actor)):

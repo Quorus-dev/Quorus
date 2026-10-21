@@ -47,16 +47,16 @@ def test_a_sent_handoff_records_attempt_capsule_and_send(wiring, monkeypatch):
 
     monkeypatch.setattr(handoff_sender, "snapshot", snapshot)
     assert _attempt(daemon, Candidates(), wt, cap) == "sent"
-    assert seen_before_check == ["attempt"]  # on disk before the checkpoint runs
+    assert seen_before_check == ["attempt", "selection"]  # durable before checkpoint
     events = _events(daemon, wt)
-    assert [e["event"] for e in events] == ["attempt", "capsule_built", "sent"]
+    assert [e["event"] for e in events] == ["attempt", "selection", "capsule_built", "sent"]
     assert len({e["attempt_id"] for e in events}) == 1
-    built = events[1]
+    built = events[2]
     assert built["fingerprint"] == fingerprint(cap)
     assert built["capsule_bytes"] == len(cap.model_dump_json().encode())
     assert built["check"]["argv"] == list(cap.check.argv)
     assert built["check"]["config_id"] == cap.check.config_id
-    assert events[2]["envelope_bytes"] > built["capsule_bytes"]
+    assert events[3]["envelope_bytes"] > built["capsule_bytes"]
     path = handoff_runtime.journal(daemon, "build", wt).events_path
     assert path.stat().st_mode & 0o777 == 0o600
 

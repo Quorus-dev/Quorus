@@ -23,10 +23,50 @@ from quorus.runtime.handoff_capsule import build_capsule
 from quorus.runtime.handoff_ownership import owns_claim
 from quorus.runtime.handoff_state import fingerprint
 
+# Spend at most 57 seconds in backoff for a capable busy receiver, without
+# transferring the claim or waking a harness. Relay requests have their own
+# timeouts. Legacy (switch OFF) failover still selects once.
+SELECTION_BACKOFF = (2, 5, 10, 20, 20)
+
 
 def enabled(room: str, bindings) -> bool:
     """Is live handoff on for *room*? The owner's per-room flag, read every call."""
     return runtime.handoff_enabled(bindings, room)
+
+
+async def select_target(relay, *, room, actor, task_id, failed_agents, task,
+                        detect, capabilities, score, bindings, event):
+    """Busy is temporary unavailability, not a permanent candidate exclusion.
+
+    Do not send to a busy receiver: it returns a typed decline and is excluded
+    from this capsule's retries. In a two-agent room that leaves no receiver.
+    Keep the original claim while polling, then use the ordinary proof path.
+    """
+    policy = dict(actor=actor, failed=failed_agents, task=task, detect=detect,
+                  capabilities=capabilities, score=score)
+    for poll in range(len(SELECTION_BACKOFF) + 1):
+        if not enabled(room, bindings):
+            return None, "gate_closed"
+        if not await owns_claim(relay, room=room, participant=actor, task_id=task_id):
+            return None, "no_claim"
+        entries = await relay.fetch_presence()
+        members = await relay.fetch_members(room=room)
+        target = failover.choose_candidate(entries, members, **policy)
+        busy = failover.choose_candidate(entries, members, statuses=("busy",), **policy)
+        # Retain the selection evidence that was missing from rehearsal run 1.
+        # Never store raw presence, harness output, or exception text.
+        event("selection", poll=poll, target=target, busy_target=busy,
+              active=[e["name"] for e in entries if e.get("name") in members
+                      and e.get("online") and e.get("status") == "active"],
+              busy=[e["name"] for e in entries if e.get("name") in members
+                    and e.get("online") and e.get("status") == "busy"])
+        if target:
+            return target, None
+        if not busy:
+            return None, "no_target"
+        if poll == len(SELECTION_BACKOFF):
+            return None, "busy_timeout"
+        await asyncio.sleep(SELECTION_BACKOFF[poll])
 
 
 def snapshot(daemon, room, worktree, data, bindings):
@@ -118,12 +158,12 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree,
         task = " ".join(str((mission or {}).get("summary") or previous.get("task")
                             or envelope.get("content") or "Continue task").split())[:120]
         stage = "target"
-        target = failover.choose_candidate(
-            await relay.fetch_presence(), await relay.fetch_members(room=room), actor=actor,
-            failed=failed_agents, task=task, detect=detect, capabilities=capabilities,
-            score=score)
+        target, cause = await select_target(
+            relay, room=room, actor=actor, task_id=task_id, failed_agents=failed_agents,
+            task=task, detect=detect, capabilities=capabilities, score=score,
+            bindings=bindings, event=event)
         if not target:
-            return failed("no_target", "No available handoff receiver; owner needed.")
+            return failed(cause, "No available handoff receiver; owner needed.")
         data = {"original_message_id": original, "task_id": task_id, "task": task,
                 "reason": reason, "branch": worktree.branch, "last_commit": "",
                 "failed_agents": failed_agents, "handoffs": previous.get("handoffs", 0) + 1}
