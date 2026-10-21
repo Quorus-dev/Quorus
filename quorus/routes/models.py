@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import uuid as _uuid
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -175,6 +176,11 @@ class HeartbeatRequest(BaseModel):
     # turn failed), until epoch seconds (0 = unknown). Not free text.
     waiting_on: str = ""
     waiting_until: float = Field(default=0.0, ge=0.0, le=4102444800.0)
+    # Limit status (quorus.limit_status): Quorus's own pause and the vendor's
+    # readings. Raw here on purpose: an invalid reading is dropped by
+    # limit_status.clean, never a 422 that takes the agent off the board.
+    pause: Any = None
+    readings: Any = None
     # The model the agent runs ("claude-opus-5-5", "gpt-5.5"), so people can tell
     # agents apart without vendor logos. Display text only, like activity.
     model: str = ""

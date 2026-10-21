@@ -2324,8 +2324,11 @@ class RelayClient:
         waiting_on: str = "",
         waiting_until: float = 0.0,
         model: str = "",
+        pause: dict[str, Any] | None = None,
+        readings: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Presence heartbeat (R2) — lets the relay show active/away + queued."""
+        """Presence heartbeat (R2) — lets the relay show active/away + queued.
+        ``pause`` / ``readings``: limit status; relays before 0.6.6 ignore them."""
         headers = await self._headers()
         body: dict[str, Any] = {"instance_name": participant, "status": status, "room": room}
         if reason:
@@ -2336,6 +2339,10 @@ class RelayClient:
             body["waiting_on"], body["waiting_until"] = waiting_on, max(0.0, waiting_until)
         if model:
             body["model"] = model
+        if pause:
+            body["pause"] = pause
+        if readings:
+            body["readings"] = readings
         resp = await self.client.post("/heartbeat", headers=headers, json=body)
         resp.raise_for_status()
 
@@ -3072,7 +3079,23 @@ class Reflexd:
         if status == "busy":
             return {"activity": self._activity} if self._activity else {}
         kind, until = self._waiting_now()
-        return {"waiting_on": kind, "waiting_until": until} if kind else {}
+        extra: dict[str, Any] = {"waiting_on": kind, "waiting_until": until} if kind else {}
+        return {**extra, **self._limit_fields()}
+
+    def _limit_fields(self) -> dict[str, Any]:
+        """Limit status for presence: our pause and the vendor's live reading."""
+        now, out = time.time(), {}
+        until = getattr(self.adapter, "limited_until", 0.0) or 0.0
+        if until > now:
+            out["pause"] = {"reason": getattr(self.adapter, "pause_reason", "quota"),
+                            "until": until}
+        current = getattr(self.adapter, "current_limit", None)
+        reading = current(now) if current else None
+        if reading is not None:
+            out["readings"] = [{"window": reading.window, "kind": reading.kind,
+                                "source": reading.source, "used_pct": None,
+                                "resets_at": reading.resets_at, "seen_at": reading.seen_at}]
+        return out
 
     def _waiting_now(self) -> tuple[str, float]:
         until = getattr(self.adapter, "limited_until", 0.0) or 0.0

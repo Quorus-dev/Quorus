@@ -15,16 +15,11 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from quorus.limit_status import RESET_MAX_AHEAD_S as MAX_RESET_AHEAD_S
+from quorus.limit_status import SOURCE_KIND  # the relay validates against the same ids
+
 LIMIT_DEFAULT_S = 30 * 60  # no reset time in the message: our guess
 LIMIT_MAX_S = 24 * 3600  # the longest we pause before trying again
-MAX_RESET_AHEAD_S = 8 * 24 * 3600  # beyond the 7-day window: not trusted
-
-# source id -> the kind it implies (design rev 3, "Bounded fields")
-SOURCE_KIND = {
-    "msg.retry_in": "observed",
-    "msg.try_again_at": "observed",
-    "msg.no_time": "guess",
-}
 
 _RETRY_RE = re.compile(r"retry in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+(?:\.\d+)?)s)?",
                        re.IGNORECASE)

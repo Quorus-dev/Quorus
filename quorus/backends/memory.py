@@ -501,7 +501,7 @@ class InMemoryPresenceBackend:
     async def heartbeat(
         self, tenant_id: str, name: str, status: str, room: str, reason: str = "",
         activity: str = "", waiting_on: str = "", waiting_until: float = 0.0,
-        model: str = "",
+        model: str = "", limits: str = "",
     ) -> dict:
         now = time.time()
         async with self._lock:
@@ -525,6 +525,7 @@ class InMemoryPresenceBackend:
             entry["reason"] = reason
             entry["waiting_on"], entry["waiting_until"] = waiting_on, waiting_until
             entry["model"] = model
+            entry["limits"] = limits
             entry["trail"] = presence_trail.extend(entry.get("trail"), activity, now)
             if waking:
                 entry["last_wake_at"] = now
