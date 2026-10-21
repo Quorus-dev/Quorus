@@ -91,3 +91,49 @@ def test_the_agents_own_tool_wins_on_its_daemon_path(tmp_path, monkeypatch):
     assert shutil.which("codex", path=path) == str(real / "codex")
     # without an own tool, the old order (unchanged for the team's daemons)
     assert shutil.which("claude", path=agent_cmd._harness_path()) == str(real / "claude")
+
+
+@pytest.mark.parametrize("running_in, asked", [(None, "qd/claude"), ("qd/claude", None),
+                                               ("qd/old", "qd/claude")])
+def test_a_running_daemon_with_other_state_is_refused(env, monkeypatch, tmp_path,  # noqa: F811
+                                                      running_in, asked):
+    """Codex on 246acab9: a running daemon accepted a new --state-dir, bound the repo
+    into it and reported success, while the daemon kept reading its old state."""
+    repo = tmp_path / "dogfood"
+    repo.mkdir()
+    monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda *a, **k: "pid 42")
+    if running_in:
+        agent_cmd._state_record("arav-handoff-claude").write_text(str(tmp_path / running_in))
+    with pytest.raises(SystemExit, match="agent remove arav-handoff-claude"):
+        agent_cmd.cmd_agent(_Args(name="handoff", room="weekend-handoff", repo=str(repo),
+                                  state_dir=str(tmp_path / asked) if asked else None),
+                            _Console())
+    assert env["joins"] == [] and env["daemons"] == []  # refused before any change
+    for d in (tmp_path / "qd" / "claude", tmp_path / "qd" / "old"):
+        assert not (d / "room-bindings.json").exists()
+    owner = agent_cmd.bindings_path()
+    assert not owner.exists() or "weekend-handoff" not in json.loads(owner.read_text())
+
+
+def test_a_running_daemon_with_the_same_state_is_reused(env, monkeypatch, tmp_path):  # noqa: F811
+    state = tmp_path / "qd" / "codex"
+    monkeypatch.setattr(agent_cmd, "_running_daemon_for", lambda *a, **k: "pid 42")
+    agent_cmd._state_record("arav-handoff-codex").write_text(str(state))
+    console = _Console()
+    agent_cmd.cmd_agent(_Args(tool="codex", name="handoff", room="weekend-handoff-rehearsal",
+                              state_dir=str(state)), console)
+    assert env["joins"][-1][:2] == ("weekend-handoff-rehearsal", "arav-handoff-codex")
+    assert env["daemons"] == [] and any("already running" in x for x in console.lines)
+
+
+def test_starting_and_removing_keep_the_state_record(tmp_path, monkeypatch):
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
+    monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    state = tmp_path / "qd" / "claude"
+    agent_cmd._start_daemon({"relay_url": "http://r"}, "arav-handoff-claude", "k", True,
+                            None, state)
+    assert agent_cmd._daemon_state_dir("arav-handoff-claude") == state
+    agent_cmd._start_daemon({"relay_url": "http://r"}, "arav-handoff-claude", "k", True)
+    assert agent_cmd._daemon_state_dir("arav-handoff-claude") is None

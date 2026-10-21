@@ -58,6 +58,21 @@ def _write_private(path: Path, text: str) -> None:
     write_private_text(path, text)
 
 
+def _state_record(name: str) -> Path:
+    """Where `agent add` notes the --state-dir it started *name*'s daemon with."""
+    return _agents_dir() / f"{name}.state-dir"
+
+
+def _daemon_state_dir(name: str) -> Path | None:
+    """The --state-dir *name*'s daemon was started with; None for the owner's own dir
+    (and for daemons started before the record existed)."""
+    try:
+        text = _state_record(name).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return Path(text) if text else None
+
+
 def _uid() -> int:
     return os.getuid()
 
@@ -421,6 +436,9 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
         # The daemon's own bindings, runtime, journals and holds live here, apart from
         # the owner's ~/.quorus (dogfood plan §2). The CLI keeps the owner's config.
         env["QUORUS_CONFIG_DIR"] = str(state_dir)
+        _write_private(_state_record(name), str(state_dir))
+    else:
+        _state_record(name).unlink(missing_ok=True)
     argv = [sys.executable, str(_reflexd_script_path()), "start",
             "--participant", name, "--relay-url", cfg["relay_url"]]
     if not _launchd_ok():
@@ -480,6 +498,14 @@ def _add(args: Any, console: Any) -> None:
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
     state_dir = _state_dir(getattr(args, "state_dir", None))
+    existing = _running_daemon_for(name, cfg.get("relay_url"))
+    running_in = _daemon_state_dir(name) if existing else None
+    if existing and running_in != state_dir:
+        # A running daemon keeps the state dir it started with: binding into another
+        # one would report success while the daemon never reads it (Codex on 246acab9).
+        raise SystemExit(f"agent: @{name} is already running ({existing}) with its state "
+                         f"in {running_in or 'your own config dir'}; run `quorus agent "
+                         f"remove {name}` first, then add it again")
     wants = getattr(args, "trust", None) or args.mode is not None
     if repo is None and wants:
         # --trust/--mode live on the room's workspace binding: without --repo they
@@ -520,7 +546,6 @@ def _add(args: Any, console: Any) -> None:
         swap = f" [dim](was @{previous})[/]" if previous and previous != name else ""
         console.print(f"[success]✓[/] @{name} leads #{args.room}: it splits your requests "
                       f"into tasks and assigns them{swap}")
-    existing = _running_daemon_for(name, cfg.get("relay_url"))
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "
                       "— it now also listens to this room")
@@ -671,6 +696,7 @@ def _remove(args: Any, console: Any) -> None:
                        capture_output=True, check=False, timeout=15)
         plist.unlink(missing_ok=True)
     agent_proc.stop(_agents_dir(), args.name)
+    _state_record(args.name).unlink(missing_ok=True)
     _drop_lead_everywhere(args.name)
     left = _leave_all_rooms(args.name)
     if not was_running and not left:
