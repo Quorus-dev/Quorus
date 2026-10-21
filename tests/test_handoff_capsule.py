@@ -23,7 +23,8 @@ def arguments():
                                 b"FAILED test_x").hexdigest()},
                 config=config, tried=["first approach failed"],
                 limit={"vendor": "claude", "reason": "quota", "kind": "observed",
-                       "source": "msg.retry_in", "seen_at": 1000.0, "resets_at": 2000.0},
+                       "source": "msg.retry_in", "seen_at": "2026-10-21T14:00:00Z",
+                       "resets_at": "2026-10-21T15:00:00Z"},
                 spent={"turns": 1, "wall_s": 50.0, "attempts": 1})
 
 
@@ -112,3 +113,30 @@ def test_parser_rejects_unknown_fields_or_oversized_capsule():
     raw["repo"]["dirty_files"] = ["x" * 200] * 32
     with pytest.raises(ValueError, match="4096"):
         HandoffCapsule.model_validate(raw)
+
+
+def test_capsule_iso_and_presence_epochs_represent_same_instants():
+    from datetime import datetime
+
+    args = arguments()
+    args["limit"].update(seen_at="2026-10-21T10:00:00.125-04:00",
+                         resets_at="2026-10-21T11:00:00.125-04:00")
+    value = build_capsule(**args).limit
+    reading = value.presence_reading()
+    assert value.window == reading["window"] == "limit"
+    assert value.seen_at == "2026-10-21T14:00:00.125000+00:00"
+    assert reading["seen_at"] == datetime.fromisoformat(value.seen_at).timestamp()
+    assert reading["resets_at"] - reading["seen_at"] == 3600
+    assert reading["source"] == "msg.retry_in"
+    assert type(value).from_presence(reading, vendor="claude", reason="quota") == value
+    reading["seen_at"] = True
+    with pytest.raises(ValueError):
+        type(value).from_presence(reading, vendor="claude", reason="quota")
+
+
+@pytest.mark.parametrize("timestamp", ["2026-10-21T14:00:00", "bad", "2200-01-01T00:00:00Z"])
+def test_naive_malformed_or_out_of_bounds_limit_time_rejected(timestamp):
+    args = arguments()
+    args["limit"]["seen_at"] = timestamp
+    with pytest.raises(ValueError):
+        build_capsule(**args)

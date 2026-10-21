@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 SHA = Annotated[str, Field(pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -71,12 +71,43 @@ class CheckpointRecord(Data):
 class LimitContext(Data):
     vendor: str = Field(min_length=1, max_length=32)
     reason: Literal["quota", "rate_limit", "login"]
+    window: Literal["limit"] = "limit"
     kind: Literal["reported", "observed", "guess"]
     source: Literal["claude.statusline", "claude.stream", "codex.token_count",
                     "msg.retry_in", "msg.try_again_at", "msg.no_time"]
-    seen_at: float = Field(ge=0, le=4102444800)
-    resets_at: float | None = Field(default=None, ge=0, le=4102444800)
+    seen_at: str = Field(max_length=64)
+    resets_at: str | None = Field(default=None, max_length=64)
     used_pct: float | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("seen_at", "resets_at")
+    @classmethod
+    def utc_timestamp(cls, value):
+        if value is None:
+            return value
+        when = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if when.tzinfo is None or not 0 <= when.timestamp() <= 4102444800:
+            raise ValueError("limit timestamp requires timezone and bounded epoch")
+        return when.astimezone(timezone.utc).isoformat()
+
+    def presence_reading(self) -> dict:
+        """Presence uses epoch seconds; the capsule uses ISO for the same instants."""
+        result = self.model_dump(exclude={"vendor", "reason"})
+        for name in ("seen_at", "resets_at"):
+            result[name] = (datetime.fromisoformat(result[name]).timestamp()
+                            if result[name] else None)
+        return result
+
+    @classmethod
+    def from_presence(cls, reading: dict, *, vendor: str, reason: str):
+        value = dict(reading)
+        for name in ("seen_at", "resets_at"):
+            epoch = value.get(name)
+            if epoch is None and name == "resets_at":
+                continue
+            if type(epoch) not in (int, float) or not 0 <= epoch <= 4102444800:
+                raise ValueError("invalid presence epoch")
+            value[name] = datetime.fromtimestamp(epoch, timezone.utc).isoformat()
+        return cls.model_validate({**value, "vendor": vendor, "reason": reason})
 
     @model_validator(mode="after")
     def validate_source(self):
@@ -85,9 +116,11 @@ class LimitContext(Data):
                     else "guess" if self.source == "msg.no_time" else "observed")
         if self.kind != expected:
             raise ValueError("limit kind/source mismatch")
-        if (self.resets_at is not None
-                and not self.seen_at < self.resets_at <= self.seen_at + 691200):
-            raise ValueError("invalid vendor reset time")
+        if self.resets_at is not None:
+            elapsed = (datetime.fromisoformat(self.resets_at)
+                       - datetime.fromisoformat(self.seen_at)).total_seconds()
+            if not 0 < elapsed <= 691200:
+                raise ValueError("invalid vendor reset time")
         if self.kind == "guess" and self.resets_at is not None:
             raise ValueError("guess cannot claim a vendor reset")
         if self.kind == "observed" and self.resets_at is None:
