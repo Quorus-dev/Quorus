@@ -15,19 +15,11 @@ Each prints ONE JSON object to stdout in the harness's expected schema
 and exits 0 (or 2 if the harness expects a non-blocking error). Stderr is
 reserved for diagnostics — never write notification content there.
 
-Cursor's quirks:
-  - `beforeSubmitPrompt` silently strips `updated_input` (confirmed bug),
-    so we cannot inject mid-conversation context that way.
-  - `sessionStart` returns `additional_context`.
-  - `stop` returns `followup_message` which auto-submits — the only way
-    to push a Quorus message into Cursor mid-session.
+Cursor uses additional_context at session start and followup_message at stop.
+Gemini uses hookSpecificOutput.additionalContext before each turn.
 
-Gemini's `BeforeAgent` hook is purpose-built for this: returns
-`hookSpecificOutput.additionalContext`, appended to the user's prompt
-for the current turn. No tricks needed.
-
-Cursor state file: ~/.quorus/cursors-<agent>.json — last-seen message id
-per (room, agent). Survives across machines if synced.
+Receipt files are scoped to relay and participant. Seen delivery ids survive
+hook invocations; they are not ordered chat read cursors.
 
 Diagnostics:
   Hooks must NEVER block the host harness — relay flakiness should fall
@@ -51,8 +43,19 @@ from pathlib import Path
 
 import httpx
 
-# ── Diagnostics ─────────────────────────────────────────────────────────────
+from quorus_cli import inbox_delivery as _delivery
+from quorus_cli.inbox_delivery import SHOW_CAP, Batch, daemon_owns_queue
 
+# Compatibility for existing hook integrations and tests.
+_cursors_path = _delivery._cursors_path
+_filter_unseen = _delivery._filter_unseen
+_format_for_context = _delivery._format_for_context
+_load_cursors = _delivery._load_cursors
+_save_cursors = _delivery._save_cursors
+_mark_seen = _delivery._mark_seen
+SEEN_CAP = _delivery.SEEN_CAP
+
+# ── Diagnostics ─────────────────────────────────────────────────────────────
 _HOOK_DEBUG_LOG_BYTES = 10 * 1024 * 1024  # 10 MB rotation cap
 
 
@@ -223,33 +226,6 @@ def _config() -> tuple[str, str, str]:
     )
 
 
-def _cursors_path(agent: str) -> Path:
-    """Per-agent cursor file. Tracks last-seen message id per room."""
-    p = Path.home() / ".quorus" / f"cursors-{agent}.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
-
-
-def _load_cursors(agent: str) -> dict[str, str]:
-    p = _cursors_path(agent)
-    if not p.exists():
-        return {}
-    try:
-        return json.loads(p.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        _hook_debug_log("cursor-load-fail", exc, extra=str(p))
-        return {}
-
-
-def _save_cursors(agent: str, cursors: dict[str, str]) -> None:
-    p = _cursors_path(agent)
-    try:
-        p.write_text(json.dumps(cursors, indent=2))
-    except OSError as exc:
-        # Best effort — don't block agent on disk failure
-        _hook_debug_log("cursor-save-fail", exc, extra=str(p))
-
-
 def _fetch_unread(
     relay: str,
     headers_or_secret: dict[str, str] | str,
@@ -257,9 +233,8 @@ def _fetch_unread(
 ) -> list[dict]:
     """Pull pending messages for *agent* from the relay's inbox endpoint.
 
-    Mirrors `_cmd_inbox` in cli.py: peek first to avoid pulling when empty,
-    then GET /messages/{agent} with `ack=manual` so the relay doesn't drop
-    them off the queue (we want each harness to see them once each).
+    Human consumers peek then lease with `ack=manual`. Agent identities never
+    fetch: even an unacked lease would hide deliveries from reflexd for 60 s.
 
     Accepts either a pre-built headers dict (preferred — what
     ``_resolve_auth`` returns) or a legacy positional secret string for
@@ -271,6 +246,8 @@ def _fetch_unread(
     be blocked by relay flakiness, but the silent-failure mode that hid
     the cold-install-smoke regression must never recur.
     """
+    if daemon_owns_queue(relay, agent):
+        return []
     if isinstance(headers_or_secret, dict):
         headers = headers_or_secret
     elif headers_or_secret:
@@ -291,7 +268,8 @@ def _fetch_unread(
                 extra=f"relay={relay} agent={agent} status={peek.status_code}",
             )
             return []
-        if (peek.json() or {}).get("count", 0) == 0:
+        counts = peek.json() or {}
+        if not (counts.get("count", 0) or counts.get("pending", 0)):
             return []
         full = httpx.get(
             f"{relay}/messages/{agent}",
@@ -315,50 +293,13 @@ def _fetch_unread(
         return []
 
 
-def _format_for_context(messages: list[dict]) -> str:
-    """Render messages as a compact context block the LLM can read."""
-    if not messages:
-        return ""
-    lines = ["[Quorus] new messages while you were idle:"]
-    for m in messages[-20:]:  # cap at 20 to avoid blowing context budgets
-        sender = m.get("from_name") or m.get("sender") or "?"
-        room = m.get("room") or ""
-        room_part = f" #{room}" if room else ""
-        body = (m.get("content") or "").strip().replace("\n", " ")
-        if len(body) > 280:
-            body = body[:277] + "..."
-        ts = (m.get("timestamp") or "")[:19].replace("T", " ")
-        lines.append(f"  [{ts}] @{sender}{room_part}: {body}")
-    lines.append("")
-    lines.append("Reply via mcp__quorus__send_room_message or `quorus say`.")
-    return "\n".join(lines)
-
-
-def _filter_unseen(messages: list[dict], cursors: dict[str, str]) -> list[dict]:
-    """Filter to messages newer than per-room cursors. Updates cursors in place."""
-    fresh = []
-    for m in messages:
-        room = m.get("room") or "_dm"
-        msg_id = m.get("id") or m.get("message_id") or ""
-        last_seen = cursors.get(room, "")
-        # Lex compare on ULID/UUID timestamps works for ULID; for UUIDv4
-        # the "last seen" semantic falls back to "any new message id" —
-        # acceptable since the relay deduplicates server-side.
-        if not last_seen or msg_id > last_seen or msg_id != last_seen:
-            fresh.append(m)
-            if msg_id:
-                cursors[room] = max(cursors.get(room, ""), msg_id)
-    return fresh
-
-
 # ── Per-harness entrypoints ─────────────────────────────────────────────────
 
 
 def handle_cursor_session() -> int:
     """Cursor sessionStart hook — emits {additional_context: "..."}.
 
-    Fires once at composer open / `/clear`. Inject all unread Quorus
-    messages so the agent picks up where the team left off.
+    Fires at composer open or `/clear` to inject unread human-inbox messages.
     """
     try:
         relay, instance, headers = _resolve_auth()
@@ -366,10 +307,10 @@ def handle_cursor_session() -> int:
         if not msgs:
             print(json.dumps({"additional_context": ""}))
             return 0
-        cursors = _load_cursors(instance)
-        fresh = _filter_unseen(msgs, cursors)
-        _save_cursors(instance, cursors)
-        print(json.dumps({"additional_context": _format_for_context(fresh)}))
+        batch = Batch(relay, instance, headers, msgs, limit=SHOW_CAP)
+        fresh = batch.shown
+        print(json.dumps({"additional_context": _format_for_context(fresh)}), flush=True)
+        batch.commit()
         return 0
     except Exception as exc:
         _hook_debug_log(
@@ -396,17 +337,19 @@ def handle_cursor_stop() -> int:
         if not msgs:
             print(json.dumps({}))
             return 0
-        cursors = _load_cursors(instance)
-        fresh = _filter_unseen(msgs, cursors)
-        _save_cursors(instance, cursors)
-        try:
-            sentinel.unlink()
-        except OSError as exc:
-            _hook_debug_log("cursor-sentinel-unlink-fail", exc, extra=str(sentinel))
+        batch = Batch(relay, instance, headers, msgs, limit=SHOW_CAP)
+        fresh = batch.shown
+        if not batch.has_more:
+            try:
+                sentinel.unlink()
+            except OSError as exc:
+                _hook_debug_log("cursor-sentinel-unlink-fail", exc, extra=str(sentinel))
         if not fresh:
+            batch.commit()
             print(json.dumps({}))
             return 0
-        print(json.dumps({"followup_message": _format_for_context(fresh)}))
+        print(json.dumps({"followup_message": _format_for_context(fresh)}), flush=True)
+        batch.commit()
         return 0
     except Exception as exc:
         _hook_debug_log(
@@ -430,15 +373,16 @@ def handle_gemini_beforeagent() -> int:
         if not msgs:
             print(json.dumps({"hookSpecificOutput": {"additionalContext": ""}}))
             return 0
-        cursors = _load_cursors(instance)
-        fresh = _filter_unseen(msgs, cursors)
-        _save_cursors(instance, cursors)
+        batch = Batch(relay, instance, headers, msgs, limit=SHOW_CAP)
+        fresh = batch.shown
         if not fresh:
+            batch.commit()
             print(json.dumps({"hookSpecificOutput": {"additionalContext": ""}}))
             return 0
         print(json.dumps({
             "hookSpecificOutput": {"additionalContext": _format_for_context(fresh)}
-        }))
+        }), flush=True)
+        batch.commit()
         return 0
     except Exception as exc:
         _hook_debug_log(
@@ -492,21 +436,9 @@ def handle_claude_session_end() -> int:
 
 
 def handle_claude_stop() -> int:
-    """Claude Code Stop hook — deliver pending Quorus messages (L2).
+    """Claude Code Stop: emit human-inbox messages unless stop_hook_active is set.
 
-    This is the documented way to push work into an ALREADY-RUNNING
-    session: when the turn ends and the room has unread mentions, block the
-    stop and hand the messages back as the reason, so the agent answers
-    them in the same session (full context, no cold start, no keystrokes).
-
-    Deliberately NOT the raw inbox socket: as of 2026-08 Anthropic
-    documents the auth frame but not the message-frame schema, and
-    empirical probes are silently dropped. Guessing at an unpublished wire
-    format would be a fake fix. reflexd covers the not-running case via
-    headless resume (D2).
-
-    ``stop_hook_active`` in the hook payload guards the loop: when Claude
-    is already continuing because of us, we stay silent.
+    Agent queues belong to reflexd; no hook leases or acknowledges them.
     """
     try:
         try:
@@ -522,10 +454,10 @@ def handle_claude_stop() -> int:
         if not msgs:
             print(json.dumps({}))
             return 0
-        cursors = _load_cursors(instance)
-        fresh = _filter_unseen(msgs, cursors)
-        _save_cursors(instance, cursors)
+        batch = Batch(relay, instance, headers, msgs, limit=SHOW_CAP)
+        fresh = batch.shown
         if not fresh:
+            batch.commit()
             print(json.dumps({}))
             return 0
         print(json.dumps({
@@ -536,7 +468,8 @@ def handle_claude_stop() -> int:
                 "(or the quorus MCP tools) before stopping:\n\n"
                 + _format_for_context(fresh)
             ),
-        }))
+        }), flush=True)
+        batch.commit()
         return 0
     except Exception as exc:
         _hook_debug_log(

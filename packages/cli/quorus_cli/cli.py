@@ -1089,6 +1089,10 @@ def _cmd_heartbeat(args):
 
 def _cmd_inbox(args):
     """Check for pending messages (for hooks or manual use)."""
+    from quorus_cli.inbox_delivery import Batch, daemon_owns_queue
+
+    if daemon_owns_queue(RELAY_URL, INSTANCE_NAME):
+        return
     try:
         resp = httpx.get(
             f"{RELAY_URL}/messages/{INSTANCE_NAME}/peek",
@@ -1105,8 +1109,8 @@ def _cmd_inbox(args):
 
     data = resp.json()
     count = data.get("count", 0)
-    if count == 0:
-        return  # Silent exit, no messages
+    if count == 0 and not data.get("pending", 0):
+        return  # Silent exit, no queued or pending deliveries
 
     # Fetch actual messages to display
     try:
@@ -1120,11 +1124,15 @@ def _cmd_inbox(args):
         resp.raise_for_status()
         result = resp.json()
         messages = result.get("messages", [])
-        ack_token = result.get("ack_token")
     except (httpx.ConnectError, httpx.HTTPStatusError):
         return
 
     if not messages:
+        return
+    batch = Batch(RELAY_URL, INSTANCE_NAME, _auth_headers(), messages)
+    messages = batch.shown
+    if not messages:
+        batch.commit()
         return
 
     if getattr(args, "json", False):
@@ -1144,18 +1152,8 @@ def _cmd_inbox(args):
                 content = content[:97] + "..."
             print(f"- {sender} ({time_part}): {content}")
 
-    # ACK messages after successfully printing (prevents redelivery)
-    if ack_token:
-        try:
-            httpx.post(
-                f"{RELAY_URL}/messages/{INSTANCE_NAME}/ack",
-                json={"ack_token": ack_token},
-                headers=_auth_headers(),
-                timeout=5,
-                follow_redirects=True,
-            )
-        except (httpx.ConnectError, httpx.HTTPStatusError):
-            pass  # Best effort — messages may redeliver but output succeeded
+    sys.stdout.flush()
+    batch.commit()
 
 
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"

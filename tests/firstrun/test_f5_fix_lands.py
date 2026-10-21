@@ -195,6 +195,42 @@ def _calls(home: Path) -> list[dict]:
         return []
 
 
+def _patch_ids(repo: Path, *rev: str) -> dict[str, str]:
+    """{commit: stable patch-id} for `git log -p <rev>`."""
+    log = subprocess.run(["git", "-C", str(repo), "log", "-p", "--no-color", *rev],
+                         capture_output=True, check=True).stdout
+    ids = subprocess.run(["git", "-C", str(repo), "patch-id", "--stable"], input=log,
+                         capture_output=True, check=True).stdout.decode().split("\n")
+    return {c: p for p, c in (ln.split() for ln in ids if ln.strip())}
+
+
+def _landed(repo: Path, sha: str, branch: str = "main") -> str | None:
+    """The commit on *branch* that carries *sha*'s change, or None.
+
+    The ✅ names the agent's own commit. What reaches main can be a different one with
+    the same change: rebased onto a main that moved, cherry-picked back after a hold, or
+    redone by a later wake. Matching on the patch-id, not the SHA, keeps F5 about "the
+    fix landed" rather than "this exact object landed"."""
+    if subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", sha, branch],
+                      capture_output=True).returncode == 0:
+        return _git(repo, "rev-parse", sha)
+    try:
+        want = list(_patch_ids(repo, "-1", sha).values())
+        on_branch = _patch_ids(repo, "-50", branch)
+    except subprocess.CalledProcessError:
+        return None
+    return next((c for c, p in on_branch.items() if want and p == want[0]), None)
+
+
+def _not_on_main(repo: Path, sha: str, home: Path) -> str:
+    """Why the ✅ commit isn't on main: which commit landed and which wakes ran."""
+    branches = _git(repo, "for-each-ref", "refs/heads",
+                    "--format=%(refname:short) %(objectname:short)")
+    wakes = [(c.get("stub"), c.get("can_write"), c.get("from_agent")) for c in _calls(home)]
+    return (f"✅ named {sha}; main is {_git(repo, 'log', '--oneline', '-3')}; "
+            f"branches {branches.split(chr(10))}; wakes (stub, can_write, from_agent) {wakes}")
+
+
 def test_f5_a_strangers_fix_lands_on_main_and_the_other_agent_reviews_it(tmp_path_factory):
     home = tmp_path_factory.mktemp("f5-yes") / "home"
     repo, bin_dir = _setup(home)
@@ -206,11 +242,12 @@ def test_f5_a_strangers_fix_lands_on_main_and_the_other_agent_reviews_it(tmp_pat
         sha = _SHA.search(fixed.split("✅", 1)[1]).group(0)
         # The change is on main, not just in a reply. The publish can land after the
         # ✅ on a slow CI runner, and main may move past it, so wait (up to 90 s) for
-        # the commit to be ON main rather than AT main (PR #15 CI flake).
+        # the change to be ON main rather than AT main (PR #15 CI flake). The commit on
+        # main may not be the one the ✅ named (rebased, or reapplied after a hold;
+        # main run 39551326253), so match it by patch-id.
         deadline = time.monotonic() + 90
-        while subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", sha,
-                              "main"], capture_output=True).returncode != 0:
-            assert time.monotonic() < deadline, f"main is {_git(repo, 'log', '--oneline', '-3')}"
+        while _landed(repo, sha) is None:
+            assert time.monotonic() < deadline, _not_on_main(repo, sha, home)
             time.sleep(0.5)
         assert "return a + b" in _git(repo, "show", "main:calc.py")
         assert "fix: add() returns the sum" in _git(repo, "log", "-1", "--format=%s", sha)

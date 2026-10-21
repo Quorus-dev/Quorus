@@ -416,3 +416,34 @@ def test_watcher_banner_honours_quorus_notify(
             patch.object(watcher.subprocess, "run", fake_run):
         watcher._notify_macos("Quorus — general", "alice: hi")
     fake_run.assert_not_called()
+
+
+def test_concurrent_state_saves_both_succeed(state_dir: Path, caplog) -> None:
+    """Several daemons share ~/.quorus. With one fixed ``.tmp`` name, two writers
+    that both wrote it before either renamed made the second ``os.replace`` fail
+    ("state save failed: [Errno 2] … .tmp", 138 times in two daemon logs on
+    2026-10-21). Each writer now gets its own temp file."""
+    import logging
+    import os
+    import threading
+
+    path = state_dir / native.STATE_FILE_NAME
+    both_written = threading.Barrier(2, timeout=5)
+    real_replace = os.replace
+
+    def replace_after_both_wrote(src, dst):
+        both_written.wait()  # force the interleaving that broke the fixed name
+        return real_replace(src, dst)
+
+    states = [{"a\x1fdev": 1.0}, {"b\x1fdev": 2.0}]
+    with caplog.at_level(logging.DEBUG, logger="quorus.notifications"), \
+         patch.object(native.os, "replace", replace_after_both_wrote):
+        writers = [threading.Thread(target=native._save_state, args=(path, s))
+                   for s in states]
+        for w in writers:
+            w.start()
+        for w in writers:
+            w.join(10)
+    assert "state save failed" not in caplog.text
+    assert json.loads(path.read_text()) in states
+    assert [p.name for p in state_dir.iterdir()] == [native.STATE_FILE_NAME]

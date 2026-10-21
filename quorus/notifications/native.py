@@ -31,6 +31,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -125,22 +126,27 @@ def _load_state(path: Path) -> dict[str, Any]:
 def _save_state(path: Path, state: dict[str, Any]) -> None:
     """Persist state atomically with 0o600 perms.
 
-    We write to a tmp file in the same dir, ``os.replace`` it into place,
-    and then chmod (a no-op on Windows). Any failure is logged but never
-    raised — notifications must not block on disk hiccups.
+    We write to a uniquely named tmp file in the same dir (``mkstemp``
+    creates it 0o600) and ``os.replace`` it into place. The name must be
+    unique: several daemons share ``~/.quorus``, and with one fixed ``.tmp``
+    name the second rename found nothing (2026-10-21, 138 failures in two
+    daemon logs). Any failure is logged but never raised — notifications
+    must not block on disk hiccups.
     """
+    tmp = ""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(state), encoding="utf-8")
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            # Some filesystems (e.g. Windows on FAT) don't honour chmod.
-            pass
+        fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(state))
         os.replace(tmp, path)
     except OSError as exc:
         logger.debug("notifications: state save failed: %s", exc)
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def _rate_limit_key(sender: str, room: str) -> str:

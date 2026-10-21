@@ -1195,6 +1195,47 @@ def test_cmd_inbox_with_messages(capsys):
     assert "bob" in captured.out
 
 
+def test_cmd_inbox_acks_exactly_the_printed_delivery_ids(capsys):
+    """Chat-list slice 0: the inbox acks by the delivery ids it printed, never by the
+    whole fetch token, so nothing that wasn't shown is ever acked."""
+    import httpx as httpx_mod
+
+    from quorus.cli import _cmd_inbox
+
+    peek_resp = MagicMock()
+    peek_resp.status_code = 200
+    peek_resp.json.return_value = {"count": 2, "pending": 0}
+    peek_resp.raise_for_status = MagicMock()
+    fetch_resp = MagicMock()
+    fetch_resp.status_code = 200
+    fetch_resp.json.return_value = {
+        "messages": [
+            {"id": "m1", "_delivery_id": "m1", "from_name": "alice", "content": "Hello",
+             "timestamp": "2026-04-12T12:34:00Z"},
+            {"id": "m2", "_delivery_id": "m2", "from_name": "bob", "content": "World",
+             "timestamp": "2026-04-12T12:35:00Z"},
+        ],
+        "ack_token": "tok123",
+    }
+    fetch_resp.raise_for_status = MagicMock()
+    posted = []
+
+    def fake_post(url, **kw):
+        posted.append((url, kw.get("json")))
+        return MagicMock(status_code=200)
+
+    with patch.object(httpx_mod, "get", side_effect=[peek_resp, fetch_resp]), \
+            patch.object(httpx_mod, "post", side_effect=fake_post):
+        args = MagicMock()
+        args.quiet = True
+        args.json = False
+        _cmd_inbox(args)
+
+    assert "alice" in capsys.readouterr().out
+    assert len(posted) == 1 and posted[0][0].endswith("/ack")
+    assert posted[0][1] == {"delivery_ids": ["m1", "m2"]}
+
+
 def test_cmd_inbox_json_output(capsys):
     """--json flag should output raw JSON."""
     import httpx as httpx_mod
