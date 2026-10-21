@@ -9,6 +9,7 @@ itself keeps reading the owner's relay config.
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 import pytest
@@ -71,3 +72,22 @@ def test_the_flag_is_on_the_cli():
                           "sys.argv=['quorus','agent','add','--help']; main()"],
                          capture_output=True, text=True, timeout=60)
     assert "--state-dir" in out.stdout, out.stderr[-300:]
+
+
+def test_the_agents_own_tool_wins_on_its_daemon_path(tmp_path, monkeypatch):
+    """Codex on 826faa27: with a fakebin `claude` first on PATH and the real claude
+    beside codex elsewhere, the daemon's PATH put codex's dir (and its claude) first."""
+    import shutil
+
+    fake, real = tmp_path / "fakebin", tmp_path / "real"
+    for d, names in ((fake, ["claude"]), (real, ["claude", "codex"])):
+        d.mkdir()
+        for n in names:
+            (d / n).write_text("#!/bin/sh\n")
+            (d / n).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake}{os.pathsep}{real}")
+    path = agent_cmd._harness_path("claude")
+    assert shutil.which("claude", path=path) == str(fake / "claude")
+    assert shutil.which("codex", path=path) == str(real / "codex")
+    # without an own tool, the old order (unchanged for the team's daemons)
+    assert shutil.which("claude", path=agent_cmd._harness_path()) == str(real / "claude")

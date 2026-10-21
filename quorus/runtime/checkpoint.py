@@ -59,6 +59,16 @@ def local_paths(text: str, root: Path, home: str | None) -> str:
     return text
 
 
+_DURATION = re.compile(r"\bin \d+(?:\.\d+)?s(?: \(\d+:\d{2}:\d{2}\))?")
+
+
+def without_timings(text: str) -> str:
+    """Run times out of the tail before it is hashed: pytest ends "5 failed in 0.03s",
+    and the same failure reruns in 0.02s, so the sender's and receiver's tails never
+    hashed the same and every handoff read `weak` (Codex on 826faa27)."""
+    return _DURATION.sub("in <t>s", text)
+
+
 def run_checkpoint(root: Path, head: str, config: CheckConfig | None, *,
                    env: dict[str, str], known_secrets: tuple[str, ...] = ()) -> dict:
     """Caller supplies the stripped wake environment, never the ambient daemon env.
@@ -89,9 +99,9 @@ def run_checkpoint(root: Path, head: str, config: CheckConfig | None, *,
             status = "passing" if output.code == 0 else "ran"
         result.update(exit=output.code, truncated=output.truncated)
         # Capture removed any bisected first line. Redact before the receipt cap.
-        redacted = local_paths(
+        redacted = without_timings(local_paths(
             redact_secrets(output.output.decode("utf-8", "replace"), known_secrets),
-            root, env.get("HOME"))
+            root, env.get("HOME")))
         tail = "\n".join(redacted.splitlines()[-40:])
         tail = tail.encode()[-1500:].decode("utf-8", "ignore")
         result.update(tail=tail, tail_sha256=hashlib.sha256(tail.encode()).hexdigest())

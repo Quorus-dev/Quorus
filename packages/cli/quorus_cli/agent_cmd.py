@@ -361,13 +361,19 @@ def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None,
     return mode
 
 
-def _harness_path() -> str:
+def _harness_path(own: str | None = None) -> str:
     parts = [str(Path(sys.executable).parent), "/usr/bin", "/bin", "/usr/sbin", "/sbin",
              "/opt/homebrew/bin", "/usr/local/bin"]
     for b in HARNESSES:
         w = shutil.which(b)
         if w:
             parts.insert(0, str(Path(w).parent))
+    mine = shutil.which(own) if own else None
+    if mine:
+        # The agent's own tool, exactly as `agent add` resolved it, comes first: another
+        # harness's dir can hold a different binary of the same name. The dogfood
+        # rehearsal's fakebin `claude` lost to the real one that way (Codex on 826faa27).
+        parts.insert(0, str(Path(mine).parent))
     return os.pathsep.join(dict.fromkeys(parts))
 
 
@@ -397,7 +403,9 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
     label = LABEL_PREFIX + name
     log = _agents_dir() / f"{name}.log"
     crash_log = _agents_dir() / f"{name}.crash.log"  # launchd stdout/stderr
-    env = {"PATH": _harness_path(), "RELAY_URL": cfg["relay_url"], "API_KEY": cred,
+    own = name.rsplit("-", 1)[-1]
+    env = {"PATH": _harness_path(own if own in HARNESSES else None),
+           "RELAY_URL": cfg["relay_url"], "API_KEY": cred,
            "REFLEXD_PARTICIPANT": name, "PYTHONUNBUFFERED": "1",
            "REFLEXD_LOG_PATH": str(log),
            # The daemon reads room bindings from the same home `agent add`
