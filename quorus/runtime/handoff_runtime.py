@@ -37,11 +37,14 @@ def check_env() -> dict[str, str]:
 
 
 def skip_sync(daemon, room, worktree) -> bool:
-    """Never sync a held receiver or a durable sender before its authority gate."""
-    if marker_path(daemon._unfinished_dir, worktree.path).exists():
-        return True
+    """Protect handoff holds/journals; ordinary unfinished turns still sync."""
     store = journal(daemon, room, worktree)
     try:
+        path = marker_path(daemon._unfinished_dir, worktree.path)
+        if path.exists():
+            value = json.loads(path.read_text())
+            if not isinstance(value, dict) or "handoff" in value:
+                return True
         with store.locked():
             return any(e["state"] in {"sent", "received", "adopting", "adopted", "verified",
                                       "continuing"}
