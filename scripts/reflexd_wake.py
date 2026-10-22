@@ -865,7 +865,15 @@ def wake_instructions(
                   "should do, say so and @-mention who should take it.")
     else:
         opener = f"`{sender}` asked something in room `{room}` and you won the pick."
-    ws = (worktree_instructions(worktree, dirty=worktree_dirty(worktree))
+    # A read-only turn gets one consistent instruction. The 0.7.0 demo reviewer was told
+    # read-only and also "get the tests green, then commit" and "do the work now", and a
+    # free model kept trying denied commands until the demo's wait ran out (0.7.1 plan).
+    read_only = bool(untrusted) or read_only_members
+    ws = ("You can read files but can't run commands or edit in this turn. Review by "
+          "reading the changed files and the message, then post your verdict in one "
+          "reply: approve, or what to change and why. Don't try commands; they're denied."
+          if read_only else
+          worktree_instructions(worktree, dirty=worktree_dirty(worktree))
           if worktree is not None else
           "You are running inside the room's bound workspace: make real changes, "
           "run the tests, and commit when the work is done."
@@ -894,12 +902,14 @@ def wake_instructions(
            "If the request needs changes, say that once, in one line, and stop. "
            "Don't hand the task to a teammate agent: it can't edit here either.\n"
            if cannot_write else "")
-        +
-        "- If the message asks for work, do the work now rather than stopping "
-        "at a plan. If a tool you need is not permitted, say exactly what is "
-        "blocked so a human can decide, and don't hand the task to a teammate "
-        "agent for that reason: it has the same permissions here.\n"
-        "- If it is just a question, answer it in 1-3 sentences.\n"
+        + ("- If the message asks for work, answer or review it by reading: this turn "
+           "can't change anything, so say what needs changing instead of trying.\n"
+           if read_only else
+           "- If the message asks for work, do the work now rather than stopping "
+           "at a plan. If a tool you need is not permitted, say exactly what is "
+           "blocked so a human can decide, and don't hand the task to a teammate "
+           "agent for that reason: it has the same permissions here.\n")
+        + "- If it is just a question, answer it in 1-3 sentences.\n"
         f"- {ws}\n"
         "- For anything longer than a few minutes, post a 1-line plan first with "
         f"the Quorus send_room_message tool: send_room_message(room_id=\"{room}\", "

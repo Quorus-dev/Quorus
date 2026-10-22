@@ -178,6 +178,12 @@ def test_an_untraceable_agent_request_in_a_members_room_is_told_read_only(
     assert "quorus agent add" not in seen["context"]  # no widening command for strangers
     # the owner-trust wording is for owner rooms only; one notice, not two
     assert "(your owner), so this turn is READ-ONLY" not in seen["context"]
+    # one consistent instruction: nothing telling it to run tests, commit or "do the work"
+    # (Codex on c58443d3: the failing demo path is exactly this members-room flag)
+    for contradiction in ("Get the tests green", "run the tests", "do the work now",
+                          "commit when the work is done"):
+        assert contradiction not in seen["context"], contradiction
+    assert "post your verdict in one reply" in seen["context"]
 
 
 def test_an_agent_relaying_an_observers_request_is_read_only(monkeypatch, tmp_path) -> None:

@@ -35,8 +35,12 @@ BUILDER, REVIEWER, HUMAN, ROOM = "demo-opencode", "demo-review-opencode", "you",
 
 
 def task_for(builder: str, reviewer: str) -> str:
+    # The reviewer's turn is read-only (no reply chain to a person under `trust:
+    # members`), so the hand-off carries what it needs to review by reading (0.7.1).
     return (f"@{builder} add() in calc.py is broken: fix it, run the test, commit, then "
-            f"@-mention your reviewer ({reviewer}) to review your commit.")
+            f"@-mention your reviewer ({reviewer}) to review your commit. In that "
+            "message, give the commit hash, the file and line you changed, and the test "
+            "result, so it can review by reading.")
 
 
 TASK = task_for(BUILDER, REVIEWER)
