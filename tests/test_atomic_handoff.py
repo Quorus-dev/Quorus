@@ -383,9 +383,9 @@ async def test_claim_read_waits_for_atomic_transfer_even_with_an_old_claim(
     assert await owns_claim(relay, room=room_id, participant="bob", task_id="old")
 
 
-@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("receipt_kind", ["exact", "missing", "wrong"])
 async def test_owner_discard_is_exact_authorized_and_replay_safe(
-        client, room_id, real_ref_id, legacy):
+        client, room_id, real_ref_id, receipt_kind):
     await claim(client, room_id)
     response = await client.post("/v1/handoff", json=body(room_id, real_ref_id),
                                  headers=social._user_headers("alice"))
@@ -393,18 +393,25 @@ async def test_owner_discard_is_exact_authorized_and_replay_safe(
     queue = app.state.work_queue_service
     await queue.claim(social._TEST_TENANT_ID, room_id, task_id="old", actor="bob")
     capsule_fp = response.json()["state_change"]["fingerprint"]
-    if legacy:
+    if receipt_kind != "exact":
         for receipt in queue._bucket(social._TEST_TENANT_ID, room_id)["task"][
                 "metadata"]["handoff_receipts"].values():
-            receipt.pop("fingerprint")
+            if receipt_kind == "missing":
+                receipt.pop("fingerprint")
+            else:
+                receipt["fingerprint"] = "f" * 64
     payload = dict(room_id=room_id, receiver="bob", task_id="task", resolution_id=capsule_fp)
     forbidden = await client.post("/v1/handoff/discard", json=payload,
                                   headers=social._user_headers("carol"))
     assert forbidden.status_code == 403
     response = await client.post("/v1/handoff/discard", json=payload,
                                  headers=social._user_headers("bob"))
+    if receipt_kind != "exact":
+        assert response.status_code == 409, response.text
+        task = queue._bucket(social._TEST_TENANT_ID, room_id)["task"]
+        assert task["claimed_by"] == "bob" and "handoff_discards" not in task["metadata"]
+        return
     assert response.status_code == 200, response.text
-    assert response.json()["legacy_receipt"] is legacy
     bucket = queue._bucket(social._TEST_TENANT_ID, room_id)
     assert bucket["task"]["claimed_by"] is None and bucket["task"]["status"] == "pending"
     assert bucket["old"]["claimed_by"] == "bob"

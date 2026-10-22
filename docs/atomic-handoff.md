@@ -57,8 +57,8 @@ releasing someone else's newer claim. Publish decisions keep their claim.
 `POST /v1/handoff/discard` requires the receiver, its verified owner, or a relay
 admin, with room write/policy checks. It matches a protected capsule receipt and
 uses the same social/queue locks and strict persistence acknowledgement as the
-handoff. Older receipts without fingerprints are identified by their exact task
-and receiver under the same owner authority. Client metadata cannot forge either
+handoff. A receipt must match the capsule fingerprint; missing or mismatched
+fingerprints refuse discard and retain the hold. Client metadata cannot forge either
 transfer receipts or discard acknowledgements. Both client and relay must be
 upgraded for this discard path; an old relay fails closed.
 
@@ -74,3 +74,15 @@ CFG="$X/owner" qd handoff release --runtime-dir "$X/codex/runtime" \
 Existing stale claims that already lost their local hold are not silently
 changed. The owner can resolve their exact task/receiver through the reviewed
 relay endpoint; these fixes perform no live cleanup.
+
+## Relay restart and claim persistence
+
+Without Redis, the relay work queue lives in memory. File-mode message/history
+persistence does not persist task claims: a relay restart clears them. Use durable
+Redis storage when claims must survive relay restarts. This does not replace the
+receiver’s fresh ownership checks.
+
+If a claim disappears before proof/adoption, the receiver stays read-only. If it
+disappears after launch, completion refuses to commit or publish and retains the
+local hold for owner recovery. A delivered capsule never reconstructs authority.
+The owner must resolve the lost claim and retained work explicitly.

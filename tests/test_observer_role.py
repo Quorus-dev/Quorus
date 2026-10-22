@@ -58,6 +58,11 @@ WRITES = [
      lambda n: {"room_id": "build", "agent": n, "tool_name": "Bash", "input": {}}),
     ("POST", "/v1/social/claim", lambda n: {"actor": n, "room_id": "build", "payload": {
         "task_id": "t1", "eta_seconds": 60, "scope": "a.py"}}),
+    ("POST", "/v1/handoff",
+     lambda n: {"actor": n, "room_id": "build", "payload": {"to": "arav"}}),
+    ("POST", "/v1/handoff/discard",
+     lambda n: {"room_id": "build", "receiver": n, "task_id": "t1",
+                "resolution_id": "a" * 64}),
     ("PUT", "/v1/memory/{n}/build/k", lambda n: {"value": "v"}),
     ("POST", "/v1/bid",
      lambda n: {"room_id": "build", "participant": n, "message_id": "m1", "bid": 0.5}),
@@ -113,15 +118,21 @@ async def test_a_member_is_not_mistaken_for_an_observer(client, method, path, bo
     assert r.status_code != 403 or r.json().get("detail") != OBSERVER_DENIED, r.text
 
 
-async def test_a_downgrade_applies_to_the_next_request(client: AsyncClient) -> None:
+@pytest.mark.parametrize("path, body, first_status", [
+    ("/rooms/build/messages", {"from_name": "mark", "content": "hi"}, 200),
+    ("/v1/handoff", {"actor": "mark", "room_id": "build", "payload": {"to": "arav"}}, 400),
+    ("/v1/handoff/discard", {"room_id": "build", "receiver": "mark", "task_id": "t1",
+                             "resolution_id": "a" * 64}, 409),
+])
+async def test_a_downgrade_applies_to_the_next_request(
+        client: AsyncClient, path, body, first_status) -> None:
     mark = await _join(client, "build", "mark", "member")
-    msg = {"from_name": "mark", "content": "hi"}
-    assert (await client.post("/rooms/build/messages", json=msg, headers=mark)).status_code == 200
+    assert (await client.post(path, json=body, headers=mark)).status_code == first_status
     rooms = app.state.room_service
     rid, _ = await rooms.get("_legacy", "build")
     await rooms.leave("_legacy", rid, "mark")
     await rooms.join("_legacy", rid, "mark", "observer", 50)
-    r = await client.post("/rooms/build/messages", json=msg, headers=mark)  # same old JWT
+    r = await client.post(path, json=body, headers=mark)  # same old JWT
     assert r.status_code == 403 and r.json()["detail"] == OBSERVER_DENIED
 
 

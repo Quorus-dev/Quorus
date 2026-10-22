@@ -25,10 +25,7 @@ async def discard(queue, social, tid, rid, *, receiver, task_id, resolution_id):
                 return dict(resolved=True, task_id=task_id, duplicate=True)
             receipts = [r for r in task.get("metadata", {}).get("handoff_receipts", {}).values()
                         if r.get("target") == receiver]
-            # Pre-fix receipts bind task + receiver but didn't store a fingerprint.
-            # The authenticated owner may explicitly resolve those exact old claims.
-            legacy = bool(receipts) and all("fingerprint" not in r for r in receipts)
-            if not legacy and not any(r.get("fingerprint") == resolution_id for r in receipts):
+            if not any(r.get("fingerprint") == resolution_id for r in receipts):
                 raise HTTPException(409, "no matching capsule receipt; local hold retained")
             if len(decisions) >= 128:
                 raise HTTPException(409, "discard ledger full; owner resolution required")
@@ -55,4 +52,4 @@ async def discard(queue, social, tid, rid, *, receiver, task_id, resolution_id):
                                         "retry exact decision") from exc
             bucket[task_id] = changed
             social._state[(tid, rid)] = state
-            return dict(resolved=True, task_id=task_id, duplicate=False, legacy_receipt=legacy)
+            return dict(resolved=True, task_id=task_id, duplicate=False)
