@@ -53,3 +53,21 @@ def test_a_held_lock_refuses_a_second_non_blocking_holder(tmp_path):
     finally:
         os.close(second)
         os.close(first)
+
+
+def test_no_packaged_module_imports_fcntl_at_top_level():
+    """The startup list above can't name tomorrow's module: no module under quorus/
+    or packages/ may import fcntl at top level (only file_lock, inside try)."""
+    import ast
+
+    bad = []
+    for base in ("quorus", "packages"):
+        for path in (ROOT / base).rglob("*.py"):
+            if "tests" in path.parts:
+                continue
+            for node in ast.parse(path.read_text(encoding="utf-8")).body:
+                names = ([a.name for a in node.names] if isinstance(node, ast.Import)
+                         else [node.module] if isinstance(node, ast.ImportFrom) else [])
+                if "fcntl" in names:
+                    bad.append(str(path.relative_to(ROOT)))
+    assert bad == [], bad
