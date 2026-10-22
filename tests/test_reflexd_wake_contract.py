@@ -1170,3 +1170,32 @@ def test_the_worktree_text_never_claims_a_shared_store_across_owners(tmp_path: P
     assert "all worktrees share one object store" not in text
     assert "git cat-file -e <hash>" in text and "quorus fetch <bundle> --room <room>" in text
     assert "Never tell a reviewer that you share a store" in text
+
+
+def _intent(**kw):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import reflexd_wake
+
+    base = dict(participant="a-codex", room="r", sender="a-claude", kind="mention",
+                teammates=["a-claude", "a-codex"], has_workspace=True, from_agent=True)
+    return reflexd_wake.wake_instructions(**{**base, **kw})
+
+
+def test_read_only_turns_get_one_consistent_instruction():
+    """0.7.1 plan: a read-only turn was told READ-ONLY and also to get the tests green,
+    commit and "do the work now", so a free model kept trying denied commands."""
+    for kw in ({"read_only_members": True}, {"untrusted": "arav"}):
+        text = _intent(**kw)
+        assert "can't run commands or edit in this turn" in text
+        assert "post your verdict in one reply" in text
+        for contradiction in ("do the work now", "run the tests", "commit when the work"):
+            assert contradiction not in text, (kw, contradiction)
+
+
+def test_write_capable_turns_keep_their_instructions():
+    text = _intent()
+    assert "do the work now" in text and "run the tests" in text
+    assert "can't run commands or edit in this turn" not in text

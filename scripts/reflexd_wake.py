@@ -817,13 +817,17 @@ def wake_instructions(
     teammates: list[str], has_workspace: bool, worktree: Worktree | None = None,
     manual: bool = False, from_agent: bool = False, lead: str | None = None,
     owner: str | None = None, untrusted: str | None = None,
-    cannot_write: str | None = None,
+    cannot_write: str | None = None, read_only_members: bool = False,
 ) -> str:
     """The Wake Intent block — tells the agent it may (and should) do work.
 
     *cannot_write*: why this turn has no edits or shell, with the command the
     owner can run. Given only on the owner's own turns: an untrusted sender
-    must never be told how to turn autonomous mode on (codex)."""
+    must never be told how to turn autonomous mode on (codex).
+    *read_only_members*: a `trust: members` room where this request doesn't
+    trace back to a person who may change the room. Say so, without any
+    widening command: the 0.7.0 demo reviewer got no notice, tried five denied
+    shell commands and never posted a verdict (PyPI pass, 2026-10-22)."""
     others = ", ".join(f"@{t}" for t in teammates if t != participant) or "(none)"
     is_lead = bool(lead) and lead == participant
     led_by = lead if lead and not is_lead and lead in teammates else None
@@ -861,7 +865,15 @@ def wake_instructions(
                   "should do, say so and @-mention who should take it.")
     else:
         opener = f"`{sender}` asked something in room `{room}` and you won the pick."
-    ws = (worktree_instructions(worktree, dirty=worktree_dirty(worktree))
+    # A read-only turn gets one consistent instruction. The 0.7.0 demo reviewer was told
+    # read-only and also "get the tests green, then commit" and "do the work now", and a
+    # free model kept trying denied commands until the demo's wait ran out (0.7.1 plan).
+    read_only = bool(untrusted) or read_only_members
+    ws = ("You can read files but can't run commands or edit in this turn. Review by "
+          "reading the changed files and the message, then post your verdict in one "
+          "reply: approve, or what to change and why. Don't try commands; they're denied."
+          if read_only else
+          worktree_instructions(worktree, dirty=worktree_dirty(worktree))
           if worktree is not None else
           "You are running inside the room's bound workspace: make real changes, "
           "run the tests, and commit when the work is done."
@@ -876,6 +888,12 @@ def wake_instructions(
            "READ-ONLY: answer or review, and if it needs code changes, say exactly what "
            f"and ask `{untrusted}` to approve or assign it. Don't hand it to a teammate "
            "agent: they would get a read-only turn too.\n" if untrusted else "")
+        + ("- This request doesn't trace back to a person who may change this room, so "
+           "this turn is READ-ONLY: edits and shell commands are denied here, so don't "
+           "try them (each attempt only costs time). Review by reading the files with "
+           "your read tool, then post your answer or verdict in one message. Don't hand "
+           "it to a teammate agent: they would get a read-only turn too.\n"
+           if read_only_members and not untrusted else "")
         + ("- This room is in MANUAL mode: risky actions need your owner's "
            "approval. If one is denied or not answered, do not retry or work "
            "around it - stop and say exactly what you need approved.\n"
@@ -884,12 +902,14 @@ def wake_instructions(
            "If the request needs changes, say that once, in one line, and stop. "
            "Don't hand the task to a teammate agent: it can't edit here either.\n"
            if cannot_write else "")
-        +
-        "- If the message asks for work, do the work now rather than stopping "
-        "at a plan. If a tool you need is not permitted, say exactly what is "
-        "blocked so a human can decide, and don't hand the task to a teammate "
-        "agent for that reason: it has the same permissions here.\n"
-        "- If it is just a question, answer it in 1-3 sentences.\n"
+        + ("- If the message asks for work, answer or review it by reading: this turn "
+           "can't change anything, so say what needs changing instead of trying.\n"
+           if read_only else
+           "- If the message asks for work, do the work now rather than stopping "
+           "at a plan. If a tool you need is not permitted, say exactly what is "
+           "blocked so a human can decide, and don't hand the task to a teammate "
+           "agent for that reason: it has the same permissions here.\n")
+        + "- If it is just a question, answer it in 1-3 sentences.\n"
         f"- {ws}\n"
         "- For anything longer than a few minutes, post a 1-line plan first with "
         f"the Quorus send_room_message tool: send_room_message(room_id=\"{room}\", "

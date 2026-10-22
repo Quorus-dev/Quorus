@@ -5,6 +5,16 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-10-22
+
+### Fixed
+
+- `quorus demo` now ends on the reviewer's verdict. The reviewer's turn is read-only, but
+  its instructions also told it to run the tests and commit, so a free model kept trying
+  commands that were denied until the demo's wait ran out. A read-only turn now gets one
+  instruction: review by reading, then post the verdict. This applies to every read-only
+  turn, not just the demo. Nothing about who may edit has changed.
+
 ## [0.7.0] — 2026-10-22
 
 ### Added
