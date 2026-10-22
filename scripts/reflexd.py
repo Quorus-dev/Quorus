@@ -4349,6 +4349,11 @@ class Reflexd:
                        and not trusted_now
                        else None),
             cannot_write=cannot_write,
+            # `trust: members`, but the chain doesn't reach a writer (an agent's
+            # untraceable hand-off, an observer): the turn runs read-only, so say so.
+            read_only_members=(room_mode != "default"
+                               and trust_for(wake_room) == "members"
+                               and not trusted_now),
         )
 
         memory_block = render_memory_context(memory_entries or [])

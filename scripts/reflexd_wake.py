@@ -817,13 +817,17 @@ def wake_instructions(
     teammates: list[str], has_workspace: bool, worktree: Worktree | None = None,
     manual: bool = False, from_agent: bool = False, lead: str | None = None,
     owner: str | None = None, untrusted: str | None = None,
-    cannot_write: str | None = None,
+    cannot_write: str | None = None, read_only_members: bool = False,
 ) -> str:
     """The Wake Intent block — tells the agent it may (and should) do work.
 
     *cannot_write*: why this turn has no edits or shell, with the command the
     owner can run. Given only on the owner's own turns: an untrusted sender
-    must never be told how to turn autonomous mode on (codex)."""
+    must never be told how to turn autonomous mode on (codex).
+    *read_only_members*: a `trust: members` room where this request doesn't
+    trace back to a person who may change the room. Say so, without any
+    widening command: the 0.7.0 demo reviewer got no notice, tried five denied
+    shell commands and never posted a verdict (PyPI pass, 2026-10-22)."""
     others = ", ".join(f"@{t}" for t in teammates if t != participant) or "(none)"
     is_lead = bool(lead) and lead == participant
     led_by = lead if lead and not is_lead and lead in teammates else None
@@ -876,6 +880,12 @@ def wake_instructions(
            "READ-ONLY: answer or review, and if it needs code changes, say exactly what "
            f"and ask `{untrusted}` to approve or assign it. Don't hand it to a teammate "
            "agent: they would get a read-only turn too.\n" if untrusted else "")
+        + ("- This request doesn't trace back to a person who may change this room, so "
+           "this turn is READ-ONLY: edits and shell commands are denied here, so don't "
+           "try them (each attempt only costs time). Review by reading the files with "
+           "your read tool, then post your answer or verdict in one message. Don't hand "
+           "it to a teammate agent: they would get a read-only turn too.\n"
+           if read_only_members and not untrusted else "")
         + ("- This room is in MANUAL mode: risky actions need your owner's "
            "approval. If one is denied or not answered, do not retry or work "
            "around it - stop and say exactly what you need approved.\n"

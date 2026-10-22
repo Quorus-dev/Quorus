@@ -165,6 +165,21 @@ def test_a_stranger_or_an_unknown_role_is_read_only_in_a_members_room(
                 roles={"aarya": "superuser"})["mode"] == "readonly"
 
 
+def test_an_untraceable_agent_request_in_a_members_room_is_told_read_only(
+        monkeypatch, tmp_path) -> None:
+    """0.7.0 PyPI pass: `quorus demo` binds its room `trust: members`, the builder's
+    @-mention has no reply chain to a person, so the reviewer ran read-only, but its
+    prompt never said so. It tried five denied shell commands and posted no verdict."""
+    seen = _run(monkeypatch, tmp_path, "aarya-codex", "members",
+                roles={"aarya": "member", "aarya-codex": "member"})
+    assert seen["mode"] == "readonly"
+    assert "READ-ONLY" in seen["context"] and "don't try them" in seen["context"]
+    assert "reading the files" in seen["context"]
+    assert "quorus agent add" not in seen["context"]  # no widening command for strangers
+    # the owner-trust wording is for owner rooms only; one notice, not two
+    assert "(your owner), so this turn is READ-ONLY" not in seen["context"]
+
+
 def test_an_agent_relaying_an_observers_request_is_read_only(monkeypatch, tmp_path) -> None:
     history = [_msg("ask", "olive"), _msg("hand", "aarya-codex", "ask")]
     seen = _run(monkeypatch, tmp_path, "aarya-codex", "members", reply_to="hand",
