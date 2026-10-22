@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -67,10 +68,19 @@ def load(state_dirs: list[Path]) -> tuple[list[dict], dict[str, list[dict]], dic
     return [*events, *resolved_waits], entries, bindings
 
 
+_FRACTION = re.compile(r"\.(\d{1,6})(?=[+-]\d{2}:?\d{2}$|$)")
+
+
+def _when(value: str | None) -> datetime:
+    """Python 3.10's fromisoformat takes neither "Z" nor a 1-5 digit fraction such as
+    ".5"; 3.11 takes both, so the report silently lost resume times on 3.10 (PR #20)."""
+    text = str(value).replace("Z", "+00:00")
+    return datetime.fromisoformat(_FRACTION.sub(lambda m: "." + m[1].ljust(6, "0"), text))
+
+
 def _seconds(start: str | None, end: str | None) -> float | None:
     try:
-        return (datetime.fromisoformat(str(end)) - datetime.fromisoformat(str(start))
-                ).total_seconds()
+        return (_when(end) - _when(start)).total_seconds()
     except (TypeError, ValueError):
         return None
 

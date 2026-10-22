@@ -354,3 +354,21 @@ def test_a_crash_mid_line_is_repaired_before_the_next_event(tmp_path):
     only_partial.events_path.write_text('{"event": "att')
     only_partial.event({"event": "attempt", "attempt_id": "b1"})
     assert json.loads(only_partial.events_path.read_text())["attempt_id"] == "b1"
+
+
+@pytest.mark.parametrize("start, end, seconds", [
+    ("2026-10-21T14:00:00+00:00", "2026-10-21T14:01:03.5+00:00", 63.5),
+    ("2026-10-21T14:00:00Z", "2026-10-21T14:00:01.25Z", 1.25),
+    ("2026-10-21T14:00:00.123456+00:00", "2026-10-21T14:00:01.123456+00:00", 1.0),
+])
+def test_report_times_parse_on_every_supported_python(start, end, seconds):
+    """Python 3.10's fromisoformat rejects "Z" and a short fraction like ".5"; the
+    resume column read "-" there while 3.11+ passed (PR #20 CI)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("handoff_report_t",
+                                                  ROOT / "scripts" / "handoff_report.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod._seconds(start, end) == pytest.approx(seconds)
+    assert mod._seconds(None, end) is None and mod._seconds(start, "not a time") is None
