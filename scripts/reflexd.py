@@ -2409,10 +2409,12 @@ class RelayClient:
         return [m for m in members if isinstance(m, str)] if isinstance(members, list) else []
 
     async def mission_task_for(
-        self, *, room: str, participant: str,
+        self, *, room: str, participant: str, task_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Return the first active work-queue task claimed by *participant*
-        in *room*, or None. Failures degrade to None (chat budgets)."""
+        """Return the exact task when requested, otherwise the first active claim.
+
+        Failures degrade to None (chat budgets); handoff callers always supply an ID.
+        """
         headers = await self._headers()
         try:
             resp = await self.client.get(
@@ -2427,9 +2429,11 @@ class RelayClient:
             logger.debug("work-queue lookup failed for %s: %s", room, exc)
             return None
         tasks = data.get("tasks") if isinstance(data, dict) else None
-        if isinstance(tasks, list) and tasks:
-            first = tasks[0]
-            return first if isinstance(first, dict) else None
+        if isinstance(tasks, list):
+            return next((t for t in tasks if isinstance(t, dict)
+                         and (task_id is None or t.get("task_id") == task_id)
+                         and t.get("claimed_by") == participant
+                         and t.get("status") in {"pending", "in_progress", "blocked"}), None)
         return None
 
     async def post_reply(

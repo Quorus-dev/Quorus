@@ -328,3 +328,129 @@ def test_relay_rejection_detail_cannot_introduce_room_mentions():
 
     detail = HandoffRejected("target @teammate left; @all retry").detail
     assert "@" not in detail and "teammate" in detail
+
+
+async def test_exact_handoff_claim_lookup_ignores_an_older_held_task():
+    from quorus.runtime.handoff_ownership import owns_claim
+
+    def respond(request):
+        return httpx.Response(200, json={"tasks": [
+            {"task_id": "old", "claimed_by": "bob", "status": "in_progress"},
+            {"task_id": "new", "claimed_by": "bob", "status": "in_progress"}]})
+
+    relay = reflexd.RelayClient(relay_url="http://claims", api_key="synthetic")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond),
+                                 base_url="http://claims") as c:
+        relay._client = c
+        async def headers():
+            return {}
+        relay._headers = headers
+        assert await owns_claim(relay, room="room", participant="bob", task_id="new")
+        assert not await owns_claim(relay, room="room", participant="bob", task_id="absent")
+
+
+async def test_claim_read_waits_for_atomic_transfer_even_with_an_old_claim(
+        client, room_id, real_ref_id, monkeypatch):
+    from quorus.runtime.handoff_ownership import owns_claim
+
+    response = await client.post("/v1/social/claim", headers=social._user_headers("bob"),
+        json=dict(actor="bob", room_id=room_id,
+                  payload=dict(task_id="old", scope="old task", eta_seconds=0)))
+    assert response.status_code == 200
+    await claim(client, room_id)
+    relay = reflexd.RelayClient(relay_url="http://test", api_key="synthetic")
+    relay._client = client
+
+    async def headers():
+        return social._user_headers("bob")
+
+    relay._headers = headers
+    original = app.state.room_msg_service.send
+    reads = []
+
+    async def send(*a, **kw):
+        reads.append(asyncio.create_task(owns_claim(
+            relay, room=room_id, participant="bob", task_id="task")))
+        await asyncio.sleep(0)
+        assert not reads[0].done()  # queue lock prevents an early false receipt
+        return await original(*a, **kw)
+
+    monkeypatch.setattr(app.state.room_msg_service, "send", send)
+    response = await client.post("/v1/handoff", json=body(room_id, real_ref_id),
+                                 headers=social._user_headers("alice"))
+    assert response.status_code == 200
+    assert await reads[0]
+    assert await owns_claim(relay, room=room_id, participant="bob", task_id="old")
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_owner_discard_is_exact_authorized_and_replay_safe(
+        client, room_id, real_ref_id, legacy):
+    await claim(client, room_id)
+    response = await client.post("/v1/handoff", json=body(room_id, real_ref_id),
+                                 headers=social._user_headers("alice"))
+    assert response.status_code == 200
+    queue = app.state.work_queue_service
+    await queue.claim(social._TEST_TENANT_ID, room_id, task_id="old", actor="bob")
+    capsule_fp = response.json()["state_change"]["fingerprint"]
+    if legacy:
+        for receipt in queue._bucket(social._TEST_TENANT_ID, room_id)["task"][
+                "metadata"]["handoff_receipts"].values():
+            receipt.pop("fingerprint")
+    payload = dict(room_id=room_id, receiver="bob", task_id="task", resolution_id=capsule_fp)
+    forbidden = await client.post("/v1/handoff/discard", json=payload,
+                                  headers=social._user_headers("carol"))
+    assert forbidden.status_code == 403
+    response = await client.post("/v1/handoff/discard", json=payload,
+                                 headers=social._user_headers("bob"))
+    assert response.status_code == 200, response.text
+    assert response.json()["legacy_receipt"] is legacy
+    bucket = queue._bucket(social._TEST_TENANT_ID, room_id)
+    assert bucket["task"]["claimed_by"] is None and bucket["task"]["status"] == "pending"
+    assert bucket["old"]["claimed_by"] == "bob"
+    state = (await client.get(f"/v1/social/state/{room_id}",
+                             headers=social._user_headers("alice"))).json()
+    assert "task" not in state["claims"]
+    # A resumed local discard cannot release the next person's newer claim.
+    claimed = await client.post("/v1/social/claim", headers=social._user_headers("carol"),
+        json=dict(actor="carol", room_id=room_id,
+                  payload=dict(task_id="task", scope="new attempt", eta_seconds=0)))
+    assert claimed.status_code == 200
+    repeated = await client.post("/v1/handoff/discard", json=payload,
+                                 headers=social._user_headers("bob"))
+    assert repeated.status_code == 200 and repeated.json()["duplicate"]
+    assert bucket["task"]["claimed_by"] == "carol"
+    changed = await client.post("/v1/handoff/discard",
+        json={**payload, "resolution_id": "b" * 64}, headers=social._user_headers("bob"))
+    assert changed.status_code == 409 and bucket["task"]["claimed_by"] == "carol"
+
+
+async def test_discard_persistence_failure_keeps_the_receiver_claim(
+        client, room_id, real_ref_id):
+    await claim(client, room_id)
+    sent = await client.post("/v1/handoff", json=body(room_id, real_ref_id),
+                             headers=social._user_headers("alice"))
+    fp = sent.json()["state_change"]["fingerprint"]
+    queue = app.state.work_queue_service
+
+    class BrokenRedis:
+        async def hset(self, *a):
+            raise OSError("full")
+
+    queue._redis = BrokenRedis()
+    response = await client.post("/v1/handoff/discard", headers=social._user_headers("bob"),
+        json=dict(room_id=room_id, receiver="bob", task_id="task", resolution_id=fp))
+    assert response.status_code == 503
+    assert queue._bucket(social._TEST_TENANT_ID, room_id)["task"]["claimed_by"] == "bob"
+
+
+async def test_callers_cannot_forge_discard_acknowledgements():
+    from quorus.services.work_queue_svc import WorkQueueSvc
+
+    queue = WorkQueueSvc()
+    value = {"handoff_discards": {"fake": "bob"}, "handoff_receipts": {"fake": {}}, "note": 1}
+    added = await queue.add("t", "r", task_id="task", requested_by="bob", summary="x",
+                            metadata=value)
+    assert added["metadata"] == {"note": 1}
+    changed = await queue.update("t", "r", task_id="task", actor="bob", metadata_patch=value)
+    assert changed["metadata"] == {"note": 1}

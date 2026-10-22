@@ -12,7 +12,7 @@ async def owns_claim(relay, *, room: str, participant: str, task_id: str | None)
     if not task_id:
         return False
     try:
-        task = await relay.mission_task_for(room=room, participant=participant)
+        task = await relay.mission_task_for(room=room, participant=participant, task_id=task_id)
     except Exception:
         return False
     return (isinstance(task, dict) and task.get("task_id") == task_id

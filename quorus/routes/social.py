@@ -28,6 +28,7 @@ from quorus.auth.policy import (
     load_policy_for_tenant,
 )
 from quorus.protocol import VERBS, SocialVerb
+from quorus.routes.handoff_owner import router as owner_handoff_router
 from quorus.routes.room_auth import require_room_member, require_room_writer
 from quorus.services.social_svc import (
     BlockedError,
@@ -39,6 +40,7 @@ from quorus.services.social_svc import (
 )
 
 router = APIRouter()
+router.include_router(owner_handoff_router)
 _LEGACY_TENANT = "_legacy"
 
 

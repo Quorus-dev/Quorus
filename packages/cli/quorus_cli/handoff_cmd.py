@@ -74,16 +74,23 @@ def cmd_release(args) -> None:
     console.print(f"[warning]{action}[/] @{escape(args.agent)}'s held work in "
                   f"[primary]{escape(args.room)}[/] at {escape(args.head[:12])} "
                   f"[dim](state in {escape(str(_runtime_dir(args)))})[/]")
+    matching = [h for h in handoff_release.holds(_runtime_dir(args))
+                if h.room == args.room and h.agent == args.agent and h.capsule_id == args.capsule]
+    if len(matching) == 1 and action == "discard":
+        task_id = escape(str(matching[0].entry.get("task_id", "unknown")))
+        console.print(f"  [dim]relay task: {task_id}[/]")
     if input(f"  type the room name ({args.room}) to go on: ").strip() != args.room:
         _ui.error("nothing changed: the name didn't match")
         raise SystemExit(2)
     running = daemon_running(args.agent)
+    from quorus_cli.handoff_relay import resolve_claim
+
     try:
         note = handoff_release.release(
             _runtime_dir(args), agent=args.agent, room=args.room, capsule_id=args.capsule,
-            head=args.head, action=action, daemon_running=running)
+            head=args.head, action=action, daemon_running=running, resolve_claim=resolve_claim)
     except handoff_release.Refused as exc:
-        _ui.error(f"nothing changed: {exc}")
+        _ui.error(f"release not completed: {exc}")
         raise SystemExit(2) from exc
     console.print(f"[success]done[/] {escape(note)}")
 
@@ -107,7 +114,8 @@ def add_parser(sub, help_block) -> None:
                        help="lift the hold; the agent's daemon publishes on its next start")
     which.add_argument("--discard", action="store_true",
                        help="move the branch back to before the handoff (a backup ref stays)")
-    rel.add_argument("--runtime-dir", help=argparse.SUPPRESS)
+    rel.add_argument("--runtime-dir",
+                     help="receiver's runtime directory; keep the owner relay config")
 
 
 def cmd_handoff(args) -> None:

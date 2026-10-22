@@ -117,7 +117,7 @@ def hold_daemon_lock(path: Path) -> int | None:
 
 
 def release(runtime_dir: Path, *, agent: str, room: str, capsule_id: str, head: str,
-            action: str, daemon_running: bool | None) -> str:
+            action: str, daemon_running: bool | None, resolve_claim=None) -> str:
     """Release one hold after the owner looked at *head*. Raises Refused.
 
     *daemon_running* is the caller's process check: None (couldn't tell) refuses,
@@ -134,13 +134,13 @@ def release(runtime_dir: Path, *, agent: str, room: str, capsule_id: str, head: 
     if lock is None:
         raise Refused(f"@{agent}'s daemon (or another release) holds its lock; stop it first")
     try:
-        return _release(runtime_dir, agent, room, capsule_id, head, action)
+        return _release(runtime_dir, agent, room, capsule_id, head, action, resolve_claim)
     finally:
         os.close(lock)  # held for the whole release: no daemon starts mid-way
 
 
 def _release(runtime_dir: Path, agent: str, room: str, capsule_id: str, head: str,
-             action: str) -> str:
+             action: str, resolve_claim=None) -> str:
     mine = journal_path(runtime_dir, agent)
     found = [h for h in holds(runtime_dir)
              if h.journal == mine and h.room == room and h.capsule_id == capsule_id]
@@ -169,7 +169,14 @@ def _release(runtime_dir: Path, agent: str, room: str, capsule_id: str, head: st
             # step leaves a record the owner's rerun resumes from.
             if not resuming:
                 _log(runtime_dir, {**record, "at": time.time(), "step": "decided"})
+            if action == "discard" and entry.get("task_id") and resolve_claim is None:
+                raise Refused("discard needs exact relay claim resolution; use the owner CLI")
             note = _move(Git(held.worktree), held, entry, head, action, resuming)
+            if action == "discard":
+                if entry.get("task_id"):
+                    resolve_claim(room=room, agent=agent, task_id=entry["task_id"],
+                                  resolution_id=entry["fingerprint"])
+                journal.discard(capsule)
             hold.release()
     except StateError as exc:
         raise Refused(str(exc)) from exc

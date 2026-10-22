@@ -110,9 +110,10 @@ def _now_epoch() -> float:
     return time.time()
 
 
-# Metadata only the relay writes: atomic handoff receipts. Stripped from every
-# caller-supplied metadata, on add and on every update (0.7.0 port of 666399cc).
-RESERVED_METADATA: frozenset[str] = frozenset({"handoff_receipts"})
+# Metadata only the relay writes: atomic handoff receipts and discard decisions.
+# Stripped from every caller-supplied metadata, on add and on every update (0.7.0
+# port of 666399cc and 3d6f49d1).
+RESERVED_METADATA: frozenset[str] = frozenset({"handoff_receipts", "handoff_discards"})
 
 
 def _caller_metadata(meta: dict[str, Any] | None) -> dict[str, Any]:

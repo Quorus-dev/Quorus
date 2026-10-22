@@ -7,7 +7,9 @@ import json
 
 from fastapi import HTTPException
 
+from quorus.protocol.handoff_capsule import HandoffCapsule
 from quorus.runtime.failover import continuation
+from quorus.runtime.handoff_state import fingerprint
 from quorus.services.social_svc import _empty_state
 from quorus.services.work_queue_svc import MAX_ACTIVE_PER_ACTOR
 
@@ -68,7 +70,10 @@ async def accept(queue, social, tid, rid, sv, members, deliver):
             if sent.get("warning") and (not sent.get("skipped_recipients")
                                         or target in sent["skipped_recipients"]):
                 raise HTTPException(503, "handoff target delivery failed; claim retained")
-            receipt = dict(message_id=sent["id"], task_id=task_id, target=target)
+            capsule_fp = (context["fingerprint"] if payload.get("decline") else
+                          fingerprint(HandoffCapsule.model_validate(context["capsule"])))
+            receipt = dict(message_id=sent["id"], task_id=task_id, target=target,
+                           fingerprint=capsule_fp)
             meta = changed.setdefault("metadata", {})
             meta.setdefault("handoff_receipts", {})[receipt_id] = receipt
             meta.setdefault("handoff_history", []).append(dict(

@@ -325,3 +325,78 @@ def test_a_crash_after_the_tree_went_back_but_before_the_branch_moved_resumes(
     assert "discarded" in _release(held)  # the rerun finishes, no false "uncommitted"
     assert c.git("rev-parse", "HEAD") == c.base and c.git("status", "--porcelain") == ""
     assert not PublicationHold(c.root, c.journal, c.capsule).owned()
+
+
+def test_discard_resolves_only_the_capsules_task_before_lifting_hold(held):
+    c = held.c
+    rows = json.loads(c.journal.path.read_text())
+    next(iter(rows.values()))["task_id"] = "new"
+    c.journal.path.write_text(json.dumps(rows))
+    claims = {"old": AGENT, "new": AGENT}
+    seen = []
+
+    def resolve(**kw):
+        assert PublicationHold(c.root, c.journal, c.capsule).owned()
+        assert c.git("rev-parse", "HEAD") == c.base
+        seen.append(kw["task_id"])
+        claims[kw["task_id"]] = None
+
+    _release(held, resolve_claim=resolve)
+    assert seen == ["new"] and claims == {"old": AGENT, "new": None}
+    assert c.journal.read(c.capsule)["state"] == "discarded"
+
+
+def test_failed_claim_resolution_keeps_hold_and_can_resume(held):
+    c = held.c
+    rows = json.loads(c.journal.path.read_text())
+    next(iter(rows.values()))["task_id"] = "task"
+    c.journal.path.write_text(json.dumps(rows))
+
+    def fail(**kw):
+        raise hr.Refused("claim changed")
+
+    with pytest.raises(hr.Refused, match="claim changed"):
+        _release(held, resolve_claim=fail)
+    assert PublicationHold(c.root, c.journal, c.capsule).owned()
+    assert c.git("rev-parse", "HEAD") == c.base
+    _release(held, resolve_claim=lambda **kw: None)
+    assert not PublicationHold(c.root, c.journal, c.capsule).owned()
+
+
+def test_discard_without_online_resolution_refuses_before_the_branch_moves(held):
+    rows = json.loads(held.c.journal.path.read_text())
+    next(iter(rows.values()))["task_id"] = "task"
+    held.c.journal.path.write_text(json.dumps(rows))
+    with pytest.raises(hr.Refused, match="exact relay claim"):
+        _release(held)
+    _assert_untouched(held)
+
+
+@pytest.mark.parametrize("status, payload, refused", [
+    (200, {"resolved": True, "task_id": "task"}, False),
+    (200, {"resolved": True, "task_id": "other"}, True),
+    (404, {}, True),
+    (409, {}, True),
+    (503, {}, True),
+])
+def test_cli_claim_resolution_needs_an_exact_relay_ack(monkeypatch, status, payload, refused):
+    import httpx
+    from quorus_cli import cli, handoff_relay
+
+    monkeypatch.setattr(cli, "RELAY_URL", "http://synthetic")
+    monkeypatch.setattr(cli, "_auth_headers", lambda: {"Authorization": "Bearer synthetic"})
+    calls = []
+
+    def post(url, **kw):
+        calls.append((url, kw["json"]))
+        return httpx.Response(status, json=payload, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(handoff_relay.httpx, "post", post)
+    args = dict(room="room", agent=AGENT, task_id="task", resolution_id="a" * 64)
+    if refused:
+        with pytest.raises(hr.Refused):
+            handoff_relay.resolve_claim(**args)
+    else:
+        handoff_relay.resolve_claim(**args)
+    assert calls == [("http://synthetic/v1/handoff/discard", dict(
+        room_id="room", receiver=AGENT, task_id="task", resolution_id="a" * 64))]

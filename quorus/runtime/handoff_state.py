@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from quorus.private_files import write_private_json
@@ -13,8 +14,8 @@ from quorus.protocol.handoff_capsule import HandoffCapsule
 
 STATES = frozenset({"received", "adopting", "adopted", "verified", "continuing", "done",
                     "declined", "stale", "unverifiable", "already_passing", "sent", "failed",
-                    "waiting"})
-TERMINAL = frozenset({"done", "declined", "stale", "unverifiable", "already_passing"})
+                    "waiting", "discarded"})
+TERMINAL = frozenset({"done", "declined", "stale", "unverifiable", "already_passing", "discarded"})
 
 
 class StateError(ValueError):
@@ -215,6 +216,19 @@ class Journal:
             raise StateError("receipt without registered delivery")
         data[self.key(capsule)] = {**entry, "receipt": text, "check_finished": finished}
         self._save(data)
+
+    def discard(self, capsule: HandoffCapsule) -> None:
+        """Owner resolved this exact relay claim; no retry may reopen the turn."""
+        data = self._load()
+        entry = self.read(capsule)
+        if entry is None:
+            raise StateError("discard without registered delivery")
+        result = {"result": "kept_unpublished", "cause": "owner_discard",
+                  "at": datetime.now(timezone.utc).isoformat()}
+        data[self.key(capsule)] = {**entry, "state": "discarded", "completion": result}
+        self._save(data)
+        self.event(dict(event="completion", fingerprint=fingerprint(capsule),
+                        room=self.scope.partition(":")[0], **result))
 
     def record_completion(self, capsule: HandoffCapsule, result: dict) -> None:
         """Attach publication evidence without changing continuation authority."""
