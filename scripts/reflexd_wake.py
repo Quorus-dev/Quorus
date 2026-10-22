@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from quorus.private_files import write_private_json
+from quorus.runtime.generated_files import EXCLUDES as GENERATED_EXCLUDES
 
 # Codex sandbox for woken agents. Default "" = whatever the owner's
 # ~/.codex/config.toml says (headless `codex exec` is read-only by default,
@@ -528,12 +529,9 @@ def _belongs_to(path: Path, repo: Path) -> bool:
 
 
 # Never auto-commit test/build leftovers, even in a repo with no .gitignore
-# (a chat-only wake once committed __pycache__ to a user's main).
-_GENERATED = tuple(f":(exclude,glob){g}" for g in (
-    "**/__pycache__/**", "**/*.py[co]", "**/.pytest_cache/**", "**/.mypy_cache/**",
-    "**/.ruff_cache/**", "**/node_modules/**", "**/.DS_Store", "**/.coverage",
-    "**/*.egg-info/**", "**/.venv/**", "**/.tox/**", "graphify-out/**",
-))
+# (a chat-only wake once committed __pycache__ to a user's main). The handoff
+# clean-tree checks share this list.
+_GENERATED = GENERATED_EXCLUDES
 
 
 def worktree_dirty(wt: Worktree) -> bool:

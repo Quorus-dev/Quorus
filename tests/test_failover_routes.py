@@ -76,3 +76,22 @@ async def test_release_moves_real_queue_claim_before_defer(client, room_id):
                               params={"actor": "bob"})).json()["tasks"]
     assert tasks[0]["claimed_by"] == "bob"
     assert len(tasks[0]["metadata"]["handoff_history"]) == 1
+
+
+async def test_busy_decline_has_one_durable_delivery(client, room_id, real_ref_id, monkeypatch):
+    pushes = []
+    monkeypatch.setattr(app.state.sse_service, "push", lambda *args: pushes.append(args[-1]))
+    resp = await client.post("/v1/social/defer", headers=_user_headers("bob"), json={
+        "actor": "bob", "room_id": room_id, "ref_message_id": real_ref_id,
+        "payload": {"to": "alice", "decline": {
+            "capsule_id": real_ref_id + ":1", "fingerprint": "a" * 64,
+            "task_id": "task-1", "reason": "busy"}},
+    })
+    assert resp.status_code == 200, resp.text
+    delivered = [p for p in pushes if p.get("message_type") == "social"
+                 and p.get("to") == "alice"]
+    assert len(delivered) == 1
+    inbox = await client.get("/messages/alice", headers=_user_headers("alice"), params={"wait": 0})
+    pending = [m for m in inbox.json()["messages"] if m.get("message_type") == "social"]
+    assert len(pending) == 1
+    assert pending[0]["message_id"] == delivered[0]["message_id"]

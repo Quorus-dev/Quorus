@@ -241,3 +241,14 @@ def test_the_newest_tuning_line_becomes_a_board_row(tmp_path: Path) -> None:
     assert 'mine.slice().reverse().find((m) => m.message_type === "status"' in BOARD_JS
     assert 'el("div", "btune", r.tuning.text + " · undo: ")' in BOARD_JS
     assert ".btune code{" in DASHBOARD_HTML
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_track_owner_preserves_dashed_human_names(tmp_path):
+    (tmp_path / "board.js").write_text(BOARD_JS)
+    script = tmp_path / "owner.js"
+    script.write_text(
+        "const {trackOwner} = require('./board.js');\n"
+        "for (const name of ['alice-smith', 'alice-smith-codex', 'alice-smith-codex-desktop']) "
+        "{ if (trackOwner(name) !== 'alice-smith') throw new Error(name); }\n")
+    subprocess.run([NODE, str(script)], check=True, capture_output=True)

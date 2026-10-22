@@ -200,3 +200,30 @@ async def test_an_owned_agents_messages_carry_the_owners_claim(client: AsyncClie
     assert "sender_owner_claim_id" not in by["bob"]  # a person, not an agent
     assert by["bob-claude"]["sender_auth"] == "secret"
     assert "sender_owner_claim_id" not in by["bob-claude"]
+
+
+@pytest.mark.parametrize("as_admin", [False, True])
+async def test_member_can_resolve_only_its_own_agents_exact_handoff_claim(client, as_admin):
+    import hashlib
+
+    _, owner = await _join(client, "build", "bob")
+    agent = await _agent(client, owner, "bob-codex")
+    response = await client.post("/v1/social/claim", headers=agent, json={
+        "actor": "bob-codex", "room_id": "build",
+        "payload": {"task_id": "task", "scope": "fix", "eta_seconds": 0}})
+    assert response.status_code == 200, response.text
+    queue = app.state.work_queue_service
+    # Isolate owner authorization from the separately tested transfer protocol.
+    task = next(t for bucket in queue._tasks.values() for t in bucket.values()
+                if t["task_id"] == "task")
+    fp = hashlib.sha256(b"synthetic capsule").hexdigest()
+    task["metadata"]["handoff_receipts"] = {"receipt": {
+        "fingerprint": fp, "target": "bob-codex"}}
+    payload = {"room_id": "build", "receiver": "bob-codex", "task_id": "task",
+               "resolution_id": fp}
+    response = await client.post("/v1/handoff/discard", headers=ADMIN if as_admin else owner,
+                                 json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()["resolved"] and task is not None
+    rows = (await client.get("/v1/work_queue/build", headers=owner)).json()["tasks"]
+    assert rows[0]["status"] == "pending" and rows[0]["claimed_by"] is None

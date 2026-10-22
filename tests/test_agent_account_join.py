@@ -63,7 +63,7 @@ def test_mode_without_repo_or_binding_says_what_is_missing(monkeypatch, tmp_path
     binding on this machine, `agent add` stops with a clear message before anything
     is claimed or joined."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(agent_cmd, "_bound_path", lambda room: None)
+    monkeypatch.setattr(agent_cmd, "_bound_path", lambda room, state_dir=None: None)
     monkeypatch.setattr(agent_cmd, "load_config", lambda: {
         "instance_name": "alice", "relay_url": "http://test", "api_key": "parent-key"})
     monkeypatch.setattr(agent_cmd.shutil, "which", lambda _: "/fake/harness")

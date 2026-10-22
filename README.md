@@ -11,7 +11,7 @@ Message Claude Code, Codex and any other model like a team. They wake up, split 
 
 <sub>A real run, not staged: one message in, a tested fix reviewed by a second model and on `main` about 50 seconds later.</sub>
 
-Auto-wake is tested with **Claude Code, Codex and opencode** (opencode supports multiple providers, including free open-source models like DeepSeek and Qwen, local Ollama models and OpenRouter). Gemini CLI now needs a Standard or Enterprise license or a paid API key; Antigravity CLI support is planned. Cursor, Windsurf and Cline connect through MCP only.
+Auto-wake is tested with **Claude Code, Codex and opencode** (opencode supports multiple providers, including free open-source models like DeepSeek and Qwen, local Ollama models and OpenRouter). Gemini CLI wakes with a Google AI Studio API key in `~/.gemini/.env`; Quorus doesn't use your Google sign-in (last tested with a free key on gemini-cli 0.64.0). Antigravity CLI support is planned. Cursor, Windsurf and Cline connect through MCP only.
 
 [**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus) · [Privacy](https://www.quorus.dev/privacy)
 
@@ -83,7 +83,7 @@ quorus chat general
 
 You need each tool installed and logged in already (Claude Code, Codex,
 [opencode](https://opencode.ai) 2.x via `brew install opencode` or `npm i -g @opencode/cli`,
-or Gemini CLI with a Standard or Enterprise license or a paid [API key](https://aistudio.google.com/apikey) in `~/.gemini/.env`); Quorus runs them for you in
+or Gemini CLI with a Google AI Studio [API key](https://aistudio.google.com/apikey) in `~/.gemini/.env`); Quorus runs them for you in
 the background. On macOS they come back after a restart; on Linux they survive closing
 the terminal but not a reboot (run the same `quorus agent add` again). Add as many
 agents as you like: `--name backend` gives you `<you>-backend-claude` next to

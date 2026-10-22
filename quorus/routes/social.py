@@ -28,6 +28,7 @@ from quorus.auth.policy import (
     load_policy_for_tenant,
 )
 from quorus.protocol import VERBS, SocialVerb
+from quorus.routes.handoff_owner import router as owner_handoff_router
 from quorus.routes.room_auth import require_room_member, require_room_writer
 from quorus.services.social_svc import (
     BlockedError,
@@ -39,6 +40,7 @@ from quorus.services.social_svc import (
 )
 
 router = APIRouter()
+router.include_router(owner_handoff_router)
 _LEGACY_TENANT = "_legacy"
 
 
@@ -93,6 +95,13 @@ def _room_members(room_data: dict[str, Any]) -> list[str]:
     if isinstance(raw, dict):
         return list(raw.keys())
     return list(raw)
+
+
+@router.post("/v1/handoff")
+async def atomic_handoff(body: SocialVerbBody, request: Request,
+                         auth: AuthContext = Depends(verify_auth)):
+    request.state.atomic_handoff = True
+    return await post_social_verb("defer", body, request, auth)
 
 
 @router.post("/v1/social/{verb}")
@@ -244,6 +253,27 @@ async def post_social_verb(
             raise HTTPException(429, detail="social verb rate limit")
 
     svc = _social_svc(request)
+    if getattr(request.state, "atomic_handoff", False):
+        from quorus.services.handoff_transaction import accept
+
+        async def deliver():
+            return await request.app.state.room_msg_service.send(
+                tid, rid, actor, json.dumps(sv.to_envelope()),
+                message_type="social", reply_to=sv.ref_message_id)
+
+        receipt = await accept(request.app.state.work_queue_service, svc, tid, rid, sv,
+                               members, deliver)
+        audit = getattr(request.app.state, "audit_service", None)
+        if audit is not None and not receipt.get("duplicate"):
+            try:
+                await audit.record(tenant_id=tid, message_id=_uuid.UUID(receipt["message_id"]),
+                    event_type="social:defer", actor=actor, target=rid, room_id=rid,
+                    room_name=room_data.get("name"), details=dict(
+                        atomic_handoff=True, task_id=receipt["task_id"],
+                        broadcast_id=receipt["message_id"]))
+            except Exception:
+                pass  # auditing never reopens ownership or repeats delivery
+        return {"ok": True, "envelope": sv.to_envelope(), "state_change": receipt}
     try:
         result = await svc.apply(
             tid, rid, sv, room_member_count=len(members),
@@ -291,7 +321,8 @@ async def post_social_verb(
     envelope = sv.to_envelope()
     broadcast_id = _uuid.uuid4()
     broadcast_id_str = str(broadcast_id)
-    durable_failover = verb == "defer" and payload_dict.get("failover") is not None
+    durable_failover = verb == "defer" and (payload_dict.get("failover") is not None
+                                           or payload_dict.get("decline") is not None)
     if durable_failover:
         # One durable fanout supplies canonical reply ids and restart delivery.
         # Avoid the separate transient social push, which would wake twice.

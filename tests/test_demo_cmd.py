@@ -39,6 +39,30 @@ def test_a_plan_line_is_not_a_review() -> None:
     assert demo_cmd.review_of([pub, early]) is None
 
 
+def test_an_approval_request_is_never_the_verdict() -> None:
+    """0.6.6 stranger pass: the reviewer asked for `bash`, and the demo's closing
+    line read "Second agent's review: 🔐 approval needed: `bash` …"."""
+    pub = _m(demo_cmd.BUILDER, "(quorus) published 1 commit(s) from quorus/demo to main")
+    ask = _m(demo_cmd.REVIEWER, "🔐 approval needed: `bash` (details: `quorus approvals`)\n"
+                                "approve with `quorus approve apr_1` or deny with `quorus deny`")
+    assert demo_cmd.review_of([pub, ask]) is None
+    verdict = _m(demo_cmd.REVIEWER, "Reviewed ce36508 by reading the diff: correct fix.")
+    assert demo_cmd.review_of([pub, ask, verdict]).startswith("Reviewed ce36508")
+
+
+def test_demo_agents_cannot_block_on_an_approval(tmp_path: Path) -> None:
+    """The demo room has no human who can approve, so every agent's environment
+    tells the approve tool to deny at once (see phase1_tools.approve)."""
+    env = demo_cmd.agent_env({"PATH": "/bin"}, home=tmp_path / "home", root=tmp_path,
+                             url="http://127.0.0.1:1", secret="s", name=demo_cmd.REVIEWER,
+                             model=None)
+    assert env["QUORUS_APPROVALS"] == "deny"
+    assert env["REFLEXD_PARTICIPANT"] == demo_cmd.REVIEWER and "REFLEXD_MODEL" not in env
+    with_model = demo_cmd.agent_env({}, home=tmp_path, root=tmp_path, url="u", secret="s",
+                                    name=demo_cmd.BUILDER, model="opencode/x-free")
+    assert with_model["REFLEXD_MODEL"] == "opencode/x-free"
+
+
 def test_task_names_the_reviewer_without_waking_it() -> None:
     import re
 
@@ -209,8 +233,8 @@ def test_a_probe_slower_than_the_limit_counts_as_no_answer(monkeypatch, tmp_path
 
 
 def test_closing_hint_offers_only_tested_wakes():
-    """Stranger pass of 0.6.2: the hint still offered gemini, which Google ended for
-    individual accounts; the README calls it a note, not a tested wake."""
+    """Stranger pass of 0.6.2: the hint still offered gemini, which needs an AI Studio
+    API key; the README calls it a note, not a tested wake."""
     from pathlib import Path
 
     src = (Path(__file__).resolve().parents[1] / "packages/cli/quorus_cli/demo_cmd.py").read_text()

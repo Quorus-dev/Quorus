@@ -30,7 +30,7 @@ async def health():
     from quorus.backends.redis_client import check_redis
     from quorus.storage.postgres import check_connection
 
-    checks: dict = {"status": "ok"}
+    checks: dict = {"status": "ok", "atomic_capsule_handoff": 1}
 
     # Postgres check
     pg_ok = await check_connection()

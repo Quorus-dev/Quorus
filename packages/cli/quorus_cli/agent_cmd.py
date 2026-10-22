@@ -58,6 +58,21 @@ def _write_private(path: Path, text: str) -> None:
     write_private_text(path, text)
 
 
+def _state_record(name: str) -> Path:
+    """Where `agent add` notes the --state-dir it started *name*'s daemon with."""
+    return _agents_dir() / f"{name}.state-dir"
+
+
+def _daemon_state_dir(name: str) -> Path | None:
+    """The --state-dir *name*'s daemon was started with; None for the owner's own dir
+    (and for daemons started before the record existed)."""
+    try:
+        text = _state_record(name).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return Path(text) if text else None
+
+
 def _uid() -> int:
     return os.getuid()
 
@@ -294,19 +309,38 @@ def _drop_lead_everywhere(name: str) -> None:
         _set_lead(room, None)
 
 
-def bindings_path() -> Path:
+def bindings_path(state_dir: Path | None = None) -> Path:
     """Where this machine's room → workspace bindings live: the shared resolver in
     ``quorus.runtime.bindings``, looked up at call time so a test's isolation of it
-    (tests/conftest.py) covers every reader in this module too."""
+    (tests/conftest.py) covers every reader in this module too. With *state_dir*
+    (`agent add --state-dir`), that agent's own bindings file instead."""
     from quorus.runtime import bindings
 
-    return bindings.bindings_path()
+    return state_dir / bindings.FILENAME if state_dir else bindings.bindings_path()
 
 
-def _bound_path(room: str) -> Path | None:
+def _state_dir(raw: str | None) -> Path | None:
+    """`agent add --state-dir DIR`: an absolute, private dir for the daemon's own state
+    (created 0700). Never the owner's own config dir: that is the default anyway."""
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise SystemExit("agent: --state-dir must be an absolute path")
+    path = path.resolve()
+    from quorus.runtime.bindings import config_dir
+
+    if path == config_dir().resolve():
+        raise SystemExit("agent: --state-dir is for a separate dir; leave it off to use "
+                         f"{path}")
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return path
+
+
+def _bound_path(room: str, state_dir: Path | None = None) -> Path | None:
     """The workspace *room* is bound to on this machine, if it still exists."""
     try:
-        prev = json.loads(bindings_path().read_text(encoding="utf-8")).get(room)
+        prev = json.loads(bindings_path(state_dir).read_text(encoding="utf-8")).get(room)
     except (OSError, ValueError, AttributeError):
         return None
     raw = prev.get("path") if isinstance(prev, dict) else prev
@@ -316,8 +350,9 @@ def _bound_path(room: str) -> Path | None:
     return path if path.is_dir() else None
 
 
-def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> str:
-    path = bindings_path()
+def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None,
+          state_dir: Path | None = None) -> str:
+    path = bindings_path(state_dir)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -341,13 +376,19 @@ def _bind(room: str, repo: Path, mode: str | None, trust: str | None = None) -> 
     return mode
 
 
-def _harness_path() -> str:
+def _harness_path(own: str | None = None) -> str:
     parts = [str(Path(sys.executable).parent), "/usr/bin", "/bin", "/usr/sbin", "/sbin",
              "/opt/homebrew/bin", "/usr/local/bin"]
     for b in HARNESSES:
         w = shutil.which(b)
         if w:
             parts.insert(0, str(Path(w).parent))
+    mine = shutil.which(own) if own else None
+    if mine:
+        # The agent's own tool, exactly as `agent add` resolved it, comes first: another
+        # harness's dir can hold a different binary of the same name. The dogfood
+        # rehearsal's fakebin `claude` lost to the real one that way (Codex on 826faa27).
+        parts.insert(0, str(Path(mine).parent))
     return os.pathsep.join(dict.fromkeys(parts))
 
 
@@ -371,13 +412,15 @@ def _plist(label: str, argv: list[str], env: dict[str, str], log: Path) -> str:
 
 
 def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
-                  model: str | None = None) -> str:
+                  model: str | None = None, state_dir: Path | None = None) -> str:
     from quorus.runtime.supervisor import _reflexd_script_path
 
     label = LABEL_PREFIX + name
     log = _agents_dir() / f"{name}.log"
     crash_log = _agents_dir() / f"{name}.crash.log"  # launchd stdout/stderr
-    env = {"PATH": _harness_path(), "RELAY_URL": cfg["relay_url"], "API_KEY": cred,
+    own = name.rsplit("-", 1)[-1]
+    env = {"PATH": _harness_path(own if own in HARNESSES else None),
+           "RELAY_URL": cfg["relay_url"], "API_KEY": cred,
            "REFLEXD_PARTICIPANT": name, "PYTHONUNBUFFERED": "1",
            "REFLEXD_LOG_PATH": str(log),
            # The daemon reads room bindings from the same home `agent add`
@@ -389,6 +432,13 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
         env["REFLEXD_LEGACY_BEARER"] = "1"
     if model:
         env["REFLEXD_MODEL"] = model
+    if state_dir is not None:
+        # The daemon's own bindings, runtime, journals and holds live here, apart from
+        # the owner's ~/.quorus (dogfood plan §2). The CLI keeps the owner's config.
+        env["QUORUS_CONFIG_DIR"] = str(state_dir)
+        _write_private(_state_record(name), str(state_dir))
+    else:
+        _state_record(name).unlink(missing_ok=True)
     argv = [sys.executable, str(_reflexd_script_path()), "start",
             "--participant", name, "--relay-url", cfg["relay_url"]]
     if not _launchd_ok():
@@ -447,12 +497,21 @@ def _add(args: Any, console: Any) -> None:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo is not None and not repo.is_dir():
         raise SystemExit(f"agent: not a directory: {repo}")
+    state_dir = _state_dir(getattr(args, "state_dir", None))
+    existing = _running_daemon_for(name, cfg.get("relay_url"))
+    running_in = _daemon_state_dir(name) if existing else None
+    if existing and running_in != state_dir:
+        # A running daemon keeps the state dir it started with: binding into another
+        # one would report success while the daemon never reads it (Codex on 246acab9).
+        raise SystemExit(f"agent: @{name} is already running ({existing}) with its state "
+                         f"in {running_in or 'your own config dir'}; run `quorus agent "
+                         f"remove {name}` first, then add it again")
     wants = getattr(args, "trust", None) or args.mode is not None
     if repo is None and wants:
         # --trust/--mode live on the room's workspace binding: without --repo they
         # were dropped silently, so a friend's asks stayed read-only (audit 0.6.3,
         # bug 9). Use the room's existing workspace, or say what's missing.
-        repo = _bound_path(args.room)
+        repo = _bound_path(args.room, state_dir)
         if repo is None:
             flag = "--trust" if getattr(args, "trust", None) else "--mode"
             raise SystemExit(f"agent: {flag} applies to the room's workspace, and "
@@ -479,7 +538,7 @@ def _add(args: Any, console: Any) -> None:
     _join(cfg, args.room, name, _bearer(cfg, join_cred, legacy))
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
-        mode = _bind(args.room, repo, mode, getattr(args, "trust", None))
+        mode = _bind(args.room, repo, mode, getattr(args, "trust", None), state_dir)
         console.print(f"[success]✓[/] #{args.room} works in {repo} [dim]({mode})[/]")
     if getattr(args, "lead", False):
         previous = _read_leads().get(args.room)
@@ -487,7 +546,6 @@ def _add(args: Any, console: Any) -> None:
         swap = f" [dim](was @{previous})[/]" if previous and previous != name else ""
         console.print(f"[success]✓[/] @{name} leads #{args.room}: it splits your requests "
                       f"into tasks and assigns them{swap}")
-    existing = _running_daemon_for(name, cfg.get("relay_url"))
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "
                       "— it now also listens to this room")
@@ -495,13 +553,13 @@ def _add(args: Any, console: Any) -> None:
             console.print(f"[dim]--model only applies to a new agent: run `quorus agent "
                           f"remove {name}` and add it again to switch models[/]")
     else:
-        where = _start_daemon(cfg, name, cred, legacy, model)
+        where = _start_daemon(cfg, name, cred, legacy, model, state_dir)
         # Only launchd brings it back; elsewhere it is a plain detached process.
         lasts = ("restarts at login" if sys.platform == "darwin" else
                  "keeps running after you close this terminal, but not after a "
                  "reboot: run this command again then")
         console.print(f"[success]✓[/] @{name} is running [dim]({where}; {lasts})[/]")
-    if repo is not None or _room_bound(args.room):
+    if repo is not None or _room_bound(args.room, state_dir):
         console.print(f"\n[dim]Try it:[/] quorus say {args.room} \"@{name} hello, what "
                       "can you do in this repo\"")
     else:
@@ -509,9 +567,9 @@ def _add(args: Any, console: Any) -> None:
                       f"{args.room} <path>")
 
 
-def _room_bound(room: str) -> bool:
+def _room_bound(room: str, state_dir: Path | None = None) -> bool:
     try:
-        data = json.loads(bindings_path().read_text(encoding="utf-8"))
+        data = json.loads(bindings_path(state_dir).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return isinstance(data, dict) and bool(data.get(room))
@@ -561,13 +619,13 @@ def _readiness_warnings(harness: str, model: str | None) -> list[str]:
     if harness == "codex" and not _codex_logged_in():
         out.append("Codex isn't signed in, so every wake would fail. Run `codex login` first")
     if harness == "gemini" and not _gemini_has_key():
-        out.append("Gemini CLI needs an API key: Google no longer lets it sign in with "
-                   "a personal Google account. Get a free key at "
+        out.append("Gemini CLI needs an API key: Quorus runs it in its own Gemini home and "
+                   "doesn't use your Google sign-in. Get a key at "
                    "https://aistudio.google.com/apikey and put GEMINI_API_KEY=<key> "
                    "in ~/.gemini/.env")
     if harness == "gemini" and not model:
-        out.append("Gemini's free tier allows only about 20 requests a day on its default "
-                   "model, and one agent turn can use a dozen. For an always-on agent, add "
+        out.append("Free Gemini API keys have a low daily request limit, and one agent "
+                   "turn can use a dozen requests. For an always-on agent, add "
                    "`--model gemini-3.5-flash-lite`")
     if harness == "opencode":
         version = _opencode_version()
@@ -638,6 +696,7 @@ def _remove(args: Any, console: Any) -> None:
                        capture_output=True, check=False, timeout=15)
         plist.unlink(missing_ok=True)
     agent_proc.stop(_agents_dir(), args.name)
+    _state_record(args.name).unlink(missing_ok=True)
     _drop_lead_everywhere(args.name)
     left = _leave_all_rooms(args.name)
     if not was_running and not left:

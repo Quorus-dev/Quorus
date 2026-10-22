@@ -23,9 +23,13 @@ const $ = (id) => document.getElementById(id);
 const enc = encodeURIComponent;  // every path segment from data goes through this
 const AGENT = /-(claude|codex|gemini|opencode|cursor|cline)$/;
 const B = { room: null, timer: null, members: [], membersAt: 0, since: {}, on: false,
-            card: {}, cardAt: 0 };
+            card: {}, cardAt: 0, track: {}, trackAt: 0 };
 const token = () => sessionStorage.getItem("qt") || "";
 const me = () => sessionStorage.getItem("qn") || "";
+function trackOwner(name) {
+  const matched = /^(.+?)-(claude|codex|gemini|cursor|opencode|cline)(-.*)?$/i.exec(name);
+  return matched ? matched[1] : name;
+}
 // A participant JWT has three dot-separated parts; the shared secret doesn't.
 // Approvals are never decided with the shared secret (team decision, 2026-10-17).
 const ownKey = () => token().split(".").length === 3;
@@ -101,13 +105,19 @@ function rowState(name, presence, history, approvals, now) {
     r.line = "stuck" + (last ? " since " + clock(ts(last)) : "");
     if (last) r.detail = (last.content || "").split("\n")[0].slice(0, 160);
   } else if (p.waiting_on === "quota") {
+    // limit_line (quorus/limit_display.py): the vendor's reset with its source,
+    // or our retry marked "?", never our padded retry passed off as the reset.
     r.rank = 3;
-    r.line = "out of quota" + (p.waiting_until ? " · back about " + clock(p.waiting_until) : "");
+    r.line = p.limit_line
+      || "out of quota" + (p.waiting_until ? " · back about " + clock(p.waiting_until) : "");
   } else if (p.waiting_on === "pacing") {
     r.rank = 3;
     r.line = "waiting for its plan slot"
       + (p.waiting_until ? " · next turn in " + ago(p.waiting_until - now) : "");
-  } else { r.rank = 5; r.line = "idle"; }
+  } else if (/^paused by Quorus/.test(p.limit_line || "")) {
+    r.rank = 3; r.line = p.limit_line;  // a free-model cooldown: ours, not quota
+  } else { r.rank = 5; r.line = "idle" + (p.limit_line ? " · " + p.limit_line : ""); }
+  if (p.online && p.limit_hint) r.line += " → " + p.limit_hint;  // a suggestion only
   if (r.approvals.length || r.asks.length) r.rank = 1;
   const pub = mine.slice().reverse().find((m) => PUBLISHED.test(m.content || ""));
   if (pub) {
@@ -223,6 +233,21 @@ function rowEl(r) {
       }
       row.append(box);
     });
+    const history = B.track[r.name] || [];
+    if (history.length) {
+      row.append(el("div", "bdetail", "observed in this repo, not a ranking · 30 days"));
+      const table = el("table", "btrack");
+      const header = el("tr");
+      ["kind", "model", "harness version", "task history"]
+        .forEach((v) => header.append(el("th", "", v)));
+      table.append(header);
+      history.forEach((c) => {
+        const tr = el("tr");
+        [c.kind, c.model, c.version, c.summary].forEach((v) => tr.append(el("td", "", String(v))));
+        table.append(tr);
+      });
+      row.append(table);
+    }
     if (r.card) row.append(el("div", "bship", "track record: " + r.card));
     if (r.tuning) {
       const t = el("div", "btune", r.tuning.text + " · undo: ");
@@ -254,6 +279,18 @@ function refresh() {
     ? api("/rooms/" + enc(B.room)).then((r) => { B.members = r.members || []; B.membersAt = now; })
         .catch(() => {})
     : Promise.resolve();
+  if (now - B.trackAt > 60) {
+    B.trackAt = now;
+    const asked = { room: B.room, tok: token(), name: me() };
+    const live = () => asked.room === B.room && asked.tok === token() && asked.name === me();
+    const owner = trackOwner(asked.name);
+    api("/v1/rooms/" + enc(asked.room) + "/track?owner=" + enc(owner)).then((r) => {
+      if (!live()) return;
+      B.track = {};
+      (r.cells || []).forEach((c) => { (B.track[c.agent] ||= []).push(c); });
+      refresh();
+    }).catch(() => { if (live()) B.track = {}; });
+  }
   if (now - B.cardAt > 60) {
     // In the background: the first scorecard walks the repo's git history and
     // can take many seconds. Waiting for it left the board blank (Arav, live).
@@ -321,11 +358,11 @@ function mode(m) {  // "list" or "quorum": two looks over the same rows
 }
 
 if (typeof module !== "undefined") {  // node tests only; browsers have no `module`
-  module.exports = { rowState, B };
+  module.exports = { rowState, B, trackOwner };
   return;
 }
 document.addEventListener("quorus:room", (e) => {
-  B.room = e.detail; B.membersAt = 0; B.cardAt = 0;
+  B.room = e.detail; B.membersAt = 0; B.cardAt = 0; B.trackAt = 0; B.track = {};
   const view = sessionStorage.getItem("qv");  // `quorus web` lands here (#view=board|quorum)
   if ((view === "board" || view === "quorum") && !B.on) {
     sessionStorage.removeItem("qv");

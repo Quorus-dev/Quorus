@@ -54,8 +54,10 @@ FALLBACK_ORDER = ("claude", "codex")
 AUTH_FILES = {"claude": ("Library/Keychains", ".claude/.credentials.json"),
               "codex": (".codex/auth.json",)}
 LOGIN_CHECK = {"claude": ["claude", "auth", "status"], "codex": ["codex", "login", "status"]}
-_NOT_A_VERDICT = re.compile(r"nothing to review|standing by|will review|waiting for",
-                            re.IGNORECASE)
+# "approval needed" is the relay's notice that an agent asked a human for a tool;
+# the 0.6.6 stranger pass printed it as the "Second agent's review" (2026-10-21).
+_NOT_A_VERDICT = re.compile(r"nothing to review|standing by|will review|waiting for"
+                            r"|approval needed", re.IGNORECASE)
 
 
 def make_sample_repo(root: Path) -> Path:
@@ -145,6 +147,21 @@ def share_login(home: Path, harnesses: set[str], real_home: Path | None = None) 
 
 
 LABELS = {"claude": "Claude Code", "codex": "Codex", "opencode": "opencode"}
+
+
+def agent_env(base_env: dict[str, str], *, home: Path, root: Path, url: str, secret: str,
+              name: str, model: str | None) -> dict[str, str]:
+    """Environment for one demo agent's daemon (and, inherited, its harness and
+    MCP server). ``QUORUS_APPROVALS=deny``: the demo room has no human who can
+    approve a tool call, so the approve tool answers "no" at once instead of
+    posting an approval request nobody will answer (0.6.6 stranger pass: the
+    reviewer blocked 232 s on `bash`)."""
+    return {**base_env, "HOME": str(home), "CODEX_HOME": str(home / ".codex"),
+            "RELAY_URL": url, "API_KEY": secret,
+            "REFLEXD_PARTICIPANT": name, "REFLEXD_LEGACY_BEARER": "1",
+            **({"REFLEXD_MODEL": model} if model else {}), "REFLEXD_OWNER": HUMAN,
+            "PYTHONUNBUFFERED": "1", "QUORUS_NOTIFY": "0", "QUORUS_APPROVALS": "deny",
+            "REFLEXD_LOG_PATH": str(root / f"{name}.log"), "PWD": str(root)}
 
 
 def _label(member: tuple[str, str | None]) -> str:
@@ -286,12 +303,8 @@ def cmd_demo(args: Any, console: Any) -> None:
         from quorus.runtime.supervisor import _reflexd_script_path
 
         for name, (_h, model) in ((builder, cast[0]), (reviewer, cast[1])):
-            env = {**base_env, "HOME": str(home), "CODEX_HOME": str(home / ".codex"),
-                   "RELAY_URL": url, "API_KEY": secret,
-                   "REFLEXD_PARTICIPANT": name, "REFLEXD_LEGACY_BEARER": "1",
-                   **({"REFLEXD_MODEL": model} if model else {}), "REFLEXD_OWNER": HUMAN,
-                   "PYTHONUNBUFFERED": "1", "QUORUS_NOTIFY": "0",
-                   "REFLEXD_LOG_PATH": str(root / f"{name}.log"), "PWD": str(root)}
+            env = agent_env(base_env, home=home, root=root, url=url, secret=secret,
+                            name=name, model=model)
             procs.append(subprocess.Popen(
                 [sys.executable, str(_reflexd_script_path()), "start", "--participant", name,
                  "--relay-url", url], env=env, cwd=str(root),

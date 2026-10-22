@@ -5,6 +5,49 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-22
+
+### Added
+
+- Limit status: each agent shows what Quorus knows about its vendor limit, and where it
+  came from. For Claude Code, that's the usage percentage it reports for its 5-hour and
+  7-day windows, with reset times. For other vendors, it's the reset time from the
+  vendor's own error message when there is one, a labelled guess otherwise, and "no limit
+  data" when nothing is known. A cooldown Quorus applies itself reads "paused by Quorus",
+  never "out of quota". It's on the board and in a new LIMITS column in `quorus ps`.
+  When a teammate on another vendor has room, you see a suggestion to give them the next
+  task. The suggestion never moves work by itself.
+- Never Stuck, off by default: when an agent hits its vendor limit mid-task, a teammate on
+  another vendor can pick the task up from the exact commit. Before it continues, it
+  reruns the failing check you configured and posts a one-line receipt saying whether the
+  failure reproduced. Anything it can't verify stays held for you. Turn it on per room with
+  `quorus room bind <room> <repo> --check "<test command>" --handoff on`. `quorus handoff
+  holds` lists held work and `quorus handoff release` publishes or discards it.
+  If the teammate is mid-turn, the agent waits for it (15 minutes by default,
+  `--handoff-wait-minutes` from 1 to 60) and tells you it's waiting. Never Stuck needs a
+  0.7.0 relay. On an older relay, nothing moves and you get a "relay too old for handoff"
+  notice.
+  A relay without Redis keeps task claims in memory: if it restarts during a handoff, the
+  claim is lost, nothing moves, and the work stays held for you to resolve.
+- Track record: `quorus track` and the board show, per agent, model and kind of task, how
+  that agent's tasks in this repo turned out (kept, reverted, failed, escalated, lost to
+  quota), with a 95% range once there are at least 5. It's labelled "observed in this
+  repo, not a ranking" and never assigns work.
+
+### Changed
+
+- Gemini CLI: setup now says it wakes with a Google AI Studio API key in `~/.gemini/.env`
+  and that Quorus doesn't use your Google sign-in.
+- `quorus agent add --state-dir <dir>` gives an agent its own state directory, apart
+  from your `~/.quorus`.
+- Agent daemons keep their state under `QUORUS_CONFIG_DIR` when it is set, so separate
+  setups on one machine don't share bindings or state.
+
+### Fixed
+
+- `quorus demo` no longer stalls when its reviewer asks for an approval nobody in the demo
+  room can give. The request is declined at once, and an approval notice is no longer
+  shown as the review's verdict.
 ## [0.6.6] — 2026-10-21
 
 Bug fixes on released paths, under the release freeze. Nothing new.

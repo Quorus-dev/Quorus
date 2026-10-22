@@ -8,6 +8,7 @@ import json
 import subprocess
 from datetime import datetime, timezone
 
+from quorus.bounded import bounded
 from quorus.private_files import write_private_json
 from quorus.protocol import SocialVerb
 
@@ -39,6 +40,12 @@ def continuation(envelope: dict) -> dict | None:
             or len(set(data["failed_agents"])) != data["handoffs"]
             or payload["to"] in data["failed_agents"]
             or sv.ref_message_id != data["original_message_id"]):
+        return None
+    capsule = data.get("capsule")
+    if capsule and (capsule["root"] != sv.ref_message_id
+                    or capsule["hop"] != data["handoffs"] or capsule["by"] != sv.actor
+                    or capsule["repo"]["branch"] != data["branch"]
+                    or not capsule["repo"]["head"].startswith(data["last_commit"])):
         return None
     return {**payload["failover"], "to": payload["to"], "actor": sv.actor,
             "root": sv.ref_message_id}
@@ -76,12 +83,14 @@ def timestamp(value) -> float:
             return 0.0
 
 
-def choose_candidate(entries, members, *, actor, failed, task, detect, capabilities, score):
+def choose_candidate(entries, members, *, actor, failed, task, detect, capabilities, score,
+                     statuses=("active",)):
     ranked = []
     for entry in entries:
         name = entry.get("name") or ""
         if (name not in members or name == actor or name in failed
-                or not entry.get("online") or entry.get("status") != "active"
+                or not entry.get("online") or entry.get("status") not in statuses
+                or paused(entry)
                 or not name.endswith(("-claude", "-codex", "-gemini", "-cursor",
                                       "-opencode", "-cline"))
                 or detect(name) == detect(actor)):
@@ -93,6 +102,17 @@ def choose_candidate(entries, members, *, actor, failed, task, detect, capabilit
     return min(ranked)[2] if ranked else None
 
 
+def paused(entry):
+    """Presence may still say active while Quorus is pausing the harness."""
+    import time
+
+    pause = entry.get("pause")
+    if not isinstance(pause, dict):
+        return False
+    until = bounded(pause.get("until"), 0, 4102444800)
+    return until is not None and until > time.time()
+
+
 def _last_commit(worktree) -> str:
     if worktree is None:
         return "unavailable"
@@ -102,10 +122,15 @@ def _last_commit(worktree) -> str:
 
 
 async def attempt(daemon, relay, envelope, *, reason, mission, worktree, mode,
-                  detect, capabilities, score) -> str | None:
+                  detect, capabilities, score, bindings=None, spent=None) -> str | None:
     """Transfer a claim, then send one typed wake. Return a fallback diagnosis suffix."""
     if mode in ("manual", "readonly"):  # read-only rooms post the diagnosis only (spec)
         return None
+    from quorus.runtime import handoff_sender
+    if handoff_sender.enabled(envelope.get("room") or "", bindings):
+        return await handoff_sender.attempt(
+            daemon, relay, envelope, reason=reason, mission=mission, worktree=worktree,
+            detect=detect, capabilities=capabilities, score=score, bindings=bindings, spent=spent)
     actor = daemon.config.participant_name
     room = envelope.get("room") or ""
     previous = continuation(envelope) or {}
@@ -157,6 +182,16 @@ async def attempt(daemon, relay, envelope, *, reason, mission, worktree, mode,
                                              task_id=data["task_id"])
         await relay.post_social_defer(room_id=room, actor=actor, target=target,
                                       ref_message_id=original, failover=data)
+        if worktree:
+            try:
+                from quorus.runtime import task_capture, task_record
+                from quorus.services.approval_svc import agent_owner
+
+                await asyncio.to_thread(task_capture.escalation, worktree.repo,
+                    task_record.scope(daemon.config.relay_url, agent_owner(actor), worktree.repo),
+                    original, target)
+            except Exception:
+                pass  # observational evidence cannot change a handoff
     except Exception as exc:
         return f"Failover could not complete ({type(exc).__name__}); owner needs to reassign."
     return "sent"

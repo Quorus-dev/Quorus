@@ -214,8 +214,8 @@ def gemini_api_key(env: dict[str, str]) -> str | None:
 def gemini_settings(spec: dict[str, Any] | None, *, api_key: bool = False,
                     mode: str = "default") -> dict[str, Any]:
     """settings.json for the agent's own Gemini home: Quorus tools, and
-    API-key sign-in when the user has a key (a retired Google login in the
-    user's own settings made every wake fail)."""
+    API-key sign-in when the user has a key (the Google login in the user's
+    own settings made every wake fail on gemini-cli 0.64.0)."""
     cfg: dict[str, Any] = {
         # Gemini CLI reads only GEMINI.md, so in a repo that keeps its rules in
         # AGENTS.md / CLAUDE.md it never learned the venv or test command, went

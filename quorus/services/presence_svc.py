@@ -22,12 +22,15 @@ class PresenceService:
         waiting_on: str = "",
         waiting_until: float = 0.0,
         model: str = "",
+        limits: str = "",
     ) -> dict:
-        """Record a heartbeat for *name* and return the stored entry."""
+        """Record a heartbeat for *name* and return the stored entry.
+
+        ``limits`` is the JSON of ``quorus.limit_status.clean`` ("" = none)."""
         return await self._backend.heartbeat(tenant_id, name, status, room,
                                              reason=reason, activity=activity,
                                              waiting_on=waiting_on, waiting_until=waiting_until,
-                                             model=model)
+                                             model=model, limits=limits)
 
     async def list_all(
         self, tenant_id: str, timeout: int

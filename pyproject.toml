@@ -1,6 +1,6 @@
 [project]
 name = "quorus-ai"
-version = "0.6.6"
+version = "0.7.0"
 description = "Real-time coordination layer for AI agent swarms — rooms, messaging, distributed locks"
 requires-python = ">=3.10"
 license = "MIT"
@@ -124,6 +124,7 @@ packages = ["quorus", "packages/sdk/quorus_sdk", "packages/tui/quorus_tui", "pac
 "scripts/reflexd_readonly.py" = "quorus/_reflexd/reflexd_readonly.py"
 "scripts/reflexd_unfinished.py" = "quorus/_reflexd/reflexd_unfinished.py"
 "scripts/reflexd_held.py" = "quorus/_reflexd/reflexd_held.py"
+"scripts/reflexd_limits.py" = "quorus/_reflexd/reflexd_limits.py"
 
 [tool.hatch.build.targets.sdist]
 exclude = [

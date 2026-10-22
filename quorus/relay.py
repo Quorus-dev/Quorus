@@ -608,7 +608,7 @@ app = FastAPI(
         "Any agent that speaks HTTP can join rooms, send messages, "
         "and coordinate work through this API."
     ),
-    version="0.6.6",
+    version="0.7.0",
     lifespan=lifespan,
 )
 
@@ -910,6 +910,7 @@ from quorus.routes.admin_metrics import router as admin_metrics_router  # noqa: 
 from quorus.routes.join_codes import router as join_codes_router  # noqa: E402
 from quorus.routes.join_redeem import router as join_redeem_router  # noqa: E402
 from quorus.routes.room_scorecard import router as room_scorecard_router  # noqa: E402
+from quorus.routes.room_track import router as room_track_router  # noqa: E402
 
 app.include_router(relay_router)
 app.include_router(auth_router)
@@ -919,6 +920,7 @@ app.include_router(dashboard_router)
 app.include_router(board_router)
 app.include_router(quorum_router)
 app.include_router(room_scorecard_router)
+app.include_router(room_track_router)
 app.include_router(join_redeem_router)
 app.include_router(admin_metrics_router)
 app.include_router(admin_dashboard_router)

@@ -70,8 +70,9 @@ def detect(which: Callable[[str], str | None] = shutil.which) -> list[Found]:
         elif h == "codex" and not _codex_logged_in():
             found.append(Found(h, False, "not logged in: run `codex login`"))
         elif h == "gemini" and not _gemini_has_key():
-            found.append(Found(h, False, "needs a free key from aistudio.google.com/apikey "
-                                         "in ~/.gemini/.env (GEMINI_API_KEY=...)"))
+            found.append(Found(h, False, "needs an API key from aistudio.google.com/apikey "
+                                         "in ~/.gemini/.env (GEMINI_API_KEY=...); Quorus "
+                                         "doesn't use your Google sign-in"))
         elif h == "opencode" and int((_opencode_version() or "2").split(".")[0]) < 2:
             found.append(Found(h, False, "too old: `npm i -g @opencode/cli`"))
         else:

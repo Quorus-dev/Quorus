@@ -1201,6 +1201,31 @@ def _resolve_turnguard_participant(explicit: str | None) -> str:
     return name
 
 
+def _cmd_handoff(args):
+    from quorus_cli.handoff_cmd import cmd_handoff
+
+    cmd_handoff(args)
+
+
+def _confirm_handoff_on(room: str) -> None:
+    """Turning live handoff on is typed at a terminal, never done by accident.
+
+    An operator safeguard, not authentication: an agent running as the same user
+    could allocate a PTY (dogfood plan §1, accepted risk). Turning it off needs
+    no confirmation, because off never publishes or moves anything."""
+    if not sys.stdin.isatty():
+        _ui.error("--handoff on must be typed at a terminal",
+                  hint=f"run it yourself: quorus room bind {room} <path> --handoff on")
+        raise SystemExit(2)
+    console.print(f"[warning]live handoff:[/] when an agent in [primary]{room}[/] hits its "
+                  "vendor limit, a teammate on another vendor reruns the room's check and "
+                  "continues its branch.")
+    typed = input(f"  type the room name ({room}) to turn it on: ").strip()
+    if typed != room:
+        _ui.error("not turned on: the name didn't match")
+        raise SystemExit(2)
+
+
 def _cmd_room(args):
     """Host-local room utilities. `quorus room bind <room> <path>` binds a
     room to a workspace directory so reflexd wakes agents INSIDE the repo
@@ -1271,7 +1296,20 @@ def _cmd_room(args):
         # room silently dropped it to default — review 2026-10-09).
         mode = getattr(args, "mode", None) or (
             prev.get("mode", "default") if isinstance(prev, dict) else "default")
-        data[args.room] = str(ws) if mode == "default" else {"path": str(ws), "mode": mode}
+        # Keep the room's other settings (trust, check) across a rebind.
+        extra = {k: v for k, v in prev.items() if k not in ("path", "mode")} \
+            if isinstance(prev, dict) else {}
+        data[args.room] = (str(ws) if mode == "default" and not extra
+                           else {"path": str(ws), "mode": mode, **extra})
+        from quorus.runtime.check_config import configure_binding
+
+        try:
+            data[args.room] = configure_binding(data[args.room], prev, args, ws)
+        except ValueError as exc:
+            _ui.error(str(exc))
+            raise SystemExit(2) from exc
+        if getattr(args, "handoff", None) == "on":
+            _confirm_handoff_on(args.room)
         bindings_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(bindings_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -1283,7 +1321,8 @@ def _cmd_room(args):
         }[mode]
         console.print(
             f"[success]bound[/] [primary]{args.room}[/] → {ws} [dim]({mode})[/]\n"
-            f"[dim]agents woken for this room run inside that directory {how}[/]"
+            f"[dim]agents woken for this room run inside that directory {how}[/]\n"
+            f"[dim]saved in {bindings_path}[/]"
         )
         return
 
@@ -1367,6 +1406,12 @@ def _cmd_scorecard(args):
     from quorus_cli.scorecard_cmd import cmd_scorecard
 
     cmd_scorecard(args, console)
+
+
+def _cmd_track(args):
+    from quorus_cli.track_cmd import cmd_track
+
+    cmd_track(args, console)
 
 
 def _cmd_track_report(args):
@@ -1456,8 +1501,13 @@ def _cmd_turnguard(args):
 # reflexd — start/stop/status/logs wrapper around scripts/reflexd.py
 # ---------------------------------------------------------------------------
 
-_REFLEXD_DEFAULT_LOG = Path.home() / ".quorus" / "reflexd.log"
-_REFLEXD_RUNTIME_DIR = Path.home() / ".quorus" / "runtime"
+# Same dirs the daemon uses (quorus.runtime.bindings.config_dir). A distinct name:
+# `_config_dir` above is the CLI's config resolver, legacy dirs included, and
+# shadowing it sent reads and writes to different dirs (Codex on 90321f74).
+from quorus.runtime.bindings import config_dir as _daemon_state_dir  # noqa: E402
+
+_REFLEXD_DEFAULT_LOG = _daemon_state_dir() / "reflexd.log"
+_REFLEXD_RUNTIME_DIR = _daemon_state_dir() / "runtime"
 
 
 def _resolve_reflexd_participant(explicit: str | None) -> str:
@@ -2598,6 +2648,7 @@ async def _ps(*, as_json: bool = False) -> None:
         console.print()
 
         from rich import box as _box
+        from rich.markup import escape as rich_escape
 
         table = Table(
             box=_box.SIMPLE_HEAD,
@@ -2611,6 +2662,9 @@ async def _ps(*, as_json: bool = False) -> None:
         table.add_column("ROOM", style="dim")
         table.add_column("LAST SEEN", style="dim", no_wrap=True)
         table.add_column("UPTIME", justify="right", style="dim", no_wrap=True)
+        # The relay's limit line (quorus/limit_display.py): vendor reset and its
+        # source, "?" on guesses, our own cooldowns never called quota.
+        table.add_column("LIMITS", style="dim")
 
         from datetime import datetime, timezone
 
@@ -2653,12 +2707,19 @@ async def _ps(*, as_json: bool = False) -> None:
             room_label = a.get("room", "")
             if room_label:
                 room_label = f"#{room_label}"
+            if online:
+                limits = str(a.get("limit_line") or "no limit data")
+                if a.get("limit_hint"):
+                    limits += f" → {a['limit_hint']}"
+            else:
+                limits = "—"
             table.add_row(
                 f"@{a['name']}",
                 status_display,
                 room_label or "—",
                 hb_str,
                 uptime,
+                rich_escape(limits),
             )
 
         console.print(table)
@@ -9968,6 +10029,9 @@ def main():
     p_deny.add_argument("approval_id", help="Approval id (apr_...)")
     p_deny.add_argument("--reason", default="", help="Optional note")
 
+    from quorus_cli.handoff_cmd import add_parser as _add_handoff_parser
+
+    _add_handoff_parser(sub, _help_block)
     p_room = sub.add_parser("room", **_help_block(
         synopsis="Host-local room utilities (workspace binding).",
         description=(
@@ -9983,6 +10047,19 @@ def main():
     p_room_bind = room_sub.add_parser("bind", help="Bind room → workspace dir")
     p_room_bind.add_argument("room", help="Room name or id")
     p_room_bind.add_argument("path", help="Workspace directory (repo root)")
+    p_room_bind.add_argument("--check", default=None,
+                             help="Checkpoint command (argv, no shell); empty disables")
+    p_room_bind.add_argument("--check-timeout", type=float, default=None,
+                             help="Checkpoint seconds (default 45, maximum 300)")
+    p_room_bind.add_argument("--check-output-kb", type=int, default=None,
+                             help="Checkpoint output cap in KiB (default 64, maximum 1024)")
+    p_room_bind.add_argument("--handoff-wait-minutes", type=float, default=None,
+                             help="Busy receiver wait cap: 1–60 minutes (default 15)")
+    p_room_bind.add_argument(
+        "--handoff", choices=["on", "off"], default=None,
+        help=("live handoff for this room: when an agent hits its vendor limit, a "
+              "teammate on another vendor reruns the room's check and continues "
+              "(needs --check; asks you to type the room name to turn it on)"))
     p_room_bind.add_argument(
         "--mode", choices=["default", "manual", "autonomous"], default=None,
         help=("default: your own CLI permission settings; manual: agents ask "
@@ -10085,6 +10162,13 @@ def main():
     p_score.add_argument("--by", choices=["agent", "vendor"], default="agent")
     p_score.add_argument("--json", action="store_true", help="One JSON row per commit")
 
+    p_track = sub.add_parser("track", help="Observed repo-local task history (read-only)")
+    p_track.add_argument("--repo", help="Repo path (default: current directory)")
+    p_track.add_argument("--main", default="main", help="Room's integration branch")
+    p_track.add_argument("--owner", help="Whose task history to read")
+    p_track.add_argument("--relay", help="Relay URL (default: active config)")
+    p_track.add_argument("--json", action="store_true", help="Print task cells as JSON")
+
     p_track = sub.add_parser(
         "track-report", help="Loop A's shadow numbers per agent, last 24h (read-only)")
     p_track.add_argument("--agent", help="One agent (default: every agent on this machine)")
@@ -10109,6 +10193,10 @@ def main():
                              help="opencode runs any model: Ollama, OpenRouter, Qwen, ...")
     p_agent_add.add_argument("--room", required=True, help="Room to join")
     p_agent_add.add_argument("--repo", help="Repo the room works in (binds the room)")
+    p_agent_add.add_argument(
+        "--state-dir", metavar="DIR",
+        help=("Keep this agent's daemon state (room bindings, handoff journals, holds) "
+              "in DIR, apart from ~/.quorus; for running a second set of agents"))
     p_agent_add.add_argument(
         "--mode", choices=["default", "manual", "autonomous"], default=None,
         help="Permissions in this room's repo (with --repo)",
@@ -10430,8 +10518,10 @@ def main():
         "approve": _cmd_approve,
         "deny": _cmd_deny,
         "room": _cmd_room,
+        "handoff": _cmd_handoff,
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,
+        "track": _cmd_track,
         "track-report": _cmd_track_report,
         "tune": _cmd_tune,
         "invites": _cmd_invites,

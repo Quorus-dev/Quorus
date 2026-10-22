@@ -482,6 +482,18 @@ async def approve(
             "message": (f"{_STOPPED} Do not retry or work around it: stop now and "
                         "report exactly what was blocked."),
         }
+    if os.environ.get("QUORUS_APPROVALS") == "deny":
+        # A room with nobody who can approve (`quorus demo`): the reviewer there
+        # asked for `bash`, posted "approval needed" and sat 232 s until the
+        # demo gave up (0.6.6 stranger pass, 2026-10-21). Deny at once, with
+        # the reason, and ask nothing of the room.
+        return {
+            "behavior": "deny",
+            "message": ("Nobody in this room can approve tool calls (this is a demo "
+                        "run). Don't wait or retry: do what you can without that "
+                        "tool, such as reading the published commit, and post your "
+                        "answer now."),
+        }
     room = room_id or os.environ.get("QUORUS_APPROVAL_ROOM", "")
     if not room:
         return {
