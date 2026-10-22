@@ -169,6 +169,7 @@ NOT_ROOM_WRITES = {
     ("POST", "/admin/login"): "admin dashboard sign-in, not a participant route",
     ("POST", "/admin/logout"): "admin dashboard sign-out",
     ("POST", "/heartbeat"): "your own presence",
+    ("POST", "/v1/handoff"): "delegates to post_social_verb, which calls require_room_writer",
     ("POST", "/invite/{room_name}/join"): "410 on shared-secret relays; API-key invite path",
     ("POST", "/messages/{recipient}/ack"): "acknowledging your own inbox",
     ("DELETE", "/rooms/{room_id}"): "room creator or admin only; an observer is neither",
