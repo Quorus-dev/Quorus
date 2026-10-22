@@ -46,7 +46,8 @@ def _continuation(monkeypatch, tmp_path):
     return repo, daemon, wt, turn
 
 
-@pytest.mark.parametrize("failure", [None, "harness", "claim", "uncommitted", "commit", "held"])
+@pytest.mark.parametrize("failure", [None, "harness", "claim", "uncommitted", "pycache",
+                                     "commit", "held"])
 def test_real_daemon_completion_publishes_only_the_verified_clean_turn(
         monkeypatch, tmp_path, failure):
     repo, daemon, wt, turn = _continuation(monkeypatch, tmp_path)
@@ -79,6 +80,11 @@ def test_real_daemon_completion_publishes_only_the_verified_clean_turn(
         if failure is None:
             _git(cwd, "add", "-A")
             _git(cwd, "commit", "-qm", "finish continued task")
+        if failure == "pycache":  # the receiver's own pytest run, no .gitignore (Claude)
+            (cwd / "shop" / "__pycache__").mkdir(exist_ok=True)
+            (cwd / "shop" / "__pycache__" / "inventory.cpython-313.pyc").write_bytes(b"\0")
+            (cwd / ".pytest_cache" / "v").mkdir(parents=True, exist_ok=True)
+            (cwd / ".pytest_cache" / "v" / "lastfailed").write_text("{}")
         if failure == "claim":
             relay.holder = "someone-else"
         return "[reflexd] harness timed out" if failure == "harness" else "✅ task finished"
@@ -91,16 +97,19 @@ def test_real_daemon_completion_publishes_only_the_verified_clean_turn(
                                       self_name=daemon.config.participant_name)
     asyncio.run(daemon._wake_and_reply(relay, envelope, triage=triage))
     hold = PublicationHold(wt.path, turn.journal, turn.capsule)
-    if failure in (None, "uncommitted"):
+    published = failure in (None, "uncommitted", "pycache")
+    if published:
         assert _git(repo, "rev-parse", "main") != main_before
         assert (repo / "CHANGELOG.md").read_text() == "finished by receiver\n"
         assert (repo / "shop" / "inventory.py").read_text() == "stock = 1\n"
         assert turn.journal.read(turn.capsule)["state"] == "done"
-        if failure == "uncommitted":
+        if failure in ("uncommitted", "pycache"):
             assert _git(wt.path, "log", "-1", "--format=%an") == daemon.config.participant_name
         assert not hold.path.exists()
         assert _git(repo, "rev-list", "--count", f"{main_before}..main") == "2"
         assert any("published 2 commit(s)" in x["content"] for x in relay.posted)
+        files = _git(repo, "ls-tree", "-r", "--name-only", "main")
+        assert "__pycache__" not in files and ".pytest_cache" not in files
     else:
         assert _git(repo, "rev-parse", "main") == main_before
         assert turn.journal.read(turn.capsule)["state"] == "continuing"
@@ -110,7 +119,7 @@ def test_real_daemon_completion_publishes_only_the_verified_clean_turn(
         if failure != "harness":
             assert _git(wt.path, "rev-parse", "HEAD") == turn.capsule.repo.head
     entry = turn.journal.read(turn.capsule)
-    expected = "published" if failure in (None, "uncommitted") else "kept_unpublished"
+    expected = "published" if published else "kept_unpublished"
     assert entry["completion"]["result"] == expected
     events = [json.loads(line) for line in turn.journal.events_path.read_text().splitlines()]
     assert events[-1]["event"] == "completion" and events[-1]["result"] == expected
@@ -202,3 +211,28 @@ def test_done_proof_without_integration_cannot_be_reported_published(monkeypatch
     record(turn, wt, daemon.config.participant_name, published=True, cause="publish_failed")
     result = turn.journal.read(turn.capsule)["completion"]
     assert result["result"] == "kept_unpublished" and result["cause"] == "publish_unverified"
+
+
+def test_clean_ignores_only_untracked_generated_files(tmp_path):
+    """Generated leftovers don't make a tree dirty; anything else still does."""
+    from quorus.runtime.handoff_adoption import Git
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "app.py").write_text("x = 1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init")
+    (repo / "__pycache__").mkdir()
+    (repo / "__pycache__" / "app.cpython-313.pyc").write_bytes(b"\0")
+    (repo / ".pytest_cache").mkdir()
+    (repo / ".pytest_cache" / "README.md").write_text("cache\n")
+    assert Git(repo).clean()
+    (repo / "notes.txt").write_text("new work\n")  # untracked, not generated
+    assert not Git(repo).clean()
+    (repo / "notes.txt").unlink()
+    (repo / "app.py").write_text("x = 2\n")  # tracked change
+    assert not Git(repo).clean()
+    _git(repo, "checkout", "--", "app.py")
+    _git(repo, "add", "-f", "__pycache__/app.cpython-313.pyc")  # staged, even generated
+    assert not Git(repo).clean()

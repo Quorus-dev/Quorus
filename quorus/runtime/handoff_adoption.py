@@ -41,7 +41,13 @@ class Git:
         return self.run(*args).decode().strip()
 
     def clean(self) -> bool:
-        return not self.run("status", "--porcelain=v1", "-z", "--untracked-files=all")
+        """No tracked change at all, and no untracked file except generated leftovers
+        (__pycache__ and the like), which the daemon never commits either."""
+        from quorus.runtime.generated_files import EXCLUDES
+
+        return not (self.run("status", "--porcelain=v1", "-z", "--untracked-files=no")
+                    or self.run("ls-files", "--others", "--exclude-standard", "-z",
+                                "--", ".", *EXCLUDES))
 
 
 def adopt(git: Git, journal: Journal, capsule: HandoffCapsule, *,
