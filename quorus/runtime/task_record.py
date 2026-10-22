@@ -6,7 +6,6 @@ Readers never create files. Only daemon capture/settlement appends evidence.
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -16,6 +15,9 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from quorus.runtime import file_lock
+
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # absent on Windows
 KINDS = ("test", "fix", "feature", "refactor", "docs", "config")
 WORK_S, READ_S = 48 * 3600, 9 * 86400
 MAX_BYTES = 32 * 1024 * 1024
@@ -55,9 +57,9 @@ def read(repo: Path, key: str) -> list[dict]:
 @contextmanager
 def _locked(file: Path):
     file.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(file.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    fd = os.open(file.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | _NOFOLLOW, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        file_lock.lock(fd)
         yield
     finally:
         os.close(fd)
@@ -65,7 +67,7 @@ def _locked(file: Path):
 
 def _append(file: Path, row: dict) -> None:
     data = (json.dumps(row, sort_keys=True, allow_nan=False) + "\n").encode()
-    fd = os.open(file, os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    fd = os.open(file, os.O_RDWR | os.O_CREAT | os.O_APPEND | _NOFOLLOW, 0o600)
     start = os.fstat(fd).st_size
     try:
         if start + len(data) > MAX_BYTES:

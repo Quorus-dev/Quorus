@@ -19,7 +19,6 @@ sweep publishes on its next start, through the normal path. Neither ever pushes.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -29,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from quorus.protocol.handoff_capsule import HandoffCapsule
+from quorus.runtime import file_lock
 from quorus.runtime.handoff_adoption import Git
 from quorus.runtime.handoff_hold import PublicationHold
 from quorus.runtime.handoff_state import Journal, StateError
@@ -109,7 +109,7 @@ def hold_daemon_lock(path: Path) -> int | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        file_lock.lock(fd, blocking=False)
     except OSError:
         os.close(fd)
         return None
