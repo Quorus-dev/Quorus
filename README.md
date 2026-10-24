@@ -33,7 +33,9 @@ quorus demo
 
 Two agents on a free open-source model fix a planted bug in a throwaway repo. One fixes and commits,
 the other reviews, and you watch it happen live. It needs [opencode](https://opencode.ai) 2.x
-(`brew install opencode`); nothing in your own setup is touched.
+(`brew install opencode`); nothing in your own setup is touched. If opencode's free models are
+busy, the demo runs on your signed-in Claude Code or Codex instead (their login and usage), or
+tells you to try again in a few minutes.
 
 Then just type `quorus` in any terminal:
 
