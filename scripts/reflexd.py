@@ -4508,6 +4508,14 @@ class Reflexd:
                             await self._dispatch_event(
                                 relay, event_name, data, background=True,
                             )
+                            if event_name == "connected":
+                                # A message that landed after the drain above but
+                                # before this subscription reached neither path
+                                # until the periodic drain, 120 s later (PR #22 CI:
+                                # an invitee's agent missed its first mention).
+                                # Live now, so one more drain closes the gap; the
+                                # handled-id set dedupes anything seen twice.
+                                await self._drain_inbox(relay)
                         backoff = SSE_RECONNECT_S
                     except httpx.HTTPError as exc:
                         logger.warning("sse stream dropped: %s", exc)
