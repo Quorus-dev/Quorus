@@ -266,7 +266,12 @@ def test_retired_gemini_model_tells_the_room_to_update() -> None:
 # ── opencode free-model failover (2026-10-17) ───────────────────────────
 
 
-def _rotating_adapter(limited: set[str | None]) -> tuple[Any, list[str | None]]:
+def _rotating_adapter(slow: set[str | None] = frozenset(),
+                      limited: set[str | None] = frozenset()) -> tuple[Any, list[str | None]]:
+    """A fake opencode: *slow* models print nothing before the first-output
+    deadline (per model, so the rotation moves on); *limited* models return the
+    typed free-tier limit `diagnose_harness_failure` produces (shared across the
+    free models, so the rotation stops: keyless-answer.md §3.1)."""
     import time as _time
 
     adapter = reflexd.HeadlessAdapter()
@@ -276,32 +281,63 @@ def _rotating_adapter(limited: set[str | None]) -> tuple[Any, list[str | None]]:
         tried.append(adapter.model)
         if adapter.model in limited:
             adapter.limited_until = _time.time() + 1800
-            return "⚠ opencode: the vendor rate-limited this account; the wake was dropped."
+            return reflexd._failover.VendorFailure(
+                "⚠ opencode: the vendor rate-limited this account; the wake was dropped.",
+                "rate_limit")
+        if adapter.model in slow:
+            return reflexd.SlowStart("opencode", reflexd.FREE_FIRST_EVENT_S)
         return f"fixed it on {adapter.model}"
 
     adapter._opencode_once = once  # type: ignore[method-assign]
     return adapter, tried
 
 
-def test_a_limited_free_model_moves_to_the_next_free_one() -> None:
+def test_a_slow_free_model_moves_to_the_next_free_one() -> None:
     free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
-    adapter, tried = _rotating_adapter({free[0]})
+    adapter, tried = _rotating_adapter(slow={free[0]})
     adapter.model = free[0]
     out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert out == f"fixed it on {free[1]}" and tried == [free[0], free[1]]
     assert adapter.model == free[1] and adapter.limited_until == 0.0  # sticks with what works
 
 
-def test_every_free_model_limited_cools_down_on_the_original() -> None:
+def test_a_free_tier_limit_stops_the_rotation() -> None:
+    """keyless-answer.md §3.1 (Codex GO f33da14e): opencode's free-tier limit is
+    shared by every free model, so after a typed 429 on model 1 the daemon never
+    calls model 2; it would only spend more of the same budget."""
     free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
-    adapter, tried = _rotating_adapter({None, *free})
+    adapter, tried = _rotating_adapter(limited={free[0]})
+    adapter.model = free[0]
     out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
-    assert "rate-limited" in out and tried == [None, *free]
+    assert tried == [free[0]]  # no second call
+    assert isinstance(out, reflexd._failover.VendorFailure) and out.reason == "rate_limit"
+    assert adapter.model == free[0] and adapter.limited_until > 0  # the quota pause stands
+    assert adapter.pause_reason == "quota" and adapter._rotated_at == 0.0
+
+
+def test_a_limit_after_a_slow_model_also_stops_the_rotation() -> None:
+    """Slow on model 1 rotates; a typed limit on model 2 ends the loop with the
+    original model restored and no third call."""
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter, tried = _rotating_adapter(slow={free[0]}, limited={free[1]})
+    adapter.model = free[0]
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert tried == [free[0], free[1]]
+    assert isinstance(out, reflexd._failover.VendorFailure)
+    assert adapter.model == free[0] and adapter.limited_until > 0
+
+
+def test_every_free_model_slow_cools_down_on_the_original() -> None:
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter, tried = _rotating_adapter(slow={None, *free})
+    out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert isinstance(out, reflexd.SlowStart) and tried == [None, *free]
     assert adapter.model is None and adapter.limited_until > 0
+    assert adapter.pause_reason == "slow_start"  # our cooldown, never "out of quota"
 
 
 def test_rotation_reaches_a_live_free_model_the_tuple_never_had(monkeypatch) -> None:
-    """Release check: every tuple model was limited while nemotron-3.5-lightning
+    """Release check: every tuple model was silent while nemotron-3.5-lightning
     answered. The rotation now walks the live `opencode models` catalog."""
     import subprocess
 
@@ -311,14 +347,18 @@ def test_rotation_reaches_a_live_free_model_the_tuple_never_had(monkeypatch) -> 
     catalog = "\n".join([*free, "opencode/nemotron-3.5-lightning-free"])
     monkeypatch.setattr(opencode_free, "_default_run", lambda argv, **_k:
                         subprocess.CompletedProcess(argv, 0, stdout=catalog, stderr=""))
-    adapter, tried = _rotating_adapter({None, *free})
+    adapter, tried = _rotating_adapter(slow={None, *free})
     out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert out == "fixed it on opencode/nemotron-3.5-lightning-free"
     assert tried == [None, *free, "opencode/nemotron-3.5-lightning-free"]
 
 
 def test_a_paid_model_is_never_swapped() -> None:
-    adapter, tried = _rotating_adapter({"openrouter/qwen/qwen3-coder"})
+    adapter, tried = _rotating_adapter(limited={"openrouter/qwen/qwen3-coder"})
+    adapter.model = "openrouter/qwen/qwen3-coder"
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert tried == ["openrouter/qwen/qwen3-coder"]
+    adapter, tried = _rotating_adapter(slow={"openrouter/qwen/qwen3-coder"})
     adapter.model = "openrouter/qwen/qwen3-coder"
     asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert tried == ["openrouter/qwen/qwen3-coder"]
@@ -346,7 +386,7 @@ def test_failover_goes_back_to_the_agents_own_model(monkeypatch) -> None:
     """It moved to the slowest free model at 09:29 and stayed there, timing
     out two 30-minute turns (2026-10-17)."""
     free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
-    adapter, tried = _rotating_adapter({free[0]})
+    adapter, tried = _rotating_adapter(slow={free[0]})
     adapter.model = free[0]
     asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert adapter.model == free[1]

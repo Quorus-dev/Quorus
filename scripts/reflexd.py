@@ -1331,6 +1331,13 @@ def _same_result(posted: str, reply: str) -> bool:
     return reply.lstrip().startswith("✅") and posted.lstrip().startswith("✅")
 
 
+def _free_tier_limit(reply: Any) -> bool:
+    """A typed vendor limit (quota or rate limit) from `diagnose_harness_failure`,
+    never prose: the only evidence that ends a free-model rotation."""
+    return (isinstance(reply, _failover.VendorFailure)
+            and reply.reason in ("quota", "rate_limit"))
+
+
 class SlowStart(str):
     """The harness printed nothing before its first-output deadline (a free
     model whose provider takes minutes to its first token)."""
@@ -1749,11 +1756,13 @@ class HeadlessAdapter:
     ) -> str:
         """opencode wake: Quorus tools, room permissions, any provider/model.
 
-        opencode's free models are rate-limited hour to hour, one at a time
-        (night 1: DeepSeek and MiMo limited while LongCat answered; a fresh
-        user's very first message hit it, 2026-10-17). On a free model, a limit
-        moves the agent to the next free model at once instead of dropping
-        the wake. A model the user picked and pays for is never swapped."""
+        opencode's free tier is limited per account and network, shared across
+        all its free models (docs/plans/keyless-answer.md §2), so a typed limit
+        on one free model ends the turn: trying the next one only spends more
+        of the same budget. What does rotate, one model at a time, is a free
+        model that is slow to start or that the provider won't route (night 1:
+        DeepSeek and MiMo answered nothing while LongCat answered, 2026-10-17).
+        A model the user picked and pays for is never swapped."""
         if self._rotated_at and time.time() - self._rotated_at > reflexd_models.ROTATE_BACK_S:
             self.model, self._rotated_at, self.limit = self._home_model, 0.0, None
         if (self.model or "").startswith("ollama/"):
@@ -1766,6 +1775,8 @@ class HeadlessAdapter:
                                           mode=mode)
         if not reflexd_models.is_free_opencode(first):
             return reply
+        if _free_tier_limit(reply):
+            return reply  # shared across the free models: the quota pause stands
         self._note_slow(reply)
         self._note_no_route(reply)
         tried = {first}
@@ -1774,13 +1785,13 @@ class HeadlessAdapter:
         # The live catalog, not just our tuple: it churns (release check, 2026-10-17).
         rotation = await asyncio.to_thread(free_models, reflexd_models.OPENCODE_FREE_MODELS)
         for alt in rotation:
-            if self.limited_until <= time.time():
-                break  # answered (or failed for another reason): done
+            if self.limited_until <= time.time() or _free_tier_limit(reply):
+                break  # answered, failed for another reason, or limited: done
             if alt in tried:
                 continue
             tried.add(alt)
-            logger.warning("opencode %s is rate-limited; trying %s", self.model or "default",
-                           alt)
+            logger.warning("opencode %s is slow or unavailable; trying %s",
+                           self.model or "default", alt)
             if not self._rotated_at:
                 self._home_model, self._rotated_at = first, time.time()
             # Another model: the old one's pause and reading don't apply.
@@ -1792,9 +1803,13 @@ class HeadlessAdapter:
             self._note_slow(reply)
             self._note_no_route(reply)
         if self.limited_until > time.time():
-            # Every free model is busy: cool down as before, on the original
-            # model. The last one's reading was about another model.
-            self.model, self.limit = first, None
+            # Every free model is slow or unavailable (or the last one hit the
+            # shared limit): cool down on the original model. A reading from a
+            # rotated-to model is about that model, so it is dropped; the
+            # shared limit's own reading, when that is what ended the loop, stays.
+            self.model = first
+            if not _free_tier_limit(reply):
+                self.limit = None
             if first == self._home_model:
                 self._rotated_at = 0.0
         return reply

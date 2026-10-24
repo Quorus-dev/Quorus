@@ -170,21 +170,45 @@ def test_a_good_turn_clears_the_limit_and_a_fresh_daemon_has_none() -> None:
     assert d.adapter.limit is None
 
 
-def test_a_model_rotation_clears_the_reading_and_the_pause() -> None:
+def test_a_model_rotation_clears_the_cooldown() -> None:
+    """A slow free model rotates to the next one; the slow-start cooldown and any
+    stale reading don't follow the agent onto the model that answered."""
     free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
     adapter = reflexd.HeadlessAdapter()
     adapter.model = free[0]
 
     async def once(*_a: Any, **_k: Any) -> str:
         if adapter.model == free[0]:
-            adapter.note_limit("rate limit, retry in 2h")
-            return "⚠ opencode: the vendor rate-limited this account; the wake was dropped."
+            return reflexd.SlowStart("opencode", 60.0)
         return f"fixed it on {adapter.model}"
 
     adapter._opencode_once = once  # type: ignore[method-assign]
     asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert adapter.model == free[1]
     assert (adapter.limit, adapter.limited_until, adapter.pause_reason) == (None, 0.0, "quota")
+
+
+def test_a_free_tier_limit_keeps_its_reading_and_its_model() -> None:
+    """keyless-answer.md §3.1: the typed limit is shared across free models, so
+    there is no rotation, and the vendor's own reset reading is kept for the
+    pause line and the limit display."""
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter = reflexd.HeadlessAdapter()
+    adapter.model = free[0]
+    calls: list[str | None] = []
+
+    async def once(*_a: Any, **_k: Any) -> str:
+        calls.append(adapter.model)
+        adapter.note_limit("rate limit, retry in 2h")
+        return reflexd._failover.VendorFailure(
+            "⚠ opencode: the vendor rate-limited this account; the wake was dropped.",
+            "rate_limit")
+
+    adapter._opencode_once = once  # type: ignore[method-assign]
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert calls == [free[0]] and adapter.model == free[0]
+    assert adapter.limit is not None and adapter.limited_until > time.time()
+    assert adapter.pause_reason == "quota"
 
 
 # ── the two clock-advance gates (Codex, plan GO on ab26832d) ────────────
