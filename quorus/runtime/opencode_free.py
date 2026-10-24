@@ -10,9 +10,43 @@ first, in their order; any other live ``opencode/*-free`` model follows. If
 
 from __future__ import annotations
 
+import json
+import re
 import subprocess
 import time
 from collections.abc import Callable, Sequence
+
+# opencode's free tier is limited per account and network, shared across all its
+# free models (its maintainers' bot on every October 2026 issue), and the 429 body is
+# {"type":"error","error":{"type":"FreeUsageLimitError","message":"Free usage limit
+# reached. ..."}} or the older "Rate limit exceeded. Please try again later."
+# (docs/plans/keyless-answer-research.md). Trying the next free model after one of
+# these only spends more of the same budget.
+FREE_LIMIT_RE = re.compile(r"FreeUsageLimitError|usage limit|rate.?limit|quota|"
+                           r"resource_exhausted", re.IGNORECASE)
+
+
+def free_limit_in(stdout: str) -> str | None:
+    """The typed free-tier limit in an ``opencode run --format json`` stream: the
+    error event's own words, or None. Only ``"type":"error"`` events count, so a
+    reply that merely talks about quotas never trips it."""
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ev, dict) or ev.get("type") != "error":
+            continue
+        err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
+        data = err.get("data") if isinstance(err.get("data"), dict) else {}
+        text = " ".join(str(v) for v in (err.get("type"), err.get("name"), err.get("message"),
+                                         data.get("message")) if v)
+        if FREE_LIMIT_RE.search(text):
+            return text[:300]
+    return None
 
 CACHE_S = 60 * 60
 # A model that sat silent past the first-output deadline goes to the back of

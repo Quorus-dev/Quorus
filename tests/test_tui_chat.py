@@ -292,8 +292,14 @@ def test_read_receipt_only_on_most_recent_own_message():
     out = _render_to_str(
         chat.render_bubble_feed(msgs, "dev", "arav", console_width=80)
     )
-    # "Delivered" appears exactly once — under the most recent own bubble.
-    assert out.count("Delivered") == 1
+    # A sent message gets no "Delivered" row (tui-polish.md defect 7)...
+    assert "Delivered" not in out
+    # ...but one still on its way says so, under the most recent own bubble only.
+    msgs[0].pop("id"), msgs[2].pop("id")
+    out = _render_to_str(
+        chat.render_bubble_feed(msgs, "dev", "arav", console_width=80)
+    )
+    assert out.count("Sending…") == 1
 
 
 def test_read_receipt_label_picks_correct_state():
@@ -647,8 +653,8 @@ def test_golden_five_message_mixed_human_agent_snapshot():
     assert "#design" in snap                     # inline highlight
     # Round-corner glyphs render on standalone bubbles.
     assert "╭" in snap or "╰" in snap
-    # Read-receipt micro-row appears ONCE, on the most recent own message.
-    assert snap.count("Delivered") == 1
+    # Sent messages carry no "Delivered" receipt row.
+    assert "Delivered" not in snap
     # No emojis (project rule).
     for ch in ("👋", "🙂", "❤", "🎉"):
         assert ch not in snap

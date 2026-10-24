@@ -381,16 +381,15 @@ def _first_launch_setup(console: Console) -> dict:
 
     Single-screen onboarding. Cadence:
 
-        (banner)
-        Welcome to Quorus. One group chat for you and every agent.
+        quorus 0.7.4 — one group chat for you and your agents
 
         Your name > arav
 
         Looking for a relay... ✓ local relay at localhost:8080
 
-    The session then prints "Connecting to …" and, on success, "You're in as
-    @arav." — in that order, so the success never precedes the connection it
-    describes.
+    The session then prints "Connecting to …" and, on success, "You're @arav in
+    #general. Type a message and press Enter." — in that order, so the success
+    never precedes the connection it describes.
 
     Fast-path requires exactly one prompt. No-local-relay path adds one
     more ("Token or Enter to sign up"). No other prompts, ever.
@@ -400,15 +399,7 @@ def _first_launch_setup(console: Console) -> dict:
     try:
         _ui.banner()
     except Exception:
-        console.print(
-            "\n  [bold primary]quorus[/]  "
-            "[dim]coordination for agent swarms[/]\n"
-        )
-
-    console.print(
-        "  [muted]Welcome to Quorus. "
-        "One group chat for you and every agent.[/]\n"
-    )
+        console.print("\n  [bold primary]quorus[/]\n")
 
     name = _prompt_name(console)
 
@@ -456,14 +447,15 @@ def _first_launch_setup(console: Console) -> dict:
                     "automatically.[/]"
                 )
         else:
-            console.print("[warning]not reachable[/] [dim]— is your teammate's relay up?[/]")
+            console.print("[warning]![/] [bold]not reachable[/] "
+                          "[dim]— is your teammate's relay up?[/]")
     elif raw:
         from quorus.services.join_code_svc import normalize_code
 
         canonical = normalize_code(raw)
         if canonical is None:
             console.print(
-                "\n  [error]Couldn't recognize that input.[/] "
+                "\n  [error]✗[/] [bold]Couldn't recognize that input.[/] "
                 "[dim]Expected an invite code like ABCD-EFGH.[/]"
             )
         else:
@@ -502,7 +494,7 @@ def _first_launch_setup(console: Console) -> dict:
                         "automatically.[/]"
                     )
             elif address:
-                console.print("[error]code not found, expired, or relay unreachable[/]")
+                console.print("[error]✗[/] [bold]code not found, expired, or relay unreachable[/]")
     else:
         secret = new_secret()
         console.print("\n  [dim]Setting up Quorus on this computer...[/] ", end="")
@@ -539,7 +531,7 @@ def _first_launch_setup(console: Console) -> dict:
     # Save config — even partial configs so the next run starts warm.
     _save_instance_config(name, relay_url, secret=secret, api_key=api_key)
 
-    # "You're in as @name" is printed by the session once the relay has
+    # "You're @name in #room" is printed by the session once the relay has
     # actually answered — printing it here landed *before* "Connecting to …"
     # and made the happy path read like a race (finding #4).
     profile = {
@@ -584,7 +576,7 @@ def _claim_human_key(relay_url: str, secret: str, name: str, console: Console) -
         return str((r.json() or {}).get("participant_key") or "")
     if r.status_code == 409:
         console.print(
-            f"  [warning]The name @{name} is already claimed on this relay.[/] [dim]Its "
+            f"  [warning]![/] [bold]The name @{name} is already claimed on this relay.[/] [dim]Its "
             f"owner can free it with [accent]quorus release-name {name}[/]; until then "
             "you can read and post, but /vote, /claim and the other verbs need a "
             "name of your own.[/]"
@@ -674,7 +666,7 @@ def _ask_relay_address(console: Console, tries: int = 3) -> str:
                 and parsed.hostname and not parsed.username and not parsed.password
                 and " " not in raw):
             return raw
-        console.print("  [warning]That isn't an address.[/] [dim]It looks like "
+        console.print("  [warning]![/] [bold]That isn't an address.[/] [dim]It looks like "
                       "http://192.168.1.20:8080: your teammate's `quorus share` "
                       "shows it after --relay.[/]")
     return ""
@@ -1527,7 +1519,6 @@ def _print_inline_message(
     # Skip our own echoed messages — we already showed the optimistic echo.
     if sender == my_name:
         return
-    sender_style = _sender_color(sender)
 
     # Draw the separator rule once per "typing session" so multiple incoming
     # messages don't get multiple rules stacked on top of each other.
@@ -1544,7 +1535,7 @@ def _print_inline_message(
         line.append(f"· {content}", style="muted italic")
         console.print(line)
         return
-    line.append(f"@{sender}", style=f"bold {sender_style}")
+    line.append(f"@{sender}", style="bold")
     line.append(": ", style="dim")
     # Themed 'bright' instead of literal 'white' — keeps the line
     # legible on light terminals and matches the rest of the surface.
@@ -1892,7 +1883,6 @@ def _format_header_line(
         hhmm = "??:??"
 
     is_me = sender == my_name
-    sender_color = "agent" if is_me else _sender_color(sender)
 
     line = Text()
     line.append("  ")
@@ -1904,7 +1894,7 @@ def _format_header_line(
         line.append("  ", style="")
     line.append(f"[{hhmm}]", style="ts")
     line.append("  ")
-    line.append(f"@{sender}", style=f"bold {sender_color}")
+    line.append(f"@{sender}", style="bold")
     line.append("  ")
     # 'bright' for own messages (eye-anchor), 'subtle' for others — readable
     # but recessed so the typing column stays the visual focus.
@@ -1928,6 +1918,22 @@ def _format_continuation_line(msg: dict, my_name: str) -> Text:
     line = Text(indent)
     line.append(content, style="bright" if is_me else "subtle")
     return line
+
+
+def _room_state_row(state, connected: bool, members: list[str], messages: list[dict],
+                    room: str) -> Text | None:
+    """The status row above the composer (tui-polish.md §3.3). While presence is
+    unknown (before the first poll, or after a failed one) only states that need
+    no presence are shown, and nothing once answered: the composer hint below
+    already shows the keys."""
+    from .onboarding import room_state
+
+    presence = state.working.presence()
+    kind, text = room_state(connected, members, presence, messages, time.time(), room=room,
+                            busy_since=dict(state.working.snapshot()))
+    if kind == "answered" or (presence is None and kind not in ("disconnected", "no agents")):
+        return None
+    return Text("  " + text, style="muted")
 
 
 def _ts_epoch(msg: dict) -> float:
@@ -3426,11 +3432,6 @@ def _main_input_loop(
 
                     members = (selected.get("members") or []) if selected else []
                     last_active = _chat.last_active_label(msgs_snap)
-                    from .onboarding import room_status
-
-                    onboarding_status = room_status(members, msgs_snap, connected=connected)
-                    if onboarding_status:
-                        console.print(Text("  " + onboarding_status, style="muted"))
                     console.print(
                         _chat.render_app_bar(
                             room_name=room_name,
@@ -3490,10 +3491,9 @@ def _main_input_loop(
                         thread_collapsed=state.get_thread_collapsed(),
                     ):
                         console.print(feed_line)
-                    working_line = _working.render_working_line(
-                        state.working.snapshot(), activity=state.working.activity())
-                    if working_line is not None:
-                        console.print(working_line)
+                    row = _room_state_row(state, connected, members, msgs_snap, room_name)
+                    if row is not None:
+                        console.print(row)
                     console.print()
                     console.print(_chat.render_composer_hint())
                 # Transient status line (if any) above the bare prompt.
@@ -4028,7 +4028,7 @@ def _run_session(
     the full interactive loop.
 
     *announce_ready* is set for a first run: once the relay has answered and
-    the rooms are loaded we print "You're in as @name", which is the line the
+    the rooms are loaded we print "You're @name in #room", which is the line the
     first-run wizard used to print *before* connecting (finding #4).
     """
     console = _ui.console
@@ -4062,7 +4062,7 @@ def _run_session(
         if _name_has_agent_keyword(agent_name):
             chat_identity = _strip_agent_suffix(agent_name)
             console.print(
-                f"\n  [dim]Identity: posting as [bold success]@{chat_identity}[/]"
+                f"\n  [dim]Identity: posting as [bold]@{chat_identity}[/]"
                 f" (human). Profile instance is [muted]@{agent_name}[/]"
                 f" (agent). Override with [accent]/identity agent[/].[/]"
             )
@@ -4129,10 +4129,6 @@ def _run_session(
         except Exception as exc:  # never block the hub on the offer
             console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
 
-    if announce_ready and rooms:
-        console.print(f"  [success]✓[/] [muted]You're in as[/] [agent]@{agent_name}[/].")
-        time.sleep(0.15)
-
     if state is None:
         state = HubState()
     state.set_rooms(rooms)
@@ -4143,6 +4139,12 @@ def _run_session(
         # they type reaches it (new-user pass 1, F1).
         if announce_ready:
             _open_room(state, relay_url, secret, agent_name, profile.get("room") or "general")
+            # Name the room actually opened: with no #general, _open_room falls
+            # back to the first room (Codex on 33e2466b).
+            landing = (state.get_selected_room() or {}).get("name") or ""
+            console.print(f"  You're [agent]@{agent_name}[/] in [room]#{landing}[/]. "
+                          "Type a message and press Enter.")
+            time.sleep(0.15)
     else:
         state.set_connected(False, "No rooms yet")
     state.away_rows = _away_rows(relay_url, secret, rooms, chat_identity or agent_name)

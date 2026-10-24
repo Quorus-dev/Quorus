@@ -6,7 +6,7 @@ renderer in ``hub.py`` takes over and this module is silent.
 
 Layout (top → bottom, one blank line between sections):
 
-  1. Banner — softer two-stop gradient (see ``ui._gradient_text``)
+  1. Wordmark — one line (``ui.wordmark``)
   2. Identity rule — ``@you  ·  workspace  ·  welcome home``
   3. Action menu — columned, right-aligned shortcut hints
   4. Chats — segmented "active" / "idle" lists with relative timestamps
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from quorus_cli.ui import _BANNER_LINES, _gradient_text  # type: ignore[attr-defined]
+from quorus_cli.ui import wordmark
 from rich.console import Console
 from rich.text import Text
 
@@ -130,12 +130,10 @@ def render_welcome(
     width = max(40, console.size.width)
 
     # ── 1. Banner ────────────────────────────────────────────────────────────
+    from quorus import __version__
+
     console.print()
-    if width >= 60:
-        for line in _BANNER_LINES:
-            console.print(_gradient_text(line))
-    else:
-        console.print(Text(f"{INDENT}quorus", style="bold primary"))
+    console.print(Text(INDENT) + wordmark(__version__, tagline=False))
 
     # Tagline directly under the banner — single line, no decoration.
     console.print()

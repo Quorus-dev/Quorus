@@ -90,7 +90,7 @@ def test_one_agent_cli_gets_a_tested_fix_on_main(tmp_path_factory, tool):
         s.type("y" + ENTER)
         s.expect(r"\[y/n\] \(n\)", timeout=20)
         s.type("y" + ENTER)
-        screen = s.expect(r"You're in as @" + OWNER, timeout=90)
+        screen = s.expect(r"You're @" + OWNER + r" in #", timeout=90)
         s.settle(quiet=1.0, timeout=10)
         s.secret = relay_secret(home)
 
@@ -137,7 +137,7 @@ def _invitee(base: Path, add: str) -> tuple[PtySession, PtySession, Path, Path, 
         alice.type("alice" + ENTER)
         alice.expect(r"Invite, or Enter to run it here")
         alice.type(ENTER)
-        alice.expect(r"You're in as @alice", timeout=90)
+        alice.expect(r"You're @alice in #", timeout=90)
         alice.secret = relay_secret(home_a)
         shared = _quorus(alice, None, "quorus share general")
         assert shared.returncode == 0, (shared.stdout, shared.stderr)
@@ -156,7 +156,7 @@ def _invitee(base: Path, add: str) -> tuple[PtySession, PtySession, Path, Path, 
             screen = bob.expect(r"\[y/n\] \(n\)", timeout=30)
             assert "teammate's relay" in screen and "your own key" in screen, screen[-1500:]
             bob.type("y" + ENTER)
-        bob.expect(r"You're in as @bob", timeout=90)
+        bob.expect(r"You're @bob in #", timeout=90)
         bob.settle(quiet=1.0, timeout=10)
         return alice, bob, repo, bin_dir, plain(bob.text())
     except BaseException:

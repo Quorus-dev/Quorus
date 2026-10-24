@@ -105,7 +105,7 @@ def test_two_peoples_agents_build_and_review_each_others_work(tmp_path_factory):
         alice.type("y" + ENTER)
         alice.expect(r"\[y/n\] \(n\)", timeout=20)
         alice.type("y" + ENTER)
-        alice.expect(r"You're in as @alice", timeout=90)
+        alice.expect(r"You're @alice in #", timeout=90)
         alice.settle(quiet=1.0, timeout=10)
         alice.secret = relay_secret(home_a)
 
@@ -127,7 +127,7 @@ def test_two_peoples_agents_build_and_review_each_others_work(tmp_path_factory):
         bob.type("y" + ENTER)
         bob.expect(r"\[y/n\] \(n\)", timeout=30)
         bob.type("y" + ENTER)
-        screen = bob.expect(r"You're in as @bob", timeout=90)
+        screen = bob.expect(r"You're @bob in #", timeout=90)
         assert "every agent hears you" in screen, screen[-2000:]  # bob-codex was added
         bob.settle(quiet=1.0, timeout=10)
         bob.secret = alice.secret  # the test reads history; bob never holds it

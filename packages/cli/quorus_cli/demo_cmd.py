@@ -197,20 +197,40 @@ def _opencode_ok() -> str | None:
 PROBE_MAX_S = 20.0
 
 
-def model_answers(model: str, cwd: Path, timeout: float = PROBE_MAX_S) -> float | None:
-    """One tiny `pong` call: seconds this free model took to answer, or None
-    if it didn't (busy, rate-limited, or slower than *timeout*)."""
+class FreeTierLimited(str):
+    """The probe got opencode's typed free-tier limit (the error event's words).
+    The limit is shared across every free model, so probing the next one would
+    only spend more of it (docs/plans/keyless-answer.md §3.5)."""
+
+
+def model_answers(model: str, cwd: Path,
+                  timeout: float = PROBE_MAX_S) -> float | FreeTierLimited | None:
+    """One tiny `pong` call: seconds this free model took to answer; a
+    :class:`FreeTierLimited` when the free tier itself refused; None when it
+    didn't answer for any other reason (busy, slower than *timeout*)."""
+    from quorus.runtime.opencode_free import free_limit_in
+
     started = time.monotonic()
     try:
         out = subprocess.run(
             ["opencode", "run", "--standalone", "--format", "json", "-m", model, "--",
              "Reply with exactly: pong"], cwd=cwd, capture_output=True, text=True,
             timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired as exc:
+        # The CLI retries a 429 itself with an hours-long countdown, so a limited
+        # probe times out with the limit event already in its partial output
+        # (codex, review of 94a791db). Read it: this is a limit, not a slow model.
+        partial = exc.output or b""
+        stdout = partial.decode("utf-8", errors="replace") if isinstance(partial, bytes) \
+            else str(partial)
+        limit = free_limit_in(stdout)
+        return FreeTierLimited(limit) if limit else None
     except (OSError, subprocess.SubprocessError):
         return None
     if '"type":"text"' in out.stdout.replace(" ", "") and "pong" in out.stdout.lower():
         return time.monotonic() - started
-    return None
+    limit = free_limit_in(out.stdout)
+    return FreeTierLimited(limit) if limit else None
 
 
 def pick_models(cwd: Path, console: Any, forced: str | None = None) -> list[str]:
@@ -222,6 +242,12 @@ def pick_models(cwd: Path, console: Any, forced: str | None = None) -> list[str]
     for model in free_models(FREE_MODELS):  # the live catalog first; it churns
         console.print(f"[dim]checking {model.split('/', 1)[1]}…[/]")
         secs = model_answers(model, cwd)
+        if isinstance(secs, FreeTierLimited):
+            # Shared limit: the other free models are limited too. Stop here, and
+            # don't file a limit as "slow" (it would outlive the limit by an hour).
+            console.print("[dim]opencode's free tier reported its limit; not probing "
+                          "the other free models[/]")
+            break
         if secs is None:
             mark_slow(model)  # busy or slow: last in line if we come back to it
             continue
@@ -301,6 +327,9 @@ def cmd_demo(args: Any, console: Any) -> None:
                 console.print("[warning]![/] opencode's free models are all busy right now. Try "
                               "again in a few minutes, or use your own models with "
                               "`quorus agent add`.")
+                from quorus_cli.quickstart import print_next_command
+
+                print_next_command(console, "general")  # the same line `quorus doctor` prints
             raise SystemExit(1)  # scripts and CI must see the demo didn't run
         secret, port = secrets.token_hex(16), _free_port()
         url = f"http://127.0.0.1:{port}"

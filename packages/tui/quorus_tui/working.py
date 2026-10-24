@@ -24,6 +24,7 @@ class WorkingTracker:
         self._lock = threading.Lock()
         self._since: dict[str, float] = {}
         self._activity: dict[str, str] = {}
+        self._presence: list[dict[str, Any]] | None = None
 
     def update(self, busy: set[str], now: float | None = None,
                activity: dict[str, str] | None = None) -> list[str]:
@@ -38,6 +39,18 @@ class WorkingTracker:
     def snapshot(self) -> list[tuple[str, float]]:
         with self._lock:
             return sorted(self._since.items(), key=lambda kv: kv[1])
+
+    def set_presence(self, rows: list[dict[str, Any]] | None) -> None:
+        """None marks presence unknown: a failed poll must not leave an old
+        ``online: true`` reading on screen as if it were live."""
+        with self._lock:
+            self._presence = None if rows is None else list(rows)
+
+    def presence(self) -> list[dict[str, Any]] | None:
+        """The rows from the latest poll; None before the first success and
+        after any failed poll, until one succeeds again."""
+        with self._lock:
+            return self._presence
 
     def activity(self) -> dict[str, str]:
         """``name -> current step`` ("editing relay.py") for busy agents."""
@@ -98,6 +111,8 @@ def presence_loop(
         try:
             room = selected_room()
             presence = fetch_presence(relay, headers) if room else []
+            if room:
+                tracker.set_presence(presence)
             if presence is not None:
                 busy = busy_in_room(presence, room) if room else set()
                 steps = activity_in_room(presence, room) if room else {}
@@ -108,5 +123,5 @@ def presence_loop(
                     for name in tracker.update(busy, activity=steps):
                         announce(name)
         except Exception:
-            pass
+            tracker.set_presence(None)
         stop.wait(interval)

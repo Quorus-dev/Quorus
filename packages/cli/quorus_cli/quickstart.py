@@ -66,13 +66,12 @@ def detect(which: Callable[[str], str | None] = shutil.which) -> list[Found]:
         if which(h) is None:
             continue
         if h == "claude" and _claude_logged_in() is False:
-            found.append(Found(h, False, "not logged in: run `claude /login`"))
+            found.append(Found(h, False, "run `claude /login`"))
         elif h == "codex" and not _codex_logged_in():
-            found.append(Found(h, False, "not logged in: run `codex login`"))
+            found.append(Found(h, False, "run `codex login`"))
         elif h == "gemini" and not _gemini_has_key():
-            found.append(Found(h, False, "needs an API key from aistudio.google.com/apikey "
-                                         "in ~/.gemini/.env (GEMINI_API_KEY=...); Quorus "
-                                         "doesn't use your Google sign-in"))
+            found.append(Found(h, False, "needs GEMINI_API_KEY in ~/.gemini/.env, from "
+                                         "aistudio.google.com/apikey"))
         elif h == "opencode" and int((_opencode_version() or "2").split(".")[0]) < 2:
             found.append(Found(h, False, "too old: `npm i -g @opencode/cli`"))
         else:
@@ -123,11 +122,9 @@ def offer(console: Any, room: str, cwd: Path | None = None,
                       "Gemini CLI or opencode), then: quorus agent add <tool> --room "
                       f"{room} --repo <your project>[/]")
         return []
-    for f in found:
-        if not f.ready:
-            console.print(f"  [warning]![/] {LABEL[f.harness]} found but {f.note}")
     tools, lead = plan(found)
     if not tools:
+        _also_here(console, found)
         return []
     repo = git_root(cwd or Path.cwd())
     names = ", ".join(LABEL[t] for t in tools)
@@ -142,6 +139,7 @@ def offer(console: Any, room: str, cwd: Path | None = None,
                   "free-model agents depend on the vendor's current availability.")
     if not ask(f"  Add them to [room]#{room}[/] {where}?"):
         console.print(f"  [dim]Later: quorus agent add <tool> --room {room} --repo <path>[/]")
+        _also_here(console, found)
         return []
     mode = None  # default: whatever each tool's own settings allow
     if repo is not None:
@@ -180,11 +178,126 @@ def offer(console: Any, room: str, cwd: Path | None = None,
             added.append(t)
         except SystemExit as exc:  # one agent failing must not stop the others
             console.print(f"  [warning]![/] {LABEL[t]}: {exc}")
+    _also_here(console, found)
     if added:
-        console.print(f"\n  [success]✓[/] Say something in [room]#{room}[/]: every agent "
-                      "hears you" + (f", and your {LABEL[lead]} agent leads: it splits "
-                                     "the work." if lead in added else "."))
+        console.print(f"\n  Say something in [room]#{room}[/]: every agent hears you"
+                      + (f", and your {LABEL[lead]} agent leads: it splits the work."
+                         if lead in added else "."))
     return added
+
+
+def _also_here(console, found: list[Found]) -> None:
+    """Tools that are installed but can't run yet: one muted line after the result,
+    not a warning per tool before it (tui-polish.md §3.4)."""
+    waiting = [f"{LABEL[f.harness]} ({f.note})" for f in found if not f.ready]
+    if waiting:
+        console.print(f"  [muted]Also on this computer: {' · '.join(waiting)}[/]")
+
+
+# ── the one honest next command (docs/plans/keyless-answer.md §3.4) ──────────
+#
+# When no free model can answer, `quorus demo` and a fresh-install `quorus doctor`
+# print the same command for the machine's state, from this one function, so the
+# two can never disagree. Ollama is the only keyless path (local, no account, no
+# shared quota); a signed-in Claude Code or Codex uses the person's own account;
+# a Gemini key file is only checked for existence, never read.
+
+OLLAMA_MODEL = "qwen3:4b"  # the README's documented local model
+OLLAMA_AGENT = "local"  # distinct from the room's `<you>-opencode` free-model agent:
+# `quorus agent add` without --name re-targets that agent and keeps its old model.
+# The daemon's own line, plus where to run it: `ollama serve` stays in the foreground,
+# so a line after it on the same terminal never runs (claude, review of 0d4ce515).
+OLLAMA_SERVE = ("OLLAMA_CONTEXT_LENGTH=32768 ollama serve   # in its own terminal, keep it "
+                "running (macOS: brew services start ollama)")
+
+
+OPENCODE_INSTALL = "brew install opencode   # or: npm i -g @opencode/cli"
+QUORUS_SETUP = "quorus   # one question: your name, a local relay and #general"
+
+
+@dataclass
+class MachineState:
+    ollama: str  # "absent" | "stopped" | "no_model" | "serving"
+    ollama_model: str | None = None
+    claude: bool = False  # signed in
+    codex: bool = False
+    gemini_env: bool = False  # ~/.gemini/.env exists (contents never read)
+    opencode: bool = False  # the opencode CLI is on PATH (every ollama/* agent runs in it)
+    gemini_cli: bool = False  # the gemini CLI is on PATH
+    configured: bool = False  # `quorus` has run once: `agent add` needs the name and relay
+
+
+def ollama_state(which: Callable[[str], str | None] = shutil.which,
+                 timeout: float = 2.0) -> tuple[str, str | None]:
+    """Ollama as the daemon reads it (`ollama_problem()`): one local GET /api/tags."""
+    if not which("ollama"):
+        return "absent", None
+    import httpx
+
+    host = os.environ.get("OLLAMA_HOST") or "127.0.0.1:11434"
+    base = host if host.startswith("http") else f"http://{host}"
+    try:
+        resp = httpx.get(f"{base.rstrip('/')}/api/tags", timeout=timeout)
+        resp.raise_for_status()
+        names = [m.get("name") for m in resp.json().get("models", [])
+                 if isinstance(m, dict) and isinstance(m.get("name"), str)]
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return "stopped", None
+    return ("serving", names[0]) if names else ("no_model", None)
+
+
+def machine_state(which: Callable[[str], str | None] = shutil.which,
+                  home: Path | None = None, config_file: Path | None = None) -> MachineState:
+    from quorus.config import resolve_config_file
+
+    ollama, model = ollama_state(which)
+    home = home or Path.home()
+    return MachineState(
+        ollama=ollama, ollama_model=model,
+        claude=bool(which("claude")) and _claude_logged_in() is True,
+        codex=bool(which("codex")) and _codex_logged_in(),
+        gemini_env=(home / ".gemini" / ".env").exists(),
+        opencode=bool(which("opencode")),
+        gemini_cli=bool(which("gemini")),
+        configured=(config_file or resolve_config_file()).exists(),
+    )
+
+
+def next_command_lines(room: str, state: MachineState) -> list[str]:
+    """The single honest path to a real answer, as shell lines in order. Every
+    prerequisite `agent_cmd._add` enforces comes first: `quorus` once (name and
+    relay), the harness CLI on PATH, then the server and model for Ollama
+    (codex, review of 0d4ce515)."""
+    setup = [] if state.configured else [QUORUS_SETUP]
+    add = f"quorus agent add opencode --room {room} --name {OLLAMA_AGENT} --model ollama/"
+    opencode = [] if state.opencode else [OPENCODE_INSTALL]
+    pull_add = f"ollama pull {OLLAMA_MODEL} && {add}{OLLAMA_MODEL}"
+    if state.ollama == "serving":
+        return setup + opencode + [add + (state.ollama_model or OLLAMA_MODEL)]
+    if state.ollama == "no_model":
+        return setup + opencode + [pull_add]
+    if state.ollama == "stopped":
+        return setup + opencode + [OLLAMA_SERVE, pull_add]
+    if state.claude:
+        return setup + [f"quorus agent add claude --room {room}"]
+    if state.codex:
+        return setup + [f"quorus agent add codex --room {room}"]
+    if state.gemini_env and state.gemini_cli:
+        return setup + [f"quorus agent add gemini --room {room} --model {FREE_MODEL['gemini']}"]
+    return setup + ["brew install ollama   # or the installer at ollama.com/download",
+                    *opencode, OLLAMA_SERVE, pull_add]
+
+
+def print_next_command(console: Any, room: str, state: MachineState | None = None) -> None:
+    """The one printer for these lines, so every caller agrees; a free model is never
+    offered. Called from `quorus demo`'s all-busy exit. Not from a fresh-install
+    `doctor`: a new user should try the free path before being sent to a multi-GB
+    local model (claude, review of 0d4ce515); a set-up doctor where no agent has
+    answered is slice 1 of keyless-answer.md."""
+    state = state or machine_state()
+    console.print(f"  To get an answer in #{room} now:")
+    for line in next_command_lines(room, state):
+        console.print(f"    {line}", markup=False, highlight=False)
 
 
 def doctor_agents(check: Callable[..., None],

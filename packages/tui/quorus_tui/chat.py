@@ -152,16 +152,13 @@ def render_app_bar(
     glyph, glyph_style = ("●", "muted")
     if messages or typing:
         glyph, glyph_style = presence_dot(messages or [], typing=typing)
-    # Avatar dot for the room itself uses the room-name's hashed color
-    # — even when the presence ring is dim, the room "identity" reads.
-    room_hue = sender_color(room_name)
 
     left = Text(INDENT)
     left.append("‹", style="dim")
     left.append("  ", style="dim")
     left.append(glyph, style=glyph_style)
     left.append("  ", style="dim")
-    left.append(f"#{room_name}", style=f"bold {room_hue}")
+    left.append(f"#{room_name}", style="bold")
     if member_count:
         left.append("  ·  ", style="dim")
         suffix = "member" if member_count == 1 else "members"
@@ -205,8 +202,10 @@ def _own_bubble(
     position: str = "only",
     sender: str = "",
     show_header: bool = False,
+    rows: list[tuple[str, bool]] | None = None,
 ) -> list[Text]:
-    """Right-aligned own-message bubble.
+    """Right-aligned own-message bubble. *rows* (``(line, is_code)``, from
+    :func:`_message_rows`) replace *content* when a message has code in it.
 
     The receipt parameter is accepted for back-compat but rendered as a
     dedicated micro-row by :func:`render_bubble_feed` — never inline. The
@@ -220,7 +219,7 @@ def _own_bubble(
     user kept asking "where's my @arav green-dot label?"
     """
     inner = bubble_width(console_width)
-    body = _wrap_lines(content, inner)
+    body = _shown(rows if rows is not None else _message_rows(content, inner, code=False))
     out: list[Text] = []
     top_glyph, bot_glyph = bubble_corners(position=position, side="right")
 
@@ -234,21 +233,22 @@ def _own_bubble(
         used = 1 + 2 + len(name_part) + 2 + 1
         pad = max(2, console_width - 2 - used)
         head.append(" " * pad)
-        head.append(f"@{sender}", style=f"bold {color}")
+        head.append(f"@{sender}", style="bold")
         head.append("  ")
         head.append("●", style=glyph_color)
         head.append("  ")
         head.append(top_glyph, style="dim")
         out.append(head)
 
-    for i, line in enumerate(body):
+    for i, (line, is_code) in enumerate(body):
         is_last = i == len(body) - 1
         suffix = (len(hhmm_str) + 2) if is_last and hhmm_str else 0
         # 2-cell gutter on the right for the rounded-corner glyph.
         pad = max(2, console_width - 2 - len(line) - suffix - 2)
         row = Text(" " * pad)
-        # Body — highlighted inline for @mentions / #rooms.
-        row.append_text(highlight_inline(line, body_style="bright"))
+        # Body — highlighted inline for @mentions / #rooms; code verbatim.
+        row.append_text(Text(line, style="bright") if is_code
+                        else highlight_inline(line, body_style="bright"))
         if is_last and hhmm_str:
             row.append("  ")
             row.append(hhmm_str, style="ts")
@@ -257,6 +257,8 @@ def _own_bubble(
         # without a header, the first line renders the top corner itself.
         if show_header and sender:
             glyph = bot_glyph if is_last else "│"
+        elif i == 0 and is_last:  # one line: whichever corner this part has
+            glyph = top_glyph if top_glyph != "│" else bot_glyph
         else:
             glyph = top_glyph if i == 0 else (bot_glyph if is_last else "│")
         row.append("  ")
@@ -273,15 +275,17 @@ def _other_bubble(
     *,
     show_header: bool,
     position: str = "only",
+    rows: list[tuple[str, bool]] | None = None,
 ) -> list[Text]:
-    """Left-aligned other-person bubble with avatar dot + sender header.
+    """Left-aligned other-person bubble with avatar dot + sender header. *rows*
+    as in :func:`_own_bubble`.
 
     Humans get a green ● to visually separate them from agents. The
     sender color hashes deterministically from the name (6-color palette
     via :func:`sender_color`). Mentions inside the body are auto-styled.
     """
     inner = bubble_width(console_width)
-    body = _wrap_lines(content, inner)
+    body = _shown(rows if rows is not None else _message_rows(content, inner, code=False))
     color = sender_color(sender)
     glyph_color = "success" if is_human_sender(sender) else color
     out: list[Text] = []
@@ -293,11 +297,11 @@ def _other_bubble(
         head.append("  ")
         head.append("●", style=glyph_color)
         head.append("  ")
-        head.append(f"@{sender}", style=f"bold {color}")
+        head.append(f"@{sender}", style="bold")
         out.append(head)
 
     body_indent = "    "
-    for i, line in enumerate(body):
+    for i, (line, is_code) in enumerate(body):
         is_first = i == 0
         is_last = i == len(body) - 1
         # Choose left-edge glyph: rounded top on a fresh standalone (no header),
@@ -305,13 +309,16 @@ def _other_bubble(
         # already rendered above, so the first body line gets a continuation.
         if show_header:
             edge = "│" if not is_last else bot_glyph
+        elif is_first and is_last:  # one line: whichever corner this part has
+            edge = top_glyph if top_glyph != "│" else bot_glyph
         else:
             edge = top_glyph if is_first else (bot_glyph if is_last else "│")
 
         row = Text("  ")
         row.append(edge, style="dim")
         row.append(" ")  # one-cell gutter (replaces the body_indent)
-        row.append_text(highlight_inline(line, body_style="bright"))
+        row.append_text(Text(line, style="bright") if is_code
+                        else highlight_inline(line, body_style="bright"))
         if is_last and hhmm_str:
             used = 4 + len(line)
             pad = max(2, console_width - 2 - used - len(hhmm_str))
@@ -360,16 +367,29 @@ def _unread_divider(console_width: int) -> Text:
     return line
 
 
-def _code_block(body: str, console_width: int) -> list[Text]:
-    """Render a triple-backtick block with subtle background tint."""
-    inner = bubble_width(console_width)
-    out: list[Text] = []
-    for raw in body.splitlines() or [""]:
-        for chunk in [raw[i:i + inner] for i in range(0, max(1, len(raw)), inner)] or [""]:
-            row = Text("    │ ", style="dim")
-            row.append(chunk, style="bright")
-            out.append(row)
-    return out
+def _message_rows(content: str, inner: int, *, code: bool = True) -> list[tuple[str, bool]]:
+    """One message's body as ``(line, is_code)`` rows, wrapped to *inner* cells.
+
+    Fenced code stays in the message (tui-polish.md defect 3): its lines sit two
+    cells past the prose, verbatim, and prose parts get :func:`plain_markdown`.
+    With *code* False the content is one text part, as the bubbles always
+    rendered it."""
+    parts = _split_code_fences(content) if code else [("text", content)]
+    rows: list[tuple[str, bool]] = []
+    for kind, body in parts:
+        if kind == "code":
+            width = max(1, inner - 2)
+            for raw in body.splitlines() or [""]:
+                rows += [("  " + raw[k:k + width], True)
+                         for k in range(0, max(1, len(raw)), width)]
+        elif body:
+            text = plain_markdown(body) if code else body
+            rows += [(line, False) for line in _wrap_lines(text, inner)]
+    return rows
+
+
+def _shown(rows: list[tuple[str, bool]]) -> list[tuple[str, bool]]:
+    return rows or [("", False)]
 
 
 def _split_code_fences(content: str) -> list[tuple[str, str]]:
@@ -677,27 +697,29 @@ def render_bubble_feed(
         # actual bubble rows, not the inter-bubble whitespace above.
         rows_before = len(out)
 
-        for kind, body in _split_code_fences(content):
-            if not body and kind == "text":
-                continue
-            if kind == "code":
-                out.extend(_code_block(body, console_width))
-                continue
-            body = plain_markdown(body)
-            if is_me:
-                out.extend(_own_bubble(
-                    body, ts_show, console_width,
-                    receipt="",  # receipts are now a dedicated row
-                    position=position,
-                    sender=sender,
-                    show_header=not same_group,
-                ))
-            else:
-                out.extend(_other_bubble(
-                    body, sender, ts_show, console_width,
-                    show_header=not same_group,
-                    position=position,
-                ))
+        # One message is one block (tui-polish.md defect 3): fenced code is
+        # part of its body, so the header, corners and timestamp follow the
+        # whole message whether it starts, ends or consists of code.
+        has_code = "```" in content
+        rows = _message_rows(content, bubble_width(console_width)) if has_code else None
+        if not has_code:
+            content = plain_markdown(content)
+        if is_me:
+            out.extend(_own_bubble(
+                content, ts_show, console_width,
+                receipt="",  # receipts are now a dedicated row
+                position=position,
+                sender=sender,
+                show_header=not same_group,
+                rows=rows,
+            ))
+        else:
+            out.extend(_other_bubble(
+                content, sender, ts_show, console_width,
+                show_header=not same_group,
+                position=position,
+                rows=rows,
+            ))
 
         # Reactions row — opt-in, dummy data is fine.
         chips = reactions_by_index.get(i)
@@ -706,10 +728,11 @@ def render_bubble_feed(
             if row.cell_len:
                 out.append(row)
 
-        # Read-receipt row — only on the user's MOST RECENT own message.
+        # Only a message still on its way gets a receipt row: "Delivered" on
+        # every send was iMessage chrome that told the user nothing.
         if is_me and i == last_own_idx:
             label = receipt_label(msg)
-            if label:
+            if label == "Sending…":
                 out.append(read_receipt_row(label, console_width))
 
         # Stream B threading: indent newly-rendered thread-child rows by
@@ -785,7 +808,7 @@ def render_composer_hint(typing: str | None = None) -> Text:
     :class:`Text` that includes both rows separated by a newline.
     """
     line = Text(INDENT)
-    line.append("│ ", style="primary")
+    line.append("│ ", style="brand")
     line.append("Type a message…  ", style="dim")
     line.append("@", style="kbd")
     line.append(" mention", style="dim")

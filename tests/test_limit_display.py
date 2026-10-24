@@ -60,7 +60,8 @@ def test_a_guess_or_an_unread_reset_always_carries_a_question_mark() -> None:
 
 
 def test_a_cooldown_is_paused_by_quorus_never_quota() -> None:
-    for reason, why in (("slow_start", "slow to start"), ("no_route", "unavailable")):
+    for reason, why in (("slow_start", "slow to start"), ("no_route", "unavailable"),
+                        ("free_busy", "free tier limited for this connection or account")):
         line = describe({"pause": {"reason": reason, "until": NOW + 900}}, NOW)
         assert line.startswith("paused by Quorus · retry in 15m") and why in line
         assert "quota" not in line

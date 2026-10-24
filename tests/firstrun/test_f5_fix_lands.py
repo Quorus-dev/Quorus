@@ -152,7 +152,7 @@ def _first_run(s: PtySession, home: Path, repo: Path, write_answer: str) -> None
     screen = s.expect(r"\[y/n\] \(n\)", timeout=20)
     assert "edit files and run commands" in screen and str(repo.resolve()) in screen
     s.type(write_answer + ENTER)
-    s.expect(r"You're in as @alice", timeout=90)
+    s.expect(r"You're @alice in #", timeout=90)
     s.settle(quiet=1.0, timeout=10)
     s.secret = _relay_secret(home)
 

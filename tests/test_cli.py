@@ -107,7 +107,7 @@ def test_cli_version(capsys):
     from quorus import __version__
 
     assert __version__ in captured.out
-    assert "coordination" in captured.out.lower() or "swarm" in captured.out.lower()
+    assert "one group chat" in captured.out.lower()
 
 
 def test_cli_logs(capsys):
@@ -2813,4 +2813,13 @@ def test_the_banner_shows_the_installed_version(capsys):
     import quorus
 
     ui.banner()
-    assert f"v{quorus.__version__}" in capsys.readouterr().out
+    assert f"quorus {quorus.__version__} " in capsys.readouterr().out
+
+
+def test_the_banner_is_one_line(capsys):
+    """tui-polish.md §3.4: the 6-line block wordmark is gone."""
+    from quorus_cli import ui
+
+    ui.banner(version="9.9.9")
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert lines == ["quorus 9.9.9 — one group chat for you and your agents"]

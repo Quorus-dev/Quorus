@@ -825,7 +825,7 @@ def _cmd_rooms(args):
         header_style="muted",
         border_style="dim",
     )
-    table.add_column("ROOM", style=f"bold {ui.ROOM}", no_wrap=True)
+    table.add_column("ROOM", style="bold", no_wrap=True)
     table.add_column("MEMBERS", style="muted")
     table.add_column("ID", style="dim", no_wrap=True)
     for r in rooms:
@@ -2657,7 +2657,7 @@ async def _ps(*, as_json: bool = False) -> None:
             pad_edge=False,
             header_style="muted",
         )
-        table.add_column("AGENT", style=f"bold {_ui.AGENT}", no_wrap=True)
+        table.add_column("AGENT", style="bold", no_wrap=True)
         table.add_column("STATUS", no_wrap=True)
         table.add_column("ROOM", style="dim")
         table.add_column("LAST SEEN", style="dim", no_wrap=True)
@@ -6013,7 +6013,7 @@ def _cmd_share(args):
 
     big = Text()
     big.append("      ")
-    big.append(code, style=f"bold {ui.ROOM}")
+    big.append(code, style="bold")
     big.append(f"      expires in {ttl_label}", style="muted")
     ui.console.print(big)
     ui.console.print()
@@ -6462,9 +6462,9 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     ui.console.print()
     welcome = Text()
     welcome.append("  Welcome ", style="primary")
-    welcome.append(f"@{name}", style=f"bold {ui.AGENT}")
+    welcome.append(f"@{name}", style="bold")
     welcome.append(" to ", style="primary")
-    welcome.append(f"#{room}", style=f"bold {ui.ROOM}")
+    welcome.append(f"#{room}", style="bold")
     ui.console.print(
         Panel(welcome, border_style="primary", padding=(0, 1))
     )
@@ -7335,9 +7335,13 @@ def _cmd_doctor(args):
     if not config_file.exists() and not RELAY_SECRET:
         # A fresh install isn't broken: five red checks (and "run init with a
         # secret" the user doesn't have) was the old first impression.
+        # The demo can't promise a result: free models can be busy, and then it
+        # asks before using the user's own login, or exits 1 (0.7.3 pipx check).
         ui.console.print("  Quorus isn't set up yet. Run [accent]quorus[/] (one question, "
                          "about a minute), or [accent]quorus demo[/] to watch two agents "
-                         "fix a bug first (no keys needed).\n")
+                         "fix a bug on a free model first. If the free models are busy, "
+                         "it asks before using your Claude Code or Codex login, or tells "
+                         "you to retry later.\n")
         quickstart.doctor_agents(check)
         return
     check(

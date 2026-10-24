@@ -16,66 +16,64 @@ from rich.text import Text
 from rich.theme import Theme
 
 # ── Palette ──────────────────────────────────────────────────────────────────
-# Three-color palette: one brand teal, one warm accent (room highlights),
-# and one cool accent (agent identity). Everything else is neutral.
-# Goal: confident, intentional, never garish. References: Linear, Vercel.
-PRIMARY = "#14b8a6"            # brand teal — primary affordance
-PRIMARY_DEEP = "#0f766e"       # legible on light terminals
-PRIMARY_LIGHT = "#2dd4bf"
-PRIMARY_MINT = "#5eead4"       # accent / hover state
-SUBTLE = "#94a3b8"             # bright neutral — body text on dark
-MUTED = "#64748b"              # mid neutral — meta / hints
-DIM = "#334155"                # rule lines, deep separators
-BRIGHT = "#e2e8f0"             # primary surface text (white-ish)
-SUCCESS = "#10b981"
-WARNING = "#f59e0b"
+# tui-polish.md §3.2. Words never carry a hex colour: text is the terminal's
+# default foreground (bold or dim for emphasis), so it reads on dark and light
+# themes alike. 4.5:1 against both #1e1e1e and #ffffff is impossible for any
+# colour (the best grey manages 4.06:1). Hue lives only in MARKS below: glyphs,
+# dots, rules and borders, each ≥ 3:1 on both (tests/test_tui_contrast.py).
+PRIMARY = "#0d9488"            # brand teal — rules, borders, the prompt bar
+PRIMARY_MINT = "#0891b2"       # info marks
+SUCCESS = "#059669"
+WARNING = "#d97706"
 ERROR = "#ef4444"
-AGENT = "#818cf8"              # cool indigo — distinct from brand teal
-ROOM = "#fbbf24"               # warm amber — distinct from brand teal
 
-# Sender palette — 6 perceptually-distinct hues used to color member names
-# deterministically. Picked to: (a) all read on dark terminals at a glance,
-# (b) survive common color-blindness filters (no R/G adjacency), (c) avoid
-# the brand teal so chrome and content stay separable. Mirrors the deck
-# avatar palette so a member's color is consistent across surfaces.
-SENDER_TEAL    = "#2dd4bf"     # teal-300 — paired
-SENDER_INDIGO  = "#a5b4fc"     # indigo-300
-SENDER_AMBER   = "#fcd34d"     # amber-300
-SENDER_ROSE    = "#fda4af"     # rose-300
-SENDER_VIOLET  = "#c4b5fd"     # violet-300
-SENDER_CYAN    = "#67e8f9"     # cyan-300
+# Sender palette — 6 hues for the dot beside each member's name, hashed
+# deterministically. Same families as before (no red/green adjacency), at
+# mid-tones so a dot reads on light terminals too.
+SENDER_TEAL    = "#0d9488"
+SENDER_INDIGO  = "#6366f1"
+SENDER_AMBER   = "#d97706"
+SENDER_ROSE    = "#f43f5e"
+SENDER_VIOLET  = "#8b5cf6"
+SENDER_CYAN    = "#0284c7"
 
-THEME = Theme(
-    {
-        "primary": PRIMARY,
-        "accent": PRIMARY_MINT,
-        "muted": MUTED,
-        "dim": DIM,
-        "subtle": SUBTLE,
-        "bright": BRIGHT,
-        "success": SUCCESS,
-        "warning": WARNING,
-        "error": ERROR,
-        "agent": AGENT,
-        "room": ROOM,
-        "prompt": f"bold {PRIMARY}",
-        "heading": f"bold {PRIMARY}",
-        # New semantic tokens — used by render helpers to keep call sites
-        # free of literal styles. Alias-only, never override the above.
-        "pill": f"bold {PRIMARY}",
-        "pill_idle": MUTED,
-        "kbd": f"bold {AGENT}",
-        "ts": MUTED,
-        # Sender palette tokens — hashed deterministically by chat.py so
-        # the same name always renders in the same color.
-        "sender1": SENDER_TEAL,
-        "sender2": SENDER_INDIGO,
-        "sender3": SENDER_AMBER,
-        "sender4": SENDER_ROSE,
-        "sender5": SENDER_VIOLET,
-        "sender6": SENDER_CYAN,
-    }
-)
+STYLES = {
+    # Text: the terminal's default foreground, with attributes only. These
+    # carry words people read (names, rooms, commands, headings, messages).
+    "primary": "bold",
+    "accent": "bold",
+    "muted": "dim",
+    "dim": "dim",
+    "subtle": "none",
+    "bright": "none",
+    "agent": "bold",
+    "room": "bold",
+    "prompt": "bold",
+    "heading": "bold",
+    "pill": "bold",
+    "pill_idle": "dim",
+    "kbd": "bold",
+    "ts": "dim",
+}
+# Marks: hue for glyphs, dots, rules and borders only (✓ ✗ ! ● │ ─), never for
+# words. Non-text contrast (WCAG 1.4.11) asks 3:1, met on dark and light.
+MARKS = {
+    "brand": PRIMARY,
+    "success": SUCCESS,
+    "warning": WARNING,
+    "error": ERROR,
+    "danger": ERROR,
+    "info": PRIMARY_MINT,
+    # Sender dots — hashed deterministically by chat.py so the same name
+    # always gets the same dot; the name itself stays default foreground.
+    "sender1": SENDER_TEAL,
+    "sender2": SENDER_INDIGO,
+    "sender3": SENDER_AMBER,
+    "sender4": SENDER_ROSE,
+    "sender5": SENDER_VIOLET,
+    "sender6": SENDER_CYAN,
+}
+THEME = Theme({**STYLES, **MARKS})
 
 def _no_color() -> bool:
     """Honor the NO_COLOR spec (https://no-color.org/)."""
@@ -96,64 +94,26 @@ ICON_BULLET = "·"
 ICON_DOT_LIVE = "⏵"
 
 # ── Banner ───────────────────────────────────────────────────────────────────
-_BANNER_LINES = [
-    " ██████╗ ██╗   ██╗ ██████╗ ██████╗ ██╗   ██╗███████╗",
-    "██╔═══██╗██║   ██║██╔═══██╗██╔══██╗██║   ██║██╔════╝",
-    "██║   ██║██║   ██║██║   ██║██████╔╝██║   ██║███████╗",
-    "██║▄▄ ██║██║   ██║██║   ██║██╔══██╗██║   ██║╚════██║",
-    "╚██████╔╝╚██████╔╝╚██████╔╝██║  ██║╚██████╔╝███████║",
-    " ╚══▀▀═╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝",
-]
-
-_TINY_BANNER = "quorus"
-
-# Confident two-stop gradient. The previous 4-color ramp read as
-# "video game"; this reads as "product". Deep teal at the leading
-# edge, brand teal at the trailing edge — no light-mint highlight
-# (it muddied the silhouette on warm-color terminals).
-_GRADIENT = [PRIMARY_DEEP, PRIMARY]
+TAGLINE = "one group chat for you and your agents"
 
 
-def _gradient_text(line: str) -> Text:
-    """Apply a soft horizontal gradient across each non-space char.
-
-    Two-stop linear interpolation — printable-char index drives the
-    color pick. Spaces never get styled so the silhouette stays sharp.
-    """
-    text = Text()
-    n = len(_GRADIENT)
-    printable_chars = [c for c in line if c != " "]
-    total = max(1, len(printable_chars))
-    idx = 0
-    for ch in line:
-        if ch == " ":
-            text.append(ch)
-            continue
-        color = _GRADIENT[min(n - 1, idx * n // total)]
-        text.append(ch, style=color)
-        idx += 1
-    return text
+def wordmark(version: str, tagline: bool = True) -> Text:
+    """``quorus 0.7.4 — one group chat for you and your agents``, one line at any
+    width (tui-polish.md §3.4: the 6-line block letters ate the first screen)."""
+    line = Text("quorus", style="bold primary")
+    line.append(f" {version}", style="muted")
+    if tagline:
+        line.append(f" — {TAGLINE}", style="muted")
+    return line
 
 
 def banner(version: str | None = None, tagline: bool = True) -> None:
-    """Print the Quorus banner with teal gradient. *version* defaults to the
-    installed package's (it said v0.5.0 on 0.5.2: new-user pass 1, F2)."""
+    """Print the one-line wordmark. *version* defaults to the installed
+    package's (it said v0.5.0 on 0.5.2: new-user pass 1, F2)."""
     if version is None:
         from quorus import __version__ as version
-    width = console.size.width
-    if width < 60:
-        console.print(f"[bold primary]{_TINY_BANNER}[/] [muted]v{version}[/]")
-        if tagline:
-            console.print("[muted]coordination for agent swarms[/]")
-        console.print()
-        return
     console.print()
-    for line in _BANNER_LINES:
-        console.print(_gradient_text(line))
-    if tagline:
-        console.print(
-            f"[muted]          coordination for agent swarms · v{version}[/]"
-        )
+    console.print(wordmark(version, tagline))
     console.print()
 
 
@@ -182,7 +142,7 @@ def warn(msg: str, hint: str | None = None) -> None:
 
 def heading(title: str) -> None:
     console.print()
-    console.rule(f"[heading]{title}[/]", style="primary", align="left")
+    console.rule(f"[heading]{title}[/]", style="brand", align="left")
 
 
 def footer(hint: str) -> None:
@@ -196,7 +156,7 @@ def hint_next_steps(steps: list[str]) -> None:
         Panel(
             body,
             title="[heading]Next steps[/]",
-            border_style="primary",
+            border_style="brand",
             padding=(1, 2),
             title_align="left",
         )
@@ -207,7 +167,7 @@ def hint_next_steps(steps: list[str]) -> None:
 @contextmanager
 def spinner(text: str) -> Iterator[None]:
     """Braille spinner in teal while a block of work runs."""
-    with console.status(f"[primary]{text}[/]", spinner="dots", spinner_style="primary"):
+    with console.status(f"[primary]{text}[/]", spinner="dots", spinner_style="brand"):
         yield
 
 
@@ -260,7 +220,7 @@ def code(snippet: str, *, lang: str = "bash") -> None:
     body = Text()
     body.append("  ")
     body.append("$ ", style=f"bold {PRIMARY}")
-    body.append(snippet, style=PRIMARY_MINT)
+    body.append(snippet, style="bold")
     console.print(body)
 
 
@@ -291,13 +251,13 @@ def token_box(token: str, *, label: str = "Token", expires_in: str | None = None
     """
     body = Text()
     body.append(f"  {label}\n", style=f"bold {PRIMARY}")
-    body.append(f"  {token}\n", style=PRIMARY_MINT)
+    body.append(f"  {token}\n", style="bold")
     if expires_in:
-        body.append(f"\n  expires in {expires_in}", style=MUTED)
+        body.append(f"\n  expires in {expires_in}", style="dim")
     console.print(
         Panel(
             body,
-            border_style="primary",
+            border_style="brand",
             padding=(1, 1),
         )
     )
