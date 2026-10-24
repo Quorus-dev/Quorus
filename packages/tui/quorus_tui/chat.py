@@ -257,6 +257,8 @@ def _own_bubble(
         # without a header, the first line renders the top corner itself.
         if show_header and sender:
             glyph = bot_glyph if is_last else "│"
+        elif i == 0 and is_last:  # one line: whichever corner this part has
+            glyph = top_glyph if top_glyph != "│" else bot_glyph
         else:
             glyph = top_glyph if i == 0 else (bot_glyph if is_last else "│")
         row.append("  ")
@@ -305,6 +307,8 @@ def _other_bubble(
         # already rendered above, so the first body line gets a continuation.
         if show_header:
             edge = "│" if not is_last else bot_glyph
+        elif is_first and is_last:  # one line: whichever corner this part has
+            edge = top_glyph if top_glyph != "│" else bot_glyph
         else:
             edge = top_glyph if is_first else (bot_glyph if is_last else "│")
 
@@ -360,16 +364,33 @@ def _unread_divider(console_width: int) -> Text:
     return line
 
 
-def _code_block(body: str, console_width: int) -> list[Text]:
-    """Render a triple-backtick block with subtle background tint."""
-    inner = bubble_width(console_width)
+def _code_block(body: str, console_width: int, *, side: str = "left") -> list[Text]:
+    """A fenced block inside its message: on the message's own gutter, indented
+    two cells past the prose so it still reads as code."""
+    inner = bubble_width(console_width) - 2
     out: list[Text] = []
     for raw in body.splitlines() or [""]:
         for chunk in [raw[i:i + inner] for i in range(0, max(1, len(raw)), inner)] or [""]:
-            row = Text("    │ ", style="dim")
-            row.append(chunk, style="bright")
+            if side == "right":
+                pad = max(2, console_width - 2 - len(chunk) - 2 - 2)
+                row = Text(" " * pad)
+                row.append(chunk, style="bright")
+                row.append("  │", style="dim")
+            else:
+                row = Text("  │   ", style="dim")
+                row.append(chunk, style="bright")
             out.append(row)
     return out
+
+
+def _part_position(position: str, first: bool, last: bool) -> str:
+    """The corners of one text part of a message split by code fences: the
+    message's top corner only on its first part, its bottom only on its last."""
+    opens = position in ("only", "first") and first
+    closes = position in ("only", "last") and last
+    if opens and closes:
+        return "only"
+    return "first" if opens else ("last" if closes else "mid")
 
 
 def _split_code_fences(content: str) -> list[tuple[str, str]]:
@@ -677,26 +698,37 @@ def render_bubble_feed(
         # actual bubble rows, not the inter-bubble whitespace above.
         rows_before = len(out)
 
-        for kind, body in _split_code_fences(content):
-            if not body and kind == "text":
-                continue
+        # One message is one block (tui-polish.md defect 3): a code fence stays
+        # inside it, so only the first text part gets the sender header, only
+        # the last gets the timestamp, and the corners open and close once.
+        parts = [(k, b) for k, b in _split_code_fences(content) if b or k == "code"]
+        texts = [j for j, (k, _b) in enumerate(parts) if k == "text"] or [-1]
+        if texts == [-1] and not same_group:  # all code: still one sender header
+            bubble = (_own_bubble(" ", "", console_width, receipt="", sender=sender,
+                                  show_header=True) if is_me else
+                      _other_bubble(" ", sender, "", console_width, show_header=True))
+            out.append(bubble[0])
+        for j, (kind, body) in enumerate(parts):
             if kind == "code":
-                out.extend(_code_block(body, console_width))
+                out.extend(_code_block(body, console_width, side="right" if is_me else "left"))
                 continue
+            part_pos = _part_position(position, j == texts[0], j == texts[-1])
             body = plain_markdown(body)
+            part_ts = ts_show if j == texts[-1] else ""
+            header = not same_group and j == texts[0]
             if is_me:
                 out.extend(_own_bubble(
-                    body, ts_show, console_width,
+                    body, part_ts, console_width,
                     receipt="",  # receipts are now a dedicated row
-                    position=position,
+                    position=part_pos,
                     sender=sender,
-                    show_header=not same_group,
+                    show_header=header,
                 ))
             else:
                 out.extend(_other_bubble(
-                    body, sender, ts_show, console_width,
-                    show_header=not same_group,
-                    position=position,
+                    body, sender, part_ts, console_width,
+                    show_header=header,
+                    position=part_pos,
                 ))
 
         # Reactions row — opt-in, dummy data is fine.
@@ -706,10 +738,11 @@ def render_bubble_feed(
             if row.cell_len:
                 out.append(row)
 
-        # Read-receipt row — only on the user's MOST RECENT own message.
+        # Only a message still on its way gets a receipt row: "Delivered" on
+        # every send was iMessage chrome that told the user nothing.
         if is_me and i == last_own_idx:
             label = receipt_label(msg)
-            if label:
+            if label == "Sending…":
                 out.append(read_receipt_row(label, console_width))
 
         # Stream B threading: indent newly-rendered thread-child rows by
