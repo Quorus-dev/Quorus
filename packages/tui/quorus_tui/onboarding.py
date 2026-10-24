@@ -34,7 +34,7 @@ def room_status(members: list[str], messages: list[dict], *, connected: bool) ->
     if not any(not is_human_sender(name) for name in members):
         return "Room available · No agents connected · /agents to set up; /share for teammates"
     if free_tier_limited:
-        return ("No free model answered yet · the agent retries after its pause · "
+        return ("No free model answered yet · message the agent again after its pause · "
                 "/agents for other options")
     return "Agent joined; waiting for a response · /agents to retry setup"
 

@@ -122,7 +122,6 @@ def test_a_later_guess_does_not_overwrite_a_live_observed_reset() -> None:
 
 
 def test_slow_start_and_no_route_cooldowns_are_never_quota() -> None:
-    assert reflexd._failover is not None  # the limit path's typed failures come from here
     for reason in ("slow_start", "no_route"):
         d = _daemon()
         d.adapter._cool_down(reason)
@@ -213,14 +212,36 @@ def test_a_free_tier_limit_is_a_free_busy_pause_not_quota() -> None:
     assert adapter.current_limit() is None  # nothing for the board to call "out of quota"
 
 
-def test_the_free_busy_pause_line_never_says_quota_and_names_the_unit() -> None:
+def test_the_free_busy_pause_line_never_says_quota_and_promises_no_retry() -> None:
     d = _daemon()
     d.adapter._free_tier_pause()
     line = _announce(d)
     assert "quota" not in line and "connection or account" in line
-    assert "free tier" in line and "tries again" in line
+    assert "free tier" in line and "Message it again" in line  # `_limited` schedules nothing
+    assert "tries again" not in line and "for about 15 min" in line
     assert "waiting_on" not in d._presence_extra("active")  # old relays: no "out of quota"
     assert d._presence_extra("active")["pause"]["reason"] == "free_busy"
+
+
+def test_a_free_tier_limit_with_a_vendor_reset_keeps_it(monkeypatch) -> None:
+    """Codex on ef234595: when opencode does name a reset ("retry in 6h"), the pause runs
+    to it and the reading stays for the room line and the board, instead of being
+    replaced by our 15-minute floor."""
+    d = _daemon()
+    d.adapter.note_limit("Free usage limit reached. retry in 6h")
+    assert d.adapter.limit is not None and d.adapter.limit.resets_at is not None
+    d.adapter._free_tier_pause()
+    assert d.adapter.pause_reason == "free_busy" and d.adapter.limit is not None
+    assert d.adapter.limited_until > time.time() + 5 * 3600  # not cut down to 15 min
+    assert d.adapter.current_limit() is not None  # live() keeps a reading with a reset
+    line = _announce(d)
+    assert "opencode's reset in about 6 h" in line and "quota" not in line
+    # without a reset there is nothing to keep: the 15-minute floor and no reading
+    d2 = _daemon()
+    d2.adapter.note_limit("Free usage limit reached. Subscribe to OpenCode Go")
+    d2.adapter._free_tier_pause()
+    assert d2.adapter.limit is None and d2.adapter.current_limit() is None
+    assert 0 < d2.adapter.limited_until - time.time() <= reflexd.SLOW_COOLDOWN_S
 
 
 def test_the_free_tier_notice_names_the_unit_and_the_next_command(monkeypatch) -> None:
@@ -232,6 +253,7 @@ def test_the_free_tier_notice_names_the_unit_and_the_next_command(monkeypatch) -
     assert text.startswith("⚠ opencode's free tier has hit its limit for this connection or "
                            "account")
     assert "quota" not in text.lower() and "-free" not in text
+    assert "Message me again" in text and "try again" not in text  # no retry is scheduled
     assert "quorus agent add opencode --room general --name local --model ollama/qwen3:4b" in text
 
 

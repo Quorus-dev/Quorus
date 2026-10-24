@@ -40,6 +40,7 @@ def test_a_free_tier_limit_is_its_own_state_not_waiting():
                                    "now. To get an answer now:\n  quorus agent add …")
     line = onboarding.room_status(members, [notice], connected=True)
     assert "No free model answered yet" in line and "/agents" in line
+    assert "message the agent again" in line  # nothing retries on its own
     assert "waiting for a response" not in line and "quota" not in line
     answer = msg("alice-opencode", "add() subtracts; here is the fix.")
     assert onboarding.room_status(members, [notice, answer], connected=True) is None

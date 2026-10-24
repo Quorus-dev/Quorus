@@ -1354,7 +1354,7 @@ def free_tier_notice(room: str) -> str:
         logger.warning("next-command detection failed: %s", exc)
     text = ("⚠ opencode's free tier has hit its limit for this connection or account, so "
             "no free model can answer right now (opencode shares that limit across all its "
-            "free models). I'll try again after a short pause.")
+            "free models). Message me again after the pause.")
     if lines:
         text += " To get an answer now:\n" + "\n".join(f"  {ln}" for ln in lines)
     return text
@@ -1837,12 +1837,17 @@ class HeadlessAdapter:
         return reply
 
     def _free_tier_pause(self) -> None:
-        """opencode's free tier refused (a typed 429): a 15-minute cooldown of our
-        own, never "out of quota". The 429 carries no reset time, so there is no
-        vendor reading to keep (keyless-answer.md §3.1)."""
-        self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S) \
-            if self.pause_reason == "free_busy" else time.time() + SLOW_COOLDOWN_S
-        self.pause_reason, self.limit = "free_busy", None
+        """opencode's free tier refused (a typed 429): a cooldown of our own, never
+        "out of quota" (keyless-answer.md §3.1). Today's 429 carries no reset, so the
+        pause is 15 min and there is no reading; should the vendor name one ("retry
+        in 6h"), `note_limit` already parsed it, and it is kept: the pause runs to
+        that reset and the display shows it (codex, review of ef234595)."""
+        now = time.time()
+        reading = self.limit if self.limit is not None and self.limit.resets_at else None
+        floor = now + SLOW_COOLDOWN_S
+        self.limited_until = max(floor, self.limited_until if reading is not None else 0.0,
+                                 self.limited_until if self.pause_reason == "free_busy" else 0.0)
+        self.pause_reason, self.limit = "free_busy", reading
 
     def _note_slow(self, reply: str) -> None:
         """A free model that never started answering: send it to the back of
@@ -3423,9 +3428,14 @@ class Reflexd:
         name, now = self.config.participant_name, time.time()
         reason = getattr(self.adapter, "pause_reason", "quota")
         if reason == "free_busy":
-            return (f"@{name} is paused for about {_human_wait(until - now)}: opencode's free "
-                    "tier is limited for this connection or account (shared across its free "
-                    "models). It tries again then; for an answer now, see the ⚠ line above")
+            current = getattr(self.adapter, "current_limit", None)
+            reading = current(now) if current else None
+            when = (f"until opencode's reset in about {_human_wait(reading.resets_at - now)}"
+                    if reading is not None and reading.resets_at is not None
+                    else f"for about {_human_wait(until - now)}")
+            return (f"@{name} is paused {when}: opencode's free tier is limited for this "
+                    "connection or account (shared across its free models). Message it again "
+                    "after that; for an answer now, see the ⚠ line above")
         if reason != "quota":
             return (f"@{name} is paused by Quorus for about {_human_wait(until - now)} "
                     "(its free models are slow to start or unavailable) and will pick up "
