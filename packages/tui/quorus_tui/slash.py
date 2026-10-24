@@ -149,7 +149,9 @@ def slash_info(arg, state, relay_url, secret, agent_name, console):
     ))
     if members:
         for m in members:
-            line = Text("  ●  ", style=_chat._sender_color(m))
+            line = Text("  ")
+            line.append("●", style=_chat._sender_color(m))
+            line.append("  ")
             line.append(f"@{m}", style="bold")
             console.print(line)
     else:

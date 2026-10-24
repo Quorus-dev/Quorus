@@ -125,3 +125,24 @@ def test_printed_screens_colour_no_words(monkeypatch):
     ui.error("relay unreachable", hint="run quorus doctor")
     ui.warn("free tier limited")
     assert _coloured_words_in_ansi(out.getvalue()) == []
+
+
+def test_share_card_and_info_colour_only_their_marks():
+    """Codex on 220bd1b4: a base Text style colours every appended span, so the
+    share card's brand border coloured its title, code and join command."""
+    from quorus_tui import chat_widgets, hub, slash
+
+    card = chat_widgets.render_share_card(room_name="dev", code="ABCD-EFGH",
+                                          install_url="https://quorus.dev", console_width=80)
+    assert any("ABCD-EFGH" in line.plain for line in card)
+    assert _coloured_words(card) == []
+
+    out = io.StringIO()
+    console = Console(file=out, theme=ui.THEME, force_terminal=True,
+                      color_system="truecolor", width=80)
+    state = hub.HubState()
+    state.set_rooms([{"name": "dev", "members": ["sam", "sam-opencode"]}])
+    state.select_by_name("dev")
+    slash.slash_info("", state, "http://r", "s", "sam", console)
+    assert "@sam-opencode" in out.getvalue()
+    assert _coloured_words_in_ansi(out.getvalue()) == []

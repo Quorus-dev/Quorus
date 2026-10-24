@@ -658,21 +658,26 @@ def render_share_card(
     width = max(SHARE_CARD_MIN_W, min(console_width - 4, 64))
     title = f" Share #{room_name} "
     side = max(2, (width - len(title) - 2) // 2)
-    top = Text("  ┌" + "─" * side, style="brand")
+    # Hue on the border spans only: a Text's base style colours every span
+    # appended to it, words included (Codex on 220bd1b4).
+    top = Text("  ")
+    top.append("┌" + "─" * side, style="brand")
     top.append(title, style="bold")
     top.append("─" * (width - 2 - side - len(title)) + "┐", style="brand")
 
     def _row(left: str, *, style: str = "bright") -> Text:
         body = "  " + left
         pad = max(0, width - 2 - len(body))
-        line = Text("  │", style="brand")
+        line = Text("  ")
+        line.append("│", style="brand")
         line.append(body, style=style)
         line.append(" " * pad, style="")
         line.append("│", style="brand")
         return line
 
     def _blank() -> Text:
-        line = Text("  │", style="brand")
+        line = Text("  ")
+        line.append("│", style="brand")
         line.append(" " * (width - 2), style="")
         line.append("│", style="brand")
         return line
