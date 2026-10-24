@@ -138,6 +138,8 @@ def offer(console: Any, room: str, cwd: Path | None = None,
 
         def ask(q: str) -> bool:
             return Confirm.ask(q, default=True)
+    console.print("  Signed-in agents use your CLI login and your account's usage; "
+                  "free-model agents depend on the vendor's current availability.")
     if not ask(f"  Add them to [room]#{room}[/] {where}?"):
         console.print(f"  [dim]Later: quorus agent add <tool> --room {room} --repo <path>[/]")
         return []

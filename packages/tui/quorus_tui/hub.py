@@ -2329,6 +2329,12 @@ def _slash_home(arg, state, relay_url, secret, agent_name, console):
     return True
 
 
+def _slash_agents(arg, state, relay_url, secret, agent_name, console):
+    from .onboarding import setup_agents
+
+    return setup_agents(arg, state, relay_url, secret, agent_name, console)
+
+
 def _slash_status(arg, state, relay_url, secret, agent_name, console):
     del arg, secret, agent_name, console
     connected, label = state.get_connection()
@@ -2752,6 +2758,7 @@ SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/rename":     ("/rename <name> — alias for /identity <name>", _slash_identity),
     "/name":       ("/name <name> — alias for /identity <name>",   _slash_identity),
     "/workspace":  ("list / switch workspaces",             _slash_workspace),
+    "/agents":     ("choose agents for this room (optional)", _slash_agents),
     "/status":     ("connection + relay info",              _slash_status),
     "/clear":      ("clear the chat pane",                  _slash_clear),
     "/expand":     ("/expand <root_id>|all — open a thread", _slash_expand),
@@ -3419,6 +3426,11 @@ def _main_input_loop(
 
                     members = (selected.get("members") or []) if selected else []
                     last_active = _chat.last_active_label(msgs_snap)
+                    from .onboarding import room_status
+
+                    onboarding_status = room_status(members, msgs_snap, connected=connected)
+                    if onboarding_status:
+                        console.print(Text("  " + onboarding_status, style="muted"))
                     console.print(
                         _chat.render_app_bar(
                             room_name=room_name,
@@ -3801,7 +3813,7 @@ def _main_input_loop(
                 # NEED a redraw for the bar to appear.
                 printing_verbs = {
                     "/help", "/rooms", "/workspace", "/share", "/delete",
-                    "/info",
+                    "/info", "/agents",
                 }
                 handled = _dispatch_slash(
                     verb, arg, state, relay_url, secret, agent_name, console,

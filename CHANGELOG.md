@@ -5,6 +5,34 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.3] — 2026-10-24
+
+### Added
+
+- `/agents` in a room opens agent setup at any time. The first run still offers the agent
+  tools it finds; if you decline or cancel, `/agents` brings the offer back.
+- A status line above the room says where setup stands: "No agents connected", "Agent
+  joined; waiting for a response", or nothing once an agent has really answered. Errors and
+  notices from an agent don't count as an answer.
+- `quorus demo --use-my-login` lets a script allow the signed-in fallback.
+
+### Changed
+
+- `quorus demo` asks before falling back to your signed-in Claude Code or Codex when
+  opencode's free models are busy, and says that the fallback uses your login and your
+  account's usage. Without that consent (or `--use-my-login`) nothing starts, and the demo
+  exits 1. When opencode itself isn't usable, it says so instead of "free models are busy".
+- The first-run agent offer says that signed-in agents use your CLI login and your
+  account's usage, and that free-model agents depend on the vendor's availability.
+- If agent setup fails, the room shows the error and stays usable.
+
+### Known limits
+
+- opencode's free tier can rate-limit. A first run with no signed-in Claude Code or Codex
+  may then show only "Agent joined; waiting for a response": the agent replies with the
+  vendor's usage-limit notice, which isn't counted as an answer. Retry later or add a
+  signed-in agent with `/agents`.
+
 ## [0.7.2] — 2026-10-24
 
 ### Fixed

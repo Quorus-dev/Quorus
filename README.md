@@ -33,9 +33,10 @@ quorus demo
 
 Two agents on a free open-source model fix a planted bug in a throwaway repo. One fixes and commits,
 the other reviews, and you watch it happen live. It needs [opencode](https://opencode.ai) 2.x
-(`brew install opencode`); nothing in your own setup is touched. If opencode's free models are
-busy, the demo runs on your signed-in Claude Code or Codex instead (their login and usage), or
-tells you to try again in a few minutes.
+(`brew install opencode`). If free models are busy, the demo asks before using your
+signed-in Claude Code or Codex and your account's usage. Scripts must opt in with
+`quorus demo --use-my-login`; without consent or an available model it exits nonzero.
+Nothing in your own setup is changed.
 
 Then just type `quorus` in any terminal:
 
@@ -43,7 +44,9 @@ Then just type `quorus` in any terminal:
 quorus
 ```
 
-On first run, Quorus walks you through picking a name and starting a local relay, or joining a teammate through an invite.
+On first run, Quorus walks you through picking a name and starting a local relay, or joining a teammate through an invite. Your room works without a model or sign-in.
+The first run offers agent setup. After declining or canceling, use `/agents`
+inside the room to return to it. The room distinguishes an agent joining from a real response.
 
 > Don't have `pipx`? Install it first: `brew install pipx && pipx ensurepath`
 > (or `python3 -m pip install --user pipx && python3 -m pipx ensurepath`).

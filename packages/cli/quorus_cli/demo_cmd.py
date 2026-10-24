@@ -257,33 +257,58 @@ def _show_steps(console: Any, url: str, headers: dict[str, str], last: dict[str,
                           highlight=False)
 
 
+def consented_fallback(args: Any, console: Any) -> list[tuple[str, None]]:
+    """No credential sharing or model work until the person explicitly opts in."""
+    cast = fallback_cast()
+    if not cast:
+        return []
+    tools = " and ".join(dict.fromkeys(LABELS[h] for h, _ in cast))
+    console.print(f"Free models are unavailable. The fallback uses your signed-in {tools} "
+                  "on this computer and consumes your account's usage.")
+    if getattr(args, "use_my_login", False):
+        return cast
+    if sys.stdin.isatty():
+        from rich.prompt import Confirm
+
+        try:
+            if Confirm.ask("Use those logins for this demo?", default=False, console=console):
+                return cast
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+    console.print("No signed-in fallback started. Retry later, continue in your room with "
+                  "`quorus`, or explicitly opt in with `quorus demo --use-my-login`.")
+    return []
+
+
 def cmd_demo(args: Any, console: Any) -> None:
     problem = _opencode_ok()
-    if problem and not fallback_cast():
+    if problem and args.model:
         raise SystemExit(f"demo: {problem}")
     root = Path(tempfile.mkdtemp(prefix="quorus-demo-"))
-    home, secret, port = root / "home", secrets.token_hex(16), _free_port()
-    url, procs = f"http://127.0.0.1:{port}", []
-    H = {"Authorization": f"Bearer {secret}"}
+    home, procs = root / "home", []
     console.print("[bold]Quorus demo[/]: two AI agents on a free open-source model fix a bug "
                   "together. Nothing in your own setup is touched.\n")
     try:
         repo = make_sample_repo(root)
         write_binding(home, repo)
         models = [] if problem else pick_models(root, console, args.model)
-        cast = [("opencode", m) for m in models] or ([] if args.model else fallback_cast())
+        cast = [("opencode", m) for m in models] or (
+            [] if args.model else consented_fallback(args, console))
         if not cast:
-            console.print("[warning]![/] opencode's free models are all busy right now. Try "
-                          "again in a few minutes, or use your own models with `quorus agent add`.")
+            if problem:
+                console.print(f"opencode isn't usable: {problem}", markup=False)
+            else:
+                console.print("[warning]![/] opencode's free models are all busy right now. Try "
+                              "again in a few minutes, or use your own models with "
+                              "`quorus agent add`.")
             raise SystemExit(1)  # scripts and CI must see the demo didn't run
+        secret, port = secrets.token_hex(16), _free_port()
+        url = f"http://127.0.0.1:{port}"
+        H = {"Authorization": f"Bearer {secret}"}
         builder, reviewer = (BUILDER, REVIEWER) if models else (
             f"demo-{cast[0][0]}", f"demo-review-{cast[1][0]}")
         if not models:
             share_login(home, {h for h, _ in cast})
-            tools = " and ".join(dict.fromkeys(LABELS[h] for h, _ in cast))
-            why = "opencode isn't usable here" if problem else "opencode's free models are busy"
-            console.print(f"{why}, so the demo runs on your own logged-in {tools} "
-                          "(their login and their usage).")
         console.print("[dim]builder: " + _label(cast[0]) + " · reviewer: " + _label(cast[1])
                       + "[/]\n")
         base_env = {k: v for k, v in os.environ.items()
