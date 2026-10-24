@@ -192,6 +192,16 @@ def test_an_invitee_adds_their_agent_from_the_wizard(tmp_path_factory):
                 s.close()
 
 
+def _logs(*homes: Path, tail: int = 60) -> str:
+    """The tail of every agent and relay log under *homes*, for a failure message."""
+    out = []
+    for home in homes:
+        for log in sorted((home / ".quorus").rglob("*.log")):
+            lines = log.read_text(errors="replace").splitlines()[-tail:]
+            out.append(f"--- {log.relative_to(home)}\n" + "\n".join(lines))
+    return "\n".join(out) or "(no logs)"
+
+
 def test_an_invitee_gets_a_tested_fix_in_their_own_repo(tmp_path_factory):
     """bob joins alice's relay with her invite and gets his own agent to fix his own
     repo, with the command /install gives (step 2). alice owns the relay, not bob's
@@ -206,7 +216,10 @@ def test_an_invitee_gets_a_tested_fix_in_their_own_repo(tmp_path_factory):
         assert done.returncode == 0, (done.stdout, done.stderr)
 
         _quorus(alice, None, 'quorus say general "@bob-codex fix the bug in calc.py"')
-        wait_for(alice, "bob-codex", "read-only", timeout=120)
+        try:
+            wait_for(alice, "bob-codex", "read-only", timeout=120)
+        except AssertionError as exc:  # say why the agent was silent (PR #22, Linux CI)
+            raise AssertionError(f"{exc}\n{_logs(bob.home, alice.home)}") from None
         # alice holds the relay secret, but bob's name is an invited member's: the
         # relay won't let her post as him (name reservations). If it ever did, bob's
         # agent would still trust only bob's own key (tests/test_owner_pin.py).
