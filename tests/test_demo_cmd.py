@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
 from quorus_cli import demo_cmd
 
 
@@ -120,19 +121,20 @@ def test_a_probe_tells_a_free_tier_limit_from_a_slow_model(monkeypatch, tmp_path
     assert demo_cmd.model_answers("x/chatty", tmp_path) is None  # not pong, not a limit
 
 
+@pytest.mark.parametrize("as_bytes", [False, True], ids=["str-output", "bytes-output"])
 def test_a_limit_followed_by_the_clis_own_retry_countdown_is_still_a_limit(
-        monkeypatch, tmp_path: Path) -> None:
+        monkeypatch, tmp_path: Path, as_bytes: bool) -> None:
     """Codex on 94a791db: opencode retries a 429 itself ("retrying in 6h 56m"), so the
     probe times out with the limit event already in its partial output. That is a
-    limit, not a slow model, and must be read from TimeoutExpired.output."""
+    limit, not a slow model, and must be read from TimeoutExpired.output, which
+    subprocess hands over as str (text=True) or bytes depending on the version."""
     import subprocess as sp
 
     partial = _LIMIT_429 + '\n{"type":"status","text":"retrying in 6h 56m attempt #1"}\n'
 
     def run(argv, **kw):
         out = partial if argv[argv.index("-m") + 1].endswith("limited") else ""
-        raise sp.TimeoutExpired(argv, kw["timeout"], output=out.encode() if "bytes" in argv
-                                else out)
+        raise sp.TimeoutExpired(argv, kw["timeout"], output=out.encode() if as_bytes else out)
 
     monkeypatch.setattr(demo_cmd.subprocess, "run", run)
     assert isinstance(demo_cmd.model_answers("x/limited", tmp_path), demo_cmd.FreeTierLimited)
