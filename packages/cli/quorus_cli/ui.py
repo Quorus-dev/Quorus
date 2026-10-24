@@ -16,66 +16,60 @@ from rich.text import Text
 from rich.theme import Theme
 
 # ── Palette ──────────────────────────────────────────────────────────────────
-# Three-color palette: one brand teal, one warm accent (room highlights),
-# and one cool accent (agent identity). Everything else is neutral.
-# Goal: confident, intentional, never garish. References: Linear, Vercel.
-PRIMARY = "#14b8a6"            # brand teal — primary affordance
-PRIMARY_DEEP = "#0f766e"       # legible on light terminals
-PRIMARY_LIGHT = "#2dd4bf"
-PRIMARY_MINT = "#5eead4"       # accent / hover state
-SUBTLE = "#94a3b8"             # bright neutral — body text on dark
-MUTED = "#64748b"              # mid neutral — meta / hints
-DIM = "#334155"                # rule lines, deep separators
-BRIGHT = "#e2e8f0"             # primary surface text (white-ish)
-SUCCESS = "#10b981"
-WARNING = "#f59e0b"
+# tui-polish.md §3.2. Text never carries a hex colour: body text is the
+# terminal's default foreground and meta text is Rich's ``dim`` on it, so both
+# read on dark and light themes. Hue is kept for accents, names and status
+# glyphs only, each mid-tone enough for ≥ 3:1 against both #1e1e1e and #ffffff
+# (tests/test_tui_contrast.py). 4.5:1 on both is impossible for any colour:
+# the best grey manages 4.06:1, which is why text stays uncoloured.
+PRIMARY = "#0d9488"            # brand teal — prompt, rules, headings
+PRIMARY_MINT = "#0891b2"       # accent
+SUCCESS = "#059669"
+WARNING = "#d97706"
 ERROR = "#ef4444"
-AGENT = "#818cf8"              # cool indigo — distinct from brand teal
-ROOM = "#fbbf24"               # warm amber — distinct from brand teal
+AGENT = "#6366f1"              # cool indigo — distinct from brand teal
+ROOM = "#d97706"               # warm amber — distinct from brand teal
 
-# Sender palette — 6 perceptually-distinct hues used to color member names
-# deterministically. Picked to: (a) all read on dark terminals at a glance,
-# (b) survive common color-blindness filters (no R/G adjacency), (c) avoid
-# the brand teal so chrome and content stay separable. Mirrors the deck
-# avatar palette so a member's color is consistent across surfaces.
-SENDER_TEAL    = "#2dd4bf"     # teal-300 — paired
-SENDER_INDIGO  = "#a5b4fc"     # indigo-300
-SENDER_AMBER   = "#fcd34d"     # amber-300
-SENDER_ROSE    = "#fda4af"     # rose-300
-SENDER_VIOLET  = "#c4b5fd"     # violet-300
-SENDER_CYAN    = "#67e8f9"     # cyan-300
+# Sender palette — 6 hues for member names, hashed deterministically. Same
+# families as before (no red/green adjacency, none equal to the brand teal),
+# moved to mid-tones so a name reads on light terminals too.
+SENDER_TEAL    = "#0d9488"
+SENDER_INDIGO  = "#6366f1"
+SENDER_AMBER   = "#d97706"
+SENDER_ROSE    = "#f43f5e"
+SENDER_VIOLET  = "#8b5cf6"
+SENDER_CYAN    = "#0284c7"
 
-THEME = Theme(
-    {
-        "primary": PRIMARY,
-        "accent": PRIMARY_MINT,
-        "muted": MUTED,
-        "dim": DIM,
-        "subtle": SUBTLE,
-        "bright": BRIGHT,
-        "success": SUCCESS,
-        "warning": WARNING,
-        "error": ERROR,
-        "agent": AGENT,
-        "room": ROOM,
-        "prompt": f"bold {PRIMARY}",
-        "heading": f"bold {PRIMARY}",
-        # New semantic tokens — used by render helpers to keep call sites
-        # free of literal styles. Alias-only, never override the above.
-        "pill": f"bold {PRIMARY}",
-        "pill_idle": MUTED,
-        "kbd": f"bold {AGENT}",
-        "ts": MUTED,
-        # Sender palette tokens — hashed deterministically by chat.py so
-        # the same name always renders in the same color.
-        "sender1": SENDER_TEAL,
-        "sender2": SENDER_INDIGO,
-        "sender3": SENDER_AMBER,
-        "sender4": SENDER_ROSE,
-        "sender5": SENDER_VIOLET,
-        "sender6": SENDER_CYAN,
-    }
-)
+STYLES = {
+    "primary": PRIMARY,
+    "accent": PRIMARY_MINT,
+    "muted": "dim",
+    "dim": "dim",
+    "subtle": "none",
+    "bright": "none",
+    "success": SUCCESS,
+    "warning": WARNING,
+    "error": ERROR,
+    "agent": AGENT,
+    "room": ROOM,
+    "prompt": f"bold {PRIMARY}",
+    "heading": f"bold {PRIMARY}",
+    # New semantic tokens — used by render helpers to keep call sites
+    # free of literal styles. Alias-only, never override the above.
+    "pill": f"bold {PRIMARY}",
+    "pill_idle": "dim",
+    "kbd": f"bold {AGENT}",
+    "ts": "dim",
+    # Sender palette tokens — hashed deterministically by chat.py so
+    # the same name always renders in the same color.
+    "sender1": SENDER_TEAL,
+    "sender2": SENDER_INDIGO,
+    "sender3": SENDER_AMBER,
+    "sender4": SENDER_ROSE,
+    "sender5": SENDER_VIOLET,
+    "sender6": SENDER_CYAN,
+}
+THEME = Theme(STYLES)
 
 def _no_color() -> bool:
     """Honor the NO_COLOR spec (https://no-color.org/)."""
@@ -255,7 +249,7 @@ def token_box(token: str, *, label: str = "Token", expires_in: str | None = None
     body.append(f"  {label}\n", style=f"bold {PRIMARY}")
     body.append(f"  {token}\n", style=PRIMARY_MINT)
     if expires_in:
-        body.append(f"\n  expires in {expires_in}", style=MUTED)
+        body.append(f"\n  expires in {expires_in}", style="dim")
     console.print(
         Panel(
             body,
