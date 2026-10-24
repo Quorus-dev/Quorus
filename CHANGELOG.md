@@ -44,11 +44,13 @@ All notable changes to Quorus are documented here. This project follows
 - First-screen copy: a one-line wordmark instead of block letters; the ready line says which
   room you are in ("You're @you in #general. Type a message and press Enter."); tools that
   are installed but not signed in appear as one muted "Also on this computer" line after the
-  result instead of a warning each.
-- Each room message is one block: sender, time and text together, with code fences bounded
-  by the message, not the terminal.
-- Colour tokens that read on light terminals: words stay on the terminal's default
-  foreground; hue is used only for marks (ticks, bullets, the share card and `/info`).
+  result instead of a warning each. The relay's log path and the launchd label are no longer
+  printed by default (`quorus agent list` still shows the label).
+- Each room message is one block: a code fence no longer splits a reply into several
+  messages, so there is one sender header and one timestamp per message. Sent messages no
+  longer show a "Delivered" row; only "Sending…" still appears, while a message is on its way.
+- Colour tokens that read on light terminals: names and text stay on the terminal's default
+  foreground; hue is used only on marks: ✓ ✗ ! glyphs, sender dots, rules and borders.
 
 ### Fixed
 
