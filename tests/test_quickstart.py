@@ -123,7 +123,11 @@ def test_doctor_on_a_fresh_install_points_at_quorus(tmp_path: Path) -> None:
     import sys
 
     env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "TERM": "dumb", "COLUMNS": "200",
-           "PYTHONPATH": os.environ.get("PYTHONPATH", "")}
+           # cwd is tmp_path, so a relative PYTHONPATH (".:packages/cli") would resolve
+           # there and the child would import whatever `quorus_cli` the venv installed.
+           "PYTHONPATH": os.pathsep.join(os.path.abspath(p) for p in
+                                         os.environ.get("PYTHONPATH", "").split(os.pathsep)
+                                         if p)}
     out = subprocess.run([sys.executable, "-m", "quorus_cli.cli", "doctor"], env=env,
                          capture_output=True, text=True, timeout=60, cwd=tmp_path)
     text = out.stdout + out.stderr
