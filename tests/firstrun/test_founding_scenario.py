@@ -25,7 +25,7 @@ import httpx
 import pytest
 
 pytest.importorskip("fcntl", reason="needs a POSIX pty")
-from tests.firstrun.pty_session import ENTER, PtySession, child_env
+from tests.firstrun.pty_session import ENTER, PtySession, child_env, plain
 from tests.firstrun.stub_agents import calls, git, relay_secret, setup, wait_for
 from tests.firstrun.test_first_result import _CODE, _fix_lands, _quorus
 
@@ -101,11 +101,13 @@ def test_two_peoples_agents_build_and_review_each_others_work(tmp_path_factory):
         alice.type("alice" + ENTER)
         alice.expect(r"Invite, or Enter to run it here")
         alice.type(ENTER)
+        alice.expect(r"You're in as @alice", timeout=90)
+        alice.type("/agents" + ENTER)
         alice.expect(r"Add them to #general", timeout=45)
         alice.type("y" + ENTER)
         alice.expect(r"\[y/n\] \(n\)", timeout=20)
         alice.type("y" + ENTER)
-        alice.expect(r"You're in as @alice", timeout=90)
+        alice.expect(r"Say something in", timeout=90)
         alice.settle(quiet=1.0, timeout=10)
         alice.secret = relay_secret(home_a)
 
@@ -123,11 +125,14 @@ def test_two_peoples_agents_build_and_review_each_others_work(tmp_path_factory):
         bob.type(code.group(1) + ENTER)
         bob.expect(r"relay address", timeout=20)
         bob.type(lan_url + ENTER)
+        bob.expect(r"You're in as @bob", timeout=90)
+        bob.type("/agents" + ENTER)
         bob.expect(r"Add them to #general", timeout=60)
         bob.type("y" + ENTER)
         bob.expect(r"\[y/n\] \(n\)", timeout=30)
         bob.type("y" + ENTER)
-        screen = bob.expect(r"You're in as @bob", timeout=90)
+        screen = bob.expect(r"Say something in", timeout=90)
+        screen = plain(bob.text())
         assert "every agent hears you" in screen, screen[-2000:]  # bob-codex was added
         bob.settle(quiet=1.0, timeout=10)
         bob.secret = alice.secret  # the test reads history; bob never holds it

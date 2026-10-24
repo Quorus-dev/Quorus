@@ -2329,6 +2329,12 @@ def _slash_home(arg, state, relay_url, secret, agent_name, console):
     return True
 
 
+def _slash_agents(arg, state, relay_url, secret, agent_name, console):
+    from .onboarding import setup_agents
+
+    return setup_agents(arg, state, relay_url, secret, agent_name, console)
+
+
 def _slash_status(arg, state, relay_url, secret, agent_name, console):
     del arg, secret, agent_name, console
     connected, label = state.get_connection()
@@ -2752,6 +2758,7 @@ SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/rename":     ("/rename <name> — alias for /identity <name>", _slash_identity),
     "/name":       ("/name <name> — alias for /identity <name>",   _slash_identity),
     "/workspace":  ("list / switch workspaces",             _slash_workspace),
+    "/agents":     ("choose agents for this room (optional)", _slash_agents),
     "/status":     ("connection + relay info",              _slash_status),
     "/clear":      ("clear the chat pane",                  _slash_clear),
     "/expand":     ("/expand <root_id>|all — open a thread", _slash_expand),
@@ -3419,6 +3426,10 @@ def _main_input_loop(
 
                     members = (selected.get("members") or []) if selected else []
                     last_active = _chat.last_active_label(msgs_snap)
+                    from .onboarding import room_status
+
+                    console.print(Text("  " + room_status(
+                        members, msgs_snap, connected=connected), style="muted"))
                     console.print(
                         _chat.render_app_bar(
                             room_name=room_name,
@@ -3801,7 +3812,7 @@ def _main_input_loop(
                 # NEED a redraw for the bar to appear.
                 printing_verbs = {
                     "/help", "/rooms", "/workspace", "/share", "/delete",
-                    "/info",
+                    "/info", "/agents",
                 }
                 handled = _dispatch_slash(
                     verb, arg, state, relay_url, secret, agent_name, console,
@@ -4030,7 +4041,6 @@ def _run_session(
     # TUI silently when the secret won.
     global _ADMIN_SECRET
     raw_secret, _ADMIN_SECRET = session_credentials(profile)
-    api_key_val = (profile.get("api_key") or "").strip()
     workspace_label: str = profile.get("workspace_label") or ""
 
     # Identity disambiguation: when the active profile is for an AGENT
@@ -4079,15 +4089,6 @@ def _run_session(
             console.print(
                 f"  [dim]Created starter room [room]#{starter}[/] — you can add more anytime.[/]"
             )
-            # Blank slate: offer the agent CLIs already installed, one keypress.
-            try:
-                from quorus_cli.quickstart import offer
-
-                offer(console, starter)
-            except (KeyboardInterrupt, EOFError):
-                console.print()
-            except Exception as exc:  # never block the hub on the offer
-                console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
             rooms = _fetch_rooms(relay_url, secret)
         elif status == "conflict":
             # Someone else made a room named `general` in the same tenant —
@@ -4104,19 +4105,6 @@ def _run_session(
                 "[dim]Is it running? Try: quorus relay[/]"
             )
         # Any other failure → render the empty-state hint from the panel.
-    elif announce_ready and profile.get("room") and _invited_elsewhere(api_key_val, relay_url):
-        # An invitee's first run: the teammate's relay already has rooms, so the
-        # blank-slate offer never ran and their agent CLIs went unmentioned (bet 1's
-        # invitee persona). Offer them for the room the invite was for.
-        try:
-            from quorus_cli.quickstart import offer
-
-            offer(console, profile["room"], invitee=True)
-        except (KeyboardInterrupt, EOFError):
-            console.print()
-        except Exception as exc:  # never block the hub on the offer
-            console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
-
     if announce_ready and rooms:
         console.print(f"  [success]✓[/] [muted]You're in as[/] [agent]@{agent_name}[/].")
         time.sleep(0.15)

@@ -10107,6 +10107,8 @@ def main():
     p_demo = sub.add_parser("demo", help="Watch two free AI agents fix a bug together (no keys)")
     p_demo.add_argument("--model", help="opencode model (default: a free open-source one)")
     p_demo.add_argument("--timeout", type=int, default=300, help="Seconds to wait (default 300)")
+    p_demo.add_argument("--use-my-login", action="store_true",
+                        help="Allow signed-in Claude Code/Codex fallback using your usage")
     p_demo.add_argument("--keep", action="store_true", help="Keep the demo folder afterwards")
 
     p_sbranch = sub.add_parser("share-branch",

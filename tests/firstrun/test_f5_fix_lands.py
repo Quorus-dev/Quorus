@@ -146,13 +146,15 @@ def _first_run(s: PtySession, home: Path, repo: Path, write_answer: str) -> None
     s.type("alice" + ENTER)
     s.expect(r"Invite, or Enter to run it here")
     s.type(ENTER)
+    s.expect(r"You're in as @alice", timeout=90)
+    s.type("/agents" + ENTER)
     s.expect(r"Add them to #general", timeout=45)
     s.type("y" + ENTER)
     # Rich shows the default as "(n)": Enter keeps existing permissions.
     screen = s.expect(r"\[y/n\] \(n\)", timeout=20)
     assert "edit files and run commands" in screen and str(repo.resolve()) in screen
     s.type(write_answer + ENTER)
-    s.expect(r"You're in as @alice", timeout=90)
+    s.expect(r"Say something in", timeout=90)
     s.settle(quiet=1.0, timeout=10)
     s.secret = _relay_secret(home)
 
