@@ -59,3 +59,26 @@ def add_own_relay(path: Path, url: str) -> None:
     if not norm:
         raise ValueError(f"not a relay URL: {url!r}")
     write_private_json(path, sorted(own_relays(path) | {norm}))
+
+
+def owned_alias(url: str, path: Path | None = None) -> str:
+    """*url*, or the exact loopback address this machine's relay owns on the same
+    port, when *url* says `localhost` but the relay holds only 127.0.0.1 or ::1.
+
+    `localhost` is trusted only when the relay holds both loopbacks (relay.
+    own_relay_urls): it may resolve to either, and the other could belong to
+    another process. Pointing at the address the relay did bind keeps that
+    boundary and still lets the owner use their own relay (Codex on 21d422ff,
+    0.7.1 stranger path). Anything else comes back unchanged."""
+    owned = own_relays(path or own_relays_path())
+    norm = normalize_relay(url)
+    if not norm or norm in owned:
+        return url
+    parts = urlsplit(url.strip())
+    if (parts.hostname or "").lower() != "localhost":
+        return url
+    for host in ("127.0.0.1", "[::1]"):
+        alias = norm.replace("://localhost:", f"://{host}:", 1)
+        if alias in owned:
+            return alias
+    return url
