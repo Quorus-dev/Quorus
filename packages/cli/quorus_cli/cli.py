@@ -7335,9 +7335,13 @@ def _cmd_doctor(args):
     if not config_file.exists() and not RELAY_SECRET:
         # A fresh install isn't broken: five red checks (and "run init with a
         # secret" the user doesn't have) was the old first impression.
+        # The demo can't promise a result: free models can be busy, and then it
+        # asks before using the user's own login, or exits 1 (0.7.3 pipx check).
         ui.console.print("  Quorus isn't set up yet. Run [accent]quorus[/] (one question, "
                          "about a minute), or [accent]quorus demo[/] to watch two agents "
-                         "fix a bug first (no keys needed).\n")
+                         "fix a bug on a free model first. If the free models are busy, "
+                         "it asks before using your Claude Code or Codex login, or tells "
+                         "you to retry later.\n")
         quickstart.doctor_agents(check)
         return
     check(

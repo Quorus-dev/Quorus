@@ -126,6 +126,9 @@ def test_doctor_on_a_fresh_install_points_at_quorus(tmp_path: Path) -> None:
     text = out.stdout + out.stderr
     assert "isn't set up yet" in text and "quorus demo" in text
     assert "--secret" not in text  # the old advice needed a secret nobody has yet
+    # "no keys needed" over-promised: busy free models make the demo exit 1.
+    flat = " ".join(text.split())  # rich wraps at the terminal width
+    assert "no keys needed" not in flat and "retry later" in flat
 
 
 def _auth(stdout: str = "", rc: int = 0, exc: Exception | None = None):
