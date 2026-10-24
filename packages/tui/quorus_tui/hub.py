@@ -511,6 +511,7 @@ def _first_launch_setup(console: Console) -> dict:
         if note:
             console.print(f"  [dim]{note}[/]")
         if relay_ok:
+            relay_url = _owned_relay_url(relay_url)
             # The human gets a normal participant claim, like every invitee: the
             # secret alone names nobody, so social verbs, owner memory and whoami
             # had no identity to work with (0.6.3 audit, BUG H4). The secret stays
@@ -550,6 +551,22 @@ def _first_launch_setup(console: Console) -> dict:
     if invited_room:
         profile["room"] = invited_room  # the room the invite was for
     return profile
+
+
+def _owned_relay_url(relay_url: str, wait_s: float = 3.0) -> str:
+    """The address to save for the relay this wizard just started: `localhost`, or
+    127.0.0.1 when the relay could bind only that loopback (quorus/runtime/
+    own_relays.owned_alias). The relay records what it bound just after it starts
+    answering, so give that record a moment to land."""
+    from quorus.runtime import own_relays
+
+    deadline = time.monotonic() + wait_s
+    while True:
+        alias = own_relays.owned_alias(relay_url)
+        owned = own_relays.own_relays(own_relays.own_relays_path())
+        if own_relays.normalize_relay(alias) in owned or time.monotonic() >= deadline:
+            return alias
+        time.sleep(0.1)
 
 
 def _claim_human_key(relay_url: str, secret: str, name: str, console: Console) -> str:

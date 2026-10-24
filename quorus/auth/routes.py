@@ -347,6 +347,17 @@ async def exchange_api_key(req: TokenRequest, request: Request):
 
         return await participant_token(request, raw_key)
 
+    from quorus.storage import postgres
+
+    if postgres._session_factory is None:
+        # File-mode relay (RELAY_SECRET, no DATABASE_URL): there are no API-key
+        # accounts to look up. Every non-participant key used to 500 here with
+        # "Database not initialized" (22,704 times on the team relay, 2026-10-22).
+        raise HTTPException(status_code=401, detail=(
+            "This relay has no API-key accounts (it runs without a database). Sign in "
+            "with a participant key (quorus_pk_...) from `quorus join`, or send the "
+            "relay secret as the Bearer token."))
+
     try:
         prefix = extract_key_prefix(raw_key)
     except ValueError:

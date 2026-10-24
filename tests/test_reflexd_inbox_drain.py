@@ -895,3 +895,67 @@ def test_a_timed_out_wake_names_its_last_step(monkeypatch: pytest.MonkeyPatch) -
     asyncio.run(daemon._wake_and_reply(relay, _wake_envelope(), reason="test"))
     assert relay.posted[0]["content"].startswith(
         "⚠ ran out of time while searching the code, before finishing")
+
+
+def test_a_message_between_the_drain_and_the_stream_is_answered_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR #22 CI: the daemon drained an empty inbox, the mention landed, then the
+    stream subscribed. Nothing delivered it until the periodic drain 120 s later.
+    Whatever the runner's timing, a message queued in that gap is dispatched as
+    soon as the stream is live."""
+    daemon = _make_daemon()
+    gap_msg = {"id": "m-gap", "message_id": "m-gap", "room": "general",
+               "from_name": "alice", "content": "@bob-codex fix the bug"}
+    inbox = [[], [gap_msg], []]  # before the stream, then the gap, then empty
+    dispatched: list[str] = []
+
+    class _FakeRelay:
+        client = object()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def bearer_jwt(self):
+            return ""
+
+        async def mint_stream_token(self, participant):
+            return "tok"
+
+        def stream_url(self, participant, token):
+            return "http://relay.test/stream"
+
+        async def post_heartbeat(self, **kw):
+            return None
+
+        async def fetch_inbox(self, *, participant):
+            return (inbox.pop(0) if inbox else []), None
+
+        async def ack_inbox(self, **kw):  # pragma: no cover
+            return None
+
+    monkeypatch.setattr(reflexd, "RelayClient", lambda **kw: _FakeRelay())
+    monkeypatch.setattr(reflexd, "DRAIN_INTERVAL_S", 3600.0)  # no periodic rescue
+
+    async def fake_dm_loop(relay):
+        return None
+
+    monkeypatch.setattr(daemon, "_dm_loop", fake_dm_loop)
+
+    async def record(relay, event_name, data, *, background=False):
+        if event_name == "message":
+            dispatched.append(data["id"])
+
+    monkeypatch.setattr(daemon, "_dispatch_event", record)
+
+    async def fake_sse(client, url):
+        yield "connected", {}
+        await asyncio.sleep(0.05)
+        daemon._stop.set()
+
+    monkeypatch.setattr(reflexd, "iter_sse_events", fake_sse)
+    asyncio.run(asyncio.wait_for(daemon.run(), timeout=10))
+    assert dispatched == ["m-gap"]

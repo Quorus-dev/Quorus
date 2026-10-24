@@ -255,3 +255,21 @@ def test_store_calls_close_their_connections(tmp_path: Path) -> None:
     finally:
         gc.enable()
     assert after - before <= 2, (before, after)
+
+
+@pytest.mark.parametrize("key", ["test-secret", "mur_abcdef_0123456789abcdef", "garbage"])
+def test_a_non_participant_key_on_a_file_mode_relay_gets_401_with_a_next_step(
+        client: TestClient, monkeypatch, key: str) -> None:
+    """The team relay (file mode, no DATABASE_URL) answered 500 "Database not
+    initialized" 22,704 times: every key that isn't quorus_pk_ took the Postgres
+    path. It's a client mistake, so say how to sign in instead."""
+    from quorus.storage import postgres
+
+    monkeypatch.setattr(postgres, "_session_factory", None)
+    resp = client.post("/v1/auth/token", json={"api_key": key})
+    assert resp.status_code == 401, resp.text
+    detail = resp.json()["detail"]
+    assert "no API-key accounts" in detail and "quorus_pk_" in detail
+    assert key not in detail  # never echo the credential back
+    # participant keys on the same relay keep working
+    assert _jwt(client, _claim(client, "fm-agent"))["Authorization"].startswith("Bearer ")

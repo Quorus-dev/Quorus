@@ -275,7 +275,7 @@ def cmd_demo(args: Any, console: Any) -> None:
         if not cast:
             console.print("[warning]![/] opencode's free models are all busy right now. Try "
                           "again in a few minutes, or use your own models with `quorus agent add`.")
-            return
+            raise SystemExit(1)  # scripts and CI must see the demo didn't run
         builder, reviewer = (BUILDER, REVIEWER) if models else (
             f"demo-{cast[0][0]}", f"demo-review-{cast[1][0]}")
         if not models:

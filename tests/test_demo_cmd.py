@@ -240,3 +240,24 @@ def test_closing_hint_offers_only_tested_wakes():
     src = (Path(__file__).resolve().parents[1] / "packages/cli/quorus_cli/demo_cmd.py").read_text()
     assert "quorus agent add claude|codex|opencode --room general" in src
     assert "claude|codex|gemini|opencode" not in src
+
+
+def test_no_usable_model_exits_nonzero(monkeypatch, tmp_path) -> None:
+    """Free models busy and no logged-in Claude Code or Codex: the demo didn't run, so
+    it must not exit 0 (stranger-path test of 0.7.1, 2026-10-24)."""
+    import types
+
+    import pytest
+
+    monkeypatch.setattr(demo_cmd, "_opencode_ok", lambda: None)
+    monkeypatch.setattr(demo_cmd, "pick_models", lambda *a, **k: [])
+    monkeypatch.setattr(demo_cmd, "fallback_cast", lambda *a, **k: [])
+    monkeypatch.setattr(demo_cmd.tempfile, "mkdtemp", lambda prefix="": str(tmp_path / "demo"))
+    said = []
+    console = types.SimpleNamespace(print=lambda *a, **k: said.append(" ".join(map(str, a))))
+    args = types.SimpleNamespace(model=None, timeout=1, keep=False)
+    with pytest.raises(SystemExit) as exc:
+        demo_cmd.cmd_demo(args, console)
+    assert exc.value.code == 1
+    assert any("all busy" in line for line in said)
+    assert not (tmp_path / "demo").exists()  # the throwaway folder is still removed

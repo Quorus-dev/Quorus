@@ -167,6 +167,18 @@ def _credentials(cfg: dict[str, Any], name: str, harness: str) -> tuple[str, boo
     raise SystemExit("agent: not configured — run `quorus init` or `quorus join` first")
 
 
+def _on_owned_address(cfg: dict[str, Any]) -> dict[str, Any]:
+    """A `localhost` profile on this machine's own relay that holds only one loopback
+    (IPv6 off, ::1 taken): the owner's agents use the address the relay did bind, so
+    they keep the owner's trust there, rather than being refused as a teammate's
+    agents (0.7.1 stranger path)."""
+    from quorus.runtime import own_relays
+
+    url = cfg.get("relay_url") or ""
+    alias = own_relays.owned_alias(url)
+    return cfg if alias == url else {**cfg, "relay_url": alias}
+
+
 def _on_teammates_relay(cfg: dict[str, Any]) -> bool:
     """This profile signs in with a participant key to a relay this machine
     didn't start. The key alone no longer says so: since H4 the relay's own
@@ -476,7 +488,7 @@ def cmd_agent(args: Any, console: Any) -> None:
 
 
 def _add(args: Any, console: Any) -> None:
-    cfg = load_config()
+    cfg = _on_owned_address(load_config())
     me = (cfg.get("instance_name") or "").strip()
     if not me or me == "default":
         raise SystemExit("agent: set your name first — `quorus init <your-name>`")

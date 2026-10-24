@@ -5,6 +5,27 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-10-24
+
+### Fixed
+
+- A new user can add agents again. On a fresh install, `quorus agent add` (and the first-run
+  offer to add opencode) failed with "only an invited person's own key can add agents": the
+  profile points at `http://localhost:8080`, but the relay `quorus` starts bound 127.0.0.1
+  only, so the owner's own relay read as a teammate's. That relay now binds both 127.0.0.1
+  and ::1. Where it can only bind 127.0.0.1 (IPv6 off, or another program holds ::1 on that
+  port), the wizard saves `http://127.0.0.1:8080` and `agent add` points your agents there.
+  `localhost` is still trusted only when the relay holds both loopbacks, so your relay
+  secret never goes to another program listening on ::1.
+  Upgrading: a relay that 0.7.1 started keeps its old 127.0.0.1-only bind until it
+  restarts. `agent add` works with it anyway, using 127.0.0.1. To move it to the new bind,
+  run `quorus relay --replace` once: it stops the background relay and starts the new one
+  in that terminal.
+- `quorus demo` exits 1 when no model can run (opencode's free models busy and no signed-in
+  Claude Code or Codex), instead of 0.
+- A relay without a database answers 401 on `/v1/auth/token` instead of logging a 500 with a
+  traceback on every token exchange.
+
 ## [0.7.1] — 2026-10-22
 
 ### Fixed

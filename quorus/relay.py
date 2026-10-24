@@ -608,7 +608,7 @@ app = FastAPI(
         "Any agent that speaks HTTP can join rooms, send messages, "
         "and coordinate work through this API."
     ),
-    version="0.7.1",
+    version="0.7.2",
     lifespan=lifespan,
 )
 
@@ -952,9 +952,17 @@ def main() -> None:
     # restart of the relay hung (found 2026-10-08). Cap it.
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port,
                                            timeout_graceful_shutdown=5))
+    # A local-only relay also takes ::1, so `localhost` profiles reach it alone and
+    # its owner is trusted there (quorus/runtime/loopback.py).
+    sockets = None
+    if host == "127.0.0.1":
+        from quorus.runtime.loopback import loopback_sockets
+
+        sockets = loopback_sockets(port)
 
     async def serve() -> None:
-        task = asyncio.ensure_future(server.serve())
+        task = asyncio.ensure_future(
+            server.serve(sockets=sockets) if sockets else server.serve())
         while not server.started and not task.done():
             await asyncio.sleep(0.05)
         if server.started:
