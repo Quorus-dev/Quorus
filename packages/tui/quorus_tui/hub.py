@@ -4130,12 +4130,6 @@ def _run_session(
         except Exception as exc:  # never block the hub on the offer
             console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
 
-    if announce_ready and rooms:
-        landing = profile.get("room") or "general"
-        console.print(f"  You're [agent]@{agent_name}[/] in [room]#{landing}[/]. "
-                      "Type a message and press Enter.")
-        time.sleep(0.15)
-
     if state is None:
         state = HubState()
     state.set_rooms(rooms)
@@ -4146,6 +4140,12 @@ def _run_session(
         # they type reaches it (new-user pass 1, F1).
         if announce_ready:
             _open_room(state, relay_url, secret, agent_name, profile.get("room") or "general")
+            # Name the room actually opened: with no #general, _open_room falls
+            # back to the first room (Codex on 33e2466b).
+            landing = (state.get_selected_room() or {}).get("name") or ""
+            console.print(f"  You're [agent]@{agent_name}[/] in [room]#{landing}[/]. "
+                          "Type a message and press Enter.")
+            time.sleep(0.15)
     else:
         state.set_connected(False, "No rooms yet")
     state.away_rows = _away_rows(relay_url, secret, rooms, chat_identity or agent_name)

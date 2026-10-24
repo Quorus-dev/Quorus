@@ -30,7 +30,7 @@ def tmp_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _run(monkeypatch, announce: bool):
+def _run(monkeypatch, announce: bool, rooms=None):
     """Run `_run_session` far enough to reach the announce line, then exit."""
     from quorus_tui.hub import HubState, _run_session
 
@@ -39,7 +39,7 @@ def _run(monkeypatch, announce: bool):
     state = HubState()
     state.request_workspace_switch("personal")  # exit on the first tick
     with patch("quorus_tui.hub._get_auth_token", return_value="fake-jwt"), \
-         patch("quorus_tui.hub._fetch_rooms", return_value=list(ROOMS)), \
+         patch("quorus_tui.hub._fetch_rooms", return_value=list(rooms or ROOMS)), \
          patch("quorus_tui.hub._away_rows", return_value=[]), \
          patch("quorus_tui.hub._poll_loop"), \
          patch("quorus_tui.hub._sse_loop"), \
@@ -83,3 +83,14 @@ def test_a_returning_user_gets_no_first_run_banner(
 ) -> None:
     _run(monkeypatch, announce=False)
     assert "Type a message and press Enter" not in capsys.readouterr().out
+
+
+def test_first_run_names_the_room_it_opened(
+    tmp_config_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys,
+) -> None:
+    """Codex on 33e2466b: with no #general the session opens the first room, so the
+    ready line must name that room, not the #general it asked for."""
+    _run(monkeypatch, announce=True, rooms=[{"name": "dev", "members": ["alice"]}])
+    out = capsys.readouterr().out
+    assert "You're @alice in #dev. Type a message and press Enter." in out
+    assert "#general" not in out
