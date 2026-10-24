@@ -961,7 +961,8 @@ def main() -> None:
         sockets = loopback_sockets(port)
 
     async def serve() -> None:
-        task = asyncio.ensure_future(server.serve(sockets=sockets))
+        task = asyncio.ensure_future(
+            server.serve(sockets=sockets) if sockets else server.serve())
         while not server.started and not task.done():
             await asyncio.sleep(0.05)
         if server.started:

@@ -647,9 +647,12 @@ def test_main_runs_uvicorn(monkeypatch):
         def __init__(self, config):
             self.config = config
 
-        async def serve(self):
-            return None
+        async def serve(self, sockets=None):
+            served.append([s.getsockname()[0] for s in sockets or []])
+            for s in sockets or []:
+                s.close()
 
+    served = []
     monkeypatch.setenv("PORT", "9090")
     monkeypatch.delenv("HOST", raising=False)
     monkeypatch.setitem(sys.modules, "uvicorn",
@@ -665,6 +668,9 @@ def test_main_runs_uvicorn(monkeypatch):
     monkeypatch.setenv("HOST", "127.0.0.1")
     main()
     assert calls[0][1] == "127.0.0.1"  # laptop relay stays off the LAN
+    # ...and takes ::1 too where it can, so `localhost` reaches only it.
+    assert served[0] == [] and served[1][0] == "127.0.0.1" and set(served[1]) <= {
+        "127.0.0.1", "::1"}
 
 
 async def test_webhook_called_on_message(client: AsyncClient, auth_headers: dict):

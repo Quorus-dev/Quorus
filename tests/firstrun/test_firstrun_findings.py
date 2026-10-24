@@ -112,7 +112,9 @@ def test_the_first_run_starts_one_relay_on_its_own_url(session) -> None:
     """Found building loop C: the wizard set its relay URL but started the relay
     on the hard-coded default (8080); the hub then started a second one."""
     log = (session.home / ".quorus" / "relay.log").read_text()
-    assert log.count("Uvicorn running on") == 1
+    # Our own banner, once per relay process: uvicorn prints no "running on" line
+    # for the pre-bound loopback sockets (quorus/runtime/loopback.py).
+    assert log.count("[quorus-relay] listening on") == 1
     assert f"127.0.0.1:{session.port}" in log
 
 
