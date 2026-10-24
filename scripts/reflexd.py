@@ -1829,9 +1829,13 @@ class HeadlessAdapter:
             self._free_tier_pause()
         if self.limited_until > time.time():
             # Every free model is slow or unavailable, or the last one hit the
-            # shared limit: cool down on the original model, and drop a reading
-            # that was about a rotated-to model.
-            self.model, self.limit = first, None
+            # shared limit: cool down on the original model. A slow-start or
+            # no-route reading was about a rotated-to model and is dropped; the
+            # shared limit's reading is about the whole free tier, so it stays
+            # (codex, review of a1eff750).
+            self.model = first
+            if not _free_tier_limit(reply):
+                self.limit = None
             if first == self._home_model:
                 self._rotated_at = 0.0
         return reply

@@ -212,6 +212,31 @@ def test_a_free_tier_limit_is_a_free_busy_pause_not_quota() -> None:
     assert adapter.current_limit() is None  # nothing for the board to call "out of quota"
 
 
+def test_a_limit_after_a_slow_model_keeps_the_shared_readings_reset() -> None:
+    """Codex on a1eff750: slow on model 1 rotates to model 2; model 2's typed limit names
+    a 6 h reset. Restoring model 1 must keep that reading: it is about the whole free
+    tier, not the model it arrived on."""
+    free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
+    adapter = reflexd.HeadlessAdapter()
+    adapter.model = free[0]
+    calls: list[str | None] = []
+
+    async def once(*_a: Any, **_k: Any) -> str:
+        calls.append(adapter.model)
+        if adapter.model == free[0]:
+            return reflexd.SlowStart("opencode", 60.0)
+        adapter.note_limit("Free usage limit reached. retry in 6h")
+        return reflexd._failover.VendorFailure("⚠ opencode: usage limit reached.", "quota")
+
+    adapter._opencode_once = once  # type: ignore[method-assign]
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert calls == [free[0], free[1]] and adapter.model == free[0]
+    assert adapter.pause_reason == "free_busy"
+    assert adapter.limit is not None and adapter.limit.resets_at is not None
+    assert adapter.limited_until > time.time() + 5 * 3600
+    assert adapter.current_limit() is not None
+
+
 def test_the_free_busy_pause_line_never_says_quota_and_promises_no_retry() -> None:
     d = _daemon()
     d.adapter._free_tier_pause()
