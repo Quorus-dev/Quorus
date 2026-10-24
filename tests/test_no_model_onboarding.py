@@ -22,12 +22,13 @@ def test_membership_and_notices_are_not_answers():
                        ("NO_REPLY", "chat"), ("done", "status")]:
         assert "waiting" in status(members, [msg("alice-codex", body, kind)], connected=True)
     answer = msg("alice-codex", "The test fails because add subtracts.")
-    assert "Agent answered" in status(members, [answer], connected=True)
-    assert "waiting" in status(members, [answer, msg("alice", "fix it")], connected=True)
-    assert "waiting" in status(members, [answer, msg("alice-codex", "⚠ unavailable", "status")],
-                               connected=True)
-    assert "disconnected" in status(members, [answer], connected=False)
-    assert "No agents connected" in status(["alice"], [answer], connected=True)
+    assert status(members, [answer], connected=True) is None
+    assert status(members, [answer, msg("alice", "fix it")], connected=True) is None
+    assert status(members, [answer, msg("alice-codex", "⚠ unavailable", "status")],
+                  connected=True) is None
+    assert status(members, [answer], connected=False) is None
+    assert status(["alice"], [answer], connected=True) is None
+    assert "disconnected" in status(members, [], connected=False)
 
 
 def test_setup_can_be_canceled_and_retried_without_losing_the_room(monkeypatch):
@@ -59,23 +60,39 @@ def test_setup_can_be_canceled_and_retried_without_losing_the_room(monkeypatch):
     assert state.messages[0]["content"] == "hello"
 
 
-@pytest.mark.parametrize("first_run", [True, False])
-def test_room_entry_never_discovers_or_starts_agents(monkeypatch, tmp_path, first_run):
+@pytest.mark.parametrize("persona", ["returning", "owner", "invitee"])
+@pytest.mark.parametrize("outcome", ["decline", "interrupt"])
+def test_initial_offer_and_returning_room_setup(monkeypatch, tmp_path, persona, outcome):
     from quorus_cli import quickstart
 
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setattr(quickstart, "offer", lambda *a, **k: pytest.fail("implicit setup"))
+    offers = []
+
+    def offer(console, room, **kw):
+        offers.append((room, kw))
+        if outcome == "interrupt":
+            raise KeyboardInterrupt
+        return []
+
+    monkeypatch.setattr(quickstart, "offer", offer)
+    monkeypatch.setattr(hub, "_invited_elsewhere", lambda *a: persona == "invitee")
     monkeypatch.setattr(quickstart, "detect", lambda *a, **k: pytest.fail("implicit discovery"))
     state = hub.HubState()
     state.request_workspace_switch("personal")
     profile = {"relay_url": "http://127.0.0.1:8080", "instance_name": "alice",
                "chat_identity": "alice", "relay_secret": "test", "room": "general"}
+    room = {"name": "general"}
+    fetches = [[], [room]] if persona == "owner" else [[room]]
     with patch.object(hub, "_get_auth_token", return_value="jwt"), \
-         patch.object(hub, "_fetch_rooms", return_value=[{"name": "general"}]), \
+         patch.object(hub, "_create_room", return_value=("ok", None)), \
+         patch.object(hub, "_fetch_rooms", side_effect=fetches), \
          patch.object(hub, "_away_rows", return_value=[]), \
          patch.object(hub, "_poll_loop"), patch.object(hub, "_sse_loop"), \
          patch.object(hub, "_join_room"), patch.object(hub, "_load_history_into"):
-        hub._run_session(profile, state=state, announce_ready=first_run)
+        hub._run_session(profile, state=state, announce_ready=persona != "returning")
+    assert offers == ([] if persona == "returning" else
+                      [("general", {"invitee": True} if persona == "invitee" else {})])
+    assert state.rooms == [room]
     assert "/agents" in hub.SLASH_COMMANDS
 
 
@@ -103,3 +120,24 @@ def test_setup_cancellation_keeps_the_composer_usable(monkeypatch):
     assert len(sent) == 1 and sent[0][-2:] == ("alice", "hello")
     assert state.get_selected_room()["name"] == "general"
     assert "No agents connected" in out.getvalue()
+
+
+def test_setup_failure_explains_the_cause(monkeypatch):
+    from quorus_cli import quickstart
+
+    monkeypatch.setattr("quorus.config.load_config", lambda: {})
+    monkeypatch.setattr(hub, "_invited_elsewhere", lambda *a: False)
+
+    def fail(*a, **kw):
+        raise RuntimeError("CLI [unavailable]")
+
+    monkeypatch.setattr(quickstart, "offer", fail)
+    state = hub.HubState()
+    state.set_rooms([{"name": "general"}])
+    state.select_by_name("general")
+    out = io.StringIO()
+    onboarding.setup_agents("", state, "http://relay.test", "jwt", "alice",
+                            Console(file=out, width=160))
+    assert "CLI [unavailable]" in out.getvalue()
+    assert state.get_selected_room()["name"] == "general"
+    assert "/agents to retry" in state.get_status_bar()

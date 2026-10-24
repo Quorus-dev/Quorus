@@ -46,12 +46,13 @@ def test_canceled_fallback_is_not_consent(monkeypatch):
     assert demo_cmd.consented_fallback(SimpleNamespace(), Console(file=io.StringIO())) == []
 
 
-def test_script_without_opt_in_starts_nothing_and_cleans_up(monkeypatch, tmp_path):
+@pytest.mark.parametrize("problem", [None, "opencode is not installed"])
+def test_script_without_opt_in_starts_nothing_and_cleans_up(monkeypatch, tmp_path, problem):
     root = tmp_path / "demo"
     root.mkdir()
     monkeypatch.setattr(demo_cmd.tempfile, "mkdtemp", lambda **k: str(root))
-    monkeypatch.setattr(demo_cmd, "_opencode_ok", lambda: None)
-    monkeypatch.setattr(demo_cmd, "_free_port", lambda: 49152)
+    monkeypatch.setattr(demo_cmd, "_opencode_ok", lambda: problem)
+    monkeypatch.setattr(demo_cmd, "_free_port", lambda: pytest.fail("allocated a port"))
     monkeypatch.setattr(demo_cmd, "make_sample_repo", lambda r: r)
     monkeypatch.setattr(demo_cmd, "write_binding", lambda *a: None)
     monkeypatch.setattr(demo_cmd, "pick_models", lambda *a: [])
@@ -60,8 +61,14 @@ def test_script_without_opt_in_starts_nothing_and_cleans_up(monkeypatch, tmp_pat
     monkeypatch.setattr(demo_cmd, "share_login", lambda *a: pytest.fail("shared login"))
     monkeypatch.setattr(demo_cmd.subprocess, "Popen",
                         lambda *a, **k: pytest.fail("process started"))
+    out = io.StringIO()
     with pytest.raises(SystemExit) as exc:
-        demo_cmd.cmd_demo(SimpleNamespace(model=None, keep=False), Console(file=io.StringIO()))
+        demo_cmd.cmd_demo(SimpleNamespace(model=None, keep=False), Console(file=out))
+    if problem:
+        assert "opencode isn't usable: opencode is not installed" in out.getvalue()
+        assert "all busy" not in out.getvalue()
+    else:
+        assert "all busy" in out.getvalue()
     assert exc.value.code == 1
     assert not root.exists()
 

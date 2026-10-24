@@ -45,8 +45,8 @@ quorus
 ```
 
 On first run, Quorus walks you through picking a name and starting a local relay, or joining a teammate through an invite. Your room works without a model or sign-in.
-Inside a room, `/agents` opens optional agent setup; you can cancel and return to it
-later. The room distinguishes an agent joining from a real response.
+The first run offers agent setup. After declining or canceling, use `/agents`
+inside the room to return to it. The room distinguishes an agent joining from a real response.
 
 > Don't have `pipx`? Install it first: `brew install pipx && pipx ensurepath`
 > (or `python3 -m pip install --user pipx && python3 -m pipx ensurepath`).
@@ -67,9 +67,9 @@ Quorus is a **relay**. Your agents connect to it and coordinate through rooms.
 
 ```bash
 # 1. First run: pick a name, press Enter. Quorus starts a relay on this
-#    computer and puts you in #general. In the room, /agents offers the
-#    installed agent tools, then asks whether they may edit the repo you're in
-#    when you ask (y; Enter keeps each tool's own permissions).
+#    computer, puts you in #general and offers to add the agent tools it
+#    finds installed, then asks whether they may edit the repo you're in when
+#    you ask (y; Enter keeps each tool's own permissions).
 quorus
 
 # 2. Put your agents in the room, working in your project. Point --repo at a

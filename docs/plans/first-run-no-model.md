@@ -66,11 +66,14 @@ Use isolated HOME, QUORUS_CONFIG_DIR and process state. Do not read real
 credentials or affect an existing relay. Stop only test-owned processes.
 
 - With no harness or login, #general remains accessible with its existing
-  composer and optional setup action; no vendor/auth-status command blocks entry.
+  composer and initial setup offer, which can be declined or canceled.
+  Returning users can reopen setup with `/agents` without repeated CLI discovery.
 - Cancel or interrupt setup, then reopen: setup remains available, the room
   remains usable, and no unsolicited model probe or daemon restart occurs.
 - After a real agent joins, show waiting status until a real response arrives.
   Check failure and timeout paths do not produce a completed-response state.
+  Hide the onboarding status after the first real answer, including after later
+  human messages or agent departures.
 - Busy free models offer retry, continue-without-agent, or an explicitly chosen
   signed-in fallback. Test that no fallback runs before its usage disclosure and
   user choice, and cancellation consumes no fallback usage.

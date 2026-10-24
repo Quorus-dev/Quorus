@@ -2,7 +2,7 @@
 stranger get a first real result, and how many commands does it take?
 
 Each persona is someone with one agent CLI installed, standing in their own repo.
-They run plain `quorus`, choose `/agents` (y to edits), run the "Try it" line
+They run plain `quorus`, answer the wizard (y to edits), run the "Try it" line
 the wizard printed, then ask for a fix. The result counts only when it's really
 there: a commit on main, whose checkout passes the repo's own test, made with the
 write access the daemon granted (codex, review of the bet). A printed next step
@@ -36,7 +36,7 @@ pytestmark = pytest.mark.firstrun
 _SHA = re.compile(r"\b[0-9a-f]{7,40}\b")
 _TRY_IT = re.compile(r'Try it: (quorus say \S+ "[^"]+")')
 _RUN = "import sys; sys.argv = ['quorus'] + sys.argv[1:]; from quorus_cli.cli import main; main()"
-MAX_COMMANDS = 5  # includes explicit /agents; room entry no longer starts setup
+MAX_COMMANDS = 4  # bet 1's target, counting `pipx install quorus-ai`
 
 
 def _quorus(s: PtySession, bin_dir: Path | None, command: str) -> subprocess.CompletedProcess:
@@ -86,14 +86,11 @@ def test_one_agent_cli_gets_a_tested_fix_on_main(tmp_path_factory, tool):
         s.type(OWNER + ENTER)
         s.expect(r"Invite, or Enter to run it here")
         s.type(ENTER)
-        s.expect(r"You're in as @" + OWNER, timeout=90)
-        s.type("/agents" + ENTER)
-        commands.append("/agents")
         s.expect(r"Add them to #general", timeout=45)
         s.type("y" + ENTER)
         s.expect(r"\[y/n\] \(n\)", timeout=20)
         s.type("y" + ENTER)
-        screen = s.expect(r"Say something in", timeout=90)
+        screen = s.expect(r"You're in as @" + OWNER, timeout=90)
         s.settle(quiet=1.0, timeout=10)
         s.secret = relay_secret(home)
 
@@ -153,16 +150,13 @@ def _invitee(base: Path, add: str) -> tuple[PtySession, PtySession, Path, Path, 
         bob.type(code.group(1) + ENTER)
         bob.expect(r"relay address", timeout=20)
         bob.type(alice.relay_url + ENTER)
-        bob.expect(r"You're in as @bob", timeout=90)
-        bob.type("/agents" + ENTER)
         bob.expect(r"Add them to #general", timeout=60)
         bob.type(add + ENTER)
         if add == "y":
             screen = bob.expect(r"\[y/n\] \(n\)", timeout=30)
             assert "teammate's relay" in screen and "your own key" in screen, screen[-1500:]
             bob.type("y" + ENTER)
-        bob.expect(r"Say something in" if add == "y" else r"Later: quorus agent add",
-                   timeout=90)
+        bob.expect(r"You're in as @bob", timeout=90)
         bob.settle(quiet=1.0, timeout=10)
         return alice, bob, repo, bin_dir, plain(bob.text())
     except BaseException:
@@ -186,7 +180,7 @@ def test_an_invitee_adds_their_agent_from_the_wizard(tmp_path_factory):
         alice, bob, repo, _bin, _screen = _invitee(tmp_path_factory.mktemp("invitee-wiz"), "y")
         bob.secret = alice.secret
         ask = "@bob-codex fix the bug in calc.py"
-        commands = ["pipx install quorus-ai", "quorus", "/agents", ask]
+        commands = ["pipx install quorus-ai", "quorus", ask]
         bob.type(ask + ENTER)
         _fix_lands(alice, "bob-codex", bob.home, repo)
         assert calls(bob.home)[-1]["can_write"] is True, calls(bob.home)
@@ -217,7 +211,7 @@ def test_an_invitee_gets_a_tested_fix_in_their_own_repo(tmp_path_factory):
     try:
         alice, bob, repo, bin_dir, _screen = _invitee(tmp_path_factory.mktemp("invitee"), "n")
         add = f"quorus agent add codex --room general --repo {repo} --mode autonomous"
-        commands = ["pipx install quorus-ai", "quorus", "/agents", add]
+        commands = ["pipx install quorus-ai", "quorus", add]
         done = _quorus(bob, bin_dir, add)
         assert done.returncode == 0, (done.stdout, done.stderr)
 

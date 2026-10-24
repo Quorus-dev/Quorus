@@ -295,8 +295,12 @@ def cmd_demo(args: Any, console: Any) -> None:
         cast = [("opencode", m) for m in models] or (
             [] if args.model else consented_fallback(args, console))
         if not cast:
-            console.print("[warning]![/] opencode's free models are all busy right now. Try "
-                          "again in a few minutes, or use your own models with `quorus agent add`.")
+            if problem:
+                console.print(f"opencode isn't usable: {problem}", markup=False)
+            else:
+                console.print("[warning]![/] opencode's free models are all busy right now. Try "
+                              "again in a few minutes, or use your own models with "
+                              "`quorus agent add`.")
             raise SystemExit(1)  # scripts and CI must see the demo didn't run
         secret, port = secrets.token_hex(16), _free_port()
         url = f"http://127.0.0.1:{port}"

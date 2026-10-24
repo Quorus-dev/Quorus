@@ -4,34 +4,29 @@ from __future__ import annotations
 from .chat_widgets import is_human_sender
 
 
-def room_status(members: list[str], messages: list[dict], *, connected: bool) -> str:
+def room_status(members: list[str], messages: list[dict], *, connected: bool) -> str | None:
     """Membership is not proof of a response; notices never complete this step.
 
     Use the same agent-name convention as the chat surface. The status describes
     the loaded history, not a guarantee that an agent process is running.
     """
-    if not connected:
-        return "Room disconnected — reconnect to check agent status."
-    agents = {name for name in members if not is_human_sender(name)}
-    if not agents:
-        return "Room available · No agents connected · /agents to set up; /share for teammates"
-    for msg in reversed(messages):
-        kind = msg.get("message_type", "chat")
+    for msg in messages:
         body = (msg.get("content") or "").strip()
-        if not body:
-            continue
         sender = msg.get("from_name") or ""
-        if sender not in agents:
-            if is_human_sender(sender) and kind == "chat":
-                break  # a new human message has not received an answer yet
+        if (not body or not sender or is_human_sender(sender)
+                or msg.get("message_type", "chat") != "chat"):
             continue
         if (body.startswith(("⚠", "❌", "🔐", "[reflexd]", "(quorus)"))
                 or body.lower().startswith(("plan:", "no_reply"))
                 or "is out of quota" in body.lower()):
-            break
-        if kind != "chat":
             continue
-        return "Agent answered · /agents for setup · /share for teammates"
+        # Onboarding is complete even if a later human message is unanswered,
+        # or the agent that answered has since left the room.
+        return None
+    if not connected:
+        return "Room disconnected — reconnect to check agent status."
+    if not any(not is_human_sender(name) for name in members):
+        return "Room available · No agents connected · /agents to set up; /share for teammates"
     return "Agent joined; waiting for a response · /agents to retry setup"
 
 
@@ -58,7 +53,8 @@ def setup_agents(arg, state, relay_url, secret, agent_name, console):
     except (KeyboardInterrupt, EOFError):
         console.print()
         state.set_status_bar("Setup canceled. Your room is still available; /agents to retry.")
-    except Exception:
-        console.print("Agent setup failed. Try `quorus doctor` for setup checks.")
+    except Exception as exc:
+        console.print(f"Agent setup failed: {exc}. Try `quorus doctor` for setup checks.",
+                      markup=False)
         state.set_status_bar("Setup failed. /agents to retry; the room remains available.")
     return True
