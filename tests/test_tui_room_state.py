@@ -125,3 +125,36 @@ def test_presence_loop_keeps_rows_for_the_status_row(monkeypatch):
     monkeypatch.setattr(stop, "wait", lambda _s: stop.set())
     working.presence_loop("http://r", {}, tracker, lambda: ROOM, lambda _n: None, stop)
     assert tracker.presence() == rows
+
+
+def test_failed_presence_polls_drop_live_claims_until_one_succeeds(monkeypatch):
+    """Codex on b5ffac6c: an online reading followed by failed /presence polls kept
+    saying "is here" while the room stream stayed connected."""
+    import threading
+
+    from quorus_tui import hub, working
+    polls = iter([[online()], None, RuntimeError("boom"), [online(status="busy")]])
+
+    def fetch(relay, headers):
+        result = next(polls)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(working, "fetch_presence", fetch)
+    stop, tracker = threading.Event(), working.WorkingTracker()
+    holder = _State(None)
+    holder.working = tracker
+    rows = []
+
+    def after_poll(_s):
+        row = hub._room_state_row(holder, True, MEMBERS, [msg("sam", "fix it")], ROOM)
+        rows.append(None if row is None else row.plain.strip())
+        if len(rows) == 4:
+            stop.set()
+
+    monkeypatch.setattr(stop, "wait", after_poll)
+    working.presence_loop("http://r", {}, tracker, lambda: ROOM, lambda _n: None, stop)
+    assert rows[0].startswith("@sam-opencode hasn't picked this up")
+    assert rows[1] is None and rows[2] is None  # unknown presence: no live claim
+    assert rows[3].startswith("⋯ @sam-opencode working")

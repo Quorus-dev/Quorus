@@ -1923,9 +1923,10 @@ def _format_continuation_line(msg: dict, my_name: str) -> Text:
 
 def _room_state_row(state, connected: bool, members: list[str], messages: list[dict],
                     room: str) -> Text | None:
-    """The status row above the composer (tui-polish.md §3.3). Before the first
-    presence poll lands only states that need no presence are shown, and nothing
-    once answered: the composer hint below already shows the keys."""
+    """The status row above the composer (tui-polish.md §3.3). While presence is
+    unknown (before the first poll, or after a failed one) only states that need
+    no presence are shown, and nothing once answered: the composer hint below
+    already shows the keys."""
     from .onboarding import room_state
 
     presence = state.working.presence()
