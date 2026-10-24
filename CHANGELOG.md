@@ -15,8 +15,9 @@ All notable changes to Quorus are documented here. This project follows
   response; answered, when the row disappears. An agent counts as ready only when the
   relay's presence says it is online, not because it is a member. Notices, status posts,
   plans and `NO_REPLY` are never an answer, and an unanswered message from you brings
-  "waiting" back. Until the first presence poll lands the row only ever says "disconnected"
-  or "no agents", and a failed poll keeps the previous rows instead of claiming anything.
+  "waiting" back. While presence is unknown, before the first poll or after a failed one,
+  the row only ever says "disconnected" or "no agents": a failed poll drops the old rows,
+  so a stale "ready" is never shown as live.
 - A free-model agent whose free tier is limited now says so. When opencode's free tier
   refuses (a typed 429, shared across all of its free models), the agent posts one notice to
   the room: the limit is per connection or account, no free model can answer right now,
