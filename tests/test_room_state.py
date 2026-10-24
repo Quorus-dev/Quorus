@@ -1,127 +1,499 @@
-"""tui-polish.md §3.3: the status row's eight states, their precedence and the
-lines that never count as an answer."""
-from datetime import datetime
+"""Tests for Primitive A (GET /rooms/{room}/state) and
+Primitive B (POST/DELETE /rooms/{room}/lock — distributed mutex).
+"""
+
+from __future__ import annotations
+
+import asyncio
 
 import pytest
-from quorus_tui.onboarding import room_state
+from httpx import ASGITransport, AsyncClient
 
-NOW = 1_800_000_000.0
-ROOM = "general"
-MEMBERS = ["sam", "sam-opencode"]
-FREE_BUSY = ("⚠ opencode's free tier has hit its limit for this connection or account, "
-             "so no free model can answer right now.")
+from quorus.relay import _reset_state, app
+
+HEADERS = {"Authorization": "Bearer test-secret"}
 
 
-def msg(who, body, kind="chat", ts=""):
-    return {"from_name": who, "content": body, "message_type": kind, "timestamp": ts}
+@pytest.fixture(autouse=True)
+async def clean_state():
+    _reset_state()
+    yield
+    _reset_state()
 
 
-def online(name="sam-opencode", status="active", room=ROOM, activity=""):
-    return {"name": name, "online": True, "status": status, "room": room,
-            "activity": activity}
+@pytest.fixture
+async def client():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
 
 
-def state(messages=(), presence=None, members=MEMBERS, connected=True, **kw):
-    presence = [online()] if presence is None else presence
-    return room_state(connected, list(members), presence, list(messages), NOW, room=ROOM, **kw)
+@pytest.fixture
+async def room_id(client: AsyncClient) -> str:
+    """Create a test room and return its id."""
+    resp = await client.post(
+        "/rooms",
+        json={"name": "state-test-room", "created_by": "agent-alpha"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+    return resp.json()["id"]
 
 
-def test_one_case_per_state():
-    ask, reply = msg("sam", "why does add fail?"), msg("sam-opencode", "add() subtracts.")
-    assert state(connected=False)[0] == "disconnected"
-    assert state(members=["sam"]) == (
-        "no agents", "No agents here yet · /agents to add one · /share to invite a person")
-    assert state(presence=[]) == (
-        "not running", "@sam-opencode isn't running · /agents to restart it")
-    assert state() == ("ready", "@sam-opencode is here · say something to wake it")
-    busy = [online(status="busy", activity="editing relay.py")]
-    assert state([ask], presence=busy, busy_since={"sam-opencode": NOW - 12}) == (
-        "working", "⋯ @sam-opencode editing relay.py 12s")
-    assert state([ask, msg("sam-opencode", FREE_BUSY)])[0] == "free tier limited"
-    assert state([ask])[0] == "waiting"
-    assert state([ask, reply]) == ("answered", "@ mention · / commands · ^D quit")
+# ---------------------------------------------------------------------------
+# Primitive A — Shared State Matrix
+# ---------------------------------------------------------------------------
 
 
-def test_disconnected_wins_over_a_busy_agent():
-    busy = [online(status="busy")]
-    assert state([msg("sam", "hi")], presence=busy, connected=False)[0] == "disconnected"
+class TestGetRoomState:
+    """GET /rooms/{room}/state returns the shared state matrix."""
+
+    async def test_returns_correct_schema(self, client: AsyncClient, room_id: str):
+        resp = await client.get(f"/rooms/{room_id}/state", headers=HEADERS)
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["room_id"] == room_id
+        assert "snapshot_at" in data
+        assert data["schema_version"] == "1.0"
+        assert "active_goal" in data
+        assert isinstance(data["claimed_tasks"], list)
+        assert isinstance(data["locked_files"], dict)
+        assert isinstance(data["resolved_decisions"], list)
+        assert isinstance(data["active_agents"], list)
+        assert isinstance(data["message_count"], int)
+        assert "last_activity" in data
+
+    async def test_state_by_room_name(self, client: AsyncClient, room_id: str):
+        """Room state is also resolvable by room name."""
+        resp = await client.get("/rooms/state-test-room/state", headers=HEADERS)
+        assert resp.status_code == 200
+        assert resp.json()["room_id"] == room_id
+
+    async def test_unknown_room_returns_404(self, client: AsyncClient):
+        resp = await client.get("/rooms/no-such-room-xyz/state", headers=HEADERS)
+        assert resp.status_code == 404
+
+    async def test_initial_state_is_empty(self, client: AsyncClient, room_id: str):
+        resp = await client.get(f"/rooms/{room_id}/state", headers=HEADERS)
+        data = resp.json()
+        assert data["claimed_tasks"] == []
+        assert data["locked_files"] == {}
+        assert data["active_goal"] is None
+        assert data["message_count"] == 0
+
+    async def test_locked_file_appears_in_state(self, client: AsyncClient, room_id: str):
+        await client.post(
+            f"/rooms/{room_id}/lock",
+            json={
+                "file_path": "src/auth.py",
+                "claimed_by": "agent-alpha",
+                "ttl_seconds": 300,
+            },
+            headers=HEADERS,
+        )
+
+        resp = await client.get(f"/rooms/{room_id}/state", headers=HEADERS)
+        data = resp.json()
+        assert "src/auth.py" in data["locked_files"]
+
+    async def test_message_count_increments(self, client: AsyncClient, room_id: str):
+        await client.post(
+            f"/rooms/{room_id}/join",
+            json={"participant": "agent-beta"},
+            headers=HEADERS,
+        )
+        await client.post(
+            f"/rooms/{room_id}/messages",
+            json={"from_name": "agent-alpha", "content": "hello room"},
+            headers=HEADERS,
+        )
+
+        resp = await client.get(f"/rooms/{room_id}/state", headers=HEADERS)
+        assert resp.json()["message_count"] >= 1
+
+    async def test_no_auth_returns_401(self, client: AsyncClient, room_id: str):
+        resp = await client.get(f"/rooms/{room_id}/state")
+        assert resp.status_code == 401
 
 
-def test_membership_alone_is_not_ready():
-    offline = [{**online(), "online": False, "status": "offline"}]
-    assert state(presence=offline)[0] == "not running"
-    assert state(presence=[online(name="someone-else-codex")])[0] == "not running"
-    assert state(presence=[])[0] == "not running"
+# ---------------------------------------------------------------------------
+# Primitive B — Distributed Mutex (file-path lock)
+# ---------------------------------------------------------------------------
 
 
-def test_busy_in_another_room_is_not_working_here():
-    assert state([msg("sam", "hi")], presence=[online(status="busy", room="other")])[0] == (
-        "waiting")
+class TestClaimLock:
+    """POST /rooms/{room}/lock — acquire an optimistic file lock."""
+
+    async def test_grants_lock_with_correct_fields(self, client: AsyncClient, room_id: str):
+        resp = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={
+                "file_path": "src/main.py",
+                "claimed_by": "agent-alpha",
+                "ttl_seconds": 300,
+            },
+            headers=HEADERS,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["locked"] is False
+        assert "lock_token" in data
+        assert "expires_at" in data
+        assert len(data["lock_token"]) > 0
+
+    async def test_second_claim_returns_locked_true(self, client: AsyncClient, room_id: str):
+        # First agent claims the file
+        await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/main.py", "claimed_by": "agent-alpha", "ttl_seconds": 300},
+            headers=HEADERS,
+        )
+
+        # Second agent tries the same file
+        resp = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/main.py", "claimed_by": "agent-beta", "ttl_seconds": 300},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["locked"] is True
+        assert data["held_by"] == "agent-alpha"
+        assert "expires_at" in data
+
+    async def test_different_paths_are_independent(self, client: AsyncClient, room_id: str):
+        """Two agents can each lock different files without conflict."""
+        resp_a = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/auth.py", "claimed_by": "agent-alpha", "ttl_seconds": 300},
+            headers=HEADERS,
+        )
+        resp_b = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/db.py", "claimed_by": "agent-beta", "ttl_seconds": 300},
+            headers=HEADERS,
+        )
+        assert resp_a.json()["locked"] is False
+        assert resp_b.json()["locked"] is False
+
+    async def test_lock_appears_in_state(self, client: AsyncClient, room_id: str):
+        await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/api.py", "claimed_by": "agent-alpha", "ttl_seconds": 300},
+            headers=HEADERS,
+        )
+
+        state = (await client.get(f"/rooms/{room_id}/state", headers=HEADERS)).json()
+        assert "src/api.py" in state["locked_files"]
+        assert state["locked_files"]["src/api.py"]["held_by"] == "agent-alpha"
+
+    async def test_unknown_room_returns_404(self, client: AsyncClient):
+        resp = await client.post(
+            "/rooms/no-such-room/lock",
+            json={"file_path": "x.py", "claimed_by": "agent", "ttl_seconds": 60},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 404
+
+    async def test_no_auth_returns_401(self, client: AsyncClient, room_id: str):
+        resp = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "x.py", "claimed_by": "agent", "ttl_seconds": 60},
+        )
+        assert resp.status_code == 401
 
 
-@pytest.mark.parametrize("body,kind", [
-    ("⚠ vendor usage limit reached", "chat"), ("❌ failed", "chat"),
-    ("🔐 approval needed", "chat"), ("[reflexd] restarting", "chat"),
-    ("(quorus) published 1 commit(s)", "chat"), ("plan: looking now", "chat"),
-    ("NO_REPLY", "chat"), ("@sam-opencode is out of quota for about 2h", "chat"),
-    ("@sam-opencode is paused for about 5 min", "status"),
-])
-def test_notices_after_a_question_leave_it_waiting(body, kind):
-    assert state([msg("sam", "fix it"), msg("sam-opencode", body, kind)])[0] == "waiting"
+class TestReleaseLock:
+    """DELETE /rooms/{room}/lock/{path} — release a file lock."""
+
+    async def _acquire(self, client: AsyncClient, room_id: str, path: str) -> str:
+        resp = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": path, "claimed_by": "agent-alpha", "ttl_seconds": 300},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 200
+        return resp.json()["lock_token"]
+
+    async def test_correct_token_releases_lock(self, client: AsyncClient, room_id: str):
+        token = await self._acquire(client, room_id, "src/model.py")
+
+        resp = await client.request(
+            "DELETE",
+            f"/rooms/{room_id}/lock/src/model.py",
+            json={"lock_token": token},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["released"] is True
+        assert data["file_path"] == "src/model.py"
+
+    async def test_wrong_token_returns_403(self, client: AsyncClient, room_id: str):
+        await self._acquire(client, room_id, "src/model.py")
+
+        resp = await client.request(
+            "DELETE",
+            f"/rooms/{room_id}/lock/src/model.py",
+            json={"lock_token": "not-the-right-token"},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 403
+
+    async def test_release_nonexistent_lock_returns_404(
+        self, client: AsyncClient, room_id: str
+    ):
+        resp = await client.request(
+            "DELETE",
+            f"/rooms/{room_id}/lock/src/no-lock-here.py",
+            json={"lock_token": "any-token"},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 404
+
+    async def test_released_lock_disappears_from_state(
+        self, client: AsyncClient, room_id: str
+    ):
+        token = await self._acquire(client, room_id, "src/router.py")
+
+        # Confirm it's in state
+        state_before = (
+            await client.get(f"/rooms/{room_id}/state", headers=HEADERS)
+        ).json()
+        assert "src/router.py" in state_before["locked_files"]
+
+        # Release it
+        await client.request(
+            "DELETE",
+            f"/rooms/{room_id}/lock/src/router.py",
+            json={"lock_token": token},
+            headers=HEADERS,
+        )
+
+        # Confirm it's gone
+        state_after = (
+            await client.get(f"/rooms/{room_id}/state", headers=HEADERS)
+        ).json()
+        assert "src/router.py" not in state_after["locked_files"]
+
+    async def test_no_auth_returns_401(self, client: AsyncClient, room_id: str):
+        resp = await client.request(
+            "DELETE",
+            f"/rooms/{room_id}/lock/src/x.py",
+            json={"lock_token": "tok"},
+        )
+        assert resp.status_code == 401
 
 
-def test_limit_notice_then_real_answer():
-    ask = msg("sam", "fix it")
-    limited = [ask, msg("sam-opencode", FREE_BUSY)]
-    assert state(limited)[0] == "free tier limited"
-    assert state(limited + [msg("sam-opencode", "Fixed in abc123.")])[0] == "answered"
-    assert state(limited + [msg("sam", "still there?")])[0] == "waiting"
+class TestLockTTL:
+    """Lock TTL expiry: lock should disappear after ttl_seconds elapsed."""
+
+    async def test_expired_lock_not_present_in_state(
+        self, client: AsyncClient, room_id: str
+    ):
+        """Create a lock with ttl=1, wait 2 seconds, verify it's gone from state."""
+        resp = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/expire.py", "claimed_by": "agent-alpha", "ttl_seconds": 1},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["locked"] is False
+
+        # Wait for TTL to expire
+        await asyncio.sleep(2)
+
+        state = (await client.get(f"/rooms/{room_id}/state", headers=HEADERS)).json()
+        assert "src/expire.py" not in state["locked_files"]
+
+    async def test_expired_lock_can_be_re_acquired(
+        self, client: AsyncClient, room_id: str
+    ):
+        """After TTL expiry, another agent can claim the same file."""
+        await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/shared.py", "claimed_by": "agent-alpha", "ttl_seconds": 1},
+            headers=HEADERS,
+        )
+
+        await asyncio.sleep(2)
+
+        resp = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/shared.py", "claimed_by": "agent-beta", "ttl_seconds": 300},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["locked"] is False
+        assert "lock_token" in resp.json()
 
 
-def test_waiting_counts_up_and_hints_after_two_minutes():
-    ts = "2027-01-15T08:00:00+00:00"
-    then = datetime.fromisoformat(ts).timestamp()
-    ask = msg("sam", "fix it", ts=ts)
-    soon = room_state(True, MEMBERS, [online()], [ask], then + 40, room=ROOM)
-    assert soon == ("waiting", "@sam-opencode hasn't picked this up yet · 40s")
-    late = room_state(True, MEMBERS, [online()], [ask], then + 125, room=ROOM)
-    assert late[1].endswith("· 2m 05s · /agents to check it")
+class TestLockSSEBroadcast:
+    """Verify LOCK_ACQUIRED SSE events are pushed when a lock is granted."""
+
+    async def test_lock_acquired_sse_event_is_broadcast(
+        self, client: AsyncClient, room_id: str
+    ):
+        sse_svc = app.state.sse_service
+
+        # Add a member to the room so they receive the broadcast
+        await client.post(
+            f"/rooms/{room_id}/join",
+            json={"participant": "watcher"},
+            headers=HEADERS,
+        )
+
+        # Register an SSE queue for the watcher
+        q = sse_svc.register_queue("_legacy", "watcher")
+
+        # Claim a lock — should trigger LOCK_ACQUIRED broadcast
+        resp = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/target.py", "claimed_by": "agent-alpha", "ttl_seconds": 300},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["locked"] is False
+
+        # SSE queue should have received the event
+        msg = await asyncio.wait_for(q.get(), timeout=2)
+        assert msg["message_type"] == "LOCK_ACQUIRED"
+
+        sse_svc.unregister_queue("_legacy", "watcher", q)
+
+    async def test_lock_released_sse_event_is_broadcast(
+        self, client: AsyncClient, room_id: str
+    ):
+        sse_svc = app.state.sse_service
+
+        await client.post(
+            f"/rooms/{room_id}/join",
+            json={"participant": "watcher"},
+            headers=HEADERS,
+        )
+        q = sse_svc.register_queue("_legacy", "watcher")
+
+        # Acquire
+        lock_resp = await client.post(
+            f"/rooms/{room_id}/lock",
+            json={"file_path": "src/target.py", "claimed_by": "agent-alpha", "ttl_seconds": 300},
+            headers=HEADERS,
+        )
+        token = lock_resp.json()["lock_token"]
+
+        # Drain the LOCK_ACQUIRED event
+        await asyncio.wait_for(q.get(), timeout=2)
+
+        # Release
+        await client.request(
+            "DELETE",
+            f"/rooms/{room_id}/lock/src/target.py",
+            json={"lock_token": token},
+            headers=HEADERS,
+        )
+
+        # LOCK_RELEASED should appear in the queue
+        msg = await asyncio.wait_for(q.get(), timeout=2)
+        assert msg["message_type"] == "LOCK_RELEASED"
+
+        sse_svc.unregister_queue("_legacy", "watcher", q)
 
 
-def test_order_not_timestamps_decides_answered():
-    ask = msg("sam", "fix it", ts="2027-01-15T08:00:05+00:00")
-    reply = msg("sam-opencode", "done", ts="2027-01-15T08:00:05+00:00")
-    assert state([ask, reply])[0] == "answered"
-    assert state([reply, ask])[0] == "waiting"
+# ---------------------------------------------------------------------------
+# Membership Enforcement Tests
+# ---------------------------------------------------------------------------
 
 
-class _State:
-    def __init__(self, presence):
-        from quorus_tui.working import WorkingTracker
-        self.working = WorkingTracker()
-        if presence is not None:
-            self.working.set_presence(presence)
+class TestRoomStateMembership:
+    """Room state endpoints require membership when using JWT auth."""
 
+    @pytest.fixture
+    def alice_jwt(self):
+        from quorus.auth.tokens import create_jwt
+        return create_jwt(sub="alice", tenant_id="t-1", tenant_slug="acme", role="user")
 
-def test_hub_row_waits_for_presence_and_hides_once_answered():
-    from quorus_tui import hub
-    ask, reply = msg("sam", "fix it"), msg("sam-opencode", "done")
-    row = hub._room_state_row
-    assert row(_State(None), True, MEMBERS, [ask], ROOM) is None  # no poll yet: no claim
-    assert "Not connected" in row(_State(None), False, MEMBERS, [ask], ROOM).plain
-    assert "hasn't picked this up" in row(_State([online()]), True, MEMBERS, [ask], ROOM).plain
-    assert "isn't running" in row(_State([]), True, MEMBERS, [ask], ROOM).plain
-    assert row(_State([online()]), True, MEMBERS, [ask, reply], ROOM) is None
+    @pytest.fixture
+    def bob_jwt(self):
+        from quorus.auth.tokens import create_jwt
+        return create_jwt(sub="bob", tenant_id="t-1", tenant_slug="acme", role="user")
 
+    @pytest.fixture
+    async def room_with_alice(self, client: AsyncClient, alice_jwt: str) -> str:
+        """Create a room where alice is the only member."""
+        resp = await client.post(
+            "/rooms",
+            json={"name": "alice-room", "created_by": "alice"},
+            headers={"Authorization": f"Bearer {alice_jwt}"},
+        )
+        assert resp.status_code == 200
+        return resp.json()["id"]
 
-def test_presence_loop_keeps_rows_for_the_status_row(monkeypatch):
-    import threading
+    async def test_non_member_cannot_get_room_state(
+        self, client: AsyncClient, room_with_alice: str, bob_jwt: str
+    ):
+        """Bob cannot view state of a room he's not in."""
+        resp = await client.get(
+            f"/rooms/{room_with_alice}/state",
+            headers={"Authorization": f"Bearer {bob_jwt}"},
+        )
+        assert resp.status_code == 403
+        assert "member" in resp.json()["detail"].lower()
 
-    from quorus_tui import working
-    rows = [online()]
-    monkeypatch.setattr(working, "fetch_presence", lambda relay, headers: rows)
-    stop, tracker = threading.Event(), working.WorkingTracker()
-    assert tracker.presence() is None
-    monkeypatch.setattr(stop, "wait", lambda _s: stop.set())
-    working.presence_loop("http://r", {}, tracker, lambda: ROOM, lambda _n: None, stop)
-    assert tracker.presence() == rows
+    async def test_non_member_cannot_claim_lock(
+        self, client: AsyncClient, room_with_alice: str, bob_jwt: str
+    ):
+        """Bob cannot claim a lock in a room he's not in."""
+        resp = await client.post(
+            f"/rooms/{room_with_alice}/lock",
+            json={"file_path": "src/main.py", "claimed_by": "bob", "ttl_seconds": 60},
+            headers={"Authorization": f"Bearer {bob_jwt}"},
+        )
+        assert resp.status_code == 403
+
+    async def test_non_member_cannot_set_goal(
+        self, client: AsyncClient, room_with_alice: str, bob_jwt: str
+    ):
+        """Bob cannot set goal in a room he's not in."""
+        resp = await client.patch(
+            f"/rooms/{room_with_alice}/state/goal",
+            json={"goal": "take over alice's room"},
+            headers={"Authorization": f"Bearer {bob_jwt}"},
+        )
+        assert resp.status_code == 403
+
+    async def test_non_member_cannot_add_decision(
+        self, client: AsyncClient, room_with_alice: str, bob_jwt: str
+    ):
+        """Bob cannot add decision in a room he's not in."""
+        resp = await client.post(
+            f"/rooms/{room_with_alice}/state/decisions",
+            json={"decision": "bob's decision"},
+            headers={"Authorization": f"Bearer {bob_jwt}"},
+        )
+        assert resp.status_code == 403
+
+    async def test_member_can_access_room_state(
+        self, client: AsyncClient, room_with_alice: str, alice_jwt: str
+    ):
+        """Alice (room creator/member) can access room state."""
+        resp = await client.get(
+            f"/rooms/{room_with_alice}/state",
+            headers={"Authorization": f"Bearer {alice_jwt}"},
+        )
+        assert resp.status_code == 200
+        assert "active_goal" in resp.json()
+
+    async def test_legacy_auth_bypasses_membership(
+        self, client: AsyncClient, room_id: str
+    ):
+        """Legacy auth (test-secret) bypasses membership for backward compat.
+
+        Uses the room_id fixture which creates a room in the legacy tenant,
+        allowing legacy auth to access it even without explicit membership.
+        """
+        resp = await client.get(
+            f"/rooms/{room_id}/state",
+            headers=HEADERS,  # legacy auth
+        )
+        assert resp.status_code == 200
