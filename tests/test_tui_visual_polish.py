@@ -297,3 +297,18 @@ def test_snapshot_app_bar_typical_room_at_80_cols():
     )
     for frag in expected_fragments:
         assert frag in out, f"expected fragment missing: {frag!r}\n--- render ---\n{out}"
+
+
+def test_home_screen_has_a_one_line_wordmark():
+    """tui-polish.md §3.4: no block letters on the Esc home screen either."""
+    import io
+
+    from quorus_tui import welcome
+    from rich.console import Console
+
+    out = io.StringIO()
+    welcome.render_welcome(Console(file=out, width=100), rooms=[], unread_by_room={},
+                           selected_room_name="", messages=[], agent_name="sam")
+    text = out.getvalue()
+    assert "█" not in text and "╚" not in text
+    assert text.lstrip().startswith("quorus ")

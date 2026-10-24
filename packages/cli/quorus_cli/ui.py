@@ -96,64 +96,26 @@ ICON_BULLET = "·"
 ICON_DOT_LIVE = "⏵"
 
 # ── Banner ───────────────────────────────────────────────────────────────────
-_BANNER_LINES = [
-    " ██████╗ ██╗   ██╗ ██████╗ ██████╗ ██╗   ██╗███████╗",
-    "██╔═══██╗██║   ██║██╔═══██╗██╔══██╗██║   ██║██╔════╝",
-    "██║   ██║██║   ██║██║   ██║██████╔╝██║   ██║███████╗",
-    "██║▄▄ ██║██║   ██║██║   ██║██╔══██╗██║   ██║╚════██║",
-    "╚██████╔╝╚██████╔╝╚██████╔╝██║  ██║╚██████╔╝███████║",
-    " ╚══▀▀═╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝",
-]
-
-_TINY_BANNER = "quorus"
-
-# Confident two-stop gradient. The previous 4-color ramp read as
-# "video game"; this reads as "product". Deep teal at the leading
-# edge, brand teal at the trailing edge — no light-mint highlight
-# (it muddied the silhouette on warm-color terminals).
-_GRADIENT = [PRIMARY_DEEP, PRIMARY]
+TAGLINE = "one group chat for you and your agents"
 
 
-def _gradient_text(line: str) -> Text:
-    """Apply a soft horizontal gradient across each non-space char.
-
-    Two-stop linear interpolation — printable-char index drives the
-    color pick. Spaces never get styled so the silhouette stays sharp.
-    """
-    text = Text()
-    n = len(_GRADIENT)
-    printable_chars = [c for c in line if c != " "]
-    total = max(1, len(printable_chars))
-    idx = 0
-    for ch in line:
-        if ch == " ":
-            text.append(ch)
-            continue
-        color = _GRADIENT[min(n - 1, idx * n // total)]
-        text.append(ch, style=color)
-        idx += 1
-    return text
+def wordmark(version: str, tagline: bool = True) -> Text:
+    """``quorus 0.7.4 — one group chat for you and your agents``, one line at any
+    width (tui-polish.md §3.4: the 6-line block letters ate the first screen)."""
+    line = Text("quorus", style="bold primary")
+    line.append(f" {version}", style="muted")
+    if tagline:
+        line.append(f" — {TAGLINE}", style="muted")
+    return line
 
 
 def banner(version: str | None = None, tagline: bool = True) -> None:
-    """Print the Quorus banner with teal gradient. *version* defaults to the
-    installed package's (it said v0.5.0 on 0.5.2: new-user pass 1, F2)."""
+    """Print the one-line wordmark. *version* defaults to the installed
+    package's (it said v0.5.0 on 0.5.2: new-user pass 1, F2)."""
     if version is None:
         from quorus import __version__ as version
-    width = console.size.width
-    if width < 60:
-        console.print(f"[bold primary]{_TINY_BANNER}[/] [muted]v{version}[/]")
-        if tagline:
-            console.print("[muted]coordination for agent swarms[/]")
-        console.print()
-        return
     console.print()
-    for line in _BANNER_LINES:
-        console.print(_gradient_text(line))
-    if tagline:
-        console.print(
-            f"[muted]          coordination for agent swarms · v{version}[/]"
-        )
+    console.print(wordmark(version, tagline))
     console.print()
 
 

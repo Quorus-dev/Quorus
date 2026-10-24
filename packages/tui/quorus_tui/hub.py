@@ -381,8 +381,7 @@ def _first_launch_setup(console: Console) -> dict:
 
     Single-screen onboarding. Cadence:
 
-        (banner)
-        Welcome to Quorus. One group chat for you and every agent.
+        quorus 0.7.4 — one group chat for you and your agents
 
         Your name > arav
 
@@ -400,15 +399,7 @@ def _first_launch_setup(console: Console) -> dict:
     try:
         _ui.banner()
     except Exception:
-        console.print(
-            "\n  [bold primary]quorus[/]  "
-            "[dim]coordination for agent swarms[/]\n"
-        )
-
-    console.print(
-        "  [muted]Welcome to Quorus. "
-        "One group chat for you and every agent.[/]\n"
-    )
+        console.print("\n  [bold primary]quorus[/]\n")
 
     name = _prompt_name(console)
 
