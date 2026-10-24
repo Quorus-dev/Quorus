@@ -3,7 +3,7 @@ import io
 from types import SimpleNamespace
 
 import pytest
-from quorus_cli import demo_cmd
+from quorus_cli import demo_cmd, quickstart
 from rich.console import Console
 
 
@@ -59,6 +59,12 @@ def test_script_without_opt_in_starts_nothing_and_cleans_up(monkeypatch, tmp_pat
     monkeypatch.setattr(demo_cmd, "fallback_cast", lambda: [("codex", None)] * 2)
     monkeypatch.setattr(demo_cmd.sys, "stdin", SimpleNamespace(isatty=lambda: False))
     monkeypatch.setattr(demo_cmd, "share_login", lambda *a: pytest.fail("shared login"))
+    # The all-busy exit prints the next command for *this* machine; detecting it runs
+    # `claude auth status` where Claude Code is installed, which the Popen guard below
+    # would read as an agent starting. Pin the machine so the test doesn't depend on PATH.
+    monkeypatch.setattr(quickstart, "machine_state", lambda **k: quickstart.MachineState(
+        ollama="absent", ollama_model=None, claude=False, codex=False, gemini_env=False,
+        opencode=False, gemini_cli=False, configured=False))
     monkeypatch.setattr(demo_cmd.subprocess, "Popen",
                         lambda *a, **k: pytest.fail("process started"))
     out = io.StringIO()
