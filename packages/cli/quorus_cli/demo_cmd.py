@@ -216,6 +216,15 @@ def model_answers(model: str, cwd: Path,
             ["opencode", "run", "--standalone", "--format", "json", "-m", model, "--",
              "Reply with exactly: pong"], cwd=cwd, capture_output=True, text=True,
             timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired as exc:
+        # The CLI retries a 429 itself with an hours-long countdown, so a limited
+        # probe times out with the limit event already in its partial output
+        # (codex, review of 94a791db). Read it: this is a limit, not a slow model.
+        partial = exc.output or b""
+        stdout = partial.decode("utf-8", errors="replace") if isinstance(partial, bytes) \
+            else str(partial)
+        limit = free_limit_in(stdout)
+        return FreeTierLimited(limit) if limit else None
     except (OSError, subprocess.SubprocessError):
         return None
     if '"type":"text"' in out.stdout.replace(" ", "") and "pong" in out.stdout.lower():
