@@ -33,7 +33,7 @@ def session(tmp_path_factory):
         s.expect(r"Invite, or Enter to run it here")
         s.type(ENTER)
         # The session's own line, whichever screen it lands on: F1 is about which.
-        s.expect(r"You're in as @alice", timeout=45)
+        s.expect(r"You're @alice in #", timeout=45)
         s.settle(quiet=1.0, timeout=10)
         s.landed = plain(s.text()[s._mark:])
         s.secret = json.loads((s.home / ".quorus" / "config.json").read_text())["relay_secret"]
@@ -64,7 +64,7 @@ def _sent(s: PtySession, marker: str, timeout: float = 8.0) -> list[str]:
 
 def test_f2_the_banner_shows_the_installed_version(session) -> None:
     """F2 (fixed in db6ab005): the banner said v0.5.0 whatever was installed."""
-    assert f"v{quorus.__version__}" in session.welcome
+    assert f"quorus {quorus.__version__}" in session.welcome
 
 
 def test_f1_the_first_message_lands_in_general(session) -> None:

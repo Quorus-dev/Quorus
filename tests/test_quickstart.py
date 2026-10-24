@@ -58,7 +58,10 @@ def test_one_keypress_adds_every_ready_agent_and_claude_leads(tools, tmp_path: P
     assert "your account's permissions" in asked[0]
     assert any(str(tmp_path.resolve()) in line and "work in" in line for line in c.out)
     assert calls[2].model == quickstart.FREE_MODEL["opencode"]  # stays in the free tier
-    assert any("Gemini CLI found but" in line for line in c.out)
+    # tui-polish.md §3.4: tools that can't run yet share one muted line.
+    also = [line for line in c.out if "Also on this computer" in line]
+    assert len(also) == 1 and "Gemini CLI (needs GEMINI_API_KEY" in also[0]
+    assert not any("found but" in line for line in c.out)
     assert any("Claude Code agent leads" in line for line in c.out)
 
 

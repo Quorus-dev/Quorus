@@ -387,9 +387,9 @@ def _first_launch_setup(console: Console) -> dict:
 
         Looking for a relay... ✓ local relay at localhost:8080
 
-    The session then prints "Connecting to …" and, on success, "You're in as
-    @arav." — in that order, so the success never precedes the connection it
-    describes.
+    The session then prints "Connecting to …" and, on success, "You're @arav in
+    #general. Type a message and press Enter." — in that order, so the success
+    never precedes the connection it describes.
 
     Fast-path requires exactly one prompt. No-local-relay path adds one
     more ("Token or Enter to sign up"). No other prompts, ever.
@@ -530,7 +530,7 @@ def _first_launch_setup(console: Console) -> dict:
     # Save config — even partial configs so the next run starts warm.
     _save_instance_config(name, relay_url, secret=secret, api_key=api_key)
 
-    # "You're in as @name" is printed by the session once the relay has
+    # "You're @name in #room" is printed by the session once the relay has
     # actually answered — printing it here landed *before* "Connecting to …"
     # and made the happy path read like a race (finding #4).
     profile = {
@@ -4029,7 +4029,7 @@ def _run_session(
     the full interactive loop.
 
     *announce_ready* is set for a first run: once the relay has answered and
-    the rooms are loaded we print "You're in as @name", which is the line the
+    the rooms are loaded we print "You're @name in #room", which is the line the
     first-run wizard used to print *before* connecting (finding #4).
     """
     console = _ui.console
@@ -4131,7 +4131,9 @@ def _run_session(
             console.print(f"  [dim]Couldn't add agents ({exc}); try `quorus agent add`.[/]")
 
     if announce_ready and rooms:
-        console.print(f"  [success]✓[/] [muted]You're in as[/] [agent]@{agent_name}[/].")
+        landing = profile.get("room") or "general"
+        console.print(f"  You're [agent]@{agent_name}[/] in [room]#{landing}[/]. "
+                      "Type a message and press Enter.")
         time.sleep(0.15)
 
     if state is None:

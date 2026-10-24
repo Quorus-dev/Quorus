@@ -85,7 +85,7 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
                             "secret — stop it, or run `quorus init <name> --secret -` and "
                             "paste its secret")
             _record(cfg, proc.pid, parsed.port or 8080)
-            return True, f"started your local relay (log: {cfg / 'relay.log'})"
+            return True, "started your local relay"
         time.sleep(0.25)
     # Never answered: stop the process we spawned (by its own handle) rather than
     # leave an untracked relay running (codex, review of e409ee1a).

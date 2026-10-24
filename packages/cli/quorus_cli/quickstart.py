@@ -66,13 +66,12 @@ def detect(which: Callable[[str], str | None] = shutil.which) -> list[Found]:
         if which(h) is None:
             continue
         if h == "claude" and _claude_logged_in() is False:
-            found.append(Found(h, False, "not logged in: run `claude /login`"))
+            found.append(Found(h, False, "run `claude /login`"))
         elif h == "codex" and not _codex_logged_in():
-            found.append(Found(h, False, "not logged in: run `codex login`"))
+            found.append(Found(h, False, "run `codex login`"))
         elif h == "gemini" and not _gemini_has_key():
-            found.append(Found(h, False, "needs an API key from aistudio.google.com/apikey "
-                                         "in ~/.gemini/.env (GEMINI_API_KEY=...); Quorus "
-                                         "doesn't use your Google sign-in"))
+            found.append(Found(h, False, "needs GEMINI_API_KEY in ~/.gemini/.env, from "
+                                         "aistudio.google.com/apikey"))
         elif h == "opencode" and int((_opencode_version() or "2").split(".")[0]) < 2:
             found.append(Found(h, False, "too old: `npm i -g @opencode/cli`"))
         else:
@@ -123,11 +122,9 @@ def offer(console: Any, room: str, cwd: Path | None = None,
                       "Gemini CLI or opencode), then: quorus agent add <tool> --room "
                       f"{room} --repo <your project>[/]")
         return []
-    for f in found:
-        if not f.ready:
-            console.print(f"  [warning]![/] {LABEL[f.harness]} found but {f.note}")
     tools, lead = plan(found)
     if not tools:
+        _also_here(console, found)
         return []
     repo = git_root(cwd or Path.cwd())
     names = ", ".join(LABEL[t] for t in tools)
@@ -142,6 +139,7 @@ def offer(console: Any, room: str, cwd: Path | None = None,
                   "free-model agents depend on the vendor's current availability.")
     if not ask(f"  Add them to [room]#{room}[/] {where}?"):
         console.print(f"  [dim]Later: quorus agent add <tool> --room {room} --repo <path>[/]")
+        _also_here(console, found)
         return []
     mode = None  # default: whatever each tool's own settings allow
     if repo is not None:
@@ -180,11 +178,20 @@ def offer(console: Any, room: str, cwd: Path | None = None,
             added.append(t)
         except SystemExit as exc:  # one agent failing must not stop the others
             console.print(f"  [warning]![/] {LABEL[t]}: {exc}")
+    _also_here(console, found)
     if added:
-        console.print(f"\n  [success]✓[/] Say something in [room]#{room}[/]: every agent "
-                      "hears you" + (f", and your {LABEL[lead]} agent leads: it splits "
-                                     "the work." if lead in added else "."))
+        console.print(f"\n  Say something in [room]#{room}[/]: every agent hears you"
+                      + (f", and your {LABEL[lead]} agent leads: it splits the work."
+                         if lead in added else "."))
     return added
+
+
+def _also_here(console, found: list[Found]) -> None:
+    """Tools that are installed but can't run yet: one muted line after the result,
+    not a warning per tool before it (tui-polish.md §3.4)."""
+    waiting = [f"{LABEL[f.harness]} ({f.note})" for f in found if not f.ready]
+    if waiting:
+        console.print(f"  [muted]Also on this computer: {' · '.join(waiting)}[/]")
 
 
 # ── the one honest next command (docs/plans/keyless-answer.md §3.4) ──────────

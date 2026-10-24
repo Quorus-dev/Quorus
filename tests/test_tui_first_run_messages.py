@@ -57,13 +57,13 @@ def test_invite_prompt_hides_the_empty_default() -> None:
 
 
 def test_first_launch_setup_does_not_claim_ready_before_connecting() -> None:
-    """`You're in as @alice` must come from the session, after the relay
+    """The "You're @alice in #general" line must come from the session, after the relay
     answered — not from the wizard, which runs before it connects."""
     from quorus_tui.hub import _first_launch_setup
 
     src = inspect.getsource(_first_launch_setup)
     assert not any(
-        "You're in as" in line for line in src.splitlines()
+        "press Enter" in line for line in src.splitlines()
         if "console.print" in line
     )
 
@@ -73,13 +73,13 @@ def test_first_run_announces_ready_after_connecting(
 ) -> None:
     _run(monkeypatch, announce=True)
     out = capsys.readouterr().out
-    assert "You're in as" in out
+    assert "Type a message and press Enter." in out
     assert "Connecting to" in out
-    assert out.index("Connecting to") < out.index("You're in as")
+    assert out.index("Connecting to") < out.index("Type a message")
 
 
 def test_a_returning_user_gets_no_first_run_banner(
     tmp_config_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys,
 ) -> None:
     _run(monkeypatch, announce=False)
-    assert "You're in as" not in capsys.readouterr().out
+    assert "Type a message and press Enter" not in capsys.readouterr().out

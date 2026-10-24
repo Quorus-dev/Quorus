@@ -565,12 +565,12 @@ def _add(args: Any, console: Any) -> None:
             console.print(f"[dim]--model only applies to a new agent: run `quorus agent "
                           f"remove {name}` and add it again to switch models[/]")
     else:
-        where = _start_daemon(cfg, name, cred, legacy, model, state_dir)
+        _start_daemon(cfg, name, cred, legacy, model, state_dir)
         # Only launchd brings it back; elsewhere it is a plain detached process.
         lasts = ("restarts at login" if sys.platform == "darwin" else
                  "keeps running after you close this terminal, but not after a "
                  "reboot: run this command again then")
-        console.print(f"[success]✓[/] @{name} is running [dim]({where}; {lasts})[/]")
+        console.print(f"[success]✓[/] @{name} is running [dim]({lasts})[/]")
     if repo is not None or _room_bound(args.room, state_dir):
         console.print(f"\n[dim]Try it:[/] quorus say {args.room} \"@{name} hello, what "
                       "can you do in this repo\"")
