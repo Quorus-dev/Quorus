@@ -7343,7 +7343,6 @@ def _cmd_doctor(args):
                          "it asks before using your Claude Code or Codex login, or tells "
                          "you to retry later.\n")
         quickstart.doctor_agents(check)
-        quickstart.print_next_command(ui.console, "general")  # same line as `quorus demo`
         return
     check(
         "Config file exists",

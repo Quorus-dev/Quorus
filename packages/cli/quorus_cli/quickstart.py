@@ -198,7 +198,14 @@ def offer(console: Any, room: str, cwd: Path | None = None,
 OLLAMA_MODEL = "qwen3:4b"  # the README's documented local model
 OLLAMA_AGENT = "local"  # distinct from the room's `<you>-opencode` free-model agent:
 # `quorus agent add` without --name re-targets that agent and keeps its old model.
-OLLAMA_SERVE = "OLLAMA_CONTEXT_LENGTH=32768 ollama serve"  # the daemon's own line
+# The daemon's own line, plus where to run it: `ollama serve` stays in the foreground,
+# so a line after it on the same terminal never runs (claude, review of 0d4ce515).
+OLLAMA_SERVE = ("OLLAMA_CONTEXT_LENGTH=32768 ollama serve   # in its own terminal, keep it "
+                "running (macOS: brew services start ollama)")
+
+
+OPENCODE_INSTALL = "brew install opencode   # or: npm i -g @opencode/cli"
+QUORUS_SETUP = "quorus   # one question: your name, a local relay and #general"
 
 
 @dataclass
@@ -208,6 +215,9 @@ class MachineState:
     claude: bool = False  # signed in
     codex: bool = False
     gemini_env: bool = False  # ~/.gemini/.env exists (contents never read)
+    opencode: bool = False  # the opencode CLI is on PATH (every ollama/* agent runs in it)
+    gemini_cli: bool = False  # the gemini CLI is on PATH
+    configured: bool = False  # `quorus` has run once: `agent add` needs the name and relay
 
 
 def ollama_state(which: Callable[[str], str | None] = shutil.which,
@@ -230,7 +240,9 @@ def ollama_state(which: Callable[[str], str | None] = shutil.which,
 
 
 def machine_state(which: Callable[[str], str | None] = shutil.which,
-                  home: Path | None = None) -> MachineState:
+                  home: Path | None = None, config_file: Path | None = None) -> MachineState:
+    from quorus.config import resolve_config_file
+
     ollama, model = ollama_state(which)
     home = home or Path.home()
     return MachineState(
@@ -238,30 +250,43 @@ def machine_state(which: Callable[[str], str | None] = shutil.which,
         claude=bool(which("claude")) and _claude_logged_in() is True,
         codex=bool(which("codex")) and _codex_logged_in(),
         gemini_env=(home / ".gemini" / ".env").exists(),
+        opencode=bool(which("opencode")),
+        gemini_cli=bool(which("gemini")),
+        configured=(config_file or resolve_config_file()).exists(),
     )
 
 
 def next_command_lines(room: str, state: MachineState) -> list[str]:
-    """The single honest path to a real answer, as 1–3 shell lines in order."""
+    """The single honest path to a real answer, as shell lines in order. Every
+    prerequisite `agent_cmd._add` enforces comes first: `quorus` once (name and
+    relay), the harness CLI on PATH, then the server and model for Ollama
+    (codex, review of 0d4ce515)."""
+    setup = [] if state.configured else [QUORUS_SETUP]
     add = f"quorus agent add opencode --room {room} --name {OLLAMA_AGENT} --model ollama/"
+    opencode = [] if state.opencode else [OPENCODE_INSTALL]
+    pull_add = f"ollama pull {OLLAMA_MODEL} && {add}{OLLAMA_MODEL}"
     if state.ollama == "serving":
-        return [add + (state.ollama_model or OLLAMA_MODEL)]
+        return setup + opencode + [add + (state.ollama_model or OLLAMA_MODEL)]
     if state.ollama == "no_model":
-        return [f"ollama pull {OLLAMA_MODEL} && {add}{OLLAMA_MODEL}"]
+        return setup + opencode + [pull_add]
     if state.ollama == "stopped":
-        return [OLLAMA_SERVE, f"ollama pull {OLLAMA_MODEL} && {add}{OLLAMA_MODEL}"]
+        return setup + opencode + [OLLAMA_SERVE, pull_add]
     if state.claude:
-        return [f"quorus agent add claude --room {room}"]
+        return setup + [f"quorus agent add claude --room {room}"]
     if state.codex:
-        return [f"quorus agent add codex --room {room}"]
-    if state.gemini_env:
-        return [f"quorus agent add gemini --room {room} --model {FREE_MODEL['gemini']}"]
-    return ["brew install ollama   # or the installer at ollama.com/download",
-            OLLAMA_SERVE, f"ollama pull {OLLAMA_MODEL} && {add}{OLLAMA_MODEL}"]
+        return setup + [f"quorus agent add codex --room {room}"]
+    if state.gemini_env and state.gemini_cli:
+        return setup + [f"quorus agent add gemini --room {room} --model {FREE_MODEL['gemini']}"]
+    return setup + ["brew install ollama   # or the installer at ollama.com/download",
+                    *opencode, OLLAMA_SERVE, pull_add]
 
 
 def print_next_command(console: Any, room: str, state: MachineState | None = None) -> None:
-    """Same lines from `quorus demo` and `quorus doctor`; a free model is never offered."""
+    """The one printer for these lines, so every caller agrees; a free model is never
+    offered. Called from `quorus demo`'s all-busy exit. Not from a fresh-install
+    `doctor`: a new user should try the free path before being sent to a multi-GB
+    local model (claude, review of 0d4ce515); a set-up doctor where no agent has
+    answered is slice 1 of keyless-answer.md."""
     state = state or machine_state()
     console.print(f"  To get an answer in #{room} now:")
     for line in next_command_lines(room, state):
