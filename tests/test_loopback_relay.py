@@ -172,7 +172,10 @@ def test_agent_add_works_on_an_ipv4_only_relay_from_a_localhost_profile(
             monkeypatch.setattr(agent_cmd, "_start_daemon",
                                 lambda cfg, name, cred, legacy, *a: started.append(
                                     (cfg["relay_url"], name, legacy)) or "pid 1")
-            monkeypatch.setattr("quorus_cli.agent_declare.declare", lambda *a, **k: True)
+            import importlib.util
+
+            if importlib.util.find_spec("quorus_cli.agent_declare"):  # not on 0.7.x
+                monkeypatch.setattr("quorus_cli.agent_declare.declare", lambda *a, **k: True)
             args = types.SimpleNamespace(tool="opencode", room="general", repo=None,
                                          mode=None, name=None, model=None, lead=False,
                                          trust=None, state_dir=None, disclosed=False)
