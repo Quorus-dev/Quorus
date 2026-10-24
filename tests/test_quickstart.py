@@ -129,6 +129,120 @@ def test_doctor_on_a_fresh_install_points_at_quorus(tmp_path: Path) -> None:
     # "no keys needed" over-promised: busy free models make the demo exit 1.
     flat = " ".join(text.split())  # rich wraps at the terminal width
     assert "no keys needed" not in flat and "retry later" in flat
+    # keyless-answer.md §3.4: with nothing on PATH the one honest command is the
+    # Ollama path, named so it never re-targets the room's free-model agent.
+    assert "To get an answer in #general now" in flat
+    assert "--name local --model ollama/qwen3:4b" in flat and "-free" not in flat
+
+
+# ── the one honest next command (keyless-answer.md §3.4) ────────────────────
+
+def _state(**kw: Any) -> quickstart.MachineState:
+    return quickstart.MachineState(**{"ollama": "absent", **kw})
+
+
+def test_each_machine_state_gets_one_honest_command() -> None:
+    lines = quickstart.next_command_lines
+    add = "quorus agent add opencode --room r --name local --model ollama/"
+    assert lines("r", _state(ollama="serving", ollama_model="llama3.2:3b")) == \
+        [add + "llama3.2:3b"]
+    assert lines("r", _state(ollama="no_model")) == [f"ollama pull qwen3:4b && {add}qwen3:4b"]
+    # installed but stopped: the server starts before any pull (Codex on 70e355d8)
+    stopped = lines("r", _state(ollama="stopped"))
+    assert stopped[0] == quickstart.OLLAMA_SERVE and stopped[1].startswith("ollama pull")
+    assert lines("r", _state(claude=True)) == ["quorus agent add claude --room r"]
+    assert lines("r", _state(codex=True)) == ["quorus agent add codex --room r"]
+    assert lines("r", _state(gemini_env=True)) == \
+        ["quorus agent add gemini --room r --model gemini-3.5-flash-lite"]
+    bare = lines("r", _state())
+    assert bare[0].startswith("brew install ollama") and bare[1] == quickstart.OLLAMA_SERVE
+    # a serving Ollama wins over a signed-in login: local, no account, no shared quota
+    assert lines("r", _state(ollama="serving", ollama_model="m", claude=True)) == [add + "m"]
+    for state in (_state(ollama="serving", ollama_model="m"), _state(ollama="no_model"),
+                  _state(ollama="stopped"), _state()):
+        for line in lines("r", state):
+            assert "-free" not in line  # never another free model: same shared quota
+            if "agent add opencode" in line:
+                assert "--name local" in line  # the room's free agent is `<you>-opencode`
+
+
+def test_demo_and_doctor_print_the_same_next_command(monkeypatch) -> None:
+    state = _state(ollama="no_model")
+    demo_console, doctor_console = _C(), _C()
+    quickstart.print_next_command(demo_console, "general", state)
+    quickstart.print_next_command(doctor_console, "general", state)
+    assert demo_console.out == doctor_console.out
+    assert any("ollama pull qwen3:4b && quorus agent add opencode --room general --name local"
+               in line for line in demo_console.out)
+
+
+def test_the_demos_all_busy_exit_prints_the_next_command(monkeypatch, tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from quorus_cli import demo_cmd
+
+    monkeypatch.setattr(demo_cmd, "_opencode_ok", lambda: None)
+    monkeypatch.setattr(demo_cmd, "pick_models", lambda *a, **k: [])
+    monkeypatch.setattr(demo_cmd, "consented_fallback", lambda *a, **k: [])
+    monkeypatch.setattr(quickstart, "machine_state",
+                        lambda *a, **k: _state(ollama="serving", ollama_model="qwen3:4b"))
+    console = _C()
+    with pytest.raises(SystemExit) as exc:
+        demo_cmd.cmd_demo(SimpleNamespace(model=None, timeout=1, keep=False,
+                                          use_my_login=False), console)
+    assert exc.value.code == 1
+    assert any("quorus agent add opencode --room general --name local --model ollama/qwen3:4b"
+               in line for line in console.out)
+
+
+def test_the_gemini_check_only_asks_whether_the_file_exists(tmp_path: Path, monkeypatch) -> None:
+    """Claude on 339b0e10: detection must never read `~/.gemini/.env`."""
+    import os
+
+    if os.geteuid() == 0:
+        pytest.skip("root can read a 000 file")
+    (tmp_path / ".gemini").mkdir()
+    env = tmp_path / ".gemini" / ".env"
+    env.write_text("GEMINI_API_KEY=secret\n")
+    env.chmod(0)  # a read would raise PermissionError; exists() does not
+    try:
+        monkeypatch.setattr(quickstart, "ollama_state", lambda *a, **k: ("absent", None))
+        state = quickstart.machine_state(which=lambda b: None, home=tmp_path)
+    finally:
+        env.chmod(0o600)
+    assert state.gemini_env is True and state.ollama == "absent"
+    assert state.claude is False and state.codex is False
+
+
+def test_ollama_state_reads_the_server_like_the_daemon(monkeypatch) -> None:
+    import httpx
+
+    def transport(handler):
+        return monkeypatch.setattr(httpx, "get", handler)
+
+    which = lambda b: "/bin/ollama" if b == "ollama" else None  # noqa: E731
+    assert quickstart.ollama_state(lambda b: None) == ("absent", None)
+
+    def down(*a, **k):
+        raise httpx.ConnectError("refused")
+
+    transport(down)
+    assert quickstart.ollama_state(which) == ("stopped", None)
+
+    class _R:
+        def __init__(self, models):
+            self._m = models
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": self._m}
+
+    transport(lambda *a, **k: _R([]))
+    assert quickstart.ollama_state(which) == ("no_model", None)
+    transport(lambda *a, **k: _R([{"name": "qwen3:4b"}, {"name": "x"}]))
+    assert quickstart.ollama_state(which) == ("serving", "qwen3:4b")
 
 
 def _auth(stdout: str = "", rc: int = 0, exc: Exception | None = None):

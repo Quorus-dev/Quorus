@@ -327,6 +327,9 @@ def cmd_demo(args: Any, console: Any) -> None:
                 console.print("[warning]![/] opencode's free models are all busy right now. Try "
                               "again in a few minutes, or use your own models with "
                               "`quorus agent add`.")
+                from quorus_cli.quickstart import print_next_command
+
+                print_next_command(console, "general")  # the same line `quorus doctor` prints
             raise SystemExit(1)  # scripts and CI must see the demo didn't run
         secret, port = secrets.token_hex(16), _free_port()
         url = f"http://127.0.0.1:{port}"

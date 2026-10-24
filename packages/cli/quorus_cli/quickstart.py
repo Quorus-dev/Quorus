@@ -187,6 +187,87 @@ def offer(console: Any, room: str, cwd: Path | None = None,
     return added
 
 
+# ── the one honest next command (docs/plans/keyless-answer.md §3.4) ──────────
+#
+# When no free model can answer, `quorus demo` and a fresh-install `quorus doctor`
+# print the same command for the machine's state, from this one function, so the
+# two can never disagree. Ollama is the only keyless path (local, no account, no
+# shared quota); a signed-in Claude Code or Codex uses the person's own account;
+# a Gemini key file is only checked for existence, never read.
+
+OLLAMA_MODEL = "qwen3:4b"  # the README's documented local model
+OLLAMA_AGENT = "local"  # distinct from the room's `<you>-opencode` free-model agent:
+# `quorus agent add` without --name re-targets that agent and keeps its old model.
+OLLAMA_SERVE = "OLLAMA_CONTEXT_LENGTH=32768 ollama serve"  # the daemon's own line
+
+
+@dataclass
+class MachineState:
+    ollama: str  # "absent" | "stopped" | "no_model" | "serving"
+    ollama_model: str | None = None
+    claude: bool = False  # signed in
+    codex: bool = False
+    gemini_env: bool = False  # ~/.gemini/.env exists (contents never read)
+
+
+def ollama_state(which: Callable[[str], str | None] = shutil.which,
+                 timeout: float = 2.0) -> tuple[str, str | None]:
+    """Ollama as the daemon reads it (`ollama_problem()`): one local GET /api/tags."""
+    if not which("ollama"):
+        return "absent", None
+    import httpx
+
+    host = os.environ.get("OLLAMA_HOST") or "127.0.0.1:11434"
+    base = host if host.startswith("http") else f"http://{host}"
+    try:
+        resp = httpx.get(f"{base.rstrip('/')}/api/tags", timeout=timeout)
+        resp.raise_for_status()
+        names = [m.get("name") for m in resp.json().get("models", [])
+                 if isinstance(m, dict) and isinstance(m.get("name"), str)]
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return "stopped", None
+    return ("serving", names[0]) if names else ("no_model", None)
+
+
+def machine_state(which: Callable[[str], str | None] = shutil.which,
+                  home: Path | None = None) -> MachineState:
+    ollama, model = ollama_state(which)
+    home = home or Path.home()
+    return MachineState(
+        ollama=ollama, ollama_model=model,
+        claude=bool(which("claude")) and _claude_logged_in() is True,
+        codex=bool(which("codex")) and _codex_logged_in(),
+        gemini_env=(home / ".gemini" / ".env").exists(),
+    )
+
+
+def next_command_lines(room: str, state: MachineState) -> list[str]:
+    """The single honest path to a real answer, as 1–3 shell lines in order."""
+    add = f"quorus agent add opencode --room {room} --name {OLLAMA_AGENT} --model ollama/"
+    if state.ollama == "serving":
+        return [add + (state.ollama_model or OLLAMA_MODEL)]
+    if state.ollama == "no_model":
+        return [f"ollama pull {OLLAMA_MODEL} && {add}{OLLAMA_MODEL}"]
+    if state.ollama == "stopped":
+        return [OLLAMA_SERVE, f"ollama pull {OLLAMA_MODEL} && {add}{OLLAMA_MODEL}"]
+    if state.claude:
+        return [f"quorus agent add claude --room {room}"]
+    if state.codex:
+        return [f"quorus agent add codex --room {room}"]
+    if state.gemini_env:
+        return [f"quorus agent add gemini --room {room} --model {FREE_MODEL['gemini']}"]
+    return ["brew install ollama   # or the installer at ollama.com/download",
+            OLLAMA_SERVE, f"ollama pull {OLLAMA_MODEL} && {add}{OLLAMA_MODEL}"]
+
+
+def print_next_command(console: Any, room: str, state: MachineState | None = None) -> None:
+    """Same lines from `quorus demo` and `quorus doctor`; a free model is never offered."""
+    state = state or machine_state()
+    console.print(f"  To get an answer in #{room} now:")
+    for line in next_command_lines(room, state):
+        console.print(f"    {line}", markup=False, highlight=False)
+
+
 def doctor_agents(check: Callable[..., None],
                   which: Callable[[str], str | None] = shutil.which) -> None:
     """`quorus doctor` lines for each agent CLI (optional: you need just one)."""
