@@ -24,6 +24,7 @@ class WorkingTracker:
         self._lock = threading.Lock()
         self._since: dict[str, float] = {}
         self._activity: dict[str, str] = {}
+        self._presence: list[dict[str, Any]] | None = None
 
     def update(self, busy: set[str], now: float | None = None,
                activity: dict[str, str] | None = None) -> list[str]:
@@ -38,6 +39,15 @@ class WorkingTracker:
     def snapshot(self) -> list[tuple[str, float]]:
         with self._lock:
             return sorted(self._since.items(), key=lambda kv: kv[1])
+
+    def set_presence(self, rows: list[dict[str, Any]]) -> None:
+        with self._lock:
+            self._presence = list(rows)
+
+    def presence(self) -> list[dict[str, Any]] | None:
+        """The last ``/presence`` rows; None until the first fetch succeeds."""
+        with self._lock:
+            return self._presence
 
     def activity(self) -> dict[str, str]:
         """``name -> current step`` ("editing relay.py") for busy agents."""
@@ -99,6 +109,8 @@ def presence_loop(
             room = selected_room()
             presence = fetch_presence(relay, headers) if room else []
             if presence is not None:
+                if room:
+                    tracker.set_presence(presence)
                 busy = busy_in_room(presence, room) if room else set()
                 steps = activity_in_room(presence, room) if room else {}
                 if room != last_room:  # switching rooms is not "started working"

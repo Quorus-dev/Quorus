@@ -93,3 +93,35 @@ def test_order_not_timestamps_decides_answered():
     reply = msg("sam-opencode", "done", ts="2027-01-15T08:00:05+00:00")
     assert state([ask, reply])[0] == "answered"
     assert state([reply, ask])[0] == "waiting"
+
+
+class _State:
+    def __init__(self, presence):
+        from quorus_tui.working import WorkingTracker
+        self.working = WorkingTracker()
+        if presence is not None:
+            self.working.set_presence(presence)
+
+
+def test_hub_row_waits_for_presence_and_hides_once_answered():
+    from quorus_tui import hub
+    ask, reply = msg("sam", "fix it"), msg("sam-opencode", "done")
+    row = hub._room_state_row
+    assert row(_State(None), True, MEMBERS, [ask], ROOM) is None  # no poll yet: no claim
+    assert "Not connected" in row(_State(None), False, MEMBERS, [ask], ROOM).plain
+    assert "hasn't picked this up" in row(_State([online()]), True, MEMBERS, [ask], ROOM).plain
+    assert "isn't running" in row(_State([]), True, MEMBERS, [ask], ROOM).plain
+    assert row(_State([online()]), True, MEMBERS, [ask, reply], ROOM) is None
+
+
+def test_presence_loop_keeps_rows_for_the_status_row(monkeypatch):
+    import threading
+
+    from quorus_tui import working
+    rows = [online()]
+    monkeypatch.setattr(working, "fetch_presence", lambda relay, headers: rows)
+    stop, tracker = threading.Event(), working.WorkingTracker()
+    assert tracker.presence() is None
+    monkeypatch.setattr(stop, "wait", lambda _s: stop.set())
+    working.presence_loop("http://r", {}, tracker, lambda: ROOM, lambda _n: None, stop)
+    assert tracker.presence() == rows

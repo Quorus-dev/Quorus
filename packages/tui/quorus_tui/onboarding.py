@@ -30,33 +30,6 @@ def _is_notice(body: str) -> bool:
             or "is out of quota" in body.lower())
 
 
-def room_status(members: list[str], messages: list[dict], *, connected: bool) -> str | None:
-    """Membership is not proof of a response; notices never complete this step.
-
-    Use the same agent-name convention as the chat surface. The status describes
-    the loaded history, not a guarantee that an agent process is running.
-    """
-    free_tier_limited = False
-    for msg in messages:
-        line = _agent_line(msg)
-        if line is None:
-            continue
-        body = line[1]
-        if _is_notice(body):
-            free_tier_limited = free_tier_limited or FREE_TIER_MARK in body
-            continue
-        # Onboarding is complete even if a later human message is unanswered,
-        # or the agent that answered has since left the room.
-        return None
-    if not connected:
-        return "Room disconnected — reconnect to check agent status."
-    if not any(not is_human_sender(name) for name in members):
-        return "Room available · No agents connected · /agents to set up; /share for teammates"
-    if free_tier_limited:
-        return FREE_TIER_TEXT
-    return "Agent joined; waiting for a response · /agents to retry setup"
-
-
 def _names(names: list[str]) -> str:
     return " · ".join(f"@{n}" for n in names)
 

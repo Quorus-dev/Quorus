@@ -1930,6 +1930,21 @@ def _format_continuation_line(msg: dict, my_name: str) -> Text:
     return line
 
 
+def _room_state_row(state, connected: bool, members: list[str], messages: list[dict],
+                    room: str) -> Text | None:
+    """The status row above the composer (tui-polish.md §3.3). Before the first
+    presence poll lands only states that need no presence are shown, and nothing
+    once answered: the composer hint below already shows the keys."""
+    from .onboarding import room_state
+
+    presence = state.working.presence()
+    kind, text = room_state(connected, members, presence, messages, time.time(), room=room,
+                            busy_since=dict(state.working.snapshot()))
+    if kind == "answered" or (presence is None and kind not in ("disconnected", "no agents")):
+        return None
+    return Text("  " + text, style="muted")
+
+
 def _ts_epoch(msg: dict) -> float:
     """Parse a message's ISO timestamp to epoch seconds. 0 on failure."""
     from datetime import datetime
@@ -3426,11 +3441,6 @@ def _main_input_loop(
 
                     members = (selected.get("members") or []) if selected else []
                     last_active = _chat.last_active_label(msgs_snap)
-                    from .onboarding import room_status
-
-                    onboarding_status = room_status(members, msgs_snap, connected=connected)
-                    if onboarding_status:
-                        console.print(Text("  " + onboarding_status, style="muted"))
                     console.print(
                         _chat.render_app_bar(
                             room_name=room_name,
@@ -3490,10 +3500,9 @@ def _main_input_loop(
                         thread_collapsed=state.get_thread_collapsed(),
                     ):
                         console.print(feed_line)
-                    working_line = _working.render_working_line(
-                        state.working.snapshot(), activity=state.working.activity())
-                    if working_line is not None:
-                        console.print(working_line)
+                    row = _room_state_row(state, connected, members, msgs_snap, room_name)
+                    if row is not None:
+                        console.print(row)
                     console.print()
                     console.print(_chat.render_composer_hint())
                 # Transient status line (if any) above the bare prompt.

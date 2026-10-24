@@ -11,24 +11,29 @@ def msg(who, body, kind="chat"):
     return {"id": "m1", "from_name": who, "content": body, "message_type": kind}
 
 
+ONLINE = [{"name": "alice-codex", "online": True, "status": "active", "room": "r"},
+          {"name": "alice-opencode", "online": True, "status": "active", "room": "r"}]
+
+
+def status(members, messages, connected=True):
+    return onboarding.room_state(connected, members, ONLINE, messages, 0.0, room="r")[1]
+
+
 def test_membership_and_notices_are_not_answers():
     members = ["alice", "alice-codex"]
-    status = onboarding.room_status
-    assert "No agents connected" in status(["alice"], [], connected=True)
-    assert "waiting" in status(members, [], connected=True)
+    assert "No agents here yet" in status(["alice"], [])
+    assert "is here" in status(members, [])
+    ask = msg("alice", "why?")
     for body, kind in [("joined", "join"), ("plan: looking", "chat"),
                        ("⚠ vendor usage limit reached", "chat"),
                        ("❌ failed", "chat"), ("🔐 approval needed", "chat"),
                        ("NO_REPLY", "chat"), ("done", "status")]:
-        assert "waiting" in status(members, [msg("alice-codex", body, kind)], connected=True)
+        assert "hasn't picked this up" in status(members, [ask, msg("alice-codex", body, kind)])
     answer = msg("alice-codex", "The test fails because add subtracts.")
-    assert status(members, [answer], connected=True) is None
-    assert status(members, [answer, msg("alice", "fix it")], connected=True) is None
-    assert status(members, [answer, msg("alice-codex", "⚠ unavailable", "status")],
-                  connected=True) is None
-    assert status(members, [answer], connected=False) is None
-    assert status(["alice"], [answer], connected=True) is None
-    assert "disconnected" in status(members, [], connected=False)
+    assert onboarding.room_state(True, members, ONLINE, [ask, answer], 0.0,
+                                 room="r")[0] == "answered"
+    assert "hasn't picked this up" in status(members, [ask, answer, msg("alice", "fix it")])
+    assert "Not connected" in status(members, [], connected=False)
 
 
 def test_a_free_tier_limit_is_its_own_state_not_waiting():
@@ -38,13 +43,14 @@ def test_a_free_tier_limit_is_its_own_state_not_waiting():
     notice = msg("alice-opencode", "⚠ opencode's free tier has hit its limit for this "
                                    "connection or account, so no free model can answer right "
                                    "now. To get an answer now:\n  quorus agent add …")
-    line = onboarding.room_status(members, [notice], connected=True)
+    line = status(members, [msg("alice", "why?"), notice])
     assert "No free model answered yet" in line and "/agents" in line
     assert "message the agent again" in line  # nothing retries on its own
-    assert "waiting for a response" not in line and "quota" not in line
+    assert "picked this up" not in line and "quota" not in line
     answer = msg("alice-opencode", "add() subtracts; here is the fix.")
-    assert onboarding.room_status(members, [notice, answer], connected=True) is None
-    assert "disconnected" in onboarding.room_status(members, [notice], connected=False)
+    assert onboarding.room_state(True, members, ONLINE, [msg("alice", "why?"), notice, answer],
+                                 0.0, room="r")[0] == "answered"
+    assert "Not connected" in status(members, [notice], connected=False)
 
 
 def test_setup_can_be_canceled_and_retried_without_losing_the_room(monkeypatch):
@@ -135,7 +141,7 @@ def test_setup_cancellation_keeps_the_composer_usable(monkeypatch):
                              relay_url="http://relay.test", secret="jwt", agent_name="alice")
     assert len(sent) == 1 and sent[0][-2:] == ("alice", "hello")
     assert state.get_selected_room()["name"] == "general"
-    assert "No agents connected" in out.getvalue()
+    assert "No agents here yet" in out.getvalue()
 
 
 def test_setup_failure_explains_the_cause(monkeypatch):
