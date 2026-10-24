@@ -122,6 +122,7 @@ def test_a_later_guess_does_not_overwrite_a_live_observed_reset() -> None:
 
 
 def test_slow_start_and_no_route_cooldowns_are_never_quota() -> None:
+    assert reflexd._failover is not None  # the limit path's typed failures come from here
     for reason in ("slow_start", "no_route"):
         d = _daemon()
         d.adapter._cool_down(reason)
@@ -188,10 +189,10 @@ def test_a_model_rotation_clears_the_cooldown() -> None:
     assert (adapter.limit, adapter.limited_until, adapter.pause_reason) == (None, 0.0, "quota")
 
 
-def test_a_free_tier_limit_keeps_its_reading_and_its_model() -> None:
-    """keyless-answer.md §3.1: the typed limit is shared across free models, so
-    there is no rotation, and the vendor's own reset reading is kept for the
-    pause line and the limit display."""
+def test_a_free_tier_limit_is_a_free_busy_pause_not_quota() -> None:
+    """keyless-answer.md §3.1: the typed limit is shared across free models, so there
+    is no rotation; the pause is Quorus's own 15 minutes, labelled `free_busy`, and
+    the 429 carries no reset, so no vendor reading is kept or shown as quota."""
     free = reflexd.reflexd_models.OPENCODE_FREE_MODELS
     adapter = reflexd.HeadlessAdapter()
     adapter.model = free[0]
@@ -199,16 +200,39 @@ def test_a_free_tier_limit_keeps_its_reading_and_its_model() -> None:
 
     async def once(*_a: Any, **_k: Any) -> str:
         calls.append(adapter.model)
-        adapter.note_limit("rate limit, retry in 2h")
+        adapter.note_limit("Free usage limit reached. Subscribe to OpenCode Go")
         return reflexd._failover.VendorFailure(
-            "⚠ opencode: the vendor rate-limited this account; the wake was dropped.",
-            "rate_limit")
+            "⚠ opencode: the vendor reports the account's usage limit has been reached.",
+            "quota")
 
     adapter._opencode_once = once  # type: ignore[method-assign]
     asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert calls == [free[0]] and adapter.model == free[0]
-    assert adapter.limit is not None and adapter.limited_until > time.time()
-    assert adapter.pause_reason == "quota"
+    assert adapter.limit is None and adapter.pause_reason == "free_busy"
+    assert 0 < adapter.limited_until - time.time() <= reflexd.SLOW_COOLDOWN_S
+    assert adapter.current_limit() is None  # nothing for the board to call "out of quota"
+
+
+def test_the_free_busy_pause_line_never_says_quota_and_names_the_unit() -> None:
+    d = _daemon()
+    d.adapter._free_tier_pause()
+    line = _announce(d)
+    assert "quota" not in line and "connection or account" in line
+    assert "free tier" in line and "tries again" in line
+    assert "waiting_on" not in d._presence_extra("active")  # old relays: no "out of quota"
+    assert d._presence_extra("active")["pause"]["reason"] == "free_busy"
+
+
+def test_the_free_tier_notice_names_the_unit_and_the_next_command(monkeypatch) -> None:
+    from quorus_cli import quickstart
+
+    monkeypatch.setattr(quickstart, "machine_state", lambda *a, **k: quickstart.MachineState(
+        ollama="serving", ollama_model="qwen3:4b", configured=True, opencode=True))
+    text = reflexd.free_tier_notice("general")
+    assert text.startswith("⚠ opencode's free tier has hit its limit for this connection or "
+                           "account")
+    assert "quota" not in text.lower() and "-free" not in text
+    assert "quorus agent add opencode --room general --name local --model ollama/qwen3:4b" in text
 
 
 # ── the two clock-advance gates (Codex, plan GO on ab26832d) ────────────

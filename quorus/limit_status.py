@@ -21,7 +21,10 @@ USAGE_MAX_AGE_S = 3600.0  # 5h / 7d usage older than this is dropped
 RESET_MAX_AHEAD_S = 8 * 24 * 3600.0  # beyond the 7-day window: not trusted
 MAX_READINGS = 3  # one per window
 
-PAUSE_REASONS = frozenset({"quota", "slow_start", "no_route"})
+# "free_busy": opencode's free tier refused (a typed 429), which is a limit on the
+# connection or account shared across its free models, never the person's own
+# vendor quota (docs/plans/keyless-answer.md §3.1).
+PAUSE_REASONS = frozenset({"quota", "slow_start", "no_route", "free_busy"})
 WINDOWS = frozenset({"5h", "7d", "limit"})
 # source id -> the kind it implies
 SOURCE_KIND = {

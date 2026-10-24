@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from .chat_widgets import is_human_sender
 
+# The daemon's notice when opencode's free tier refused (reflexd.free_tier_notice):
+# the agent is up but no free model can answer, which is neither "waiting" nor "answered".
+FREE_TIER_MARK = "free tier has hit its limit"
+
 
 def room_status(members: list[str], messages: list[dict], *, connected: bool) -> str | None:
     """Membership is not proof of a response; notices never complete this step.
@@ -10,6 +14,7 @@ def room_status(members: list[str], messages: list[dict], *, connected: bool) ->
     Use the same agent-name convention as the chat surface. The status describes
     the loaded history, not a guarantee that an agent process is running.
     """
+    free_tier_limited = False
     for msg in messages:
         body = (msg.get("content") or "").strip()
         sender = msg.get("from_name") or ""
@@ -19,6 +24,7 @@ def room_status(members: list[str], messages: list[dict], *, connected: bool) ->
         if (body.startswith(("⚠", "❌", "🔐", "[reflexd]", "(quorus)"))
                 or body.lower().startswith(("plan:", "no_reply"))
                 or "is out of quota" in body.lower()):
+            free_tier_limited = free_tier_limited or FREE_TIER_MARK in body
             continue
         # Onboarding is complete even if a later human message is unanswered,
         # or the agent that answered has since left the room.
@@ -27,6 +33,9 @@ def room_status(members: list[str], messages: list[dict], *, connected: bool) ->
         return "Room disconnected — reconnect to check agent status."
     if not any(not is_human_sender(name) for name in members):
         return "Room available · No agents connected · /agents to set up; /share for teammates"
+    if free_tier_limited:
+        return ("No free model answered yet · the agent retries after its pause · "
+                "/agents for other options")
     return "Agent joined; waiting for a response · /agents to retry setup"
 
 

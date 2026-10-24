@@ -31,6 +31,21 @@ def test_membership_and_notices_are_not_answers():
     assert "disconnected" in status(members, [], connected=False)
 
 
+def test_a_free_tier_limit_is_its_own_state_not_waiting():
+    """keyless-answer.md §3.3: the agent is up but opencode's free tier refused, which is
+    neither "waiting for a response" nor an answer; a later real answer still wins."""
+    members = ["alice", "alice-opencode"]
+    notice = msg("alice-opencode", "⚠ opencode's free tier has hit its limit for this "
+                                   "connection or account, so no free model can answer right "
+                                   "now. To get an answer now:\n  quorus agent add …")
+    line = onboarding.room_status(members, [notice], connected=True)
+    assert "No free model answered yet" in line and "/agents" in line
+    assert "waiting for a response" not in line and "quota" not in line
+    answer = msg("alice-opencode", "add() subtracts; here is the fix.")
+    assert onboarding.room_status(members, [notice, answer], connected=True) is None
+    assert "disconnected" in onboarding.room_status(members, [notice], connected=False)
+
+
 def test_setup_can_be_canceled_and_retried_without_losing_the_room(monkeypatch):
     from quorus_cli import quickstart
 

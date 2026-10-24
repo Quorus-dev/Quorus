@@ -101,6 +101,15 @@ def test_usage_ages_out_but_a_live_limit_does_not() -> None:
     assert limit_status.clean(None, [old_limit], NOW)["readings"]
 
 
+def test_a_free_busy_pause_is_a_valid_pause_but_never_a_quota() -> None:
+    """keyless-answer.md §3.1: the daemon's pause for opencode's free-tier 429."""
+    pause = {"reason": "free_busy", "until": NOW + 900}
+    assert limit_status.clean_pause(pause, NOW) == pause
+    guess = {"window": "limit", "kind": "guess", "source": "msg.no_time", "seen_at": NOW}
+    assert "readings" not in limit_status.clean(pause, [guess], NOW)  # not a quota pause
+    assert limit_status.clean_pause({"reason": "free-busy", "until": NOW + 9}, NOW) is None
+
+
 def test_a_reset_less_limit_needs_a_live_quota_pause() -> None:
     guess = {"window": "limit", "kind": "guess", "source": "msg.no_time", "seen_at": NOW}
     assert "readings" not in limit_status.clean(None, [guess], NOW)

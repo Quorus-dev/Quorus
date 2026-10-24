@@ -24,7 +24,8 @@ SOURCE_SAYS = {
     "msg.retry_in": 'vendor said "retry in …"',
     "msg.try_again_at": 'vendor said "try again at …"',
 }
-PAUSE_WHY = {"slow_start": "free model slow to start", "no_route": "free model unavailable"}
+PAUSE_WHY = {"slow_start": "free model slow to start", "no_route": "free model unavailable",
+             "free_busy": "free tier limited for this connection or account"}
 
 
 def duration(seconds: float) -> str:

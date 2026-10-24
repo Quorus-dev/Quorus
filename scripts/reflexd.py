@@ -1338,6 +1338,28 @@ def _free_tier_limit(reply: Any) -> bool:
             and reply.reason in ("quota", "rate_limit"))
 
 
+def free_tier_notice(room: str) -> str:
+    """What the room is told when opencode's free tier refused a free model: the
+    limit's real unit (opencode's own words: by account and network, shared across
+    its free models), no "quota" or "account" of the person's, and the one honest
+    next command from the same detection `quorus demo` uses (keyless-answer.md
+    §3.3–3.4). The command lines are best-effort: a detection failure never costs
+    the notice itself."""
+    lines: list[str] = []
+    try:
+        from quorus_cli import quickstart
+
+        lines = quickstart.next_command_lines(room, quickstart.machine_state())
+    except Exception as exc:  # pragma: no cover - never let detection break the turn
+        logger.warning("next-command detection failed: %s", exc)
+    text = ("⚠ opencode's free tier has hit its limit for this connection or account, so "
+            "no free model can answer right now (opencode shares that limit across all its "
+            "free models). I'll try again after a short pause.")
+    if lines:
+        text += " To get an answer now:\n" + "\n".join(f"  {ln}" for ln in lines)
+    return text
+
+
 class SlowStart(str):
     """The harness printed nothing before its first-output deadline (a free
     model whose provider takes minutes to its first token)."""
@@ -1776,7 +1798,8 @@ class HeadlessAdapter:
         if not reflexd_models.is_free_opencode(first):
             return reply
         if _free_tier_limit(reply):
-            return reply  # shared across the free models: the quota pause stands
+            self._free_tier_pause()
+            return reply  # shared across the free models: no rotation
         self._note_slow(reply)
         self._note_no_route(reply)
         tried = {first}
@@ -1802,17 +1825,24 @@ class HeadlessAdapter:
                                               mode=mode)
             self._note_slow(reply)
             self._note_no_route(reply)
+        if _free_tier_limit(reply):
+            self._free_tier_pause()
         if self.limited_until > time.time():
-            # Every free model is slow or unavailable (or the last one hit the
-            # shared limit): cool down on the original model. A reading from a
-            # rotated-to model is about that model, so it is dropped; the
-            # shared limit's own reading, when that is what ended the loop, stays.
-            self.model = first
-            if not _free_tier_limit(reply):
-                self.limit = None
+            # Every free model is slow or unavailable, or the last one hit the
+            # shared limit: cool down on the original model, and drop a reading
+            # that was about a rotated-to model.
+            self.model, self.limit = first, None
             if first == self._home_model:
                 self._rotated_at = 0.0
         return reply
+
+    def _free_tier_pause(self) -> None:
+        """opencode's free tier refused (a typed 429): a 15-minute cooldown of our
+        own, never "out of quota". The 429 carries no reset time, so there is no
+        vendor reading to keep (keyless-answer.md §3.1)."""
+        self.limited_until = max(self.limited_until, time.time() + SLOW_COOLDOWN_S) \
+            if self.pause_reason == "free_busy" else time.time() + SLOW_COOLDOWN_S
+        self.pause_reason, self.limit = "free_busy", None
 
     def _note_slow(self, reply: str) -> None:
         """A free model that never started answering: send it to the back of
@@ -3391,7 +3421,12 @@ class Reflexd:
         """The vendor's reset when it gave one; our retry, marked "?", when not;
         and never "out of quota" for a free-model cooldown (limit-status rev 3)."""
         name, now = self.config.participant_name, time.time()
-        if getattr(self.adapter, "pause_reason", "quota") != "quota":
+        reason = getattr(self.adapter, "pause_reason", "quota")
+        if reason == "free_busy":
+            return (f"@{name} is paused for about {_human_wait(until - now)}: opencode's free "
+                    "tier is limited for this connection or account (shared across its free "
+                    "models). It tries again then; for an answer now, see the ⚠ line above")
+        if reason != "quota":
             return (f"@{name} is paused by Quorus for about {_human_wait(until - now)} "
                     "(its free models are slow to start or unavailable) and will pick up "
                     "again then")
@@ -3746,6 +3781,11 @@ class Reflexd:
             reply = "[reflexd] harness errored"
 
         vendor_failure = reply if isinstance(reply, _failover.VendorFailure) else None
+        if vendor_failure and getattr(self.adapter, "pause_reason", "") == "free_busy":
+            # A keyless person has no "account" to be out of quota on: say what the
+            # free tier did and what gets an answer now (keyless-answer.md §3.3).
+            reply = vendor_failure = _failover.VendorFailure(free_tier_notice(room),
+                                                             vendor_failure.reason)
         exit_code = reply.exit_code if isinstance(reply, HarnessExitFailure) else "unknown"
         # Classify before redaction turns the reply into a plain str.
         turn_outcome = _track.classify_turn(

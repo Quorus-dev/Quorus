@@ -311,8 +311,12 @@ def test_a_free_tier_limit_stops_the_rotation() -> None:
     out = asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
     assert tried == [free[0]]  # no second call
     assert isinstance(out, reflexd._failover.VendorFailure) and out.reason == "rate_limit"
-    assert adapter.model == free[0] and adapter.limited_until > 0  # the quota pause stands
-    assert adapter.pause_reason == "quota" and adapter._rotated_at == 0.0
+    assert adapter.model == free[0] and adapter._rotated_at == 0.0
+    # a free-tier limit is our 15-minute cooldown, never the person's "quota"
+    assert adapter.pause_reason == "free_busy" and adapter.limit is None
+    import time as _time
+
+    assert 0 < adapter.limited_until - _time.time() <= reflexd.SLOW_COOLDOWN_S
 
 
 def test_a_limit_after_a_slow_model_also_stops_the_rotation() -> None:
@@ -325,6 +329,16 @@ def test_a_limit_after_a_slow_model_also_stops_the_rotation() -> None:
     assert tried == [free[0], free[1]]
     assert isinstance(out, reflexd._failover.VendorFailure)
     assert adapter.model == free[0] and adapter.limited_until > 0
+    assert adapter.pause_reason == "free_busy"
+
+
+def test_a_paid_models_limit_is_still_the_vendors_quota() -> None:
+    """Only opencode's free tier gets the `free_busy` wording: a paid or pinned model
+    that is rate-limited is the person's own account, and the quota pause stands."""
+    adapter, tried = _rotating_adapter(limited={"openrouter/qwen/qwen3-coder"})
+    adapter.model = "openrouter/qwen/qwen3-coder"
+    asyncio.run(adapter._run_opencode("ctx", cwd=None, resume=None, on_session=None))
+    assert tried == ["openrouter/qwen/qwen3-coder"] and adapter.pause_reason == "quota"
 
 
 def test_every_free_model_slow_cools_down_on_the_original() -> None:
