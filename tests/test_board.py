@@ -252,3 +252,19 @@ def test_track_owner_preserves_dashed_human_names(tmp_path):
         "for (const name of ['alice-smith', 'alice-smith-codex', 'alice-smith-codex-desktop']) "
         "{ if (trackOwner(name) !== 'alice-smith') throw new Error(name); }\n")
     subprocess.run([NODE, str(script)], check=True, capture_output=True)
+
+
+def test_the_scripts_are_files_not_python_strings() -> None:
+    """board-inbox.md slice 1: the JS (and the page's CSS) live in quorus/web so ESLint
+    and node see files. The modules only load them; what the relay serves is unchanged."""
+    from quorus import board, dashboard
+
+    web = Path(board.__file__).parent / "web"
+    assert BOARD_JS == "\n" + (web / "board.js").read_text(encoding="utf-8")
+    assert dashboard.DASHBOARD_JS == "\n" + (web / "web.js").read_text(encoding="utf-8")
+    assert (web / "web.css").read_text(encoding="utf-8").rstrip("\n") in DASHBOARD_HTML
+    for module in (board, dashboard):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        assert "function " not in source and "{display:" not in source, module.__name__
+        assert source.count("\n") < 200, module.__name__
+    assert (web / "eslint.config.mjs").exists()
