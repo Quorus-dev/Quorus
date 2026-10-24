@@ -21,7 +21,7 @@ export default [
     files: ["**/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
-      sourceType: "script",  // board.js and web.js are IIFEs with "use strict"
+      sourceType: "script",  // web.js is an IIFE with "use strict"
       globals: { ...globals.browser, module: "readonly" },  // `module`: the node tests
     },
     rules: {
@@ -33,7 +33,7 @@ export default [
     },
   },
   {
-    files: ["**/quorum*.js"],
+    files: ["**/quorum*.js", "**/board.js", "**/rows.js"],
     languageOptions: { sourceType: "module" },
   },
 ];

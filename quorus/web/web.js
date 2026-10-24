@@ -85,6 +85,9 @@ $("newRoom").addEventListener("click", () => {
 function openRoom(name) {
   S.room = name; S.seen = new Set(); $("messages").replaceChildren();
   $("roomName").textContent = "#" + name; $("app").classList.add("inroom");
+  // The board (a module script, so it may run after this): the event for a running
+  // board, the attribute for one that loads later.
+  document.documentElement.dataset.room = name;
   document.dispatchEvent(new CustomEvent("quorus:room", { detail: name }));  // the board
   loadRooms(); poll();
 }

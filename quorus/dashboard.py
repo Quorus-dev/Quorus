@@ -66,7 +66,7 @@ _HTML = """\
   </main>
 </div>
 <script src="/web.js"></script>
-<script src="/board.js"></script>
+<script type="module" src="/board.js"></script>
 <script type="module" src="/quorum.js"></script>
 </body>
 </html>

@@ -17,15 +17,25 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 router = APIRouter()
-# The script lives in quorus/web/board.js (ships in the wheel with the package),
-# so ESLint and the node tests see a file, not a Python string (board-inbox.md, slice 1).
+# The scripts live in quorus/web/ (shipped in the wheel with the package), so ESLint and
+# the node tests see files, not Python strings (board-inbox.md, slices 1-2). board.js is
+# an ES module: it imports /rows.js and the vendored Preact + htm from /vendor/.
 _WEB = Path(__file__).parent / "web"
 
 BOARD_JS = "\n" + (_WEB / "board.js").read_text(encoding="utf-8")
+# The pure row logic board.js imports; node tests run this file (slice 2).
+ROWS_JS = (_WEB / "rows.js").read_text(encoding="utf-8")
 
 
 @router.get("/board.js", include_in_schema=False)
 async def board_js() -> Response:
     """The board's script, same-origin so the CSP stays ``script-src 'self'``."""
     return Response(BOARD_JS, media_type="application/javascript",
+                    headers={"cache-control": "no-cache"})
+
+
+@router.get("/rows.js", include_in_schema=False)
+async def rows_js() -> Response:
+    """The board's row logic, imported by /board.js (same origin, same CSP)."""
+    return Response(ROWS_JS, media_type="application/javascript",
                     headers={"cache-control": "no-cache"})

@@ -1,19 +1,15 @@
-"use strict";
-(() => {
+// The "needs you" board: one row per agent, sorted by what needs a human (2026-10-17).
+// This module renders; the row logic is rows.js (pure, node-tested). Preact + htm are
+// vendored ESM served same-origin, so the relay CSP stays script-src 'self' with no build
+// step and no eval (docs/plans/board-inbox.md, slice 2). Data only ever becomes text:
+// htm interpolations are text nodes, and nothing here writes markup from data.
+import { h, render as mount } from "/vendor/preact.module.js";
+import htm from "/vendor/htm.module.js";
+import { AGENT, B, briefTick, clock, enc, me, ownKey, rowState, token, trackOwner }
+  from "/rows.js";
+
+const html = htm.bind(h);
 const $ = (id) => document.getElementById(id);
-const enc = encodeURIComponent;  // every path segment from data goes through this
-const AGENT = /-(claude|codex|gemini|opencode|cursor|cline)$/;
-const B = { room: null, timer: null, members: [], membersAt: 0, since: {}, on: false,
-            card: {}, cardAt: 0, track: {}, trackAt: 0, brief: { at: {}, gen: 0 } };
-const token = () => sessionStorage.getItem("qt") || "";
-const me = () => sessionStorage.getItem("qn") || "";
-function trackOwner(name) {
-  const matched = /^(.+?)-(claude|codex|gemini|cursor|opencode|cline)(-.*)?$/i.exec(name);
-  return matched ? matched[1] : name;
-}
-// A participant JWT has three dot-separated parts; the shared secret doesn't.
-// Approvals are never decided with the shared secret (team decision, 2026-10-17).
-const ownKey = () => token().split(".").length === 3;
 
 function api(path, opts) {
   const o = Object.assign({ headers: {} }, opts || {});
@@ -29,121 +25,6 @@ function el(tag, cls, text) {  // textContent only: no HTML from data, ever
   if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
-}
-// "@name" not followed by more name characters ("@arav" isn't "@arav-codex").
-const mention = (name) =>
-  new RegExp("(^|[^\\w-])@" + name.replace(/[^\w-]/g, "") + "(?![\\w-])");
-function ago(sec) {
-  sec = Math.max(0, Math.round(sec));
-  if (sec < 60) return sec + "s";
-  if (sec < 3600) return Math.floor(sec / 60) + "m";
-  return Math.floor(sec / 3600) + "h " + Math.floor((sec % 3600) / 60) + "m";
-}
-function clock(epoch) {
-  return new Date(epoch * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-const ts = (m) => Date.parse(m.timestamp || "") / 1000 || 0;
-const STALE_S = 600;  // a busy step older than this is a stuck daemon, not work
-// When this wake started: the relay's last_wake_at (epoch seconds from the file
-// backend, ISO text from Redis), else when this page first saw the agent busy.
-function busySince(p, name, now) {
-  const w = p.last_wake_at;
-  const t = typeof w === "number" ? w : Date.parse(w || "") / 1000;
-  return t > 0 ? t : (B.since[name] || now);
-}
-const PUBLISHED = /\(quorus\) published (\d+) commit\(s\) from quorus\/([\w-]+) to ([\w./-]+)/;
-const OK = /✅|\bapproved?\b|\bLGTM\b|lifting my block/i;
-const BLOCK = /\/disagree|\bblocking\b|\brejected\b|\bnot approved\b/i;
-
-// One agent's row, from presence + history + approvals. Pure: easy to reason about.
-function rowState(name, presence, history, approvals, now) {
-  const p = presence[name] || { online: false, status: "offline" };
-  const mine = history.filter((m) => m.from_name === name);
-  const r = { name, vendor: (name.match(AGENT) || ["", ""])[1], rank: 5, line: "", detail: "",
-              model: String(p.model || ""),  // tells agents apart without vendor logos
-              asks: [], approvals: approvals.filter((a) => a.agent === name),
-              // Mission control: the last few live steps, oldest first (sanitised
-              // `activity` history from /presence?trail=1, never raw output).
-              trail: p.online && Array.isArray(p.trail) ? p.trail.slice(-5) : [] };
-  const myName = me();
-  const ask = mine.slice().reverse().find((m) => myName && m.message_type !== "status"
-    && mention(myName).test(m.content || "")
-    && /\?|please (approve|confirm|decide)|need (your )?(approval|ok|decision)|i'?m blocked/i
-       .test(m.content || ""));
-  const answered = ask && history.some((m) => m.from_name === myName && ts(m) > ts(ask));
-  if (ask && !answered) r.asks.push((ask.content || "").split("\n")[0].slice(0, 160));
-  if (!p.online) { r.rank = 6; r.line = "offline"; }
-  else if (p.status === "busy" && now - busySince(p, name, now) > STALE_S) {
-    // A daemon stuck in a wake kept "running tests · 7h 26m" on the board for
-    // hours (Arav, 2026-10-18). A step clears after 10 minutes: idle, no trail.
-    r.rank = 5; r.line = "idle"; r.trail = [];
-  } else if (p.status === "busy") {
-    r.rank = 4;
-    r.line = (p.activity || "working") + " · " + ago(now - busySince(p, name, now));
-  } else if (p.waiting_on === "stuck") {
-    r.rank = 2;
-    const last = mine.slice().reverse().find((m) => /^⚠/.test(m.content || ""));
-    r.line = "stuck" + (last ? " since " + clock(ts(last)) : "");
-    if (last) r.detail = (last.content || "").split("\n")[0].slice(0, 160);
-  } else if (p.waiting_on === "quota") {
-    // limit_line (quorus/limit_display.py): the vendor's reset with its source,
-    // or our retry marked "?", never our padded retry passed off as the reset.
-    r.rank = 3;
-    r.line = p.limit_line
-      || "out of quota" + (p.waiting_until ? " · back about " + clock(p.waiting_until) : "");
-  } else if (p.waiting_on === "pacing") {
-    r.rank = 3;
-    r.line = "waiting for its plan slot"
-      + (p.waiting_until ? " · next turn in " + ago(p.waiting_until - now) : "");
-  } else if (/^paused by Quorus/.test(p.limit_line || "")) {
-    r.rank = 3; r.line = p.limit_line;  // a free-model cooldown: ours, not quota
-  } else { r.rank = 5; r.line = "idle" + (p.limit_line ? " · " + p.limit_line : ""); }
-  if (p.online && p.limit_hint) r.line += " → " + p.limit_hint;  // a suggestion only
-  if (r.approvals.length || r.asks.length) r.rank = 1;
-  const pub = mine.slice().reverse().find((m) => PUBLISHED.test(m.content || ""));
-  if (pub) {
-    const [, n, , to] = (pub.content || "").match(PUBLISHED);
-    r.shipped = "shipped " + n + " commit(s) to " + to + " · " + ago(now - ts(pub)) + " ago";
-    const verdict = history.slice().reverse().find((m) => m.from_name !== name
-      && ts(m) > ts(pub) && (m.content || "").includes("@" + name)
-      && (OK.test(m.content || "") || BLOCK.test(m.content || "")));
-    if (verdict) {
-      r.review = (BLOCK.test(verdict.content) ? "blocked by @" : "approved by @")
-        + verdict.from_name;
-      r.reviewBad = BLOCK.test(verdict.content);
-    }
-  }
-  // The newest self-tuning line about this agent (quorus/runtime/track_record.py
-  // posts "(quorus) t1 (shadow, not applied): would set @open bids x0.75 for @x ·
-  // 2 errors, 0 clean/24h · undo: quorus tune undo t1", or "(quorus) adapted t1: …").
-  // One row line per decision, with its undo: the same affordance every slice shares.
-  // Only a `status` message the agent posted itself counts (its daemon always posts
-  // them that way), so no room member can put a fake adaptation on someone's row.
-  // Ids are "t1" or, since 0.6.4, "<owner>.t1" (two owners' agents both said "t1").
-  const TUNE = /^\(quorus\) (adapted )?(?:[\w-]+\.)?t\d+\b/,
-    UNDO = / undo: quorus tune undo (?:[\w-]+\.)?t\d+/;
-  const tune = mine.slice().reverse().find((m) => m.message_type === "status"
-    && TUNE.test(m.content || "") && UNDO.test(m.content) && mention(name).test(m.content));
-  if (tune) {
-    const text = tune.content,
-      id = (text.match(/^\(quorus\) (?:adapted )?((?:[\w-]+\.)?t\d+)\b/) || [])[1] || "";
-    const shadow = /shadow, not applied/.test(text);
-    const what = text.slice(text.indexOf(": ") + 2, text.indexOf(" · undo:"))
-      .replace(/^would set /, "");
-    r.tuning = { id, shadow, undo: "quorus tune undo " + id,
-                 text: (shadow ? "shadow, not applied: would set " : "adapted: ") + what };
-  }
-  const c = B.card[name];  // the outcome ledger for this agent's work here
-  if (c && c.survival !== null && c.survival !== undefined) r.keptPct = c.survival;
-  if (c && c.commits) {
-    r.commits = c.commits;
-    r.card = c.commits + " commit(s) · "
-      + (c.survival === null || c.survival === undefined ? ""
-         : Math.round(100 * c.survival) + "% kept · ")
-      + c.approved + " approved" + (c.flagged ? " · " + c.flagged + " flagged" : "")
-      + (c.reverted ? " · " + c.reverted + " reverted" : "");
-  }
-  return r;
 }
 
 function decide(id, approve, btn) {
@@ -166,109 +47,72 @@ function ask(name, input) {
     .catch(() => { input.disabled = false; });
 }
 
+function Approval({ a }) {
+  const want = "wants to run " + (a.tool_name || "a tool") + ": "
+    + String(a.input_preview || "").slice(0, 120);
+  if (!ownKey()) {
+    return html`<div class="bapproval"><span>${want}</span>
+      <code>${"quorus approve " + a.id}</code></div>`;
+  }
+  // Action registry ids (quorus/actions/registry.py): the hub's /approve and /deny bind to
+  // the same record, with the same credential (the viewer's own). No caller-supplied
+  // decider: the relay takes it from the viewer's own JWT (Codex, 2026-10-17).
+  return html`<div class="bapproval"><span>${want}</span>
+    <button type="button" class="ok" data-action="quorus.approval.decide"
+            onClick=${(e) => decide(a.id, true, e.currentTarget)}>Approve</button>
+    <button type="button" class="no" data-action="quorus.approval.decide"
+            onClick=${(e) => decide(a.id, false, e.currentTarget)}>Deny</button></div>`;
+}
+
+function Row({ r }) {
+  const history = B.track[r.name] || [];
+  const last = r.trail.length - 1;
+  return html`<article class=${"brow r" + r.rank}>
+    <div class="bhead"><b>${"@" + r.name}</b><span class="tag">${r.model || r.vendor}</span>
+      <span class="bline">${r.line}</span></div>
+    ${r.detail && html`<div class="bdetail">${r.detail}</div>`}
+    ${r.trail.length > 1 && html`<ol class="btrail">${r.trail.map((t, i) =>
+      html`<li class=${i === last ? "now" : ""}><time>${clock(t.t)}</time>
+        <span>${String(t.step || "")}</span></li>`)}</ol>`}
+    ${r.asks.map((a) => html`<div class="bask">${"asked you: " + a}</div>`)}
+    ${r.approvals.map((a) => html`<${Approval} a=${a} />`)}
+    ${history.length > 0 && html`
+      <div class="bdetail">observed in this repo, not a ranking · 30 days</div>
+      <table class="btrack"><tr>${["kind", "model", "harness version", "task history"]
+        .map((v) => html`<th>${v}</th>`)}</tr>
+        ${history.map((c) => html`<tr>${[c.kind, c.model, c.version, c.summary]
+          .map((v) => html`<td>${String(v)}</td>`)}</tr>`)}</table>`}
+    ${r.card && html`<div class="bship">${"track record: " + r.card}</div>`}
+    ${r.tuning && html`<div class="btune">${r.tuning.text + " · undo: "}
+      <code>${r.tuning.undo}</code></div>`}
+    ${r.shipped && html`<div class="bship">${r.shipped}${r.review
+      && html`<span class=${r.reviewBad ? "bad" : "good"}>${" · " + r.review}</span>`}</div>`}
+    <form class="bassign" data-action="quorus.message.say"
+          onSubmit=${(e) => {
+            e.preventDefault(); ask(r.name, e.currentTarget.querySelector("input"));
+          }}>
+      <input placeholder=${"Ask or assign @" + r.name + "…"} autocomplete="off" />
+    </form>
+  </article>`;
+}
+
 function render(rows) {
   const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
   rows.forEach((r) => { if (counts[r.rank] !== undefined) counts[r.rank] += 1; });
-  const sum = $("boardSummary");
-  sum.replaceChildren();
-  [[1, "need you"], [2, "stuck"], [3, "waiting"], [4, "working"]].forEach(([k, label]) => {
-    const c = el("span", "chip" + (k === 1 && counts[k] ? " hot" : ""), counts[k] + " " + label);
-    sum.append(c);
-  });
-  const list = $("boardRows");
-  list.replaceChildren();
-  rows.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name))
-    .forEach((r) => list.append(rowEl(r)));
-  if (!rows.length) list.append(el("p", "hint", "No agents in this room yet: quorus agent add …"));
+  mount([[1, "need you"], [2, "stuck"], [3, "waiting"], [4, "working"]].map(([k, label]) =>
+    html`<span class=${"chip" + (k === 1 && counts[k] ? " hot" : "")}>
+      ${counts[k] + " " + label}</span>`),
+    $("boardSummary"));
+  rows.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
+  // Keyed by name: a row's "Ask or assign" input survives the 3 s refresh.
+  mount(rows.length ? rows.map((r) => html`<${Row} key=${r.name} r=${r} />`)
+    : html`<p class="hint">No agents in this room yet: quorus agent add …</p>`, $("boardRows"));
 }
 
-function rowEl(r) {
-    const row = el("article", "brow r" + r.rank);
-    const head = el("div", "bhead");
-    head.append(el("b", "", "@" + r.name), el("span", "tag", r.model || r.vendor),
-                el("span", "bline", r.line));
-    row.append(head);
-    if (r.detail) row.append(el("div", "bdetail", r.detail));
-    if (r.trail.length > 1) {  // the current step is already the headline
-      const trail = el("ol", "btrail");
-      r.trail.forEach((t, i) => {
-        const li = el("li", i === r.trail.length - 1 ? "now" : "");
-        li.append(el("time", "", clock(t.t)), el("span", "", String(t.step || "")));
-        trail.append(li);
-      });
-      row.append(trail);
-    }
-    r.asks.forEach((a) => row.append(el("div", "bask", "asked you: " + a)));
-    r.approvals.forEach((a) => {
-      const box = el("div", "bapproval");
-      box.append(el("span", "", "wants to run " + (a.tool_name || "a tool") + ": "
-        + String(a.input_preview || "").slice(0, 120)));
-      if (ownKey()) {
-        const yes = el("button", "ok", "Approve"), no = el("button", "no", "Deny");
-        yes.type = no.type = "button";
-        // Action registry ids (quorus/actions/registry.py): the hub's /approve and
-        // /deny bind to the same record, with the same credential (the viewer's own).
-        yes.dataset.action = "quorus.approval.decide";
-        no.dataset.action = "quorus.approval.decide";
-        yes.addEventListener("click", () => decide(a.id, true, yes));
-        no.addEventListener("click", () => decide(a.id, false, no));
-        box.append(yes, no);
-      } else {
-        box.append(el("code", "", "quorus approve " + a.id));
-      }
-      row.append(box);
-    });
-    const history = B.track[r.name] || [];
-    if (history.length) {
-      row.append(el("div", "bdetail", "observed in this repo, not a ranking · 30 days"));
-      const table = el("table", "btrack");
-      const header = el("tr");
-      ["kind", "model", "harness version", "task history"]
-        .forEach((v) => header.append(el("th", "", v)));
-      table.append(header);
-      history.forEach((c) => {
-        const tr = el("tr");
-        [c.kind, c.model, c.version, c.summary].forEach((v) => tr.append(el("td", "", String(v))));
-        table.append(tr);
-      });
-      row.append(table);
-    }
-    if (r.card) row.append(el("div", "bship", "track record: " + r.card));
-    if (r.tuning) {
-      const t = el("div", "btune", r.tuning.text + " · undo: ");
-      t.append(el("code", "", r.tuning.undo));
-      row.append(t);
-    }
-    if (r.shipped) {
-      const s = el("div", "bship", r.shipped);
-      if (r.review) s.append(el("span", r.reviewBad ? "bad" : "good", " · " + r.review));
-      row.append(s);
-    }
-    const form = el("form", "bassign");
-    form.dataset.action = "quorus.message.say";
-    const input = el("input");
-    input.placeholder = "Ask or assign @" + r.name + "…";
-    input.autocomplete = "off";
-    form.append(input);
-    form.addEventListener("submit", (e) => { e.preventDefault(); ask(r.name, input); });
-    row.append(form);
-    return row;
-}
-
-// The room's catch-me-up for people, read with the viewer's own token (it shows only
-// what they may read); room text goes in as textContent, never HTML. At most one
-// request per room every 30 s, mode toggles included, and a response lands only if
-// it is still for the room, credential and request that asked (Codex on c551a749).
-function briefTick(B, now, get, show) {
-  if (B.mode !== "brief" || !B.room) return null;
-  if (now - (B.brief.at[B.room] || 0) < 30) return null;  // per room: A→B→A included
-  const asked = { room: B.room, tok: token(), gen: ++B.brief.gen };
-  B.brief.at[B.room] = now;
-  const live = () => asked.gen === B.brief.gen && asked.room === B.room
-    && asked.tok === token();
-  return get("/rooms/" + enc(asked.room) + "/brief?format=text").then(
-    (r) => { if (live()) show((r && r.text) || ""); },
-    (e) => { if (live()) show("No brief: " + e.message); });
+function rowEl(r) {  // the Quorum view's seat card is the board's row (quorum.js)
+  const host = document.createElement("div");
+  mount(html`<${Row} r=${r} />`, host);
+  return host.firstElementChild;
 }
 
 function refresh() {
@@ -337,7 +181,7 @@ function show(on) {
   B.on = on;
   $("board").hidden = !on;
   if (on && !$("boardRows").children.length) {
-    $("boardRows").replaceChildren(el("p", "hint", "Loading the team…"));
+    mount(html`<p class="hint">Loading the team…</p>`, $("boardRows"));
   }
   // Mission control: on a wide screen the room's chat stays beside the agent
   // panels, so you watch them work and talk to them at once; a phone toggles.
@@ -362,12 +206,8 @@ function mode(m) {  // "list" or "quorum": two looks over the same rows
   refresh();
 }
 
-if (typeof module !== "undefined") {  // node tests only; browsers have no `module`
-  module.exports = { rowState, B, briefTick, trackOwner };
-  return;
-}
-document.addEventListener("quorus:room", (e) => {
-  B.room = e.detail; B.membersAt = 0; B.cardAt = 0; B.trackAt = 0; B.track = {};
+function onRoom(room) {
+  B.room = room; B.membersAt = 0; B.cardAt = 0; B.trackAt = 0; B.track = {};
   B.brief.gen++;  // whatever the old room's request returns, it is dropped
   $("brief").textContent = "";
   const view = sessionStorage.getItem("qv");  // `quorus web` lands here (#view=board|quorum)
@@ -378,7 +218,8 @@ document.addEventListener("quorus:room", (e) => {
   } else {
     refresh();
   }
-});
+}
+document.addEventListener("quorus:room", (e) => onRoom(e.detail));
 // Catch-me-up for people (slice 2): a third look next to List and Quorum.
 const briefBtn = el("button", "", "Brief");
 briefBtn.type = "button";
@@ -395,4 +236,5 @@ $("modeList").addEventListener("click", () => mode("list"));
 $("modeQuorum").addEventListener("click", () => mode("quorum"));
 window.QuorusBoard = { rowEl };  // the Quorum view's seat card is the board's row
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
-})();
+// web.js may have opened the room before this module ran (module scripts are deferred).
+if (document.documentElement.dataset.room) onRoom(document.documentElement.dataset.room);
