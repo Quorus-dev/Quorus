@@ -5,6 +5,56 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.4] — 2026-10-24
+
+### Added
+
+- The room's status row (the line above the composer) now names one of eight states, in
+  this order of precedence: not connected to the relay; no agents here yet; the agent isn't
+  running; working (with the busy agents named); free tier limited; ready; waiting for a
+  response; answered, when the row disappears. An agent counts as ready only when the
+  relay's presence says it is online, not because it is a member. Notices, status posts,
+  plans and `NO_REPLY` are never an answer, and an unanswered message from you brings
+  "waiting" back. Until the first presence poll lands the row only ever says "disconnected"
+  or "no agents", and a failed poll keeps the previous rows instead of claiming anything.
+- A free-model agent whose free tier is limited now says so. When opencode's free tier
+  refuses (a typed 429, shared across all of its free models), the agent posts one notice to
+  the room: the limit is per connection or account, no free model can answer right now,
+  message it again after the pause, and the exact commands that would get an answer now on
+  this computer. The daemon pauses until the vendor's reset and shows `free tier limited for
+  this connection or account` in `/status`, as its own pause reason, not as your quota. The
+  room's status row reads "free tier limited" until a real answer arrives.
+- `quorus demo` and the agent's notice share one "next command" detector. It lists every
+  prerequisite in order: `quorus` once if nothing is configured, the harness CLI if it isn't
+  on PATH, then the first path that works here: a running Ollama (and `ollama pull` if the
+  model is missing), a signed-in Claude Code or Codex, or Gemini with a key; otherwise how to
+  install Ollama. A free model is never offered as the way out of a free-tier limit.
+
+### Changed
+
+- `quorus demo` stops probing as soon as opencode reports the free-tier limit, instead of
+  trying every free model (they share the limit) and marking each one "slow" for an hour. A
+  probe that times out with the limit already in its output is read as a limit, not a slow
+  model. The same rule applies to an agent rotating through free models: a limit ends the
+  rotation, keeps the vendor's reset time, and restores the model it started on.
+- `quorus doctor` on a fresh install no longer promises "no keys needed": it says the demo
+  runs on a free model, and that if the free models are busy it asks before using your
+  Claude Code or Codex login, or tells you to retry later.
+- First-screen copy: a one-line wordmark instead of block letters; the ready line says which
+  room you are in ("You're @you in #general. Type a message and press Enter."); tools that
+  are installed but not signed in appear as one muted "Also on this computer" line after the
+  result instead of a warning each.
+- Each room message is one block: sender, time and text together, with code fences bounded
+  by the message, not the terminal.
+- Colour tokens that read on light terminals: words stay on the terminal's default
+  foreground; hue is used only for marks (ticks, bullets, the share card and `/info`).
+
+### Fixed
+
+- The 0.7.3 known limit: a first run on opencode's free tier that hit the rate limit used to
+  show only "Agent joined; waiting for a response". It now shows the notice and the "free
+  tier limited" row described above.
+
 ## [0.7.3] — 2026-10-24
 
 ### Added
