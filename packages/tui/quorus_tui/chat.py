@@ -152,16 +152,13 @@ def render_app_bar(
     glyph, glyph_style = ("●", "muted")
     if messages or typing:
         glyph, glyph_style = presence_dot(messages or [], typing=typing)
-    # Avatar dot for the room itself uses the room-name's hashed color
-    # — even when the presence ring is dim, the room "identity" reads.
-    room_hue = sender_color(room_name)
 
     left = Text(INDENT)
     left.append("‹", style="dim")
     left.append("  ", style="dim")
     left.append(glyph, style=glyph_style)
     left.append("  ", style="dim")
-    left.append(f"#{room_name}", style=f"bold {room_hue}")
+    left.append(f"#{room_name}", style="bold")
     if member_count:
         left.append("  ·  ", style="dim")
         suffix = "member" if member_count == 1 else "members"
@@ -236,7 +233,7 @@ def _own_bubble(
         used = 1 + 2 + len(name_part) + 2 + 1
         pad = max(2, console_width - 2 - used)
         head.append(" " * pad)
-        head.append(f"@{sender}", style=f"bold {color}")
+        head.append(f"@{sender}", style="bold")
         head.append("  ")
         head.append("●", style=glyph_color)
         head.append("  ")
@@ -300,7 +297,7 @@ def _other_bubble(
         head.append("  ")
         head.append("●", style=glyph_color)
         head.append("  ")
-        head.append(f"@{sender}", style=f"bold {color}")
+        head.append(f"@{sender}", style="bold")
         out.append(head)
 
     body_indent = "    "
@@ -811,7 +808,7 @@ def render_composer_hint(typing: str | None = None) -> Text:
     :class:`Text` that includes both rows separated by a newline.
     """
     line = Text(INDENT)
-    line.append("│ ", style="primary")
+    line.append("│ ", style="brand")
     line.append("Type a message…  ", style="dim")
     line.append("@", style="kbd")
     line.append(" mention", style="dim")

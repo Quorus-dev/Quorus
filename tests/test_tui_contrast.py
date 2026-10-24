@@ -5,11 +5,10 @@ import re
 
 import pytest
 from quorus_cli import ui
-from rich.color import ColorType
 from rich.console import Console
 
 DARK, LIGHT = (0x1E, 0x1E, 0x1E), (0xFF, 0xFF, 0xFF)
-ACCENT_MIN = 3.0  # names, glyphs and headings are bold or large; text is uncoloured
+MARK_MIN = 3.0  # WCAG 1.4.11 non-text contrast: glyphs, dots, rules, borders
 
 
 def _luminance(rgb):
@@ -26,20 +25,53 @@ def _contrast(a, b):
 
 
 @pytest.mark.parametrize("name", sorted(ui.STYLES))
-def test_each_style_is_default_foreground_or_reads_on_both_backgrounds(name):
+def test_text_styles_are_the_default_foreground(name):
+    """Words (names, rooms, commands, headings, messages): no colour at all,
+    only bold/dim/italic, since no colour reaches 4.5:1 on dark and light."""
     style = ui.THEME.styles[name]
-    color = style.color
-    if color is None or color.type == ColorType.DEFAULT:
-        return  # the terminal's own foreground: legible by definition
-    rgb = color.get_truecolor()
+    assert style.color is None and style.bgcolor is None, name
+
+
+@pytest.mark.parametrize("name", sorted(ui.MARKS))
+def test_marks_read_on_both_backgrounds(name):
+    color = ui.THEME.styles[name].color
     for bg in (DARK, LIGHT):
-        assert _contrast(tuple(rgb), bg) >= ACCENT_MIN, (name, color.name, bg)
+        assert _contrast(tuple(color.get_truecolor()), bg) >= MARK_MIN, (name, bg)
 
 
-@pytest.mark.parametrize("name", ["muted", "dim", "ts", "subtle", "bright", "pill_idle"])
-def test_text_styles_carry_no_hex(name):
-    """Body and meta text: default foreground, at most the dim attribute."""
-    assert ui.THEME.styles[name].color is None
+def _coloured_words(lines):
+    """Segments that contain a letter or digit and carry a foreground colour."""
+    console = Console(file=io.StringIO(), theme=ui.THEME, force_terminal=True,
+                      color_system="truecolor", width=80)
+    bad = []
+    for line in lines:
+        for seg in console.render(line):  # applies each Text's base style too
+            if seg.style and seg.style.color is not None and re.search(r"[A-Za-z0-9]",
+                                                                      seg.text):
+                bad.append((seg.text, str(seg.style)))
+    return bad
+
+
+def test_no_word_in_the_room_is_coloured():
+    from quorus_tui import chat, chat_widgets
+
+    msgs = [
+        {"from_name": "sam", "content": "why does @sam-opencode fail in #dev?", "id": "1",
+         "timestamp": "2027-01-15T08:00:00+00:00"},
+        {"from_name": "sam-opencode", "content": "Looking now:\n```\nassert 3\n```\ndone",
+         "id": "2", "timestamp": "2027-01-15T08:01:00+00:00"},
+        {"from_name": "ada-codex", "content": "", "message_type": "social", "id": "3",
+         "timestamp": "2027-01-15T08:02:00+00:00"},
+    ]
+    lines = chat.render_bubble_feed(msgs, "dev", "sam", console_width=80)
+    lines.append(chat.render_app_bar(room_name="dev", member_count=3, last_active="now",
+                                     console_width=80, messages=msgs))
+    lines.append(chat.render_composer_hint(typing="sam-opencode"))
+    for verb, payload in [("vote", {"option": "ship"}), ("disagree", {"reason": "no"}),
+                          ("claim", {"task_id": "t1"}), ("interrupt", {"reason": "stop"})]:
+        lines += [d for d in chat_widgets.verb_decoration(verb, payload, 80, sender="ada-codex")
+                  if chat_widgets._INTERRUPT_BORDER_MARKER not in d.plain]  # never printed
+    assert _coloured_words(lines) == []
 
 
 def test_no_color_emits_no_colour_codes():
@@ -55,3 +87,41 @@ def test_no_color_emits_no_colour_codes():
     for params in sgr:
         for p in filter(None, params.split(";")):
             assert not (30 <= int(p) <= 49 or 90 <= int(p) <= 107), params
+
+
+def _coloured_words_in_ansi(text):
+    """Letters or digits printed while an SGR foreground colour is active."""
+    bad, coloured = [], False
+    for code, chunk in re.findall(r"\x1b\[([0-9;]*)m|([^\x1b]+)", text):
+        if chunk:
+            if coloured and re.search(r"[A-Za-z0-9]", chunk):
+                bad.append(chunk)
+            continue
+        params = [int(p) for p in code.split(";") if p] or [0]
+        i = 0
+        while i < len(params):
+            p = params[i]
+            if p in (0, 39):
+                coloured = False
+            elif p in (38,):
+                coloured, i = True, i + (4 if params[i + 1:i + 2] == [2] else 2)
+            elif 30 <= p <= 37 or 90 <= p <= 97:
+                coloured = True
+            i += 1
+    return bad
+
+
+def test_printed_screens_colour_no_words(monkeypatch):
+    from quorus_tui import welcome
+
+    out = io.StringIO()
+    console = Console(file=out, theme=ui.THEME, force_terminal=True,
+                      color_system="truecolor", width=100)
+    welcome.render_welcome(console, rooms=[{"name": "dev"}], unread_by_room={"dev": 2},
+                           selected_room_name="dev", messages=[], agent_name="sam")
+    monkeypatch.setattr(ui, "console", console)
+    ui.banner(version="9.9.9")
+    ui.success("joined #dev")
+    ui.error("relay unreachable", hint="run quorus doctor")
+    ui.warn("free tier limited")
+    assert _coloured_words_in_ansi(out.getvalue()) == []

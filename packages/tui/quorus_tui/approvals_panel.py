@@ -65,10 +65,10 @@ def render_approvals_panel(
     n = len(live)
     header = Text(INDENT)
     header.append("🔐 ", style="")
-    header.append("Waiting on you", style="bold warning")
+    header.append("Waiting on you", style="bold")
     header.append("  —  ", style="dim")
     header.append(
-        f"{n} agent{'s' if n != 1 else ''} blocked", style="warning",
+        f"{n} agent{'s' if n != 1 else ''} blocked", style="bright",
     )
     rows.append(header)
 

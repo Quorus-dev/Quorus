@@ -150,7 +150,7 @@ def slash_info(arg, state, relay_url, secret, agent_name, console):
     if members:
         for m in members:
             line = Text("  ●  ", style=_chat._sender_color(m))
-            line.append(f"@{m}", style=f"bold {_chat._sender_color(m)}")
+            line.append(f"@{m}", style="bold")
             console.print(line)
     else:
         console.print(Text.from_markup("  [dim]no member roster yet[/]"))

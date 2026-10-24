@@ -447,14 +447,15 @@ def _first_launch_setup(console: Console) -> dict:
                     "automatically.[/]"
                 )
         else:
-            console.print("[warning]not reachable[/] [dim]— is your teammate's relay up?[/]")
+            console.print("[warning]![/] [bold]not reachable[/] "
+                          "[dim]— is your teammate's relay up?[/]")
     elif raw:
         from quorus.services.join_code_svc import normalize_code
 
         canonical = normalize_code(raw)
         if canonical is None:
             console.print(
-                "\n  [error]Couldn't recognize that input.[/] "
+                "\n  [error]✗[/] [bold]Couldn't recognize that input.[/] "
                 "[dim]Expected an invite code like ABCD-EFGH.[/]"
             )
         else:
@@ -493,7 +494,7 @@ def _first_launch_setup(console: Console) -> dict:
                         "automatically.[/]"
                     )
             elif address:
-                console.print("[error]code not found, expired, or relay unreachable[/]")
+                console.print("[error]✗[/] [bold]code not found, expired, or relay unreachable[/]")
     else:
         secret = new_secret()
         console.print("\n  [dim]Setting up Quorus on this computer...[/] ", end="")
@@ -575,7 +576,7 @@ def _claim_human_key(relay_url: str, secret: str, name: str, console: Console) -
         return str((r.json() or {}).get("participant_key") or "")
     if r.status_code == 409:
         console.print(
-            f"  [warning]The name @{name} is already claimed on this relay.[/] [dim]Its "
+            f"  [warning]![/] [bold]The name @{name} is already claimed on this relay.[/] [dim]Its "
             f"owner can free it with [accent]quorus release-name {name}[/]; until then "
             "you can read and post, but /vote, /claim and the other verbs need a "
             "name of your own.[/]"
@@ -665,7 +666,7 @@ def _ask_relay_address(console: Console, tries: int = 3) -> str:
                 and parsed.hostname and not parsed.username and not parsed.password
                 and " " not in raw):
             return raw
-        console.print("  [warning]That isn't an address.[/] [dim]It looks like "
+        console.print("  [warning]![/] [bold]That isn't an address.[/] [dim]It looks like "
                       "http://192.168.1.20:8080: your teammate's `quorus share` "
                       "shows it after --relay.[/]")
     return ""
@@ -1518,7 +1519,6 @@ def _print_inline_message(
     # Skip our own echoed messages — we already showed the optimistic echo.
     if sender == my_name:
         return
-    sender_style = _sender_color(sender)
 
     # Draw the separator rule once per "typing session" so multiple incoming
     # messages don't get multiple rules stacked on top of each other.
@@ -1535,7 +1535,7 @@ def _print_inline_message(
         line.append(f"· {content}", style="muted italic")
         console.print(line)
         return
-    line.append(f"@{sender}", style=f"bold {sender_style}")
+    line.append(f"@{sender}", style="bold")
     line.append(": ", style="dim")
     # Themed 'bright' instead of literal 'white' — keeps the line
     # legible on light terminals and matches the rest of the surface.
@@ -1883,7 +1883,6 @@ def _format_header_line(
         hhmm = "??:??"
 
     is_me = sender == my_name
-    sender_color = "agent" if is_me else _sender_color(sender)
 
     line = Text()
     line.append("  ")
@@ -1895,7 +1894,7 @@ def _format_header_line(
         line.append("  ", style="")
     line.append(f"[{hhmm}]", style="ts")
     line.append("  ")
-    line.append(f"@{sender}", style=f"bold {sender_color}")
+    line.append(f"@{sender}", style="bold")
     line.append("  ")
     # 'bright' for own messages (eye-anchor), 'subtle' for others — readable
     # but recessed so the typing column stays the visual focus.
@@ -4063,7 +4062,7 @@ def _run_session(
         if _name_has_agent_keyword(agent_name):
             chat_identity = _strip_agent_suffix(agent_name)
             console.print(
-                f"\n  [dim]Identity: posting as [bold success]@{chat_identity}[/]"
+                f"\n  [dim]Identity: posting as [bold]@{chat_identity}[/]"
                 f" (human). Profile instance is [muted]@{agent_name}[/]"
                 f" (agent). Override with [accent]/identity agent[/].[/]"
             )

@@ -825,7 +825,7 @@ def _cmd_rooms(args):
         header_style="muted",
         border_style="dim",
     )
-    table.add_column("ROOM", style=f"bold {ui.ROOM}", no_wrap=True)
+    table.add_column("ROOM", style="bold", no_wrap=True)
     table.add_column("MEMBERS", style="muted")
     table.add_column("ID", style="dim", no_wrap=True)
     for r in rooms:
@@ -2657,7 +2657,7 @@ async def _ps(*, as_json: bool = False) -> None:
             pad_edge=False,
             header_style="muted",
         )
-        table.add_column("AGENT", style=f"bold {_ui.AGENT}", no_wrap=True)
+        table.add_column("AGENT", style="bold", no_wrap=True)
         table.add_column("STATUS", no_wrap=True)
         table.add_column("ROOM", style="dim")
         table.add_column("LAST SEEN", style="dim", no_wrap=True)
@@ -6013,7 +6013,7 @@ def _cmd_share(args):
 
     big = Text()
     big.append("      ")
-    big.append(code, style=f"bold {ui.ROOM}")
+    big.append(code, style="bold")
     big.append(f"      expires in {ttl_label}", style="muted")
     ui.console.print(big)
     ui.console.print()
@@ -6462,9 +6462,9 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     ui.console.print()
     welcome = Text()
     welcome.append("  Welcome ", style="primary")
-    welcome.append(f"@{name}", style=f"bold {ui.AGENT}")
+    welcome.append(f"@{name}", style="bold")
     welcome.append(" to ", style="primary")
-    welcome.append(f"#{room}", style=f"bold {ui.ROOM}")
+    welcome.append(f"#{room}", style="bold")
     ui.console.print(
         Panel(welcome, border_style="primary", padding=(0, 1))
     )

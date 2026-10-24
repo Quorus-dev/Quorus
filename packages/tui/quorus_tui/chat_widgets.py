@@ -394,7 +394,7 @@ def verb_decoration(
         mode = str(payload.get("mode", "advisory"))
         style = "danger" if mode == "blocking" else "warning"
         line.append("⚠ ", style=style)
-        line.append(f"disagree ({mode})", style=f"bold {style}")
+        line.append(f"disagree ({mode})", style="bold")
         reason = str(payload.get("reason", ""))[:80]
         if reason:
             line.append(f" — {reason}", style="muted")
@@ -406,20 +406,21 @@ def verb_decoration(
         after = str(payload.get("after", "?"))[:40]
         summary = str(payload.get("task_summary", ""))[:60]
         line.append("≡ ", style="info")
-        line.append(f"queued after #{after}", style="info")
+        line.append(f"queued after #{after}", style="bright")
         if summary:
             line.append(f" — {summary}", style="muted")
     elif verb == "vote":
         option = str(payload.get("option", "?"))[:40]
         weight = float(payload.get("weight", 1.0))
         line.append("✓ ", style="success")
-        line.append(f"vote: {option}", style="bold success")
+        line.append(f"vote: {option}", style="bold")
         line.append(f"  ({weight:g})", style="muted")
     elif verb == "interrupt":
         reason = str(payload.get("reason", ""))[:120]
-        line.append("! INTERRUPT", style="bold danger")
+        line.append("!", style="bold danger")
+        line.append(" INTERRUPT", style="bold")
         if reason:
-            line.append(f" — {reason}", style="danger")
+            line.append(f" — {reason}", style="bright")
         marker = Text(_INTERRUPT_BORDER_MARKER, style="danger")
         return [line, marker]
     else:
@@ -509,7 +510,7 @@ def typing_indicator(typist: str | None) -> Text:
         return Text("")
     line = Text(INDENT)
     line.append(f"{PRESENCE_GLYPH_TYPING}  ", style="accent")
-    line.append(f"@{typist}", style=f"bold {sender_color(typist)}")
+    line.append(f"@{typist}", style="bold")
     line.append(" is typing", style="dim italic")
     line.append("…", style="dim italic")
     return line
@@ -657,26 +658,26 @@ def render_share_card(
     width = max(SHARE_CARD_MIN_W, min(console_width - 4, 64))
     title = f" Share #{room_name} "
     side = max(2, (width - len(title) - 2) // 2)
-    top = Text("  ┌" + "─" * side, style="primary")
-    top.append(title, style="bold primary")
-    top.append("─" * (width - 2 - side - len(title)) + "┐", style="primary")
+    top = Text("  ┌" + "─" * side, style="brand")
+    top.append(title, style="bold")
+    top.append("─" * (width - 2 - side - len(title)) + "┐", style="brand")
 
     def _row(left: str, *, style: str = "bright") -> Text:
         body = "  " + left
         pad = max(0, width - 2 - len(body))
-        line = Text("  │", style="primary")
+        line = Text("  │", style="brand")
         line.append(body, style=style)
         line.append(" " * pad, style="")
-        line.append("│", style="primary")
+        line.append("│", style="brand")
         return line
 
     def _blank() -> Text:
-        line = Text("  │", style="primary")
+        line = Text("  │", style="brand")
         line.append(" " * (width - 2), style="")
-        line.append("│", style="primary")
+        line.append("│", style="brand")
         return line
 
-    bottom = Text("  └" + "─" * (width - 2) + "┘", style="primary")
+    bottom = Text("  └" + "─" * (width - 2) + "┘", style="brand")
 
     lines: list[Text] = [top, _blank()]
     lines.append(_row(f"Code:   {_short_code(code)}", style="bold accent"))
@@ -729,7 +730,7 @@ def render_mention_popover(
         line = Text("  ")
         line.append("●", style=sender_color(name))
         line.append("  ")
-        line.append(f"@{name}", style=f"bold {sender_color(name)}")
+        line.append(f"@{name}", style="bold")
         rows.append(line)
     return rows
 
