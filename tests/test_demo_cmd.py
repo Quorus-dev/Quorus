@@ -94,6 +94,65 @@ def test_picks_the_free_models_that_answer(monkeypatch, tmp_path: Path) -> None:
     assert demo_cmd.pick_models(tmp_path, _C(), "x/y") == ["x/y", "x/y"]
 
 
+_LIMIT_429 = ('{"type":"error","error":{"type":"FreeUsageLimitError","message":"Free usage '
+              'limit reached. Subscribe to OpenCode Go to keep going: https://opencode.ai/go"}}')
+
+
+def test_a_probe_tells_a_free_tier_limit_from_a_slow_model(monkeypatch, tmp_path: Path) -> None:
+    """keyless-answer.md §3.5: the limit is typed evidence (an error event), never a
+    timeout or a reply that happens to mention quotas."""
+    import subprocess as sp
+
+    outputs = {"limited": _LIMIT_429,
+               "pong": '{"type":"text","part":{"text":"pong","messageID":"m"}}',
+               "chatty": '{"type":"text","part":{"text":"the quota is fine","messageID":"m"}}',
+               "older": '{"type":"error","error":{"name":"APIError","data":{"message":'
+                        '"Rate limit exceeded. Please try again later."}}}'}
+
+    def run(argv, **_kw):
+        model = argv[argv.index("-m") + 1]
+        return sp.CompletedProcess(argv, 1, stdout=outputs[model.split("/")[-1]], stderr="")
+
+    monkeypatch.setattr(demo_cmd.subprocess, "run", run)
+    assert isinstance(demo_cmd.model_answers("x/limited", tmp_path), demo_cmd.FreeTierLimited)
+    assert isinstance(demo_cmd.model_answers("x/older", tmp_path), demo_cmd.FreeTierLimited)
+    assert isinstance(demo_cmd.model_answers("x/pong", tmp_path), float)
+    assert demo_cmd.model_answers("x/chatty", tmp_path) is None  # not pong, not a limit
+
+
+def test_a_free_tier_limit_stops_the_probes_and_marks_nothing_slow(monkeypatch,
+                                                                     tmp_path: Path) -> None:
+    """Claude on 339b0e10: under the shared quota one demo run probed every free
+    model and recorded the limit as "slow" for an hour."""
+    from quorus.runtime import opencode_free
+
+    class _C:
+        out: list[str] = []
+
+        def print(self, *a, **_k) -> None:
+            self.out.append(" ".join(map(str, a)))
+
+    import subprocess as sp
+
+    opencode_free.reset_cache()
+    monkeypatch.setattr(opencode_free, "_default_run", lambda argv, **_k: sp.CompletedProcess(
+        argv, 0, stdout="\n".join(demo_cmd.FREE_MODELS), stderr=""))
+    probed: list[str] = []
+
+    def answers(model, cwd):
+        probed.append(model)
+        return demo_cmd.FreeTierLimited("FreeUsageLimitError Free usage limit reached.")
+
+    monkeypatch.setattr(demo_cmd, "model_answers", answers)
+    try:
+        assert demo_cmd.pick_models(tmp_path, _C()) == []
+        assert probed == [demo_cmd.FREE_MODELS[0]]  # one probe, not one per free model
+        assert not any(opencode_free.is_slow(m) for m in demo_cmd.FREE_MODELS)
+        assert any("free tier reported its limit" in line for line in _C.out)
+    finally:
+        opencode_free.reset_cache()
+
+
 def test_demo_shows_each_agents_step_once(monkeypatch) -> None:
     class C:
         out: list[str] = []
