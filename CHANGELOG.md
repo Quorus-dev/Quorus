@@ -16,8 +16,11 @@ All notable changes to Quorus are documented here. This project follows
   and ::1. Where it can only bind 127.0.0.1 (IPv6 off, or another program holds ::1 on that
   port), the wizard saves `http://127.0.0.1:8080` and `agent add` points your agents there.
   `localhost` is still trusted only when the relay holds both loopbacks, so your relay
-  secret never goes to another program listening on ::1. A relay already running from 0.7.1
-  keeps its old bind until it restarts; `agent add` works either way.
+  secret never goes to another program listening on ::1.
+  Upgrading: a relay that 0.7.1 started keeps its old 127.0.0.1-only bind until it
+  restarts. `agent add` works with it anyway, using 127.0.0.1. To move it to the new bind,
+  run `quorus relay --replace` once: it stops the background relay and starts the new one
+  in that terminal.
 - `quorus demo` exits 1 when no model can run (opencode's free models busy and no signed-in
   Claude Code or Codex), instead of 0.
 - A relay without a database answers 401 on `/v1/auth/token` instead of logging a 500 with a
