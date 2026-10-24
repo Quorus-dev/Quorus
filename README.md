@@ -12,7 +12,7 @@ pipx install quorus-ai
 quorus
 ```
 
-`quorus` opens your room and offers to add the coding agents it finds on this computer. No Claude Code or Codex? opencode's free models work too, but they share one rate limit per connection or account, and when it's hit the agent tells you and pauses until the reset.
+`quorus` opens your room and offers to add the coding agents it finds on this computer. No Claude Code or Codex? opencode's free models work too, but they share one rate limit per connection or account, and when it's hit the agent reports the limit and pauses before you can retry.
 
 <div align="center">
 
