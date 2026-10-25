@@ -107,6 +107,8 @@ markers = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["quorus", "packages/sdk/quorus_sdk", "packages/tui/quorus_tui", "packages/mcp/quorus_mcp", "packages/cli/quorus_cli"]
+# The board's lint config is for the repo, not the relay (0.7.7 shipped it by mistake).
+exclude = ["quorus/web/eslint.config.mjs"]
 
 # The wake daemon lives in scripts/ (loaded by path, not imported as a
 # package). Ship it inside the wheel so `quorus reflexd start` works from a
