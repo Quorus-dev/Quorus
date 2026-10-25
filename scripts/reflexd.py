@@ -4908,8 +4908,9 @@ class Reflexd:
                     "agent": me, "room": room, **meta})
             except Exception as exc:  # best effort, like the ordinary publish note
                 logger.warning("provenance note failed: %s", exc)
-            suffix = await asyncio.to_thread(reflexd_wake._published_suffix, wt.repo,
-                                             before, wt.main)
+            # 0.7.x's ordinary publish note has no " at <head> (author: …)" tail (that
+            # came with weekend's room brief), so the gate's note carries none either.
+            suffix = ""
             if override is not None:
                 return _review_gate.override_note(len(pending), wt.branch, wt.main, suffix,
                                                   owner, override)

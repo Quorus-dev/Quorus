@@ -17,7 +17,6 @@ from typing import Any
 import httpx
 
 from quorus.runtime import review_gate as _gate
-from quorus_cli import relay_http as _relay_http
 
 _KEYED = {"key": "claim_id", "jwt": "participant_id"}
 _STAMP = {"claim_id": "sender_claim_id", "participant_id": "sender_participant_id"}
@@ -42,8 +41,8 @@ def _history(room: str) -> list[dict[str, Any]] | None:
     from quorus_cli import cli
 
     try:
-        resp = _relay_http.get(f"{cli.RELAY_URL}/rooms/{room}/history",
-                               params={"limit": 200}, headers=cli._auth_headers(), timeout=10)
+        resp = httpx.get(f"{cli.RELAY_URL}/rooms/{room}/history",
+                         params={"limit": 200}, headers=cli._auth_headers(), timeout=10)
     except httpx.ConnectError as exc:
         cli._relay_unreachable(exc=exc)
         return None

@@ -228,7 +228,8 @@ def test_pinned_go_publishes_the_held_tip_once(env):
     assert _git(repo, "rev-parse", "main") == tip
     assert rg.load_marker(d.config.runtime_dir, repo, wt.branch) is None
     [note] = [p["content"] for p in relay.posted]
-    assert note.startswith(f"(quorus) published 2 commit(s) from {wt.branch} to main at ")
+    # 0.7.x: no " at <head> (author: …)" tail; that came with weekend's room brief.
+    assert note.startswith(f"(quorus) published 2 commit(s) from {wt.branch} to main; ")
     assert note.endswith("; reviewed by @rev-codex (GO g1)")
     notes = _git(repo, "notes", "--ref=quorus", "show", "main")
     assert '"reviewed_by": "rev-codex"' in notes and '"review_msg": "g1"' in notes
