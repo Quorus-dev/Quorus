@@ -274,6 +274,17 @@ def test_a_review_closes_on_the_viewers_wire_vote_or_disagree(tmp_path: Path) ->
     elsewhere = ask + [verb("v3", "arav", "vote", {"option": "approve", "poll_id": "vote_zz"},
                             minute=2)]  # a vote in another poll is no verdict on r1
     assert _kinds(_inbox(tmp_path, elsewhere, [])) == [("review", "r1")]
+    # Codex on fc4ed6ee: an explicit poll_id wins over the envelope's ref, as in the relay
+    # (social_svc.py:389-404), so this vote went to vote_other and r1 stays open.
+    explicit = ask + [verb("v5", "arav", "vote", {"option": "approve", "poll_id": "vote_other"},
+                           ref="r1", minute=2)]
+    assert _kinds(_inbox(tmp_path, explicit, [])) == [("review", "r1")]
+    # No poll_id while a block is active: the relay puts the vote in the block's poll, so
+    # it is no verdict on r1 either (and that vote alone doesn't clear the block).
+    with_block = BLOCK_ON_CLAUDE + ask + [verb("v6", "arav", "vote", {"option": "approve"},
+                                               ref="r1", minute=3)]
+    assert _kinds(_inbox(tmp_path, with_block, [], members=3)) == [("block", "v1"),
+                                                                   ("review", "r1")]
     someone_else = ask + [verb("v4", "arav-codex", "vote", {"option": "approve",
                                                            "poll_id": "vote_r1"}, minute=2)]
     assert _kinds(_inbox(tmp_path, someone_else, [])) == [("review", "r1")]

@@ -55,6 +55,7 @@ export function wireBlocks(history, members) {
   };
   let active = null;  // { msg, env, ref, poll, closedBy? }
   const history_ = [];
+  const landed = new Map();  // vote message id -> the poll the relay put it in
   history.forEach((m) => {
     const e = envelope(m);
     if (!e) return;
@@ -71,6 +72,7 @@ export function wireBlocks(history, members) {
       const id = p.poll_id || (active ? active.poll
         : (e.ref_message_id ? "vote_" + e.ref_message_id : ""));
       if (!id) return;
+      landed.set(String(m.id || ""), id);
       const tally = poll(id);
       if (tally.voters.has(e.actor)) return;
       tally.voters.add(e.actor);
@@ -82,7 +84,7 @@ export function wireBlocks(history, members) {
       }
     }
   });
-  return { active, closed: history_, polls };
+  return { active, closed: history_, polls, landed };
 }
 
 function isMine(name, me) {
@@ -107,7 +109,8 @@ export function inboxItems(history, approvals, me, now, members) {
                  at, age: Math.max(0, now - at), actions: ["approve", "deny"] });
   });
 
-  const block = wireBlocks(history, members).active;
+  const wire = wireBlocks(history, members);
+  const block = wire.active;
   if (block) {
     const b = block;
     const target = byId.get(b.ref);
@@ -129,8 +132,9 @@ export function inboxItems(history, approvals, me, now, members) {
     const text = String(m.content);
     if (from !== me && mention(me || "\u0000").test(text) && REVIEW.test(text) && SHA.test(text)) {
       // A review request: closed by the viewer's own verdict, in prose on the sha or the
-      // asker, or on the wire: a `vote` in this request's poll (the inbox's `a`) or a
-      // `disagree` that references it (Codex on bb78c474).
+      // asker, or on the wire: a `vote` that landed in this request's poll (resolved the
+      // relay's way in wireBlocks: explicit poll_id first, else the active block's poll,
+      // else vote_<ref>; Codex on fc4ed6ee) or a `disagree` that references it.
       const sha = text.match(SHA)[0];
       const id = String(m.id || "");
       const verdict = later.some((x) => {
@@ -138,8 +142,8 @@ export function inboxItems(history, approvals, me, now, members) {
         const e = envelope(x);
         if (e) {
           const p = e.payload || {};
-          return (e.verb === "vote" && (p.poll_id === "vote_" + id || e.ref_message_id === id))
-            || (e.verb === "disagree" && (p.ref_message_id === id || e.ref_message_id === id));
+          return (e.verb === "vote" && wire.landed.get(String(x.id || "")) === "vote_" + id)
+            || (e.verb === "disagree" && (p.ref_message_id || e.ref_message_id) === id);
         }
         return (OK.test(x.content || "") || BLOCK.test(x.content || ""))
           && (String(x.content).includes(sha) || mention(from).test(x.content || ""));
