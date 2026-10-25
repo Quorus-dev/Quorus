@@ -13,7 +13,7 @@ SECRET = "relay-s3cret-value-123"
 ENCODED = base64.urlsafe_b64encode(SECRET.encode()).decode().rstrip("=")
 
 
-def _type(lines):
+def _type(lines, sent=None):
     state = hub.HubState()
     state.set_rooms([{"name": "general", "members": ["alice", "alice-codex"]}])
     state.select_by_name("general")
@@ -22,7 +22,9 @@ def _type(lines):
     with patch.object(hub, "_read_input", side_effect=[*lines, "quit"]), \
          patch.object(hub, "_full_clear"), \
          patch.object(hub, "_join_room"), patch.object(hub, "_load_history_into"), \
-         patch.object(hub, "_send_message", return_value="m1"), \
+         patch.object(hub, "_send_message",
+                      side_effect=lambda *a: (sent if sent is not None else []).append(a[-1])
+                      or "m1"), \
          patch.object(hub, "_mint_join_token", return_value="ABCD-EFGH"), \
          patch("quorus_tui.slash.run_share_flow", return_value="Share card closed"), \
          patch("builtins.input", return_value=""):
@@ -40,6 +42,9 @@ def test_no_typed_input_prints_the_secret_or_a_join_token(text):
     assert "quorus_join_" not in out
 
 
-def test_invite_points_to_share():
-    state, _ = _type(["invite bob"])
-    assert "/share" in state.get_status_bar()
+def test_invite_in_a_room_is_just_a_message():
+    """0.7.5 points `invite <name>` to /share; on this line typed room text is a
+    message (tui-polish.md defect 7), so it is sent and prints nothing more."""
+    sent = []
+    _, out = _type(["invite bob"], sent)
+    assert sent == ["invite bob"] and "quorus_join_" not in out
