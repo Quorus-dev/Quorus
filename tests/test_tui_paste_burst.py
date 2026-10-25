@@ -114,3 +114,19 @@ def test_esc_on_the_slash_menu_drops_the_half_typed_command(tmp_path):
     # Enter on the open menu accepts "/help"; the second Enter sends it.
     got = _paste(["/h", "\x1b", "/help", "\r", "\r"], tmp_path)
     assert [line.strip() for line in got] == ["/help"]
+
+
+@pytest.mark.parametrize("keys", [["half typed", "\x04", " reply\r"],   # Ctrl-D
+                                  ["half typed", "\t", " reply\r"]])    # Tab
+def test_quit_and_next_room_keys_keep_a_half_typed_message(keys, tmp_path):
+    """tui-polish.md §3.5: Ctrl-D quit and Tab switched rooms with a draft in the
+    composer, and the draft was lost. With text typed, both do nothing."""
+    assert _paste(keys, tmp_path) == ["half typed reply"]
+
+
+@pytest.mark.parametrize("key, sentinel", [("\x04", "__QUIT_KEY__"), ("\t", "__TAB__")])
+def test_on_an_empty_composer_they_still_quit_and_switch(key, sentinel, tmp_path):
+    from quorus_tui import hub
+
+    assert sentinel in (hub._KEY_QUIT, hub._KEY_TAB)
+    assert _paste(key, tmp_path) == [sentinel]

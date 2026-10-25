@@ -3181,6 +3181,11 @@ def _read_input(
                     buf = list(draft)
                     _redraw_line(buf)
                 continue
+            # Tab (next room) and Ctrl-D (quit) act only on an empty input, like
+            # Esc below: with a half-typed message they dropped it on the floor
+            # (tui-polish.md §3.5: no key discards typed text).
+            if key == readchar.key.TAB and buf:
+                continue
             if key == readchar.key.TAB:
                 sys.stdout.write("\n")
                 sys.stdout.flush()
@@ -3192,6 +3197,8 @@ def _read_input(
                 sys.stdout.write("\n")
                 sys.stdout.flush()
                 return _KEY_ESC
+            if key == readchar.key.CTRL_D and buf:
+                continue
             if key in (readchar.key.CTRL_C, readchar.key.CTRL_D):
                 sys.stdout.write("\n")
                 sys.stdout.flush()
