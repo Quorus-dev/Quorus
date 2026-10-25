@@ -103,7 +103,8 @@ def test_reviewed_room_holds_the_turn(env):
     status = _publish(d, wt)
     tip = _git(repo, "rev-parse", wt.branch)
     assert status == (f"(quorus) awaiting @rev-codex's review of {tip[:12]} "
-                      "(2 commit(s)); not on main")
+                      f"(2 commit(s)); not on main. @rev-codex: reply `✅ GO on {tip[:12]}` "
+                      "to publish it, or `/disagree blocking` with why.")
     assert _git(repo, "rev-parse", "main") == main
     marker = rg.load_marker(d.config.runtime_dir, repo, wt.branch)
     assert marker is not None
@@ -699,3 +700,39 @@ def test_self_review_is_rechecked_under_the_lock(env, monkeypatch):
     monkeypatch.setattr(reflexd._review_gate, "self_review", flips)
     _tick(d, _Room([_say(f"✅ GO on {tip[:8]}")]))
     assert _git(repo, "rev-parse", "main") == main
+
+
+# ── a daemon that binds only a sibling room (codex, review of aa965c81) ───
+
+
+def test_a_pin_recording_the_repo_holds_a_sibling_only_daemon(env):
+    d, repo, wt, cfg = env
+    reflexd.ROOM_BINDINGS_PATH.write_text(json.dumps({"side": str(repo)}))  # no "general"
+    rg.save_reviewer("general", "rev-codex", tenant="t1", claim_id="c-rev",
+                     path=cfg / "room-reviewers.json", repo=repo)
+    assert reflexd._review_gate_for("side", repo) == (
+        "general", {"name": "rev-codex", "tenant": "t1", "claim_id": "c-rev"})
+    main = _git(repo, "rev-parse", "main")
+    status = _publish(d, wt, room="side")
+    assert "awaiting @rev-codex's review" in status
+    assert _git(repo, "rev-parse", "main") == main
+    assert rg.load_marker(d.config.runtime_dir, repo, wt.branch)["room"] == "general"
+
+
+def test_without_the_repo_a_sibling_only_daemon_was_not_held(env):
+    # What the pin's recorded repo fixes: the same setup minus `repo` publishes.
+    d, repo, wt, cfg = env
+    reflexd.ROOM_BINDINGS_PATH.write_text(json.dumps({"side": str(repo)}))
+    rg.save_reviewer("general", "rev-codex", tenant="t1", claim_id="c-rev",
+                     path=cfg / "room-reviewers.json")
+    assert reflexd._review_gate_for("side", repo) is None
+
+
+def test_a_pin_for_another_repo_does_not_hold(env, tmp_path):
+    d, repo, wt, cfg = env
+    reflexd.ROOM_BINDINGS_PATH.write_text(json.dumps({"side": str(repo)}))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    rg.save_reviewer("general", "rev-codex", tenant="t1", claim_id="c-rev",
+                     path=cfg / "room-reviewers.json", repo=elsewhere)
+    assert reflexd._review_gate_for("side", repo) is None

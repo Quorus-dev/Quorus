@@ -315,7 +315,14 @@ def _review_gate_for(room: str, repo: Path, *,
         raw = data.get(other)
         raw = raw.get("path") if isinstance(raw, dict) else raw
         if raw is None and other not in data:
-            continue  # a reviewed room bound nowhere gates no repo
+            # Not bound here: the pin may still name the repo it gates (a builder
+            # whose bindings only name a sibling room; codex, review of aa965c81).
+            gated = _review_gate.reviewer_repo(other)
+            if gated is not None and gated == target:
+                pin = _review_gate.reviewer_for(other)
+                if pin is not None:
+                    return other, pin
+            continue  # a reviewed room bound nowhere else gates no repo
         if not isinstance(raw, str):
             return unknown
         try:

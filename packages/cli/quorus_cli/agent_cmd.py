@@ -31,7 +31,7 @@ import httpx
 
 from quorus.config import load_config, resolve_config_dir
 from quorus.private_files import write_private_text
-from quorus_cli import agent_proc
+from quorus_cli import agent_proc, agent_release, agent_start
 
 # opencode = any model: Ollama (local), OpenRouter, DeepSeek, Qwen, Gemini...
 HARNESSES = ("claude", "codex", "gemini", "opencode")
@@ -84,15 +84,25 @@ def _launchd_ok() -> bool:
     return sys.platform == "darwin" and not os.environ.get("QUORUS_NO_LAUNCHD")
 
 
-def _launchd_labels() -> list[str]:
+def _launchd_jobs() -> dict[str, int | None]:
+    """{quorus launchd label: its pid, or None while the job isn't running}."""
     if not _launchd_ok():
-        return []
+        return {}
     try:
         out = subprocess.run(["launchctl", "list"], capture_output=True, text=True,
                              timeout=10, check=False).stdout
     except (OSError, subprocess.SubprocessError):
-        return []
-    return [line.split()[-1] for line in out.splitlines() if "quorus" in line]
+        return {}
+    jobs: dict[str, int | None] = {}
+    for line in out.splitlines():
+        cols = line.split()
+        if "quorus" in line and cols:
+            jobs[cols[-1]] = int(cols[0]) if cols[0].isdigit() else None
+    return jobs
+
+
+def _launchd_labels() -> list[str]:
+    return list(_launchd_jobs())
 
 
 def _running_daemon_for(name: str, relay_url: str | None = None) -> str | None:
@@ -102,12 +112,17 @@ def _running_daemon_for(name: str, relay_url: str | None = None) -> str | None:
     answer every message twice. The pid file comes first: minimal Linux
     images ship without pgrep. With *relay_url*, a reflexd process for the same
     name on another relay doesn't count: an orphan from an old run on a dead
-    relay made every later `agent add` of that name start nothing."""
+    relay made every later `agent add` of that name start nothing. Our own
+    launchd job with no live pid doesn't count either: a crashed job blocked the
+    re-add that would fix it, and `_start_daemon` replaces it (take-3 bug 1).
+    Another job's label (dogfood's) still counts: KeepAlive may restart it."""
     pid = agent_proc.live_pid(_agents_dir(), name)
     if pid is not None:
         return f"pid {pid}"
-    for label in _launchd_labels():
+    for label, job_pid in _launchd_jobs().items():
         if label.endswith(f".{name}") and ("agent." in label or "reflexd." in label):
+            if job_pid is None and label == LABEL_PREFIX + name:
+                continue
             return label
     try:
         out = subprocess.run(["pgrep", "-f", f"reflexd.py start.*--participant {name}( |$)"],
@@ -453,19 +468,45 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
         _state_record(name).unlink(missing_ok=True)
     argv = [sys.executable, str(_reflexd_script_path()), "start",
             "--participant", name, "--relay-url", cfg["relay_url"]]
+    # Only a daemon that stays up is "running"; otherwise say why (take-3 bug 1).
+    offset, secrets = agent_start.size(crash_log), [cred, cfg.get("relay_secret") or ""]
     if not _launchd_ok():
         # No launchd: run detached; `quorus agent remove` stops it via pid.
         with crash_log.open("ab") as out:
             proc = subprocess.Popen(argv, env={**os.environ, **env}, stdout=out,
                                     stderr=out, stdin=subprocess.DEVNULL,
                                     start_new_session=True)
-        _write_private(_agents_dir() / f"{name}.pid", str(proc.pid))
+        # Inside a test episode only (explicit env opt-in): register the detached daemon
+        # before `agent add` returns, so the episode's teardown owns it.
+        from quorus.runtime.episode_hook import register_spawned
+
+        register_spawned(proc)
+        pidfile = _agents_dir() / f"{name}.pid"
+        _write_private(pidfile, str(proc.pid))
+        if not agent_start.stays_up(lambda: proc.pid if proc.poll() is None else None):
+            pidfile.unlink(missing_ok=True)
+            raise agent_start.not_started(name, crash_log, offset, secrets)
         return f"pid {proc.pid}"
     _LA.mkdir(parents=True, exist_ok=True)
     plist = _LA / f"{label}.plist"
+    target = f"gui/{_uid()}/{label}"
+    # A crashed job of ours is still loaded, and bootstrap refuses a loaded label.
+    subprocess.run(["launchctl", "bootout", target], capture_output=True, check=False,
+                   timeout=15)
     _write_private(plist, _plist(label, argv, env, crash_log))
-    subprocess.run(["launchctl", "bootstrap", f"gui/{_uid()}", str(plist)],
-                   capture_output=True, check=False, timeout=15)
+    done = subprocess.run(["launchctl", "bootstrap", f"gui/{_uid()}", str(plist)],
+                          capture_output=True, text=True, check=False, timeout=15)
+    if done.returncode != 0:
+        plist.unlink(missing_ok=True)  # or it loads, and fails, at every login
+        said = next((ln.strip() for ln in (done.stderr or "").splitlines() if ln.strip()),
+                    f"exit {done.returncode}")
+        raise SystemExit(f"agent: @{name} didn't start: launchctl said {said}")
+    if not agent_start.stays_up(lambda: _launchd_jobs().get(label)):
+        # KeepAlive would restart it every few seconds, forever, and at every login.
+        subprocess.run(["launchctl", "bootout", target], capture_output=True, check=False,
+                       timeout=15)
+        plist.unlink(missing_ok=True)
+        raise agent_start.not_started(name, crash_log, offset, secrets)
     return label
 
 
@@ -488,6 +529,33 @@ def cmd_agent(args: Any, console: Any) -> None:
 
 
 def _add(args: Any, console: Any) -> None:
+    """`quorus agent add`: prepare (name, credentials, join, binding), then start.
+    With ``--reviewer`` the agent is pinned as the room's reviewer in between, so
+    its gate exists before it runs (docs/plans/gate-by-default.md)."""
+    prep = _prepare(args, console)
+    if getattr(args, "reviewer", False):
+        from quorus_cli import agent_identity, gate_setup
+
+        try:
+            gate_setup.pin_reviewer(prep, replace=getattr(args, "replace", False))
+        except agent_identity.IdentityError as exc:
+            raise SystemExit(f"agent: no review gate: {exc}") from exc
+    _start(prep, console)
+    if getattr(args, "reviewer", False):
+        from quorus_cli import gate_setup
+
+        line = gate_setup.gate_line(prep["room"], prep["name"], prep["repo"])
+        console.print(f"[success]✓[/] {line}")
+        for where in gate_setup.where_lines(gate_setup.room_files(prep["room"],
+                                                                  [prep["state_dir"]])):
+            console.print(where)
+        gate_setup.post(prep, line)
+
+
+def _prepare(args: Any, console: Any) -> dict[str, Any]:
+    """Everything before the daemon starts: name, credentials, join, binding and
+    lead. Split from :func:`_start` so the first-run wizard can pin a reviewer
+    between the two, before any agent can publish (docs/plans/gate-by-default.md)."""
     cfg = _on_owned_address(load_config())
     me = (cfg.get("instance_name") or "").strip()
     if not me or me == "default":
@@ -547,7 +615,8 @@ def _add(args: Any, console: Any) -> None:
     # Adding members requires the room owner/admin, not the child agent
     # (self-join is deliberately forbidden even if it inherited membership).
     join_cred = cred if legacy else cfg["api_key"]
-    _join(cfg, args.room, name, _bearer(cfg, join_cred, legacy))
+    bearer = _bearer(cfg, join_cred, legacy)
+    _join(cfg, args.room, name, bearer)
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
         mode = _bind(args.room, repo, mode, getattr(args, "trust", None), state_dir)
@@ -558,6 +627,16 @@ def _add(args: Any, console: Any) -> None:
         swap = f" [dim](was @{previous})[/]" if previous and previous != name else ""
         console.print(f"[success]✓[/] @{name} leads #{args.room}: it splits your requests "
                       f"into tasks and assigns them{swap}")
+    return {"cfg": cfg, "me": me, "name": name, "room": args.room, "repo": repo,
+            "model": model, "state_dir": state_dir, "existing": existing,
+            "cred": cred, "legacy": legacy, "bearer": bearer}
+
+
+def _start(prep: dict[str, Any], console: Any) -> None:
+    """Start (or reuse) the prepared agent's daemon."""
+    cfg, name, room = prep["cfg"], prep["name"], prep["room"]
+    repo, model, state_dir = prep["repo"], prep["model"], prep["state_dir"]
+    existing, cred, legacy = prep["existing"], prep["cred"], prep["legacy"]
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "
                       "— it now also listens to this room")
@@ -565,18 +644,22 @@ def _add(args: Any, console: Any) -> None:
             console.print(f"[dim]--model only applies to a new agent: run `quorus agent "
                           f"remove {name}` and add it again to switch models[/]")
     else:
+        if legacy:  # its key may be saved in another dir: reuse it, don't claim again
+            from quorus_cli import agent_identity
+
+            agent_identity.adopt_key(cfg["relay_url"], name, state_dir)
         _start_daemon(cfg, name, cred, legacy, model, state_dir)
         # Only launchd brings it back; elsewhere it is a plain detached process.
         lasts = ("restarts at login" if sys.platform == "darwin" else
                  "keeps running after you close this terminal, but not after a "
                  "reboot: run this command again then")
         console.print(f"[success]✓[/] @{name} is running [dim]({lasts})[/]")
-    if repo is not None or _room_bound(args.room, state_dir):
-        console.print(f"\n[dim]Try it:[/] quorus say {args.room} \"@{name} hello, what "
+    if repo is not None or _room_bound(room, state_dir):
+        console.print(f"\n[dim]Try it:[/] quorus say {room} \"@{name} hello, what "
                       "can you do in this repo\"")
     else:
         console.print(f"\n[dim]Give it a repo to work in:[/] quorus room bind "
-                      f"{args.room} <path>")
+                      f"{room} <path>")
 
 
 def _room_bound(room: str, state_dir: Path | None = None) -> bool:
@@ -672,10 +755,10 @@ def _list(console: Any, *, as_json: bool = False) -> None:
     other identities' agents too (review 2026-10-09). Without launchd the
     agents are pid files; a dead one is listed so a reboot isn't silent."""
     me = (load_config().get("instance_name") or "").strip()
-    labels = [lb for lb in _launchd_labels()
-              if ("agent." in lb or "reflexd." in lb)
-              and lb.rsplit(".", 1)[-1].startswith(f"{me}-")]
-    rows = [(lb.rsplit(".", 1)[-1], lb, True) for lb in labels]
+    jobs = {lb: pid for lb, pid in _launchd_jobs().items()
+            if ("agent." in lb or "reflexd." in lb)
+            and lb.rsplit(".", 1)[-1].startswith(f"{me}-")}
+    rows = [(lb.rsplit(".", 1)[-1], lb, pid is not None) for lb, pid in jobs.items()]
     seen = {name for name, _, _ in rows}
     for pf in sorted(_agents_dir().glob(f"{me}-*.pid")) if me else []:
         if pf.stem not in seen:
@@ -703,6 +786,9 @@ def _remove(args: Any, console: Any) -> None:
     plist = _LA / f"{label}.plist"
     was_running = (plist.exists()
                    or agent_proc.live_pid(_agents_dir(), args.name) is not None)
+    relay_url = (load_config().get("relay_url") or "").strip()
+    # Before the state record goes: it names one of the dirs a key may be saved in.
+    held = agent_release.held_keys(args.name, relay_url) if relay_url else {}
     if _launchd_ok():  # no launchctl elsewhere: it crashed `remove` on Linux
         subprocess.run(["launchctl", "bootout", f"gui/{_uid()}/{label}"],
                        capture_output=True, check=False, timeout=15)
@@ -711,13 +797,20 @@ def _remove(args: Any, console: Any) -> None:
     _state_record(args.name).unlink(missing_ok=True)
     _drop_lead_everywhere(args.name)
     left = _leave_all_rooms(args.name)
+    freed = agent_release.release(args.name, relay_url, held) if relay_url else None
     if not was_running and not left:
         console.print(f"[error]✗[/] no agent @{args.name} here — see [accent]quorus agent "
                       "list[/]")
         raise SystemExit(4)
-    what = "stopped" if was_running else "was not running;"
-    where = f" and left {', '.join('#' + r for r in left)}" if left else ""
-    console.print(f"[success]✓[/] {what} @{args.name} on this machine{where}")
+    rooms = ", ".join("#" + r for r in left)
+    if was_running:
+        where = f" and left {rooms}" if left else ""
+        console.print(f"[success]✓[/] stopped @{args.name} on this machine{where}")
+    else:  # bug bash: "✓ was not running; @x on this machine and left #lab"
+        console.print(f"[success]✓[/] @{args.name} wasn't running on this machine; "
+                      f"it left {rooms}")
+    if freed:
+        console.print(freed)
 
 
 def _leave_all_rooms(name: str) -> list[str]:

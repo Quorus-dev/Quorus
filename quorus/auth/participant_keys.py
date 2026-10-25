@@ -20,7 +20,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -29,18 +29,20 @@ SIGNING_KEY_FILE = "jwt-signing.key"
 CLAIMS_DB = "participant_keys.db"
 
 
-def data_dir() -> Path:
+def data_dir(env: Mapping[str, str] | None = None) -> Path:
     """Where a shared-secret relay keeps its state: next to the history DB,
     else next to MESSAGES_FILE, else ~/.quorus. Never relative to the working
     directory: under launchd that is "/" and the relay crashed on start with
-    "Read-only file system: '/.quorus'" (2026-10-17)."""
-    db = os.environ.get("QUORUS_HISTORY_DB") or os.environ.get("MURMUR_HISTORY_DB")
+    "Read-only file system: '/.quorus'" (2026-10-17). *env* is the relay's own
+    environment when it isn't this process's (the env `quorus` starts it with)."""
+    env = os.environ if env is None else env
+    db = env.get("QUORUS_HISTORY_DB") or env.get("MURMUR_HISTORY_DB")
     if db:
         return Path(db).expanduser().resolve().parent
-    messages = os.environ.get("MESSAGES_FILE")
+    messages = env.get("MESSAGES_FILE")
     if messages:
         return Path(messages).expanduser().resolve().parent
-    return Path.home() / ".quorus"
+    return (Path(env["HOME"]) if env.get("HOME") else Path.home()) / ".quorus"
 
 
 def load_or_create_signing_key(folder: Path) -> str:

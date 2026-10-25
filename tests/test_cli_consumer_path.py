@@ -80,7 +80,7 @@ def test_init_does_not_start_agents_by_default(tmp_path: Path) -> None:
 def test_agent_add_sees_a_plain_daemon_process(monkeypatch) -> None:
     from quorus_cli import agent_cmd
 
-    monkeypatch.setattr(agent_cmd, "_launchd_labels", lambda: [])
+    monkeypatch.setattr(agent_cmd, "_launchd_jobs", lambda: {})
     calls: list[list[str]] = []
 
     def fake_run(argv, **kw):

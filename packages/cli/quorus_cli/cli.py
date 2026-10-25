@@ -8312,6 +8312,8 @@ def _print_grouped_help():
             ("resolve",            "AI-powered merge conflict resolution"),
             ("board",              "Live swarm task board"),
             ("room bind <r> <dir>","Bind a room to a repo — agents wake there"),
+            ("room reviewer <r> <n>","Hold a room's commits until this agent's GO"),
+            ("review status",      "Commits held for review (publish <sha> --unreviewed)"),
             ("approvals",          "Tool approvals waiting on you"),
             ("approve <id>",       "Allow an agent's blocked tool call"),
             ("deny <id>",          "Refuse an agent's blocked tool call"),
@@ -9761,6 +9763,11 @@ def main():
     p_agent_add.add_argument("tool", choices=["claude", "codex", "gemini", "opencode"],
                              help="opencode runs any model: Ollama, OpenRouter, Qwen, ...")
     p_agent_add.add_argument("--room", required=True, help="Room to join")
+    p_agent_add.add_argument("--reviewer", action="store_true",
+                             help="Make this agent the room's reviewer: commits in the room's "
+                                  "repo wait for its GO before main")
+    p_agent_add.add_argument("--replace", action="store_true",
+                             help="With --reviewer: replace the room's current reviewer")
     p_agent_add.add_argument("--repo", help="Repo the room works in (binds the room)")
     p_agent_add.add_argument(
         "--state-dir", metavar="DIR",

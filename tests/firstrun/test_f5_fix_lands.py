@@ -141,7 +141,8 @@ def _setup(home: Path) -> tuple[Path, Path]:
     return repo, bin_dir
 
 
-def _first_run(s: PtySession, home: Path, repo: Path, write_answer: str) -> None:
+def _first_run(s: PtySession, home: Path, repo: Path, write_answer: str,
+               gate: str = "n") -> None:
     s.expect(r"Your name", timeout=30)
     s.type("alice" + ENTER)
     s.expect(r"Invite, or Enter to run it here")
@@ -152,6 +153,10 @@ def _first_run(s: PtySession, home: Path, repo: Path, write_answer: str) -> None
     screen = s.expect(r"\[y/n\] \(n\)", timeout=20)
     assert "edit files and run commands" in screen and str(repo.resolve()) in screen
     s.type(write_answer + ENTER)
+    # Two vendors: the wizard offers the review gate (docs/plans/gate-by-default.md).
+    # Most tests here are about write access, so they answer no; "" takes the default.
+    s.expect(r"review Codex's commits before they reach main\? \[y/n\] \(y\)", timeout=30)
+    s.type(gate + ENTER)
     s.expect(r"You're @alice in #", timeout=90)
     s.settle(quiet=1.0, timeout=10)
     s.secret = _relay_secret(home)

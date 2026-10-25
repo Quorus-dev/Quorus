@@ -5,6 +5,54 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.9] — 2026-10-25
+
+### Added
+
+- The review gate is on by default. When the first run adds agents from two vendors to a
+  room with a repo, it asks "Have <reviewer> review <lead>'s commits before they reach
+  main?" (default yes), gives the reviewer its own participant key, pins it as the room's
+  reviewer, and only then starts the daemons, so nothing can publish before the gate
+  exists. The room gets one line saying so: "Review gate on: commits in <repo> wait for
+  @<reviewer>'s GO before they reach main. @<reviewer>'s own commits wait for you (`quorus
+  review publish <sha> --unreviewed`). Turn it off: `quorus room reviewer <room> --none`."
+  If the pin can't be made (an agent didn't join, the relay isn't one this machine runs,
+  a running reviewer's key can't be confirmed), the first run says so and keeps the
+  room as it was: no new gate, any existing gate kept. Answering no, one vendor, or no
+  repo changes nothing.
+- `quorus agent add <tool> --room <room> --reviewer` makes that agent the room's
+  reviewer the same way, before its daemon starts; `--replace` swaps out a room's
+  current reviewer, otherwise an existing reviewer is kept and the command says so.
+- The held line tells the reviewer how to approve: "awaiting @<reviewer>'s review of
+  <sha> (N commit(s)); not on main. @<reviewer>: reply `✅ GO on <sha>` to publish it, or
+  `/disagree blocking` with why." A reviewer that answered "LGTM" or `/vote approve`
+  used to hold a fix forever.
+- `quorus room reviewer <room> <name>` and `--none` now write (or clear) the pin in every
+  reviewers file a daemon on this machine reads for the room's repo, including each
+  agent's own `--state-dir`, and list the files they wrote. Before, a pin only took
+  effect when `QUORUS_CONFIG_DIR` matched the agents' state dir. All files are written
+  or none: a file that can't be read or written prints ✗ and exits 1 with nothing
+  changed. With no name it shows the current reviewer per file and any disagreement.
+
+### Fixed
+
+- `quorus agent add` no longer prints "is running" for a daemon that died on start. It
+  checks the launch agent's exit, waits up to 5 s for a live process, and otherwise
+  prints the redacted tail of the crash log (secrets scrubbed from the whole log first).
+- A removed agent's name can be added again. `quorus agent remove` releases the name's
+  claim on a relay this machine runs (and says how to free it on one it doesn't), and
+  re-adding an agent reuses its saved key from any state dir on this machine instead of
+  failing with 409.
+- The relay `quorus` starts on this computer gets absolute state paths (a relative
+  history database was recorded against the CLI's directory while the relay read
+  another file), so the CLI and the relay agree on which claims file is in use.
+
+### Docs
+
+- README and llms.txt describe the review gate (what a GO is, the 20-minute warning and
+  owner override, the limits), and say to pin a reviewer after it has posted in the room
+  once. `quorus --help` lists `room reviewer` and `review status`.
+
 ## [0.7.8] — 2026-10-25
 
 ### Added

@@ -123,6 +123,21 @@ def save_participant_key(relay_url: str, name: str, key: str,
     write_private_json(path, keys)
 
 
+def forget_participant_key(relay_url: str, name: str, store_dir: Path | None = None) -> bool:
+    """Drop *name*'s saved key for *relay_url*. True if one was saved."""
+    from quorus.private_files import write_private_json
+
+    path = _keys_path(store_dir)
+    try:
+        keys = json.loads(path.read_text()) if path.exists() else {}
+    except ValueError:
+        return False
+    if not isinstance(keys, dict) or keys.pop(f"{relay_url.rstrip('/')}|{name}", None) is None:
+        return False
+    write_private_json(path, keys)
+    return True
+
+
 def bearer(relay_url: str, *, api_key: str = "", secret: str = "", name: str = "",
            store_dir: Path | None = None) -> str:
     """A participant JWT for this relay.

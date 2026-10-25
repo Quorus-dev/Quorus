@@ -100,7 +100,11 @@ def offer(console: Any, room: str, cwd: Path | None = None,
           add: Callable[[Any, Any], None] | None = None,
           which: Callable[[str], str | None] = shutil.which,
           ask_write: Callable[[str], bool] | None = None,
-          invitee: bool = False) -> list[str]:
+          invitee: bool = False,
+          ask_gate: Callable[[str], bool] | None = None,
+          prepare: Callable[[Any, Any], dict] | None = None,
+          start: Callable[[dict, Any], None] | None = None,
+          pin: Callable[[dict], Any] | None = None) -> list[str]:
     """Offer to add every ready agent CLI to *room*; return the tools added.
 
     With a repo, a second question decides the room's permission mode. The
@@ -165,24 +169,87 @@ def offer(console: Any, room: str, cwd: Path | None = None,
             console.print("  [dim]OK: permissions stay as they are; each tool keeps its "
                           f"own settings. Later: quorus agent add <tool> --room {room} "
                           f"--repo {repo} --mode autonomous[/]")
-    if add is None:
-        from quorus_cli.agent_cmd import _add as add
-    added: list[str] = []
-    for t in tools:
-        args = SimpleNamespace(tool=t, room=room, repo=str(repo) if repo else None,
+    def args_for(t: str) -> SimpleNamespace:
+        return SimpleNamespace(tool=t, room=room, repo=str(repo) if repo else None,
                                mode=mode, name=None, model=FREE_MODEL.get(t),
                                lead=(t == lead), trust=None,
                                disclosed=invitee)  # asked above, after the note
-        try:
-            add(args, console)
-            added.append(t)
-        except SystemExit as exc:  # one agent failing must not stop the others
-            console.print(f"  [warning]![/] {LABEL[t]}: {exc}")
+
+    added: list[str] = []
+    if add is not None:  # an injected one-step add (tests of the 0.7.8 flow)
+        for t in tools:
+            try:
+                add(args_for(t), console)
+                added.append(t)
+            except SystemExit as exc:  # one agent failing must not stop the others
+                console.print(f"  [warning]![/] {LABEL[t]}: {exc}")
+    else:
+        added = _add_gated(console, room, repo, tools, lead, args_for, ask_gate,
+                           prepare, start, pin)
     _also_here(console, found)
     if added:
         console.print(f"\n  Say something in [room]#{room}[/]: every agent hears you"
                       + (f", and your {LABEL[lead]} agent leads: it splits the work."
                          if lead in added else "."))
+    return added
+
+
+def _add_gated(console: Any, room: str, repo: Path | None, tools: list[str],
+               lead: str | None, args_for: Callable[[str], Any],
+               ask_gate: Callable[[str], bool] | None,
+               prepare: Callable[[Any, Any], dict] | None,
+               start: Callable[[dict, Any], None] | None,
+               pin: Callable[[dict], Any] | None) -> list[str]:
+    """Prepare every agent, pin the reviewer, then start them all, so no daemon
+    can publish before the gate exists (docs/plans/gate-by-default.md 5a). With
+    no repo, one vendor, or a "no", nothing is gated and nothing changes."""
+    from quorus_cli import agent_cmd, gate_setup
+
+    prepare = prepare or agent_cmd._prepare
+    start = start or agent_cmd._start
+    pin = pin or gate_setup.pin_reviewer
+    reviewer = gate_setup.pick_reviewer(tools, lead, LEAD_ORDER) if repo is not None else None
+    if reviewer is not None:
+        if ask_gate is None:
+            from rich.prompt import Confirm
+
+            def ask_gate(q: str) -> bool:
+                return Confirm.ask(q, default=True)
+        if not ask_gate(f"  Have {LABEL[reviewer]} review {LABEL[lead]}'s commits before "
+                        "they reach main?"):
+            reviewer = None
+    preps: dict[str, dict] = {}
+    for t in tools:
+        try:
+            preps[t] = prepare(args_for(t), console)
+        except SystemExit as exc:  # one agent failing must not stop the others
+            console.print(f"  [warning]![/] {LABEL[t]}: {exc}")
+    line = None
+    if reviewer is not None and reviewer in preps and lead in preps:
+        dirs = [p["state_dir"] for p in preps.values()]
+        try:
+            pin(preps[reviewer], state_dirs=dirs)
+            line = gate_setup.gate_line(room, preps[reviewer]["name"], repo)
+        except Exception as exc:  # any failure: no new gate, said plainly
+            why = str(exc) or exc.__class__.__name__
+            files = gate_setup.reviewer_files([*dirs, *gate_setup.daemon_state_dirs(room)])
+            kept = gate_setup.current_reviewers(room, files)
+            console.print(f"  [warning]![/] {gate_setup.failed_line(room, why, reviewer, kept)}")
+    elif reviewer is not None:
+        why = "an agent did not join"
+        console.print(f"  [warning]![/] {gate_setup.failed_line(room, why, reviewer)}")
+    added: list[str] = []
+    for t in tools:
+        if t not in preps:
+            continue
+        try:
+            start(preps[t], console)
+            added.append(t)
+        except SystemExit as exc:
+            console.print(f"  [warning]![/] {LABEL[t]}: {exc}")
+    if line is not None:
+        console.print(f"  [success]✓[/] {line}")
+        gate_setup.post(preps[lead], line)
     return added
 
 
