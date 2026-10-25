@@ -6646,21 +6646,17 @@ def _cmd_quickstart(args):
     )
     if r.status_code in (200, 201):
         r.json()  # validate response
-        from quorus_cli import ui as _ui
         _ui.success(f"Created [room]#{room_name}[/]")
     elif r.status_code == 409:
-        from quorus_cli import ui as _ui
         _ui.warn(
             f"Room '{room_name}' already exists",
             hint="continuing with existing room",
         )
     elif r.status_code in (401, 403):
-        from quorus_cli import ui as _ui
         _ui.error("Not authenticated", hint="check your relay secret")
         relay_proc.terminate()
         sys.exit(3)
     else:
-        from quorus_cli import ui as _ui
         _ui.error(
             f"Couldn't create room (HTTP {r.status_code})",
             hint=r.text[:120] if r.text else None,
