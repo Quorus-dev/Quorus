@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -56,7 +57,8 @@ def _bind(tmp: Path, room: str, repo: Path) -> None:
 @pytest.fixture
 async def client(tmp_path: Path, monkeypatch):
     _reset_state()
-    room_diff._cache.clear()
+    room_diff._diffs.items.clear()
+    room_diff._aliases.items.clear()
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("QUORUS_CONFIG_DIR", raising=False)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -124,16 +126,27 @@ async def test_the_cache_is_keyed_by_tenant_and_repo(client: AsyncClient, tmp_pa
         return real(r, s)
 
     monkeypatch.setattr(room_diff, "_render", counted)
+    resolves: list[str] = []
+    real_resolve = room_diff._resolve
+    monkeypatch.setattr(room_diff, "_resolve",
+                        lambda r, s: resolves.append(s) or real_resolve(r, s))
     first = await client.get(f"/v1/rooms/build/commits/{sha}/diff", headers=client.arav)
     second = await client.get(f"/v1/rooms/build/commits/{sha}/diff", headers=client.arav)
     assert first.status_code == second.status_code == 200 and first.text == second.text
-    assert len(calls) == 1  # the second answer came from the cache: no git spawn
+    assert len(calls) == 1 and len(resolves) == 1  # the second answer spawned no git at all
+    # Codex on f3ba7b4a: a short sha is the same commit, so it shares the one rendered entry.
+    short = await client.get(f"/v1/rooms/build/commits/{sha[:7]}/diff", headers=client.arav)
+    assert short.status_code == 200 and short.text == first.text
+    assert len(calls) == 1 and len(resolves) == 2  # resolved once more, rendered never again
+    assert len(room_diff._diffs.items) == 1 and len(room_diff._aliases.items) == 2
     # Re-bound to another repo (different content, so a different history): a different
     # repo is a different key, so the cache is missed and git runs again, and finds nothing.
     other, _ = _repo(tmp_path, name="other", lines=4)
     _bind(tmp_path, "build", other)
     r = await client.get(f"/v1/rooms/build/commits/{sha}/diff", headers=client.arav)
-    assert r.status_code == 404 and len(calls) == 2  # that sha isn't in the other repo
+    # A different repo is a different key: resolved again (and not found), never served
+    # from the other repo's entry.
+    assert r.status_code == 404 and len(resolves) == 3 and len(calls) == 1
     assert str(repo) not in r.text and str(other) not in r.text
 
 
@@ -152,4 +165,33 @@ async def test_another_tenants_room_with_the_same_name_gets_nothing(
     # The local member still reads it, and the two answers never share a cache entry.
     assert (await client.get(f"/v1/rooms/build/commits/{sha}/diff", headers=client.arav)
             ).status_code == 200
-    assert all(k[0] == "_legacy" for k in room_diff._cache)
+    assert all(k[0] == "_legacy" for k in room_diff._diffs.items)
+
+
+async def test_the_cache_is_bounded_and_expires(client: AsyncClient, tmp_path: Path,
+                                                monkeypatch) -> None:
+    """Codex on f3ba7b4a: without a cap, members could park unlimited 64 KB diffs in relay
+    memory. Oldest entries leave past the cap; every entry leaves after CACHE_S."""
+    repo, _ = _repo(tmp_path)
+    shas = []
+    for i in range(4):  # four more commits, each a different diff
+        (repo / "a.py").write_text(f"x = {i}\n")
+        _git(repo, tmp_path, "add", "-A")
+        _git(repo, tmp_path, "-c", "user.name=a", "-c", "user.email=a@x", "commit", "-qm", f"c{i}")
+        shas.append(_git(repo, tmp_path, "rev-parse", "HEAD"))
+    _bind(tmp_path, "build", repo)
+    monkeypatch.setattr(room_diff._diffs, "cap", 2)
+    monkeypatch.setattr(room_diff._aliases, "cap", 2)
+    for sha in shas:
+        assert (await client.get(f"/v1/rooms/build/commits/{sha}/diff", headers=client.arav)
+                ).status_code == 200
+    kept = [k[2] for k in room_diff._diffs.items]
+    assert kept == shas[-2:] and len(room_diff._aliases.items) == 2  # the two newest only
+    # Expiry: an entry older than CACHE_S is dropped on the next touch and rendered again.
+    calls: list[str] = []
+    real = room_diff._render
+    monkeypatch.setattr(room_diff, "_render", lambda r, f: calls.append(f) or real(r, f))
+    monkeypatch.setattr(room_diff, "_now", lambda: time.time() + room_diff.CACHE_S + 1)
+    assert (await client.get(f"/v1/rooms/build/commits/{shas[-1]}/diff", headers=client.arav)
+            ).status_code == 200
+    assert calls == [shas[-1]] and len(room_diff._diffs.items) == 1

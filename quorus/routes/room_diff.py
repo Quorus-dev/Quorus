@@ -25,16 +25,48 @@ from quorus.runtime import commit_evidence
 router = APIRouter()
 DIFF_BYTES = 65_536  # a review reads this much; the marker says when a commit was longer
 CACHE_S = 60.0
-# (tenant, resolved repo path, full sha) -> (when, text): a room re-bound to another repo
-# or another tenant's room never gets a cached answer meant for someone else.
-_cache: dict[tuple[str, str, str], tuple[float, str]] = {}
+# Bounded, or members could park arbitrarily many 64 KB diffs in relay memory (codex on
+# f3ba7b4a): at most this many rendered diffs, oldest out first, expired entries dropped
+# on every touch. Keys use the commit's full sha, so `abc1234` and its 40-character form
+# share one entry; the small alias map remembers what a short form resolved to.
+MAX_ENTRIES = 32
 
 
-def _render(repo: Path, sha: str) -> str:
-    """Resolve *sha* in *repo* and render it; "" when it is not a commit there."""
-    full = commit_evidence.resolve(repo, sha)
-    if full is None:
-        return ""
+class _Cache:
+    """Insertion-ordered, time- and size-bounded; one per thing cached."""
+
+    def __init__(self, cap: int) -> None:
+        self.cap = cap
+        self.items: dict[tuple, tuple[float, object]] = {}
+
+    def get(self, key: tuple, now: float):
+        self._sweep(now)
+        hit = self.items.get(key)
+        return hit[1] if hit else None
+
+    def put(self, key: tuple, value: object, now: float) -> None:
+        self._sweep(now)
+        self.items.pop(key, None)
+        self.items[key] = (now, value)
+        while len(self.items) > self.cap:
+            self.items.pop(next(iter(self.items)))  # the oldest insertion
+
+    def _sweep(self, now: float) -> None:
+        for key in [k for k, (at, _) in self.items.items() if now - at >= CACHE_S]:
+            self.items.pop(key, None)
+
+
+_now = time.time  # patched by the expiry test
+_diffs = _Cache(MAX_ENTRIES)    # (tenant, resolved repo path, full sha) -> text
+_aliases = _Cache(MAX_ENTRIES)  # (tenant, resolved repo path, sha as given) -> full sha
+
+
+def _resolve(repo: Path, sha: str) -> str | None:
+    return commit_evidence.resolve(repo, sha)
+
+
+def _render(repo: Path, full: str) -> str:
+    """`git show` of the resolved commit, cut at the cap; "" when git has nothing."""
     return commit_evidence.render(repo, full, limit=DIFF_BYTES) or ""
 
 
@@ -52,14 +84,18 @@ async def room_commit_diff(room_id: str, sha: str, request: Request,
         raise HTTPException(status_code=404, detail="no repo bound to this room here")
     if not commit_evidence.HASH_RE.fullmatch(sha):
         raise HTTPException(status_code=404, detail="not a commit here")
-    key = (tid, str(repo.resolve()), sha)
-    hit = _cache.get(key)
-    if hit and time.time() - hit[0] < CACHE_S:
-        text = hit[1]
-    else:
-        text = await asyncio.to_thread(_render, repo, sha)
-        if text:
-            _cache[key] = (time.time(), text)
-    if not text:
-        raise HTTPException(status_code=404, detail="not a commit here")
+    where = str(repo.resolve())
+    now = _now()
+    full = _aliases.get((tid, where, sha), now)
+    if full is None:
+        full = await asyncio.to_thread(_resolve, repo, sha)
+        if full is None:
+            raise HTTPException(status_code=404, detail="not a commit here")
+        _aliases.put((tid, where, sha), full, now)
+    text = _diffs.get((tid, where, full), now)
+    if text is None:
+        text = await asyncio.to_thread(_render, repo, full)
+        if not text:
+            raise HTTPException(status_code=404, detail="not a commit here")
+        _diffs.put((tid, where, full), text, now)
     return PlainTextResponse(text, headers={"cache-control": "private, max-age=60"})
