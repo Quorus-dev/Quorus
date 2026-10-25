@@ -32,7 +32,6 @@ import httpx
 from quorus.config import load_config, resolve_config_dir
 from quorus.private_files import write_private_text
 from quorus_cli import agent_proc, agent_release, agent_start
-from quorus_cli import relay_http as _relay_http
 
 # opencode = any model: Ollama (local), OpenRouter, DeepSeek, Qwen, Gemini...
 HARNESSES = ("claude", "codex", "gemini", "opencode")
@@ -616,7 +615,8 @@ def _prepare(args: Any, console: Any) -> dict[str, Any]:
     # Adding members requires the room owner/admin, not the child agent
     # (self-join is deliberately forbidden even if it inherited membership).
     join_cred = cred if legacy else cfg["api_key"]
-    _join(cfg, args.room, name, _bearer(cfg, join_cred, legacy))
+    bearer = _bearer(cfg, join_cred, legacy)
+    _join(cfg, args.room, name, bearer)
     console.print(f"[success]✓[/] @{name} joined #{args.room}")
     if repo is not None:
         mode = _bind(args.room, repo, mode, getattr(args, "trust", None), state_dir)
