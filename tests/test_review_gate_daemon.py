@@ -631,3 +631,14 @@ def test_override_gone_under_the_lock_holds(env, monkeypatch):
     relay = Vanishing([_owner_says(f"publish {tip[:12]} unreviewed")])
     _tick(d, relay)
     assert _git(repo, "rev-parse", "main") == main
+
+
+@pytest.mark.parametrize("after", [{"tenant": "t1", "claim_id": "c-new"}, None])
+def test_owner_pin_rotated_or_removed_before_the_lock_holds(env, monkeypatch, after):
+    # codex, review of a48abf0e: the lock-time check reused the captured pin.
+    d, repo, _wt, main, tip = _held(env)
+    pins = iter([OWNER_PIN, OWNER_PIN] + [after] * 10)  # rotated after the first read
+    monkeypatch.setattr(reflexd._owner_pin, "owner_pin", lambda _p: next(pins))
+    relay = _Room([_owner_says(f"publish {tip[:12]} unreviewed")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main

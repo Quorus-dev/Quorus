@@ -4841,7 +4841,10 @@ class Reflexd:
             local = _review_gate.load_marker(runtime, wt.repo, wt.branch) or {}
             if local.get("override_tip") == tip:
                 return "local"
-            return _review_gate.owner_override(hist, owner, owner_pin, tip)
+            # The pin is re-read on every call, so the lock-time check sees a
+            # rotated or removed pin (codex, review of a48abf0e).
+            return _review_gate.owner_override(hist, agent_owner(me),
+                                               _owner_pin.owner_pin(me), tip)
 
         override = overridden(history)
         if override is None and state == "blocked":
