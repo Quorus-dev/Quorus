@@ -795,33 +795,23 @@ def _empty_card(console_width: int, title: str, cta: str) -> list[Text]:
 
 
 def render_composer_hint(typing: str | None = None) -> Text:
-    """Single dim placeholder rendered just above the prompt.
+    """The keys line just above the prompt: ``@ mention · / commands · ^D quit``.
 
-    Typography: a thin primary vertical bar (``│``) leads the line as a
-    visual "you're here" prompt indicator, mirroring the ``❯`` glyph the
-    actual prompt uses one row down. Inline ``@`` and ``/`` keys render
-    in *kbd* style (bold accent) so they read as keyboard hints, not
-    placeholder text.
-
-    When *typing* is provided, a typing-indicator line shows *above* the
-    placeholder — the caller passes a renderable group, so we return a
-    :class:`Text` that includes both rows separated by a newline.
+    It is a hint, not a second input: the old ``│ Type a message…`` bar looked
+    like a composer while the cursor sat on the real ``❯`` prompt below it
+    (tui-polish.md defect 2). With *typing*, the typing indicator sits above.
     """
     line = Text(INDENT)
-    line.append("│ ", style="brand")
-    line.append("Type a message…  ", style="dim")
     line.append("@", style="kbd")
-    line.append(" mention", style="dim")
-    line.append("    ", style="")
+    line.append(" mention · ", style="dim")
     line.append("/", style="kbd")
-    line.append(" command", style="dim")
+    line.append(" commands · ", style="dim")
+    line.append("^D", style="kbd")
+    line.append(" quit", style="dim")
     if not typing:
         return line
-    # When typing is set, prepend the indicator above the placeholder by
-    # returning a multi-line Text. Rich prints embedded "\n" correctly.
-    indicator = typing_indicator(typing)
     head = Text()
-    head.append_text(indicator)
+    head.append_text(typing_indicator(typing))
     head.append("\n")
     head.append_text(line)
     return head

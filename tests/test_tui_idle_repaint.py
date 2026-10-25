@@ -68,3 +68,20 @@ def test_latency_jitter_alone_is_not_a_change(monkeypatch):
 
     clears, _ = _run(state, inputs(), monkeypatch)
     assert clears == 2
+
+
+def test_a_new_one_room_screen_names_the_room_once(monkeypatch):
+    """tui-polish.md defect 5: #general appeared three times (app bar, the room
+    strip, the empty card) and the empty card drew a second cursor."""
+    clears, out = _run(_state(), ["quit"], monkeypatch)
+    assert out.count("#general") == 1
+    assert "▌" not in out and "Type a message" not in out
+    assert "No messages yet" in out and "^D quit" in out
+
+
+def test_the_room_strip_returns_with_a_second_room(monkeypatch):
+    state = _state()
+    state.set_rooms([{"name": "general", "members": ["alice"]}, {"name": "dev"}])
+    state.select_by_name("general")
+    _, out = _run(state, ["quit"], monkeypatch)
+    assert "#dev" in out

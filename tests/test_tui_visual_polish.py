@@ -259,12 +259,12 @@ def test_system_event_wraps_with_middle_dots():
 
 
 def test_composer_hint_renders_kbd_hints_separately():
-    """Composer shows ``@ mention    / command`` with keyboard hints set apart."""
+    """The keys line shows ``@ mention · / commands · ^D quit``, keys set apart."""
     line = chat.render_composer_hint()
     out = _render_to_str([line], width=80)
-    assert "Type a message" in out
     assert "@ mention" in out
-    assert "/ command" in out
+    assert "/ commands" in out
+    assert any(span.style == "kbd" for span in line.spans)
 
 
 # ── J. Snapshot — full app-bar render at 80 cols ────────────────────────────

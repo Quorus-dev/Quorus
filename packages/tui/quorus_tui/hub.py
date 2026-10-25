@@ -3450,13 +3450,15 @@ def _main_input_loop(
                             )
                         )
                         # Inline room strip stays as a one-liner so Tab still
-                        # has a visual reference. Dim & compact.
-                        console.print(
-                            _render_room_strip(
-                                rooms_snap, selected_idx,
-                                unread_by_room=unread_by_room,
+                        # has a visual reference. With one room it would only
+                        # repeat the app bar's #room (tui-polish.md defect 5).
+                        if len(rooms_snap) > 1:
+                            console.print(
+                                _render_room_strip(
+                                    rooms_snap, selected_idx,
+                                    unread_by_room=unread_by_room,
+                                )
                             )
-                        )
                         console.print()
                         # Stream B — fold-up panels above the feed. Both are
                         # opt-in (Ctrl-W / Ctrl-N) so the feed remains the

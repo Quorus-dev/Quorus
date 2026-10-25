@@ -466,32 +466,15 @@ def reaction_row(reactions: dict[str, int], console_width: int) -> Text:
 
 
 def empty_room_card(room_name: str, console_width: int) -> list[Text]:
-    """iMessage-y centered illustration for a room with zero messages.
+    """A room with no messages: one left-aligned line under the app bar.
 
-    Renders:
-      ``               #room                  `` (big, primary)
-      ``     say hi to start the conversation `` (muted)
-      ``                  ▌                    `` (blinking cursor — bright)
-    The "blink" is purely visual — a bright vertical bar that the human
-    brain reads as a pulse. Static across renders to avoid Live thrashing.
+    The app bar already names the room, and the real prompt is the only cursor;
+    the old card repeated ``#room``, centred itself in a left-aligned log and drew
+    a ``▌`` that read as a second cursor (tui-polish.md defects 2 and 5).
     """
-    title = f"#{room_name}"
-    cta = "say hi to start the conversation"
-    cursor = "▌"
-
-    def _center(s: str, style: str) -> Text:
-        pad = max(0, (console_width - len(s)) // 2)
-        return Text(" " * pad + s, style=style)
-
-    return [
-        Text(""),
-        Text(""),
-        _center(title, "bold room"),
-        Text(""),
-        _center(cta, "muted italic"),
-        Text(""),
-        _center(cursor, "bold accent"),
-    ]
+    del room_name, console_width  # named by the app bar; one line needs no width
+    return [Text(""), Text(INDENT + "No messages yet · say hi to start the conversation",
+                           style="muted")]
 
 
 # ── Typing indicator ─────────────────────────────────────────────────────────
