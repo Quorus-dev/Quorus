@@ -14,8 +14,10 @@ line or a string literal, and the pasted copy no longer runs.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from quorus.config import DEFAULT_RELAY_URL, ConfigManager, resolve_config_file, same_relay
+from quorus.profiles import ProfileManager
 from quorus_cli import ui
 
 ENV_VAR = "QUORUS_RELAY_SECRET"
@@ -30,10 +32,21 @@ def secret_is_saved(relay_url: str, secret: str) -> bool:
         relay_url, saved.get("relay_url") or DEFAULT_RELAY_URL)
 
 
+def saved_credential_file() -> Path:
+    """The file ``ConfigManager().load(migrate=False)`` read the secret from: the
+    current profile (``profiles/<name>.json``), or a legacy flat ``config.json``
+    (Codex on 09807d75: the hint named ``config.json`` for profile layouts too)."""
+    pm = ProfileManager()
+    if pm.legacy_flat() is not None:
+        return pm.pointer_path
+    slug = pm.current()
+    return pm.profiles_dir / f"{slug}.json" if slug else resolve_config_file()
+
+
 def _where(relay_url: str, secret: str) -> str:
     """One line naming where the secret lives, never the secret."""
     if secret_is_saved(relay_url, secret):
-        return f"the relay_secret saved in {resolve_config_file()}"
+        return f"the relay_secret saved in {saved_credential_file()}"
     return f'the RELAY_SECRET set in this shell (export {ENV_VAR}="$RELAY_SECRET")'
 
 

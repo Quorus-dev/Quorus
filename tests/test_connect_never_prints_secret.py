@@ -12,6 +12,7 @@ import pytest
 from quorus_cli import cli
 
 from quorus.config import load_config
+from quorus.profiles import ProfileManager
 
 SAVED, SHELL = "saved-s3cret-aaa111", "shell-s3cret-bbb222"
 RELAY_A, RELAY_B = "http://relay-a.test:8080", "http://relay-b.test:9090"
@@ -20,19 +21,27 @@ _ENV = ("RELAY_URL", "RELAY_SECRET", "API_KEY", "INSTANCE_NAME", "QUORUS_PROFILE
         "QUORUS_RELAY_SECRET")
 
 
-@pytest.fixture
-def home(tmp_path, monkeypatch):
-    """A saved profile for relay A, in an isolated HOME and config dir."""
+@pytest.fixture(params=["profile", "flat"])
+def home(request, tmp_path, monkeypatch):
+    """A saved profile for relay A, in an isolated HOME and config dir: the usual
+    `profiles/<name>.json` layout, or a legacy flat `config.json` (Codex on
+    09807d75). Returns the file that holds the secret."""
     config_dir = tmp_path / ".quorus"
     config_dir.mkdir()
-    (config_dir / "config.json").write_text(json.dumps(
-        {"relay_url": RELAY_A, "relay_secret": SAVED, "instance_name": "sam"}))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(config_dir))
     for var in _ENV:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(cli, "API_KEY", "")
-    return config_dir
+    saved = {"relay_url": RELAY_A, "relay_secret": SAVED, "instance_name": "sam"}
+    if request.param == "flat":
+        (config_dir / "config.json").write_text(json.dumps(saved))
+        return config_dir / "config.json"
+    pm = ProfileManager()
+    pm.save("work", saved)
+    pm.set_current("work")
+    assert "relay_secret" not in (config_dir / "config.json").read_text()
+    return config_dir / "profiles" / "work.json"
 
 
 def _connect(monkeypatch, capsys, platform, relay_url, secret):
@@ -108,7 +117,7 @@ def test_python_snippets_read_the_secret_from_the_environment(home, monkeypatch,
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
              and ast.unparse(n.func) == "QuorusClient"]
     assert calls and ast.unparse(calls[0].args[1]) == "os.environ['QUORUS_RELAY_SECRET']"
-    assert "relay_secret saved in" in out and str(home / "config.json") in "".join(
+    assert "relay_secret saved in" in out and str(home) in "".join(
         out.split())
 
 
