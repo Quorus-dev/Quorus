@@ -2854,6 +2854,9 @@ class Reflexd:
         self._answered: dict[str, dict[str, None]] = {}
         self._turns: list[float] = []  # harness run start times, for pacing
         self._refunds: list[float] = []  # NO_REPLY turns given back, this hour
+        # Held lines said but not yet known to have reached the room:
+        # {line: (repo, branch, {"tip", "reviewer"})} (first-ten-minutes.md).
+        self._unannounced: dict[str, tuple[Any, str, dict[str, str]]] = {}
         self._pace_announced: dict[str, float] = {}
         # Paced envelopes wait here (newest per room, coalesced) instead of
         # holding the wake lock: a pacing sleep under the lock kept the owner's
@@ -4223,6 +4226,7 @@ class Reflexd:
                 reply_to=parent_id if parent_id else None,
             )
             posted_id = posted.get("id") if isinstance(posted, dict) else None
+            await self._note_posted(reply)
             logger.info(
                 "posted reply room=%s len=%d thread_root=%s id=%s",
                 room, len(reply), thread_root_id, posted_id,
@@ -4846,10 +4850,32 @@ class Reflexd:
             me = self.config.participant_name
             # The reviewer's own commits go to its second, if the pin has one.
             pin = _review_gate.reviewer_of(pin, me) or pin
+            prior = _review_gate.load_marker(runtime, wt.repo, wt.branch) or {}
             _review_gate.save_marker(runtime, wt.repo, wt.branch, room=room, tip=tip,
                                      base=base, count=int(count),
                                      reviewer=pin.get("name", ""), now=time.time())
-        return _review_gate.awaiting_status(pin, tip, int(count), me)
+            said = {"tip": tip, "reviewer": _review_gate.identity_key(pin)}
+            if prior.get("announced") == said:
+                # Already in the room for this tip and reviewer: saying it again
+                # @-mentioned the reviewer every turn, and the reviewer's reply woke
+                # this agent again (first-ten-minutes.md, item 1).
+                _review_gate.update_marker(runtime, wt.repo, wt.branch, announced=said)
+                return None
+        line = _review_gate.awaiting_status(pin, tip, int(count), me)
+        self._unannounced[line] = (wt.repo, wt.branch, said)
+        return line
+
+    async def _note_posted(self, content: str) -> None:
+        """A post reached the room: a held line it carried is announced, for the
+        exact tip and reviewer that line named. Only after a successful post, so
+        a failed one is said again next turn (codex, review of 0645125a)."""
+        for line in [ln for ln in self._unannounced if ln and ln in (content or "")]:
+            repo, branch, said = self._unannounced.pop(line)
+            marker = await asyncio.to_thread(_review_gate.load_marker,
+                                             self.config.runtime_dir, repo, branch)
+            if marker and marker.get("tip") == said["tip"]:
+                await asyncio.to_thread(_review_gate.update_marker, self.config.runtime_dir,
+                                        repo, branch, announced=said)
 
     def _schedule_review_tick(self, relay: RelayClient, room: str) -> None:
         """Check *room*'s repo for a held tip the reviewer may just have GO'd.
@@ -4887,6 +4913,7 @@ class Reflexd:
             try:
                 await relay.post_reply(room=marker.get("room") or room, from_name=me,
                                        content=status)
+                await self._note_posted(status)
             except httpx.HTTPError as exc:
                 logger.warning("review gate post failed: %s", exc)
 
@@ -5163,6 +5190,7 @@ class Reflexd:
                 try:
                     await relay.post_reply(room=room, from_name=self.config.participant_name,
                                            content=status)
+                    await self._note_posted(status)
                 except httpx.HTTPError as exc:
                     logger.warning("publish sweep post failed: %s", exc)
 

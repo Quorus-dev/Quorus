@@ -107,3 +107,30 @@ def test_the_reviewers_own_fix_waits_for_the_leads_go(tmp_path_factory):
         assert "published" in note
     finally:
         s.close()
+
+
+def test_a_held_fix_is_announced_once_and_the_gate_line_wakes_nobody(tmp_path_factory):
+    """docs/plans/first-ten-minutes.md: a builder that doesn't name the reviewer (real
+    Claude Code often doesn't). On 0.7.11 every later builder turn re-posted the held
+    line, the reviewer's reply woke the builder again, and it looped until the chatter
+    guard; the chat gate line also woke both agents to say hi."""
+    home = tmp_path_factory.mktemp("gate-once") / "home"
+    repo, bin_dir = _setup(home)
+    codex = bin_dir / "codex"
+    codex.write_text(codex.read_text().replace("OTHER = 'alice-opencode'", "OTHER = None"))
+    s = PtySession(home, cwd=repo, extra_path=bin_dir)
+    try:
+        _first_run(s, home, repo, write_answer="y", gate="")
+        gate = _wait_any(s, "Review gate on:", timeout=30)
+        assert gate.get("message_type") == "status"
+        ask = "@alice-codex fix the bug in calc.py"
+        s.type(ask + ENTER)
+        _wait_any(s, "awaiting @alice-opencode's review", timeout=120)
+        time.sleep(25)  # long enough for the 0.7.11 loop to have run several laps
+        texts = [(m.get("from_name"), m.get("content") or "") for m in _history(s)]
+        held = [c for _, c in texts if "awaiting @alice-opencode's review" in c]
+        assert len(held) == 1, texts
+        before_ask = texts[:next(i for i, (_, c) in enumerate(texts) if c == ask)]
+        assert not [w for w, _ in before_ask if w and w.startswith("alice-")], before_ask
+    finally:
+        s.close()

@@ -102,6 +102,14 @@ def _identity(entry: dict[str, Any]) -> dict[str, str]:
     return out
 
 
+def identity_key(pin: dict[str, Any] | None) -> str:
+    """The full stamped identity a pin names (name, tenant, claim or participant
+    id), as one comparable string: the same name with a rotated key differs."""
+    pin = pin or {}
+    return json.dumps({k: pin.get(k) or "" for k in
+                       ("name", "tenant", "claim_id", "participant_id")}, sort_keys=True)
+
+
 def reviewer_of(pin: dict[str, Any] | None, me: str) -> dict[str, Any] | None:
     """Who reviews *me*'s commits under *pin*: the pinned reviewer, or its
     ``second`` when *me* is that reviewer. Nobody reviews their own: with no
