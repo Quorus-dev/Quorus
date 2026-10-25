@@ -42,16 +42,16 @@ _HTML = """\
 <form id="signin" hidden>
   <h1>Quorus</h1>
   <p class="hint">Open the link from <code>quorus phone</code>, or sign in with your relay secret.</p>
-  <input id="siName" placeholder="Your name" autocomplete="username" required>
-  <input id="siToken" placeholder="Relay secret or API token" type="password"
+  <input id="siName" placeholder="Your name" aria-label="Your name" autocomplete="username" required>
+  <input id="siToken" placeholder="Relay secret or API token" aria-label="Relay secret or API token" type="password"
          autocomplete="current-password" required>
   <button type="submit">Sign in</button><div id="err"></div>
 </form>
 <div id="app" hidden>
-  <nav id="rooms"><h1><span id="connDot" title="connection"></span>Quorus</h1>
+  <nav id="rooms"><h2><span id="connDot" role="img" aria-label="connection" title="connection"></span>Quorus</h2>
     <div id="roomList"></div><button id="newRoom" type="button">+ New room</button></nav>
   <main id="chat">
-    <div id="bar"><button id="back" type="button">‹ Rooms</button><h2 id="roomName">Pick a room</h2>
+    <div id="bar"><button id="back" type="button">‹ Rooms</button><h1 id="roomName">Pick a room</h1>
       <button id="viewToggle" type="button">Board</button><span id="who"></span></div>
     <section id="board" hidden aria-live="polite">
       <div id="boardTop"><div id="boardSummary"></div>
@@ -62,9 +62,10 @@ _HTML = """\
       <div id="inbox"></div>
       <div id="boardRows" hidden></div>
       <div id="quorum" hidden></div><div id="quorumCard" hidden></div></section>
-    <div id="messages" aria-live="polite"></div>
+    <div id="messages" aria-live="polite" tabindex="0" aria-label="Messages"></div>
     <div id="working"></div>
-    <form id="composer"><input id="msgInput" placeholder="Message the room…" autocomplete="off">
+    <form id="composer"><input id="msgInput" placeholder="Message the room…" autocomplete="off"
+        aria-label="Message the room">
       <button id="send" type="submit">Send</button></form>
   </main>
 </div>

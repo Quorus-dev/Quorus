@@ -44,7 +44,12 @@ function plain(md) {  // agent markdown → readable text (rendered as text, nev
     .replace(/`([^`\n]+)`/g, "$1").replace(/^\s{0,3}#{1,6}\s+/gm, "")
     .replace(/^(\s*)[-*+]\s+/gm, "$1• ");
 }
-function conn(ok) { $("connDot").className = ok ? "conn-ok" : "conn-err"; }
+function conn(ok) {  // colour plus a word: the dot's state is read out and in its title
+  const dot = $("connDot");
+  dot.className = ok ? "conn-ok" : "conn-err";
+  dot.dataset.state = ok ? "connected" : "disconnected";
+  dot.title = ok ? "connected" : "disconnected";
+}
 function hhmm(ts) { const d = new Date(ts); return isNaN(d) ? "" :
   d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 

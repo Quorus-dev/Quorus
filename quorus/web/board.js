@@ -99,7 +99,8 @@ function Row({ r }) {
           onSubmit=${(e) => {
             e.preventDefault(); ask(r.name, e.currentTarget.querySelector("input"));
           }}>
-      <input placeholder=${"Ask or assign @" + r.name + "…"} autocomplete="off" />
+      <input placeholder=${"Ask or assign @" + r.name + "…"} aria-label=${"Ask or assign @" + r.name}
+             autocomplete="off" />
     </form>
   </article>`;
 }
