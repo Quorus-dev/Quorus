@@ -371,7 +371,8 @@ def timeout_note(pin: dict[str, str], tip: str, waited_s: float, owner: str,
                  in_room: bool) -> str:
     who = pin.get("name") or "the reviewer"
     how = (f"@{owner} can say `publish {tip[:12]} unreviewed`" if in_room
-           else f"@{owner} can override from this machine")
+           else f"@{owner} can run `quorus review publish {tip[:12]} --unreviewed` "
+                "on this machine")
     return (f"{_STATUS} ⚠ no review of {tip[:12]} from @{who} after "
             f"{int(waited_s // 60)} min; still not on main. {how}.")
 

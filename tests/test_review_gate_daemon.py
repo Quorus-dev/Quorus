@@ -527,7 +527,8 @@ def test_timeout_posts_one_warning_and_publishes_nothing(env, monkeypatch):
     assert _git(repo, "rev-parse", "main") == main
     [note] = [p["content"] for p in relay.posted]
     assert note.startswith(f"(quorus) ⚠ no review of {tip[:12]} from @rev-codex after 21 min")
-    assert "still not on main" in note and "@b can override from this machine" in note
+    assert "still not on main" in note
+    assert f"@b can run `quorus review publish {tip[:12]} --unreviewed` on this machine" in note
     assert len(alerts) == 1
 
 
