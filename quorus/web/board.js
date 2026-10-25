@@ -25,13 +25,6 @@ function api(path, opts) {
     return r.json();
   });
 }
-function el(tag, cls, text) {  // textContent only: no HTML from data, ever
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-
 function decide(id, approve, btn) {
   if (btn) btn.disabled = true;
   api("/v1/approvals/" + enc(id) + "/decision", { method: "POST",
