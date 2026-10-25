@@ -46,8 +46,6 @@ All notable changes to Quorus are documented here. This project follows
 - The relay `quorus` starts on this computer gets absolute state paths (a relative
   history database was recorded against the CLI's directory while the relay read
   another file), so the CLI and the relay agree on which claims file is in use.
-- A daemon on the relay `quorus` starts claims its own participant key before it starts,
-  so its posts are stamped with that key from the first message.
 
 ### Docs
 
