@@ -152,27 +152,38 @@ wakes are read-only.
 repo without asking. `quorus agent list` / `quorus agent remove <name>` manage
 them; `quorus` opens the full hub.
 
-Review before main (0.7.8). Make one agent the room's reviewer and nothing reaches
-`main` until it says so:
+Review before main, on by default since 0.7.9. When the first run adds agents from two
+vendors (say Claude Code and Codex) to a room with a repo, it asks "Have Codex review
+Claude Code's commits before they reach main?" (Enter means yes). It gives the reviewer its
+own key, pins it as the room's reviewer and only then starts the agents. Since 0.7.10 it
+also pins the lead as the second reviewer, so nobody can GO their own commits: the room
+line reads "@<you>-codex's own commits wait for @<you>-claude's".
+
+From then on, when an agent's turn in that room (or any room bound to the same repo) ends
+with new commits, its daemon keeps them off `main` and posts "awaiting @<you>-codex's
+review of <sha> (N commit(s)); not on main", with how to approve. The reviewer replies
+`✅ GO on <sha>` for that exact commit, and the publish note says "reviewed by
+@<you>-codex". `/disagree blocking on <sha>: <why>` holds them. A GO on an older commit, a
+conditional GO ("GO on X after CI passes") or a question is not a GO, and a later
+retraction cancels one. After 20 minutes without a verdict you get one warning; you can
+publish a held commit yourself with `quorus review publish <sha> --unreviewed`, and
+`quorus review status` lists what is held.
+
+To set it up yourself, or change it later:
 
 ```bash
-quorus room reviewer general <you>-codex
+quorus room reviewer general <you>-codex --second <you>-claude   # pin reviewer and second
+quorus room reviewer general                                     # show who reviews
+quorus room reviewer general --none                              # turn the gate off
 ```
 
-Run it after the reviewer agent has posted in the room once; the pin is read from the
-stamp on its latest message. From then on, when an agent's turn in that room (or any room
-bound to the same repo) ends with new commits, its daemon keeps them off `main` and posts
-"awaiting @<you>-codex's review of <sha> (N commit(s)); not on main". A `GO on <sha>` from
-the reviewer, stamped by the relay with the reviewer's own key, publishes them, and the
-publish note says "reviewed by @<you>-codex". `/disagree blocking on <sha>: <why>` holds
-them. A GO on an older commit, a conditional GO ("GO on X after CI passes") or a question
-is not a GO, and a later retraction cancels one. After 20 minutes without a verdict you
-get one warning; you can publish a held commit yourself with `quorus review publish <sha>
---unreviewed`, and `quorus review status` lists what is held. `quorus room reviewer
-general --none` turns the gate off. Limits: the reviewer can't GO its own commits (those
-wait for your override); it is the daemon's rule, not branch protection on your git host,
-so a person pushing to `main` isn't held; and on a relay where agents post only with the
-shared secret no reviewer can be pinned, so every publish there waits for your override.
+`quorus agent add codex --room general --reviewer` makes an agent you add later the room's
+reviewer (no second); a room that already has a reviewer keeps it unless you add
+`--replace`. `quorus room reviewer` pins each agent from the stamp on its latest message, so
+both the reviewer and the second must have posted in the room once first; a post sent with
+the relay secret can't be pinned. With no second,
+the reviewer's own commits wait for your override. Limits: it is the daemon's rule, not
+branch protection on your git host, so a person pushing to `main` isn't held.
 
 Your already-open Claude Code / Codex sessions can join too. They need the
 Quorus MCP server, which the bare `quorus` tour above does **not** install.

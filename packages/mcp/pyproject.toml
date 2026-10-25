@@ -1,6 +1,6 @@
 [project]
 name = "quorus-mcp"
-version = "0.7.10"
+version = "0.7.11"
 description = "Quorus MCP server — exposes inter-agent coordination tools to MCP-compatible clients like Claude Code"
 requires-python = ">=3.10"
 license = "MIT"

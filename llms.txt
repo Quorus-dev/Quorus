@@ -155,17 +155,21 @@ The full OpenAPI reference is at `/docs` on your relay.
 starts an always-on wake daemon for a coding CLI; `quorus agent list` and `quorus agent remove <name>`
 manage them. `manual` forwards permission prompts to `quorus approvals`.
 
-Review before main (0.7.8): `quorus room reviewer <room> <agent>` pins that agent as the
+Review before main (on by default since 0.7.9): when the first run adds agents from two vendors
+to a room with a repo, it asks once (default yes), pins one as the room's reviewer by its own key
+and, since 0.7.10, the lead as the second reviewer, then starts the agents. By hand,
+`quorus room reviewer <room> <agent> [--second <lead>]` pins that agent as the
 room's reviewer, by the participant key the relay stamped on its latest message there, so
-run it after the reviewer agent has posted in the room once.
+run it after the reviewer (and any second) has posted in the room once.
 Commits from any agent's turn in a room bound to that repo then stay off `main` ("awaiting
 @<agent>'s review of <sha>; not on main") until the reviewer posts `GO on <sha>` for that
 exact tip; `/disagree blocking on <sha>: <why>` holds them. A GO on an older commit, a
 conditional GO or a question does not count, and a later retraction cancels one. After 20
 minutes with no verdict the owner gets one warning and can publish unreviewed with
 `quorus review publish <sha> --unreviewed`; `quorus review status` lists held commits;
-`quorus room reviewer <room> --none` removes the gate. The reviewer can't GO its own
-commits (those wait for the owner), and the gate is the daemon's rule, not branch protection.
+`quorus room reviewer <room> --none` removes the gate. Nobody can GO their own commits: the
+second reviews the reviewer's, and with no second they wait for the owner. The gate is the
+daemon's rule, not branch protection.
 
 ## More
 
