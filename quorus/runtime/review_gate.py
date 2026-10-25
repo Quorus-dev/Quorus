@@ -269,3 +269,22 @@ def awaiting_status(pin: dict[str, str], tip: str, count: int) -> str:
         return (f"{_STATUS} {tip[:12]} ({count} commit(s)) is held: review by @{who} can't "
                 "be authenticated on this relay; owner override only. Not on main.")
     return f"{_STATUS} awaiting @{who}'s review of {tip[:12]} ({count} commit(s)); not on main"
+
+
+def update_marker(runtime_dir: Path, repo: Path, branch: str, **fields: Any) -> None:
+    """Merge *fields* into an existing, readable marker (no-op otherwise)."""
+    data = load_marker(runtime_dir, repo, branch)
+    if not data or data.get("unreadable"):
+        return
+    data.update(fields)
+    write_private_text(marker_path(runtime_dir, repo, branch),
+                       json.dumps(data, sort_keys=True) + "\n")
+
+
+def reviewed_note(n: int, branch: str, main: str, suffix: str, reviewer: str,
+                  msg_id: str | None) -> str:
+    """The usual publish note (its " at <head> (author: …)" *suffix* keeps the
+    ledger and brief parsers working), plus who reviewed it."""
+    ref = f" (GO {msg_id})" if msg_id else ""
+    return (f"{_STATUS} published {n} commit(s) from {branch} to {main}{suffix}; "
+            f"reviewed by @{reviewer}{ref}")

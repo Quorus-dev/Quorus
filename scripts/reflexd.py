@@ -4747,6 +4747,122 @@ class Reflexd:
                                      reviewer=pin.get("name", ""), now=time.time())
         return _review_gate.awaiting_status(pin, tip, int(count))
 
+    def _schedule_review_tick(self, relay: RelayClient, room: str) -> None:
+        """Check *room*'s repo for a held tip the reviewer may just have GO'd.
+        Beside the wake, never in its way; ticks run one at a time."""
+        if not room or workspace_for(room) is None:
+            return
+        task = asyncio.create_task(self._review_tick(relay, room))
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    async def _review_tick(self, relay: RelayClient, room: str) -> None:
+        lock = self.__dict__.setdefault("_review_tick_lock", asyncio.Lock())
+        async with lock:
+            try:
+                await self._review_tick_locked(relay, room)
+            except Exception:  # a failed tick must never take the daemon down
+                logger.exception("review gate tick failed room=%s", room)
+
+    async def _review_tick_locked(self, relay: RelayClient, room: str) -> None:
+        ws = workspace_for(room)
+        me = self.config.participant_name
+        wt = (await asyncio.to_thread(reflexd_wake.existing_worktree, ws, me)
+              if ws else None)
+        if wt is None:
+            return
+        runtime = self.config.runtime_dir
+        marker = await asyncio.to_thread(_review_gate.load_marker, runtime, wt.repo,
+                                         wt.branch)
+        if not marker or marker.get("unreadable") or not marker.get("tip"):
+            return
+        status = await self._review_publish(relay, wt, marker)
+        if status and status != marker.get("last_status"):
+            await asyncio.to_thread(_review_gate.update_marker, runtime, wt.repo,
+                                    wt.branch, last_status=status)
+            try:
+                await relay.post_reply(room=marker.get("room") or room, from_name=me,
+                                       content=status)
+            except httpx.HTTPError as exc:
+                logger.warning("review gate post failed: %s", exc)
+
+    async def _review_publish(self, relay: RelayClient, wt: Any,
+                              marker: dict[str, Any]) -> str | None:
+        """Publish a held tip on the pinned reviewer's GO (review-gate slice 3b).
+        Returns a room status, or None when there is nothing new to say."""
+        runtime, tip = self.config.runtime_dir, marker["tip"]
+        gate = await asyncio.to_thread(_review_gate_for, marker.get("room") or "", wt.repo)
+        if gate is None:  # the reviewer was removed: the next turn publishes as usual
+            await asyncio.to_thread(_review_gate.clear_marker, runtime, wt.repo, wt.branch)
+            return None
+        room, pin = gate
+        listed = await asyncio.to_thread(reflexd_wake._git, "rev-list", "--reverse",
+                                         f"{wt.main}..{tip}", cwd=wt.repo)
+        pending = listed.stdout.split() if listed.returncode == 0 else []
+        if not pending:  # already on main (or the tip is gone)
+            await asyncio.to_thread(_review_gate.clear_marker, runtime, wt.repo, wt.branch)
+            return None
+        try:
+            fetch = getattr(relay, "fetch_history", None) or relay.fetch_recent
+            history = await fetch(room=room, limit=reflexd_held.HISTORY_LIMIT)
+        except Exception as exc:  # can't read the room: hold, never publish blind
+            logger.warning("review gate history fetch failed: %s", exc)
+            return None
+        state, ref = _review_gate.decide(history, pin, pending)
+        who = pin.get("name") or "the reviewer"
+        if state == "blocked":
+            return (f"{reflexd_wake.STATUS_PREFIX} held: @{who} /disagree blocking on "
+                    f"{tip[:12]}; not on main")
+        if state != "go":
+            return None
+        held = await self._guard_publish(relay, room, wt)
+        if held is not None:
+            return held
+
+        def check() -> str | None:  # under the repo lock, right before the merge
+            now = _review_gate.load_marker(runtime, wt.repo, wt.branch)
+            if not now or now.get("tip") != tip:
+                return "the held tip changed"
+            if _review_gate.reviewer_for(room) != pin:
+                return "the room's reviewer changed"
+            return None
+
+        res = await asyncio.to_thread(_review_publish.publish_approved, runtime, wt.repo,
+                                      wt.main, wt.branch, tip, check)
+        if res.status in ("published", "already"):
+            await asyncio.to_thread(_review_gate.clear_marker, runtime, wt.repo, wt.branch)
+        if res.status == "already":
+            return None
+        if res.status == "published":
+            before = res.before or marker.get("base") or ""
+            try:
+                from quorus.ledger import record_provenance
+                await asyncio.to_thread(record_provenance, wt.repo, before, tip, {
+                    "agent": self.config.participant_name, "room": room,
+                    "reviewed_by": who, "review_msg": ref})
+            except Exception as exc:  # best effort, like the ordinary publish note
+                logger.warning("provenance note failed: %s", exc)
+            suffix = await asyncio.to_thread(reflexd_wake._published_suffix, wt.repo,
+                                             before, wt.main)
+            return _review_gate.reviewed_note(len(pending), wt.branch, wt.main, suffix,
+                                              who, ref)
+        if res.status == "behind" and not self._wake_lock.locked():
+            status = await asyncio.to_thread(self._hold_for_review, wt, room, pin)
+            new = await asyncio.to_thread(_review_gate.load_marker, runtime, wt.repo,
+                                          wt.branch)
+            if new and new.get("tip") and new["tip"] != tip:
+                return (f"{reflexd_wake.STATUS_PREFIX} {wt.main} moved after @{who}'s GO "
+                        f"on {tip[:12]}; rebased to {new['tip'][:12]}, which needs a fresh "
+                        f"review (git range-diff {res.before[:12]}..{tip[:12]} "
+                        f"{wt.main}..{new['tip'][:12]}); not on main")
+            return status
+        if res.status in ("behind", "not_tip"):
+            return None  # the turn's own end re-holds the new tip
+        if res.status == "stuck":
+            self._alert_owner(room, f"review gate: {res.detail}")
+        return (f"{reflexd_wake.STATUS_PREFIX} @{who}'s GO on {tip[:12]} not published: "
+                f"{res.detail}")
+
     async def _guard_publish(self, relay: RelayClient, room: str, wt: Any) -> str | None:
         """Before publishing *wt*: if the owner or the room's lead @-mentioned
         this agent since its oldest unpublished turn started (or that history
@@ -4975,12 +5091,29 @@ class Reflexd:
         dedupe everything already answered."""
         while not self._stop.is_set():
             await self._sleep_or_stop(interval)
-            if self._stop.is_set() or self._wake_lock.locked():
+            if self._stop.is_set():
+                continue
+            await self._review_sweep(relay)  # a GO the live path missed
+            if self._wake_lock.locked():
                 continue
             try:
                 await self._drain_inbox(relay)
             except Exception as exc:  # never kill the daemon over a drain
                 logger.debug("periodic drain failed: %s", exc)
+
+    async def _review_sweep(self, relay: RelayClient) -> None:
+        """One review tick per bound repo (review-gate slice 3b)."""
+        try:
+            data = json.loads(ROOM_BINDINGS_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        seen: set[Path] = set()
+        for room in (data if isinstance(data, dict) else {}):
+            ws = workspace_for(room)
+            if ws is None or ws.resolve() in seen:
+                continue
+            seen.add(ws.resolve())
+            await self._review_tick(relay, room)
 
     async def _heartbeat_loop(
         self, relay: RelayClient, interval: float = HEARTBEAT_INTERVAL_S,
@@ -5038,6 +5171,8 @@ class Reflexd:
             return
         if event_name != "message":
             return
+        if data.get("from_name") != self.config.participant_name:
+            self._schedule_review_tick(relay, data.get("room") or "")
         if _handoff_sender.decline(data):
             ws = workspace_for(data.get("room") or "")
             wt = (await asyncio.to_thread(reflexd_wake.existing_worktree, ws,

@@ -186,3 +186,175 @@ def test_restart_sweep_without_reviewer_still_publishes(env):
     asyncio.run(d._publish_sweep(relay))
     assert _git(repo, "rev-parse", "main") == _git(repo, "rev-parse", wt.branch)
     assert any("published 2 commit(s)" in p["content"] for p in relay.posted)
+
+
+# ── slice 3b: the reviewer's GO publishes the exact held tip ─────────────
+
+
+class _Room(_Relay):
+    def __init__(self, history: list[dict[str, Any]] | None = None) -> None:
+        super().__init__()
+        self.history = history or []
+
+    async def fetch_history(self, **_kw: Any) -> list[dict[str, Any]]:
+        return list(self.history)
+
+
+def _say(text: str, *, mid: str = "g1", auth: str = "key", claim: str = "c-rev",
+         sender: str = "rev-codex", ts: str = "2026-10-25T08:00:00") -> dict[str, Any]:
+    msg = {"id": mid, "from_name": sender, "content": text, "timestamp": ts,
+           "sender_auth": auth, "sender_tenant": "t1"}
+    if auth == "key":
+        msg["sender_claim_id"] = claim
+    return msg
+
+
+def _held(env) -> tuple[Any, Path, Any, str, str]:
+    d, repo, wt, cfg = env
+    _pin(cfg)
+    main = _git(repo, "rev-parse", "main")
+    _publish(d, wt)
+    return d, repo, wt, main, _git(repo, "rev-parse", wt.branch)
+
+
+def _tick(d, relay, room: str = "r") -> None:
+    asyncio.run(d._review_tick(relay, room))
+
+
+def test_pinned_go_publishes_the_held_tip_once(env):
+    d, repo, wt, _main, tip = _held(env)
+    relay = _Room([_say(f"@b-claude ✅ GO on `{tip[:8]}`")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == tip
+    assert rg.load_marker(d.config.runtime_dir, repo, wt.branch) is None
+    [note] = [p["content"] for p in relay.posted]
+    assert note.startswith(f"(quorus) published 2 commit(s) from {wt.branch} to main at ")
+    assert note.endswith("; reviewed by @rev-codex (GO g1)")
+    notes = _git(repo, "notes", "--ref=quorus", "show", "main")
+    assert '"reviewed_by": "rev-codex"' in notes and '"review_msg": "g1"' in notes
+    _tick(d, relay)  # the same GO again: nothing more to say
+    assert len(relay.posted) == 1
+
+
+def test_publish_note_still_parses_for_the_ledger(env):
+    from quorus import ledger
+    d, repo, _wt, _main, tip = _held(env)
+    relay = _Room([_say(f"✅ GO on {tip[:8]}")])
+    _tick(d, relay)
+    assert ledger._PUBLISHED.search(relay.posted[0]["content"])
+
+
+@pytest.mark.parametrize("msg", [
+    {"auth": "secret"},                 # shared-secret bearer under the reviewer's name
+    {"claim": "c-other"},               # a re-claimed name
+    {"sender": "someone-else"},         # another member
+])
+def test_unpinned_go_publishes_nothing(env, msg):
+    d, repo, _wt, main, tip = _held(env)
+    relay = _Room([_say(f"✅ GO on {tip[:8]}", **msg)])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main and relay.posted == []
+
+
+def test_go_on_an_older_commit_publishes_nothing(env):
+    d, repo, wt, main, _tip = _held(env)
+    first = _git(repo, "rev-list", "--reverse", f"main..{wt.branch}").split()[0]
+    relay = _Room([_say(f"✅ GO on {first[:8]}")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main
+
+
+def test_block_holds_and_says_so_once(env):
+    d, repo, _wt, main, tip = _held(env)
+    relay = _Room([_say(f"✅ GO on {tip[:8]}", ts="2026-10-25T08:00:00"),
+                   _say(f"/disagree blocking on `{tip[:8]}`: no test", mid="b1",
+                        ts="2026-10-25T08:01:00")])
+    _tick(d, relay)
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main
+    assert [p["content"] for p in relay.posted] == [
+        f"(quorus) held: @rev-codex /disagree blocking on {tip[:12]}; not on main"]
+    relay.history.append(_say(f"✅ GO on {tip[:8]}", mid="g2", ts="2026-10-25T08:02:00"))
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == tip
+
+
+def test_commit_after_the_hold_is_never_published_by_the_go(env):
+    d, repo, wt, main, tip = _held(env)
+    (wt.path / "late.txt").write_text("late")
+    _git(wt.path, "add", "late.txt")
+    _git(wt.path, "commit", "-q", "-m", "late")
+    relay = _Room([_say(f"✅ GO on {tip[:8]}")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main  # the branch moved past the GO'd tip
+    assert relay.posted == []
+
+
+def test_main_moved_after_the_go_rebases_and_asks_again(env):
+    d, repo, wt, _main, tip = _held(env)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "someone else landed")
+    moved = _git(repo, "rev-parse", "main")
+    relay = _Room([_say(f"✅ GO on {tip[:8]}")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == moved
+    new = rg.load_marker(d.config.runtime_dir, repo, wt.branch)
+    assert new["tip"] != tip and new["base"] == moved
+    [status] = [p["content"] for p in relay.posted]
+    assert f"after @rev-codex's GO on {tip[:12]}" in status
+    assert f"rebased to {new['tip'][:12]}, which needs a fresh review" in status
+    assert "range-diff" in status and status.endswith("not on main")
+
+
+def test_dirty_main_checkout_says_why_once(env):
+    d, repo, _wt, main, tip = _held(env)
+    (repo / "human.txt").write_text("x")
+    _git(repo, "add", "human.txt")
+    relay = _Room([_say(f"✅ GO on {tip[:8]}")])
+    _tick(d, relay)
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main
+    [status] = [p["content"] for p in relay.posted]
+    assert f"@rev-codex's GO on {tip[:12]} not published" in status
+    assert "uncommitted changes" in status
+
+
+def test_removed_reviewer_drops_the_marker_without_publishing(env):
+    d, repo, wt, main, tip = _held(env)
+    _, _, _, cfg = env
+    rg.clear_reviewer("r", cfg / "room-reviewers.json")
+    _tick(d, _Room([_say(f"✅ GO on {tip[:8]}")]))
+    assert _git(repo, "rev-parse", "main") == main
+    assert rg.load_marker(d.config.runtime_dir, repo, wt.branch) is None
+
+
+def test_history_fetch_failure_publishes_nothing(env):
+    d, repo, _wt, main, _tip = _held(env)
+
+    class Down(_Relay):
+        async def fetch_history(self, **_kw: Any) -> list[dict[str, Any]]:
+            raise RuntimeError("relay down")
+
+    relay = Down()
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main and relay.posted == []
+
+
+def test_review_sweep_finds_a_go_the_live_path_missed(env):
+    d, repo, _wt, _main, tip = _held(env)
+    relay = _Room([_say(f"✅ GO on {tip[:8]}")])
+    asyncio.run(d._review_sweep(relay))
+    assert _git(repo, "rev-parse", "main") == tip
+
+
+def test_a_room_message_schedules_the_tick(env):
+    d, repo, _wt, _main, tip = _held(env)
+    relay = _Room([_say(f"✅ GO on {tip[:8]}")])
+
+    async def go() -> None:
+        await d._dispatch_event(relay, "message", {
+            "message_id": "g1", "room": "r", "from_name": "rev-codex",
+            "content": f"✅ GO on {tip[:8]}", "message_type": "status"})
+        await asyncio.gather(*list(d._bg_tasks), return_exceptions=True)
+
+    asyncio.run(go())
+    assert _git(repo, "rev-parse", "main") == tip
