@@ -177,9 +177,11 @@ quorus room reviewer general                                     # show who revi
 quorus room reviewer general --none                              # turn the gate off
 ```
 
-`quorus agent add codex --room general --reviewer` does the same for an agent you add
-later. Pin an agent after it has posted in the room once; the pin is read from the stamp on
-its latest message, and a post sent with the relay secret can't be pinned. With no second,
+`quorus agent add codex --room general --reviewer` makes an agent you add later the room's
+reviewer (no second); a room that already has a reviewer keeps it unless you add
+`--replace`. `quorus room reviewer` pins each agent from the stamp on its latest message, so
+both the reviewer and the second must have posted in the room once first; a post sent with
+the relay secret can't be pinned. With no second,
 the reviewer's own commits wait for your override. Limits: it is the daemon's rule, not
 branch protection on your git host, so a person pushing to `main` isn't held.
 
