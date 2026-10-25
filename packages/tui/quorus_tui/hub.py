@@ -3277,6 +3277,7 @@ def _main_input_loop(
         chat_identity = agent_name
     _full_clear(console)
     last_render = 0.0
+    last_frame_key: tuple[str, str] | None = None
     # Hold auto-redraw until the user submits next input. Used after we
     # print transient output (help, slash hint, room menu) so the redraw
     # tick doesn't clear it out from under them.
@@ -3388,118 +3389,132 @@ def _main_input_loop(
                 latency_ms = state.get_latency_ms()
                 console_width = max(40, console.size.width)
 
-                _full_clear(console)
+                # Idle ticks repaint only when something visible changed (tui-polish.md
+                # defect 1): an unchanged frame is not cleared and reprinted, so the
+                # screen stops flickering and scrollback stops filling with copies.
+                # Latency jitter alone never counts as a change. Forced renders
+                # (last_render = 0: new messages, input, commands) always repaint.
+                forced = last_render == 0
                 # Header row + single hairline rule. No border box.
-                console.print(
-                    _render_header(
+                def _header(latency: int | None) -> Text:
+                    return _render_header(
                         relay_url,
                         agent_name,
                         connected,
                         conn_status,
                         room_count=len(rooms_snap),
                         unread_total=unread_total,
-                        latency_ms=latency_ms,
+                        latency_ms=latency,
                         workspace_label=workspace_label,
                         console_width=console_width,
                         chat_identity=chat_identity,
                     )
-                )
-                console.print(_Rule(style="dim"))
+                header = _header(latency_ms)
+                header_key = _header(None).plain
+                with console.capture() as body_cap:
+                    console.print(_Rule(style="dim"))
 
-                if selected is None:
-                    # Welcome / Home view — banner, action menu, chats panel.
-                    # Skips the room strip + nav hint + chat feed entirely so
-                    # the welcome surface owns the screen between header and
-                    # prompt. The instant the user picks a room (Tab/Enter/
-                    # /join), the else-branch below takes over.
-                    _welcome.render_welcome(
-                        console,
-                        rooms=rooms_snap,
-                        unread_by_room=unread_by_room,
-                        selected_room_name=room_name,
-                        messages=msgs_snap,
-                        agent_name=agent_name,
-                        workspace_label=workspace_label,
-                        away_rows=getattr(state, "away_rows", None),
-                    )
-                else:
-                    # iMessage-style in-room view: pinned app-bar on top,
-                    # bubble feed in the middle, slim composer hint above
-                    # the prompt. The room strip is folded into the app-bar
-                    # actions so the screen real estate stays focused on
-                    # the conversation, not the navigation chrome.
-                    from . import chat as _chat
-
-                    members = (selected.get("members") or []) if selected else []
-                    last_active = _chat.last_active_label(msgs_snap)
-                    console.print(
-                        _chat.render_app_bar(
-                            room_name=room_name,
-                            member_count=len(members),
-                            last_active=last_active,
-                            console_width=console_width,
-                            messages=msgs_snap,
-                        )
-                    )
-                    # Inline room strip stays as a one-liner so Tab still
-                    # has a visual reference. Dim & compact.
-                    console.print(
-                        _render_room_strip(
-                            rooms_snap, selected_idx,
+                    if selected is None:
+                        # Welcome / Home view — banner, action menu, chats panel.
+                        # Skips the room strip + nav hint + chat feed entirely so
+                        # the welcome surface owns the screen between header and
+                        # prompt. The instant the user picks a room (Tab/Enter/
+                        # /join), the else-branch below takes over.
+                        _welcome.render_welcome(
+                            console,
+                            rooms=rooms_snap,
                             unread_by_room=unread_by_room,
+                            selected_room_name=room_name,
+                            messages=msgs_snap,
+                            agent_name=agent_name,
+                            workspace_label=workspace_label,
+                            away_rows=getattr(state, "away_rows", None),
                         )
-                    )
-                    console.print()
-                    # Stream B — fold-up panels above the feed. Both are
-                    # opt-in (Ctrl-W / Ctrl-N) so the feed remains the
-                    # default surface. Pure render — no I/O at this point.
-                    if state.is_work_queue_panel_open():
-                        _, wq_tasks, _wq_at = state.get_work_queue()
-                        for wq_row in render_work_queue_panel(
-                            wq_tasks, expanded=True,
+                    else:
+                        # iMessage-style in-room view: pinned app-bar on top,
+                        # bubble feed in the middle, slim composer hint above
+                        # the prompt. The room strip is folded into the app-bar
+                        # actions so the screen real estate stays focused on
+                        # the conversation, not the navigation chrome.
+                        from . import chat as _chat
+
+                        members = (selected.get("members") or []) if selected else []
+                        last_active = _chat.last_active_label(msgs_snap)
+                        console.print(
+                            _chat.render_app_bar(
+                                room_name=room_name,
+                                member_count=len(members),
+                                last_active=last_active,
+                                console_width=console_width,
+                                messages=msgs_snap,
+                            )
+                        )
+                        # Inline room strip stays as a one-liner so Tab still
+                        # has a visual reference. Dim & compact.
+                        console.print(
+                            _render_room_strip(
+                                rooms_snap, selected_idx,
+                                unread_by_room=unread_by_room,
+                            )
+                        )
+                        console.print()
+                        # Stream B — fold-up panels above the feed. Both are
+                        # opt-in (Ctrl-W / Ctrl-N) so the feed remains the
+                        # default surface. Pure render — no I/O at this point.
+                        if state.is_work_queue_panel_open():
+                            _, wq_tasks, _wq_at = state.get_work_queue()
+                            for wq_row in render_work_queue_panel(
+                                wq_tasks, expanded=True,
+                                console_width=console_width,
+                            ):
+                                console.print(wq_row)
+                            console.print()
+                        # L3: a blocked agent cannot wait for a keybind, so
+                        # this panel is unconditional when anything is pending.
+                        for apr_row in render_approvals_panel(
+                            state.get_pending_approvals(),
                             console_width=console_width,
                         ):
-                            console.print(wq_row)
-                        console.print()
-                    # L3: a blocked agent cannot wait for a keybind, so
-                    # this panel is unconditional when anything is pending.
-                    for apr_row in render_approvals_panel(
-                        state.get_pending_approvals(),
-                        console_width=console_width,
-                    ):
-                        console.print(apr_row)
-                    if state.get_pending_approvals():
-                        console.print()
-                    if state.is_dm_inbox_open():
-                        for dm_row in render_dm_inbox_panel(
-                            state.get_dm_messages(),
+                            console.print(apr_row)
+                        if state.get_pending_approvals():
+                            console.print()
+                        if state.is_dm_inbox_open():
+                            for dm_row in render_dm_inbox_panel(
+                                state.get_dm_messages(),
+                                console_width=console_width,
+                            ):
+                                console.print(dm_row)
+                            console.print()
+                        # Bubble feed — grouped, with optional unread divider.
+                        first_unread = state.get_unread(room_name)
+                        feed_unread_idx = (
+                            max(0, len(msgs_snap) - first_unread)
+                            if first_unread
+                            else None
+                        )
+                        for feed_line in _chat.render_bubble_feed(
+                            msgs_snap, room_name, agent_name,
                             console_width=console_width,
+                            first_unread_index=feed_unread_idx,
+                            thread_collapsed=state.get_thread_collapsed(),
                         ):
-                            console.print(dm_row)
+                            console.print(feed_line)
+                        row = _room_state_row(state, connected, members, msgs_snap, room_name)
+                        if row is not None:
+                            console.print(row)
                         console.print()
-                    # Bubble feed — grouped, with optional unread divider.
-                    first_unread = state.get_unread(room_name)
-                    feed_unread_idx = (
-                        max(0, len(msgs_snap) - first_unread)
-                        if first_unread
-                        else None
-                    )
-                    for feed_line in _chat.render_bubble_feed(
-                        msgs_snap, room_name, agent_name,
-                        console_width=console_width,
-                        first_unread_index=feed_unread_idx,
-                        thread_collapsed=state.get_thread_collapsed(),
-                    ):
-                        console.print(feed_line)
-                    row = _room_state_row(state, connected, members, msgs_snap, room_name)
-                    if row is not None:
-                        console.print(row)
-                    console.print()
-                    console.print(_chat.render_composer_hint())
-                # Transient status line (if any) above the bare prompt.
-                status_line = _render_status_line(status_bar)
-                if status_line is not None:
-                    console.print(status_line)
+                        console.print(_chat.render_composer_hint())
+                    # Transient status line (if any) above the bare prompt.
+                    status_line = _render_status_line(status_bar)
+                    if status_line is not None:
+                        console.print(status_line)
+                frame_key = (header_key, body_cap.get())
+                if forced or frame_key != last_frame_key:
+                    _full_clear(console)
+                    console.print(header)
+                    console.file.write(frame_key[1])
+                    console.file.flush()
+                    last_frame_key = frame_key
                 last_render = now
 
             # Bare prompt — no panel, no border.
@@ -3529,7 +3544,9 @@ def _main_input_loop(
                     hold_render = True
                     input_quiet_until = now + INPUT_QUIET_HOLD_S
                 else:
-                    last_render = 0
+                    # Due, but an idle tick, not a forced render: it repaints
+                    # only if the frame changed (new messages, status row).
+                    last_render = now - POLL_S
                 continue
 
             if line == _KEY_QUIT:
