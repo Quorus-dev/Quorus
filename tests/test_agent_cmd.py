@@ -160,7 +160,9 @@ def test_each_agent_daemon_gets_its_own_log(tmp_path: Path, monkeypatch) -> None
 
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
-    monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(agent_cmd.subprocess, "run",
+                        lambda a, **k: agent_cmd.subprocess.CompletedProcess(a, 0, "", ""))
+    monkeypatch.setattr(agent_cmd.agent_start, "stays_up", lambda *a, **k: True)
     monkeypatch.setattr(_sys, "platform", "darwin")
     # The plist branch only: with QUORUS_NO_LAUNCHD set it used to Popen a real
     # reflexd against http://r, which outlived the test (overseer, 2026-10-21).
@@ -200,7 +202,9 @@ def test_model_is_passed_to_the_daemon(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
-    monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(agent_cmd.subprocess, "run",
+                        lambda a, **k: agent_cmd.subprocess.CompletedProcess(a, 0, "", ""))
+    monkeypatch.setattr(agent_cmd.agent_start, "stays_up", lambda *a, **k: True)
     monkeypatch.setattr(_sys, "platform", "darwin")
     # The plist branch only: with QUORUS_NO_LAUNCHD set it used to Popen a real
     # reflexd against http://r, which outlived the test (overseer, 2026-10-21).

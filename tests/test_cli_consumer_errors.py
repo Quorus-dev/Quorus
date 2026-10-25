@@ -109,9 +109,9 @@ def test_agent_list_shows_only_my_agents(monkeypatch, capsys) -> None:
     from quorus_cli import agent_cmd
 
     monkeypatch.setattr(agent_cmd, "load_config", lambda: {"instance_name": "arav"})
-    monkeypatch.setattr(agent_cmd, "_launchd_labels", lambda: [
+    monkeypatch.setattr(agent_cmd, "_launchd_jobs", lambda: dict.fromkeys([
         "dev.quorus.agent.arav-claude", "dev.quorus.agent.bob-claude",
-        "dev.quorus.dogfood.reflexd.arav-codex", "com.other.thing"])
+        "dev.quorus.dogfood.reflexd.arav-codex", "com.other.thing"], 7))
 
     class C:
         def print(self, *a: Any, **k: Any) -> None:

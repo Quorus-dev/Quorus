@@ -54,7 +54,9 @@ def test_bad_state_dirs_are_refused(env, monkeypatch, tmp_path, raw, why):  # no
 def test_the_daemon_gets_the_state_dir_as_its_config_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
-    monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(agent_cmd.subprocess, "run",
+                        lambda a, **k: agent_cmd.subprocess.CompletedProcess(a, 0, "", ""))
+    monkeypatch.setattr(agent_cmd.agent_start, "stays_up", lambda *a, **k: True)
     monkeypatch.setattr(sys, "platform", "darwin")
     # The plist branch only: with QUORUS_NO_LAUNCHD set it used to Popen a real
     # reflexd against http://r, which outlived the test (overseer, 2026-10-21).
@@ -133,7 +135,9 @@ def test_a_running_daemon_with_the_same_state_is_reused(env, monkeypatch, tmp_pa
 def test_starting_and_removing_keep_the_state_record(tmp_path, monkeypatch):
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setattr(agent_cmd, "_LA", tmp_path / "LA")
-    monkeypatch.setattr(agent_cmd.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(agent_cmd.subprocess, "run",
+                        lambda a, **k: agent_cmd.subprocess.CompletedProcess(a, 0, "", ""))
+    monkeypatch.setattr(agent_cmd.agent_start, "stays_up", lambda *a, **k: True)
     monkeypatch.setattr(sys, "platform", "darwin")
     # The plist branch only: with QUORUS_NO_LAUNCHD set it used to Popen a real
     # reflexd against http://r, which outlived the test (overseer, 2026-10-21).

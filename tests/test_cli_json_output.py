@@ -95,8 +95,9 @@ def test_agent_list_json(monkeypatch, capsys, tmp_path) -> None:
 
     (tmp_path / "me-codex.pid").write_text("12345")
     monkeypatch.setattr(agent_cmd, "load_config", lambda: {"instance_name": "me"})
-    monkeypatch.setattr(agent_cmd, "_launchd_labels",
-                        lambda: ["com.quorus.agent.me-claude", "com.quorus.agent.other-claude"])
+    monkeypatch.setattr(agent_cmd, "_launchd_jobs",
+                        lambda: {"com.quorus.agent.me-claude": 1,
+                                 "com.quorus.agent.other-claude": 2})
     monkeypatch.setattr(agent_cmd, "_agents_dir", lambda: tmp_path)
     monkeypatch.setattr(agent_cmd.agent_proc, "live_pid", lambda d, name: None)
     monkeypatch.setattr(cli.sys, "argv", ["quorus", "agent", "list", "--json"])

@@ -31,7 +31,8 @@ import httpx
 
 from quorus.config import load_config, resolve_config_dir
 from quorus.private_files import write_private_text
-from quorus_cli import agent_proc
+from quorus_cli import agent_proc, agent_start
+from quorus_cli import relay_http as _relay_http
 
 # opencode = any model: Ollama (local), OpenRouter, DeepSeek, Qwen, Gemini...
 HARNESSES = ("claude", "codex", "gemini", "opencode")
@@ -84,15 +85,25 @@ def _launchd_ok() -> bool:
     return sys.platform == "darwin" and not os.environ.get("QUORUS_NO_LAUNCHD")
 
 
-def _launchd_labels() -> list[str]:
+def _launchd_jobs() -> dict[str, int | None]:
+    """{quorus launchd label: its pid, or None while the job isn't running}."""
     if not _launchd_ok():
-        return []
+        return {}
     try:
         out = subprocess.run(["launchctl", "list"], capture_output=True, text=True,
                              timeout=10, check=False).stdout
     except (OSError, subprocess.SubprocessError):
-        return []
-    return [line.split()[-1] for line in out.splitlines() if "quorus" in line]
+        return {}
+    jobs: dict[str, int | None] = {}
+    for line in out.splitlines():
+        cols = line.split()
+        if "quorus" in line and cols:
+            jobs[cols[-1]] = int(cols[0]) if cols[0].isdigit() else None
+    return jobs
+
+
+def _launchd_labels() -> list[str]:
+    return list(_launchd_jobs())
 
 
 def _running_daemon_for(name: str, relay_url: str | None = None) -> str | None:
@@ -102,12 +113,17 @@ def _running_daemon_for(name: str, relay_url: str | None = None) -> str | None:
     answer every message twice. The pid file comes first: minimal Linux
     images ship without pgrep. With *relay_url*, a reflexd process for the same
     name on another relay doesn't count: an orphan from an old run on a dead
-    relay made every later `agent add` of that name start nothing."""
+    relay made every later `agent add` of that name start nothing. Our own
+    launchd job with no live pid doesn't count either: a crashed job blocked the
+    re-add that would fix it, and `_start_daemon` replaces it (take-3 bug 1).
+    Another job's label (dogfood's) still counts: KeepAlive may restart it."""
     pid = agent_proc.live_pid(_agents_dir(), name)
     if pid is not None:
         return f"pid {pid}"
-    for label in _launchd_labels():
+    for label, job_pid in _launchd_jobs().items():
         if label.endswith(f".{name}") and ("agent." in label or "reflexd." in label):
+            if job_pid is None and label == LABEL_PREFIX + name:
+                continue
             return label
     try:
         out = subprocess.run(["pgrep", "-f", f"reflexd.py start.*--participant {name}( |$)"],
@@ -453,19 +469,45 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
         _state_record(name).unlink(missing_ok=True)
     argv = [sys.executable, str(_reflexd_script_path()), "start",
             "--participant", name, "--relay-url", cfg["relay_url"]]
+    # Only a daemon that stays up is "running"; otherwise say why (take-3 bug 1).
+    offset, secrets = agent_start.size(crash_log), [cred, cfg.get("relay_secret") or ""]
     if not _launchd_ok():
         # No launchd: run detached; `quorus agent remove` stops it via pid.
         with crash_log.open("ab") as out:
             proc = subprocess.Popen(argv, env={**os.environ, **env}, stdout=out,
                                     stderr=out, stdin=subprocess.DEVNULL,
                                     start_new_session=True)
-        _write_private(_agents_dir() / f"{name}.pid", str(proc.pid))
+        # Inside a test episode only (explicit env opt-in): register the detached daemon
+        # before `agent add` returns, so the episode's teardown owns it.
+        from quorus.runtime.episode_hook import register_spawned
+
+        register_spawned(proc)
+        pidfile = _agents_dir() / f"{name}.pid"
+        _write_private(pidfile, str(proc.pid))
+        if not agent_start.stays_up(lambda: proc.pid if proc.poll() is None else None):
+            pidfile.unlink(missing_ok=True)
+            raise agent_start.not_started(name, crash_log, offset, secrets)
         return f"pid {proc.pid}"
     _LA.mkdir(parents=True, exist_ok=True)
     plist = _LA / f"{label}.plist"
+    target = f"gui/{_uid()}/{label}"
+    # A crashed job of ours is still loaded, and bootstrap refuses a loaded label.
+    subprocess.run(["launchctl", "bootout", target], capture_output=True, check=False,
+                   timeout=15)
     _write_private(plist, _plist(label, argv, env, crash_log))
-    subprocess.run(["launchctl", "bootstrap", f"gui/{_uid()}", str(plist)],
-                   capture_output=True, check=False, timeout=15)
+    done = subprocess.run(["launchctl", "bootstrap", f"gui/{_uid()}", str(plist)],
+                          capture_output=True, text=True, check=False, timeout=15)
+    if done.returncode != 0:
+        plist.unlink(missing_ok=True)  # or it loads, and fails, at every login
+        said = next((ln.strip() for ln in (done.stderr or "").splitlines() if ln.strip()),
+                    f"exit {done.returncode}")
+        raise SystemExit(f"agent: @{name} didn't start: launchctl said {said}")
+    if not agent_start.stays_up(lambda: _launchd_jobs().get(label)):
+        # KeepAlive would restart it every few seconds, forever, and at every login.
+        subprocess.run(["launchctl", "bootout", target], capture_output=True, check=False,
+                       timeout=15)
+        plist.unlink(missing_ok=True)
+        raise agent_start.not_started(name, crash_log, offset, secrets)
     return label
 
 
@@ -707,10 +749,10 @@ def _list(console: Any, *, as_json: bool = False) -> None:
     other identities' agents too (review 2026-10-09). Without launchd the
     agents are pid files; a dead one is listed so a reboot isn't silent."""
     me = (load_config().get("instance_name") or "").strip()
-    labels = [lb for lb in _launchd_labels()
-              if ("agent." in lb or "reflexd." in lb)
-              and lb.rsplit(".", 1)[-1].startswith(f"{me}-")]
-    rows = [(lb.rsplit(".", 1)[-1], lb, True) for lb in labels]
+    jobs = {lb: pid for lb, pid in _launchd_jobs().items()
+            if ("agent." in lb or "reflexd." in lb)
+            and lb.rsplit(".", 1)[-1].startswith(f"{me}-")}
+    rows = [(lb.rsplit(".", 1)[-1], lb, pid is not None) for lb, pid in jobs.items()]
     seen = {name for name, _, _ in rows}
     for pf in sorted(_agents_dir().glob(f"{me}-*.pid")) if me else []:
         if pf.stem not in seen:

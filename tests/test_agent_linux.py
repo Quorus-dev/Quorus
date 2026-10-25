@@ -159,7 +159,7 @@ def test_a_daemon_for_another_relay_is_not_this_agent(linux: Path, monkeypatch) 
     """An orphaned reflexd for alice-opencode on a dead relay (a bug bash's) made every
     later `agent add alice-opencode`, on any relay, say "already running" and start
     nothing: the opencode first-run tests then waited 90 s for an agent that never ran."""
-    monkeypatch.setattr(agent_cmd, "_launchd_labels", lambda: [])
+    monkeypatch.setattr(agent_cmd, "_launchd_jobs", lambda: {})
     name = f"orphan-{time.monotonic_ns()}-opencode"  # unique: pgrep is machine-wide
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)",
                               "reflexd.py", "start", "--participant", name,
