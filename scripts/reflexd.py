@@ -174,6 +174,7 @@ def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
 ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
 PACING_PATH = Path.home() / ".quorus" / "pacing.json"
 PACE_WINDOW_S = 3600.0
+PACE_RECHECK_S = 30.0  # how often a parked wake re-reads its cap
 MAX_WAKE_ATTEMPTS = 2
 GEMINI_TIMEOUT_S = 10 * 60  # its quiet internal retries hung one wake for 55 min
 
@@ -3429,7 +3430,7 @@ class Reflexd:
         (the slot went to the room before it) waits for the next slot rather
         than being stranded with no worker left (codex, review of 10d8a8e0)."""
         while True:
-            await self._sleep_or_stop(wait)
+            await self._pace_sleep(wait)
             self._waiting = ("", 0.0)
             if self._stop.is_set():
                 return
@@ -3446,6 +3447,25 @@ class Reflexd:
                 return
             cap = pace_for(self.config.participant_name)
             wait = 0.0 if cap is None else max(1.0, pace_wait_s(self._turns, cap, time.time()))
+
+    async def _pace_sleep(self, wait: float) -> None:
+        """Wait for a pace slot, re-reading the cap every :data:`PACE_RECHECK_S`:
+        a cap raised or removed in pacing.json mid-wait counted only after a
+        restart, so parked reviews slept out a wait computed once (FRICTION
+        #95). A lowered cap waits longer. Returns at once on stop."""
+        deadline = time.time() + wait
+        while not self._stop.is_set():
+            left = deadline - time.time()
+            if left <= 0:
+                return
+            await self._sleep_or_stop(min(left, PACE_RECHECK_S))
+            if self._stop.is_set():
+                return
+            cap = pace_for(self.config.participant_name)
+            fresh = 0.0 if cap is None else pace_wait_s(self._turns, cap, time.time())
+            deadline = time.time() + fresh
+            if fresh > 0:
+                self._waiting = ("pacing", deadline)
 
     def _agent_credential(self) -> tuple[str, bool] | None:
         """``(credential, legacy)`` for the woken agent.

@@ -321,15 +321,70 @@ def test_a_no_reply_turn_that_committed_counts(tmp_path, monkeypatch) -> None:
 
 
 def test_a_refund_removes_only_its_own_turn(monkeypatch) -> None:
+    import time
     from datetime import datetime, timezone
 
     d, relay = _paced_daemon(monkeypatch), _Room()
-    first = d._record_turn()
-    second = d._record_turn()
-    while second == first:
-        second = d._record_turn()
+    first, second = time.time() - 20, time.time() - 10
+    d._turns = [first, second]
     started = datetime.now(timezone.utc)
     assert asyncio.run(d._refund_turn(relay, "build", second, started))
     assert d._turns == [first]
     assert not asyncio.run(d._refund_turn(relay, "build", second, started))  # once only
     assert d._turns == [first]
+
+
+# ── FRICTION #95: a parked wake re-reads the cap while it waits ──
+
+
+def _parked_release(monkeypatch, caps: list[int | None]) -> tuple[Any, list[float], list[str]]:
+    """Cap 1 with the hour's turn used, one wake parked. Each sleep step reads
+    the next cap from *caps*. Returns the daemon, the steps slept and the wakes."""
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+    monkeypatch.setattr(reflexd, "PACE_RECHECK_S", 0.01)
+    current = {"cap": 1}
+    monkeypatch.setattr(reflexd, "pace_for", lambda _n: current["cap"])
+    steps: list[float] = []
+    plan = iter(caps)
+
+    async def step(s: float) -> None:
+        steps.append(s)
+        try:
+            current["cap"] = next(plan)
+        except StopIteration:
+            d._stop.set()  # out of script: end the wait
+
+    woke: list[str] = []
+
+    async def fake_wake(relay: Any, env: dict, *, triage: Any = None, **_k: Any) -> None:
+        woke.append(env["room"])
+
+    monkeypatch.setattr(d, "_sleep_or_stop", step)
+    monkeypatch.setattr(d, "_wake_and_reply", fake_wake)
+    d._record_turn()
+    d._pace_parked["build"] = ({"room": "build", "from_name": "a-claude"}, None)
+    asyncio.run(d._release_paced(_Relay(), 50 * 60))
+    return d, steps, woke
+
+
+def test_raising_the_cap_releases_a_parked_wake_at_once(monkeypatch) -> None:
+    _d, steps, woke = _parked_release(monkeypatch, [10])
+    assert woke == ["build"] and len(steps) == 1  # one short step, not 50 minutes
+
+
+def test_removing_the_cap_releases_it(monkeypatch) -> None:
+    _d, steps, woke = _parked_release(monkeypatch, [None])
+    assert woke == ["build"] and len(steps) == 1
+
+
+def test_a_cap_still_full_keeps_it_parked(monkeypatch) -> None:
+    """Re-read every step, the cap of 1 still has no slot: it stays parked (the
+    stop at the end of the script is the only way out here)."""
+    _d, steps, woke = _parked_release(monkeypatch, [1, 1, 1])
+    assert woke == [] and len(steps) == 4
+
+
+def test_a_stop_during_a_step_returns_at_once(monkeypatch) -> None:
+    d, steps, woke = _parked_release(monkeypatch, [])
+    assert woke == [] and len(steps) == 1
