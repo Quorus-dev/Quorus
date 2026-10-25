@@ -430,3 +430,40 @@ def test_the_verdict_is_read_from_the_hold_when_the_room_is_gated() -> None:
                               "main; reviewed by @demo-review-opencode (GO g1)")
     later = _m("demo-review-opencode", "I'm read-only for this request too; @you please approve.")
     assert demo_cmd.review_of([held, go, pub, later]).startswith("✅ GO on abc1234")
+
+
+def test_a_go_and_publish_between_two_reads_is_still_review_before_main(tmp_path: Path,
+                                                                         monkeypatch) -> None:
+    """Codex on 09dd399a: the room is read, then main is checked; a GO and its publish
+    landing in between looked like a bypass. When main already moved, the room is read
+    once more before judging; a real bypass (no GO in the second read) still fails."""
+    from quorus.runtime import review_gate
+
+    repo = demo_cmd.make_sample_repo(tmp_path)
+    full = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True,
+                          text=True).stdout.strip()
+    pin = {"name": demo_cmd.REVIEWER, "tenant": "_legacy", "claim_id": "c1"}
+    stamp = {"sender_auth": "key", "sender_claim_id": "c1", "sender_tenant": "_legacy"}
+    held = dict(_m("demo-opencode", f"(quorus) awaiting @{demo_cmd.REVIEWER}'s review of "
+                                    f"{full[:12]} (1 commit(s)); not on main"), id="h1")
+    go = dict(_m(demo_cmd.REVIEWER, f"✅ GO on {full[:7]}: fine"), id="g1", **stamp)
+    pub = dict(_m("demo-opencode", "(quorus) published 1 commit(s) from quorus/demo-opencode to "
+                                   f"main; reviewed by @{demo_cmd.REVIEWER} (GO g1)"), id="p1")
+    assert review_gate.decide([held, go], pin, [full]) == ("go", "g1")  # the pin matches
+    reads = iter([[held], [held, go, pub]])  # first read: no GO yet; main moves meanwhile
+    monkeypatch.setattr(demo_cmd, "is_fixed", lambda r: True)
+    standing, history, tip, go_id = demo_cmd.review_standing(lambda: next(reads), pin, None,
+                                                             demo_cmd.REVIEWER, repo)
+    assert (standing, tip, go_id, len(history)) == ("reviewed", full, "g1", 3)
+    # Main moved and even the second read has no GO: that is a bypass, and it says so.
+    reads = iter([[held], [held]])
+    assert demo_cmd.review_standing(lambda: next(reads), pin, None, demo_cmd.REVIEWER,
+                                    repo)[0] == "unreviewed"
+    # A block is a block, whatever main says; and nothing fixed is just waiting.
+    block = dict(_m(demo_cmd.REVIEWER, f"/disagree blocking on {full[:7]}: no"), id="b1",
+                 **stamp)
+    assert demo_cmd.review_standing(lambda: [held, block], pin, None, demo_cmd.REVIEWER,
+                                    repo)[0] == "blocked"
+    monkeypatch.setattr(demo_cmd, "is_fixed", lambda r: False)
+    assert demo_cmd.review_standing(lambda: [held], pin, None, demo_cmd.REVIEWER,
+                                    repo)[0] == "waiting"

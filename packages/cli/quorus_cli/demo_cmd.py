@@ -180,6 +180,32 @@ def published_after_review(history: list[dict[str, Any]], reviewer: str,
     return note is not None and go_id in ids and ids.index(go_id) < note
 
 
+def review_standing(fetch: Any, pin: dict[str, str], tip: str | None, reviewer: str,
+                    repo: Path, history: list[dict[str, Any]] | None = None,
+                    ) -> tuple[str, list[dict[str, Any]], str | None, str | None]:
+    """Where the gate stands: ``("reviewed" | "unreviewed" | "blocked" | "waiting",
+    history, tip, go_id)``. ``reviewed`` means the fix is on main and the reviewer's GO
+    came before the publish note; ``unreviewed`` means main moved without that.
+
+    The room is read before main is checked, so a GO and its publish can land between
+    the two reads (codex on 09dd399a). When main already has the fix but this read
+    shows no reviewed publish, the room is read once more before judging."""
+    history = fetch() if history is None else history
+    tip = tip or held_tip(history, repo)
+    state, go_id = _gate.decide(history, pin, [tip]) if tip else ("waiting", None)
+    if state == "blocked":
+        return "blocked", history, tip, go_id
+    if not is_fixed(repo):
+        return "waiting", history, tip, go_id
+    if state != "go" or not published_after_review(history, reviewer, go_id):
+        history = fetch()
+        tip = tip or held_tip(history, repo)
+        state, go_id = _gate.decide(history, pin, [tip]) if tip else ("waiting", None)
+    if state == "go" and published_after_review(history, reviewer, go_id):
+        return "reviewed", history, tip, go_id
+    return "unreviewed", history, tip, go_id
+
+
 def is_fixed(repo: Path) -> bool:
     out = subprocess.run(["git", "show", "main:calc.py"], cwd=repo, capture_output=True,
                          text=True).stdout
@@ -473,30 +499,30 @@ def cmd_demo(args: Any, console: Any) -> None:
                                                             "content": task_for(builder, reviewer)},
                    headers=H)
         seen, history, fixed_at, steps = 0, [], None, {}
-        tip, go_at, go_id, state = None, None, None, "waiting"
+        tip, go_at, go_id, standing = None, None, None, "waiting"
+
+        def fetch() -> list[dict[str, Any]]:
+            return httpx.get(f"{url}/rooms/{ROOM}/history", params={"limit": 200},
+                                   headers=H, timeout=10).json()
+
         while time.time() - start < args.timeout:
-            history = httpx.get(f"{url}/rooms/{ROOM}/history", params={"limit": 200},
-                                headers=H, timeout=10).json()
+            standing, history, tip, go_id = review_standing(fetch, pin, tip, reviewer, repo)
             for m in history[seen:]:
                 _show(console, m, start)
             seen = len(history)
             _show_steps(console, url, H, steps, start, (builder, reviewer))
-            tip = tip or held_tip(history, repo)
-            if tip:
-                state, go_id = _gate.decide(history, pin, [tip])
-                if go_at is None and state == "go":
-                    go_at = time.time() - start
-            if fixed_at is None and is_fixed(repo):
+            if go_at is None and go_id:
+                go_at = time.time() - start
+            if fixed_at is None and standing in ("reviewed", "unreviewed"):
                 fixed_at = time.time() - start
-            if state == "blocked" or (fixed_at is not None and (
-                    go_at is None or published_after_review(history, reviewer, go_id))):
+            if standing != "waiting":
                 break
             if all_out_of_quota(history, (builder, reviewer)):
                 break
             time.sleep(2)
         fixed = fixed_at is not None or is_fixed(repo)
         took = fixed_at if fixed_at is not None else time.time() - start
-        if fixed and published_after_review(history, reviewer, go_id):
+        if standing == "reviewed":
             console.print(f"\n[success]✓[/] @{reviewer} read the commit and said GO "
                           f"{go_at:.0f}s after your message; the fix landed on main at "
                           f"{took:.0f}s, after the review, not before.")
@@ -507,14 +533,14 @@ def cmd_demo(args: Any, console: Any) -> None:
             console.print("\nYour turn: run [accent]quorus[/] to make a room, then "
                           "[accent]quorus agent add claude|codex|opencode --room general "
                           "--repo <your project>[/].")
-        elif fixed:
+        elif standing == "unreviewed" or (fixed and standing != "blocked"):
             # main moved without the reviewer's GO: the gate didn't hold. Say so and
             # fail; the demo's promise is review before main, and this run can't make it.
             console.print(f"\n[warning]![/] The fix reached main {took:.0f}s in without "
                           f"@{reviewer}'s GO. The review gate didn't hold it; this run "
                           "doesn't show review before main.")
             raise SystemExit(1)
-        elif state == "blocked":
+        elif standing == "blocked":
             console.print(f"\n[warning]![/] @{reviewer} blocked {(tip or '')[:7]}: nothing "
                           "landed on main. That is the gate working; the fix itself was "
                           "not accepted this run.")
