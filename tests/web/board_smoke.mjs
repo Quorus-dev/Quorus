@@ -1,5 +1,5 @@
-// Browser smoke for the board (docs/plans/board-inbox.md, slices 2 and 4): a reviewer runs
-// it, pytest does not. It starts its own file-mode relay on a free port in a scratch HOME,
+// Browser smoke for the board (docs/plans/board-inbox.md, slices 2, 4 and 5): a reviewer
+// runs it, pytest does not. It starts its own file-mode relay on a free port in a scratch HOME,
 // seeds a room with two agents, a question and a pending approval, opens the page the
 // way `quorus web` does (token in the fragment, shared secret, so no Approve buttons) and
 // checks that the board renders through the vendored Preact + htm under the relay's real
@@ -9,14 +9,15 @@
 // the pending approval is on the first paint and `a` approves it from the keyboard; with an
 // unrelated block active, `a` on a review item votes in that item's own poll and leaves the
 // block's tally alone; `?` lists the keys; quorum.js and three.js are not requested until the
-// council table is chosen; the inbox fits a 390 px phone. Needs Playwright with Chromium: the
+// council table is chosen; the inbox fits a 390 px phone; with a repo bound to the room, Enter
+// on a review renders its 50-line diff beside the vote in under 100 ms. Needs Playwright with Chromium: the
 // jury skill's install at ~/.cache/jury is used unless PLAYWRIGHT_DIR points elsewhere.
 //
 //   node tests/web/board_smoke.mjs            (from the repo root; ~15 s)
 //   QUORUS_PYTHON=.venv/bin/python node tests/web/board_smoke.mjs
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -31,6 +32,20 @@ const port = await new Promise((ok) => {
   const s = createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => ok(p)); });
 });
 const home = mkdtempSync(join(tmpdir(), "quorus-board-smoke-"));
+// Slice 5: a repo bound to #demo whose newest commit changes 50 lines; the review request
+// names that commit. QUORUS_CONFIG_DIR is <home>/.quorus, where room-bindings.json lives.
+const repo = join(home, "repo");
+mkdirSync(repo);
+const git = (...args) => execFileSync("git", args, { cwd: repo, env: { PATH: process.env.PATH, HOME: home },
+  stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+git("init", "-q", "-b", "main");
+writeFileSync(join(repo, "a.py"), "x = 0\n");
+git("add", "-A"); git("-c", "user.name=a", "-c", "user.email=a@x", "commit", "-qm", "init");
+writeFileSync(join(repo, "a.py"), Array.from({ length: 50 }, (_, i) => `x${i} = ${i}`).join("\n") + "\n");
+git("add", "-A"); git("-c", "user.name=sam-codex", "-c", "user.email=c@x", "commit", "-qm", "feat: fifty lines");
+const reviewSha = git("rev-parse", "--short=8", "HEAD");
+mkdirSync(join(home, ".quorus"), { recursive: true });
+writeFileSync(join(home, ".quorus", "room-bindings.json"), JSON.stringify({ demo: repo }));
 const pythonPath = ["", "packages/cli", "packages/mcp", "packages/sdk", "packages/tui"]
   .map((p) => join(root, p)).join(":");
 const relay = spawn(process.env.QUORUS_PYTHON || "python3", ["-m", "quorus.relay_cli"], {
@@ -86,7 +101,7 @@ const asJwt = async (token, path, body) => {
 };
 await asJwt(eliJwt, "/v1/social/disagree", { actor: "eli-codex", room_id: "demo", ref_message_id: shipped.id,
   payload: { ref_message_id: shipped.id, reason: "abc1234 drops the retry", mode: "blocking" } });
-const review = await api("/rooms/demo/messages", { from_name: "sam-codex", content: "@sam please review feedbac before I merge" });
+const review = await api("/rooms/demo/messages", { from_name: "sam-codex", content: `@sam please review ${reviewSha} before I merge` });
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -167,6 +182,26 @@ const kinds = await page2.evaluate(() =>
 const reviewIndex = kinds.indexOf("review");
 for (let i = 0; i < reviewIndex; i++) await page2.keyboard.press("j");
 const selectedKind = await page2.evaluate(() => document.querySelector("#inboxList .ibrow.sel")?.classList[1]);
+// Enter opens the card: the commit's diff beside the vote, timed from the keypress until the
+// 50 changed lines are on screen (the plan's < 100 ms check).
+await page2.evaluate(() => {
+  window.__diffReady = new Promise((ok) => {
+    const t0 = performance.now();
+    const seen = () => document.querySelectorAll(".ibdiff span.add").length >= 50;
+    if (seen()) return ok(0);
+    const mo = new MutationObserver(() => { if (seen()) { mo.disconnect(); ok(performance.now() - t0); } });
+    mo.observe(document.getElementById("inbox"), { childList: true, subtree: true });
+    setTimeout(() => { mo.disconnect(); ok(-1); }, 5000);
+  });
+});
+await page2.keyboard.press("Enter");
+const diffMs = await page2.evaluate(() => window.__diffReady);
+const diff = await page2.evaluate(() => ({
+  adds: document.querySelectorAll(".ibdiff span.add").length,
+  dels: document.querySelectorAll(".ibdiff span.del").length,
+  text: document.querySelector(".ibdiff")?.textContent || "",
+  verdictButtons: [...document.querySelectorAll(".ibverdict button")].map((b) => b.textContent),
+}));
 await page2.keyboard.press("a");
 // The viewer's own vote is their verdict: the review leaves the inbox on the next poll.
 let reviewGone = true;
@@ -222,6 +257,9 @@ const checks = {
   "JWT: the voted review leaves the inbox": reviewGone,
   "JWT: the unrelated block is untouched": blockRef === shipped.id && socialState.blocked_until_resolved === true
     && !(votes["vote_" + shipped.id] && Object.keys(votes["vote_" + shipped.id]).length),
+  "JWT: Enter shows the 50-line diff beside the vote": diff.adds === 50 && diff.dels === 1
+    && /feat: fifty lines/.test(diff.text) && diff.verdictButtons.includes("Vote approve"),
+  "JWT: the diff renders in under 100 ms": diffMs >= 0 && diffMs < 100,
   "`?` shows the keys, esc hides them": helpShown && helpGone,
   "council table loads quorum.js only when chosen": !quorumBefore && quorumAfter,
   "390 px: inbox visible, no horizontal overflow": phone.inboxVisible && phone.overflow <= 0,
@@ -231,7 +269,7 @@ let failed = 0;
 for (const [name, ok] of Object.entries(checks)) { console.log((ok ? "ok   " : "FAIL ") + name); if (!ok) failed++; }
 if (failed) {
   console.log(JSON.stringify({ seen, typed, problems, scripts: [...scripts], inboxFirst, firstPaint, decided,
-    kinds, selectedKind, socialState, phone, problems2, scripts2: [...scripts2] }, null, 1));
+    kinds, selectedKind, socialState, phone, problems2, scripts2: [...scripts2], diffMs, diff }, null, 1));
   console.log(relayLog.split("\n").slice(-20).join("\n"));
 }
 process.exit(failed ? 1 : 0);

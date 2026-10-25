@@ -180,3 +180,12 @@ grid-template-areas:"bar bar" "board msgs" "board work" "board comp"}
   .ibrow{grid-template-columns:auto minmax(0,1fr) auto;padding:6px 10px}
   .ibwho{grid-column:1}.ibwhat{grid-column:1/-1;white-space:normal}.ibsha{display:none}
 }
+/* The commit beside the vote (board-inbox.md slice 5). */
+.ibcard.withdiff{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,300px);gap:12px;
+  align-items:start}
+.ibverdict{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ibdiff{margin:0;max-height:420px;overflow:auto;font:12px/1.45 var(--mono);white-space:pre;
+  padding:8px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--rule);color:var(--ink)}
+.ibdiff .add{color:var(--accent)}.ibdiff .del{color:var(--bad)}
+.ibdiff .hunk{color:var(--muted)}.ibdiff .file{color:var(--muted);font-weight:600}
+@media (max-width:720px){.ibcard.withdiff{grid-template-columns:minmax(0,1fr)}.ibdiff{max-height:260px}}

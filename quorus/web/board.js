@@ -14,6 +14,7 @@ const $ = (id) => document.getElementById(id);
 // The inbox view (slice 4): what needs the viewer, one row each, driven by the keyboard.
 B.mode = "inbox"; B.items = []; B.rows = []; B.sel = 0; B.openRef = null; B.help = false;
 B.note = ""; B.full = false; B.quorum = null;
+B.diffs = {};  // sha -> { lines } | { missing: true } | { pending: true } (slice 5)
 
 function api(path, opts) {
   const o = Object.assign({ headers: {} }, opts || {});
@@ -155,6 +156,30 @@ function keyAction(it, key) {
   return (KEY_ACTION[key] || []).find((w) => (it.actions || []).includes(w));
 }
 
+// The commit beside the vote (slice 5): GET /v1/rooms/{room}/commits/{sha}/diff, the
+// viewer's own JWT, text only. Each line becomes one text node in a <span>; nothing is
+// ever parsed as HTML. A 404 (no repo bound here, or not a commit) shows the command.
+function loadDiff(sha) {
+  if (!sha || !B.room || B.diffs[sha]) return;
+  B.diffs[sha] = { pending: true };
+  fetch("/v1/rooms/" + enc(B.room) + "/commits/" + enc(sha) + "/diff",
+        { headers: { Authorization: "Bearer " + token() } })
+    .then((r) => (r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))))
+    .then((text) => { B.diffs[sha] = { lines: text.split("\n") }; renderInbox(); })
+    .catch(() => { B.diffs[sha] = { missing: true }; renderInbox(); });
+}
+const lineClass = (l) => (l.startsWith("+++") || l.startsWith("---")) ? "file"
+  : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l.startsWith("@@") ? "hunk" : "";
+function Diff({ sha }) {
+  const d = B.diffs[sha] || {};
+  if (d.pending) return html`<p class="hint">loading the diff…</p>`;
+  if (d.missing || !d.lines) {
+    return html`<p class="hint">diff not available here · <code>${"git show " + sha}</code></p>`;
+  }
+  return html`<pre class="ibdiff">${d.lines.map((l) => html`<span class=${lineClass(l)}>${l}
+</span>`)}</pre>`;
+}
+
 function Card({ it }) {
   // Each button is a literal with its registry id (quorus/actions/registry.py
   // BOARD_CONTROLS), so the action-registry test can read label and binding from the file.
@@ -174,10 +199,15 @@ function Card({ it }) {
   };
   const buttons = (it.actions || []).map((what) => BUTTON[what]).filter(Boolean);
   const cli = it.kind === "approval" ? "quorus approve " + it.ref : "quorus web";
-  return html`<div class="ibcard">
-    <span class="ibtext">${it.what}</span>
-    ${ownKey() ? buttons : html`<code>${cli}</code>`}
-    ${B.note && html`<span class="bad">${B.note}</span>`}
+  const withDiff = (it.kind === "review" || it.kind === "block") && it.sha && ownKey();
+  if (withDiff) loadDiff(it.sha);
+  return html`<div class=${"ibcard" + (withDiff ? " withdiff" : "")}>
+    ${withDiff && html`<${Diff} sha=${it.sha} />`}
+    <div class="ibverdict">
+      <span class="ibtext">${it.what}</span>
+      ${ownKey() ? buttons : html`<code>${cli}</code>`}
+      ${B.note && html`<span class="bad">${B.note}</span>`}
+    </div>
   </div>`;
 }
 
