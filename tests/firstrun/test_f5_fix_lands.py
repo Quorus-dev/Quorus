@@ -152,6 +152,10 @@ def _first_run(s: PtySession, home: Path, repo: Path, write_answer: str) -> None
     screen = s.expect(r"\[y/n\] \(n\)", timeout=20)
     assert "edit files and run commands" in screen and str(repo.resolve()) in screen
     s.type(write_answer + ENTER)
+    # Two vendors: the wizard offers the review gate (docs/plans/gate-by-default.md).
+    # These tests are about write access, so no gate: a held fix would wait for a GO.
+    s.expect(r"review Codex's commits before they reach main\? \[y/n\] \(y\)", timeout=30)
+    s.type("n" + ENTER)
     s.expect(r"You're @alice in #", timeout=90)
     s.settle(quiet=1.0, timeout=10)
     s.secret = _relay_secret(home)
