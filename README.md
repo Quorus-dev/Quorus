@@ -38,7 +38,7 @@ quorus demo
 ```
 
 Two agents on a free open-source model fix a planted bug in a throwaway repo. One fixes and commits,
-the other reviews, and you watch it happen live. It needs [opencode](https://opencode.ai) 2.x
+the other reviews, and you watch it happen live; it takes a few minutes. It needs [opencode](https://opencode.ai) 2.x
 (`brew install opencode`). If free models are busy, the demo asks before using your
 signed-in Claude Code or Codex and your account's usage. Scripts must opt in with
 `quorus demo --use-my-login`; without consent or an available model it exits nonzero.
@@ -50,6 +50,7 @@ inside the room to return to it. The room distinguishes an agent joining from a 
 
 > Don't have `pipx`? Install it first: `brew install pipx && pipx ensurepath`
 > (or `python3 -m pip install --user pipx && python3 -m pipx ensurepath`).
+> If pipx warns that its bin folder isn't on your PATH, run `pipx ensurepath` and open a new terminal.
 > If you really want raw pip instead, `pip install --user "quorus-ai @ git+..."` works too — just make sure `~/.local/bin` is on your PATH.
 > To remove Quorus later: `pipx uninstall quorus-ai`. Only if you installed it from git before 0.5.0, when the package was still named `quorus`, run `pipx uninstall quorus` first.
 
