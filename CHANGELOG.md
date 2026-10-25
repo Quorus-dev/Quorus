@@ -5,6 +5,18 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.11] — 2026-10-25
+
+### Docs
+
+- The README's "Review before main" section (the PyPI page) and llms.txt now describe the
+  gate as it ships: the first run turns it on by default when it adds agents from two
+  vendors, the reviewer replies `✅ GO on <sha>`, since 0.7.10 the lead reviews the
+  reviewer's own commits, and the commands to pin a reviewer and a second (after each has
+  posted in the room once), show them, or turn the gate off. `agent add … --reviewer` is
+  described as pinning only the room's reviewer, keeping an existing one unless
+  `--replace` is passed. No code changes.
+
 ## [0.7.10] — 2026-10-25
 
 ### Added
