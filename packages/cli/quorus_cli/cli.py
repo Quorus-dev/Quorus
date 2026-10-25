@@ -3114,7 +3114,11 @@ def _cmd_connect(args):
         return
 
     # Prose fallback for manual-only platforms.
-    prose_generators[platform](room, name, relay_url, secret)
+    from quorus_cli import connect_snippets
+
+    connect_snippets.run(platform, room, name, relay_url=relay_url, secret=secret,
+                         api_key=API_KEY, parent=INSTANCE_NAME,
+                         register=_register_agent_identity_full)
 
 
 async def _kick(room_name: str, participant: str) -> None:
