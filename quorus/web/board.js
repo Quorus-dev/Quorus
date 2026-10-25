@@ -5,7 +5,7 @@
 // htm interpolations are text nodes, and nothing here writes markup from data.
 import { h, render as mount } from "/vendor/preact.module.js";
 import htm from "/vendor/htm.module.js";
-import { AGENT, B, ago, briefTick, clock, enc, me, ownKey, rowState, token, trackOwner }
+import { AGENT, B, ago, clock, enc, me, ownKey, rowState, token, trackOwner }
   from "/rows.js";
 import { HISTORY_LIMIT, historyWindowFull, inboxItems } from "/inbox.js";
 
@@ -295,7 +295,6 @@ function refresh() {
     return Promise.resolve();
   }
   const now = Date.now() / 1000;
-  briefTick(B, now, api, (text) => { $("brief").textContent = text; });
   const members = now - B.membersAt > 30
     ? api("/rooms/" + enc(B.room)).then((r) => { B.members = r.members || []; B.membersAt = now; })
         .catch(() => {})
@@ -379,15 +378,14 @@ function show(on) {
   else if (B.timer) { clearInterval(B.timer); B.timer = null; }
 }
 
-function mode(m) {  // "inbox" (default), "list", "quorum" or "brief": looks over the same data
+function mode(m) {  // "inbox" (default), "list" or "quorum": looks over the same data
   B.mode = m;
   $("inbox").hidden = m !== "inbox";
   $("boardRows").hidden = m !== "list";
   $("quorum").hidden = m !== "quorum";
   $("quorumCard").hidden = true;
-  [["modeInbox", "inbox"], ["modeList", "list"], ["modeQuorum", "quorum"], ["modeBrief", "brief"]]
+  [["modeInbox", "inbox"], ["modeList", "list"], ["modeQuorum", "quorum"]]
     .forEach(([id, name]) => $(id).classList.toggle("on", m === name));
-  $("brief").hidden = m !== "brief";
   const menu = $("boardModes").querySelector(".viewmenu");
   if (menu) menu.open = false;
   if (m !== "quorum") document.dispatchEvent(new CustomEvent("quorus:quorum-off"));
@@ -399,8 +397,6 @@ function mode(m) {  // "inbox" (default), "list", "quorum" or "brief": looks ove
 
 function onRoom(room) {
   B.room = room; B.membersAt = 0; B.cardAt = 0; B.trackAt = 0; B.track = {};
-  B.brief.gen++;  // whatever the old room's request returns, it is dropped
-  $("brief").textContent = "";
   // `quorus web` lands here: #view=board or inbox (the default), list, or quorum.
   const view = sessionStorage.getItem("qv");
   if (["board", "inbox", "list", "quorum"].includes(view) && !B.on) {
@@ -413,17 +409,7 @@ function onRoom(room) {
   }
 }
 document.addEventListener("quorus:room", (e) => onRoom(e.detail));
-// Catch-me-up for people (slice 2): a third look next to List and Quorum.
-const briefBtn = el("button", "", "Brief");
-briefBtn.type = "button";
-briefBtn.id = "modeBrief";
-briefBtn.dataset.action = "quorus.room.brief";
-$("boardModes").insertBefore(briefBtn, $("boardModes").querySelector(".viewmenu"));
-const briefBox = el("pre", "brief");
-briefBox.id = "brief";
-briefBox.hidden = true;
-$("board").appendChild(briefBox);
-briefBtn.addEventListener("click", () => mode("brief"));
+// The Brief view (a room's catch-me-up, GET /rooms/{room}/brief) is not in 0.7.x yet.
 $("viewToggle").addEventListener("click", () => show(!B.on));
 $("modeInbox").addEventListener("click", () => mode("inbox"));
 $("modeList").addEventListener("click", () => mode("list"));

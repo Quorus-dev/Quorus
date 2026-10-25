@@ -2969,8 +2969,8 @@ def _join_room_as(relay_url: str, room: str, participant: str, agent_key: str = 
     key is never re-sent elsewhere (as in :func:`_auth_headers`)."""
     try:
         if agent_key:
-            resp = _relay_http.post(f"{relay_url}/v1/auth/token", json={"api_key": agent_key},
-                                    timeout=10, follow_redirects=False)
+            resp = httpx.post(f"{relay_url}/v1/auth/token", json={"api_key": agent_key},
+                              timeout=10, follow_redirects=False)
             if resp.status_code != 200:
                 return
             headers = {"Authorization": f"Bearer {resp.json()['token']}"}

@@ -58,7 +58,7 @@ def relay(monkeypatch):
                                   post=MagicMock(return_value=token))
     monkeypatch.setattr(cli, "_get_client", calls.get_client)
     monkeypatch.setattr(cli, "_auth_headers", calls.auth_headers)
-    monkeypatch.setattr(cli._relay_http, "post", calls.post)
+    monkeypatch.setattr(cli.httpx, "post", calls.post)
     return calls
 
 

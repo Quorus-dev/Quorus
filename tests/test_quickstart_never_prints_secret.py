@@ -14,8 +14,8 @@ def test_quickstart_prints_where_the_secret_is_not_the_secret(tmp_path, capsys):
     ok.json.return_value = {}
     with patch("secrets.token_urlsafe", return_value=SECRET), \
          patch.object(cli.subprocess, "Popen", return_value=MagicMock(pid=4242)), \
-         patch.object(cli._relay_http, "get", return_value=ok), \
-         patch.object(cli._relay_http, "post", return_value=ok), \
+         patch("httpx.get", return_value=ok), \
+         patch("httpx.post", return_value=ok), \
          patch.object(cli, "_config_dir", return_value=tmp_path), \
          patch.object(cli, "_spawn_agent"), \
          patch.object(cli, "_chat", new=MagicMock(return_value=None)), \
@@ -36,7 +36,7 @@ def test_a_relay_that_never_starts_reports_it(tmp_path, capsys):
     import pytest
 
     with patch.object(cli.subprocess, "Popen", return_value=MagicMock(pid=4242)), \
-         patch.object(cli._relay_http, "get", side_effect=OSError("refused")), \
+         patch("httpx.get", side_effect=OSError("refused")), \
          patch.object(cli, "_config_dir", return_value=tmp_path), \
          patch("time.sleep"), pytest.raises(SystemExit):
         cli._cmd_quickstart(types.SimpleNamespace(agents=1))
