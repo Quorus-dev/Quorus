@@ -862,7 +862,7 @@ def test_the_held_line_is_said_once_it_reached_the_room(env):
     assert first.startswith("(quorus) awaiting @rev-codex's review")
     # Not posted yet (or the post failed): the next turn says it again.
     assert _publish(d, wt) == first
-    asyncio.run(d._note_posted(f"✅ done\n{first}"))
+    asyncio.run(d._note_posted(d._claim_held(f"✅ done\n{first}")))
     marker = rg.load_marker(d.config.runtime_dir, repo, wt.branch)
     assert marker["announced"]["tip"] == _git(repo, "rev-parse", wt.branch)
     # Same tip, same reviewer, already in the room: nothing to say, nobody @-mentioned.
@@ -874,7 +874,7 @@ def test_a_post_without_the_line_announces_nothing(env):
     d, repo, wt, cfg = env
     _pin(cfg)
     first = _publish(d, wt)
-    asyncio.run(d._note_posted("✅ done, nothing else"))
+    asyncio.run(d._note_posted(d._claim_held("✅ done, nothing else")))
     assert "announced" not in rg.load_marker(d.config.runtime_dir, repo, wt.branch)
     assert _publish(d, wt) == first
 
@@ -882,7 +882,7 @@ def test_a_post_without_the_line_announces_nothing(env):
 def test_a_new_tip_is_said_again(env):
     d, repo, wt, cfg = env
     _pin(cfg)
-    asyncio.run(d._note_posted(_publish(d, wt)))
+    asyncio.run(d._note_posted(d._claim_held(_publish(d, wt))))
     _another_commit(wt)
     again = _publish(d, wt)
     assert again and "(3 commit(s))" in again
@@ -892,7 +892,7 @@ def test_a_new_tip_is_said_again(env):
 def test_a_changed_reviewer_identity_is_said_again(env, change):
     d, repo, wt, cfg = env
     _pin(cfg)
-    asyncio.run(d._note_posted(_publish(d, wt)))
+    asyncio.run(d._note_posted(d._claim_held(_publish(d, wt))))
     kw = {"rotated key": {"claim_id": "c-rev-2"}, "tenant": {"tenant": "t2"},
           "another reviewer": {}}[change]
     if change == "another reviewer":
@@ -902,3 +902,29 @@ def test_a_changed_reviewer_identity_is_said_again(env, change):
         _pin(cfg, **kw)
     again = _publish(d, wt)
     assert again and again.startswith("(quorus) awaiting @")
+
+
+def test_an_old_posts_acknowledgement_never_announces_a_rotated_key(env):
+    """codex, review of 83d476fe: hold under key A, rotate to B, hold again (same
+    line text), then A's post succeeds. B must still be said."""
+    d, repo, wt, cfg = env
+    _pin(cfg)
+    line = _publish(d, wt)
+    claimed_a = d._claim_held(line)  # A's post is composed and in flight
+    _pin(cfg, claim_id="c-rev-2")  # rotate the same reviewer's key
+    assert _publish(d, wt) == line  # same text, now for key B
+    asyncio.run(d._note_posted(claimed_a))  # A's post lands
+    announced = rg.load_marker(d.config.runtime_dir, repo, wt.branch)["announced"]
+    assert "c-rev-2" not in announced["reviewer"]
+    assert _publish(d, wt) == line  # B is still said
+    asyncio.run(d._note_posted(d._claim_held(line)))
+    assert _publish(d, wt) is None
+
+
+def test_a_failed_post_leaves_the_line_to_be_said_again(env):
+    d, repo, wt, cfg = env
+    _pin(cfg)
+    line = _publish(d, wt)
+    d._claim_held(line)  # composed, but the post raised: _note_posted never runs
+    assert "announced" not in rg.load_marker(d.config.runtime_dir, repo, wt.branch)
+    assert _publish(d, wt) == line
