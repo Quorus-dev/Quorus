@@ -76,6 +76,11 @@ def _show(room: str, files: list[Path]) -> None:
     elif _gate.pinned(pin):
         key = pin.get("claim_id") or pin.get("participant_id")
         cli.console.print(f"#{room} reviewer: @{pin['name']} (pinned to {key})")
+        second = pin.get("second")
+        if second:
+            its = second.get("claim_id") or second.get("participant_id")
+            cli.console.print(f"  @{pin['name']}'s own commits: @{second['name']} "
+                              f"(pinned to {its})")
     else:
         cli.console.print(f"#{room} reviewer: @{pin.get('name') or '?'} "
                           "[warning](not pinned: owner override only)[/]")
@@ -121,11 +126,25 @@ def cmd_room_reviewer(args: Any) -> None:
                   "connect give one), or pass --unpinned: every publish then waits "
                   "for your override"))
         raise SystemExit(1)
+    second = None
+    other = getattr(args, "second", None)
+    if other:
+        # Pinned like the first, from its own stamped post (reviewer-backup.md).
+        found = latest_pin(history, other) if pin is not None else None
+        if found is None or other == name:
+            cli._ui.error(
+                f"Can't pin @{other} to review @{name}'s commits: "
+                + ("it can't be the reviewer itself." if other == name else
+                   f"no message in #{room} from it sent with its own key"),
+                hint=f"have @{other} post in #{room} first, then run this again")
+            raise SystemExit(1)
+        second = {"name": other, **found}
     repo = gate_setup.room_repo(room)
     _write(room, files, lambda f: _gate.save_reviewer(
         room, name, tenant=(pin or {}).get("tenant", ""),
         claim_id=(pin or {}).get("claim_id", ""),
-        participant_id=(pin or {}).get("participant_id", ""), path=f, repo=repo))
+        participant_id=(pin or {}).get("participant_id", ""), path=f, repo=repo,
+        second=second))
     if pin is None:
         cli.console.print(f"[warning]![/] #{room} reviewer: @{name}, not pinned. Its GOs "
                           "can't count; every publish waits for your override.")
@@ -133,6 +152,9 @@ def cmd_room_reviewer(args: Any) -> None:
         key = pin.get("claim_id") or pin.get("participant_id")
         cli.console.print(f"[success]✓[/] #{room} reviewer: @{name}, pinned to {key}. "
                           "Commits in this room's repo now wait for its GO before main.")
+        if second:
+            cli.console.print(f"[success]✓[/] @{name}'s own commits wait for "
+                              f"@{second['name']}'s GO.")
     for line in gate_setup.where_lines(files):
         cli.console.print(line)
 

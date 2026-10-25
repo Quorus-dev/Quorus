@@ -79,3 +79,31 @@ def test_the_default_first_run_holds_the_fix_until_the_other_vendor_goes(tmp_pat
         assert not unreviewed, unreviewed
     finally:
         s.close()
+
+
+def test_the_reviewers_own_fix_waits_for_the_leads_go(tmp_path_factory):
+    """docs/plans/reviewer-backup.md: the wizard pins the lead (codex) to review the
+    reviewer's (opencode's) own commits, so the owner isn't the only way through."""
+    home = tmp_path_factory.mktemp("gate-second") / "home"
+    repo, bin_dir = _setup(home)
+    s = PtySession(home, cwd=repo, extra_path=bin_dir)
+    try:
+        _first_run(s, home, repo, write_answer="y", gate="")
+        line = _wait_any(s, "Review gate on:", timeout=30)["content"]
+        assert "@alice-opencode's own commits wait for @alice-codex's" in line
+        ask = "@alice-opencode fix the bug in calc.py, then ask @alice-codex to review it"
+        s.type(ask + ENTER)
+        fixed = _wait_for(s, "alice-opencode", "✅", timeout=120)
+        sha = _SHA.search(fixed.split("✅", 1)[1]).group(0)
+        held = _wait_any(s, "awaiting @alice-codex's review", timeout=60)["content"]
+        assert sha[:7] in held and "✅ GO on " in held
+        go = _wait_for(s, "alice-codex", "✅ GO on", timeout=120)
+        assert sha[:7] in go
+        deadline = time.monotonic() + 180
+        while _landed(repo, sha) is None:
+            assert time.monotonic() < deadline, _not_on_main(repo, sha, home)
+            time.sleep(0.5)
+        note = _wait_any(s, "reviewed by @alice-codex", timeout=60)["content"]
+        assert "published" in note
+    finally:
+        s.close()

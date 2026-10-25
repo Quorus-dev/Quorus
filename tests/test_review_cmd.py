@@ -269,3 +269,29 @@ def test_a_file_that_cant_be_read_is_a_cross_not_a_traceback(cfg, pinning, capsy
     out = " ".join(capsys.readouterr().out.split())
     assert "✗" in out and "couldn't read" in out
     assert rg.reviewer_for("r") is None
+
+
+# ── --second: who reviews the reviewer's own commits (reviewer-backup.md) ──
+
+
+def test_second_is_pinned_from_its_own_stamped_post(cfg, monkeypatch, capsys):
+    monkeypatch.setattr(review_cmd, "_history", lambda room: [
+        _m("rev", "key", sender_claim_id="c-rev"), _m("lead", "key", sender_claim_id="c-lead")])
+    review_cmd.cmd_room_reviewer(_args(name="rev", second="lead"))
+    assert rg.reviewer_for("r")["second"] == {"name": "lead", "tenant": "t1",
+                                              "claim_id": "c-lead"}
+    review_cmd.cmd_room_reviewer(_args())
+    out = " ".join(capsys.readouterr().out.split())
+    assert "@rev's own commits: @lead (pinned to c-lead)" in out
+
+
+@pytest.mark.parametrize("second, hist", [
+    ("lead", [_m("rev", "key", sender_claim_id="c-rev")]),  # lead never posted
+    ("lead", [_m("rev", "key", sender_claim_id="c-rev"), _m("lead", "secret")]),
+    ("rev", [_m("rev", "key", sender_claim_id="c-rev")]),  # itself
+])
+def test_a_second_that_cant_be_pinned_saves_nothing(cfg, monkeypatch, second, hist):
+    monkeypatch.setattr(review_cmd, "_history", lambda room: hist)
+    with pytest.raises(SystemExit):
+        review_cmd.cmd_room_reviewer(_args(name="rev", second=second))
+    assert rg.reviewer_for("r") is None

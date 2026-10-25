@@ -188,14 +188,39 @@ def current_reviewers(room: str, files: list[Path]) -> dict[str, str]:
     return found
 
 
-def pin_reviewer(prep: dict[str, Any], *, replace: bool = False,
-                 state_dirs: list[Any] | None = None) -> dict[str, str]:
-    """Pin *prep*'s agent as its room's reviewer, from the key it signs in with.
+def _signing_key(prep: dict[str, Any], *, flag: str = "--reviewer") -> str:
+    """The key *prep*'s agent signs in with: the saved one for a running daemon
+    (checked, never assumed; codex, review of 0941c028), else claimed now into
+    the key dir its daemon will load."""
+    cfg, name, room, where = prep["cfg"], prep["name"], prep["room"], prep["state_dir"]
+    if prep["existing"]:
+        from quorus import bundle_client
 
-    Raises ``agent_identity.IdentityError`` (and saves nothing) when that can't
-    be established: a room that already has a reviewer (unless *replace*), a
-    relay this machine doesn't run, or a running daemon whose key isn't saved
-    where it signs in from (codex, review of 0e361b2d / 0941c028)."""
+        key = bundle_client.load_participant_key(cfg["relay_url"], name,
+                                                 agent_identity.key_dir(name, where))
+        if not key:
+            raise agent_identity.IdentityError(
+                f"couldn't confirm which identity @{name} posts with. Run `quorus agent "
+                f"remove {name}`, then `quorus agent add {name.rsplit('-', 1)[-1]} --room "
+                f"{room} {flag}`")
+        return key
+    return agent_identity.ensure_key(cfg["relay_url"], prep["cred"], name, where)
+
+
+def pin_reviewer(prep: dict[str, Any], *, replace: bool = False,
+                 state_dirs: list[Any] | None = None,
+                 second: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Pin *prep*'s agent as its room's reviewer, from the key it signs in with.
+    With *second* (the lead's prep), that agent is pinned the same way to review
+    the reviewer's own commits (docs/plans/reviewer-backup.md). The returned pin
+    has ``second`` only if it was saved.
+
+    Raises ``agent_identity.IdentityError`` (and saves nothing) when the first
+    pin can't be established: a room that already has a reviewer (unless
+    *replace*), a relay this machine doesn't run, or a running daemon whose key
+    isn't saved where it signs in from (codex, review of 0e361b2d / 0941c028).
+    A second that can't be established is left out: the reviewer's own commits
+    then wait for the owner, as before."""
     cfg, name, room = prep["cfg"], prep["name"], prep["room"]
     files = room_files(room, [prep["state_dir"], *(state_dirs or [])])
     current = current_reviewers(room, files)
@@ -208,32 +233,35 @@ def pin_reviewer(prep: dict[str, Any], *, replace: bool = False,
             "this relay isn't one you run, so its agents can't be pinned from here; "
             "pin one after it posts: quorus room reviewer "
             f"{room} {name}")
-    url, where = cfg["relay_url"], prep["state_dir"]
-    if prep["existing"]:
-        from quorus import bundle_client
-
-        key = bundle_client.load_participant_key(url, name, agent_identity.key_dir(name, where))
-        if not key:
-            raise agent_identity.IdentityError(
-                f"couldn't confirm which identity @{name} posts with. Run `quorus agent "
-                f"remove {name}`, then `quorus agent add {name.rsplit('-', 1)[-1]} --room "
-                f"{room} --reviewer`")
-    else:
-        key = agent_identity.ensure_key(url, prep["cred"], name, where)
-    pin = agent_identity.identity(url, key)
+    url = cfg["relay_url"]
+    pin: dict[str, Any] = agent_identity.identity(url, _signing_key(prep))
+    backup = None
+    if second is not None and second.get("name") and second["name"] != name:
+        try:
+            backup = {"name": second["name"],
+                      **agent_identity.identity(url, _signing_key(second))}
+        except agent_identity.IdentityError:
+            backup = None
     # All or nothing: a daemon that reads a file the pin didn't reach would publish
     # ungated while the room is told it's gated. Any failure keeps every old gate.
     repo = _room_repo(room, prep)
     write_all(files, lambda f: _gate.save_reviewer(
-        room, name, tenant=pin["tenant"], claim_id=pin["claim_id"], path=f, repo=repo))
+        room, name, tenant=pin["tenant"], claim_id=pin["claim_id"], path=f, repo=repo,
+        second=backup))
+    if backup is not None:
+        pin["second"] = backup
     return pin
 
 
-def gate_line(room: str, reviewer: str, repo: Any) -> str:
+def gate_line(room: str, reviewer: str, repo: Any, second: str | None = None) -> str:
     where = f"commits in {repo}" if repo else f"commits in #{room}'s repo"
+    if second:
+        theirs = f"@{reviewer}'s own commits wait for @{second}'s."
+    else:
+        theirs = (f"@{reviewer}'s own commits wait for you (`quorus review publish <sha> "
+                  f"--unreviewed`).")
     return (f"Review gate on: {where} wait for @{reviewer}'s GO before they reach main. "
-            f"@{reviewer}'s own commits wait for you (`quorus review publish <sha> "
-            f"--unreviewed`). Turn it off: `quorus room reviewer {room} --none`.")
+            f"{theirs} Turn it off: `quorus room reviewer {room} --none`.")
 
 
 def failed_line(room: str, why: str, tool: str, kept: dict[str, str] | None = None) -> str:
