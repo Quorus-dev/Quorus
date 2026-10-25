@@ -309,3 +309,76 @@ def test_a_failed_setup_reports_the_gate_it_kept(cfg, tools, monkeypatch):
     text = " ".join(c.out)
     assert "#general keeps its current gate: commits wait for @a-gemini's GO" in text
     assert "publish when a turn ends" not in text
+
+
+# ── a builder added earlier, with its own --state-dir (codex, review of 6de08414) ──
+
+
+def _builder(cfg: Path, name: str, binds: dict[str, Path]) -> Path:
+    import json
+
+    from quorus.runtime import bindings
+    state = cfg / f"{name}-state"
+    state.mkdir()
+    (state / bindings.FILENAME).write_text(
+        json.dumps({room: {"path": str(repo)} for room, repo in binds.items()}))
+    agents = agent_cmd._agents_dir()
+    agents.mkdir(parents=True, exist_ok=True)
+    (agents / f"{name}.state-dir").write_text(str(state))
+    return state
+
+
+def _bind_cli(room_paths: dict[str, Path]) -> None:
+    import json
+
+    from quorus.runtime import bindings
+    path = bindings.bindings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({r: {"path": str(p)} for r, p in room_paths.items()}))
+
+
+def test_an_existing_builders_state_dir_gets_the_pin(cfg, monkeypatch):
+    _fake_identity(monkeypatch)
+    repo = _repo(cfg)
+    builder = _builder(cfg, "a-claude", {"general": repo})
+    gate_setup.pin_reviewer(_prep("codex"))  # `agent add codex --reviewer`, no state dirs given
+    assert rg.reviewer_for("general", builder / "room-reviewers.json")["name"] == "a-codex"
+
+
+def test_a_builder_bound_to_a_sibling_room_on_the_same_repo_gets_the_pin(cfg, monkeypatch):
+    _fake_identity(monkeypatch)
+    repo = _repo(cfg)
+    _bind_cli({"general": repo})
+    builder = _builder(cfg, "a-claude", {"side": repo})
+    gate_setup.pin_reviewer(_prep("codex"))
+    assert rg.reviewer_for("general", builder / "room-reviewers.json") is not None
+
+
+def test_a_builder_on_another_repo_is_left_alone(cfg, monkeypatch):
+    _fake_identity(monkeypatch)
+    repo = _repo(cfg)
+    other = cfg / "other"
+    other.mkdir()
+    _bind_cli({"general": repo})
+    builder = _builder(cfg, "a-claude", {"elsewhere": other})
+    gate_setup.pin_reviewer(_prep("codex"))
+    assert not (builder / "room-reviewers.json").exists()
+
+
+def test_a_builder_with_unreadable_bindings_gets_the_pin(cfg, monkeypatch):
+    from quorus.runtime import bindings
+    _fake_identity(monkeypatch)
+    builder = _builder(cfg, "a-claude", {})
+    (builder / bindings.FILENAME).write_text("{not json")
+    gate_setup.pin_reviewer(_prep("codex"))
+    assert rg.reviewer_for("general", builder / "room-reviewers.json")["name"] == "a-codex"
+
+
+def test_an_existing_builders_gate_is_kept(cfg, monkeypatch):
+    _fake_identity(monkeypatch)
+    repo = _repo(cfg)
+    builder = _builder(cfg, "a-claude", {"general": repo})
+    rg.save_reviewer("general", "a-gemini", tenant="_legacy", claim_id="c-old",
+                     path=builder / "room-reviewers.json")
+    with pytest.raises(agent_identity.IdentityError, match="already has @a-gemini"):
+        gate_setup.pin_reviewer(_prep("codex"))

@@ -232,7 +232,8 @@ def _add_gated(console: Any, room: str, repo: Path | None, tools: list[str],
             line = gate_setup.gate_line(room, preps[reviewer]["name"], repo)
         except Exception as exc:  # any failure: no new gate, said plainly
             why = str(exc) or exc.__class__.__name__
-            kept = gate_setup.current_reviewers(room, gate_setup.reviewer_files(dirs))
+            files = gate_setup.reviewer_files([*dirs, *gate_setup.daemon_state_dirs(room)])
+            kept = gate_setup.current_reviewers(room, files)
             console.print(f"  [warning]![/] {gate_setup.failed_line(room, why, reviewer, kept)}")
     elif reviewer is not None:
         why = "an agent did not join"

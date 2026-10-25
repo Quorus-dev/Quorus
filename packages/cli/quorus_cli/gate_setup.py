@@ -47,6 +47,54 @@ def reviewer_files(state_dirs: list[Any]) -> list[Path]:
     return out
 
 
+def _bound(state: Path | None) -> dict[str, Path] | None:
+    """{room: resolved repo} from the bindings file a daemon with *state* reads;
+    None when that file exists but can't be read."""
+    import json
+
+    from quorus_cli import agent_cmd
+
+    try:
+        data = json.loads(agent_cmd.bindings_path(state).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return None
+    out: dict[str, Path] = {}
+    for room, raw in (data.items() if isinstance(data, dict) else []):
+        raw = raw.get("path") if isinstance(raw, dict) else raw
+        if isinstance(raw, str) and raw:
+            out[str(room)] = Path(raw).expanduser().resolve()
+    return out
+
+
+def daemon_state_dirs(room: str) -> list[Path]:
+    """Every recorded agent ``--state-dir`` on this machine whose daemon gates
+    *room*'s repo: it binds *room*, or any room bound to the same repo (the gate
+    is repo-wide). Found from ``agent add``'s records, so a builder added before
+    the reviewer still gets the pin (codex, review of 6de08414). A state dir whose
+    bindings can't be read is included: better a pin it may not need than a
+    builder left ungated."""
+    from quorus_cli import agent_cmd
+
+    states: list[Path] = []
+    for rec in sorted(agent_cmd._agents_dir().glob("*.state-dir")):
+        try:
+            text = rec.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if text and Path(text) not in states:
+            states.append(Path(text))
+    views = {None: _bound(None), **{st: _bound(st) for st in states}}
+    repos = {view[room] for view in views.values() if view and room in view}
+    out = []
+    for st in states:
+        view = views[st]
+        if view is None or room in view or any(p in repos for p in view.values()):
+            out.append(st)
+    return out
+
+
 def current_reviewers(room: str, files: list[Path]) -> dict[str, str]:
     """{reviewer name: file} for each file that already gates *room*."""
     found: dict[str, str] = {}
@@ -66,7 +114,7 @@ def pin_reviewer(prep: dict[str, Any], *, replace: bool = False,
     relay this machine doesn't run, or a running daemon whose key isn't saved
     where it signs in from (codex, review of 0e361b2d / 0941c028)."""
     cfg, name, room = prep["cfg"], prep["name"], prep["room"]
-    files = reviewer_files([prep["state_dir"], *(state_dirs or [])])
+    files = reviewer_files([prep["state_dir"], *(state_dirs or []), *daemon_state_dirs(room)])
     current = current_reviewers(room, files)
     if current and not replace:
         who = ", @".join(current)
