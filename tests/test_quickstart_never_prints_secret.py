@@ -14,7 +14,8 @@ def test_quickstart_prints_where_the_secret_is_not_the_secret(tmp_path, capsys):
     ok.json.return_value = {}
     with patch("secrets.token_urlsafe", return_value=SECRET), \
          patch.object(cli.subprocess, "Popen", return_value=MagicMock(pid=4242)), \
-         patch("httpx.get", return_value=ok), patch("httpx.post", return_value=ok), \
+         patch("httpx.get", return_value=ok), \
+         patch("httpx.post", return_value=ok), \
          patch.object(cli, "_config_dir", return_value=tmp_path), \
          patch.object(cli, "_spawn_agent"), \
          patch.object(cli, "_chat", new=MagicMock(return_value=None)), \
@@ -27,3 +28,16 @@ def test_quickstart_prints_where_the_secret_is_not_the_secret(tmp_path, capsys):
     assert "relay_secret" in flat and str(tmp_path / "config.json") in flat
     # It is still saved where the banner says, for the user's own tools.
     assert SECRET in (tmp_path / "config.json").read_text()
+
+
+def test_a_relay_that_never_starts_reports_it(tmp_path, capsys):
+    """The error path crashed with UnboundLocalError: later local imports of `_ui`
+    made the name local to the whole function."""
+    import pytest
+
+    with patch.object(cli.subprocess, "Popen", return_value=MagicMock(pid=4242)), \
+         patch("httpx.get", side_effect=OSError("refused")), \
+         patch.object(cli, "_config_dir", return_value=tmp_path), \
+         patch("time.sleep"), pytest.raises(SystemExit):
+        cli._cmd_quickstart(types.SimpleNamespace(agents=1))
+    assert "Relay failed to start" in capsys.readouterr().out

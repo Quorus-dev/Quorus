@@ -1,0 +1,207 @@
+:root{--bg:#f5f6f4;--panel:#fff;--ink:#17201c;--muted:#5f6b65;--rule:#dfe4e1;
+--accent:#0f7a63;--me:#e3f1ec;--warn:#9a5b00;--bad:#b3261e;--chip:#eef2f0;
+--on-accent:#fff;--glow:rgba(15,122,99,.22);
+--font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+--mono:ui-monospace,SFMono-Regular,Menlo,monospace;color-scheme:light;
+/* Shared with the site (board-inbox.md slice 6): one type scale, hairlines, one easing.
+   System fonts until the Geist files land on weekend; the scale is the same either way. */
+--fs-xs:13px;--fs-sm:14px;--fs-md:16px;--fs-lg:20px;--fs-xl:28px;
+--hairline:1px solid var(--rule);--ease:150ms ease-out}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1412;--panel:#161d1a;--ink:#e5ebe8;
+--muted:#93a29b;--rule:#27322e;--accent:#3cc7a2;--me:#1d2e28;--warn:#e8a63a;--bad:#f2776e;
+--chip:#1e2925;--on-accent:#0f1412;--glow:rgba(60,199,162,.25);color-scheme:dark}}
+*{box-sizing:border-box}html,body{height:100%}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:var(--fs-sm)/1.5 var(--font)}
+/* One explicit row of the full height: an implicit auto row sized itself to the
+   message list, so the chat grew with every message instead of scrolling. Pinned
+   to the window so only the messages scroll, not the page. */
+#app{display:grid;grid-template-columns:260px 1fr;grid-template-rows:minmax(0,1fr);height:100vh;height:100dvh;overflow:hidden}
+#rooms{border-right:1px solid var(--rule);background:var(--panel);overflow-y:auto;
+padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 12px}
+#rooms h2{font-size:var(--fs-lg);margin:4px 6px 12px;display:flex;align-items:center;gap:8px}
+#connDot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+#connDot.conn-ok{background:var(--accent)}#connDot.conn-err{background:var(--bad)}
+.room{display:block;width:100%;text-align:left;background:none;border:0;color:var(--ink);
+padding:10px;border-radius:8px;font:inherit;cursor:pointer}
+.room:hover,.room.on{background:var(--chip)}.room small{color:var(--muted);display:block}
+#newRoom{margin:10px 6px;font:inherit;color:var(--accent);background:none;border:0;cursor:pointer}
+#chat{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%}
+#bar{display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 10px;
+border-bottom:1px solid var(--rule);background:var(--panel)}
+#bar h1{font-size:var(--fs-md);font-weight:600;margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+#back{display:none;background:none;border:0;color:var(--accent);font:inherit;cursor:pointer}
+#who{font:12px var(--mono);color:var(--muted)}
+#messages{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:6px}
+.msg{max-width:min(680px,88%);background:var(--panel);border:1px solid var(--rule);
+border-radius:12px;padding:8px 12px;align-self:flex-start;white-space:pre-wrap;overflow-wrap:anywhere}
+.msg.me{align-self:flex-end;background:var(--me)}
+.msg b{display:block;font-size:12px;color:var(--accent);margin-bottom:2px}
+.msg time{font:11px var(--mono);color:var(--muted);margin-left:6px}
+.status{align-self:center;color:var(--muted);font-size:12px;font-style:italic;text-align:center}
+#working{min-height:20px;padding:0 16px;color:var(--muted);font-size:13px;font-style:italic}
+#composer{display:flex;gap:8px;padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 10px);
+border-top:1px solid var(--rule);background:var(--panel)}
+#msgInput{flex:1;min-width:0;font:inherit;padding:10px 12px;border-radius:10px;
+border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
+#send{font:inherit;padding:10px 16px;border-radius:10px;border:0;background:var(--accent);color:#fff}
+#signin{max-width:360px;margin:15vh auto;padding:0 16px;display:grid;gap:10px}
+#signin input{font:inherit;padding:10px;border-radius:8px;border:1px solid var(--rule);
+background:var(--panel);color:var(--ink)}
+#signin button{font:inherit;padding:10px;border-radius:8px;border:0;background:var(--accent);color:#fff}
+.hint{color:var(--muted);font-size:13px}#err{color:var(--bad);font-size:13px}
+#viewToggle{font:inherit;font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid var(--rule);
+background:var(--chip);color:var(--ink);cursor:pointer}
+#board{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+#boardTop{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:center}
+#boardSummary{display:flex;flex-wrap:wrap;gap:6px}
+#boardModes{display:flex;gap:4px}#boardModes button{font:inherit;font-size:12px;padding:4px 12px;
+border-radius:999px;border:1px solid var(--rule);background:none;color:var(--muted);cursor:pointer}
+#boardModes button.on{background:var(--chip);color:var(--ink)}
+#brief{white-space:pre-wrap;font:12px/1.5 ui-monospace,monospace;margin:8px 0;padding:12px;
+  border-radius:10px;background:var(--chip);color:var(--ink);overflow-wrap:anywhere}
+#quorum{position:relative;flex:1;min-height:520px;border-radius:12px;overflow:hidden;
+border:1px solid var(--rule)}#quorum canvas{position:absolute;inset:0;display:block;width:100%;height:100%}
+#board{position:relative}
+#quorumCard{position:absolute;right:28px;top:110px;width:min(440px,calc(100% - 56px));z-index:2;
+box-shadow:0 12px 40px rgba(0,0,0,.35);border-radius:12px}
+/* The seat card is the board's row on frosted glass over the stage. */
+#quorumCard .brow{background:rgba(22,29,26,.62);backdrop-filter:blur(16px) saturate(1.2);
+-webkit-backdrop-filter:blur(16px) saturate(1.2);border-color:rgba(255,255,255,.1)}
+.qtags{position:absolute;inset:0;pointer-events:none}
+/* The Quorum view's one web font, self-hosted (OFL, see web/vendor/fonts). */
+@font-face{font-family:"Plus Jakarta Sans";src:url(/vendor/fonts/plus-jakarta-sans.woff2) format("woff2");
+font-weight:200 800;font-display:swap}
+/* Seat plaques: frosted glass, fixed type size whatever the seat's depth, the vendor
+   as a 6px dot (no logos), the model in small caps, laid out apart by quorum.js. */
+.qtag{position:absolute;left:0;top:0;pointer-events:auto;display:grid;gap:1px;max-width:200px;
+padding:5px 10px 5px 20px;border-radius:8px;border:1px solid rgba(255,255,255,.1);
+background:rgba(16,20,18,.58);backdrop-filter:blur(12px) saturate(1.2);
+-webkit-backdrop-filter:blur(12px) saturate(1.2);will-change:transform;
+color:#eceeed;font:inherit;font-family:"Plus Jakarta Sans",var(--font);font-size:12px;
+line-height:1.25;text-align:left;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.28)}
+.qtag::before{content:"";position:absolute;left:8px;top:11px;width:6px;height:6px;border-radius:50%;
+background:var(--seat);box-shadow:0 0 6px var(--seat)}
+.qtag b{font-size:12px;font-weight:600;letter-spacing:.01em}
+.qtag .qm{color:#adb5b2;font-size:11.5px;font-variant-caps:all-small-caps;letter-spacing:.06em}
+.qtag .qs{font-size:11px;color:#cfd6d2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qtag .qs:empty,.qtag .qm:empty{display:none}
+.qtag[data-state=busy]{border-color:rgba(60,199,162,.45)}
+.qtag[data-state=needs]{border-color:#e8a63a;box-shadow:0 0 0 2px rgba(232,166,58,.4),0 6px 18px rgba(0,0,0,.28)}
+.qtag[data-state=needs] .qs{color:#ffca16}.qtag[data-state=stuck] .qs{color:#ff977d}
+.qtag[data-state=asleep],.qtag[data-state=pacing]{opacity:.78}
+@media (prefers-color-scheme:light){.qtag{background:rgba(255,255,255,.8);color:#1a211e;
+border-color:rgba(0,0,0,.08);box-shadow:0 6px 18px rgba(0,0,0,.1)}
+.qtag .qm{color:#5f6563}.qtag .qs{color:#3c4441}.qtag[data-state=needs] .qs{color:#4f3422}
+.qtag[data-state=stuck] .qs{color:#d13415}}
+.qtag:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Speech bubbles: the member's own latest message, shortened; DOM text. The "main" label over the wall screen. */
+.qbubble{position:absolute;left:0;top:0;max-width:250px;padding:7px 11px;border-radius:12px 12px 12px 3px;
+background:rgba(236,238,237,.94);color:#101513;font-family:"Plus Jakarta Sans",var(--font);font-size:12px;
+line-height:1.3;box-shadow:0 8px 24px rgba(0,0,0,.3);will-change:transform;overflow-wrap:anywhere}
+.qbubble[hidden]{display:none}
+/* In the office the plaque is a desk nameplate: name and status, the model in the card. */
+#quorum:not(.flat) .qtag{max-width:160px;padding:4px 9px 4px 18px}
+#quorum:not(.flat) .qtag .qm{display:none}
+#quorum:not(.flat) .qtag.qmain .qm{display:block}
+.qtag.qmain{background:rgba(16,20,18,.7);border-color:rgba(63,210,176,.4)}
+.qnote{position:absolute;left:12px;bottom:8px;margin:0}
+.qfps{position:absolute;right:12px;bottom:8px;margin:0;font:12px var(--mono);color:var(--muted);
+background:rgba(16,20,18,.6);padding:2px 8px;border-radius:6px}
+#quorum.flat{min-height:0;overflow:visible;border:0}
+#quorum.flat .qtags{position:static;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+#quorum.flat .qtag{position:static;max-width:none;transform:none!important}
+#quorum.flat .qnote{position:static;margin-top:8px}
+.chip{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--chip);color:var(--muted)}
+.chip.hot{background:var(--warn);color:var(--on-accent)}
+.brow{background:var(--panel);border:1px solid var(--rule);border-left:4px solid var(--rule);
+border-radius:10px;padding:10px 12px;display:grid;gap:6px}
+.brow.r1{border-left-color:var(--warn)}.brow.r2{border-left-color:var(--bad)}
+.brow.r4{border-left-color:var(--accent);box-shadow:0 0 0 1px var(--glow),0 6px 24px -10px var(--glow)}
+.brow.r6{opacity:.6}
+#boardRows{columns:320px;column-gap:10px}
+#boardRows>*{break-inside:avoid;margin-bottom:10px}
+.brow.r1,#boardRows>.hint{column-span:all}
+.btrail{list-style:none;margin:0;padding:6px 8px;border-radius:8px;background:var(--bg);
+font:12px/1.6 var(--mono);color:var(--muted);display:grid}
+.btrail li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btrail time{margin-right:8px}.btrail .now{color:var(--ink)}
+.bhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.bhead .tag{font:11px var(--mono);color:var(--muted)}.bline{color:var(--ink)}
+.bdetail,.bship{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.btune{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.btune code{font:12px var(--mono);color:var(--ink);background:var(--chip);padding:1px 6px;border-radius:6px}
+.bask,.bapproval{font-size:13px;background:var(--chip);border-radius:8px;padding:6px 8px;
+display:flex;flex-wrap:wrap;gap:8px;align-items:center;overflow-wrap:anywhere}
+.bapproval button{font:inherit;font-size:13px;padding:4px 12px;border-radius:8px;border:0;cursor:pointer}
+.bapproval .ok{background:var(--accent);color:var(--on-accent)}.bapproval .no{background:var(--rule);color:var(--ink)}
+.good{color:var(--accent)}.bad{color:var(--bad)}
+.bassign input{width:100%;font:inherit;font-size:13px;padding:6px 10px;border-radius:8px;
+border:1px solid var(--rule);background:var(--bg);color:var(--ink)}
+@media (min-width:1100px){#chat.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,380px);
+grid-template-rows:auto minmax(0,1fr) auto auto;
+grid-template-areas:"bar bar" "board msgs" "board work" "board comp"}
+#chat.split #bar{grid-area:bar}#chat.split #board{grid-area:board;min-height:0}
+#chat.split #messages{grid-area:msgs;min-height:0;border-left:1px solid var(--rule)}
+#chat.split #working{grid-area:work;border-left:1px solid var(--rule)}
+#chat.split #composer{grid-area:comp;border-left:1px solid var(--rule)}}
+@media (max-width:720px){#app{grid-template-columns:minmax(0,1fr)}#app.inroom #rooms{display:none}
+#app:not(.inroom) #chat{display:none}#back{display:block}}
+/* The needs-you inbox (board-inbox.md slice 4): 36px rows, 13px text, one item a line. */
+.inbox{list-style:none;margin:0;padding:0;border:1px solid var(--rule);border-radius:10px;
+  background:var(--panel);outline:none}
+.inbox:focus-visible{box-shadow:0 0 0 2px var(--accent)}
+.ibrow{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto auto;align-items:center;
+  gap:10px;min-height:36px;padding:0 12px;font-size:13px;border-top:1px solid var(--rule)}
+.ibrow:first-child{border-top:0}
+.ibrow.sel{background:var(--chip);box-shadow:inset 3px 0 0 var(--accent)}
+.ibkind{font:12px var(--mono);color:var(--muted);white-space:nowrap}
+.ibkind.approval,.ibkind.block{color:var(--warn)}
+.ibwho{white-space:nowrap}
+.ibwhat{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.ibsha{font:12px var(--mono);color:var(--muted)}
+.ibage{font-size:12px;color:var(--muted);white-space:nowrap}
+.ibcard{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0 10px;
+  white-space:normal}
+.ibtext{flex:1 1 100%;color:var(--muted);overflow-wrap:anywhere}
+.ibcard button{font:inherit;font-size:13px;padding:4px 12px;border-radius:8px;border:0;cursor:pointer;
+  background:var(--rule);color:var(--ink)}
+.ibcard button.ok{background:var(--accent);color:var(--on-accent)}
+.ibcard code,.ibempty kbd,.ibhelp kbd{font:12px var(--mono);background:var(--chip);color:var(--ink);
+  padding:1px 6px;border-radius:6px}
+.inbox>.hint{padding:8px 12px;border-top:1px solid var(--rule)}
+.ibhelp{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0 0 8px;padding:8px 12px;
+  font-size:12px;color:var(--muted);border:1px solid var(--rule);border-radius:10px}
+.ibhelp dt,.ibhelp dd{margin:0}
+.viewmenu{position:relative}
+.viewmenu summary{list-style:none;cursor:pointer;font-size:12px;padding:4px 12px;border-radius:999px;
+  border:1px solid var(--rule);color:var(--muted)}
+.viewmenu summary::-webkit-details-marker{display:none}
+.viewmenu[open] summary{background:var(--chip);color:var(--ink)}
+.viewmenu .menu{position:absolute;right:0;top:100%;margin-top:4px;z-index:3;display:flex;
+  flex-direction:column;min-width:160px;padding:4px;background:var(--panel);border:1px solid var(--rule);
+  border-radius:10px}
+@media (max-width:720px){
+  .ibrow{grid-template-columns:auto minmax(0,1fr) auto;padding:6px 10px}
+  .ibwho{grid-column:1}.ibwhat{grid-column:1/-1;white-space:normal}.ibsha{display:none}
+}
+/* The commit beside the vote (board-inbox.md slice 5). */
+.ibcard.withdiff{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,300px);gap:12px;
+  align-items:start}
+.ibverdict{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ibdiff{margin:0;max-height:420px;overflow:auto;font:12px/1.45 var(--mono);white-space:pre;
+  padding:8px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--rule);color:var(--ink)}
+.ibdiff .add{color:var(--accent)}.ibdiff .del{color:var(--bad)}
+.ibdiff .hunk{color:var(--muted)}.ibdiff .file{color:var(--muted);font-weight:600}
+@media (max-width:720px){.ibcard.withdiff{grid-template-columns:minmax(0,1fr)}.ibdiff{max-height:260px}}
+/* Slice 6: status changes fade, never jump; focus is visible on every control; reduced
+   motion turns the fades off. Status is never colour alone: a glyph or word goes with it. */
+.chip,.ibkind,.ibrow,.brow,#connDot,.good,.bad{transition:color var(--ease),background-color var(--ease),
+  opacity var(--ease),border-color var(--ease)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.inbox:focus-visible{outline:none;box-shadow:0 0 0 2px var(--accent)}
+#connDot::after{content:attr(data-state);position:absolute;width:1px;height:1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap}
+#connDot{position:relative}
+@media (prefers-reduced-motion:reduce){.chip,.ibkind,.ibrow,.brow,#connDot,.good,.bad{transition:none}}
+.chip,.ibage,.msg time,.btrail time{font-variant-numeric:tabular-nums}
+.ibage{min-width:3.5ch;text-align:right}

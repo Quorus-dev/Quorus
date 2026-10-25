@@ -5,6 +5,55 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.7] — 2026-10-25
+
+### Added
+
+- `quorus web` opens on a "needs you" inbox: one row per thing waiting on you, in this order:
+  an agent's pending tool approval, a `/disagree blocking` on one of your agents' commits,
+  a review request addressed to you, work a daemon kept unpublished, and a question an agent
+  asked you. Each row shows a glyph and the kind's word, who, what, the commit if there is
+  one, and how old it is. Keys: `j`/`k` move, `enter` opens the row, `a` approves (an
+  approval, or a vote on a review or block in that item's own poll), `d` denies or posts
+  `/disagree advisory` with a reason, `r` addresses the composer to them, `l` shows the
+  agents list, `?` lists the keys. These act only when you are signed in with your own
+  token (`quorus web`); with the relay secret the row shows the CLI command instead.
+- Opening a review or block shows the commit's diff beside the vote, read from the repo
+  bound to the room on the relay's machine (`quorus room bind`), through a new read-only
+  `GET /v1/rooms/{room}/commits/{sha}/diff`: members only, your own token only, capped at
+  64 KB, cached for a minute. Where no repo is bound it shows the `git show` command.
+- The agents list is a tab beside the inbox. The council table (the three.js view) sits
+  under a View menu, `#view=quorum`, or `quorus web --quorum`, and its code loads only then.
+- A `/disagree blocking` posted as a verb is tracked the way the relay tracks it: one active
+  block per room, cleared by a `/release` that hands off or by a majority vote in its poll;
+  a plain release, a defer or prose never clears it. Prose blocks still show, marked as prose.
+- `quorus connect ollama|antigravity|aider|http` on an API-key relay gives the agent its own
+  key instead of yours, checks the saved profile and relay before anything reaches a relay,
+  and joins the room as that agent.
+
+### Changed
+
+- The board's page is built from files under `quorus/web/` (Preact 11.0.2 and htm 3.1.1
+  vendored, no build step) and keeps the same strict `script-src 'self'` policy; row inputs
+  keep what you typed across refreshes; the first screen matches the site's heading.
+- In a room, what you type is a message. Only slash commands, `quit`, `exit`, `help` and `?`
+  act as commands; `/share`, `/info`, `/members` and `/leave` replace the single-letter
+  shortcuts there, which still work on the home view. Tab and Ctrl-D leave a half-typed
+  message alone. A new room names itself once: the duplicate `#room` line, the fake composer
+  bar and the second cursor are gone. Idle ticks repaint only when the frame changed.
+- `quorus quickstart` no longer prints the relay secret in its summary, says where it is
+  saved, and reports a relay that never started instead of crashing.
+- The README's first screen matches the site: install and first command in the first 15
+  lines, one honest sentence on the free-tier limit, and the `pipx ensurepath` note.
+- Board accessibility: one type scale, visible focus on every control, labelled inputs, a
+  keyboard-focusable chat log, status never shown by colour alone, and 150 ms fades that
+  reduced motion turns off. Checked with axe (0 violations at 1440 and 390 px).
+
+### Removed
+
+- Typing `invite <name>` in a room no longer does anything special: it is sent as a message.
+  Use `/share` or `quorus share` for join codes.
+
 ## [0.7.6] — 2026-10-25
 
 0.7.5 was tagged in error and never published; 0.7.6 includes its fixes.

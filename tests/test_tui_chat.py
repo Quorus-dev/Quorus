@@ -133,9 +133,9 @@ def test_app_bar_includes_room_name_and_member_count():
     ], width=120)
     assert "#general" in out
     assert "3 members" in out
-    # Each action shortcut surfaces as `(s)hare`, `(i)nfo`, etc.
-    for ch in ("s", "i", "m", "l"):
-        assert f"({ch})" in out
+    # Each action surfaces as its slash command: a bare letter is a message.
+    for cmd in ("/share", "/info", "/leave"):
+        assert cmd in out
 
 
 def test_app_bar_singular_member():
@@ -224,9 +224,9 @@ def test_last_active_label_empty_when_no_timestamps():
 
 def test_composer_hint_mentions_at_and_slash_keys():
     out = _render_to_str([chat.render_composer_hint()], width=80)
-    assert "@" in out
-    assert "/" in out
-    assert "Type a message" in out
+    assert "@ mention · / commands · ^D quit" in out
+    # A hint, not a second input box above the real prompt (tui-polish defect 2).
+    assert "Type a message" not in out and "│" not in out
 
 
 # ── Code-fence rendering ─────────────────────────────────────────────────────
@@ -430,7 +430,7 @@ def test_app_bar_idle_dot_when_no_recent_post():
 
 
 def test_app_bar_includes_action_keys():
-    """Polish-tier app-bar exposes (s)hare/(i)nfo/(m)embers/(l)eave."""
+    """The app bar shows /share /info /leave, the commands that work in a room."""
     out = _render_to_str(
         [chat.render_app_bar(
             room_name="general", member_count=1,
@@ -438,8 +438,9 @@ def test_app_bar_includes_action_keys():
         )],
         width=120,
     )
-    for ch in ("(s)", "(i)", "(m)", "(l)"):
-        assert ch in out
+    for cmd in ("/share", "/info", "/leave"):
+        assert cmd in out
+    assert "(s)" not in out
 
 
 # ── Polish-pass: empty-room state ────────────────────────────────────────────
@@ -449,10 +450,10 @@ def test_empty_room_card_renders_room_name_and_cta():
     out = _render_to_str(
         chat.render_bubble_feed([], "general", "arav", console_width=80)
     )
-    assert "#general" in out
-    assert "say hi to start the conversation" in out
-    # Cursor block character — visual "blink" affordance.
-    assert "▌" in out
+    assert "No messages yet · say hi to start the conversation" in out
+    # The app bar names the room and the prompt is the cursor (tui-polish defect 5).
+    assert "#general" not in out and "▌" not in out
+    assert all(line.startswith("  ") or not line.strip() for line in out.splitlines())
 
 
 # ── Polish-pass: reactions row ───────────────────────────────────────────────
@@ -507,7 +508,7 @@ def test_render_composer_hint_with_typing_includes_indicator():
     out = _render_to_str([line], width=80)
     assert "@arav-codex" in out
     assert "is typing" in out
-    assert "Type a message" in out
+    assert "@ mention" in out
 
 
 # ── Polish-pass: bubble corner glyphs ────────────────────────────────────────
@@ -666,9 +667,9 @@ def test_golden_typing_indicator_in_composer():
         [chat.render_composer_hint(typing="arav-codex")],
         width=80,
     )
-    # Indicator above, prompt below — both present.
+    # Indicator above, keys hint below — both present.
     assert "is typing" in out
-    assert "Type a message" in out
+    assert "/ commands" in out
 
 
 def test_golden_app_bar_layout_at_120_cols():
@@ -688,5 +689,6 @@ def test_golden_app_bar_layout_at_120_cols():
     assert "#dev" in out
     assert "4 members" in out
     assert "active 2m ago" in out
-    for ch in ("(s)", "(i)", "(m)", "(l)"):
-        assert ch in out
+    for cmd in ("/share", "/info", "/leave"):
+        assert cmd in out
+    assert "(s)" not in out

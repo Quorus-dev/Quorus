@@ -1,17 +1,25 @@
 <!-- mcp-name: io.github.Quorus-dev/quorus -->
 <div align="center">
 
-# Quorus
+# Claude Code writes it. Codex catches the bug.
 
-### Your AI agents have a group chat. You're the boss.
+Quorus puts Claude Code and Codex in one room. One builds the fix on its own branch, the other reviews it and says what's wrong.
 
-Message Claude Code, Codex and any other model like a team. They wake up, split the work, review each other's code, and push to your repo. No more copy-pasting between terminals.
+</div>
 
+```bash
+pipx install quorus-ai
+quorus
+```
+
+`quorus` opens your room and offers to add the coding agents it finds on this computer. No Claude Code or Codex? opencode's free models work too, but they share one rate limit per connection or account, and when it's hit the agent reports the limit and pauses before you can retry.
+
+<div align="center">
+
+<!-- Hero slot: swap in the recorded session (cast or GIF) when it lands. -->
 ![One message: Claude fixes the bug with tests, Codex reviews and approves it](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/demo.gif)
 
 <sub>A real run, not staged: one message in, a tested fix reviewed by a second model and on `main` about 50 seconds later.</sub>
-
-Auto-wake is tested with **Claude Code, Codex and opencode** (opencode supports multiple providers, including free open-source models like DeepSeek and Qwen, local Ollama models and OpenRouter). Gemini CLI wakes with a Google AI Studio API key in `~/.gemini/.env`; Quorus doesn't use your Google sign-in (last tested with a free key on gemini-cli 0.64.0). Antigravity CLI support is planned. Cursor, Windsurf and Cline connect through MCP only.
 
 [**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus) · [Privacy](https://www.quorus.dev/privacy)
 
@@ -21,35 +29,28 @@ Auto-wake is tested with **Claude Code, Codex and opencode** (opencode supports 
 
 ## Install
 
-```bash
-pipx install quorus-ai
-```
+Auto-wake is tested with **Claude Code, Codex and opencode** (opencode supports multiple providers, including free open-source models like DeepSeek and Qwen, local Ollama models and OpenRouter). Gemini CLI wakes with a Google AI Studio API key in `~/.gemini/.env`; Quorus doesn't use your Google sign-in (last tested with a free key on gemini-cli 0.64.0). Antigravity CLI support is planned. Cursor, Windsurf and Cline connect through MCP only.
 
-**See it work in 2 minutes, with no accounts or keys:**
+**Watch it work first, with no accounts or keys:**
 
 ```bash
 quorus demo
 ```
 
 Two agents on a free open-source model fix a planted bug in a throwaway repo. One fixes and commits,
-the other reviews, and you watch it happen live. It needs [opencode](https://opencode.ai) 2.x
+the other reviews, and you watch it happen live; it takes a few minutes. It needs [opencode](https://opencode.ai) 2.x
 (`brew install opencode`). If free models are busy, the demo asks before using your
 signed-in Claude Code or Codex and your account's usage. Scripts must opt in with
 `quorus demo --use-my-login`; without consent or an available model it exits nonzero.
 Nothing in your own setup is changed.
 
-Then just type `quorus` in any terminal:
-
-```bash
-quorus
-```
-
-On first run, Quorus walks you through picking a name and starting a local relay, or joining a teammate through an invite. Your room works without a model or sign-in.
+On first run, `quorus` walks you through picking a name and starting a local relay, or joining a teammate through an invite. Your room works without a model or sign-in.
 The first run offers agent setup. After declining or canceling, use `/agents`
 inside the room to return to it. The room distinguishes an agent joining from a real response.
 
 > Don't have `pipx`? Install it first: `brew install pipx && pipx ensurepath`
 > (or `python3 -m pip install --user pipx && python3 -m pipx ensurepath`).
+> If pipx warns that its bin folder isn't on your PATH, run `pipx ensurepath` and open a new terminal.
 > If you really want raw pip instead, `pip install --user "quorus-ai @ git+..."` works too — just make sure `~/.local/bin` is on your PATH.
 > To remove Quorus later: `pipx uninstall quorus-ai`. Only if you installed it from git before 0.5.0, when the package was still named `quorus`, run `pipx uninstall quorus` first.
 

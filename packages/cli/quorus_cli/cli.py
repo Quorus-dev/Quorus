@@ -2963,6 +2963,36 @@ def _cmd_metrics(args):
     asyncio.run(_metrics(args.room))
 
 
+def _join_room_as(relay_url: str, room: str, participant: str, agent_key: str = "") -> None:
+    """Join *room* as *participant*, best effort. With *agent_key* it signs in as
+    that agent, never as the user; a redirected sign-in is not followed, so the
+    key is never re-sent elsewhere (as in :func:`_auth_headers`)."""
+    try:
+        if agent_key:
+            resp = httpx.post(f"{relay_url}/v1/auth/token", json={"api_key": agent_key},
+                              timeout=10, follow_redirects=False)
+            if resp.status_code != 200:
+                return
+            headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+        else:
+            headers = _auth_headers()
+    except Exception:
+        return
+
+    async def _join():
+        client = _get_client()
+        try:
+            r = await client.post(f"{relay_url}/rooms/{room}/join",
+                                  json={"participant": participant}, headers=headers)
+            r.raise_for_status()
+        except Exception:
+            pass
+        finally:
+            await client.aclose()
+
+    asyncio.run(_join())
+
+
 def _cmd_connect(args):
     """Wire an agent platform's MCP config to Quorus + auto-join the room.
 
@@ -3004,6 +3034,17 @@ def _cmd_connect(args):
             + ", ".join(list(auto_write_platforms) + list(prose_generators))
             + "[/dim]"
         )
+        return
+
+    if platform in prose_generators:
+        # Resolve the agent's credential before any relay call, then join as
+        # that agent (Codex on 1ae50ab7: the join ran before the relay guard).
+        from quorus_cli import connect_snippets
+
+        connect_snippets.run(platform, room, name, relay_url=relay_url, secret=secret,
+                             api_key=API_KEY, parent=INSTANCE_NAME,
+                             register=_register_agent_identity_full,
+                             join=lambda who, key: _join_room_as(relay_url, room, who, key))
         return
 
     # Auto-join the room so the participant list reflects this agent.
@@ -3113,8 +3154,6 @@ def _cmd_connect(args):
             )
         return
 
-    # Prose fallback for manual-only platforms.
-    prose_generators[platform](room, name, relay_url, secret)
 
 
 async def _kick(room_name: str, participant: str) -> None:
@@ -6646,21 +6685,17 @@ def _cmd_quickstart(args):
     )
     if r.status_code in (200, 201):
         r.json()  # validate response
-        from quorus_cli import ui as _ui
         _ui.success(f"Created [room]#{room_name}[/]")
     elif r.status_code == 409:
-        from quorus_cli import ui as _ui
         _ui.warn(
             f"Room '{room_name}' already exists",
             hint="continuing with existing room",
         )
     elif r.status_code in (401, 403):
-        from quorus_cli import ui as _ui
         _ui.error("Not authenticated", hint="check your relay secret")
         relay_proc.terminate()
         sys.exit(3)
     else:
-        from quorus_cli import ui as _ui
         _ui.error(
             f"Couldn't create room (HTTP {r.status_code})",
             hint=r.text[:120] if r.text else None,
@@ -9572,6 +9607,8 @@ def main():
                        help="Print the sign-in link instead of opening a browser")
     p_web.add_argument("--fps", action="store_true",
                        help="Show the Quorum view's fps / DPR / quality readout")
+    p_web.add_argument("--quorum", action="store_true",
+                       help="Open the council table instead of the needs-you inbox")
 
     p_phone = sub.add_parser("phone", help="Open your rooms on your phone (Tailscale by default)")
     p_phone.add_argument("--lan", action="store_true",

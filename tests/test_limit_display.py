@@ -20,7 +20,7 @@ import pytest
 import quorus_cli.cli as cli
 from httpx import ASGITransport, AsyncClient
 
-from quorus.board import BOARD_JS
+from quorus.board import ROWS_JS
 from quorus.limit_display import describe, duration, prewall_hints
 from quorus.relay import _reset_state, app
 
@@ -187,11 +187,11 @@ def test_board_rows_use_the_limit_line(tmp_path: Path) -> None:
               "limit_hint": "next task to @c?"},
         "n": {"name": "n", "online": True, "status": "idle"},
     }
-    (tmp_path / "board.js").write_text(BOARD_JS)
+    (tmp_path / "rows.js").write_text(ROWS_JS)
     script = tmp_path / "run.js"
     script.write_text(
         "globalThis.sessionStorage = { getItem: () => null };\n"
-        "const b = require('./board.js');\n"
+        "const b = require('./rows.js');\n"
         f"const pres = {json.dumps(presence)}, now = {now};\n"
         "const rows = Object.keys(pres).map((n) => b.rowState(n, pres, [], [], now));\n"
         "console.log(JSON.stringify(rows));\n")

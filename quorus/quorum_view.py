@@ -34,6 +34,9 @@ FILES = {
     "quorum-cast.js": (WEB / "quorum-cast.js", JS, FRESH),
     "vendor/three.module.min.js": (WEB / "vendor" / "three.module.min.js", JS, DAY),
     "vendor/three.core.min.js": (WEB / "vendor" / "three.core.min.js", JS, DAY),
+    # Preact 11 + htm 3 (board.js): ESM, no build step, no eval; see vendor/README.txt.
+    "vendor/preact.module.js": (WEB / "vendor" / "preact.module.js", JS, DAY),
+    "vendor/htm.module.js": (WEB / "vendor" / "htm.module.js", JS, DAY),
     "vendor/fonts/plus-jakarta-sans.woff2": (
         WEB / "vendor" / "fonts" / "plus-jakarta-sans.woff2", "font/woff2", DAY),
 }

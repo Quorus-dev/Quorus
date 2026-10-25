@@ -80,3 +80,48 @@ Even after this, every `connect` agent holds the operator secret, which can appr
 mint invites, kick and delete rooms. The right long-term fix is for `connect` to claim
 a participant key for the agent's name (`/v1/auth/claim-name`) and print or store that
 instead. That changes what those agents can do, so it needs its own plan and decision.
+
+## Follow-up: relays that use API keys (Codex GO on 319ab1dd; built in `connect_agent_key.py`)
+
+On an API-key relay `RELAY_SECRET` is empty, so the four prose snippets print a client with
+no credential: `QuorusClient(url, os.environ["QUORUS_RELAY_SECRET"], name)` can't sign in,
+and before 0.7.6 they printed `""`. The auto-write path already handles this: it mints a
+child identity with `_register_agent_identity` (`/v1/auth/register-agent`) and writes that
+key, never the parent's.
+
+Change, for `connect ollama|antigravity|aider|http` when `API_KEY` is set and the secret is not:
+
+1. Only for the relay the profile holds (Codex on 1bb20571). Proceed only when the parent
+   key is the profile's own `api_key` and `same_relay(RELAY_URL, profile relay_url)` holds.
+   Otherwise, for example when `API_KEY`/`RELAY_URL` in this shell point at relay B while
+   the active profile is relay A, stop before calling the relay: mint nothing, write
+   nothing, and print setup guidance (`quorus init <name> --relay-url <B> --api-key -`, which
+   reads the key from stdin, then rerun `connect`). Saving B's child key into A's
+   `agent_api_keys` would bind it to the wrong relay.
+2. On the matching profile, reuse `agent_api_keys[<name>]` if it is already there (the relay
+   revokes earlier child keys on every register call, `cli.py` ~4635). Otherwise mint with
+   `_register_agent_identity_full`, use the relay's returned agent name in the snippet,
+   and save the key under that name in `saved_credential_file()`. Never print either key.
+   If minting fails, exit non-zero with the relay's error and print no snippet. No path
+   ever falls back to the parent key, including a request for a name that matches the
+   parent's.
+3. ollama, aider: `QuorusClient(url, name="<name>", api_key=os.environ["QUORUS_API_KEY"])`,
+   with the one-line hint naming `agent_api_keys["<name>"]` in that file.
+4. antigravity: `"API_KEY": "<paste the agent key>"` placeholder. Leaving the key out isn't
+   safe here: `quorus-mcp` would fall back to the profile's parent `api_key`, which acts as
+   the user, not the agent.
+5. http: one exchange line first,
+   `QUORUS_TOKEN=$(curl -s -X POST "<url>/v1/auth/token" -H "Content-Type: application/json"
+   -d "{\"api_key\":\"$QUORUS_API_KEY\"}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')`,
+   then every curl line uses `"$QUORUS_TOKEN"`. The prompt says to rerun it when a call
+   returns 401 (the token expires).
+
+Tests, added to `tests/test_connect_never_prints_secret.py` with `/v1/auth/register-agent`
+stubbed: neither the parent key nor the minted key appears in any output; the minted key is
+saved under `agent_api_keys` in the profile file; the Python snippets pass `api_key=` from
+`QUORUS_API_KEY`; the antigravity JSON has the placeholder and no parent key; every http
+call uses `$QUORUS_TOKEN`; a failed mint exits non-zero and prints no snippet; a
+profile for relay A with this shell's `API_KEY`/`RELAY_URL` set for relay B makes no
+relay call, leaves A's profile file byte-for-byte unchanged and prints neither key;
+a second `connect` for the same name reuses the saved key (one register call in
+total); and a name equal to the parent's still gets a child key, never the parent's.

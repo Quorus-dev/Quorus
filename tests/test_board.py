@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from quorus.board import BOARD_JS
+from quorus.board import BOARD_JS, ROWS_JS
 from quorus.dashboard import DASHBOARD_HTML
 
 
@@ -24,18 +24,19 @@ def test_board_is_served_same_origin_and_safe() -> None:
         js = c.get("/board.js")
         page = c.get("/")
     assert js.status_code == 200 and "javascript" in js.headers["content-type"]
-    assert '<script src="/board.js"></script>' in page.text
+    assert '<script type="module" src="/board.js"></script>' in page.text  # ESM, slice 2
     assert "script-src 'self'" in page.headers.get("content-security-policy", "")
-    for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval("):
-        assert sink not in BOARD_JS, sink
-    assert not re.search(r'"/(rooms|v1/approvals)/"\s*\+\s*(?!\s|enc\()', BOARD_JS)
+    for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(",
+                 "dangerouslySetInnerHTML"):
+        assert sink not in BOARD_JS and sink not in ROWS_JS, sink
+    assert not re.search(r'"/(rooms|v1/approvals)/"\s*\+\s*(?!\s|enc\()', BOARD_JS + ROWS_JS)
     assert 'id="viewToggle"' in DASHBOARD_HTML and 'id="board"' in DASHBOARD_HTML
 
 
 def test_approve_buttons_need_the_viewers_own_key() -> None:
     # The shared secret never decides an approval (team decision, 2026-10-17).
-    assert 'token().split(".").length === 3' in BOARD_JS
-    assert "if (ownKey())" in BOARD_JS and '"quorus approve "' in BOARD_JS
+    assert 'token().split(".").length === 3' in ROWS_JS
+    assert "if (!ownKey())" in BOARD_JS and '"quorus approve "' in BOARD_JS
     assert "decided_by" not in BOARD_JS  # the relay names the decider from the JWT
 
 
@@ -77,11 +78,11 @@ def test_rows_sort_by_what_needs_a_human(tmp_path: Path) -> None:
     approvals = [{"id": "ap1", "agent": "a-codex", "tool_name": "Bash",
                   "input_preview": "git push"}]
     script = tmp_path / "run.js"
-    (tmp_path / "board.js").write_text(BOARD_JS)
+    (tmp_path / "rows.js").write_text(ROWS_JS)
     script.write_text(
         "const vals = { qn: 'arav', qt: 'secret' };\n"
         "globalThis.sessionStorage = { getItem: (k) => vals[k] || null };\n"
-        "const b = require('./board.js');\n"
+        "const b = require('./rows.js');\n"
         f"const pres = {json.dumps(presence)}, hist = {json.dumps(history)};\n"
         f"const appr = {json.dumps(approvals)}, now = {now};\n"
         "const rows = Object.keys(pres).map((n) => b.rowState(n, pres, hist, appr, now));\n"
@@ -112,13 +113,16 @@ def test_quorus_web_link_lands_on_the_board_signed_in_as_you() -> None:
                    "&view=board")
     assert "?" not in url  # the credential only ever rides in the fragment
     assert web_url("http://r", "a.b.c", "arav", None, True, fps=True).endswith("&view=board&fps=1")
+    # `quorus web --quorum`: the council table is opt-in (board-inbox.md decision 5).
+    assert web_url("http://r", "a.b.c", "arav", None, True, quorum=True).endswith("&view=quorum")
     from quorus.dashboard import DASHBOARD_JS as _djs
 
     assert 'if (frag.get("fps")) sessionStorage.setItem("qfps", "1");' in _djs
     from quorus.dashboard import DASHBOARD_JS
 
     assert 'sessionStorage.setItem("qr"' in DASHBOARD_JS
-    assert 'view === "board" || view === "quorum"' in BOARD_JS  # #view=quorum opens the table
+    # #view=board lands on the inbox; list and quorum open those looks (slice 4).
+    assert '["board", "inbox", "list", "quorum"].includes(view)' in BOARD_JS
 
 
 def test_board_never_waits_for_the_scorecard() -> None:
@@ -141,12 +145,20 @@ def test_mission_control_keeps_chat_beside_the_panels_on_wide_screens() -> None:
     assert 'grid-template-areas:"bar bar" "board msgs"' in DASHBOARD_HTML
 
 
-def test_list_is_the_default_board_mode() -> None:
-    """The Quorum table opens only on request (#view=quorum or its button)."""
-    assert '<button id="modeList" class="on" type="button">List</button>' in DASHBOARD_HTML
+def test_inbox_is_the_default_board_mode() -> None:
+    """board-inbox.md slice 4: the needs-you inbox is the default look; the agents list
+    is a tab; the council table opens only on request (#view=quorum, --quorum or the
+    View menu) and its code is never on the page until then."""
+    assert '<button id="modeInbox" class="on" type="button">Needs you</button>' in DASHBOARD_HTML
+    assert '<button id="modeList" type="button">Agents</button>' in DASHBOARD_HTML
+    assert '<button id="modeQuorum" type="button">Council table</button>' in DASHBOARD_HTML
+    assert '<div id="inbox"></div>' in DASHBOARD_HTML
+    assert '<div id="boardRows" hidden>' in DASHBOARD_HTML
     assert '<div id="quorum" hidden>' in DASHBOARD_HTML
+    assert "/quorum.js" not in DASHBOARD_HTML and 'import("/quorum.js")' in BOARD_JS
     assert "localStorage" not in BOARD_JS  # the mode is never remembered across visits
     assert 'if (view === "quorum") mode("quorum");' in BOARD_JS
+    assert 'B.mode = "inbox"' in BOARD_JS and 'role="listbox"' in BOARD_JS
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
@@ -166,10 +178,10 @@ def test_a_step_older_than_ten_minutes_clears(tmp_path: Path) -> None:
     }
     iso_now = 1792260000  # 2026-10-17T12:00:00Z is 1760702400; use the number form too
     script = tmp_path / "run.js"
-    (tmp_path / "board.js").write_text(BOARD_JS)
+    (tmp_path / "rows.js").write_text(ROWS_JS)
     script.write_text(
         "globalThis.sessionStorage = { getItem: () => null };\n"
-        "const b = require('./board.js');\n"
+        "const b = require('./rows.js');\n"
         f"const pres = {json.dumps(presence)};\n"
         f"const now = {iso_now};\n"
         "pres['fresh-claude'].last_wake_at = new Date((now - 120) * 1000).toISOString();\n"
@@ -215,10 +227,10 @@ def test_the_newest_tuning_line_becomes_a_board_row(tmp_path: Path) -> None:
     chat = dict(applied, message_type="chat", timestamp="2026-10-18T08:09:30Z",
                 content=applied["content"].replace("t2", "t8"))
     script = tmp_path / "run.js"
-    (tmp_path / "board.js").write_text(BOARD_JS)
+    (tmp_path / "rows.js").write_text(ROWS_JS)
     script.write_text(
         "globalThis.sessionStorage = { getItem: () => null };\n"
-        "const b = require('./board.js');\n"
+        "const b = require('./rows.js');\n"
         f"const pres = {json.dumps(presence)}, shadow = {json.dumps(shadow)};\n"
         f"const applied = {json.dumps(applied)}, now = {now};\n"
         f"const spoof = {json.dumps(spoof)}, chat = {json.dumps(chat)};\n"
@@ -238,17 +250,70 @@ def test_the_newest_tuning_line_becomes_a_board_row(tmp_path: Path) -> None:
         "text": "shadow, not applied: would set @open bids x0.75 for @x-gemini · x0.75 · "
                 "2 errors, 0 clean/24h"}
     assert got["both"]["x-gemini-2"] is None  # "@x-gemini" is not "@x-gemini-2"
-    assert 'mine.slice().reverse().find((m) => m.message_type === "status"' in BOARD_JS
-    assert 'el("div", "btune", r.tuning.text + " · undo: ")' in BOARD_JS
+    assert 'mine.slice().reverse().find((m) => m.message_type === "status"' in ROWS_JS
+    assert '<div class="btune">${r.tuning.text + " · undo: "}' in BOARD_JS
     assert ".btune code{" in DASHBOARD_HTML
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
 def test_track_owner_preserves_dashed_human_names(tmp_path):
-    (tmp_path / "board.js").write_text(BOARD_JS)
+    (tmp_path / "rows.js").write_text(ROWS_JS)
     script = tmp_path / "owner.js"
     script.write_text(
-        "const {trackOwner} = require('./board.js');\n"
+        "const {trackOwner} = require('./rows.js');\n"
         "for (const name of ['alice-smith', 'alice-smith-codex', 'alice-smith-codex-desktop']) "
         "{ if (trackOwner(name) !== 'alice-smith') throw new Error(name); }\n")
     subprocess.run([NODE, str(script)], check=True, capture_output=True)
+
+
+def test_the_scripts_are_files_not_python_strings() -> None:
+    """board-inbox.md slice 1: the JS (and the page's CSS) live in quorus/web so ESLint
+    and node see files. The modules only load them; what the relay serves is unchanged."""
+    from quorus import board, dashboard
+
+    web = Path(board.__file__).parent / "web"
+    assert BOARD_JS == "\n" + (web / "board.js").read_text(encoding="utf-8")
+    assert dashboard.DASHBOARD_JS == "\n" + (web / "web.js").read_text(encoding="utf-8")
+    assert (web / "web.css").read_text(encoding="utf-8").rstrip("\n") in DASHBOARD_HTML
+    for module in (board, dashboard):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        assert "function " not in source and "{display:" not in source, module.__name__
+        assert source.count("\n") < 200, module.__name__
+    assert (web / "eslint.config.mjs").exists()
+
+
+VENDOR_SHA256 = {  # quorus/web/vendor/README.txt: a changed byte fails here first
+    "preact.module.js": "4d2617f3f082550223d37f781114b5f723362fc4a337459715a7083664dc10c1",
+    "htm.module.js": "ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4",
+}
+
+
+def test_vendored_preact_and_htm_are_pinned_and_served() -> None:
+    """board-inbox.md slice 2: Preact 11.0.2 + htm 3.1.1 as ESM, same origin, no eval."""
+    import hashlib
+
+    from quorus import quorum_view
+    from quorus.relay import app
+
+    web = Path(quorum_view.__file__).parent / "web"
+    for name, digest in VENDOR_SHA256.items():
+        data = (web / "vendor" / name).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == digest, name
+        assert b"eval(" not in data and b"Function(" not in data, name
+    assert "MIT License" in (web / "vendor" / "PREACT-LICENSE.txt").read_text()
+    assert "Apache License" in (web / "vendor" / "HTM-LICENSE.txt").read_text()
+    for src in (BOARD_JS, ROWS_JS):  # same-origin imports only
+        assert not re.search(r"https?://", src)
+    for dep in ('from "/vendor/preact.module.js"', 'from "/vendor/htm.module.js"',
+                'from "/rows.js"'):
+        assert dep in BOARD_JS, dep
+    with TestClient(app) as c:
+        for name in VENDOR_SHA256:
+            r = c.get("/vendor/" + name)
+            assert r.status_code == 200 and "javascript" in r.headers["content-type"], name
+            assert "max-age" in r.headers["cache-control"]
+        rows = c.get("/rows.js")
+        assert rows.status_code == 200 and rows.text == ROWS_JS
+        assert rows.headers["cache-control"] == "no-cache"
+        for bad in ("/vendor/PREACT-LICENSE.txt", "/vendor/HTM-LICENSE.txt"):
+            assert c.get(bad).status_code == 404, bad

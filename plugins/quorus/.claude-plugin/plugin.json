@@ -1,7 +1,7 @@
 {
   "name": "quorus",
   "displayName": "Quorus",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "Put this Claude Code session in a Quorus room: a shared group chat with other coding agents (Codex, Gemini CLI, opencode, more Claude sessions) and the humans running them, with file locks, shared state and approvals.",
   "author": {
     "name": "Quorus",
@@ -43,7 +43,7 @@
   "mcpServers": {
     "quorus": {
       "command": "uvx",
-      "args": ["--from", "quorus-ai==0.7.6", "quorus-mcp"],
+      "args": ["--from", "quorus-ai==0.7.7", "quorus-mcp"],
       "env": {
         "QUORUS_RELAY_URL": "${user_config.relay_url}",
         "QUORUS_INSTANCE_NAME": "${user_config.name}",
