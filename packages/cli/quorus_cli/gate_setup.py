@@ -79,6 +79,25 @@ def _room_repo(room: str, prep: dict[str, Any]) -> Path | None:
     return None
 
 
+def _recorded_agents() -> list[tuple[str, Path]]:
+    """(agent, --state-dir) for each daemon `agent add` started with one."""
+    from quorus_cli import agent_cmd
+
+    out = []
+    for rec in sorted(agent_cmd._agents_dir().glob("*.state-dir")):
+        try:
+            text = rec.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if text:
+            out.append((rec.name[: -len(".state-dir")], Path(text)))
+    return out
+
+
+def _recorded() -> list[Path]:
+    return list(dict.fromkeys(state for _, state in _recorded_agents()))
+
+
 def daemon_state_dirs(room: str) -> list[Path]:
     """Every recorded agent ``--state-dir`` on this machine whose daemon gates
     *room*'s repo: it binds *room*, or any room bound to the same repo (the gate
@@ -86,16 +105,7 @@ def daemon_state_dirs(room: str) -> list[Path]:
     the reviewer still gets the pin (codex, review of 6de08414). A state dir whose
     bindings can't be read is included: better a pin it may not need than a
     builder left ungated."""
-    from quorus_cli import agent_cmd
-
-    states: list[Path] = []
-    for rec in sorted(agent_cmd._agents_dir().glob("*.state-dir")):
-        try:
-            text = rec.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if text and Path(text) not in states:
-            states.append(Path(text))
+    states = _recorded()
     views = {None: _bound(None), **{st: _bound(st) for st in states}}
     repos = {view[room] for view in views.values() if view and room in view}
     out = []
@@ -104,6 +114,63 @@ def daemon_state_dirs(room: str) -> list[Path]:
         if view is None or room in view or any(p in repos for p in view.values()):
             out.append(st)
     return out
+
+
+def room_files(room: str, extra: list[Any] | None = None) -> list[Path]:
+    """Every reviewers file a daemon on this machine reads for *room*'s repo:
+    the CLI's, plus each state dir that gates it (take-3 bug 3)."""
+    return reviewer_files([*(extra or []), *daemon_state_dirs(room)])
+
+
+def room_repo(room: str) -> Path | None:
+    """The repo *room* is bound to here: the CLI's binding, else a recorded
+    state dir's (a daemon started with --state-dir binds it there)."""
+    for state in [None, *_recorded()]:
+        view = _bound(state)
+        if view and room in view:
+            return view[room]
+    return None
+
+
+def readers(files: list[Path]) -> dict[Path, list[str]]:
+    """{reviewers file: the recorded agents whose daemon reads it}."""
+    out: dict[Path, list[str]] = {f: [] for f in files}
+    for name, state in _recorded_agents():
+        f = (state / "room-reviewers.json").resolve()
+        if f in out:
+            out[f].append(name)
+    return out
+
+
+def where_lines(files: list[Path]) -> list[str]:
+    """One line per file: where the gate was written and who reads it."""
+    lines = []
+    for f, names in readers(files).items():
+        who = ", ".join(f"@{n}" for n in names) if names else "agents without --state-dir"
+        lines.append(f"  {f}  [dim](read by {who})[/]")
+    return lines
+
+
+def write_all(files: list[Path], change: Any) -> None:
+    """``change(file)`` on every file, all or nothing: a daemon reading a file
+    the change didn't reach would gate differently from what the room was told.
+    On a failure what was written is put back, and IdentityError names the file."""
+    before = {f: (f.read_bytes() if f.exists() else None) for f in files}
+    for f in files:
+        try:
+            change(f)
+        except (OSError, ValueError) as exc:
+            for g, data in before.items():
+                try:
+                    if data is None:
+                        g.unlink(missing_ok=True)
+                    else:
+                        from quorus.private_files import write_private_text
+                        write_private_text(g, data.decode("utf-8"))
+                except OSError:
+                    pass
+            raise agent_identity.IdentityError(f"couldn't save the gate to {f} ({exc})") \
+                from exc
 
 
 def current_reviewers(room: str, files: list[Path]) -> dict[str, str]:
@@ -125,7 +192,7 @@ def pin_reviewer(prep: dict[str, Any], *, replace: bool = False,
     relay this machine doesn't run, or a running daemon whose key isn't saved
     where it signs in from (codex, review of 0e361b2d / 0941c028)."""
     cfg, name, room = prep["cfg"], prep["name"], prep["room"]
-    files = reviewer_files([prep["state_dir"], *(state_dirs or []), *daemon_state_dirs(room)])
+    files = room_files(room, [prep["state_dir"], *(state_dirs or [])])
     current = current_reviewers(room, files)
     if current and not replace:
         who = ", @".join(current)
@@ -150,24 +217,10 @@ def pin_reviewer(prep: dict[str, Any], *, replace: bool = False,
         key = agent_identity.ensure_key(url, prep["cred"], name, where)
     pin = agent_identity.identity(url, key)
     # All or nothing: a daemon that reads a file the pin didn't reach would publish
-    # ungated while the room is told it's gated. On any failure, put back what
-    # was written and keep every existing gate.
-    before = {f: (f.read_bytes() if f.exists() else None) for f in files}
-    try:
-        for f in files:
-            _gate.save_reviewer(room, name, tenant=pin["tenant"], claim_id=pin["claim_id"],
-                                path=f, repo=_room_repo(room, prep))
-    except (OSError, ValueError) as exc:
-        for f, data in before.items():
-            try:
-                if data is None:
-                    f.unlink(missing_ok=True)
-                else:
-                    from quorus.private_files import write_private_text
-                    write_private_text(f, data.decode("utf-8"))
-            except OSError:
-                pass
-        raise agent_identity.IdentityError(f"couldn't save the reviewer to {f} ({exc})") from exc
+    # ungated while the room is told it's gated. Any failure keeps every old gate.
+    repo = _room_repo(room, prep)
+    write_all(files, lambda f: _gate.save_reviewer(
+        room, name, tenant=pin["tenant"], claim_id=pin["claim_id"], path=f, repo=repo))
     return pin
 
 

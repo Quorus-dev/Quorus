@@ -547,6 +547,9 @@ def _add(args: Any, console: Any) -> None:
 
         line = gate_setup.gate_line(prep["room"], prep["name"], prep["repo"])
         console.print(f"[success]✓[/] {line}")
+        for where in gate_setup.where_lines(gate_setup.room_files(prep["room"],
+                                                                  [prep["state_dir"]])):
+            console.print(where)
         gate_setup.post(prep, line)
 
 

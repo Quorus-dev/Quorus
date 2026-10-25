@@ -56,25 +56,58 @@ def _history(room: str) -> list[dict[str, Any]] | None:
     return data if isinstance(data, list) else []
 
 
-def cmd_room_reviewer(args: Any) -> None:
+def _show(room: str, files: list[Path]) -> None:
     from quorus_cli import cli
 
+    pins = {f: _gate.reviewer_for(room, f) for f in files}
+    if len({json.dumps(p, sort_keys=True) for p in pins.values()}) > 1:
+        # Daemons reading different files gate differently: say which reads what.
+        cli.console.print(f"[warning]![/] #{room}'s reviewer differs between the files "
+                          "its agents read:")
+        for f, p in pins.items():
+            who = f"@{p.get('name') or '?'}" if p is not None else "no reviewer"
+            cli.console.print(f"  {f}: {who}")
+        cli.console.print(f"[dim]set one everywhere: quorus room reviewer {room} <name>, "
+                          f"or turn it off: quorus room reviewer {room} --none[/]")
+        return
+    pin = pins[files[0]]
+    if pin is None:
+        cli.console.print(f"[dim]#{room} has no reviewer[/]")
+    elif _gate.pinned(pin):
+        key = pin.get("claim_id") or pin.get("participant_id")
+        cli.console.print(f"#{room} reviewer: @{pin['name']} (pinned to {key})")
+    else:
+        cli.console.print(f"#{room} reviewer: @{pin.get('name') or '?'} "
+                          "[warning](not pinned: owner override only)[/]")
+
+
+def _write(room: str, files: list[Path], change: Any) -> None:
+    """*change* every file a daemon for *room*'s repo reads, or none of them:
+    the pin used to reach only the CLI's own file, and agents started with
+    --state-dir published ungated (take-3 bug 3)."""
+    from quorus_cli import agent_identity, cli, gate_setup
+
+    try:
+        gate_setup.write_all(files, change)
+    except agent_identity.IdentityError as exc:
+        cli.console.print(f"[error]✗[/] #{room}'s gate is unchanged: {exc}")
+        raise SystemExit(1) from exc
+
+
+def cmd_room_reviewer(args: Any) -> None:
+    from quorus_cli import cli, gate_setup
+
     room, name = args.room, getattr(args, "name", None)
+    files = gate_setup.room_files(room)
     if getattr(args, "none", False):
-        _gate.clear_reviewer(room)
+        _write(room, files, lambda f: _gate.clear_reviewer(room, f))
         cli.console.print(f"[success]✓[/] #{room} has no reviewer: its commits publish "
                           "when a turn ends, as before")
+        for line in gate_setup.where_lines(files):
+            cli.console.print(line)
         return
     if not name:
-        pin = _gate.reviewer_for(room)
-        if pin is None:
-            cli.console.print(f"[dim]#{room} has no reviewer[/]")
-        elif _gate.pinned(pin):
-            key = pin.get("claim_id") or pin.get("participant_id")
-            cli.console.print(f"#{room} reviewer: @{pin['name']} (pinned to {key})")
-        else:
-            cli.console.print(f"#{room} reviewer: @{pin.get('name') or '?'} "
-                              "[warning](not pinned: owner override only)[/]")
+        _show(room, files)
         return
     history = _history(room)
     if history is None:
@@ -88,16 +121,20 @@ def cmd_room_reviewer(args: Any) -> None:
                   "connect give one), or pass --unpinned: every publish then waits "
                   "for your override"))
         raise SystemExit(1)
-    _gate.save_reviewer(room, name, tenant=(pin or {}).get("tenant", ""),
-                        claim_id=(pin or {}).get("claim_id", ""),
-                        participant_id=(pin or {}).get("participant_id", ""))
+    repo = gate_setup.room_repo(room)
+    _write(room, files, lambda f: _gate.save_reviewer(
+        room, name, tenant=(pin or {}).get("tenant", ""),
+        claim_id=(pin or {}).get("claim_id", ""),
+        participant_id=(pin or {}).get("participant_id", ""), path=f, repo=repo))
     if pin is None:
         cli.console.print(f"[warning]![/] #{room} reviewer: @{name}, not pinned. Its GOs "
                           "can't count; every publish waits for your override.")
-        return
-    key = pin.get("claim_id") or pin.get("participant_id")
-    cli.console.print(f"[success]✓[/] #{room} reviewer: @{name}, pinned to {key}. "
-                      "Commits in this room's repo now wait for its GO before main.")
+    else:
+        key = pin.get("claim_id") or pin.get("participant_id")
+        cli.console.print(f"[success]✓[/] #{room} reviewer: @{name}, pinned to {key}. "
+                          "Commits in this room's repo now wait for its GO before main.")
+    for line in gate_setup.where_lines(files):
+        cli.console.print(line)
 
 
 def _markers() -> list[tuple[Path, dict[str, Any]]]:

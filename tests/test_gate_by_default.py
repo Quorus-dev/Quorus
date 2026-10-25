@@ -269,7 +269,7 @@ def test_an_unwritable_daemon_dir_saves_the_pin_nowhere(cfg, monkeypatch):
     blocked.mkdir()
     blocked.chmod(0o500)  # readable, not writable
     try:
-        with pytest.raises(agent_identity.IdentityError, match="couldn't save the reviewer"):
+        with pytest.raises(agent_identity.IdentityError, match="couldn't save the gate"):
             gate_setup.pin_reviewer(_prep("codex"), state_dirs=[blocked])
     finally:
         blocked.chmod(0o700)

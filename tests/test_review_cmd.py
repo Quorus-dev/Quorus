@@ -149,3 +149,111 @@ def test_cli_routes_the_new_commands(cfg, monkeypatch, argv, target, want):
     else:
         assert (args.review_action, args.sha, args.unreviewed) == want
     assert json.dumps(vars(args), default=str)
+
+
+# ── take-3 bug 3: the pin reaches every daemon's file (docs/plans/take3-fixes.md) ──
+
+
+def _reflexd():
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    if "reflexd" not in sys.modules:
+        root = Path(__file__).resolve().parent.parent
+        spec = importlib.util.spec_from_file_location("reflexd", root / "scripts" / "reflexd.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["reflexd"] = mod
+        spec.loader.exec_module(mod)
+    return sys.modules["reflexd"]
+
+
+def _bind(base, binds):
+    """*base*'s bindings; None for the CLI's own (where `quorus room bind` writes)."""
+    from quorus.runtime import bindings
+
+    path = bindings.bindings_path() if base is None else base / bindings.FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({room: {"path": str(repo)} for room, repo in binds.items()}))
+
+
+def _builder(cfg, name, binds):
+    from quorus_cli import agent_cmd
+
+    state = cfg.parent / f"{name}-state"
+    _bind(state, binds)
+    (agent_cmd._agents_dir() / f"{name}.state-dir").write_text(str(state))
+    return state
+
+
+def _daemon_gate(monkeypatch, state, room, repo):
+    """What the daemon started with --state-dir *state* decides for *room*."""
+    from quorus.runtime import bindings
+
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", str(state))
+    return _reflexd()._review_gate_for(room, repo, bindings_path=state / bindings.FILENAME)
+
+
+@pytest.fixture
+def pinning(cfg, monkeypatch):
+    repo = cfg.parent / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(review_cmd, "_history",
+                        lambda room: [_m("rev", "key", sender_claim_id="c-rev")])
+    return repo.resolve()
+
+
+def test_a_state_dir_agent_gets_the_pin_and_its_daemon_holds(cfg, pinning, monkeypatch, capsys):
+    state = _builder(cfg, "a-claude", {"r": pinning})
+    review_cmd.cmd_room_reviewer(_args(name="rev"))
+    out = "".join(capsys.readouterr().out.split())  # Rich wraps inside the path
+    assert str((state / "room-reviewers.json").resolve()) in out and "@a-claude" in out
+    assert rg.reviewer_for("r")["name"] == "rev"  # the CLI's own file too
+    assert _daemon_gate(monkeypatch, state, "r", pinning) == (
+        "r", {"name": "rev", "tenant": "t1", "claim_id": "c-rev"})
+
+
+def test_a_sibling_room_daemon_on_the_same_repo_holds(cfg, pinning, monkeypatch):
+    _bind(None, {"r": pinning})
+    state = _builder(cfg, "a-claude", {"side": pinning})  # never binds "r"
+    review_cmd.cmd_room_reviewer(_args(name="rev"))
+    gate = _daemon_gate(monkeypatch, state, "side", pinning)
+    assert gate is not None and gate[0] == "r" and gate[1]["name"] == "rev"
+
+
+def test_an_agent_on_another_repo_is_left_alone(cfg, pinning, monkeypatch):
+    other = cfg.parent / "other"
+    other.mkdir()
+    _bind(None, {"r": pinning})
+    state = _builder(cfg, "b-claude", {"x": other.resolve()})
+    review_cmd.cmd_room_reviewer(_args(name="rev"))
+    assert not (state / "room-reviewers.json").exists()
+
+
+def test_none_clears_every_dir(cfg, pinning):
+    state = _builder(cfg, "a-claude", {"r": pinning})
+    review_cmd.cmd_room_reviewer(_args(name="rev"))
+    review_cmd.cmd_room_reviewer(_args(none=True))
+    assert rg.reviewer_for("r") is None
+    assert rg.reviewer_for("r", state / "room-reviewers.json") is None
+
+
+def test_a_file_that_cant_be_written_is_a_cross_and_changes_nothing(cfg, pinning, capsys):
+    state = _builder(cfg, "a-claude", {"r": pinning})
+    (state / "room-reviewers.json").write_text("{not json")
+    with pytest.raises(SystemExit) as exc:
+        review_cmd.cmd_room_reviewer(_args(name="rev"))
+    assert exc.value.code == 1
+    out = " ".join(capsys.readouterr().out.split())
+    assert "✗" in out and "gate is unchanged" in out and "✓" not in out
+    assert rg.reviewer_for("r") is None  # the CLI's file was put back
+
+
+def test_disagreeing_dirs_are_reported(cfg, pinning, capsys):
+    state = _builder(cfg, "a-claude", {"r": pinning})
+    rg.save_reviewer("r", "rev", tenant="t1", claim_id="c-rev")
+    rg.save_reviewer("r", "old", tenant="t1", claim_id="c-old",
+                     path=state / "room-reviewers.json")
+    review_cmd.cmd_room_reviewer(_args())
+    out = " ".join(capsys.readouterr().out.split())
+    assert "differs" in out and "@rev" in out and "@old" in out
