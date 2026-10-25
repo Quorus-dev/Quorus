@@ -8312,6 +8312,8 @@ def _print_grouped_help():
             ("resolve",            "AI-powered merge conflict resolution"),
             ("board",              "Live swarm task board"),
             ("room bind <r> <dir>","Bind a room to a repo — agents wake there"),
+            ("room reviewer <r> <n>","Hold a room's commits until this agent's GO"),
+            ("review status",      "Commits held for review (publish <sha> --unreviewed)"),
             ("approvals",          "Tool approvals waiting on you"),
             ("approve <id>",       "Allow an agent's blocked tool call"),
             ("deny <id>",          "Refuse an agent's blocked tool call"),
