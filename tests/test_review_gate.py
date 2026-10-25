@@ -54,7 +54,9 @@ def test_unpinned_reviewer_gates_but_matches_nothing(tmp_path):
     assert rg.verdict(_m(f"✅ GO on {TIP[:8]}"), pin, PENDING) is None
 
 
-@pytest.mark.parametrize("text", ["{not json", "[]", json.dumps({"r": {"name": 3}})])
+@pytest.mark.parametrize("text", ["{not json", "[]", json.dumps({"r": {"name": 3}}),
+                                  json.dumps({"r": None}), json.dumps({"r": {}}),
+                                  json.dumps({"r": "rev-codex"})])
 def test_unreadable_file_gates_every_room(tmp_path, text):
     path = tmp_path / "rev.json"
     path.write_text(text)
@@ -125,6 +127,14 @@ def test_pinned_key_under_another_name_cannot_approve():
     f"✅ GO on {TIP[:6]}",                       # prefix too short
     f"✅ GO on {TIP[:8]} /disagree advisory",    # disagree in the same clause
     "✅ GO",                                     # no sha at all
+    f"GO on {TIP[:8]} after CI passes",         # waits on CI (codex, 30601459)
+    f"GO on {TIP[:8]} when tests pass",
+    f"GO on {TIP[:8]} once the suite is green",
+    f"✅ GO on {TIP[:8]} pending the full suite",
+    f"GO on {TIP[:8]}? Waiting for tests",
+    f"✅ GO on {TIP[:8]}. After CI passes, publish",
+    f"✅ GO on {TIP[:8]}; waiting on the suite",
+    f"✅ GO on {TIP[:8]}. Can you confirm the suite?",
 ])
 def test_not_a_go(text):
     assert rg.verdict(_m(text), PIN, PENDING) is None
@@ -132,6 +142,12 @@ def test_not_a_go(text):
 
 def test_go_clause_ignores_later_negation():
     assert rg.verdict(_m(f"✅ GO on {TIP[:8]}; no regressions."), PIN, PENDING) == "go"
+
+
+def test_go_with_a_description_after_it_counts():
+    text = (f"@b ✅ security GO on `{TIP[:8]}`; /release the block. Mismatches now stop "
+            "before HTTP calls, and joins use the child's key.\n166 focused tests pass.")
+    assert rg.verdict(_m(text), PIN, PENDING) == "go"
 
 
 def test_approve_verb_counts():

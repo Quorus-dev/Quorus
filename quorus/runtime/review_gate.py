@@ -35,6 +35,11 @@ _GO = re.compile(r"(✅.*\bGO\b|\bGO on\b|/approve\b)")
 _BLOCK = re.compile(r"/disagree\s+blocking\b", re.IGNORECASE)
 _DISAGREE = re.compile(r"/disagree\b", re.IGNORECASE)
 _STATUS = "(quorus)"
+# A GO that waits on something isn't a GO yet: "GO on X after CI passes",
+# "GO on X? Waiting for tests" (codex, review of 30601459).
+_CONDITION = re.compile(r"\b(after|when|whenever|once|until|till|pending|waiting|wait|"
+                        r"assuming|provided|providing|as soon as|as long as|so long as|"
+                        r"depends?|depending|subject to|blocked on|tbd)\b", re.IGNORECASE)
 
 
 def _valid(pin: Any) -> bool:
@@ -61,9 +66,9 @@ def reviewer_for(room: str, path: Path | None = None) -> dict[str, str] | None:
         return dict(UNREADABLE)
     if not isinstance(data, dict):
         return dict(UNREADABLE)
-    entry = data.get(room)
-    if entry is None:
-        return None
+    if room not in data:
+        return None  # only an absent entry means the room has no gate
+    entry = data[room]
     if not _valid(entry):
         name = entry.get("name") if isinstance(entry, dict) else ""
         return {**UNREADABLE, "name": name if isinstance(name, str) else ""}
@@ -122,15 +127,26 @@ def from_reviewer(msg: dict[str, Any], pin: dict[str, str] | None) -> bool:
             and review_prefs.authenticated(msg, pin))
 
 
-def _clauses(body: str) -> list[str]:
+def _lines(body: str) -> list[list[str]]:
     """The sender's own unquoted, unfenced lines, minus daemon status lines,
-    split into clauses so "GO on X; no regressions" judges "GO on X" alone."""
+    each split into clauses so "GO on X; no regressions" judges "GO on X"."""
     out = []
     for line in review_prefs._lines(body):
         if line.lstrip().startswith(_STATUS):
             continue
-        out.extend(c for c in _CLAUSE.split(line) if c.strip())
+        out.append([c.strip() for c in _CLAUSE.split(line) if c.strip()])
     return out
+
+
+def _pending(clauses: list[str], i: int) -> bool:
+    """Clause *i*'s GO is conditional or open: a condition or a question in
+    the GO clause itself, or a later clause on its line that starts with one
+    ("GO on X. After CI passes, publish")."""
+    clause = clauses[i]
+    if "?" in clause or _CONDITION.search(clause) or review_prefs._uncertain(clause):
+        return True
+    return any("?" in later or _CONDITION.match(later) or review_prefs._UNCERTAIN.match(later)
+               for later in clauses[i + 1:])
 
 
 def _named(clause: str, pending: list[str]) -> set[str]:
@@ -153,20 +169,22 @@ def verdict(msg: dict[str, Any], pin: dict[str, str] | None,
     reviewer's own stamped messages count. A ``/disagree blocking`` naming
     any pending commit is a block, and wins over a GO in the same message. A
     GO names the tip itself in a clause that says GO, has no negation, no
-    condition, no question and no ``/disagree``."""
+    condition, no question and no ``/disagree``, and no later clause on its
+    line opens with a condition or asks a question."""
     if not pending or not from_reviewer(msg, pin):
         return None
     tip = pending[-1]
-    clauses = _clauses(msg.get("content") or "")
-    if any(_BLOCK.search(c) and _named(c, pending) for c in clauses):
+    lines = _lines(msg.get("content") or "")
+    if any(_BLOCK.search(c) and _named(c, pending) for line in lines for c in line):
         return "block"
-    for clause in clauses:
-        if not _GO.search(clause) or tip not in _named(clause, pending):
-            continue
-        if (_DISAGREE.search(clause) or review_prefs._NEGATED.search(clause)
-                or review_prefs._uncertain(clause)):
-            continue
-        return "go"
+    for line in lines:
+        for i, clause in enumerate(line):
+            if not _GO.search(clause) or tip not in _named(clause, pending):
+                continue
+            if (_DISAGREE.search(clause) or review_prefs._NEGATED.search(clause)
+                    or _pending(line, i)):
+                continue
+            return "go"
     return None
 
 
