@@ -128,17 +128,20 @@ function reply(who) {
   input.focus();
 }
 
+// `what` is one of the item's own actions (inbox.js): approve | deny | vote | disagree |
+// reply. A prose block is reply-only, so `a` and `d` do nothing on it (Codex on bb78c474).
 function act(it, what) {
-  if (what === "reply") return reply(it.who);
-  if (!ownKey()) return;  // the shared secret decides nothing; the card shows the command
-  if (it.kind === "approval") return decide(it.ref, what === "approve", null);
-  if (what === "approve" && (it.kind === "review" || it.kind === "block")) {
+  const can = (it.actions || []).includes(what);
+  if (what === "reply") return can ? reply(it.who) : undefined;
+  if (!can || !ownKey()) return undefined;  // the shared secret decides nothing
+  if (what === "approve" || what === "deny") return decide(it.ref, what === "approve", null);
+  if (what === "vote") {
     // An explicit poll: an unrelated active block must never capture this vote
     // (social_svc.py:389-404). A block item votes in the block's own poll.
     const ref = it.kind === "block" ? it.poll.slice("vote_".length) : it.ref;
-    return verb("vote", ref, { option: "approve", poll_id: "vote_" + ref });
+    return ref ? verb("vote", ref, { option: "approve", poll_id: "vote_" + ref }) : undefined;
   }
-  if (what === "deny" && it.kind === "review") {
+  if (what === "disagree") {
     const reason = window.prompt("Why? Posted to the room as /disagree advisory.");
     if (reason) {
       return verb("disagree", it.ref, { ref_message_id: it.ref, reason, mode: "advisory" });
@@ -146,23 +149,30 @@ function act(it, what) {
   }
   return undefined;
 }
+// The keys: `a` is the item's approve or vote, `d` its deny or disagree, whichever it has.
+const KEY_ACTION = { a: ["approve", "vote"], d: ["deny", "disagree"], r: ["reply"] };
+function keyAction(it, key) {
+  return (KEY_ACTION[key] || []).find((w) => (it.actions || []).includes(w));
+}
 
 function Card({ it }) {
   // Each button is a literal with its registry id (quorus/actions/registry.py
   // BOARD_CONTROLS), so the action-registry test can read label and binding from the file.
   const on = (what) => (e) => { e.stopPropagation(); act(it, what); };
-  const approve = html`<button type="button" class="ok" data-action="quorus.approval.decide"
-      onClick=${on("approve")}>Approve</button>`;
-  const deny = html`<button type="button" data-action="quorus.approval.decide"
-      onClick=${on("deny")}>Deny</button>`;
-  const vote = html`<button type="button" class="ok" data-action="quorus.social.vote"
-      onClick=${on("approve")}>Vote approve</button>`;
-  const disagree = html`<button type="button" data-action="quorus.social.disagree"
-      onClick=${on("deny")}>Disagree</button>`;
-  const reply = html`<button type="button" data-action="quorus.message.say"
-      onClick=${on("reply")}>Reply</button>`;
-  const buttons = { approval: [approve, deny], review: [vote, disagree, reply],
-                    block: [vote, reply], hold: [reply], question: [reply] }[it.kind] || [];
+  // One button per action the item carries (inbox.js decides; a prose block is reply-only).
+  const BUTTON = {
+    approve: html`<button type="button" class="ok" data-action="quorus.approval.decide"
+      onClick=${on("approve")}>Approve</button>`,
+    deny: html`<button type="button" data-action="quorus.approval.decide"
+      onClick=${on("deny")}>Deny</button>`,
+    vote: html`<button type="button" class="ok" data-action="quorus.social.vote"
+      onClick=${on("vote")}>Vote approve</button>`,
+    disagree: html`<button type="button" data-action="quorus.social.disagree"
+      onClick=${on("disagree")}>Disagree</button>`,
+    reply: html`<button type="button" data-action="quorus.message.say"
+      onClick=${on("reply")}>Reply</button>`,
+  };
+  const buttons = (it.actions || []).map((what) => BUTTON[what]).filter(Boolean);
   const cli = it.kind === "approval" ? "quorus approve " + it.ref : "quorus web";
   return html`<div class="ibcard">
     <span class="ibtext">${it.what}</span>
@@ -205,9 +215,11 @@ function inboxKeys(e) {
   else if (k === "k" || k === "ArrowUp") B.sel = Math.max(B.sel - 1, 0);
   else if (k === "Enter") B.openRef = it && B.openRef !== it.ref ? it.ref : null;
   else if (k === "Escape") { B.openRef = null; B.help = false; }
-  else if (k === "a" && it) act(it, "approve");
-  else if (k === "d" && it) act(it, "deny");
-  else if (k === "r" && it) act(it, "reply");
+  else if ((k === "a" || k === "d" || k === "r") && it) {
+    const what = keyAction(it, k);
+    if (!what) return;  // not one of this item's actions: the key does nothing here
+    act(it, what);
+  }
   else if (k === "?") B.help = !B.help;
   else if (k === "l") { mode("list"); return; }
   else return;

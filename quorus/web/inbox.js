@@ -128,12 +128,23 @@ export function inboxItems(history, approvals, me, now, members) {
     const later = history.slice(i + 1);
     const text = String(m.content);
     if (from !== me && mention(me || "\u0000").test(text) && REVIEW.test(text) && SHA.test(text)) {
-      // A review request: closed by the viewer's own verdict on the sha or the asker.
+      // A review request: closed by the viewer's own verdict, in prose on the sha or the
+      // asker, or on the wire: a `vote` in this request's poll (the inbox's `a`) or a
+      // `disagree` that references it (Codex on bb78c474).
       const sha = text.match(SHA)[0];
-      const verdict = later.some((x) => x.from_name === me && (OK.test(x.content || "")
-        || BLOCK.test(x.content || "")) && (String(x.content).includes(sha)
-        || mention(from).test(x.content || "")));
-      if (!verdict) item("review", m, { actions: ["approve", "disagree", "reply"] });
+      const id = String(m.id || "");
+      const verdict = later.some((x) => {
+        if (x.from_name !== me) return false;
+        const e = envelope(x);
+        if (e) {
+          const p = e.payload || {};
+          return (e.verb === "vote" && (p.poll_id === "vote_" + id || e.ref_message_id === id))
+            || (e.verb === "disagree" && (p.ref_message_id === id || e.ref_message_id === id));
+        }
+        return (OK.test(x.content || "") || BLOCK.test(x.content || ""))
+          && (String(x.content).includes(sha) || mention(from).test(x.content || ""));
+      });
+      if (!verdict) item("review", m, { actions: ["vote", "disagree", "reply"] });
       return;
     }
     if (!isMine(from, me) && BLOCK.test(text) && m.message_type !== "status") {

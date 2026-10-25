@@ -244,3 +244,36 @@ def test_poll_tallies_persist_across_events_like_the_relays_state(tmp_path: Path
     assert _inbox(tmp_path, second, [], members=3) == []  # the earlier vote still counts
     repeat = history + [verb("v6", "arav-claude", "vote", {"option": "approve"}, minute=7)]
     assert _kinds(_inbox(tmp_path, repeat, [], members=3)) == [("block", "v4")]  # refused
+
+
+def test_a_prose_block_is_reply_only_and_a_wire_block_votes_in_its_poll(tmp_path: Path) -> None:
+    """Codex on bb78c474: the card and the keys follow the item's own actions, so a prose
+    block (no poll) never sends a vote into `vote_`."""
+    history = BLOCK_ON_CLAUDE + [
+        msg("p1", "eli-codex", "@arav-codex /disagree blocking on `feedbac`: tests fail", 3)]
+    wire, prose = _inbox(tmp_path, history, [], members=3)
+    assert wire["actions"] == ["vote", "reply"] and wire["poll"] == "vote_m1"
+    assert prose["actions"] == ["reply"] and prose["poll"] == "" and prose["prose"] is True
+    assert "if (!what) return;" in board.BOARD_JS  # a key the item lacks does nothing
+    assert "(it.actions || []).map((what) => BUTTON[what])" in board.BOARD_JS
+
+
+def test_a_review_closes_on_the_viewers_wire_vote_or_disagree(tmp_path: Path) -> None:
+    """Codex on bb78c474: the inbox's `a` posts a vote in the request's own poll; that must
+    end the request, as must a wire disagree that references it."""
+    ask = [msg("r1", "arav-claude", "@arav please review 1a2b3c4 for GO", 1)]
+    items = _inbox(tmp_path, ask, [])
+    assert _kinds(items) == [("review", "r1")] and items[0]["actions"] == [
+        "vote", "disagree", "reply"]
+    voted = ask + [verb("v1", "arav", "vote", {"option": "approve", "poll_id": "vote_r1"},
+                        ref="r1", minute=2)]
+    assert _inbox(tmp_path, voted, []) == []
+    disagreed = ask + [verb("v2", "arav", "disagree", {"ref_message_id": "r1", "reason": "no",
+                                                       "mode": "advisory"}, minute=2)]
+    assert _inbox(tmp_path, disagreed, []) == []
+    elsewhere = ask + [verb("v3", "arav", "vote", {"option": "approve", "poll_id": "vote_zz"},
+                            minute=2)]  # a vote in another poll is no verdict on r1
+    assert _kinds(_inbox(tmp_path, elsewhere, [])) == [("review", "r1")]
+    someone_else = ask + [verb("v4", "arav-codex", "vote", {"option": "approve",
+                                                           "poll_id": "vote_r1"}, minute=2)]
+    assert _kinds(_inbox(tmp_path, someone_else, [])) == [("review", "r1")]

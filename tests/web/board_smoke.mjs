@@ -168,8 +168,10 @@ const reviewIndex = kinds.indexOf("review");
 for (let i = 0; i < reviewIndex; i++) await page2.keyboard.press("j");
 const selectedKind = await page2.evaluate(() => document.querySelector("#inboxList .ibrow.sel")?.classList[1]);
 await page2.keyboard.press("a");
+// The viewer's own vote is their verdict: the review leaves the inbox on the next poll.
+let reviewGone = true;
 await page2.waitForFunction(() => !document.querySelector("#inboxList .ibrow.review"), null, { timeout: 8000 })
-  .catch(() => {});  // one voter is not a majority of 5 members; the item stays, the vote landed
+  .catch(() => { reviewGone = false; });
 const state = await (await fetch(base + "/v1/social/state/demo",
   { headers: { Authorization: "Bearer " + samJwt } })).json();
 await page2.keyboard.press("?");
@@ -217,6 +219,7 @@ const checks = {
   "JWT: `a` approves from the keyboard": decided.status === "approved" && decided.decided_by === "sam",
   "JWT: `j` selects the review with a block active": selectedKind === "review" && kinds.includes("block"),
   "JWT: the review vote lands in its own poll": Object.keys(votes).includes(pollKey) && (votes[pollKey].approve || 0) >= 1,
+  "JWT: the voted review leaves the inbox": reviewGone,
   "JWT: the unrelated block is untouched": blockRef === shipped.id && socialState.blocked_until_resolved === true
     && !(votes["vote_" + shipped.id] && Object.keys(votes["vote_" + shipped.id]).length),
   "`?` shows the keys, esc hides them": helpShown && helpGone,
