@@ -16,9 +16,9 @@ or anything else (keep the journal, publish nothing, tell the owner).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import re
 import subprocess
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -50,9 +50,17 @@ def _out(*args: str, cwd: Path) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
+def repo_identity(repo: Path) -> str:
+    """The checkout's full canonical path: what a lock and journal belong to."""
+    return os.path.realpath(repo)
+
+
 def _name(runtime_dir: Path, repo: Path, suffix: str) -> Path:
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(repo.resolve()))[-150:]
-    return runtime_dir / f"publish-{safe}.{suffix}"
+    # A hash of the whole identity, never a sanitized or truncated path:
+    # "a/b" and "a_b" sanitized to one name and shared a lock and journal
+    # (codex, review of eed52d75).
+    digest = hashlib.sha256(repo_identity(repo).encode("utf-8")).hexdigest()
+    return runtime_dir / f"publish-{digest}.{suffix}"
 
 
 def journal_path(runtime_dir: Path, repo: Path) -> Path:
@@ -109,11 +117,14 @@ def recover(runtime_dir: Path, repo: Path, main: str) -> Result | None:
     path = journal_path(runtime_dir, repo)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        src, dst = str(data["from"]), str(data["to"])
+        src, dst, owner = str(data["from"]), str(data["to"]), data["repo"]
     except FileNotFoundError:
         return None
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return Result("stuck", f"publish journal {path} can't be read: {exc}")
+    if owner != repo_identity(repo):
+        # Never settle another checkout's publish against this one.
+        return Result("stuck", f"publish journal {path} belongs to {owner!r}, not {repo}")
     head = _out("rev-parse", "HEAD", cwd=repo)
     on_main = _on_main(repo, main)
     if on_main and head and _clean(repo):
@@ -178,7 +189,8 @@ def _publish(runtime_dir: Path, repo: Path, main: str, branch: str, sha: str,
         return Result("dirty", f"the main checkout {repo} has uncommitted changes",
                       before, sha)
     path = journal_path(runtime_dir, repo)
-    _write_journal(path, {"from": before, "to": sha, "main": main, "branch": branch})
+    _write_journal(path, {"repo": repo_identity(repo), "from": before, "to": sha,
+                          "main": main, "branch": branch})
     merged = _ff(repo, sha)
     if (merged.returncode == 0 and _out("rev-parse", "HEAD", cwd=repo) == sha
             and _clean(repo)):

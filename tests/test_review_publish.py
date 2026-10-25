@@ -176,7 +176,8 @@ def test_two_publishes_of_one_go_land_once(setup):
 def journal(run: Path, repo: Path, src: str, dst: str) -> Path:
     path = rp.journal_path(run, repo)
     run.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"from": src, "to": dst, "main": "main", "branch": BRANCH}))
+    path.write_text(json.dumps({"repo": rp.repo_identity(repo), "from": src, "to": dst,
+                                "main": "main", "branch": BRANCH}))
     return path
 
 
@@ -242,3 +243,63 @@ def test_failed_merge_leaves_no_journal(setup, monkeypatch):
     res = rp.publish_approved(run, repo, "main", BRANCH, tip)
     assert (res.status, res.detail) == ("failed", "boom") and head(repo) == base
     assert not rp.journal_path(run, repo).exists()
+
+
+# ── one lock and journal per repo (codex, review of eed52d75) ───────────
+
+
+def make_repo(root: Path) -> tuple[Path, str]:
+    root.mkdir(parents=True)
+    git(root, "init", "-q", "-b", "main")
+    base = commit(root, "a.txt", "a\n")
+    git(root, "branch", BRANCH)
+    return root, base
+
+
+def test_paths_that_sanitize_alike_get_their_own_lock_and_journal(tmp_path):
+    slash, _ = make_repo(tmp_path / "a" / "b")
+    under, _ = make_repo(tmp_path / "a_b")
+    run = tmp_path / "run"
+    assert rp.journal_path(run, slash) != rp.journal_path(run, under)
+    long_a = tmp_path / ("x" * 150 + "1")
+    long_b = tmp_path / ("x" * 150 + "2")
+    assert rp.journal_path(run, long_a) != rp.journal_path(run, long_b)
+
+
+def test_one_repos_journal_never_touches_another(tmp_path):
+    slash, base_s = make_repo(tmp_path / "a" / "b")
+    under, base_u = make_repo(tmp_path / "a_b")
+    run = tmp_path / "run"
+    tip = commit_on_branch(under)
+    journal(run, slash, base_s, "f" * 40)  # slash's stuck-looking journal
+    (slash / "a.txt").write_text("human edit\n")
+    assert rp.publish_approved(run, under, "main", BRANCH, tip).status == "published"
+    assert head(slash) == base_s and rp.journal_path(run, slash).exists()
+    assert head(under) == tip and base_u != tip
+
+
+def test_journal_naming_another_repo_is_stuck(setup):
+    repo, _wt, base, tip, run = setup
+    path = journal(run, repo, base, tip)
+    data = json.loads(path.read_text())
+    data["repo"] = "/somewhere/else"
+    path.write_text(json.dumps(data))
+    res = rp.recover(run, repo, "main")
+    assert res is not None and res.status == "stuck" and path.exists()
+    assert rp.publish_approved(run, repo, "main", BRANCH, tip).status == "stuck"
+    assert head(repo) == base
+
+
+def test_two_repos_do_not_share_a_lock(tmp_path):
+    slash, _ = make_repo(tmp_path / "a" / "b")
+    under, _ = make_repo(tmp_path / "a_b")
+    run = tmp_path / "run"
+    tip = commit_on_branch(under)
+    with rp.repo_lock(run, slash):  # held for the other repo
+        assert rp.publish_approved(run, under, "main", BRANCH, tip).status == "published"
+
+
+def commit_on_branch(repo: Path) -> str:
+    wt = repo.parent / (repo.name + "-wt")
+    git(repo, "worktree", "add", "-q", str(wt), BRANCH)
+    return commit(wt, "b.txt", "b\n")
