@@ -25,6 +25,8 @@ _WEB = Path(__file__).parent / "web"
 BOARD_JS = "\n" + (_WEB / "board.js").read_text(encoding="utf-8")
 # The pure row logic board.js imports; node tests run this file (slice 2).
 ROWS_JS = (_WEB / "rows.js").read_text(encoding="utf-8")
+# The "needs you" inbox model (slice 3), pure like rows.js; the view lands in slice 4.
+INBOX_JS = (_WEB / "inbox.js").read_text(encoding="utf-8")
 
 
 @router.get("/board.js", include_in_schema=False)
@@ -38,4 +40,11 @@ async def board_js() -> Response:
 async def rows_js() -> Response:
     """The board's row logic, imported by /board.js (same origin, same CSP)."""
     return Response(ROWS_JS, media_type="application/javascript",
+                    headers={"cache-control": "no-cache"})
+
+
+@router.get("/inbox.js", include_in_schema=False)
+async def inbox_js() -> Response:
+    """The inbox model, imported by the board (same origin, same CSP)."""
+    return Response(INBOX_JS, media_type="application/javascript",
                     headers={"cache-control": "no-cache"})

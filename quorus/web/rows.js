@@ -36,9 +36,13 @@ function busySince(p, name, now) {
   const t = typeof w === "number" ? w : Date.parse(w || "") / 1000;
   return t > 0 ? t : (B.since[name] || now);
 }
-const PUBLISHED = /\(quorus\) published (\d+) commit\(s\) from quorus\/([\w-]+) to ([\w./-]+)/;
-const OK = /✅|\bapproved?\b|\bLGTM\b|lifting my block/i;
-const BLOCK = /\/disagree|\bblocking\b|\brejected\b|\bnot approved\b/i;
+// Shared with inbox.js: the daemon's publish line, a verdict, a block, a question to a person.
+export const PUBLISHED =
+  /\(quorus\) published (\d+) commit\(s\) from quorus\/([\w-]+) to ([\w./-]+)/;
+export const OK = /✅|\bapproved?\b|\bLGTM\b|lifting my block/i;
+export const BLOCK = /\/disagree|\bblocking\b|\brejected\b|\bnot approved\b/i;
+export const ASK_RE =
+  /\?|please (approve|confirm|decide)|need (your )?(approval|ok|decision)|i'?m blocked/i;
 
 // One agent's row, from presence + history + approvals. Pure: easy to reason about.
 export function rowState(name, presence, history, approvals, now) {
@@ -53,8 +57,7 @@ export function rowState(name, presence, history, approvals, now) {
   const myName = me();
   const ask = mine.slice().reverse().find((m) => myName && m.message_type !== "status"
     && mention(myName).test(m.content || "")
-    && /\?|please (approve|confirm|decide)|need (your )?(approval|ok|decision)|i'?m blocked/i
-       .test(m.content || ""));
+    && ASK_RE.test(m.content || ""));
   const answered = ask && history.some((m) => m.from_name === myName && ts(m) > ts(ask));
   if (ask && !answered) r.asks.push((ask.content || "").split("\n")[0].slice(0, 160));
   if (!p.online) { r.rank = 6; r.line = "offline"; }

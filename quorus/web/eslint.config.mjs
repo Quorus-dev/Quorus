@@ -33,7 +33,7 @@ export default [
     },
   },
   {
-    files: ["**/quorum*.js", "**/board.js", "**/rows.js"],
+    files: ["**/quorum*.js", "**/board.js", "**/rows.js", "**/inbox.js"],
     languageOptions: { sourceType: "module" },
   },
 ];
