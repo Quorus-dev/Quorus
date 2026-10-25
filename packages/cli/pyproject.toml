@@ -1,6 +1,6 @@
 [project]
 name = "quorus-cli"
-version = "0.7.5"
+version = "0.7.6"
 description = "Quorus CLI — coordination layer for AI agent swarms"
 requires-python = ">=3.10"
 license = "MIT"

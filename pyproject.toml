@@ -1,6 +1,6 @@
 [project]
 name = "quorus-ai"
-version = "0.7.5"
+version = "0.7.6"
 description = "Real-time coordination layer for AI agent swarms — rooms, messaging, distributed locks"
 requires-python = ">=3.10"
 license = "MIT"

@@ -5,6 +5,24 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.6] — 2026-10-25
+
+0.7.5 was tagged in error and never published; 0.7.6 includes its fixes.
+
+### Security
+
+- `quorus connect ollama`, `antigravity`, `aider` and `http` printed your relay's secret
+  inside the snippet they tell you to paste, in every release from 0.5.0 through 0.7.4.
+  The `http` one is meant to go into an agent's system prompt, so the secret also reached
+  that agent's provider. 0.7.6 leaves it out: the Python and curl snippets read
+  `QUORUS_RELAY_SECRET` from the environment, and the Antigravity config leaves the secret
+  to `quorus-mcp`, which reads it from your saved profile. If the secret came only from
+  your shell's `RELAY_SECRET`, the Antigravity config shows a placeholder to fill in
+  instead. Each snippet names the file the secret is saved in, never the secret.
+- If you pasted one of those snippets into an agent, a prompt or a shared file, follow
+  the 0.7.5 steps below: change the relay secret, restart the relay, then review invites
+  and participant keys.
+
 ## [0.7.5] — 2026-10-25
 
 ### Security
