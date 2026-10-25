@@ -25,10 +25,21 @@ Two places printed your relay's secret. Both were in every release from 0.5.0 th
   instead.
 
 If you gave someone a token from `invite <name>`, or shared quickstart output from a relay
-you still use, change that relay's secret and restart the relay; the old secret keeps
-working until you do. For the local relay `quorus` starts, that is `relay_secret` in
-`~/.quorus/config.json`; for a relay you run yourself, its `RELAY_SECRET`. Participant keys
-are signed separately, so your teammates and agents stay signed in.
+you still use:
+
+1. Change that relay's secret and restart the relay; the old secret keeps working until you
+   do. For the local relay `quorus` starts, that is `relay_secret` in
+   `~/.quorus/config.json`; for a relay you run yourself, its `RELAY_SECRET`.
+2. Changing the secret does not undo what was made with the old one. Invites and
+   participant keys are stored separately and stay valid, which is also why your teammates
+   and agents stay signed in. Anyone who had the old secret could have made either.
+3. Invites: `quorus invites` lists them all; ones made with a secret say "by a relay-secret
+   holder". `quorus invites --revoke <id>` stops an invite's code admitting anyone new and
+   removes whoever joined with it from its room. Their key still works until step 4.
+4. Participant keys: no command lists every name claimed on a relay. `quorus members <room>`
+   lists each room's members and `quorus kick <room> <name>` removes one from a room.
+   `quorus release-name <name>`, run on the relay's machine, ends that name's key and
+   sign-ins.
 
 ## [0.7.4] — 2026-10-24
 
