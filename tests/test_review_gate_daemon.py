@@ -499,3 +499,135 @@ def test_room_unreadable_under_the_lock_holds(env):
     assert _git(repo, "rev-parse", "main") == main
     [status] = [p["content"] for p in relay.posted]
     assert "couldn't be re-read before publishing" in status
+
+
+# ── slice 3c: one ⚠ on timeout, and the owner's override ─────────────────
+
+OWNER_PIN = {"tenant": "t1", "claim_id": "c-owner"}
+
+
+def _owner_says(text: str, *, mid: str = "o1", claim: str = "c-owner", auth: str = "key",
+                ts: str = "2026-10-25T08:10:00") -> dict[str, Any]:
+    return _say(text, mid=mid, auth=auth, claim=claim, sender="b", ts=ts)
+
+
+def _age(d, repo, wt, seconds: float) -> None:
+    import time as _t
+    rg.update_marker(d.config.runtime_dir, repo, wt.branch, since=_t.time() - seconds)
+
+
+def test_timeout_posts_one_warning_and_publishes_nothing(env, monkeypatch):
+    d, repo, wt, main, tip = _held(env)
+    alerts: list[str] = []
+    monkeypatch.setattr(d, "_alert_owner", lambda room, text, *a, **k: alerts.append(text))
+    _age(d, repo, wt, 21 * 60)
+    relay = _Room([])
+    _tick(d, relay)
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main
+    [note] = [p["content"] for p in relay.posted]
+    assert note.startswith(f"(quorus) ⚠ no review of {tip[:12]} from @rev-codex after 21 min")
+    assert "still not on main" in note and "@b can override from this machine" in note
+    assert len(alerts) == 1
+
+
+def test_no_warning_before_the_timeout(env):
+    d, repo, wt, _main, _tip = _held(env)
+    _age(d, repo, wt, 60)
+    relay = _Room([])
+    _tick(d, relay)
+    assert relay.posted == []
+
+
+def test_timeout_is_configurable(env, monkeypatch):
+    d, repo, wt, _main, _tip = _held(env)
+    monkeypatch.setenv("QUORUS_REVIEW_TIMEOUT_S", "120")
+    _age(d, repo, wt, 180)
+    relay = _Room([])
+    _tick(d, relay)
+    assert "⚠ no review" in relay.posted[0]["content"]
+
+
+def test_pinned_owner_override_publishes_unreviewed(env, monkeypatch):
+    d, repo, wt, _main, tip = _held(env)
+    monkeypatch.setattr(reflexd._owner_pin, "owner_pin", lambda _p: OWNER_PIN)
+    _age(d, repo, wt, 21 * 60)
+    warn = _Room([])
+    _tick(d, warn)
+    assert f"@b can say `publish {tip[:12]} unreviewed`" in warn.posted[0]["content"]
+    relay = _Room([_owner_says(f"@b-claude publish {tip[:12]} unreviewed")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == tip
+    [note] = [p["content"] for p in relay.posted]
+    assert note.endswith("; unreviewed (owner override by @b o1)")
+    notes = _git(repo, "notes", "--ref=quorus", "show", "main")
+    assert '"override_by": "b"' in notes and '"reviewed_by": null' in notes
+
+
+def test_override_beats_a_reviewer_block(env, monkeypatch):
+    d, repo, _wt, _main, tip = _held(env)
+    monkeypatch.setattr(reflexd._owner_pin, "owner_pin", lambda _p: OWNER_PIN)
+    relay = _Room([_say(f"/disagree blocking on {tip[:8]}", mid="b1"),
+                   _owner_says(f"publish {tip[:12]} unreviewed")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == tip
+
+
+@pytest.mark.parametrize("pin, msg", [
+    (None, {}),                                     # no owner pin: no in-room override
+    (OWNER_PIN, {"auth": "secret"}),                # the owner's name via the relay secret
+    (OWNER_PIN, {"claim": "c-other"}),              # someone else's key under the name
+])
+def test_unauthenticated_override_publishes_nothing(env, monkeypatch, pin, msg):
+    d, repo, _wt, main, tip = _held(env)
+    monkeypatch.setattr(reflexd._owner_pin, "owner_pin", lambda _p: pin)
+    relay = _Room([_owner_says(f"publish {tip[:12]} unreviewed", **msg)])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main
+
+
+@pytest.mark.parametrize("text", [
+    "publish {sha} unreviewed — overseer",          # an agent signing as the owner
+    "don't publish {sha} unreviewed",               # not the command
+    "should I publish {sha} unreviewed?",
+    "> publish {sha} unreviewed",                   # quoting
+    "publish {other} unreviewed",                   # another commit
+])
+def test_not_an_override(env, monkeypatch, text):
+    d, repo, _wt, main, tip = _held(env)
+    monkeypatch.setattr(reflexd._owner_pin, "owner_pin", lambda _p: OWNER_PIN)
+    relay = _Room([_owner_says(text.format(sha=tip[:12], other="c" * 12))])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main
+
+
+def test_local_override_publishes_unreviewed(env):
+    d, repo, wt, _main, tip = _held(env)
+    rg.update_marker(d.config.runtime_dir, repo, wt.branch, override_tip=tip)
+    relay = _Room([])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == tip
+    assert relay.posted[0]["content"].endswith("; unreviewed (owner override by @b local)")
+
+
+def test_local_override_for_an_older_tip_does_nothing(env):
+    d, repo, wt, main, tip = _held(env)
+    rg.update_marker(d.config.runtime_dir, repo, wt.branch, override_tip="f" * 40)
+    _tick(d, _Room([]))
+    assert _git(repo, "rev-parse", "main") == main
+
+
+def test_override_gone_under_the_lock_holds(env, monkeypatch):
+    d, repo, _wt, main, tip = _held(env)
+    monkeypatch.setattr(reflexd._owner_pin, "owner_pin", lambda _p: OWNER_PIN)
+
+    class Vanishing(_Room):
+        reads = 0
+
+        async def fetch_history(self, **_kw: Any) -> list[dict[str, Any]]:
+            self.reads += 1
+            return list(self.history) if self.reads <= 2 else []
+
+    relay = Vanishing([_owner_says(f"publish {tip[:12]} unreviewed")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main

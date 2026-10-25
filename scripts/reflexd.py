@@ -4830,10 +4830,31 @@ class Reflexd:
             return None
         state, ref = _review_gate.decide(history, pin, pending)
         who = pin.get("name") or "the reviewer"
-        if state == "blocked":
+        me = self.config.participant_name
+        owner = agent_owner(me)
+        owner_pin = _owner_pin.owner_pin(me)
+
+        def overridden(hist: list[dict[str, Any]]) -> str | None:
+            """The owner's override of exactly this tip: their own pinned
+            `publish <sha> unreviewed` in the room, or one made on this machine
+            (the marker's `override_tip`, written by the owner's CLI)."""
+            local = _review_gate.load_marker(runtime, wt.repo, wt.branch) or {}
+            if local.get("override_tip") == tip:
+                return "local"
+            return _review_gate.owner_override(hist, owner, owner_pin, tip)
+
+        override = overridden(history)
+        if override is None and state == "blocked":
             return (f"{reflexd_wake.STATUS_PREFIX} held: @{who} /disagree blocking on "
                     f"{tip[:12]}; not on main")
-        if state != "go":
+        if override is None and state != "go":
+            waited = time.time() - float(marker.get("since") or time.time())
+            if waited >= _review_gate.timeout_s() and marker.get("timed_out") != tip:
+                await asyncio.to_thread(_review_gate.update_marker, runtime, wt.repo,
+                                        wt.branch, timed_out=tip)
+                self._alert_owner(room, f"no review of {tip[:12]} from @{who}; not on main")
+                return _review_gate.timeout_note(pin, tip, waited, owner,
+                                                 in_room=owner_pin is not None)
             return None
         held = await self._guard_publish(relay, room, wt)
         if held is not None:
@@ -4845,7 +4866,7 @@ class Reflexd:
             now = _review_gate.load_marker(runtime, wt.repo, wt.branch)
             if not now or now.get("tip") != tip:
                 return "the held tip changed"
-            if _review_gate.reviewer_for(room) != pin:
+            if override is None and _review_gate.reviewer_for(room) != pin:
                 return "the room's reviewer changed"
             # Re-read the room under the lock: a block that landed after the
             # first read (or while this waited for the lock) must win (codex,
@@ -4855,6 +4876,8 @@ class Reflexd:
                     fetch(room=room, limit=reflexd_held.HISTORY_LIMIT), loop).result(60)
             except Exception as exc:
                 return f"the room couldn't be re-read before publishing ({exc.__class__.__name__})"
+            if override is not None:  # the owner's call; it must still stand
+                return None if overridden(fresh) else _REVIEW_CHANGED + "override gone"
             listed_now = reflexd_wake._git("rev-list", "--reverse", f"{wt.main}..{tip}",
                                            cwd=wt.repo)
             pending_now = listed_now.stdout.split() if listed_now.returncode == 0 else []
@@ -4874,15 +4897,19 @@ class Reflexd:
             return None
         if res.status == "published":
             before = res.before or marker.get("base") or ""
+            meta = ({"reviewed_by": None, "override_by": owner, "override_msg": override}
+                    if override is not None else {"reviewed_by": who, "review_msg": ref})
             try:
                 from quorus.ledger import record_provenance
                 await asyncio.to_thread(record_provenance, wt.repo, before, tip, {
-                    "agent": self.config.participant_name, "room": room,
-                    "reviewed_by": who, "review_msg": ref})
+                    "agent": me, "room": room, **meta})
             except Exception as exc:  # best effort, like the ordinary publish note
                 logger.warning("provenance note failed: %s", exc)
             suffix = await asyncio.to_thread(reflexd_wake._published_suffix, wt.repo,
                                              before, wt.main)
+            if override is not None:
+                return _review_gate.override_note(len(pending), wt.branch, wt.main, suffix,
+                                                  owner, override)
             return _review_gate.reviewed_note(len(pending), wt.branch, wt.main, suffix,
                                               who, ref)
         if res.status == "behind" and not self._wake_lock.locked():

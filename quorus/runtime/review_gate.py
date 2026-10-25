@@ -330,3 +330,54 @@ def reviewed_note(n: int, branch: str, main: str, suffix: str, reviewer: str,
     ref = f" (GO {msg_id})" if msg_id else ""
     return (f"{_STATUS} published {n} commit(s) from {branch} to {main}{suffix}; "
             f"reviewed by @{reviewer}{ref}")
+
+
+# ── slice 3c: timeout and the owner's override ───────────────────────────
+
+DEFAULT_TIMEOUT_S = 20 * 60
+_OVERRIDE = re.compile(r"^\s*(?:@[\w-]+[,:]?\s+)*publish\s+`?([0-9a-f]{7,40})`?\s+unreviewed\s*$",
+                       re.IGNORECASE)
+
+
+def timeout_s() -> int:
+    """How long a held tip waits before the one ⚠ (``QUORUS_REVIEW_TIMEOUT_S``)."""
+    try:
+        value = int(os.environ.get("QUORUS_REVIEW_TIMEOUT_S", DEFAULT_TIMEOUT_S))
+    except ValueError:
+        return DEFAULT_TIMEOUT_S
+    return value if value > 0 else DEFAULT_TIMEOUT_S
+
+
+def owner_override(history: Iterable[dict[str, Any]], owner: str,
+                   owner_pin: dict[str, str] | None, tip: str) -> str | None:
+    """The id of the owner's own ``publish <sha> unreviewed`` for exactly *tip*.
+
+    The whole line must be the command (after @-mentions), naming a prefix
+    of *tip*. Only the owner's own words count, by the same check as loop B:
+    their pinned stamp, never a message signed "— overseer", relayed, quoted
+    or fenced (review_prefs.owner_post). No pin: no in-room override."""
+    found = None
+    for msg in sorted(history, key=lambda m: review_prefs._ts(m.get("timestamp"))):
+        if review_prefs.owner_post(msg, owner, owner_pin) is not None:
+            continue
+        for line in review_prefs._lines(msg.get("content") or ""):
+            m = _OVERRIDE.match(line)
+            if m and len(m.group(1)) >= MIN_SHA and tip.startswith(m.group(1).lower()):
+                found = msg.get("id") or "?"
+    return found
+
+
+def timeout_note(pin: dict[str, str], tip: str, waited_s: float, owner: str,
+                 in_room: bool) -> str:
+    who = pin.get("name") or "the reviewer"
+    how = (f"@{owner} can say `publish {tip[:12]} unreviewed`" if in_room
+           else f"@{owner} can override from this machine")
+    return (f"{_STATUS} ⚠ no review of {tip[:12]} from @{who} after "
+            f"{int(waited_s // 60)} min; still not on main. {how}.")
+
+
+def override_note(n: int, branch: str, main: str, suffix: str, owner: str,
+                  msg_id: str | None) -> str:
+    ref = f" {msg_id}" if msg_id else ""
+    return (f"{_STATUS} published {n} commit(s) from {branch} to {main}{suffix}; "
+            f"unreviewed (owner override by @{owner}{ref})")
