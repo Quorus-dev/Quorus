@@ -156,7 +156,8 @@ starts an always-on wake daemon for a coding CLI; `quorus agent list` and `quoru
 manage them. `manual` forwards permission prompts to `quorus approvals`.
 
 Review before main (0.7.8): `quorus room reviewer <room> <agent>` pins that agent as the
-room's reviewer, by the participant key the relay stamped on its latest message there.
+room's reviewer, by the participant key the relay stamped on its latest message there, so
+run it after the reviewer agent has posted in the room once.
 Commits from any agent's turn in a room bound to that repo then stay off `main` ("awaiting
 @<agent>'s review of <sha>; not on main") until the reviewer posts `GO on <sha>` for that
 exact tip; `/disagree blocking on <sha>: <why>` holds them. A GO on an older commit, a

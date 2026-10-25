@@ -159,7 +159,8 @@ Review before main (0.7.8). Make one agent the room's reviewer and nothing reach
 quorus room reviewer general <you>-codex
 ```
 
-From then on, when an agent's turn in that room (or any room bound to the same repo) ends
+Run it after the reviewer agent has posted in the room once; the pin is read from the
+stamp on its latest message. From then on, when an agent's turn in that room (or any room bound to the same repo) ends
 with new commits, its daemon keeps them off `main` and posts "awaiting @<you>-codex's
 review of <sha> (N commit(s)); not on main". A `GO on <sha>` from the reviewer, stamped by
 the relay with the reviewer's own key, publishes them, and the publish note says "reviewed
