@@ -341,3 +341,92 @@ def test_no_usable_model_exits_nonzero(monkeypatch, tmp_path) -> None:
     assert exc.value.code == 1
     assert any("all busy" in line for line in said)
     assert not (tmp_path / "demo").exists()  # the throwaway folder is still removed
+
+
+def test_task_tells_the_reviewer_what_a_go_looks_like() -> None:
+    task = demo_cmd.task_for("demo-claude", "demo-review-codex")
+    assert "fix the bug in calc.py" in task and "`GO on <hash>`" in task
+    assert "/disagree blocking on <hash>" in task
+    assert "@demo-review-codex" not in task  # still not woken by the human's message
+
+
+def _fake_post(responses: dict[str, dict]):
+    import json as _json
+
+    class R:
+        def __init__(self, status: int, body: dict) -> None:
+            self.status_code, self._body = status, body
+
+        def json(self) -> dict:
+            return self._body
+
+    def post(url: str, **kw):
+        for suffix, body in responses.items():
+            if url.endswith(suffix):
+                assert kw.get("follow_redirects") is False, "credential calls never follow"
+                return R(200, body)
+        return R(404, {})
+
+    post.jwt = "h." + __import__("base64").urlsafe_b64encode(
+        _json.dumps({"sub": "demo-review-opencode", "pk_claim": "claim-77"}).encode()
+    ).decode().rstrip("=") + ".s"
+    return post
+
+
+def test_mint_keys_where_the_daemons_look_and_pin_the_reviewer(tmp_path: Path,
+                                                               monkeypatch) -> None:
+    """review-gate.md slice 4: each demo agent gets its own key (so its messages are
+    stamped `key`), and the reviewer is pinned to the claim inside its own JWT."""
+    from quorus import bundle_client
+    from quorus.runtime import review_gate
+
+    post = _fake_post({})
+    post_map = {"/v1/auth/claim-name": {"name": "x", "participant_key": "quorus_pk_test"},
+                "/v1/auth/token": {"token": post.jwt}}
+    post = _fake_post(post_map)
+    monkeypatch.setattr(demo_cmd.httpx, "post", post)
+    home = tmp_path / "home"
+    keys = demo_cmd.mint_agent_keys("http://127.0.0.1:1", "secret", home,
+                                    (demo_cmd.BUILDER, demo_cmd.REVIEWER))
+    assert set(keys) == {demo_cmd.BUILDER, demo_cmd.REVIEWER}
+    for name in keys:
+        assert bundle_client.load_participant_key(
+            "http://127.0.0.1:1", name, demo_cmd.agent_key_dir(home, name)) == "quorus_pk_test"
+    pin = demo_cmd.pin_reviewer("http://127.0.0.1:1", home, demo_cmd.REVIEWER,
+                                keys[demo_cmd.REVIEWER])
+    assert pin == {"name": demo_cmd.REVIEWER, "tenant": "_legacy", "claim_id": "claim-77"}
+    assert review_gate.reviewer_for(demo_cmd.ROOM, demo_cmd.reviewers_file(home)) == pin
+    assert review_gate.pinned(pin)
+
+
+def test_held_tip_and_the_review_before_main_check(tmp_path: Path) -> None:
+    repo = demo_cmd.make_sample_repo(tmp_path)
+    full = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True,
+                          text=True).stdout.strip()
+    history = [_m("demo-opencode", f"(quorus) awaiting @{demo_cmd.REVIEWER}'s review of "
+                                    f"{full[:12]} (1 commit(s)); not on main")]
+    assert demo_cmd.held_tip(history, repo) == full
+    assert demo_cmd.held_tip([_m("x", "nothing held")], repo) is None
+    assert demo_cmd.held_tip([_m("x", "awaiting @r's review of 0000000 (1 commit(s))")],
+                             repo) is None  # not a commit here
+    go = dict(_m(demo_cmd.REVIEWER, f"✅ GO on {full[:7]}"), id="g1")
+    pub = dict(_m("demo-opencode", "(quorus) published 1 commit(s) from quorus/demo-opencode "
+                                   f"to main; reviewed by @{demo_cmd.REVIEWER} (GO g1)"), id="p1")
+    assert demo_cmd.published_after_review([go, pub], demo_cmd.REVIEWER, "g1")
+    assert not demo_cmd.published_after_review([pub, go], demo_cmd.REVIEWER, "g1")  # main first
+    assert not demo_cmd.published_after_review([go, pub], demo_cmd.REVIEWER, None)
+    plain = dict(_m("demo-opencode", "(quorus) published 1 commit(s) from quorus/demo-opencode "
+                                     "to main"), id="p2")
+    assert not demo_cmd.published_after_review([go, plain], demo_cmd.REVIEWER, "g1")
+
+
+def test_the_verdict_is_read_from_the_hold_when_the_room_is_gated() -> None:
+    """With the review gate the GO comes while the commit is held, before the publish
+    note; a later reviewer line (woken again by the publish) must not replace it."""
+    held = _m("demo-opencode", "(quorus) awaiting @demo-review-opencode's review of abc1234567 "
+                               "(1 commit(s)); not on main")
+    go = _m("demo-review-opencode", "✅ GO on abc1234: add() returns a + b now; reviewed.")
+    pub = _m("demo-opencode", "(quorus) published 1 commit(s) from quorus/demo-opencode to "
+                              "main; reviewed by @demo-review-opencode (GO g1)")
+    later = _m("demo-review-opencode", "I'm read-only for this request too; @you please approve.")
+    assert demo_cmd.review_of([held, go, pub, later]).startswith("✅ GO on abc1234")

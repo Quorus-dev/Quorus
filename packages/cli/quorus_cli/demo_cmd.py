@@ -10,6 +10,8 @@ is touched.
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 import re
 import secrets
@@ -24,6 +26,8 @@ from typing import Any
 
 import httpx
 
+from quorus.runtime import review_gate as _gate
+
 # opencode's free open-source models. Their limits vary hour to hour (night 1:
 # DeepSeek and MiMo rate-limited while LongCat answered), so probe and use the
 # first two that respond: one builds, the other reviews.
@@ -37,10 +41,14 @@ BUILDER, REVIEWER, HUMAN, ROOM = "demo-opencode", "demo-review-opencode", "you",
 def task_for(builder: str, reviewer: str) -> str:
     # The reviewer's turn is read-only (no reply chain to a person under `trust:
     # members`), so the hand-off carries what it needs to review by reading (0.7.1).
-    return (f"@{builder} add() in calc.py is broken: fix it, run the test, commit, then "
-            f"@-mention your reviewer ({reviewer}) to review your commit. In that "
-            "message, give the commit hash, the file and line you changed, and the test "
-            "result, so it can review by reading.")
+    # The room is gated (review-gate slice 4): the builder's commit is held off main
+    # until the reviewer's GO, so the task says exactly what a GO looks like.
+    return (f"@{builder} fix the bug in calc.py: add() returns a - b. Fix it, run the test, "
+            f"commit, then @-mention your reviewer ({reviewer}) to review your commit. In "
+            "that message, give the commit hash, the file and line you changed, and the "
+            f"test result, so it can review by reading. {reviewer}: nothing lands on main "
+            "until you answer. Read the commit; if it is right, reply on one line "
+            "`GO on <hash>`; if not, `/disagree blocking on <hash>: <why>`.")
 
 
 TASK = task_for(BUILDER, REVIEWER)
@@ -89,6 +97,89 @@ def write_binding(home: Path, repo: Path) -> None:
         {ROOM: {"path": str(repo), "mode": "autonomous", "trust": "members"}}))
 
 
+def agent_key_dir(home: Path, name: str) -> Path:
+    """Where *name*'s daemon looks for its own participant key: the daemon's
+    ``config_dir()/runtime/agents/<name>`` (scripts/reflexd.py, ``key_dir``), under the
+    demo's throwaway HOME."""
+    return home / ".quorus" / "runtime" / "agents" / name
+
+
+def mint_agent_keys(url: str, secret: str, home: Path, names: tuple[str, ...]) -> dict[str, str]:
+    """Claim a participant key for each demo agent before its daemon starts, and save
+    it where that daemon loads it, so every message the agent posts is stamped ``key``
+    (its own identity) rather than ``secret``. A GO sent with the relay secret can never
+    approve anything (review-gate.md), so this is what lets the reviewer's GO count."""
+    from quorus import bundle_client
+
+    keys: dict[str, str] = {}
+    for name in names:
+        resp = httpx.post(f"{url}/v1/auth/claim-name", json={"name": name},
+                                headers={"Authorization": f"Bearer {secret}"}, timeout=10,
+                                follow_redirects=False)
+        if resp.status_code != 200:
+            raise RuntimeError(f"the demo relay wouldn't claim {name}: HTTP {resp.status_code}")
+        keys[name] = resp.json()["participant_key"]
+        bundle_client.save_participant_key(url, name, keys[name], agent_key_dir(home, name))
+    return keys
+
+
+def claim_id_of(url: str, key: str) -> str:
+    """The claim generation the relay puts in *key*'s JWT (``pk_claim``), which it also
+    stamps on that agent's messages as ``sender_claim_id``: the thing a reviewer pin is
+    bound to. Read from our own token; the relay verifies it, we only decode it."""
+    resp = httpx.post(f"{url}/v1/auth/token", json={"api_key": key}, timeout=10,
+                            follow_redirects=False)
+    if resp.status_code != 200:
+        raise RuntimeError(f"the demo relay wouldn't sign the agent in: HTTP {resp.status_code}")
+    payload = resp.json()["token"].split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    return str(claims["pk_claim"])
+
+
+def reviewers_file(home: Path) -> Path:
+    return home / ".quorus" / "room-reviewers.json"
+
+
+def pin_reviewer(url: str, home: Path, reviewer: str, key: str) -> dict[str, str]:
+    """Record *reviewer* as #demo's reviewer, pinned to its own key's claim, in the
+    file the builder's daemon reads (``room-reviewers.json`` next to the bindings).
+    From then on that daemon holds its commits off main until this reviewer's GO."""
+    _gate.save_reviewer(ROOM, reviewer, tenant="_legacy", claim_id=claim_id_of(url, key),
+                        path=reviewers_file(home))
+    pin = _gate.reviewer_for(ROOM, reviewers_file(home))
+    assert pin and _gate.pinned(pin)
+    return pin
+
+
+_AWAITING = re.compile(r"awaiting @[\w-]+'s review of ([0-9a-f]{7,40})")
+
+
+def held_tip(history: list[dict[str, Any]], repo: Path) -> str | None:
+    """The full sha of the commit the builder's daemon is holding for review, from its
+    latest "awaiting … review of <sha>" status in the room (None until it posts one)."""
+    for m in reversed(history):
+        found = _AWAITING.search(m.get("content") or "")
+        if not found:
+            continue
+        out = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "--end-of-options",
+                              found.group(1) + "^{commit}"], cwd=repo,
+                             capture_output=True, text=True)
+        return out.stdout.strip() or None
+    return None
+
+
+def published_after_review(history: list[dict[str, Any]], reviewer: str,
+                           go_id: str | None) -> bool:
+    """The daemon's publish note names this reviewer and came after its GO."""
+    if not go_id:
+        return False
+    ids = [m.get("id") for m in history]
+    note = next((i for i, m in enumerate(history)
+                 if "(quorus) published" in (m.get("content") or "")
+                 and f"reviewed by @{reviewer}" in (m.get("content") or "")), None)
+    return note is not None and go_id in ids and ids.index(go_id) < note
+
+
 def is_fixed(repo: Path) -> bool:
     out = subprocess.run(["git", "show", "main:calc.py"], cwd=repo, capture_output=True,
                          text=True).stdout
@@ -96,11 +187,15 @@ def is_fixed(repo: Path) -> bool:
 
 
 def review_of(history: list[dict[str, Any]], reviewer: str = REVIEWER) -> str | None:
-    """The reviewer's verdict after the fix was published (a plan line isn't one)."""
-    pub = [i for i, m in enumerate(history) if "(quorus) published" in (m.get("content") or "")]
-    if not pub:
+    """The reviewer's verdict (a plan line isn't one). With the gate the review comes
+    while the commit is held, before the publish note, so look from the first
+    "awaiting … review" status; an ungated room's verdict follows its publish note."""
+    marks = [i for i, m in enumerate(history)
+             if "(quorus) awaiting" in (m.get("content") or "")
+             or "(quorus) published" in (m.get("content") or "")]
+    if not marks:
         return None
-    for m in history[pub[0] + 1:]:
+    for m in history[marks[0] + 1:]:
         body = (m.get("content") or "").strip()
         if (m.get("from_name") == reviewer and m.get("message_type") != "status"
                 and not body.lower().startswith("plan:") and not _NOT_A_VERDICT.search(body)):
@@ -358,6 +453,11 @@ def cmd_demo(args: Any, console: Any) -> None:
         httpx.post(f"{url}/rooms", json={"name": ROOM, "created_by": HUMAN}, headers=H)
         for who in (HUMAN, builder, reviewer):
             httpx.post(f"{url}/rooms/{ROOM}/join", json={"participant": who}, headers=H)
+        # Review before main: each agent gets its own key, and the reviewer is pinned to
+        # its key's claim in the file the builder's daemon reads, so the fix is held off
+        # main until a GO that provably came from the reviewer (review-gate slice 4).
+        keys = mint_agent_keys(url, secret, home, (builder, reviewer))
+        pin = pin_reviewer(url, home, reviewer, keys[reviewer])
         from quorus.runtime.supervisor import _reflexd_script_path
 
         for name, (_h, model) in ((builder, cast[0]), (reviewer, cast[1])):
@@ -373,6 +473,7 @@ def cmd_demo(args: Any, console: Any) -> None:
                                                             "content": task_for(builder, reviewer)},
                    headers=H)
         seen, history, fixed_at, steps = 0, [], None, {}
+        tip, go_at, go_id, state = None, None, None, "waiting"
         while time.time() - start < args.timeout:
             history = httpx.get(f"{url}/rooms/{ROOM}/history", params={"limit": 200},
                                 headers=H, timeout=10).json()
@@ -380,28 +481,55 @@ def cmd_demo(args: Any, console: Any) -> None:
                 _show(console, m, start)
             seen = len(history)
             _show_steps(console, url, H, steps, start, (builder, reviewer))
+            tip = tip or held_tip(history, repo)
+            if tip:
+                state, go_id = _gate.decide(history, pin, [tip])
+                if go_at is None and state == "go":
+                    go_at = time.time() - start
             if fixed_at is None and is_fixed(repo):
                 fixed_at = time.time() - start
-            if fixed_at is not None and review_of(history, reviewer):
+            if state == "blocked" or (fixed_at is not None and (
+                    go_at is None or published_after_review(history, reviewer, go_id))):
                 break
             if all_out_of_quota(history, (builder, reviewer)):
                 break
             time.sleep(2)
-        if fixed_at is not None or is_fixed(repo):
-            took = fixed_at if fixed_at is not None else time.time() - start
-            console.print(f"\n[success]✓[/] The fix was on main {took:.0f}s after your message.")
+        fixed = fixed_at is not None or is_fixed(repo)
+        took = fixed_at if fixed_at is not None else time.time() - start
+        if fixed and published_after_review(history, reviewer, go_id):
+            console.print(f"\n[success]✓[/] @{reviewer} read the commit and said GO "
+                          f"{go_at:.0f}s after your message; the fix landed on main at "
+                          f"{took:.0f}s, after the review, not before.")
             verdict = review_of(history, reviewer)
-            console.print(f"  Second agent's review: {verdict}" if verdict else
-                          "  [dim](the second agent's review was still running)[/]",
-                          highlight=False)
+            if verdict:
+                console.print(f"  Second agent's review: {verdict}", highlight=False)
             console.print(f"[dim]{subprocess.run(['git', 'log', '--oneline', '-3', 'main'], cwd=repo, capture_output=True, text=True).stdout.strip()}[/]")  # noqa: E501
             console.print("\nYour turn: run [accent]quorus[/] to make a room, then "
                           "[accent]quorus agent add claude|codex|opencode --room general "
                           "--repo <your project>[/].")
+        elif fixed:
+            # main moved without the reviewer's GO: the gate didn't hold. Say so and
+            # fail; the demo's promise is review before main, and this run can't make it.
+            console.print(f"\n[warning]![/] The fix reached main {took:.0f}s in without "
+                          f"@{reviewer}'s GO. The review gate didn't hold it; this run "
+                          "doesn't show review before main.")
+            raise SystemExit(1)
+        elif state == "blocked":
+            console.print(f"\n[warning]![/] @{reviewer} blocked {(tip or '')[:7]}: nothing "
+                          "landed on main. That is the gate working; the fix itself was "
+                          "not accepted this run.")
+            raise SystemExit(1)
+        elif tip:
+            console.print(f"\n[warning]![/] {(tip or '')[:7]} is held for @{reviewer}'s "
+                          f"review and the review didn't arrive in {args.timeout}s, so "
+                          "nothing is on main. opencode's free tier may be busy; try again "
+                          "in a few minutes, or use your own models with `quorus agent add`.")
+            raise SystemExit(1)
         else:
             console.print(f"\n[warning]![/] The agents didn't finish in {args.timeout}s. "
                           "opencode's free tier may be busy; try again in a few minutes, or "
                           "use your own models with `quorus agent add`.")
+            raise SystemExit(1)
     finally:
         for p in reversed(procs):
             p.terminate()
