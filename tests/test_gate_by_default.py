@@ -60,7 +60,7 @@ def _offer(c, repo, which, events, *, gate=True, pin=None):
     def start(prep, _c):
         events.append(("start", prep["name"]))
 
-    def do_pin(prep):
+    def do_pin(prep, **kw):
         events.append(("pin", prep["name"]))
         if pin:
             pin(prep)
@@ -103,7 +103,7 @@ def test_one_agent_means_no_gate(cfg, tools, only):
     quickstart.offer(_C(), "general", cwd=_repo(cfg), ask=lambda q: True, which=tools(only),
                      ask_write=lambda q: True, ask_gate=lambda q: asked.append(q) or True,
                      prepare=lambda a, _c: _prep(a.tool), start=lambda p, _c: None,
-                     pin=lambda p: events.append("pin"))
+                     pin=lambda p, **kw: events.append("pin"))
     assert asked == [] and events == []
 
 
@@ -116,7 +116,7 @@ def test_no_repo_means_no_gate_question(cfg, tools):
                      which=tools(("claude", "codex")), ask_write=lambda q: True,
                      ask_gate=lambda q: asked.append(q) or True,
                      prepare=lambda a, _c: _prep(a.tool), start=lambda p, _c: None,
-                     pin=lambda p: events.append("pin"))
+                     pin=lambda p, **kw: events.append("pin"))
     assert asked == [] and events == []
 
 
@@ -243,3 +243,69 @@ def test_plain_agent_add_is_unchanged(cfg, monkeypatch):
     monkeypatch.setattr(gate_setup, "pin_reviewer", lambda *a, **k: events.append("pin"))
     agent_cmd._add(SimpleNamespace(), _C())
     assert events == ["start"]
+
+
+# ── every daemon's config dir gets the pin (codex, review of 1a120d72) ────
+
+
+def _fake_identity(monkeypatch):
+    monkeypatch.setattr(agent_identity, "ensure_key", lambda *a: "quorus_pk_new")
+    monkeypatch.setattr(agent_identity, "identity",
+                        lambda url, key: {"tenant": "_legacy", "claim_id": "c-new"})
+
+
+def test_a_state_dir_daemon_reads_the_pin_too(cfg, monkeypatch):
+    _fake_identity(monkeypatch)
+    state = cfg / "state"
+    gate_setup.pin_reviewer(_prep("codex", state_dir=state), state_dirs=[cfg / "lead-state"])
+    for base in (cfg / "cfg", state, cfg / "lead-state"):
+        pin = rg.reviewer_for("general", base / "room-reviewers.json")
+        assert pin == {"name": "a-codex", "tenant": "_legacy", "claim_id": "c-new"}, base
+
+
+def test_an_unwritable_daemon_dir_saves_the_pin_nowhere(cfg, monkeypatch):
+    _fake_identity(monkeypatch)
+    blocked = cfg / "blocked"
+    blocked.mkdir()
+    blocked.chmod(0o500)  # readable, not writable
+    try:
+        with pytest.raises(agent_identity.IdentityError, match="couldn't save the reviewer"):
+            gate_setup.pin_reviewer(_prep("codex"), state_dirs=[blocked])
+    finally:
+        blocked.chmod(0o700)
+    assert rg.reviewer_for("general") is None  # the CLI's own file was rolled back
+    assert not (blocked / "room-reviewers.json").exists()
+
+
+def test_an_unreadable_daemon_dir_counts_as_gated(cfg, monkeypatch):
+    _fake_identity(monkeypatch)
+    odd = cfg / "odd"
+    odd.write_text("a file where a state dir should be")
+    with pytest.raises(agent_identity.IdentityError, match="already has"):
+        gate_setup.pin_reviewer(_prep("codex"), state_dirs=[odd])
+    assert rg.reviewer_for("general") is None
+
+
+def test_a_gate_in_any_daemon_dir_is_kept(cfg, monkeypatch):
+    _fake_identity(monkeypatch)
+    state = cfg / "state"
+    rg.save_reviewer("general", "a-gemini", tenant="_legacy", claim_id="c-old",
+                     path=state / "room-reviewers.json")
+    with pytest.raises(agent_identity.IdentityError, match="already has @a-gemini"):
+        gate_setup.pin_reviewer(_prep("codex", state_dir=state))
+    assert rg.reviewer_for("general", state / "room-reviewers.json")["claim_id"] == "c-old"
+    assert rg.reviewer_for("general") is None
+
+
+def test_a_failed_setup_reports_the_gate_it_kept(cfg, tools, monkeypatch):
+    rg.save_reviewer("general", "a-gemini", tenant="_legacy", claim_id="c-old")
+    monkeypatch.setattr(gate_setup, "post", lambda prep, text: None)
+    c = _C()
+
+    def boom(prep):
+        raise agent_identity.IdentityError("#general already has @a-gemini as its reviewer")
+
+    _offer(c, _repo(cfg), tools(("claude", "codex")), [], pin=boom)
+    text = " ".join(c.out)
+    assert "#general keeps its current gate: commits wait for @a-gemini's GO" in text
+    assert "publish when a turn ends" not in text

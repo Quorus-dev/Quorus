@@ -226,12 +226,14 @@ def _add_gated(console: Any, room: str, repo: Path | None, tools: list[str],
             console.print(f"  [warning]![/] {LABEL[t]}: {exc}")
     line = None
     if reviewer is not None and reviewer in preps and lead in preps:
+        dirs = [p["state_dir"] for p in preps.values()]
         try:
-            pin(preps[reviewer])
+            pin(preps[reviewer], state_dirs=dirs)
             line = gate_setup.gate_line(room, preps[reviewer]["name"], repo)
-        except Exception as exc:  # any failure: no gate, said plainly
+        except Exception as exc:  # any failure: no new gate, said plainly
             why = str(exc) or exc.__class__.__name__
-            console.print(f"  [warning]![/] {gate_setup.failed_line(room, why, reviewer)}")
+            kept = gate_setup.current_reviewers(room, gate_setup.reviewer_files(dirs))
+            console.print(f"  [warning]![/] {gate_setup.failed_line(room, why, reviewer, kept)}")
     elif reviewer is not None:
         why = "an agent did not join"
         console.print(f"  [warning]![/] {gate_setup.failed_line(room, why, reviewer)}")
