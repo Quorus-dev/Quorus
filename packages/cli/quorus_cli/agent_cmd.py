@@ -634,10 +634,9 @@ def _prepare(args: Any, console: Any) -> dict[str, Any]:
 
 def _start(prep: dict[str, Any], console: Any) -> None:
     """Start (or reuse) the prepared agent's daemon."""
-    cfg, me, name, room = prep["cfg"], prep["me"], prep["name"], prep["room"]
+    cfg, name, room = prep["cfg"], prep["name"], prep["room"]
     repo, model, state_dir = prep["repo"], prep["model"], prep["state_dir"]
-    existing, cred, legacy, bearer = (prep["existing"], prep["cred"], prep["legacy"],
-                                      prep["bearer"])
+    existing, cred, legacy = prep["existing"], prep["cred"], prep["legacy"]
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "
                       "— it now also listens to this room")

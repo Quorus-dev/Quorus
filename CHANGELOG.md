@@ -43,8 +43,9 @@ All notable changes to Quorus are documented here. This project follows
   claim on a relay this machine runs (and says how to free it on one it doesn't), and
   re-adding an agent reuses its saved key from any state dir on this machine instead of
   failing with 409.
-- `quorus relay` resolves its state paths against its own working directory, so a relay
-  started from another directory and the CLI agree on where its data lives.
+- The relay `quorus` starts on this computer gets absolute state paths (a relative
+  history database was recorded against the CLI's directory while the relay read
+  another file), so the CLI and the relay agree on which claims file is in use.
 - A daemon on the relay `quorus` starts claims its own participant key before it starts,
   so its posts are stamped with that key from the first message.
 
