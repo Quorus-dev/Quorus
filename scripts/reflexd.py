@@ -2851,6 +2851,7 @@ class Reflexd:
         # room -> ordered ids the agent saw in a wake it then answered.
         self._answered: dict[str, dict[str, None]] = {}
         self._turns: list[float] = []  # harness run start times, for pacing
+        self._refunds: list[float] = []  # NO_REPLY turns given back, this hour
         self._pace_announced: dict[str, float] = {}
         # Paced envelopes wait here (newest per room, coalesced) instead of
         # holding the wake lock: a pacing sleep under the lock kept the owner's
@@ -3378,10 +3379,49 @@ class Reflexd:
                 self._release_paced(relay, wait))
         return False
 
-    def _record_turn(self) -> None:
-        """A harness turn is starting: it counts against the pace window."""
+    def _record_turn(self) -> float:
+        """A harness turn is starting: it counts against the pace window.
+        Returns its timestamp, so :meth:`_refund_turn` can give back this one."""
         now = time.time()
         self._turns = [t for t in self._turns if now - t < PACE_WINDOW_S] + [now]
+        return now
+
+    async def _refund_turn(self, relay: RelayClient, room: str, started_at: float,
+                           wake_started: datetime) -> bool:
+        """Give back the slot of a turn that changed nothing: it answered
+        NO_REPLY and, by the end of the wake, published nothing, added no
+        status line and posted nothing itself (FRICTION #95; codex, review of
+        384e348a). The caller checks the first two. At most ``cap`` refunds per
+        rolling hour, so chatter spends at most twice the cap. Only this turn's
+        own timestamp goes, and any doubt keeps it counted."""
+        cap = pace_for(self.config.participant_name)
+        if cap is None or started_at not in self._turns:
+            return False
+        now = time.time()
+        self._refunds = [t for t in self._refunds if now - t < PACE_WINDOW_S]
+        if len(self._refunds) >= cap:
+            return False
+        try:
+            recent = await relay.fetch_recent(room=room, limit=50)
+        except Exception:
+            return False  # can't tell whether it posted: the turn counts
+        def before(ts: Any) -> bool:
+            try:
+                t = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            except ValueError:
+                return False
+            return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)) < wake_started
+
+        # Its own post since the wake began (through its tools), or one we can't
+        # date: the turn did something, so it counts.
+        if any(m.get("from_name") == self.config.participant_name
+               and not before(m.get("timestamp")) for m in recent):
+            return False
+        self._turns.remove(started_at)
+        self._refunds.append(now)
+        logger.info("pacing: NO_REPLY turn given back (%d/%d this hour)",
+                    len(self._refunds), cap)
+        return True
 
     async def _release_paced(self, relay: RelayClient, wait: float) -> None:
         """When the slot opens, wake once per room for the parked messages.
@@ -3606,6 +3646,9 @@ class Reflexd:
         # so a review request can carry exactly this wake's commits.
         pre_head = (await asyncio.to_thread(_review_share.head_of, worktree)
                     if worktree is not None and share_for(room) else None)
+        turn_commits: list[str] = []  # what this turn published (memory slice 2)
+        turn_at: float | None = None  # this turn's pace slot, if it ran
+        chose_no_reply = False
         shared_note = ""
         if pre_head and _review_share.shared_bundle_ids(envelope.get("content") or ""):
             # Step 4: the review request's commits are in the repo before the
@@ -3832,7 +3875,7 @@ class Reflexd:
                             + notice(tasks, task_turn["kind"]))
                 except Exception as exc:
                     logger.warning("task evidence unavailable (%s)", type(exc).__name__)
-            self._record_turn()  # only a turn that runs counts against the pace
+            turn_at = self._record_turn()  # only a turn that runs counts against the pace
             reply = await self.adapter.run(
                 harness, context=prompt,
                 cwd=worktree.path if worktree is not None else ws,
@@ -3903,6 +3946,7 @@ class Reflexd:
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
             reply = ""
+            chose_no_reply = True
         elif reply:
             # "NO_REPLY? No — …" leaked the protocol token into chat (BUG 10).
             scrubbed = reflexd_wake.scrub_no_reply(reply)
@@ -4020,6 +4064,8 @@ class Reflexd:
                 reply = f"{reply}\n{line}"
         if not reply:
             logger.info("harness produced empty reply, skipping post")
+            if chose_no_reply and turn_at is not None and not turn_commits:
+                await self._refund_turn(relay, room, turn_at, wake_started)
             # Silence looked like a dead agent (Arav, 2026-10-17): say it read
             # the message. `status` messages never wake anyone.
             if time.time() - self._last_spoke.get(room, 0.0) > SILENCE_STATUS_EVERY_S:
