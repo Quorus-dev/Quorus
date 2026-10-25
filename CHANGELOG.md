@@ -5,6 +5,24 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.5] — 2026-10-25
+
+### Security
+
+- In the terminal room (`quorus`), typing `invite <name>` printed a `quorus_join_…` token
+  and told you to give it to that person. The token contained your relay's secret,
+  base64-encoded, not hidden. Anyone who received one could decode it and act as your
+  relay's operator: post as anyone, approve requests, mint invites, remove members and
+  delete rooms. Every release from 0.5.0 through 0.7.4 has this path.
+- 0.7.5 removes it. `invite <name>` now tells you to use `/share`, which makes a join code
+  that redeems into the invitee's own key, the way `quorus share` has worked since 0.6.0.
+- If you ever sent someone a token from `invite <name>`, change your relay's secret and
+  restart the relay; the old secret keeps working until you do. For the local relay
+  `quorus` starts, that is `relay_secret` in `~/.quorus/config.json`; for a relay you run
+  yourself, its `RELAY_SECRET`. Participant keys are signed separately, so your teammates
+  and agents stay signed in. Join codes from `/share` and `quorus share` never carried the
+  secret and are not affected.
+
 ## [0.7.4] — 2026-10-24
 
 ### Added
