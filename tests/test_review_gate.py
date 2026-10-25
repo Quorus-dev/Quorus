@@ -135,6 +135,12 @@ def test_pinned_key_under_another_name_cannot_approve():
     f"✅ GO on {TIP[:8]}. After CI passes, publish",
     f"✅ GO on {TIP[:8]}; waiting on the suite",
     f"✅ GO on {TIP[:8]}. Can you confirm the suite?",
+    f"After CI passes; GO on {TIP[:8]}",          # condition before (codex, 79a256bb)
+    f"Once the suite is green, ✅ GO on {TIP[:8]}",
+    f"GO on {TIP[:8]}; correction: no GO yet",    # retraction after (codex, 79a256bb)
+    f"✅ GO on {TIP[:8]}. Scratch that, found a bug",
+    f"✅ GO on {TIP[:8]}; GO withdrawn",
+    f"✅ GO on {TIP[:8]}; not a GO until docs land",
 ])
 def test_not_a_go(text):
     assert rg.verdict(_m(text), PIN, PENDING) is None

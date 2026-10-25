@@ -32,6 +32,12 @@ MIN_SHA = 7
 _SHA = re.compile(r"\b[0-9a-f]{7,40}\b")
 _CLAUSE = re.compile(r"[;.](?:\s+|$)")
 _GO = re.compile(r"(✅.*\bGO\b|\bGO on\b|/approve\b)")
+# Taking a GO back anywhere on the line: "correction: no GO yet", "GO
+# withdrawn", "scratch that".
+_RETRACT = re.compile(r"\b(correction|correct(ed|ing) myself|retract\w*|withdr[ae]w\w*|"
+                      r"revok\w*|rescind\w*|scratch that|disregard|ignore (that|my|the)|"
+                      r"undo|not yet|not a GO|(no|not|n['’]t|never)\s+(a\s+)?GO)\b",
+                      re.IGNORECASE)
 _BLOCK = re.compile(r"/disagree\s+blocking\b", re.IGNORECASE)
 _DISAGREE = re.compile(r"/disagree\b", re.IGNORECASE)
 _STATUS = "(quorus)"
@@ -139,14 +145,16 @@ def _lines(body: str) -> list[list[str]]:
 
 
 def _pending(clauses: list[str], i: int) -> bool:
-    """Clause *i*'s GO is conditional or open: a condition or a question in
-    the GO clause itself, or a later clause on its line that starts with one
-    ("GO on X. After CI passes, publish")."""
-    clause = clauses[i]
-    if "?" in clause or _CONDITION.search(clause) or review_prefs._uncertain(clause):
+    """Clause *i*'s GO is open: its own clause is negated, or anywhere on the
+    unquoted line there is a condition, a question, or a retraction of a GO.
+    "After CI passes; GO on X" and "GO on X; correction: no GO yet" both stay
+    pending (codex, review of 79a256bb), while a plain description after the
+    GO ("no regressions") still counts: negation is judged per clause."""
+    if review_prefs._NEGATED.search(clauses[i]):
         return True
-    return any("?" in later or _CONDITION.match(later) or review_prefs._UNCERTAIN.match(later)
-               for later in clauses[i + 1:])
+    line = " ".join(clauses)
+    return bool("?" in line or _CONDITION.search(line) or _RETRACT.search(line)
+                or review_prefs._UNCERTAIN.search(line))
 
 
 def _named(clause: str, pending: list[str]) -> set[str]:
@@ -181,8 +189,7 @@ def verdict(msg: dict[str, Any], pin: dict[str, str] | None,
         for i, clause in enumerate(line):
             if not _GO.search(clause) or tip not in _named(clause, pending):
                 continue
-            if (_DISAGREE.search(clause) or review_prefs._NEGATED.search(clause)
-                    or _pending(line, i)):
+            if _DISAGREE.search(clause) or _pending(line, i):
                 continue
             return "go"
     return None
