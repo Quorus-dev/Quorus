@@ -226,7 +226,14 @@ def _turn(monkeypatch, d, relay, i: int, *, reply: str = "NO_REPLY", during=None
     monkeypatch.setattr(d.adapter, "run", fake_run)
     env = {"id": f"e{i}", "message_id": f"m{i}", "room": "build", "from_name": sender,
            "content": f"@{d.config.participant_name} thoughts?", "message_type": "chat"}
+    relay.history.append({**env, "timestamp": _now()})  # the message that wakes it
     asyncio.run(d._wake_and_reply(relay, env, reason="t"))
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 def test_no_reply_turns_give_their_slot_back_up_to_the_cap(monkeypatch) -> None:
@@ -327,6 +334,7 @@ def test_a_refund_removes_only_its_own_turn(monkeypatch) -> None:
     d, relay = _paced_daemon(monkeypatch), _Room()
     first, second = time.time() - 20, time.time() - 10
     d._turns = [first, second]
+    relay.history.append({"id": "ask", "from_name": "a-claude", "timestamp": _now()})
     started = datetime.now(timezone.utc)
     assert asyncio.run(d._refund_turn(relay, "build", second, started))
     assert d._turns == [first]
@@ -388,3 +396,24 @@ def test_a_cap_still_full_keeps_it_parked(monkeypatch) -> None:
 def test_a_stop_during_a_step_returns_at_once(monkeypatch) -> None:
     d, steps, woke = _parked_release(monkeypatch, [])
     assert woke == [] and len(steps) == 1
+
+
+def test_a_post_hidden_behind_a_busy_room_counts(monkeypatch) -> None:
+    """codex, review of dd79fc65: the agent's own post, then 50 newer messages.
+    The read never reaches back to the wake's start, so it can't refund."""
+    def busy(relay: _Room) -> None:
+        relay.history.append({"id": "own", "from_name": "a-codex", "content": "✅",
+                              "timestamp": _now()})
+        relay.history.extend({"id": f"x{n}", "from_name": "a-claude", "content": "...",
+                              "timestamp": _now()} for n in range(reflexd.REFUND_LOOKBACK))
+
+    d, relay = _paced_daemon(monkeypatch), _Room()
+    _turn(monkeypatch, d, relay, 0, during=busy)
+    assert len(d._turns) == 1 and d._refunds == []
+
+
+def test_an_empty_read_counts(monkeypatch) -> None:
+    """RelayClient.fetch_recent answers [] when the read fails: no proof, no refund."""
+    d, relay = _paced_daemon(monkeypatch), _Room()
+    _turn(monkeypatch, d, relay, 0, during=lambda r: r.history.clear())
+    assert len(d._turns) == 1 and d._refunds == []

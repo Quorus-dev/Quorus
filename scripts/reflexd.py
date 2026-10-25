@@ -175,6 +175,7 @@ ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
 PACING_PATH = Path.home() / ".quorus" / "pacing.json"
 PACE_WINDOW_S = 3600.0
 PACE_RECHECK_S = 30.0  # how often a parked wake re-reads its cap
+REFUND_LOOKBACK = 50  # messages read to check a NO_REPLY turn posted nothing
 MAX_WAKE_ATTEMPTS = 2
 GEMINI_TIMEOUT_S = 10 * 60  # its quiet internal retries hung one wake for 55 min
 
@@ -3403,7 +3404,7 @@ class Reflexd:
         if len(self._refunds) >= cap:
             return False
         try:
-            recent = await relay.fetch_recent(room=room, limit=50)
+            recent = await relay.fetch_recent(room=room, limit=REFUND_LOOKBACK)
         except Exception:
             return False  # can't tell whether it posted: the turn counts
         def before(ts: Any) -> bool:
@@ -3413,6 +3414,13 @@ class Reflexd:
                 return False
             return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)) < wake_started
 
+        # The read must reach back past the wake's start, so it shows a message
+        # from before it (the one that woke the agent, at least). In a busy room
+        # the agent's own post can sit behind 50 newer ones (codex, review of
+        # dd79fc65), and RelayClient.fetch_recent returns [] on a failed read.
+        # Either way nothing proves the turn posted nothing, so it counts.
+        if not any(before(m.get("timestamp")) for m in recent):
+            return False
         # Its own post since the wake began (through its tools), or one we can't
         # date: the turn did something, so it counts.
         if any(m.get("from_name") == self.config.participant_name
