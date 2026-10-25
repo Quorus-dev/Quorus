@@ -9572,6 +9572,8 @@ def main():
                        help="Print the sign-in link instead of opening a browser")
     p_web.add_argument("--fps", action="store_true",
                        help="Show the Quorum view's fps / DPR / quality readout")
+    p_web.add_argument("--quorum", action="store_true",
+                       help="Open the council table instead of the needs-you inbox")
 
     p_phone = sub.add_parser("phone", help="Open your rooms on your phone (Tailscale by default)")
     p_phone.add_argument("--lan", action="store_true",

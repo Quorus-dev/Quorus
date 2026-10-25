@@ -18,12 +18,14 @@ from quorus.config import load_config
 
 
 def web_url(relay_url: str, token: str, name: str, room: str | None, board: bool,
-            fps: bool = False) -> str:
+            fps: bool = False, quorum: bool = False) -> str:
     frag = f"token={quote(token, safe='')}&name={quote(name, safe='')}"
     if room:
         frag += f"&room={quote(room, safe='')}"
-    if board:
-        frag += "&view=board"
+    if quorum:  # the council table is opt-in (board-inbox.md decision 5)
+        frag += "&view=quorum"
+    elif board:
+        frag += "&view=board"  # the board lands on its needs-you inbox
     if fps:  # the Quorum view shows its fps / DPR / quality line (the M1 proof)
         frag += "&fps=1"
     return f"{relay_url.rstrip('/')}/#{frag}"
@@ -68,7 +70,8 @@ def cmd_web(args: Any, console: Any) -> None:
     if room:
         _check_room(relay, token, room)
     url = web_url(relay, token, me, room, not getattr(args, "chat", False),
-                  fps=bool(getattr(args, "fps", False)))
+                  fps=bool(getattr(args, "fps", False)),
+                  quorum=bool(getattr(args, "quorum", False)))
     if getattr(args, "print_url", False) or not webbrowser.open(url):
         console.print("Open this in your browser (it signs you in, so don't share it):")
         console.print(url, markup=False, highlight=False, soft_wrap=True)

@@ -18,8 +18,8 @@ from quorus.dashboard import DASHBOARD_HTML, DASHBOARD_JS
 def test_page_has_no_inline_script_or_handlers() -> None:
     # Only <script src="/web.js">, so `script-src 'self'` lets it run.
     scripts = re.findall(r"<script\b([^>]*)>", DASHBOARD_HTML)
-    assert scripts == [' src="/web.js"', ' type="module" src="/board.js"',
-                       ' type="module" src="/quorum.js"']  # board (ESM since slice 2) + Quorum
+    # board.js (ESM since slice 2) imports quorum.js only when the council table is opened.
+    assert scripts == [' src="/web.js"', ' type="module" src="/board.js"']
     assert not re.search(r"\son[a-z]+\s*=", DASHBOARD_HTML), "inline event handler"
 
 

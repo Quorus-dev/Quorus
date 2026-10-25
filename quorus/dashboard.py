@@ -55,9 +55,12 @@ _HTML = """\
       <button id="viewToggle" type="button">Board</button><span id="who"></span></div>
     <section id="board" hidden aria-live="polite">
       <div id="boardTop"><div id="boardSummary"></div>
-        <div id="boardModes"><button id="modeList" class="on" type="button">List</button>
-          <button id="modeQuorum" type="button">Quorum</button></div></div>
-      <div id="boardRows"></div>
+        <div id="boardModes"><button id="modeInbox" class="on" type="button">Needs you</button>
+          <button id="modeList" type="button">Agents</button>
+          <details class="viewmenu"><summary>View ▾</summary><div class="menu">
+            <button id="modeQuorum" type="button">Council table</button></div></details></div></div>
+      <div id="inbox"></div>
+      <div id="boardRows" hidden></div>
       <div id="quorum" hidden></div><div id="quorumCard" hidden></div></section>
     <div id="messages" aria-live="polite"></div>
     <div id="working"></div>
@@ -67,7 +70,6 @@ _HTML = """\
 </div>
 <script src="/web.js"></script>
 <script type="module" src="/board.js"></script>
-<script type="module" src="/quorum.js"></script>
 </body>
 </html>
 """

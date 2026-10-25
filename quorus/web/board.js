@@ -5,11 +5,15 @@
 // htm interpolations are text nodes, and nothing here writes markup from data.
 import { h, render as mount } from "/vendor/preact.module.js";
 import htm from "/vendor/htm.module.js";
-import { AGENT, B, briefTick, clock, enc, me, ownKey, rowState, token, trackOwner }
+import { AGENT, B, ago, briefTick, clock, enc, me, ownKey, rowState, token, trackOwner }
   from "/rows.js";
+import { HISTORY_LIMIT, historyWindowFull, inboxItems } from "/inbox.js";
 
 const html = htm.bind(h);
 const $ = (id) => document.getElementById(id);
+// The inbox view (slice 4): what needs the viewer, one row each, driven by the keyboard.
+B.mode = "inbox"; B.items = []; B.rows = []; B.sel = 0; B.openRef = null; B.help = false;
+B.note = ""; B.full = false; B.quorum = null;
 
 function api(path, opts) {
   const o = Object.assign({ headers: {} }, opts || {});
@@ -28,13 +32,16 @@ function el(tag, cls, text) {  // textContent only: no HTML from data, ever
 }
 
 function decide(id, approve, btn) {
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
   api("/v1/approvals/" + enc(id) + "/decision", { method: "POST",
     // No caller-supplied decider: the relay takes it from the viewer's own JWT
     // (Codex, 2026-10-17). Buttons only exist when ownKey() is true.
     body: JSON.stringify({ approve, reason: approve ? "" : "denied from the board" }) })
     .then(refresh)
-    .catch((e) => { btn.disabled = false; btn.textContent = "failed (" + e.message + ")"; });
+    .catch((e) => {
+      if (btn) { btn.disabled = false; btn.textContent = "failed (" + e.message + ")"; }
+      B.note = "failed (" + e.message + ")"; renderInbox();
+    });
 }
 
 function ask(name, input) {
@@ -96,6 +103,130 @@ function Row({ r }) {
   </article>`;
 }
 
+// ── the inbox ─────────────────────────────────────────────────────────────────
+// Status is never colour alone: a glyph and the kind's word on every row.
+const GLYPH = { approval: "!", block: "✗", review: "⟳", hold: "⏸", question: "?" };
+const KEYS = [["j / k", "next / previous"], ["enter", "open or close the item"],
+  ["a", "approve (an approval, or vote approve on a review or block)"],
+  ["d", "deny an approval, or /disagree advisory on a review"],
+  ["r", "reply: the composer, addressed to them"], ["l", "the agents list"],
+  ["esc", "close"], ["?", "these keys"]];
+
+// A social verb from the viewer, bound to their own JWT by the relay (routes/social.py).
+function verb(name, ref, payload) {
+  return api("/v1/social/" + name, { method: "POST",
+    // room_id, not room: routes/social.py:233 setdefault()s over the body's explicit null.
+    body: JSON.stringify({ actor: me(), room_id: B.room, ref_message_id: ref, payload }) })
+    .then(refresh)
+    .catch((e) => { B.note = "failed (" + e.message + ")"; renderInbox(); });
+}
+
+function reply(who) {
+  if ($("composer").hidden) show(false);  // a phone: back to the chat
+  const input = $("msgInput");
+  input.value = "@" + who + " ";
+  input.focus();
+}
+
+function act(it, what) {
+  if (what === "reply") return reply(it.who);
+  if (!ownKey()) return;  // the shared secret decides nothing; the card shows the command
+  if (it.kind === "approval") return decide(it.ref, what === "approve", null);
+  if (what === "approve" && (it.kind === "review" || it.kind === "block")) {
+    // An explicit poll: an unrelated active block must never capture this vote
+    // (social_svc.py:389-404). A block item votes in the block's own poll.
+    const ref = it.kind === "block" ? it.poll.slice("vote_".length) : it.ref;
+    return verb("vote", ref, { option: "approve", poll_id: "vote_" + ref });
+  }
+  if (what === "deny" && it.kind === "review") {
+    const reason = window.prompt("Why? Posted to the room as /disagree advisory.");
+    if (reason) {
+      return verb("disagree", it.ref, { ref_message_id: it.ref, reason, mode: "advisory" });
+    }
+  }
+  return undefined;
+}
+
+function Card({ it }) {
+  // Each button is a literal with its registry id (quorus/actions/registry.py
+  // BOARD_CONTROLS), so the action-registry test can read label and binding from the file.
+  const on = (what) => (e) => { e.stopPropagation(); act(it, what); };
+  const approve = html`<button type="button" class="ok" data-action="quorus.approval.decide"
+      onClick=${on("approve")}>Approve</button>`;
+  const deny = html`<button type="button" data-action="quorus.approval.decide"
+      onClick=${on("deny")}>Deny</button>`;
+  const vote = html`<button type="button" class="ok" data-action="quorus.social.vote"
+      onClick=${on("approve")}>Vote approve</button>`;
+  const disagree = html`<button type="button" data-action="quorus.social.disagree"
+      onClick=${on("deny")}>Disagree</button>`;
+  const reply = html`<button type="button" data-action="quorus.message.say"
+      onClick=${on("reply")}>Reply</button>`;
+  const buttons = { approval: [approve, deny], review: [vote, disagree, reply],
+                    block: [vote, reply], hold: [reply], question: [reply] }[it.kind] || [];
+  const cli = it.kind === "approval" ? "quorus approve " + it.ref : "quorus web";
+  return html`<div class="ibcard">
+    <span class="ibtext">${it.what}</span>
+    ${ownKey() ? buttons : html`<code>${cli}</code>`}
+    ${B.note && html`<span class="bad">${B.note}</span>`}
+  </div>`;
+}
+
+function Inbox({ items, rows, full }) {
+  if (!items.length) {
+    const working = rows.filter((r) => r.rank === 4).length;
+    return html`<p class="hint ibempty">Nothing needs you · ${working + " agent"
+      + (working === 1 ? "" : "s") + " working"} · <kbd>l</kbd> agents · <kbd>?</kbd> keys</p>`;
+  }
+  const sel = Math.min(B.sel, items.length - 1);
+  return html`<ol class="inbox" id="inboxList" role="listbox" aria-label="Needs you" tabindex="0"
+      aria-activedescendant=${"ib-" + sel} onKeyDown=${inboxKeys}>
+    ${items.map((it, i) => html`<li id=${"ib-" + i} role="option" aria-selected=${i === sel}
+        key=${it.kind + ":" + it.ref} class=${"ibrow " + it.kind + (i === sel ? " sel" : "")}
+        onClick=${() => {
+          B.sel = i; B.openRef = B.openRef === it.ref ? null : it.ref; renderInbox();
+        }}>
+      <span class=${"ibkind " + it.kind}>${GLYPH[it.kind] + " " + it.kind}</span>
+      <b class="ibwho">${"@" + it.who}</b>
+      <span class="ibwhat">${it.what}</span>
+      ${it.sha && html`<code class="ibsha">${it.sha}</code>`}
+      <time class="ibage">${ago(it.age)}</time>
+      ${B.openRef === it.ref && html`<${Card} it=${it} />`}
+    </li>`)}
+    ${full && html`<li class="hint" role="presentation">${"older items not shown (the last "
+      + HISTORY_LIMIT + " messages)"}</li>`}
+  </ol>`;
+}
+
+function inboxKeys(e) {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
+  const items = B.items, it = items[Math.min(B.sel, items.length - 1)];
+  const k = e.key;
+  if (k === "j" || k === "ArrowDown") B.sel = Math.min(B.sel + 1, items.length - 1);
+  else if (k === "k" || k === "ArrowUp") B.sel = Math.max(B.sel - 1, 0);
+  else if (k === "Enter") B.openRef = it && B.openRef !== it.ref ? it.ref : null;
+  else if (k === "Escape") { B.openRef = null; B.help = false; }
+  else if (k === "a" && it) act(it, "approve");
+  else if (k === "d" && it) act(it, "deny");
+  else if (k === "r" && it) act(it, "reply");
+  else if (k === "?") B.help = !B.help;
+  else if (k === "l") { mode("list"); return; }
+  else return;
+  e.preventDefault();
+  renderInbox();
+}
+
+function renderInbox() {
+  const counts = {};
+  B.items.forEach((it) => { counts[it.kind] = (counts[it.kind] || 0) + 1; });
+  mount(Object.keys(GLYPH).filter((k) => counts[k]).map((k) =>
+    html`<span class=${"chip" + (k === "approval" || k === "block" ? " hot" : "")}>
+      ${counts[k] + " " + k + (counts[k] === 1 ? "" : "s")}</span>`), $("boardSummary"));
+  mount(html`${B.help && html`<dl class="ibhelp">${KEYS.map(([key, what]) =>
+      html`<dt><kbd>${key}</kbd></dt><dd>${what}</dd>`)}</dl>`}
+    <${Inbox} items=${B.items} rows=${B.rows} full=${B.full} />`, $("inbox"));
+}
+
+// ── the agents list ───────────────────────────────────────────────────────────
 function render(rows) {
   const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
   rows.forEach((r) => { if (counts[r.rank] !== undefined) counts[r.rank] += 1; });
@@ -149,7 +280,7 @@ function refresh() {
   }
   return members.then(() => Promise.all([
     api("/presence?trail=1").catch(() => []),
-    api("/rooms/" + enc(B.room) + "/history?limit=100").catch(() => []),
+    api("/rooms/" + enc(B.room) + "/history?limit=" + HISTORY_LIMIT).catch(() => []),
     api("/v1/approvals?room=" + enc(B.room)).then((r) => r.pending || []).catch(() => []),
   ])).then(([presence, history, approvals]) => {
     const pres = {};
@@ -165,7 +296,18 @@ function refresh() {
       if (p.room === B.room && AGENT.test(p.name)) names.add(p.name);
     });
     const rows = [...names].map((n) => rowState(n, pres, history || [], approvals, now));
-    render(rows);
+    B.rows = rows;
+    if (B.mode === "inbox") {
+      B.note = "";
+      const keep = B.items[B.sel] && B.items[B.sel].ref;
+      B.items = inboxItems(history || [], approvals, me(), now, B.members.length || names.size);
+      B.full = historyWindowFull(history || []);
+      const i = B.items.findIndex((it) => it.ref === keep);
+      B.sel = i >= 0 ? i : Math.min(B.sel, Math.max(0, B.items.length - 1));
+      renderInbox();
+    } else {
+      render(rows);
+    }
     const members = B.members.length ? B.members : [...names];
     document.dispatchEvent(new CustomEvent("quorus:rows",
       { detail: { rows, history: history || [], room: B.room, members } }));
@@ -182,6 +324,7 @@ function show(on) {
   $("board").hidden = !on;
   if (on && !$("boardRows").children.length) {
     mount(html`<p class="hint">Loading the team…</p>`, $("boardRows"));
+    mount(html`<p class="hint">Loading the team…</p>`, $("inbox"));
   }
   // Mission control: on a wide screen the room's chat stays beside the agent
   // panels, so you watch them work and talk to them at once; a phone toggles.
@@ -193,28 +336,35 @@ function show(on) {
   else if (B.timer) { clearInterval(B.timer); B.timer = null; }
 }
 
-function mode(m) {  // "list" or "quorum": two looks over the same rows
+function mode(m) {  // "inbox" (default), "list", "quorum" or "brief": looks over the same data
   B.mode = m;
+  $("inbox").hidden = m !== "inbox";
   $("boardRows").hidden = m !== "list";
   $("quorum").hidden = m !== "quorum";
   $("quorumCard").hidden = true;
-  $("modeList").classList.toggle("on", m === "list");
-  $("modeQuorum").classList.toggle("on", m === "quorum");
+  [["modeInbox", "inbox"], ["modeList", "list"], ["modeQuorum", "quorum"], ["modeBrief", "brief"]]
+    .forEach(([id, name]) => $(id).classList.toggle("on", m === name));
   $("brief").hidden = m !== "brief";
-  $("modeBrief").classList.toggle("on", m === "brief");
+  const menu = $("boardModes").querySelector(".viewmenu");
+  if (menu) menu.open = false;
   if (m !== "quorum") document.dispatchEvent(new CustomEvent("quorus:quorum-off"));
-  refresh();
+  // The council table (quorum.js and three.js) is opt-in: its code loads on the first
+  // request, never on page load (board-inbox.md decision 5).
+  if (m === "quorum" && !B.quorum) B.quorum = import("/quorum.js").catch(() => null);
+  (m === "quorum" && B.quorum ? B.quorum : Promise.resolve()).then(refresh);
 }
 
 function onRoom(room) {
   B.room = room; B.membersAt = 0; B.cardAt = 0; B.trackAt = 0; B.track = {};
   B.brief.gen++;  // whatever the old room's request returns, it is dropped
   $("brief").textContent = "";
-  const view = sessionStorage.getItem("qv");  // `quorus web` lands here (#view=board|quorum)
-  if ((view === "board" || view === "quorum") && !B.on) {
+  // `quorus web` lands here: #view=board or inbox (the default), list, or quorum.
+  const view = sessionStorage.getItem("qv");
+  if (["board", "inbox", "list", "quorum"].includes(view) && !B.on) {
     sessionStorage.removeItem("qv");
     show(true);
     if (view === "quorum") mode("quorum");
+    else if (view === "list") mode("list");
   } else {
     refresh();
   }
@@ -225,13 +375,14 @@ const briefBtn = el("button", "", "Brief");
 briefBtn.type = "button";
 briefBtn.id = "modeBrief";
 briefBtn.dataset.action = "quorus.room.brief";
-$("boardModes").appendChild(briefBtn);
+$("boardModes").insertBefore(briefBtn, $("boardModes").querySelector(".viewmenu"));
 const briefBox = el("pre", "brief");
 briefBox.id = "brief";
 briefBox.hidden = true;
 $("board").appendChild(briefBox);
 briefBtn.addEventListener("click", () => mode("brief"));
 $("viewToggle").addEventListener("click", () => show(!B.on));
+$("modeInbox").addEventListener("click", () => mode("inbox"));
 $("modeList").addEventListener("click", () => mode("list"));
 $("modeQuorum").addEventListener("click", () => mode("quorum"));
 window.QuorusBoard = { rowEl };  // the Quorum view's seat card is the board's row

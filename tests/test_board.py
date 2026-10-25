@@ -113,13 +113,16 @@ def test_quorus_web_link_lands_on_the_board_signed_in_as_you() -> None:
                    "&view=board")
     assert "?" not in url  # the credential only ever rides in the fragment
     assert web_url("http://r", "a.b.c", "arav", None, True, fps=True).endswith("&view=board&fps=1")
+    # `quorus web --quorum`: the council table is opt-in (board-inbox.md decision 5).
+    assert web_url("http://r", "a.b.c", "arav", None, True, quorum=True).endswith("&view=quorum")
     from quorus.dashboard import DASHBOARD_JS as _djs
 
     assert 'if (frag.get("fps")) sessionStorage.setItem("qfps", "1");' in _djs
     from quorus.dashboard import DASHBOARD_JS
 
     assert 'sessionStorage.setItem("qr"' in DASHBOARD_JS
-    assert 'view === "board" || view === "quorum"' in BOARD_JS  # #view=quorum opens the table
+    # #view=board lands on the inbox; list and quorum open those looks (slice 4).
+    assert '["board", "inbox", "list", "quorum"].includes(view)' in BOARD_JS
 
 
 def test_board_never_waits_for_the_scorecard() -> None:
@@ -142,12 +145,20 @@ def test_mission_control_keeps_chat_beside_the_panels_on_wide_screens() -> None:
     assert 'grid-template-areas:"bar bar" "board msgs"' in DASHBOARD_HTML
 
 
-def test_list_is_the_default_board_mode() -> None:
-    """The Quorum table opens only on request (#view=quorum or its button)."""
-    assert '<button id="modeList" class="on" type="button">List</button>' in DASHBOARD_HTML
+def test_inbox_is_the_default_board_mode() -> None:
+    """board-inbox.md slice 4: the needs-you inbox is the default look; the agents list
+    is a tab; the council table opens only on request (#view=quorum, --quorum or the
+    View menu) and its code is never on the page until then."""
+    assert '<button id="modeInbox" class="on" type="button">Needs you</button>' in DASHBOARD_HTML
+    assert '<button id="modeList" type="button">Agents</button>' in DASHBOARD_HTML
+    assert '<button id="modeQuorum" type="button">Council table</button>' in DASHBOARD_HTML
+    assert '<div id="inbox"></div>' in DASHBOARD_HTML
+    assert '<div id="boardRows" hidden>' in DASHBOARD_HTML
     assert '<div id="quorum" hidden>' in DASHBOARD_HTML
+    assert "/quorum.js" not in DASHBOARD_HTML and 'import("/quorum.js")' in BOARD_JS
     assert "localStorage" not in BOARD_JS  # the mode is never remembered across visits
     assert 'if (view === "quorum") mode("quorum");' in BOARD_JS
+    assert 'B.mode = "inbox"' in BOARD_JS and 'role="listbox"' in BOARD_JS
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")

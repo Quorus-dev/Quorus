@@ -1,12 +1,16 @@
-// Browser smoke for the board (docs/plans/board-inbox.md, slice 2): a reviewer runs it,
-// pytest does not. It starts its own file-mode relay on a free port in a scratch HOME,
+// Browser smoke for the board (docs/plans/board-inbox.md, slices 2 and 4): a reviewer runs
+// it, pytest does not. It starts its own file-mode relay on a free port in a scratch HOME,
 // seeds a room with two agents, a question and a pending approval, opens the page the
 // way `quorus web` does (token in the fragment, shared secret, so no Approve buttons) and
 // checks that the board renders through the vendored Preact + htm under the relay's real
 // CSP: no CSP violation, no page error, the chips and rows, the approval's CLI hint, the
 // typed text in a row's input surviving a poll (keyed rows), and `QuorusBoard.rowEl`
-// (the Quorum view's seat card). Needs Playwright with Chromium: the jury skill's
-// install at ~/.cache/jury is used unless PLAYWRIGHT_DIR points elsewhere.
+// (the Quorum view's seat card). Then, signed in with a participant JWT, the slice 4 inbox:
+// the pending approval is on the first paint and `a` approves it from the keyboard; with an
+// unrelated block active, `a` on a review item votes in that item's own poll and leaves the
+// block's tally alone; `?` lists the keys; quorum.js and three.js are not requested until the
+// council table is chosen; the inbox fits a 390 px phone. Needs Playwright with Chromium: the
+// jury skill's install at ~/.cache/jury is used unless PLAYWRIGHT_DIR points elsewhere.
 //
 //   node tests/web/board_smoke.mjs            (from the repo root; ~15 s)
 //   QUORUS_PYTHON=.venv/bin/python node tests/web/board_smoke.mjs
@@ -61,6 +65,29 @@ await api("/rooms/demo/messages", { from_name: "sam-codex", content: "@sam shoul
 const approval = await api("/v1/approvals", { room_id: "demo", agent: "sam-codex", tool_name: "Bash",
                                               tool_input: "git push origin main" });
 
+// Slice 4 data: a participant JWT for the viewer and one for a blocker; a block on sam-claude's
+// message (the room's one active block) and a review request from sam-codex.
+const jwt = async (name) => {
+  const claimed = await api("/v1/auth/claim-name", { name });
+  const r = await fetch(base + "/v1/auth/token", { method: "POST", body: JSON.stringify({ api_key: claimed.participant_key }),
+    headers: { "Content-Type": "application/json" } });
+  if (!r.ok) throw new Error(`token for ${name}: HTTP ${r.status} ${await r.text()}`);
+  return (await r.json()).token;
+};
+const samJwt = await jwt("sam");
+await api("/rooms/demo/join", { participant: "eli-codex" });
+const eliJwt = await jwt("eli-codex");
+const shipped = await api("/rooms/demo/messages", { from_name: "sam-claude", content: "✅ abc1234 shipped the relay fix" });
+const asJwt = async (token, path, body) => {
+  const r = await fetch(base + path, { method: "POST", body: JSON.stringify(body),
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" } });
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status} ${await r.text()}`);
+  return r.json();
+};
+await asJwt(eliJwt, "/v1/social/disagree", { actor: "eli-codex", room_id: "demo", ref_message_id: shipped.id,
+  payload: { ref_message_id: shipped.id, reason: "abc1234 drops the retry", mode: "blocking" } });
+const review = await api("/rooms/demo/messages", { from_name: "sam-codex", content: "@sam please review feedbac before I merge" });
+
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 const problems = [], scripts = new Set();
@@ -78,6 +105,13 @@ await page.addInitScript(() => {
   document.addEventListener("securitypolicyviolation", (e) => window.__csp.push(e.violatedDirective + " " + e.blockedURI));
 });
 await page.goto(`${base}/#token=${SECRET}&name=sam&room=demo&view=board`);
+await page.waitForSelector("#inboxList .ibrow", { timeout: 15000 });
+const inboxFirst = await page.evaluate(() => ({
+  firstKind: document.querySelector("#inboxList .ibrow")?.className,
+  codeHint: document.querySelector("#inboxList .ibrow.sel .ibcard code")?.textContent || null,
+  rows: [...document.querySelectorAll("#inboxList .ibrow")].map((r) => r.querySelector(".ibkind").textContent),
+}));
+await page.click("#modeList");
 await page.waitForSelector("#boardRows article.brow", { timeout: 15000 });
 const seen = await page.evaluate((approvalId) => {
   const rows = [...document.querySelectorAll("#boardRows article.brow")];
@@ -103,8 +137,65 @@ await page.waitForTimeout(3500);  // one more 3 s poll
 const typed = await page.evaluate(() =>
   [...document.querySelectorAll("#boardRows article.brow")]
     .find((r) => r.querySelector("b").textContent === "@sam-codex").querySelector("form.bassign input").value);
+const quorumRequestedEarly = [...scripts].some((p) => p.includes("quorum"));
+
+// ── slice 4: the inbox with the viewer's own JWT ───────────────────────────────────────
+const page2 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+const scripts2 = new Set(), problems2 = [];
+page2.on("request", (r) => { const p = new URL(r.url()).pathname; if (p.endsWith(".js")) scripts2.add(p); });
+page2.on("pageerror", (e) => problems2.push("pageerror: " + e.message));
+page2.on("console", (m) => {
+  if (m.type() !== "error") return;
+  const url = m.location().url || "";
+  if (EXPECTED_404.some((re) => re.test(url))) return;
+  problems2.push("console: " + m.text() + " " + url);
+});
+await page2.goto(`${base}/#token=${samJwt}&name=sam&room=demo&view=board`);
+await page2.waitForSelector("#inboxList .ibrow", { timeout: 15000 });
+const firstPaint = await page2.evaluate(() =>
+  [...document.querySelectorAll("#inboxList .ibrow")].map((r) => r.querySelector(".ibkind").textContent));
+await page2.focus("#inboxList");
+await page2.keyboard.press("a");  // the selected item is the approval: approve it, keyboard only
+await page2.waitForFunction(() => ![...document.querySelectorAll("#inboxList .ibrow")]
+  .some((r) => r.classList.contains("approval")), null, { timeout: 8000 });
+const decided = await (await fetch(base + "/v1/approvals/" + approval.id,
+  { headers: { Authorization: "Bearer " + samJwt } })).json();
+// With the block active, move to the review item and vote: the vote must land in the
+// review's own poll, not the block's.
+const kinds = await page2.evaluate(() =>
+  [...document.querySelectorAll("#inboxList .ibrow")].map((r) => r.classList[1]));
+const reviewIndex = kinds.indexOf("review");
+for (let i = 0; i < reviewIndex; i++) await page2.keyboard.press("j");
+const selectedKind = await page2.evaluate(() => document.querySelector("#inboxList .ibrow.sel")?.classList[1]);
+await page2.keyboard.press("a");
+await page2.waitForFunction(() => !document.querySelector("#inboxList .ibrow.review"), null, { timeout: 8000 })
+  .catch(() => {});  // one voter is not a majority of 5 members; the item stays, the vote landed
+const state = await (await fetch(base + "/v1/social/state/demo",
+  { headers: { Authorization: "Bearer " + samJwt } })).json();
+await page2.keyboard.press("?");
+const helpShown = await page2.evaluate(() => !!document.querySelector(".ibhelp"));
+await page2.keyboard.press("Escape");
+const helpGone = await page2.evaluate(() => !document.querySelector(".ibhelp"));
+const quorumBefore = [...scripts2].some((p) => p.includes("quorum") || p.includes("three"));
+await page2.click(".viewmenu summary");
+await page2.click("#modeQuorum");
+await page2.waitForTimeout(1500);
+const quorumAfter = scripts2.has("/quorum.js");
+// A phone: the inbox fits 390 px with no horizontal overflow.
+await page2.setViewportSize({ width: 390, height: 844 });
+await page2.click("#modeInbox");
+await page2.waitForTimeout(500);
+const phone = await page2.evaluate(() => ({
+  overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  inboxVisible: !!document.querySelector("#inboxList") && !document.getElementById("inbox").hidden,
+}));
 await browser.close();
 stop();
+
+const pollKey = "vote_" + review.id;
+const socialState = state.state || state;  // the route wraps the matrix, or returns it bare
+const votes = socialState.votes || {};
+const blockRef = socialState.blocking_disagree_ref;
 
 const checks = {
   "no CSP violation": seen.csp.length === 0,
@@ -118,11 +209,26 @@ const checks = {
   "rowEl builds the seat card": seen.rowEl,
   "vendored ESM loaded, three.js not": scripts.has("/vendor/preact.module.js") && scripts.has("/vendor/htm.module.js")
     && scripts.has("/rows.js") && ![...scripts].some((s) => s.includes("three")),
+  // slice 4
+  "inbox is the default view, approval first": inboxFirst.firstKind?.includes("approval") && inboxFirst.rows.length >= 3,
+  "shared secret: the card shows the CLI command": inboxFirst.codeHint === null || /quorus approve/.test(inboxFirst.codeHint),
+  "quorum.js never requested on load": !quorumRequestedEarly,
+  "JWT: first paint shows the pending approval": firstPaint[0]?.includes("approval"),
+  "JWT: `a` approves from the keyboard": decided.status === "approved" && decided.decided_by === "sam",
+  "JWT: `j` selects the review with a block active": selectedKind === "review" && kinds.includes("block"),
+  "JWT: the review vote lands in its own poll": Object.keys(votes).includes(pollKey) && (votes[pollKey].approve || 0) >= 1,
+  "JWT: the unrelated block is untouched": blockRef === shipped.id && socialState.blocked_until_resolved === true
+    && !(votes["vote_" + shipped.id] && Object.keys(votes["vote_" + shipped.id]).length),
+  "`?` shows the keys, esc hides them": helpShown && helpGone,
+  "council table loads quorum.js only when chosen": !quorumBefore && quorumAfter,
+  "390 px: inbox visible, no horizontal overflow": phone.inboxVisible && phone.overflow <= 0,
+  "no page error (JWT page)": problems2.length === 0,
 };
 let failed = 0;
 for (const [name, ok] of Object.entries(checks)) { console.log((ok ? "ok   " : "FAIL ") + name); if (!ok) failed++; }
 if (failed) {
-  console.log(JSON.stringify({ seen, typed, problems, scripts: [...scripts] }, null, 1));
+  console.log(JSON.stringify({ seen, typed, problems, scripts: [...scripts], inboxFirst, firstPaint, decided,
+    kinds, selectedKind, socialState, phone, problems2, scripts2: [...scripts2] }, null, 1));
   console.log(relayLog.split("\n").slice(-20).join("\n"));
 }
 process.exit(failed ? 1 : 0);

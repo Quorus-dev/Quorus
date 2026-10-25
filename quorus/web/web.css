@@ -142,3 +142,41 @@ grid-template-areas:"bar bar" "board msgs" "board work" "board comp"}
 #chat.split #composer{grid-area:comp;border-left:1px solid var(--rule)}}
 @media (max-width:720px){#app{grid-template-columns:minmax(0,1fr)}#app.inroom #rooms{display:none}
 #app:not(.inroom) #chat{display:none}#back{display:block}}
+/* The needs-you inbox (board-inbox.md slice 4): 36px rows, 13px text, one item a line. */
+.inbox{list-style:none;margin:0;padding:0;border:1px solid var(--rule);border-radius:10px;
+  background:var(--panel);outline:none}
+.inbox:focus-visible{box-shadow:0 0 0 2px var(--accent)}
+.ibrow{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto auto;align-items:center;
+  gap:10px;min-height:36px;padding:0 12px;font-size:13px;border-top:1px solid var(--rule)}
+.ibrow:first-child{border-top:0}
+.ibrow.sel{background:var(--chip);box-shadow:inset 3px 0 0 var(--accent)}
+.ibkind{font:12px var(--mono);color:var(--muted);white-space:nowrap}
+.ibkind.approval,.ibkind.block{color:var(--warn)}
+.ibwho{white-space:nowrap}
+.ibwhat{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.ibsha{font:12px var(--mono);color:var(--muted)}
+.ibage{font-size:12px;color:var(--muted);white-space:nowrap}
+.ibcard{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0 10px;
+  white-space:normal}
+.ibtext{flex:1 1 100%;color:var(--muted);overflow-wrap:anywhere}
+.ibcard button{font:inherit;font-size:13px;padding:4px 12px;border-radius:8px;border:0;cursor:pointer;
+  background:var(--rule);color:var(--ink)}
+.ibcard button.ok{background:var(--accent);color:var(--on-accent)}
+.ibcard code,.ibempty kbd,.ibhelp kbd{font:12px var(--mono);background:var(--chip);color:var(--ink);
+  padding:1px 6px;border-radius:6px}
+.inbox>.hint{padding:8px 12px;border-top:1px solid var(--rule)}
+.ibhelp{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0 0 8px;padding:8px 12px;
+  font-size:12px;color:var(--muted);border:1px solid var(--rule);border-radius:10px}
+.ibhelp dt,.ibhelp dd{margin:0}
+.viewmenu{position:relative}
+.viewmenu summary{list-style:none;cursor:pointer;font-size:12px;padding:4px 12px;border-radius:999px;
+  border:1px solid var(--rule);color:var(--muted)}
+.viewmenu summary::-webkit-details-marker{display:none}
+.viewmenu[open] summary{background:var(--chip);color:var(--ink)}
+.viewmenu .menu{position:absolute;right:0;top:100%;margin-top:4px;z-index:3;display:flex;
+  flex-direction:column;min-width:160px;padding:4px;background:var(--panel);border:1px solid var(--rule);
+  border-radius:10px}
+@media (max-width:720px){
+  .ibrow{grid-template-columns:auto minmax(0,1fr) auto;padding:6px 10px}
+  .ibwho{grid-column:1}.ibwhat{grid-column:1/-1;white-space:normal}.ibsha{display:none}
+}
