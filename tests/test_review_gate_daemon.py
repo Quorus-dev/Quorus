@@ -736,3 +736,109 @@ def test_a_pin_for_another_repo_does_not_hold(env, tmp_path):
     rg.save_reviewer("general", "rev-codex", tenant="t1", claim_id="c-rev",
                      path=cfg / "room-reviewers.json", repo=elsewhere)
     assert reflexd._review_gate_for("side", repo) is None
+
+
+# ── the second reviewer reviews the reviewer's own commits ───────────────
+# (docs/plans/reviewer-backup.md, plan GO f73af94d)
+
+LEAD = {"name": "lead-claude", "tenant": "t1", "claim_id": "c-lead"}
+
+
+def _backed_held(env, second: dict | None = LEAD):
+    """This daemon (b-claude) is the room's reviewer; *second* reviews its commits."""
+    d, repo, wt, cfg = env
+    rg.save_reviewer("r", "b-claude", tenant="t1", claim_id="c-self",
+                     path=cfg / "room-reviewers.json", second=second)
+    main = _git(repo, "rev-parse", "main")
+    status = _publish(d, wt)
+    return d, repo, wt, cfg, main, _git(repo, "rev-parse", wt.branch), status
+
+
+def _lead_says(text: str, **kw: Any) -> dict[str, Any]:
+    return _say(text, sender="lead-claude", claim="c-lead", **kw)
+
+
+def test_the_reviewers_own_commit_waits_for_its_second(env):
+    d, repo, wt, _cfg, main, tip, status = _backed_held(env)
+    assert status.startswith(f"(quorus) awaiting @lead-claude's review of {tip[:12]}")
+    assert rg.load_marker(d.config.runtime_dir, repo, wt.branch)["reviewer"] == "lead-claude"
+    _tick(d, _Room([_say(f"✅ GO on {tip[:8]}", sender="b-claude", claim="c-self")]))
+    assert _git(repo, "rev-parse", "main") == main  # its own GO still never counts
+    relay = _Room([_lead_says(f"✅ GO on {tip[:8]}", mid="l1")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == tip
+    assert relay.posted[0]["content"].endswith("; reviewed by @lead-claude (GO l1)")
+
+
+def test_the_seconds_go_doesnt_count_on_a_builders_commit(env):
+    d, repo, wt, cfg = env
+    rg.save_reviewer("r", "rev-codex", tenant="t1", claim_id="c-rev",
+                     path=cfg / "room-reviewers.json", second=LEAD)
+    main = _git(repo, "rev-parse", "main")
+    _publish(d, wt)  # b-claude is a builder here
+    tip = _git(repo, "rev-parse", wt.branch)
+    _tick(d, _Room([_lead_says(f"✅ GO on {tip[:8]}")]))
+    assert _git(repo, "rev-parse", "main") == main
+    _tick(d, _Room([_say(f"✅ GO on {tip[:8]}")]))  # the first reviewer's GO does
+    assert _git(repo, "rev-parse", "main") == tip
+
+
+def test_the_seconds_own_commit_needs_the_first_reviewer(env):
+    d, repo, wt, cfg = env
+    rg.save_reviewer("r", "rev-codex", tenant="t1", claim_id="c-rev",
+                     path=cfg / "room-reviewers.json",
+                     second={"name": "b-claude", "tenant": "t1", "claim_id": "c-self"})
+    main = _git(repo, "rev-parse", "main")
+    status = _publish(d, wt)  # b-claude is the second: rev-codex reviews it
+    tip = _git(repo, "rev-parse", wt.branch)
+    assert status.startswith(f"(quorus) awaiting @rev-codex's review of {tip[:12]}")
+    _tick(d, _Room([_say(f"✅ GO on {tip[:8]}", sender="b-claude", claim="c-self")]))
+    assert _git(repo, "rev-parse", "main") == main
+    _tick(d, _Room([_say(f"✅ GO on {tip[:8]}")]))
+    assert _git(repo, "rev-parse", "main") == tip
+
+
+def test_a_malformed_second_is_ignored(env):
+    d, repo, wt, cfg = env
+    path = cfg / "room-reviewers.json"
+    rg.save_reviewer("r", "b-claude", tenant="t1", claim_id="c-self", path=path)
+    data = json.loads(path.read_text())
+    data["r"]["second"] = {"name": "lead-claude", "tenant": "t1"}  # no claim
+    path.write_text(json.dumps(data))
+    status = _publish(d, wt)
+    assert "can't GO its own commits; owner override only" in status
+    with pytest.raises(ValueError):
+        rg.save_reviewer("r", "b-claude", tenant="t1", claim_id="c", path=path,
+                         second={"name": "b-claude", "tenant": "t1", "claim_id": "c"})
+
+
+class _Rotates(_Room):
+    """On the *at*-th history read, rewrite the room's reviewers file."""
+
+    def __init__(self, history, path: Path, change, at: int) -> None:
+        super().__init__(history)
+        self.path, self.change, self.at, self.reads = path, change, at, 0
+
+    async def fetch_history(self, **_kw: Any) -> list[dict[str, Any]]:
+        self.reads += 1
+        if self.reads == self.at:
+            self.change(self.path)
+        return list(self.history)
+
+
+@pytest.mark.parametrize("change", ["rotated", "removed"])
+def test_a_second_changed_after_its_go_holds_under_the_lock(env, change):
+    """codex, plan review of f73af94d: compare the whole pin under the lock."""
+    d, repo, _wt, cfg, main, tip, _status = _backed_held(env)
+
+    def rewrite(path: Path) -> None:
+        if change == "rotated":
+            rg.save_reviewer("r", "b-claude", tenant="t1", claim_id="c-self", path=path,
+                             second={**LEAD, "claim_id": "c-new-lead"})
+        else:
+            rg.save_reviewer("r", "b-claude", tenant="t1", claim_id="c-self", path=path)
+
+    relay = _Rotates([_lead_says(f"✅ GO on {tip[:8]}")], cfg / "room-reviewers.json",
+                     rewrite, at=2)  # after decide's read, before the lock's check
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main

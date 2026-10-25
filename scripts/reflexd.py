@@ -4843,10 +4843,13 @@ class Reflexd:
                 return status  # nothing ahead, a conflict, or another hold
             tip, count = status[len(reflexd_wake.REVIEW_READY):].split()
             base = reflexd_wake._git("rev-parse", wt.main, cwd=wt.repo).stdout.strip()
+            me = self.config.participant_name
+            # The reviewer's own commits go to its second, if the pin has one.
+            pin = _review_gate.reviewer_of(pin, me) or pin
             _review_gate.save_marker(runtime, wt.repo, wt.branch, room=room, tip=tip,
                                      base=base, count=int(count),
                                      reviewer=pin.get("name", ""), now=time.time())
-        return _review_gate.awaiting_status(pin, tip, int(count), self.config.participant_name)
+        return _review_gate.awaiting_status(pin, tip, int(count), me)
 
     def _schedule_review_tick(self, relay: RelayClient, room: str) -> None:
         """Check *room*'s repo for a held tip the reviewer may just have GO'd.
@@ -4896,7 +4899,11 @@ class Reflexd:
         if gate is None:  # the reviewer was removed: the next turn publishes as usual
             await asyncio.to_thread(_review_gate.clear_marker, runtime, wt.repo, wt.branch)
             return None
-        room, pin = gate
+        room, full = gate
+        # Who reviews this agent's commits: the pinned reviewer, or its second for
+        # the reviewer's own (docs/plans/reviewer-backup.md). `full` is the whole
+        # pin, re-checked under the lock so a rotated second can't publish.
+        pin = _review_gate.reviewer_of(full, self.config.participant_name) or full
         listed = await asyncio.to_thread(reflexd_wake._git, "rev-list", "--reverse",
                                          f"{wt.main}..{tip}", cwd=wt.repo)
         pending = listed.stdout.split() if listed.returncode == 0 else []
@@ -4910,8 +4917,8 @@ class Reflexd:
             logger.warning("review gate history fetch failed: %s", exc)
             return None
         state, ref = _review_gate.decide(history, pin, pending)
-        # The reviewer's own commits: its GO never counts for its own branch; only
-        # the owner's override publishes them (a block still holds).
+        # The reviewer's own commits with no second: its GO never counts for its
+        # own branch; only the owner's override publishes them (a block holds).
         mine = _review_gate.self_review(pin, self.config.participant_name)
         if mine and state == "go":
             state, ref = "waiting", None
@@ -4955,8 +4962,8 @@ class Reflexd:
             now = _review_gate.load_marker(runtime, wt.repo, wt.branch)
             if not now or now.get("tip") != tip:
                 return "the held tip changed"
-            if override is None and _review_gate.reviewer_for(room) != pin:
-                return "the room's reviewer changed"
+            if override is None and _review_gate.reviewer_for(room) != full:
+                return "the room's reviewer changed"  # either reviewer, rotated or gone
             # Re-read the room under the lock: a block that landed after the
             # first read (or while this waited for the lock) must win (codex,
             # review of 4bc515ba). Can't read it: hold, never publish blind.
