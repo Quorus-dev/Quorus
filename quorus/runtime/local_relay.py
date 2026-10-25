@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from quorus.auth.participant_keys import data_dir
 from quorus.config import resolve_config_dir
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "0.0.0.0", "::1")
@@ -84,7 +85,7 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
                             "a relay is already running on this computer with a different "
                             "secret — stop it, or run `quorus init <name> --secret -` and "
                             "paste its secret")
-            _record(cfg, proc.pid, parsed.port or 8080)
+            _record(cfg, proc.pid, parsed.port or 8080, data_dir(env), relay_url)
             return True, "started your local relay"
         time.sleep(0.25)
     # Never answered: stop the process we spawned (by its own handle) rather than
@@ -107,13 +108,43 @@ def _stop_spawned(proc: subprocess.Popen) -> None:
 RELAY_ARGV_TAIL = " -m quorus.relay_cli"
 
 
-def _record(cfg: Path, pid: int, port: int) -> None:
+def _record(cfg: Path, pid: int, port: int, claims: Path | None = None,
+            url: str | None = None) -> None:
     """So `quorus relay --replace` can stop exactly this relay, and nothing else:
-    its pid, start time and command line, read once it answers (so after exec)."""
+    its pid, start time and command line, read once it answers (so after exec).
+    Also its URL and *claims* dir, the one its own env gives it, so `agent remove`
+    can free a name in that relay's claims file and no other (take-3 bug 2)."""
     import json
 
-    (cfg / "relay.pid").write_text(json.dumps({
-        "pid": pid, "port": port, "started": _started(pid), "command": _ps(pid, "command")}))
+    rec: dict[str, object] = {"pid": pid, "port": port, "started": _started(pid),
+                              "command": _ps(pid, "command"),
+                              "url": url or f"http://127.0.0.1:{port}"}
+    if claims is not None:
+        rec["data_dir"] = str(claims)
+    (cfg / "relay.pid").write_text(json.dumps(rec))
+
+
+def started_relay(relay_url: str) -> Path | None:
+    """The claims dir of the relay `quorus` started at *relay_url*, while that
+    exact process still runs it; None in every other case. Never a guessed dir:
+    the CLI's own ``data_dir()`` follows the CLI's env, not the relay's."""
+    import json
+
+    from quorus.auth.participant_keys import CLAIMS_DB
+    from quorus.runtime.own_relays import normalize_relay
+
+    try:
+        rec = json.loads((resolve_config_dir() / "relay.pid").read_text())
+        pid, url, claims = int(rec["pid"]), str(rec["url"]), Path(str(rec["data_dir"]))
+        started, command = str(rec["started"]), str(rec["command"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    want = normalize_relay(relay_url)
+    if not want or normalize_relay(url) != want:
+        return None
+    if not _is_our_relay(pid, started, command) or not (claims / CLAIMS_DB).is_file():
+        return None
+    return claims
 
 
 def stop_started_relay(port: int, timeout: float = 15.0) -> bool:

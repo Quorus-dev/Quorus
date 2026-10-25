@@ -31,7 +31,7 @@ import httpx
 
 from quorus.config import load_config, resolve_config_dir
 from quorus.private_files import write_private_text
-from quorus_cli import agent_proc, agent_start
+from quorus_cli import agent_proc, agent_release, agent_start
 from quorus_cli import relay_http as _relay_http
 
 # opencode = any model: Ollama (local), OpenRouter, DeepSeek, Qwen, Gemini...
@@ -642,6 +642,10 @@ def _start(prep: dict[str, Any], console: Any) -> None:
             console.print(f"[dim]--model only applies to a new agent: run `quorus agent "
                           f"remove {name}` and add it again to switch models[/]")
     else:
+        if legacy:  # its key may be saved in another dir: reuse it, don't claim again
+            from quorus_cli import agent_identity
+
+            agent_identity.adopt_key(cfg["relay_url"], name, state_dir)
         _start_daemon(cfg, name, cred, legacy, model, state_dir)
         # Only launchd brings it back; elsewhere it is a plain detached process.
         lasts = ("restarts at login" if sys.platform == "darwin" else
@@ -780,6 +784,9 @@ def _remove(args: Any, console: Any) -> None:
     plist = _LA / f"{label}.plist"
     was_running = (plist.exists()
                    or agent_proc.live_pid(_agents_dir(), args.name) is not None)
+    relay_url = (load_config().get("relay_url") or "").strip()
+    # Before the state record goes: it names one of the dirs a key may be saved in.
+    held = agent_release.held_keys(args.name, relay_url) if relay_url else {}
     if _launchd_ok():  # no launchctl elsewhere: it crashed `remove` on Linux
         subprocess.run(["launchctl", "bootout", f"gui/{_uid()}/{label}"],
                        capture_output=True, check=False, timeout=15)
@@ -788,13 +795,20 @@ def _remove(args: Any, console: Any) -> None:
     _state_record(args.name).unlink(missing_ok=True)
     _drop_lead_everywhere(args.name)
     left = _leave_all_rooms(args.name)
+    freed = agent_release.release(args.name, relay_url, held) if relay_url else None
     if not was_running and not left:
         console.print(f"[error]✗[/] no agent @{args.name} here — see [accent]quorus agent "
                       "list[/]")
         raise SystemExit(4)
-    what = "stopped" if was_running else "was not running;"
-    where = f" and left {', '.join('#' + r for r in left)}" if left else ""
-    console.print(f"[success]✓[/] {what} @{args.name} on this machine{where}")
+    rooms = ", ".join("#" + r for r in left)
+    if was_running:
+        where = f" and left {rooms}" if left else ""
+        console.print(f"[success]✓[/] stopped @{args.name} on this machine{where}")
+    else:  # bug bash: "✓ was not running; @x on this machine and left #lab"
+        console.print(f"[success]✓[/] @{args.name} wasn't running on this machine; "
+                      f"it left {rooms}")
+    if freed:
+        console.print(freed)
 
 
 def _leave_all_rooms(name: str) -> list[str]:

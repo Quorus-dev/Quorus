@@ -33,12 +33,44 @@ def key_dir(name: str, state_dir: Path | None = None) -> Path:
     return base / "runtime" / "agents" / name
 
 
+def known_key_dirs(name: str) -> list[Path]:
+    """Every key dir on this machine *name*'s key may be saved in: the CLI's
+    config dir, plus each recorded agent ``--state-dir`` (take-3 bug 2)."""
+    from quorus_cli import agent_cmd
+
+    out = [key_dir(name)]
+    for rec in sorted(agent_cmd._agents_dir().glob("*.state-dir")):
+        try:
+            text = rec.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if text and key_dir(name, Path(text)) not in out:
+            out.append(key_dir(name, Path(text)))
+    return out
+
+
+def adopt_key(relay_url: str, name: str, state_dir: Path | None = None) -> str:
+    """*name*'s key, copied (0600) into the key dir its daemon loads when it's
+    saved in another known one; "" when no copy exists here. Re-adding an agent
+    with a new ``--state-dir`` claimed again and got 409 (take-3 bug 2)."""
+    where = key_dir(name, state_dir)
+    key = bundle_client.load_participant_key(relay_url, name, where)
+    if key:
+        return key
+    for other in known_key_dirs(name):
+        key = bundle_client.load_participant_key(relay_url, name, other)
+        if key:
+            bundle_client.save_participant_key(relay_url, name, key, where)
+            return key
+    return ""
+
+
 def ensure_key(relay_url: str, secret: str, name: str,
                state_dir: Path | None = None) -> str:
     """*name*'s saved key, or one claimed now with the relay *secret* and saved
     where its daemon looks. Never follows a redirect with a credential."""
     where = key_dir(name, state_dir)
-    key = bundle_client.load_participant_key(relay_url, name, where)
+    key = adopt_key(relay_url, name, state_dir)
     if key:
         return key
     try:
@@ -50,7 +82,8 @@ def ensure_key(relay_url: str, secret: str, name: str,
         raise IdentityError(f"couldn't reach the relay to claim @{name} ({exc})") from exc
     if resp.status_code == 409:
         raise IdentityError(f"@{name} is already claimed on this relay and its key isn't "
-                            "saved here")
+                            "saved anywhere on this machine; the relay's owner can free "
+                            f"it with `quorus release-name {name}`")
     if resp.status_code != 200:
         raise IdentityError(f"the relay wouldn't claim @{name} (HTTP {resp.status_code})")
     try:
