@@ -16,7 +16,9 @@ that matches nothing, and anything that looks like a block holds.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Iterable
@@ -24,7 +26,11 @@ from typing import Any, Iterable
 from quorus.private_files import write_private_text
 from quorus.runtime import review_prefs
 
-REVIEWERS_PATH = Path.home() / ".quorus" / "room-reviewers.json"
+
+def reviewers_path() -> Path:
+    """Resolved per call, so a test's HOME (and QUORUS_CONFIG_DIR) is honored."""
+    from quorus.runtime import bindings
+    return bindings.config_dir() / "room-reviewers.json"
 # Gates the room, matches no stamp: only the owner's override publishes.
 UNREADABLE: dict[str, str] = {"name": "", "tenant": "", "claim_id": ""}
 MIN_SHA = 7
@@ -65,7 +71,7 @@ def reviewer_for(room: str, path: Path | None = None) -> dict[str, str] | None:
     matches. A room recorded with no pin (``{"name": ..., "unpinned": true}``)
     is gated the same way."""
     try:
-        data = json.loads((path or REVIEWERS_PATH).read_text(encoding="utf-8"))
+        data = json.loads((path or reviewers_path()).read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, json.JSONDecodeError):
@@ -112,7 +118,7 @@ def clear_reviewer(room: str, path: Path | None = None) -> None:
 
 
 def _write(path: Path | None, change: Any) -> None:
-    target = path or REVIEWERS_PATH
+    target = path or reviewers_path()
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -209,3 +215,57 @@ def decide(history: Iterable[dict[str, Any]], pin: dict[str, str] | None,
         elif said == "go":
             state, ref = "go", msg.get("id")
     return state, ref
+
+
+# ── pending-review markers (slice 3) ─────────────────────────────────────
+
+
+def marker_path(runtime_dir: Path, repo: Path, branch: str) -> Path:
+    """One marker per checkout and branch, named by a hash of both (never a
+    sanitized path: codex, review of eed52d75)."""
+    key = f"{os.path.realpath(repo)}\0{branch}".encode("utf-8")
+    return runtime_dir / "review-gate" / f"{hashlib.sha256(key).hexdigest()}.json"
+
+
+def save_marker(runtime_dir: Path, repo: Path, branch: str, *, room: str, tip: str,
+                base: str, count: int, reviewer: str, now: float) -> dict[str, Any]:
+    """Record that *tip* waits for *reviewer*. A marker for the same tip keeps
+    its first time, so the review timeout isn't reset by a re-hold."""
+    prior = load_marker(runtime_dir, repo, branch)
+    since = prior["since"] if prior and prior.get("tip") == tip else now
+    data = {"repo": os.path.realpath(repo), "branch": branch, "room": room, "tip": tip,
+            "base": base, "count": count, "reviewer": reviewer, "since": since}
+    path = marker_path(runtime_dir, repo, branch)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_private_text(path, json.dumps(data, sort_keys=True) + "\n")
+    return data
+
+
+def load_marker(runtime_dir: Path, repo: Path, branch: str) -> dict[str, Any] | None:
+    """The pending review for *branch*, None when there is none. An unreadable
+    marker reads as one that names no tip: nothing it says can publish."""
+    try:
+        data = json.loads(marker_path(runtime_dir, repo, branch).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return {"tip": "", "unreadable": True}
+    if not isinstance(data, dict) or data.get("repo") != os.path.realpath(repo):
+        return {"tip": "", "unreadable": True}
+    return data
+
+
+def clear_marker(runtime_dir: Path, repo: Path, branch: str) -> None:
+    try:
+        marker_path(runtime_dir, repo, branch).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def awaiting_status(pin: dict[str, str], tip: str, count: int) -> str:
+    """The room status for a held tip: honest about what is (not) on main."""
+    who = pin.get("name") or "the reviewer"
+    if not pinned(pin):
+        return (f"{_STATUS} {tip[:12]} ({count} commit(s)) is held: review by @{who} can't "
+                "be authenticated on this relay; owner override only. Not on main.")
+    return f"{_STATUS} awaiting @{who}'s review of {tip[:12]} ({count} commit(s)); not on main"

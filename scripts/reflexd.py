@@ -93,6 +93,8 @@ from quorus.runtime import handoff_runtime as _handoff_runtime  # noqa: E402
 from quorus.runtime import handoff_sender as _handoff_sender  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime import owner_pin as _owner_pin  # noqa: E402  invitee agents
+from quorus.runtime import review_gate as _review_gate  # noqa: E402  review gate
+from quorus.runtime import review_publish as _review_publish  # noqa: E402  review gate
 from quorus.runtime import review_share as _review_share  # noqa: E402
 from quorus.runtime import task_capture as _task_capture  # noqa: E402  W4 display only
 from quorus.runtime import task_record as _task_record  # noqa: E402
@@ -277,6 +279,34 @@ def _answer_only(triage: Any, envelope: dict[str, Any], me: str, lead: str | Non
     if not lead or lead == me or triage is None or triage.kind != "question":
         return False
     return not is_agent_participant(envelope.get("from_name") or "")
+
+
+def _review_gate_for(room: str, repo: Path, *,
+                     bindings_path: Path | None = None) -> tuple[str, dict[str, str]] | None:
+    """(gated room, reviewer pin) when *room*, or any room bound to the same
+    *repo*, has a reviewer (docs/plans/review-gate.md); None publishes as
+    before. Rooms share a repo's main, so one gated room gates them all. A
+    bindings file that can't be read gates nothing beyond *room* itself."""
+    if room:
+        pin = _review_gate.reviewer_for(room)
+        if pin is not None:
+            return room, pin
+    try:
+        data = json.loads((bindings_path or ROOM_BINDINGS_PATH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    target = Path(repo).resolve()
+    for other, raw in data.items():
+        raw = raw.get("path") if isinstance(raw, dict) else raw
+        if other == room or not isinstance(raw, str):
+            continue
+        if Path(raw).expanduser().resolve() == target:
+            pin = _review_gate.reviewer_for(other)
+            if pin is not None:
+                return other, pin
+    return None
 
 
 def lead_for(room: str, *, leads_path: Path | None = None) -> str | None:
@@ -4625,6 +4655,9 @@ class Reflexd:
 
         async def publish() -> str | None:
             try:
+                gate = await asyncio.to_thread(_review_gate_for, room, wt.repo)
+                if gate is not None:  # a reviewed repo: hold for the reviewer's GO
+                    return await asyncio.to_thread(self._hold_for_review, wt, *gate)
                 return await asyncio.to_thread(
                     reflexd_wake.publish_worktree, wt, self.config.participant_name,
                     {"agent": self.config.participant_name, "vendor": harness,
@@ -4696,6 +4729,23 @@ class Reflexd:
     @property
     def _held_dir(self) -> Path:
         return self.config.runtime_dir / "held-wakes"
+
+    def _hold_for_review(self, wt: Any, room: str, pin: dict[str, str]) -> str | None:
+        """A room with a reviewer (docs/plans/review-gate.md): rebase under the
+        repo's publish lock but never fast-forward main; record the tip as
+        waiting for the reviewer and return the honest room status."""
+        runtime = self.config.runtime_dir
+        with _review_publish.repo_lock(runtime, wt.repo):
+            status = reflexd_wake.publish_worktree(wt, self.config.participant_name,
+                                                   hold=True)
+            if not (status or "").startswith(reflexd_wake.REVIEW_READY):
+                return status  # nothing ahead, a conflict, or another hold
+            tip, count = status[len(reflexd_wake.REVIEW_READY):].split()
+            base = reflexd_wake._git("rev-parse", wt.main, cwd=wt.repo).stdout.strip()
+            _review_gate.save_marker(runtime, wt.repo, wt.branch, room=room, tip=tip,
+                                     base=base, count=int(count),
+                                     reviewer=pin.get("name", ""), now=time.time())
+        return _review_gate.awaiting_status(pin, tip, int(count))
 
     async def _guard_publish(self, relay: RelayClient, room: str, wt: Any) -> str | None:
         """Before publishing *wt*: if the owner or the room's lead @-mentioned
@@ -4807,7 +4857,10 @@ class Reflexd:
                                        reflexd_unfinished.pending(self._unfinished_dir, wt.path)):
                     continue  # a cut-off turn waits for review or its finishing turn
                 status = await self._guard_publish(relay, room, wt) if wt is not None else None
-                if status is None and wt is not None:
+                gate = await asyncio.to_thread(_review_gate_for, room, repo)
+                if status is None and wt is not None and gate is not None:
+                    status = await asyncio.to_thread(self._hold_for_review, wt, *gate)
+                elif status is None and wt is not None:
                     status = await asyncio.to_thread(
                         reflexd_wake.publish_worktree, wt, self.config.participant_name)
                     await asyncio.to_thread(reflexd_held.settle_window, self._held_dir, wt)
