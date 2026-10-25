@@ -488,8 +488,24 @@ def cmd_agent(args: Any, console: Any) -> None:
 
 
 def _add(args: Any, console: Any) -> None:
-    """`quorus agent add`: prepare (name, credentials, join, binding), then start."""
-    _start(_prepare(args, console), console)
+    """`quorus agent add`: prepare (name, credentials, join, binding), then start.
+    With ``--reviewer`` the agent is pinned as the room's reviewer in between, so
+    its gate exists before it runs (docs/plans/gate-by-default.md)."""
+    prep = _prepare(args, console)
+    if getattr(args, "reviewer", False):
+        from quorus_cli import agent_identity, gate_setup
+
+        try:
+            gate_setup.pin_reviewer(prep, replace=getattr(args, "replace", False))
+        except agent_identity.IdentityError as exc:
+            raise SystemExit(f"agent: no review gate: {exc}") from exc
+    _start(prep, console)
+    if getattr(args, "reviewer", False):
+        from quorus_cli import gate_setup
+
+        line = gate_setup.gate_line(prep["room"], prep["name"], prep["repo"])
+        console.print(f"[success]✓[/] {line}")
+        gate_setup.post(prep, line)
 
 
 def _prepare(args: Any, console: Any) -> dict[str, Any]:

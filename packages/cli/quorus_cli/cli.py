@@ -9763,6 +9763,11 @@ def main():
     p_agent_add.add_argument("tool", choices=["claude", "codex", "gemini", "opencode"],
                              help="opencode runs any model: Ollama, OpenRouter, Qwen, ...")
     p_agent_add.add_argument("--room", required=True, help="Room to join")
+    p_agent_add.add_argument("--reviewer", action="store_true",
+                             help="Make this agent the room's reviewer: commits in the room's "
+                                  "repo wait for its GO before main")
+    p_agent_add.add_argument("--replace", action="store_true",
+                             help="With --reviewer: replace the room's current reviewer")
     p_agent_add.add_argument("--repo", help="Repo the room works in (binds the room)")
     p_agent_add.add_argument(
         "--state-dir", metavar="DIR",
