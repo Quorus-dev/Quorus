@@ -90,7 +90,8 @@ if argv[:1] != ["exec"]:  # some other probe: not a wake, nothing to record
 prompt = argv[-1]
 can_write = any(a == 'sandbox_mode="workspace-write"' for a in argv)
 record(stub="codex", argv=argv[:-1], can_write=can_write, from_agent=from_agent(prompt),
-       untrusted="this turn is READ-ONLY" in prompt, picked=PICKED in prompt)
+       untrusted="this turn is READ-ONLY" in prompt, picked=PICKED in prompt,
+       trigger=prompt.rsplit("# Triggering message", 1)[-1][:600])
 reply = act(prompt, can_write)
 print(json.dumps({"type": "thread.started", "thread_id": "t-stub"}))
 print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": reply}}))
@@ -121,6 +122,33 @@ _STUBS = {"codex": _CODEX_STUB, "opencode": _OPENCODE_STUB}
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@x",
                            *args], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _patch_ids(repo: Path, *rev: str) -> dict[str, str]:
+    """{commit: stable patch-id} for `git log -p <rev>`."""
+    log = subprocess.run(["git", "-C", str(repo), "log", "-p", "--no-color", *rev],
+                         capture_output=True, check=True).stdout
+    ids = subprocess.run(["git", "-C", str(repo), "patch-id", "--stable"], input=log,
+                         capture_output=True, check=True).stdout.decode().split("\n")
+    return {c: p for p, c in (ln.split() for ln in ids if ln.strip())}
+
+
+def landed(repo: Path, sha: str, branch: str = "main") -> str | None:
+    """The commit on *branch* that carries *sha*'s change, or None.
+
+    The ✅ names the agent's own commit. What reaches main can be a different one with
+    the same change: rebased onto a main that moved, cherry-picked back after a hold
+    (reflexd_held), or redone by a later wake. Matching on the patch-id, not the SHA,
+    keeps F5 about "the fix landed" rather than "this exact object landed"."""
+    if subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", sha, branch],
+                      capture_output=True).returncode == 0:
+        return git(repo, "rev-parse", sha)
+    try:
+        want = list(_patch_ids(repo, "-1", sha).values())
+        on_branch = _patch_ids(repo, "-50", branch)
+    except subprocess.CalledProcessError:
+        return None
+    return next((c for c, p in on_branch.items() if want and p == want[0]), None)
 
 
 def setup(home: Path, tools: tuple[str, ...] = ("codex", "opencode"),
@@ -206,7 +234,20 @@ def wait_for(s, sender: str, marker: str, timeout: float) -> str:
     except RelayBusy:
         seen = "(relay busy: 429)"
     raise AssertionError(f"no message from {sender} with {marker!r} within {timeout}s; "
-                         f"history: {seen}")
+                         f"history: {seen}\n{agent_logs(s.home, sender)}")
+
+
+def agent_logs(home: Path, name: str, lines: int = 40) -> str:
+    """Why an agent never answered, read before teardown removes it: its daemon log
+    and crash log, or a note that it was never started (an orphan of the same name
+    once made `agent add` skip the start: 6fd323c1)."""
+    agents = home / ".quorus" / "agents"
+    found = [p for p in (agents / f"{name}.log", agents / f"{name}.crash.log") if p.exists()]
+    if not found:
+        return f"no daemon log for {name} in {agents}: it was never started"
+    return "\n".join(f"--- {p.name} (last {lines} lines)\n"
+                     + "\n".join(p.read_text(errors="replace").splitlines()[-lines:])
+                     for p in found)
 
 
 def calls(home: Path) -> list[dict]:
