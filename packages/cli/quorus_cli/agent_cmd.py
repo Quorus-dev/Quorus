@@ -466,6 +466,13 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
         _write_private(_state_record(name), str(state_dir))
     else:
         _state_record(name).unlink(missing_ok=True)
+        if os.environ.get("QUORUS_CONFIG_DIR"):
+            # launchd passes only this env: without it the daemon read ~/.quorus and
+            # missed the binding, lead and pin this CLI wrote (FRICTION #99 (4)).
+            # Absolute, since launchd starts it in /.
+            from quorus.runtime.bindings import config_dir
+
+            env["QUORUS_CONFIG_DIR"] = str(config_dir().expanduser().resolve())
     argv = [sys.executable, str(_reflexd_script_path()), "start",
             "--participant", name, "--relay-url", cfg["relay_url"]]
     # Only a daemon that stays up is "running"; otherwise say why (take-3 bug 1).

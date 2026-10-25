@@ -158,3 +158,36 @@ def test_a_private_key_longer_than_the_tail_is_redacted(tmp_path, end) -> None:
     assert "[redacted]" in tail
     assert not any(line[:7] in tail for line in body)
 
+
+def _plist_env(home: Path, monkeypatch, state_dir: Path | None = None) -> str:
+    _launchd(monkeypatch, _Launchctl(), pid=4242)
+    agent_cmd._start_daemon({"relay_url": "http://r"}, NAME, SECRET, True, None, state_dir)
+    return (home / "LA" / f"{LABEL}.plist").read_text()
+
+
+def test_the_daemon_reads_the_clis_config_dir(home, monkeypatch) -> None:
+    """FRICTION #99 (4): under QUORUS_CONFIG_DIR with no --state-dir, launchd's daemon
+    read ~/.quorus and missed its binding and pin."""
+    xml = _plist_env(home, monkeypatch)
+    assert f"<key>QUORUS_CONFIG_DIR</key><string>{(home / 'cfg').resolve()}</string>" in xml
+
+
+def test_a_relative_config_dir_is_written_absolute(home, monkeypatch) -> None:
+    monkeypatch.chdir(home)
+    monkeypatch.setenv("QUORUS_CONFIG_DIR", "cfg")
+    xml = _plist_env(home, monkeypatch)
+    assert f"<key>QUORUS_CONFIG_DIR</key><string>{(home / 'cfg').resolve()}</string>" in xml
+
+
+def test_without_it_the_plist_is_unchanged(home, monkeypatch) -> None:
+    monkeypatch.delenv("QUORUS_CONFIG_DIR")
+    monkeypatch.setattr(agent_cmd, "_agents_dir", lambda: home / "agents")
+    (home / "agents").mkdir()
+    assert "QUORUS_CONFIG_DIR" not in _plist_env(home, monkeypatch)
+
+
+def test_a_state_dir_still_wins(home, monkeypatch) -> None:
+    state = home / "qd" / "claude"
+    xml = _plist_env(home, monkeypatch, state)
+    assert f"<key>QUORUS_CONFIG_DIR</key><string>{state}</string>" in xml
+    assert str((home / "cfg").resolve()) + "</string>" not in xml.split("QUORUS_CONFIG_DIR")[1]
