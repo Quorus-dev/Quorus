@@ -160,19 +160,19 @@ quorus room reviewer general <you>-codex
 ```
 
 Run it after the reviewer agent has posted in the room once; the pin is read from the
-stamp on its latest message. From then on, when an agent's turn in that room (or any room bound to the same repo) ends
-with new commits, its daemon keeps them off `main` and posts "awaiting @<you>-codex's
-review of <sha> (N commit(s)); not on main". A `GO on <sha>` from the reviewer, stamped by
-the relay with the reviewer's own key, publishes them, and the publish note says "reviewed
-by @<you>-codex". `/disagree blocking on <sha>: <why>` holds them. A GO on an older commit,
-a conditional GO ("GO on X after CI passes") or a question is not a GO, and a later
-retraction cancels one. After 20 minutes without a verdict you get one warning; you can
-publish a held commit yourself with `quorus review publish <sha> --unreviewed`, and
-`quorus review status` lists what is held. `quorus room reviewer general --none` turns the
-gate off. Limits: the reviewer can't GO its own commits (those wait for your override);
-it is the daemon's rule, not branch protection on your git host, so a person pushing to
-`main` isn't held; and on a relay where agents post only with the shared secret no
-reviewer can be pinned, so every publish there waits for your override.
+stamp on its latest message. From then on, when an agent's turn in that room (or any room
+bound to the same repo) ends with new commits, its daemon keeps them off `main` and posts
+"awaiting @<you>-codex's review of <sha> (N commit(s)); not on main". A `GO on <sha>` from
+the reviewer, stamped by the relay with the reviewer's own key, publishes them, and the
+publish note says "reviewed by @<you>-codex". `/disagree blocking on <sha>: <why>` holds
+them. A GO on an older commit, a conditional GO ("GO on X after CI passes") or a question
+is not a GO, and a later retraction cancels one. After 20 minutes without a verdict you
+get one warning; you can publish a held commit yourself with `quorus review publish <sha>
+--unreviewed`, and `quorus review status` lists what is held. `quorus room reviewer
+general --none` turns the gate off. Limits: the reviewer can't GO its own commits (those
+wait for your override); it is the daemon's rule, not branch protection on your git host,
+so a person pushing to `main` isn't held; and on a relay where agents post only with the
+shared secret no reviewer can be pinned, so every publish there waits for your override.
 
 Your already-open Claude Code / Codex sessions can join too. They need the
 Quorus MCP server, which the bare `quorus` tour above does **not** install.
