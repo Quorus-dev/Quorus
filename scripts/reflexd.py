@@ -4974,6 +4974,10 @@ class Reflexd:
                 return f"the room couldn't be re-read before publishing ({exc.__class__.__name__})"
             if override is not None:  # the owner's call; it must still stand
                 return None if overridden(fresh) else _REVIEW_CHANGED + "override gone"
+            # Again after the read: a reviewer rotated or removed while it was
+            # blocking must not publish on its stale GO (codex, review of 6b5c271d).
+            if _review_gate.reviewer_for(room) != full:
+                return "the room's reviewer changed"
             listed_now = reflexd_wake._git("rev-list", "--reverse", f"{wt.main}..{tip}",
                                            cwd=wt.repo)
             pending_now = listed_now.stdout.split() if listed_now.returncode == 0 else []

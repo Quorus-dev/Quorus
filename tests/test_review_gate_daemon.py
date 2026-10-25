@@ -826,9 +826,11 @@ class _Rotates(_Room):
         return list(self.history)
 
 
+@pytest.mark.parametrize("at", [2, 3])  # before the lock's check; during its history read
 @pytest.mark.parametrize("change", ["rotated", "removed"])
-def test_a_second_changed_after_its_go_holds_under_the_lock(env, change):
-    """codex, plan review of f73af94d: compare the whole pin under the lock."""
+def test_a_second_changed_after_its_go_holds_under_the_lock(env, change, at):
+    """codex, plan review of f73af94d and review of 6b5c271d: compare the whole
+    pin under the lock, again after its history read."""
     d, repo, _wt, cfg, main, tip, _status = _backed_held(env)
 
     def rewrite(path: Path) -> None:
@@ -839,6 +841,6 @@ def test_a_second_changed_after_its_go_holds_under_the_lock(env, change):
             rg.save_reviewer("r", "b-claude", tenant="t1", claim_id="c-self", path=path)
 
     relay = _Rotates([_lead_says(f"✅ GO on {tip[:8]}")], cfg / "room-reviewers.json",
-                     rewrite, at=2)  # after decide's read, before the lock's check
+                     rewrite, at=at)
     _tick(d, relay)
     assert _git(repo, "rev-parse", "main") == main
