@@ -142,3 +142,15 @@ def test_list_shows_a_dead_job_as_stopped(home, monkeypatch, capsys) -> None:
     monkeypatch.setattr(agent_cmd, "_launchd_jobs", lambda: {LABEL: None})
     agent_cmd._list(_Console(), as_json=True)
     assert '"running": false' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("end", ["-----END PRIVATE KEY-----\nexit 1\n", ""])
+def test_a_private_key_longer_than_the_tail_is_redacted(tmp_path, end) -> None:
+    """Line by line, a PEM body's lines matched nothing (codex, review of 53e3f56e).
+    Also a key cut off mid-body, as a crash leaves it."""
+    body = [f"MIIEv{i:02d}" + "A" * 58 for i in range(agent_start.TAIL_LINES + 5)]
+    log = tmp_path / "crash.log"
+    log.write_text("old\n-----BEGIN PRIVATE KEY-----\n" + "\n".join(body) + "\n" + end)
+    tail = agent_start.log_tail(log, len("old\n"))
+    assert "[redacted]" in tail
+    assert not any(line[:7] in tail for line in body)

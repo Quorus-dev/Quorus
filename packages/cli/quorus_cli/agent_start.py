@@ -57,9 +57,11 @@ def log_tail(path: Path, offset: int, known: Iterable[str] = ()) -> str:
             text = fh.read().decode("utf-8", "replace")
     except OSError:
         return ""
+    # Redact the whole text first: a private key spans lines, and line by line
+    # its body didn't match (codex, review of 53e3f56e).
+    text = redact_secrets(text, [*known, *env_secret_values(os.environ)])
     lines = [ln for ln in text.splitlines() if ln.strip()][-TAIL_LINES:]
-    secrets = [*known, *env_secret_values(os.environ)]
-    return "\n".join(f"  {redact_secrets(ln, secrets)}" for ln in lines)
+    return "\n".join(f"  {ln}" for ln in lines)
 
 
 def not_started(name: str, log: Path, offset: int, known: Iterable[str]) -> SystemExit:
