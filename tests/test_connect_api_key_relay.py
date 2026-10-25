@@ -5,7 +5,7 @@ import ast
 import json
 import re
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from quorus_cli import cli
@@ -46,11 +46,24 @@ def register(monkeypatch):
     return fake
 
 
+@pytest.fixture(autouse=True)
+def relay(monkeypatch):
+    """Every way `connect` reaches the relay, recorded: the async client the join
+    uses, the user's own sign-in, and the agent's token exchange."""
+    client = AsyncMock()
+    token = MagicMock(status_code=200)
+    token.json.return_value = {"token": "agent-jwt"}
+    calls = types.SimpleNamespace(client=client, get_client=MagicMock(return_value=client),
+                                  auth_headers=MagicMock(return_value={}),
+                                  post=MagicMock(return_value=token))
+    monkeypatch.setattr(cli, "_get_client", calls.get_client)
+    monkeypatch.setattr(cli, "_auth_headers", calls.auth_headers)
+    monkeypatch.setattr(cli._relay_http, "post", calls.post)
+    return calls
+
+
 def _connect(capsys, platform, name="sam-bot"):
-    # The room join's token exchange would try relay-a.test for real.
-    with patch.object(cli, "_get_client", return_value=AsyncMock()), \
-         patch.object(cli, "_auth_headers", return_value={}):
-        cli._cmd_connect(types.SimpleNamespace(platform=platform, room="dev", name=name))
+    cli._cmd_connect(types.SimpleNamespace(platform=platform, room="dev", name=name))
     return capsys.readouterr().out
 
 
@@ -120,17 +133,44 @@ def test_a_failed_mint_prints_no_snippet(profile, register, capsys):
 
 
 @pytest.mark.parametrize("attr,value", [("RELAY_URL", RELAY_B), ("API_KEY", "mct_other_ccc")])
-def test_a_shell_for_another_relay_changes_nothing(profile, register, capsys, monkeypatch,
-                                                   attr, value):
-    """Codex on 1bb20571: B's child key saved in A's profile breaks the binding."""
+def test_a_shell_for_another_relay_changes_nothing(profile, register, relay, capsys,
+                                                   monkeypatch, attr, value):
+    """Codex on 1bb20571: B's child key saved in A's profile breaks the binding.
+    Codex on 1ae50ab7: nothing may reach a relay first, not even the room join."""
     monkeypatch.setattr(cli, attr, value)
     before = profile.read_bytes()
     with pytest.raises(SystemExit):
         _connect(capsys, "http")
     out = capsys.readouterr().out
     register.assert_not_called()
+    relay.get_client.assert_not_called()
+    relay.auth_headers.assert_not_called()
+    relay.post.assert_not_called()
     assert profile.read_bytes() == before
     flat = "".join(out.split())
     assert PARENT not in flat and CHILD not in flat
     assert attr != "API_KEY" or value not in flat
     assert "--api-key -" in out and "QUORUS_TOKEN" not in out
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_the_room_join_signs_in_as_the_agent(profile, register, relay, capsys, platform):
+    _connect(capsys, platform)
+    relay.post.assert_called_once()
+    assert relay.post.call_args.kwargs["json"] == {"api_key": CHILD}
+    assert relay.post.call_args.kwargs["follow_redirects"] is False
+    relay.auth_headers.assert_not_called()  # never the user's own sign-in
+    url, = relay.client.post.await_args.args
+    assert url == f"{RELAY_A}/rooms/dev/join"
+    assert relay.client.post.await_args.kwargs["json"] == {"participant": "sam-bot"}
+    assert relay.client.post.await_args.kwargs["headers"] == {
+        "Authorization": "Bearer agent-jwt"}
+
+
+def test_a_failed_mint_joins_nothing(profile, register, relay, capsys):
+    register.side_effect = None
+    register.return_value = None
+    with pytest.raises(SystemExit):
+        _connect(capsys, "http")
+    relay.get_client.assert_not_called()
+    relay.post.assert_not_called()

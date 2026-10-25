@@ -263,20 +263,25 @@ GENERATORS = {
 
 
 def run(platform: str, room: str, name: str, *, relay_url: str, secret: str,
-        api_key: str, parent: str, register) -> None:
-    """Print *platform*'s snippet. On a relay that uses API keys, give the agent
-    its own key first; if that can't be done, print no snippet and exit 1."""
+        api_key: str, parent: str, register, join) -> None:
+    """Join the room and print *platform*'s snippet. On a relay that uses API
+    keys the agent's own key is settled first, before any relay call but the
+    one that mints it; if that can't be done, nothing is joined or printed and
+    it exits 1. ``join(participant, agent_key)`` signs in as the agent."""
+    agent_secret = ""
     if api_key and not secret:
         from quorus_cli.connect_agent_key import AgentKeyError, agent_key
 
         try:
-            name = agent_key(relay_url=relay_url, name=name, parent=parent,
-                             parent_key=api_key, platform=platform, register=register,
-                             credential_file=saved_credential_file())
+            name, agent_secret = agent_key(
+                relay_url=relay_url, name=name, parent=parent, parent_key=api_key,
+                platform=platform, register=register,
+                credential_file=saved_credential_file())
         except AgentKeyError as exc:
             ui.error(str(exc), hint=exc.hint)
             raise SystemExit(1) from None
         cred = agent_key_cred(name)
     else:
         cred = secret_cred(relay_url, secret)
+    join(name, agent_secret)
     GENERATORS[platform](room, name, relay_url, cred)

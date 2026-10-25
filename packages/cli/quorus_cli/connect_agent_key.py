@@ -38,8 +38,9 @@ def canonical_name(name: str, parent: str, platform: str) -> tuple[str, str]:
 
 
 def agent_key(*, relay_url: str, name: str, parent: str, parent_key: str,
-              platform: str, register, credential_file: Path) -> str:
-    """The agent's name once its key is saved in *credential_file*.
+              platform: str, register, credential_file: Path) -> tuple[str, str]:
+    """``(agent name, agent key)`` once the key is saved in *credential_file*.
+    The caller must never print the key.
 
     *register* is ``cli._register_agent_identity_full``. Only the relay and
     key the profile itself holds are used: with this shell pointing at another
@@ -57,7 +58,7 @@ def agent_key(*, relay_url: str, name: str, parent: str, parent_key: str,
     keys = profile.get("agent_api_keys")
     keys = keys if isinstance(keys, dict) else {}
     if keys.get(agent):
-        return agent  # the relay revokes earlier child keys on every register call
+        return agent, keys[agent]  # the relay revokes earlier child keys on every call
     minted = register(relay_url=relay_url, parent_api_key=parent_key, suffix=suffix)
     if not minted:
         raise AgentKeyError(f"The relay didn't create an identity for {agent}.",
@@ -65,4 +66,4 @@ def agent_key(*, relay_url: str, name: str, parent: str, parent_key: str,
     agent, key = minted
     profile["agent_api_keys"] = {**keys, agent: key}
     ConfigManager(path=credential_file).save(profile)
-    return agent
+    return agent, key
