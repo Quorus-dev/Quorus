@@ -179,3 +179,241 @@ def test_a_room_re_parked_during_release_still_gets_its_slot(monkeypatch) -> Non
     asyncio.run(go())
     assert woke == ["alpha", "beta"] and d._pace_parked == {}
     assert len(sleeps) == 2  # one wait per slot, then the worker ends
+
+
+# ── FRICTION #95: a NO_REPLY turn that changed nothing gives its slot back ──
+# (docs/plans/pacing-fixes.md, plan GO 6b0ec23d)
+
+
+class _Room:
+    """A relay whose history the daemon reads for the agent's own posts."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.history: list[dict] = []
+        self.posted: list[dict] = []
+        self.fail = fail
+
+    async def fetch_recent(self, *, room: str, limit: int = 10):
+        if self.fail:
+            raise RuntimeError("relay unreachable")
+        return list(self.history)[-limit:]
+
+    async def fetch_history(self, *, room: str, limit: int):
+        return list(self.history)[-limit:]
+
+    async def post_reply(self, **kw):
+        self.posted.append(kw)
+        return {"id": f"p{len(self.posted)}"}
+
+    async def post_record(self, **_kw):
+        return {"ok": True}
+
+
+def _paced_daemon(monkeypatch, cap: int = 2, name: str = "a-codex"):
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name=name))
+    monkeypatch.setattr(reflexd, "pace_for", lambda _n: cap)
+    return d
+
+
+def _turn(monkeypatch, d, relay, i: int, *, reply: str = "NO_REPLY", during=None,
+          sender: str = "a-claude") -> None:
+    async def fake_run(harness, **_kw: Any) -> str:
+        if during is not None:
+            during(relay)
+        return reply
+
+    monkeypatch.setattr(d.adapter, "run", fake_run)
+    env = {"id": f"e{i}", "message_id": f"m{i}", "room": "build", "from_name": sender,
+           "content": f"@{d.config.participant_name} thoughts?", "message_type": "chat"}
+    relay.history.append({**env, "timestamp": _now()})  # the message that wakes it
+    asyncio.run(d._wake_and_reply(relay, env, reason="t"))
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def test_no_reply_turns_give_their_slot_back_up_to_the_cap(monkeypatch) -> None:
+    d, relay = _paced_daemon(monkeypatch, cap=2), _Room()
+    ran: list[int] = []
+    for i in range(4):
+        _turn(monkeypatch, d, relay, i, during=lambda _r, i=i: ran.append(i))
+    # Two refunds (the cap), then the third counts; the fourth still fits.
+    assert ran == [0, 1, 2, 3]
+    assert len(d._refunds) == 2 and len(d._turns) == 2
+
+
+def test_a_turn_that_replies_counts(monkeypatch) -> None:
+    d, relay = _paced_daemon(monkeypatch), _Room()
+    _turn(monkeypatch, d, relay, 0, reply="I'd keep it as is.")
+    assert len(d._turns) == 1 and d._refunds == []
+
+
+def test_a_no_reply_turn_that_posted_through_its_tools_counts(monkeypatch) -> None:
+    from datetime import datetime, timezone
+
+    def posts(relay: _Room) -> None:
+        relay.history.append({"id": "own", "from_name": "a-codex", "content": "✅ done",
+                              "timestamp": datetime.now(timezone.utc).isoformat()})
+
+    d, relay = _paced_daemon(monkeypatch), _Room()
+    _turn(monkeypatch, d, relay, 0, during=posts)
+    assert len(d._turns) == 1 and d._refunds == []
+
+
+def test_an_undated_own_post_counts(monkeypatch) -> None:
+    d, relay = _paced_daemon(monkeypatch), _Room()
+    _turn(monkeypatch, d, relay, 0, during=lambda r: r.history.append(
+        {"id": "own", "from_name": "a-codex", "content": "hi", "timestamp": "soon"}))
+    assert len(d._turns) == 1
+
+
+def test_a_failed_own_post_check_counts(monkeypatch) -> None:
+    d, relay = _paced_daemon(monkeypatch), _Room()
+    # The relay goes away during the turn, so the end-of-wake check can't read it.
+    _turn(monkeypatch, d, relay, 0, during=lambda r: setattr(r, "fail", True))
+    assert len(d._turns) == 1 and d._refunds == []
+
+
+def test_a_no_reply_turn_that_committed_counts(tmp_path, monkeypatch) -> None:
+    """The commit is published and the publish line becomes the reply."""
+    import subprocess
+
+    def git(cwd: Path, *args: str) -> str:
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@x", *args],
+                              cwd=cwd, check=True, capture_output=True, text=True).stdout
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = tmp_path / "app"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    (repo / "notes.md").write_text("start\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "init")
+    bindings = tmp_path / "bindings.json"
+    bindings.write_text(json.dumps({"build": {"path": str(repo), "mode": "autonomous"}}))
+    monkeypatch.setattr(reflexd, "ROOM_BINDINGS_PATH", bindings)
+    leads = tmp_path / "leads.json"
+    leads.write_text("{}")
+    monkeypatch.setattr(reflexd, "ROOM_LEADS_PATH", leads)
+    monkeypatch.setenv("REFLEXD_OWNER", "arav")
+    monkeypatch.setattr(reflexd.reflexd_wake, "WORKTREES_ENABLED", True)
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex",
+                                              runtime_dir=tmp_path / "runtime"))
+    monkeypatch.setattr(reflexd, "pace_for", lambda _n: 2)
+
+    async def fake_run(harness, *, cwd=None, **_kw: Any) -> str:
+        (Path(cwd) / "notes.md").write_text("done\n")
+        git(Path(cwd), "commit", "-qam", "docs: notes")
+        return "NO_REPLY"
+
+    monkeypatch.setattr(d.adapter, "run", fake_run)
+    relay = _Room()
+    env = {"id": "e", "message_id": "m", "room": "build", "from_name": "arav",
+           "content": "@a-codex write the notes", "message_type": "chat"}
+    triage = reflexd.classify_message(content=env["content"], sender="arav",
+                                      self_name="a-codex")
+
+    async def go() -> None:
+        await d._wake_and_reply(relay, env, triage=triage)
+        if d._bg_tasks:
+            await asyncio.gather(*list(d._bg_tasks))
+    asyncio.run(go())
+    assert "done" in git(repo, "show", "main:notes.md")  # it really published
+    assert any("published" in p["content"] for p in relay.posted)
+    assert len(d._turns) == 1 and d._refunds == []
+
+
+def test_a_refund_removes_only_its_own_turn(monkeypatch) -> None:
+    import time
+    from datetime import datetime, timezone
+
+    d, relay = _paced_daemon(monkeypatch), _Room()
+    first, second = time.time() - 20, time.time() - 10
+    d._turns = [first, second]
+    relay.history.append({"id": "ask", "from_name": "a-claude", "timestamp": _now()})
+    started = datetime.now(timezone.utc)
+    assert asyncio.run(d._refund_turn(relay, "build", second, started))
+    assert d._turns == [first]
+    assert not asyncio.run(d._refund_turn(relay, "build", second, started))  # once only
+    assert d._turns == [first]
+
+
+# ── FRICTION #95: a parked wake re-reads the cap while it waits ──
+
+
+def _parked_release(monkeypatch, caps: list[int | None]) -> tuple[Any, list[float], list[str]]:
+    """Cap 1 with the hour's turn used, one wake parked. Each sleep step reads
+    the next cap from *caps*. Returns the daemon, the steps slept and the wakes."""
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+    monkeypatch.setattr(reflexd, "PACE_RECHECK_S", 0.01)
+    current = {"cap": 1}
+    monkeypatch.setattr(reflexd, "pace_for", lambda _n: current["cap"])
+    steps: list[float] = []
+    plan = iter(caps)
+
+    async def step(s: float) -> None:
+        steps.append(s)
+        try:
+            current["cap"] = next(plan)
+        except StopIteration:
+            d._stop.set()  # out of script: end the wait
+
+    woke: list[str] = []
+
+    async def fake_wake(relay: Any, env: dict, *, triage: Any = None, **_k: Any) -> None:
+        woke.append(env["room"])
+
+    monkeypatch.setattr(d, "_sleep_or_stop", step)
+    monkeypatch.setattr(d, "_wake_and_reply", fake_wake)
+    d._record_turn()
+    d._pace_parked["build"] = ({"room": "build", "from_name": "a-claude"}, None)
+    asyncio.run(d._release_paced(_Relay(), 50 * 60))
+    return d, steps, woke
+
+
+def test_raising_the_cap_releases_a_parked_wake_at_once(monkeypatch) -> None:
+    _d, steps, woke = _parked_release(monkeypatch, [10])
+    assert woke == ["build"] and len(steps) == 1  # one short step, not 50 minutes
+
+
+def test_removing_the_cap_releases_it(monkeypatch) -> None:
+    _d, steps, woke = _parked_release(monkeypatch, [None])
+    assert woke == ["build"] and len(steps) == 1
+
+
+def test_a_cap_still_full_keeps_it_parked(monkeypatch) -> None:
+    """Re-read every step, the cap of 1 still has no slot: it stays parked (the
+    stop at the end of the script is the only way out here)."""
+    _d, steps, woke = _parked_release(monkeypatch, [1, 1, 1])
+    assert woke == [] and len(steps) == 4
+
+
+def test_a_stop_during_a_step_returns_at_once(monkeypatch) -> None:
+    d, steps, woke = _parked_release(monkeypatch, [])
+    assert woke == [] and len(steps) == 1
+
+
+def test_a_post_hidden_behind_a_busy_room_counts(monkeypatch) -> None:
+    """codex, review of dd79fc65: the agent's own post, then 50 newer messages.
+    The read never reaches back to the wake's start, so it can't refund."""
+    def busy(relay: _Room) -> None:
+        relay.history.append({"id": "own", "from_name": "a-codex", "content": "✅",
+                              "timestamp": _now()})
+        relay.history.extend({"id": f"x{n}", "from_name": "a-claude", "content": "...",
+                              "timestamp": _now()} for n in range(reflexd.REFUND_LOOKBACK))
+
+    d, relay = _paced_daemon(monkeypatch), _Room()
+    _turn(monkeypatch, d, relay, 0, during=busy)
+    assert len(d._turns) == 1 and d._refunds == []
+
+
+def test_an_empty_read_counts(monkeypatch) -> None:
+    """RelayClient.fetch_recent answers [] when the read fails: no proof, no refund."""
+    d, relay = _paced_daemon(monkeypatch), _Room()
+    _turn(monkeypatch, d, relay, 0, during=lambda r: r.history.clear())
+    assert len(d._turns) == 1 and d._refunds == []

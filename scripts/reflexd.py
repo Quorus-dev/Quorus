@@ -174,6 +174,8 @@ def mode_for(room: str, *, bindings_path: Path | None = None) -> str:
 ROOM_LEADS_PATH = Path.home() / ".quorus" / "room-leads.json"
 PACING_PATH = Path.home() / ".quorus" / "pacing.json"
 PACE_WINDOW_S = 3600.0
+PACE_RECHECK_S = 30.0  # how often a parked wake re-reads its cap
+REFUND_LOOKBACK = 50  # messages read to check a NO_REPLY turn posted nothing
 MAX_WAKE_ATTEMPTS = 2
 GEMINI_TIMEOUT_S = 10 * 60  # its quiet internal retries hung one wake for 55 min
 
@@ -2851,6 +2853,7 @@ class Reflexd:
         # room -> ordered ids the agent saw in a wake it then answered.
         self._answered: dict[str, dict[str, None]] = {}
         self._turns: list[float] = []  # harness run start times, for pacing
+        self._refunds: list[float] = []  # NO_REPLY turns given back, this hour
         self._pace_announced: dict[str, float] = {}
         # Paced envelopes wait here (newest per room, coalesced) instead of
         # holding the wake lock: a pacing sleep under the lock kept the owner's
@@ -3378,10 +3381,56 @@ class Reflexd:
                 self._release_paced(relay, wait))
         return False
 
-    def _record_turn(self) -> None:
-        """A harness turn is starting: it counts against the pace window."""
+    def _record_turn(self) -> float:
+        """A harness turn is starting: it counts against the pace window.
+        Returns its timestamp, so :meth:`_refund_turn` can give back this one."""
         now = time.time()
         self._turns = [t for t in self._turns if now - t < PACE_WINDOW_S] + [now]
+        return now
+
+    async def _refund_turn(self, relay: RelayClient, room: str, started_at: float,
+                           wake_started: datetime) -> bool:
+        """Give back the slot of a turn that changed nothing: it answered
+        NO_REPLY and, by the end of the wake, published nothing, added no
+        status line and posted nothing itself (FRICTION #95; codex, review of
+        384e348a). The caller checks the first two. At most ``cap`` refunds per
+        rolling hour, so chatter spends at most twice the cap. Only this turn's
+        own timestamp goes, and any doubt keeps it counted."""
+        cap = pace_for(self.config.participant_name)
+        if cap is None or started_at not in self._turns:
+            return False
+        now = time.time()
+        self._refunds = [t for t in self._refunds if now - t < PACE_WINDOW_S]
+        if len(self._refunds) >= cap:
+            return False
+        try:
+            recent = await relay.fetch_recent(room=room, limit=REFUND_LOOKBACK)
+        except Exception:
+            return False  # can't tell whether it posted: the turn counts
+        def before(ts: Any) -> bool:
+            try:
+                t = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            except ValueError:
+                return False
+            return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)) < wake_started
+
+        # The read must reach back past the wake's start, so it shows a message
+        # from before it (the one that woke the agent, at least). In a busy room
+        # the agent's own post can sit behind 50 newer ones (codex, review of
+        # dd79fc65), and RelayClient.fetch_recent returns [] on a failed read.
+        # Either way nothing proves the turn posted nothing, so it counts.
+        if not any(before(m.get("timestamp")) for m in recent):
+            return False
+        # Its own post since the wake began (through its tools), or one we can't
+        # date: the turn did something, so it counts.
+        if any(m.get("from_name") == self.config.participant_name
+               and not before(m.get("timestamp")) for m in recent):
+            return False
+        self._turns.remove(started_at)
+        self._refunds.append(now)
+        logger.info("pacing: NO_REPLY turn given back (%d/%d this hour)",
+                    len(self._refunds), cap)
+        return True
 
     async def _release_paced(self, relay: RelayClient, wait: float) -> None:
         """When the slot opens, wake once per room for the parked messages.
@@ -3389,7 +3438,7 @@ class Reflexd:
         (the slot went to the room before it) waits for the next slot rather
         than being stranded with no worker left (codex, review of 10d8a8e0)."""
         while True:
-            await self._sleep_or_stop(wait)
+            await self._pace_sleep(wait)
             self._waiting = ("", 0.0)
             if self._stop.is_set():
                 return
@@ -3406,6 +3455,25 @@ class Reflexd:
                 return
             cap = pace_for(self.config.participant_name)
             wait = 0.0 if cap is None else max(1.0, pace_wait_s(self._turns, cap, time.time()))
+
+    async def _pace_sleep(self, wait: float) -> None:
+        """Wait for a pace slot, re-reading the cap every :data:`PACE_RECHECK_S`:
+        a cap raised or removed in pacing.json mid-wait counted only after a
+        restart, so parked reviews slept out a wait computed once (FRICTION
+        #95). A lowered cap waits longer. Returns at once on stop."""
+        deadline = time.time() + wait
+        while not self._stop.is_set():
+            left = deadline - time.time()
+            if left <= 0:
+                return
+            await self._sleep_or_stop(min(left, PACE_RECHECK_S))
+            if self._stop.is_set():
+                return
+            cap = pace_for(self.config.participant_name)
+            fresh = 0.0 if cap is None else pace_wait_s(self._turns, cap, time.time())
+            deadline = time.time() + fresh
+            if fresh > 0:
+                self._waiting = ("pacing", deadline)
 
     def _agent_credential(self) -> tuple[str, bool] | None:
         """``(credential, legacy)`` for the woken agent.
@@ -3606,6 +3674,9 @@ class Reflexd:
         # so a review request can carry exactly this wake's commits.
         pre_head = (await asyncio.to_thread(_review_share.head_of, worktree)
                     if worktree is not None and share_for(room) else None)
+        turn_commits: list[str] = []  # what this turn published (memory slice 2)
+        turn_at: float | None = None  # this turn's pace slot, if it ran
+        chose_no_reply = False
         shared_note = ""
         if pre_head and _review_share.shared_bundle_ids(envelope.get("content") or ""):
             # Step 4: the review request's commits are in the repo before the
@@ -3832,7 +3903,7 @@ class Reflexd:
                             + notice(tasks, task_turn["kind"]))
                 except Exception as exc:
                     logger.warning("task evidence unavailable (%s)", type(exc).__name__)
-            self._record_turn()  # only a turn that runs counts against the pace
+            turn_at = self._record_turn()  # only a turn that runs counts against the pace
             reply = await self.adapter.run(
                 harness, context=prompt,
                 cwd=worktree.path if worktree is not None else ws,
@@ -3903,6 +3974,7 @@ class Reflexd:
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
             reply = ""
+            chose_no_reply = True
         elif reply:
             # "NO_REPLY? No — …" leaked the protocol token into chat (BUG 10).
             scrubbed = reflexd_wake.scrub_no_reply(reply)
@@ -4020,6 +4092,8 @@ class Reflexd:
                 reply = f"{reply}\n{line}"
         if not reply:
             logger.info("harness produced empty reply, skipping post")
+            if chose_no_reply and turn_at is not None and not turn_commits:
+                await self._refund_turn(relay, room, turn_at, wake_started)
             # Silence looked like a dead agent (Arav, 2026-10-17): say it read
             # the message. `status` messages never wake anyone.
             if time.time() - self._last_spoke.get(room, 0.0) > SILENCE_STATUS_EVERY_S:
@@ -4769,10 +4843,13 @@ class Reflexd:
                 return status  # nothing ahead, a conflict, or another hold
             tip, count = status[len(reflexd_wake.REVIEW_READY):].split()
             base = reflexd_wake._git("rev-parse", wt.main, cwd=wt.repo).stdout.strip()
+            me = self.config.participant_name
+            # The reviewer's own commits go to its second, if the pin has one.
+            pin = _review_gate.reviewer_of(pin, me) or pin
             _review_gate.save_marker(runtime, wt.repo, wt.branch, room=room, tip=tip,
                                      base=base, count=int(count),
                                      reviewer=pin.get("name", ""), now=time.time())
-        return _review_gate.awaiting_status(pin, tip, int(count), self.config.participant_name)
+        return _review_gate.awaiting_status(pin, tip, int(count), me)
 
     def _schedule_review_tick(self, relay: RelayClient, room: str) -> None:
         """Check *room*'s repo for a held tip the reviewer may just have GO'd.
@@ -4822,7 +4899,11 @@ class Reflexd:
         if gate is None:  # the reviewer was removed: the next turn publishes as usual
             await asyncio.to_thread(_review_gate.clear_marker, runtime, wt.repo, wt.branch)
             return None
-        room, pin = gate
+        room, full = gate
+        # Who reviews this agent's commits: the pinned reviewer, or its second for
+        # the reviewer's own (docs/plans/reviewer-backup.md). `full` is the whole
+        # pin, re-checked under the lock so a rotated second can't publish.
+        pin = _review_gate.reviewer_of(full, self.config.participant_name) or full
         listed = await asyncio.to_thread(reflexd_wake._git, "rev-list", "--reverse",
                                          f"{wt.main}..{tip}", cwd=wt.repo)
         pending = listed.stdout.split() if listed.returncode == 0 else []
@@ -4836,8 +4917,8 @@ class Reflexd:
             logger.warning("review gate history fetch failed: %s", exc)
             return None
         state, ref = _review_gate.decide(history, pin, pending)
-        # The reviewer's own commits: its GO never counts for its own branch; only
-        # the owner's override publishes them (a block still holds).
+        # The reviewer's own commits with no second: its GO never counts for its
+        # own branch; only the owner's override publishes them (a block holds).
         mine = _review_gate.self_review(pin, self.config.participant_name)
         if mine and state == "go":
             state, ref = "waiting", None
@@ -4881,8 +4962,8 @@ class Reflexd:
             now = _review_gate.load_marker(runtime, wt.repo, wt.branch)
             if not now or now.get("tip") != tip:
                 return "the held tip changed"
-            if override is None and _review_gate.reviewer_for(room) != pin:
-                return "the room's reviewer changed"
+            if override is None and _review_gate.reviewer_for(room) != full:
+                return "the room's reviewer changed"  # either reviewer, rotated or gone
             # Re-read the room under the lock: a block that landed after the
             # first read (or while this waited for the lock) must win (codex,
             # review of 4bc515ba). Can't read it: hold, never publish blind.
@@ -4893,6 +4974,10 @@ class Reflexd:
                 return f"the room couldn't be re-read before publishing ({exc.__class__.__name__})"
             if override is not None:  # the owner's call; it must still stand
                 return None if overridden(fresh) else _REVIEW_CHANGED + "override gone"
+            # Again after the read: a reviewer rotated or removed while it was
+            # blocking must not publish on its stale GO (codex, review of 6b5c271d).
+            if _review_gate.reviewer_for(room) != full:
+                return "the room's reviewer changed"
             listed_now = reflexd_wake._git("rev-list", "--reverse", f"{wt.main}..{tip}",
                                            cwd=wt.repo)
             pending_now = listed_now.stdout.split() if listed_now.returncode == 0 else []

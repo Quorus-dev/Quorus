@@ -386,3 +386,60 @@ def test_an_existing_builders_gate_is_kept(cfg, monkeypatch):
                      path=builder / "room-reviewers.json")
     with pytest.raises(agent_identity.IdentityError, match="already has @a-gemini"):
         gate_setup.pin_reviewer(_prep("codex"))
+
+
+# ── the lead reviews the reviewer's own commits (docs/plans/reviewer-backup.md) ──
+
+
+def _keys(monkeypatch, fail_for: str = ""):
+    claims: list[str] = []
+
+    def ensure(url, cred, name, where):
+        if name == fail_for:
+            raise agent_identity.IdentityError("relay said no")
+        claims.append(name)
+        return f"quorus_pk_{name}"
+    monkeypatch.setattr(agent_identity, "ensure_key", ensure)
+    monkeypatch.setattr(agent_identity, "identity",
+                        lambda url, key: {"tenant": "_legacy", "claim_id": f"c-{key}"})
+    return claims
+
+
+def test_the_lead_is_pinned_as_second_from_its_own_key(cfg, monkeypatch):
+    claims = _keys(monkeypatch)
+    pin = gate_setup.pin_reviewer(_prep("codex"), second=_prep("claude"))
+    assert claims == ["a-codex", "a-claude"]  # both before any daemon starts
+    saved = rg.reviewer_for("general")
+    assert saved["second"] == {"name": "a-claude", "tenant": "_legacy",
+                               "claim_id": "c-quorus_pk_a-claude"}
+    assert pin["second"]["name"] == "a-claude"
+
+
+def test_a_lead_whose_key_cant_be_claimed_leaves_only_the_first_pin(cfg, monkeypatch):
+    _keys(monkeypatch, fail_for="a-claude")
+    pin = gate_setup.pin_reviewer(_prep("codex"), second=_prep("claude"))
+    assert "second" not in pin and "second" not in rg.reviewer_for("general")
+    assert rg.reviewer_for("general")["name"] == "a-codex"
+
+
+@pytest.mark.parametrize("second, says", [
+    ({"name": "a-claude"}, "@a-codex's own commits wait for @a-claude's."),
+    (None, "@a-codex's own commits wait for you"),
+])
+def test_the_wizard_line_names_who_reviews_the_reviewer(cfg, tools, monkeypatch,
+                                                        second, says):
+    posted: list[str] = []
+    monkeypatch.setattr(gate_setup, "post", lambda prep, text: posted.append(text))
+    got: list[dict] = []
+
+    def pin(prep, **kw):
+        got.append(kw.get("second") or {})
+        return {"tenant": "_legacy", "claim_id": "c", **({"second": second} if second else {})}
+
+    quickstart.offer(_C(), "general", cwd=_repo(cfg), ask=lambda q: True,
+                     which=tools(("claude", "codex")), ask_write=lambda q: True,
+                     ask_gate=lambda q: True, prepare=lambda a, _c: _prep(a.tool),
+                     start=lambda p, _c: None, pin=pin)
+    assert got[0]["name"] == "a-claude"  # the lead's prep goes to the pin step
+    [line] = posted
+    assert says in line

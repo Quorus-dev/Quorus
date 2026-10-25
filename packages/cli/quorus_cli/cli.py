@@ -9632,6 +9632,8 @@ def main():
     p_room_reviewer.add_argument("--unpinned", action="store_true",
                                  help="Record a reviewer with no key to pin: every publish "
                                       "then waits for your override")
+    p_room_reviewer.add_argument("--second", metavar="NAME",
+                                 help="Also pin NAME to review the reviewer's own commits")
     p_review = sub.add_parser("review", help="Commits waiting for a reviewer's GO")
     review_sub = p_review.add_subparsers(dest="review_action")
     review_sub.add_parser("status", help="List held commits on this machine")

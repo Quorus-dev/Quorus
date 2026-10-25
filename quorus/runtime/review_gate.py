@@ -84,12 +84,31 @@ def reviewer_for(room: str, path: Path | None = None) -> dict[str, str] | None:
     if not _valid(entry):
         name = entry.get("name") if isinstance(entry, dict) else ""
         return {**UNREADABLE, "name": name if isinstance(name, str) else ""}
+    out: dict[str, Any] = _identity(entry)
+    second = entry.get("second")
+    # The reviewer of the reviewer's own commits (docs/plans/reviewer-backup.md).
+    # A malformed one is dropped: those commits wait for the owner, as before.
+    if _valid(second) and second["name"] != entry["name"]:
+        out["second"] = _identity(second)
+    return out
+
+
+def _identity(entry: dict[str, Any]) -> dict[str, str]:
     out = {"name": entry["name"], "tenant": entry["tenant"]}
     if isinstance(entry.get("claim_id"), str) and entry["claim_id"]:
         out["claim_id"] = entry["claim_id"]
     else:
         out["participant_id"] = entry["participant_id"]
     return out
+
+
+def reviewer_of(pin: dict[str, Any] | None, me: str) -> dict[str, Any] | None:
+    """Who reviews *me*'s commits under *pin*: the pinned reviewer, or its
+    ``second`` when *me* is that reviewer. Nobody reviews their own: with no
+    second the reviewer's commits still wait for the owner (self_review)."""
+    if pin and me and pin.get("name") == me and isinstance(pin.get("second"), dict):
+        return pin["second"]
+    return pin
 
 
 class _AllRooms(frozenset):
@@ -120,7 +139,8 @@ def pinned(pin: dict[str, str] | None) -> bool:
 
 def save_reviewer(room: str, name: str, *, tenant: str = "", claim_id: str = "",
                   participant_id: str = "", path: Path | None = None,
-                  repo: Path | str | None = None) -> None:
+                  repo: Path | str | None = None,
+                  second: dict[str, str] | None = None) -> None:
     """Record *name* as *room*'s reviewer. With neither a claim nor a
     participant id the room is gated but unpinned: owner override only. *repo*
     records the repo *room* gates, so a daemon whose own bindings name only a
@@ -136,6 +156,10 @@ def save_reviewer(room: str, name: str, *, tenant: str = "", claim_id: str = "",
         entry["participant_id"] = participant_id
     else:
         entry["unpinned"] = True
+    if second is not None:
+        if not _valid(second) or second["name"] == name:
+            raise ValueError("the second reviewer needs its own key's claim")
+        entry["second"] = _identity(second)
     _write(path, lambda data: data.__setitem__(room, entry))
 
 

@@ -228,8 +228,10 @@ def _add_gated(console: Any, room: str, repo: Path | None, tools: list[str],
     if reviewer is not None and reviewer in preps and lead in preps:
         dirs = [p["state_dir"] for p in preps.values()]
         try:
-            pin(preps[reviewer], state_dirs=dirs)
-            line = gate_setup.gate_line(room, preps[reviewer]["name"], repo)
+            # The lead reviews the reviewer's own commits (docs/plans/reviewer-backup.md).
+            saved = pin(preps[reviewer], state_dirs=dirs, second=preps[lead]) or {}
+            backup = (saved.get("second") or {}).get("name")
+            line = gate_setup.gate_line(room, preps[reviewer]["name"], repo, backup)
         except Exception as exc:  # any failure: no new gate, said plainly
             why = str(exc) or exc.__class__.__name__
             files = gate_setup.reviewer_files([*dirs, *gate_setup.daemon_state_dirs(room)])

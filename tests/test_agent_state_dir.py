@@ -68,7 +68,11 @@ def test_the_daemon_gets_the_state_dir_as_its_config_dir(tmp_path, monkeypatch):
     assert f"<key>QUORUS_CONFIG_DIR</key><string>{tmp_path / 'qd' / 'claude'}" in xml
     agent_cmd._start_daemon({"relay_url": "http://r"}, "arav-claude", "k", True)
     plain = (tmp_path / "LA" / "dev.quorus.agent.arav-claude.plist").read_text()
-    assert "QUORUS_CONFIG_DIR" not in plain  # the team's daemons: unchanged
+    # No --state-dir: the CLI's own config dir (this test's QUORUS_CONFIG_DIR), the
+    # one its bindings went to (FRICTION #99 (4)); without the variable, none at all
+    # (test_agent_start.py).
+    assert (f"<key>QUORUS_CONFIG_DIR</key><string>{(tmp_path / 'cfg').resolve()}</string>"
+            in plain)
 
 
 def test_the_flag_is_on_the_cli():

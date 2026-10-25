@@ -5,6 +5,44 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.10] — 2026-10-25
+
+### Added
+
+- The lead reviews the reviewer's own commits. A room's pin can now carry a second
+  reviewer, pinned from that agent's own key like the first. The second reviews the first
+  reviewer's own commits and the first reviews everyone else's, so nobody can GO their
+  own; the held line, the 20-minute warning and the lock-time check all use that choice,
+  and a second rotated or removed after its GO (even while the check was reading the
+  room) holds the commit instead of publishing on the stale GO. The first run claims the
+  lead's key too, before any daemon starts, and saves it as the second in the same
+  all-or-nothing write; the room line then reads "@<reviewer>'s own commits wait for
+  @<lead>'s". If the lead's key can't be claimed, only the first pin is saved and the line
+  says the owner releases the reviewer's commits, as in 0.7.9. Later,
+  `quorus room reviewer <room> <name> --second <lead>` pins a second from its own stamped
+  post; it refuses one that never posted, one whose latest post used the relay secret,
+  and the reviewer itself. `quorus room reviewer <room>` shows the second. With no
+  second, the reviewer's commits still wait for your override.
+
+### Fixed
+
+- Pacing no longer spends an agent's hourly cap on turns that said nothing. A turn that
+  answered NO_REPLY and, by the end of the wake, published nothing, added no status line
+  and posted nothing of its own gives its slot back, at most `cap` refunds per hour. Any
+  doubt keeps the turn counted: an own post the room read can't date, a read that doesn't
+  reach back to the message that woke the agent, or a failed read. A chatter storm can
+  therefore spend at most twice the cap while a blocking review waits.
+- A parked wake re-reads its cap every 30 s instead of sleeping out a wait computed once.
+  Raising or removing the cap in `pacing.json` takes effect without a restart; a cap that
+  is still full keeps the wake waiting.
+- `quorus agent add` runs `launchctl enable` on its own `dev.quorus.agent.<name>` label
+  before bootout and bootstrap, so a label an earlier removal left disabled no longer
+  fails every re-add with bootstrap error 5. Nothing else is enabled.
+- Under `QUORUS_CONFIG_DIR` with no `--state-dir`, the launchd plist now carries that
+  directory as an absolute path, so the daemon reads the binding, lead and reviewer pin
+  the CLI wrote instead of `~/.quorus`. Without the variable the plist is unchanged, and
+  `--state-dir` still wins.
+
 ## [0.7.9] — 2026-10-25
 
 ### Added
