@@ -45,7 +45,7 @@ fi
 suite="$work/suite/tests/firstrun"
 mkdir -p "$suite"
 : > "$work/suite/tests/__init__.py"
-for f in __init__.py pty_session.py stub_agents.py test_f5_fix_lands.py \
+for f in __init__.py conftest.py pty_session.py stub_agents.py test_f5_fix_lands.py \
          test_gate_first_run.py; do
   cp "$here/tests/firstrun/$f" "$suite/$f"
 done
@@ -64,5 +64,8 @@ for mod in (quorus, quorus_cli):  # the installed package under test, never a ch
 print(f"first run against quorus-ai {version('quorus-ai')} at {Path(sys.executable).parent}")
 PY
 
+# QUORUS_UNDER_TEST_VERSION stays unset: the package is this checkout, so every episode
+# runs whatever the version string says (tests/firstrun/conftest.py).
+unset QUORUS_UNDER_TEST_VERSION
 "$py" -m pytest -q -p no:cacheprovider -o faulthandler_timeout=600 \
   -W ignore::pytest.PytestUnknownMarkWarning tests/firstrun/test_gate_first_run.py

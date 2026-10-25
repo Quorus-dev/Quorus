@@ -109,6 +109,7 @@ def test_the_reviewers_own_fix_waits_for_the_leads_go(tmp_path_factory):
         s.close()
 
 
+@pytest.mark.since("0.7.12")  # the fix ships in 0.7.12; the nightly skips it on older PyPI
 def test_a_held_fix_is_announced_once_and_the_gate_line_wakes_nobody(tmp_path_factory):
     """docs/plans/first-ten-minutes.md: a builder that doesn't name the reviewer (real
     Claude Code often doesn't). On 0.7.11 every later builder turn re-posted the held

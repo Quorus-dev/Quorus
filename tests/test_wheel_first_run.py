@@ -58,4 +58,33 @@ def test_cold_install_runs_it_on_every_pr_from_pipxs_venv() -> None:
 
 
 def test_the_nightly_against_pypi_runs_the_gate_episodes_too() -> None:
-    assert "test_gate_first_run.py" in NIGHTLY.read_text()
+    text = NIGHTLY.read_text()
+    assert "test_gate_first_run.py" in text
+    # Episodes for fixes newer than the PyPI release are skipped there, not failed:
+    # the nightly copies the gating conftest and tells it the installed version.
+    assert "conftest.py" in text
+    assert 'QUORUS_UNDER_TEST_VERSION="$(' in text and "export QUORUS_UNDER_TEST_VERSION" in text
+    assert "import version; print(version(\"quorus-ai\"))" in text
+
+
+def test_the_wheel_run_never_skips_by_version() -> None:
+    """The checkout's wheel carries every fix whatever its version string says."""
+    text = SCRIPT.read_text()
+    assert "conftest.py" in text and "unset QUORUS_UNDER_TEST_VERSION" in text
+
+
+@pytest.mark.parametrize("marker, installed, skipped", [
+    ("0.7.12", "0.7.11", True),    # the nightly on PyPI before the fix ships
+    ("0.7.12", "0.7.12", False),   # shipped
+    ("0.7.12", "0.8.0", False),
+    ("0.7.12", None, False),       # the worktree suite, or the checkout's wheel
+    ("0.7.12", "", False),
+    ("0.7.12", "not-a-version", False),
+])
+def test_since_skips_only_older_installed_releases(marker, installed, skipped) -> None:
+    from tests.firstrun.conftest import skip_reason
+
+    why = skip_reason(marker, installed)
+    assert bool(why) is skipped, why
+    if skipped:
+        assert "0.7.12" in why and installed in why
