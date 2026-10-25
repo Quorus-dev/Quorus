@@ -183,13 +183,13 @@ def published_after_review(history: list[dict[str, Any]], reviewer: str,
 def review_standing(fetch: Any, pin: dict[str, str], tip: str | None, reviewer: str,
                     repo: Path, history: list[dict[str, Any]] | None = None,
                     ) -> tuple[str, list[dict[str, Any]], str | None, str | None]:
-    """Where the gate stands: ``("reviewed" | "unreviewed" | "blocked" | "waiting",
-    history, tip, go_id)``. ``reviewed`` means the fix is on main and the reviewer's GO
-    came before the publish note; ``unreviewed`` means main moved without that.
-
-    The room is read before main is checked, so a GO and its publish can land between
-    the two reads (codex on 09dd399a). When main already has the fix but this read
-    shows no reviewed publish, the room is read once more before judging."""
+    """Where the gate stands: ``("reviewed" | "receipt_pending" | "unreviewed" | "blocked"
+    | "waiting", history, tip, go_id)``. ``reviewed``: the fix is on main and the
+    reviewer's GO precedes the daemon's "reviewed by" publish note. ``receipt_pending``:
+    main has the fix and the GO is there, but the note isn't yet; the daemon fast-forwards
+    main before it posts the receipt (codex on 1182b513), so keep polling. ``unreviewed``:
+    main moved and there is no GO at all, after a second read of the room, because the
+    room is read before main is checked and a GO can land in between (codex on 09dd399a)."""
     history = fetch() if history is None else history
     tip = tip or held_tip(history, repo)
     state, go_id = _gate.decide(history, pin, [tip]) if tip else ("waiting", None)
@@ -197,13 +197,17 @@ def review_standing(fetch: Any, pin: dict[str, str], tip: str | None, reviewer: 
         return "blocked", history, tip, go_id
     if not is_fixed(repo):
         return "waiting", history, tip, go_id
-    if state != "go" or not published_after_review(history, reviewer, go_id):
+    if state != "go":
         history = fetch()
         tip = tip or held_tip(history, repo)
         state, go_id = _gate.decide(history, pin, [tip]) if tip else ("waiting", None)
-    if state == "go" and published_after_review(history, reviewer, go_id):
+    if state == "blocked":
+        return "blocked", history, tip, go_id
+    if state != "go":
+        return "unreviewed", history, tip, go_id
+    if published_after_review(history, reviewer, go_id):
         return "reviewed", history, tip, go_id
-    return "unreviewed", history, tip, go_id
+    return "receipt_pending", history, tip, go_id
 
 
 def is_fixed(repo: Path) -> bool:
@@ -513,9 +517,9 @@ def cmd_demo(args: Any, console: Any) -> None:
             _show_steps(console, url, H, steps, start, (builder, reviewer))
             if go_at is None and go_id:
                 go_at = time.time() - start
-            if fixed_at is None and standing in ("reviewed", "unreviewed"):
+            if fixed_at is None and standing in ("reviewed", "receipt_pending", "unreviewed"):
                 fixed_at = time.time() - start
-            if standing != "waiting":
+            if standing not in ("waiting", "receipt_pending"):
                 break
             if all_out_of_quota(history, (builder, reviewer)):
                 break
@@ -533,6 +537,13 @@ def cmd_demo(args: Any, console: Any) -> None:
             console.print("\nYour turn: run [accent]quorus[/] to make a room, then "
                           "[accent]quorus agent add claude|codex|opencode --room general "
                           "--repo <your project>[/].")
+        elif standing == "receipt_pending":
+            # The GO is there and main has the fix, but the daemon's publish receipt
+            # never arrived within the deadline, so the order can't be shown from the room.
+            console.print(f"\n[warning]![/] @{reviewer} said GO and the fix is on main, but "
+                          "the publish receipt that proves the order didn't arrive in "
+                          f"{args.timeout}s. Try again; the agents may be slow.")
+            raise SystemExit(1)
         elif standing == "unreviewed" or (fixed and standing != "blocked"):
             # main moved without the reviewer's GO: the gate didn't hold. Say so and
             # fail; the demo's promise is review before main, and this run can't make it.

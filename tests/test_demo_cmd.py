@@ -459,6 +459,15 @@ def test_a_go_and_publish_between_two_reads_is_still_review_before_main(tmp_path
     reads = iter([[held], [held]])
     assert demo_cmd.review_standing(lambda: next(reads), pin, None, demo_cmd.REVIEWER,
                                     repo)[0] == "unreviewed"
+    # Codex on 1182b513: the daemon fast-forwards main before posting the receipt. A GO
+    # with no receipt yet is not a bypass: keep polling, and the receipt completes it.
+    reads = iter([[held, go], [held, go], [held, go, pub]])
+    first = demo_cmd.review_standing(lambda: next(reads), pin, None, demo_cmd.REVIEWER, repo)
+    assert first[0] == "receipt_pending" and first[3] == "g1"
+    assert demo_cmd.review_standing(lambda: next(reads), pin, full, demo_cmd.REVIEWER,
+                                    repo)[0] == "receipt_pending"
+    assert demo_cmd.review_standing(lambda: next(reads), pin, full, demo_cmd.REVIEWER,
+                                    repo)[0] == "reviewed"
     # A block is a block, whatever main says; and nothing fixed is just waiting.
     block = dict(_m(demo_cmd.REVIEWER, f"/disagree blocking on {full[:7]}: no"), id="b1",
                  **stamp)
