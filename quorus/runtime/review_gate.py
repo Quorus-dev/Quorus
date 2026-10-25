@@ -92,6 +92,27 @@ def reviewer_for(room: str, path: Path | None = None) -> dict[str, str] | None:
     return out
 
 
+class _AllRooms(frozenset):
+    """Every room may be reviewed: the reviewers file can't be read."""
+
+
+ALL_ROOMS = _AllRooms()
+
+
+def reviewed_rooms(path: Path | None = None) -> frozenset[str]:
+    """Rooms with a reviewer entry (well-formed or not). :data:`ALL_ROOMS`
+    when the file can't be read, so callers fail closed."""
+    try:
+        data = json.loads((path or reviewers_path()).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return frozenset()
+    except (OSError, json.JSONDecodeError):
+        return ALL_ROOMS
+    if not isinstance(data, dict):
+        return ALL_ROOMS
+    return frozenset(str(k) for k in data)
+
+
 def pinned(pin: dict[str, str] | None) -> bool:
     """*pin* can authenticate a GO (not :data:`UNREADABLE` or unpinned)."""
     return _valid(pin)
@@ -265,6 +286,10 @@ def clear_marker(runtime_dir: Path, repo: Path, branch: str) -> None:
 def awaiting_status(pin: dict[str, str], tip: str, count: int) -> str:
     """The room status for a held tip: honest about what is (not) on main."""
     who = pin.get("name") or "the reviewer"
+    if pin.get("why") == "bindings":
+        return (f"{_STATUS} {tip[:12]} ({count} commit(s)) is held: this repo may have a "
+                "reviewer, but the room bindings can't be read to tell; owner override "
+                "only. Not on main.")
     if not pinned(pin):
         return (f"{_STATUS} {tip[:12]} ({count} commit(s)) is held: review by @{who} can't "
                 "be authenticated on this relay; owner override only. Not on main.")

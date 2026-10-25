@@ -285,24 +285,41 @@ def _review_gate_for(room: str, repo: Path, *,
                      bindings_path: Path | None = None) -> tuple[str, dict[str, str]] | None:
     """(gated room, reviewer pin) when *room*, or any room bound to the same
     *repo*, has a reviewer (docs/plans/review-gate.md); None publishes as
-    before. Rooms share a repo's main, so one gated room gates them all. A
-    bindings file that can't be read gates nothing beyond *room* itself."""
+    before. Rooms share a repo's main, so one gated room gates them all.
+
+    Fail closed: when any room has a reviewer but the bindings can't tell
+    which repo it gates (file missing, unreadable, not a map, or that room's
+    entry unresolvable), hold with a pin no GO can match (codex, review of
+    29b0b1fa: corrupt bindings let a sibling room's turn publish)."""
     if room:
         pin = _review_gate.reviewer_for(room)
         if pin is not None:
             return room, pin
+    reviewed = _review_gate.reviewed_rooms()
+    unknown = (room, dict(_review_gate.UNREADABLE, why="bindings"))
+    if reviewed is _review_gate.ALL_ROOMS:
+        return unknown  # the reviewers file itself can't be read
+    if not reviewed:
+        return None  # no room anywhere has a reviewer
     try:
         data = json.loads((bindings_path or ROOM_BINDINGS_PATH).read_text(encoding="utf-8"))
+        target = Path(repo).resolve()
     except (OSError, ValueError):
-        return None
+        return unknown
     if not isinstance(data, dict):
-        return None
-    target = Path(repo).resolve()
-    for other, raw in data.items():
+        return unknown
+    for other in sorted(reviewed - {room}):
+        raw = data.get(other)
         raw = raw.get("path") if isinstance(raw, dict) else raw
-        if other == room or not isinstance(raw, str):
-            continue
-        if Path(raw).expanduser().resolve() == target:
+        if raw is None and other not in data:
+            continue  # a reviewed room bound nowhere gates no repo
+        if not isinstance(raw, str):
+            return unknown
+        try:
+            bound = Path(raw).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            return unknown
+        if bound == target:
             pin = _review_gate.reviewer_for(other)
             if pin is not None:
                 return other, pin

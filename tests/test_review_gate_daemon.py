@@ -358,3 +358,56 @@ def test_a_room_message_schedules_the_tick(env):
 
     asyncio.run(go())
     assert _git(repo, "rev-parse", "main") == tip
+
+
+# ── shared-repo gating fails closed (codex, review of 29b0b1fa) ─────────
+
+
+@pytest.mark.parametrize("bad", ["{not json", "[]", None, '{"side": 7}', '{"side": {"path": 3}}'])
+def test_sibling_reviewer_with_unreadable_bindings_holds(env, monkeypatch, bad):
+    d, repo, wt, cfg = env
+    _pin(cfg, room="side")  # the turn runs in "r"; only "side" has a reviewer
+    path = reflexd.ROOM_BINDINGS_PATH
+    if bad is None:
+        path.unlink()
+    else:
+        path.write_text(bad)
+    main = _git(repo, "rev-parse", "main")
+    gate = reflexd._review_gate_for("r", repo)
+    assert gate is not None and not rg.pinned(gate[1])
+    status = asyncio.run(d._publish_with_resolution(
+        wt, harness="claude", resume=None, on_session=lambda _s: None, timeout_s=None,
+        max_turns=None, writable_root=None, room="r"))
+    assert "room bindings can't be read" in status and "owner override only" in status
+    assert _git(repo, "rev-parse", "main") == main
+
+
+def test_unreadable_reviewers_file_holds_every_room(env):
+    d, repo, wt, cfg = env
+    (cfg / "room-reviewers.json").write_text("{not json")
+    assert reflexd._review_gate_for("anything", repo) is not None
+    main = _git(repo, "rev-parse", "main")
+    _publish(d, wt, room="r")
+    assert _git(repo, "rev-parse", "main") == main
+
+
+def test_no_reviewers_anywhere_publishes_even_with_bad_bindings(env):
+    d, repo, wt, _cfg = env
+    reflexd.ROOM_BINDINGS_PATH.write_text("{not json")
+    assert reflexd._review_gate_for("r", repo) is None
+
+
+def test_reviewed_room_bound_elsewhere_does_not_gate_this_repo(env, tmp_path):
+    d, repo, wt, cfg = env
+    other = tmp_path / "other"
+    other.mkdir()
+    reflexd.ROOM_BINDINGS_PATH.write_text(json.dumps({"r": str(repo), "elsewhere": str(other)}))
+    _pin(cfg, room="elsewhere")
+    assert reflexd._review_gate_for("r", repo) is None
+    assert "published 2 commit(s)" in _publish(d, wt, room="r")
+
+
+def test_reviewed_room_not_bound_at_all_does_not_gate(env):
+    d, repo, _wt, cfg = env
+    _pin(cfg, room="unbound")
+    assert reflexd._review_gate_for("r", repo) is None
