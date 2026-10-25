@@ -2225,8 +2225,8 @@ def _slash_invite(arg, state, relay_url, secret, agent_name, console):
     if not selected:
         state.set_status_bar("no room selected — use /join <room> first")
         return True
-    # The existing "invite <name>" regex path does the real token mint. Here
-    # we just nudge the user toward the CLI / existing flow.
+    # `quorus share` mints an invite that redeems into the joiner's own key;
+    # nothing here hands out the relay secret.
     state.set_status_bar(
         f"run: quorus share {selected.get('name','')} — "
         "copies a portable invite token"
@@ -3906,36 +3906,15 @@ def _main_input_loop(
                 last_render = 0
                 continue
 
-            # invite <name> — shows a join token for the current room
-            invite_match = re.match(r"^invite\s+(\S+)$", cmd_lower)
-            if invite_match:
-                selected = state.get_selected_room()
-                if selected:
-                    rname = selected.get("name") or selected.get("id", "")
-                    invitee = invite_match.group(1)
-                    import base64 as _b64
-                    import json as _json
-                    payload = _json.dumps({"relay_url": relay_url, "secret": secret, "room": rname})
-                    token = "quorus_join_" + _b64.urlsafe_b64encode(payload.encode()).decode()
-                    # Print above the TUI frame and block until the user confirms —
-                    # otherwise the next loop iteration redraws the frame and the
-                    # token scrolls off-screen before they can copy it.
-                    console.print()
-                    console.print(f"  [bold]Invite '{invitee}' to #{rname}[/bold]")
-                    console.print("  [dim]Share this token:[/dim]")
-                    console.print(f"  [primary]{token}[/]")
-                    console.print(f"  [dim]They run: quorus join {token} --name {invitee}[/dim]")
-                    console.print()
-                    try:
-                        input("  [Press Enter to return to the hub] ")
-                    except EOFError:
-                        pass  # stdin closed — just continue; don't hang
-                    # KeyboardInterrupt intentionally propagates so Ctrl-C at
-                    # the invite prompt exits the hub (same UX as the main
-                    # input loop), caught by the outer try/except.
-                    state.set_status_bar(f"Token generated for #{rname}")
-                else:
-                    state.set_status_bar("No active room. Join one first.")
+            # invite <name> — points to /share. It used to print a quorus_join_
+            # token that base64-encoded the relay secret, for the user to hand
+            # to someone (0.7.5 security fix). /share mints a join code that
+            # redeems into the invitee's own key and fails closed.
+            if re.match(r"^invite\s+(\S+)$", cmd_lower):
+                state.set_status_bar(
+                    "To invite someone, use /share: it makes a join code that gives "
+                    "them their own key."
+                )
                 last_render = 0
                 continue
 
