@@ -199,3 +199,48 @@ def test_inbox_js_is_served_under_the_csp_and_stays_pure() -> None:
         r = c.get("/inbox.js")
     assert r.status_code == 200 and "javascript" in r.headers["content-type"]
     assert r.text == INBOX_JS and r.headers["cache-control"] == "no-cache"
+
+
+def test_a_block_whose_ref_is_only_in_the_payload_still_counts(tmp_path: Path) -> None:
+    """Codex on 884b9152: the relay reads payload.ref_message_id (social_svc.py:307); the
+    envelope's top-level ref may be null."""
+    history = [msg("m1", "arav-claude", "✅ abc1234 done", 1),
+               verb("v1", "eli-codex", "disagree", {"ref_message_id": "m1", "reason": "no",
+                                                   "mode": "blocking"}, ref=None, minute=2)]
+    items = _inbox(tmp_path, history, [], members=3)
+    assert _kinds(items) == [("block", "v1")] and items[0]["poll"] == "vote_m1"
+
+
+def test_the_relay_keeps_one_active_block_and_the_newest_supersedes(tmp_path: Path) -> None:
+    """Codex on 884b9152: two blocks, then a majority on the newest, must leave nothing;
+    the relay has one blocking_disagree_ref, so the older block is not retained."""
+    two = BLOCK_ON_CLAUDE + [
+        msg("m2", "arav-codex", "✅ feedbac shipped", 3),
+        verb("v2", "eli-codex", "disagree", {"ref_message_id": "m2", "reason": "feedbac "
+             "regresses", "mode": "blocking"}, ref="m2", minute=4),
+    ]
+    items = _inbox(tmp_path, two, [], members=3)
+    assert _kinds(items) == [("block", "v2")] and items[0]["on"] == "arav-codex"
+    resolved = two + [
+        verb("v3", "arav-claude", "vote", {"option": "approve"}, minute=5),  # active poll
+        verb("v4", "arav", "vote", {"option": "approve", "poll_id": "vote_m2"}, minute=6),
+    ]
+    assert _inbox(tmp_path, resolved, [], members=3) == []
+
+
+def test_poll_tallies_persist_across_events_like_the_relays_state(tmp_path: Path) -> None:
+    """A vote cast in vote_m1 survives m1 being superseded and re-blocked (social_svc.py
+    setdefault keeps the tally), so one more voter then reaches the majority."""
+    history = BLOCK_ON_CLAUDE + [
+        verb("v2", "arav-claude", "vote", {"option": "approve"}, minute=3),  # 1 of 2 needed
+        msg("m2", "arav-codex", "✅ feedbac shipped", 4),
+        verb("v3", "eli-codex", "disagree", {"ref_message_id": "m2", "reason": "no",
+                                             "mode": "blocking"}, ref="m2", minute=5),
+        verb("v4", "eli-codex", "disagree", {"ref_message_id": "m1", "reason": "again",
+                                             "mode": "blocking"}, ref="m1", minute=6),
+    ]
+    assert _kinds(_inbox(tmp_path, history, [], members=3)) == [("block", "v4")]
+    second = history + [verb("v5", "arav", "vote", {"option": "approve"}, minute=7)]
+    assert _inbox(tmp_path, second, [], members=3) == []  # the earlier vote still counts
+    repeat = history + [verb("v6", "arav-claude", "vote", {"option": "approve"}, minute=7)]
+    assert _kinds(_inbox(tmp_path, repeat, [], members=3)) == [("block", "v4")]  # refused

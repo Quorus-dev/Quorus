@@ -38,38 +38,51 @@ export function hasMajority(tally, voters, members) {
   return voters.size >= Math.floor((members + 1) / 2);
 }
 
-// Wire blocks, replayed the way the relay resolves them: a `disagree` with
-// payload.mode "blocking" is open until a later `release` carrying handoff_to (any
-// actor: the relay clears its one room block on any handoff, social_svc.py:276-300) or
-// a majority in the block's own poll `vote_<ref>` (social_svc.py:420-433). A plain
-// release, a defer or prose never clears one. A vote lands in its explicit poll_id,
-// else in the newest open block's poll, else in `vote_<its ref>`, like the relay.
+// Wire blocks, replayed the way the relay keeps them (services/social_svc.py): one active
+// block per room. A `disagree` with payload.mode "blocking" makes its payload.ref_message_id
+// the active block (a newer one supersedes the older, which the relay forgets); a later
+// `release` carrying handoff_to clears it (any actor, social_svc.py:276-300); a majority in
+// the active block's poll `vote_<ref>` clears it (social_svc.py:420-433). Poll tallies and
+// voters persist across events, as the relay's state does, so a re-blocked message keeps
+// its earlier votes. A vote lands in its explicit poll_id, else the active block's poll,
+// else `vote_<its ref>`; a second vote by the same actor is refused. A plain release, a
+// defer, an advisory or prose never changes any of this.
 export function wireBlocks(history, members) {
-  const blocks = [];
-  const open = () => blocks.filter((b) => b.open);
+  const polls = new Map();  // poll_id -> { tally: {option: weight}, voters: Set }
+  const poll = (id) => {
+    if (!polls.has(id)) polls.set(id, { tally: {}, voters: new Set() });
+    return polls.get(id);
+  };
+  let active = null;  // { msg, env, ref, poll, closedBy? }
+  const history_ = [];
   history.forEach((m) => {
     const e = envelope(m);
     if (!e) return;
     const p = e.payload || {};
     if (e.verb === "disagree" && p.mode === "blocking") {
-      blocks.push({ msg: m, env: e, ref: String(e.ref_message_id || ""), tally: {},
-                    voters: new Set(), open: true });
+      const ref = String(p.ref_message_id || e.ref_message_id || "");
+      if (active) history_.push({ ...active, closedBy: "superseded" });
+      active = { msg: m, env: e, ref, poll: "vote_" + ref };
+      poll(active.poll);
     } else if (e.verb === "release" && p.handoff_to) {
-      open().forEach((b) => { b.open = false; b.closedBy = "handoff"; });
+      if (active) history_.push({ ...active, closedBy: "handoff" });
+      active = null;
     } else if (e.verb === "vote") {
-      const live = open();
-      const newest = live[live.length - 1];
-      const poll = p.poll_id || (newest ? "vote_" + newest.ref
+      const id = p.poll_id || (active ? active.poll
         : (e.ref_message_id ? "vote_" + e.ref_message_id : ""));
-      const b = live.find((x) => "vote_" + x.ref === poll);
-      if (!b || b.voters.has(e.actor)) return;  // the relay refuses a second vote
-      b.voters.add(e.actor);
+      if (!id) return;
+      const tally = poll(id);
+      if (tally.voters.has(e.actor)) return;
+      tally.voters.add(e.actor);
       const option = String(p.option || "");
-      b.tally[option] = (b.tally[option] || 0) + (Number(p.weight) || 1);
-      if (hasMajority(b.tally, b.voters, members)) { b.open = false; b.closedBy = "vote"; }
+      tally.tally[option] = (tally.tally[option] || 0) + (Number(p.weight) || 1);
+      if (active && id === active.poll && hasMajority(tally.tally, tally.voters, members)) {
+        history_.push({ ...active, closedBy: "vote" });
+        active = null;
+      }
     }
   });
-  return blocks;
+  return { active, closed: history_, polls };
 }
 
 function isMine(name, me) {
@@ -94,18 +107,20 @@ export function inboxItems(history, approvals, me, now, members) {
                  at, age: Math.max(0, now - at), actions: ["approve", "deny"] });
   });
 
-  wireBlocks(history, members).forEach((b) => {
-    if (!b.open) return;
+  const block = wireBlocks(history, members).active;
+  if (block) {
+    const b = block;
     const target = byId.get(b.ref);
     const reason = b.env.payload && b.env.payload.reason;
     const onMine = target ? isMine(target.from_name, me)
       : names(reason).some((n) => isMine(n, me));
-    if (!onMine) return;
-    item("block", b.msg, { who: b.env.actor || b.msg.from_name || "", what: firstLine(reason),
-                           sha: (String(reason || "").match(SHA) || [""])[0],
-                           prose: false, poll: "vote_" + b.ref,
-                           on: target ? target.from_name : "", actions: ["vote", "reply"] });
-  });
+    if (onMine) {
+      item("block", b.msg, { who: b.env.actor || b.msg.from_name || "", what: firstLine(reason),
+                             sha: (String(reason || "").match(SHA) || [""])[0],
+                             prose: false, poll: b.poll,
+                             on: target ? target.from_name : "", actions: ["vote", "reply"] });
+    }
+  }
 
   history.forEach((m, i) => {
     if (!m || envelope(m) || !m.content) return;
