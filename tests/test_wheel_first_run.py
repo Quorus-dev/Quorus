@@ -58,6 +58,8 @@ def test_cold_install_runs_it_on_every_pr_from_pipxs_venv() -> None:
 
 
 def test_the_nightly_against_pypi_runs_the_gate_episodes_too() -> None:
+    if not NIGHTLY.exists():  # the nightly against PyPI lives on the development branch
+        pytest.skip("no stranger_nightly.sh on this branch")
     text = NIGHTLY.read_text()
     assert "test_gate_first_run.py" in text
     # Episodes for fixes newer than the PyPI release are skipped there, not failed:
