@@ -4765,7 +4765,7 @@ class Reflexd:
             _review_gate.save_marker(runtime, wt.repo, wt.branch, room=room, tip=tip,
                                      base=base, count=int(count),
                                      reviewer=pin.get("name", ""), now=time.time())
-        return _review_gate.awaiting_status(pin, tip, int(count))
+        return _review_gate.awaiting_status(pin, tip, int(count), self.config.participant_name)
 
     def _schedule_review_tick(self, relay: RelayClient, room: str) -> None:
         """Check *room*'s repo for a held tip the reviewer may just have GO'd.
@@ -4829,6 +4829,11 @@ class Reflexd:
             logger.warning("review gate history fetch failed: %s", exc)
             return None
         state, ref = _review_gate.decide(history, pin, pending)
+        # The reviewer's own commits: its GO never counts for its own branch; only
+        # the owner's override publishes them (a block still holds).
+        mine = _review_gate.self_review(pin, self.config.participant_name)
+        if mine and state == "go":
+            state, ref = "waiting", None
         who = pin.get("name") or "the reviewer"
         me = self.config.participant_name
         owner = agent_owner(me)
@@ -4884,6 +4889,8 @@ class Reflexd:
             listed_now = reflexd_wake._git("rev-list", "--reverse", f"{wt.main}..{tip}",
                                            cwd=wt.repo)
             pending_now = listed_now.stdout.split() if listed_now.returncode == 0 else []
+            if _review_gate.self_review(pin, me):
+                return _REVIEW_CHANGED + "self-review"  # its own GO never counts
             verdict, _ref = _review_gate.decide(fresh, pin, pending_now)
             return None if verdict == "go" else _REVIEW_CHANGED + verdict
 

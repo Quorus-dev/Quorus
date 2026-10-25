@@ -644,3 +644,58 @@ def test_owner_pin_rotated_or_removed_before_the_lock_holds(env, monkeypatch, af
     relay = _Room([_owner_says(f"publish {tip[:12]} unreviewed")])
     _tick(d, relay)
     assert _git(repo, "rev-parse", "main") == main
+
+
+# ── the reviewer can't GO its own commits (codex, 2026-10-25) ────────────
+
+
+def _self_held(env):
+    d, repo, wt, cfg = env
+    rg.save_reviewer("r", "b-claude", tenant="t1", claim_id="c-self",
+                     path=cfg / "room-reviewers.json")  # this daemon IS the reviewer
+    main = _git(repo, "rev-parse", "main")
+    status = _publish(d, wt)
+    return d, repo, wt, main, _git(repo, "rev-parse", wt.branch), status
+
+
+def test_reviewers_own_commits_say_owner_override_only(env):
+    _d, repo, _wt, main, tip, status = _self_held(env)
+    assert status == (f"(quorus) {tip[:12]} (2 commit(s)) is held: @b-claude is this room's "
+                      "reviewer and can't GO its own commits; owner override only. Not on main.")
+    assert _git(repo, "rev-parse", "main") == main
+
+
+def test_a_self_go_never_publishes(env):
+    d, repo, _wt, main, tip, _status = _self_held(env)
+    relay = _Room([_say(f"✅ GO on {tip[:8]}", sender="b-claude", claim="c-self")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main and relay.posted == []
+
+
+def test_owner_override_still_publishes_the_reviewers_own_commits(env):
+    d, repo, wt, _main, tip, _status = _self_held(env)
+    rg.update_marker(d.config.runtime_dir, repo, wt.branch, override_tip=tip)
+    relay = _Room([_say(f"✅ GO on {tip[:8]}", sender="b-claude", claim="c-self")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == tip
+    assert relay.posted[0]["content"].endswith("; unreviewed (owner override by @b local)")
+
+
+def test_another_reviewers_go_still_publishes(env):
+    d, repo, _wt, _main, tip = _held(env)  # reviewer rev-codex, daemon b-claude
+    _tick(d, _Room([_say(f"✅ GO on {tip[:8]}")]))
+    assert _git(repo, "rev-parse", "main") == tip
+
+
+def test_self_review_is_rechecked_under_the_lock(env, monkeypatch):
+    d, repo, _wt, main, tip = _held(env)
+    real = rg.self_review
+    calls_seen = {"n": 0}
+
+    def flips(pin, me):  # not the reviewer at first read, the reviewer at the lock
+        calls_seen["n"] += 1
+        return calls_seen["n"] > 1 or real(pin, me)
+
+    monkeypatch.setattr(reflexd._review_gate, "self_review", flips)
+    _tick(d, _Room([_say(f"✅ GO on {tip[:8]}")]))
+    assert _git(repo, "rev-parse", "main") == main

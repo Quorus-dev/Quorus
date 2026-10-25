@@ -300,9 +300,18 @@ def clear_marker(runtime_dir: Path, repo: Path, branch: str) -> None:
         pass
 
 
-def awaiting_status(pin: dict[str, str], tip: str, count: int) -> str:
+def self_review(pin: dict[str, str] | None, me: str) -> bool:
+    """*me* is the room's reviewer: its own GO never publishes its own commits
+    (codex, 2026-10-25). Those wait for the owner's override."""
+    return bool(pin) and bool(me) and pin.get("name") == me
+
+
+def awaiting_status(pin: dict[str, str], tip: str, count: int, me: str = "") -> str:
     """The room status for a held tip: honest about what is (not) on main."""
     who = pin.get("name") or "the reviewer"
+    if self_review(pin, me):
+        return (f"{_STATUS} {tip[:12]} ({count} commit(s)) is held: @{who} is this room's "
+                "reviewer and can't GO its own commits; owner override only. Not on main.")
     if pin.get("why") == "bindings":
         return (f"{_STATUS} {tip[:12]} ({count} commit(s)) is held: this repo may have a "
                 "reviewer, but the room bindings can't be read to tell; owner override "
