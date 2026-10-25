@@ -443,3 +443,29 @@ def test_the_wizard_line_names_who_reviews_the_reviewer(cfg, tools, monkeypatch,
     assert got[0]["name"] == "a-claude"  # the lead's prep goes to the pin step
     [line] = posted
     assert says in line
+
+
+def test_the_gate_line_is_a_status_line_that_wakes_nobody(monkeypatch):
+    """first-ten-minutes.md, item 2: a chat gate line named both agents and each
+    spent a turn saying hi."""
+    import importlib.util
+    import sys
+
+    sent: list[dict] = []
+    monkeypatch.setattr(gate_setup._relay_http, "post",
+                        lambda url, **kw: sent.append(kw["json"]))
+    prep = {"cfg": {"relay_url": "http://r"}, "room": "general", "me": "a", "bearer": "b"}
+    line = gate_setup.gate_line("general", "a-codex", "/p", "a-claude")
+    gate_setup.post(prep, line)
+    assert sent == [{"from_name": "a", "content": line, "message_type": "status"}]
+    root = Path(__file__).resolve().parent.parent
+    if "reflexd" not in sys.modules:
+        spec = importlib.util.spec_from_file_location("reflexd", root / "scripts" / "reflexd.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["reflexd"] = mod
+        spec.loader.exec_module(mod)
+    reflexd = sys.modules["reflexd"]
+    for me in ("a-codex", "a-claude"):
+        res = reflexd.classify_message(content=line, sender="a", self_name=me,
+                                       message_type="status")
+        assert res.action == "IGNORE", (me, res)

@@ -161,6 +161,8 @@ and, since 0.7.10, the lead as the second reviewer, then starts the agents. By h
 `quorus room reviewer <room> <agent> [--second <lead>]` pins that agent as the
 room's reviewer, by the participant key the relay stamped on its latest message there, so
 run it after the reviewer (and any second) has posted in the room once.
+`quorus agent add <tool> --room <room> --reviewer` pins a new agent from its own key; it
+sets no second and keeps an existing gate unless `--replace` is given.
 Commits from any agent's turn in a room bound to that repo then stay off `main` ("awaiting
 @<agent>'s review of <sha>; not on main") until the reviewer posts `GO on <sha>` for that
 exact tip; `/disagree blocking on <sha>: <why>` holds them. A GO on an older commit, a

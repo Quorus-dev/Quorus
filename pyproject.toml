@@ -1,6 +1,6 @@
 [project]
 name = "quorus-ai"
-version = "0.7.11"
+version = "0.7.12"
 description = "Real-time coordination layer for AI agent swarms — rooms, messaging, distributed locks"
 requires-python = ">=3.10"
 license = "MIT"
@@ -102,6 +102,7 @@ markers = [
     "integration: marks tests as integration tests requiring Docker (deselect with '-m \"not integration\"')",
     "real_harness: opt-in tests that spawn real claude/codex/gemini/cursor binaries. Run with `pytest -m real_harness`. Skipped by default.",
     "firstrun: plain `quorus` in a pty with a tmp HOME and its own relay (tests/firstrun); deselect with '-m \"not firstrun\"'",
+    "since(version): a firstrun episode that needs quorus-ai >= version; skipped when QUORUS_UNDER_TEST_VERSION names an older installed release (tests/firstrun/conftest.py)",
     "cross_harness: opt-in cross-harness verification matrix. Run with `pytest -m cross_harness`. Records latency to a JSON sidecar so the verification doc can be regenerated. Skipped by default.",
 ]
 

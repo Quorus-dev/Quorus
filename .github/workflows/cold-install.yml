@@ -131,6 +131,20 @@ jobs:
           # Reuse the local repro script — keeps CI and local in lockstep.
           bash scripts/cold_install_smoke.sh --skip-install
 
+      # ----- The Show HN path on the installed package -----
+      # Plain `quorus` from pipx's venv in a pty with a tmp HOME and stub codex +
+      # opencode: the first run's default review gate, a fix held off main, the
+      # reviewer's GO, the "reviewed by" publish (tests/firstrun/test_gate_first_run.py).
+      # Unix only: it needs a pty. A regression here is what a Show HN visitor hits.
+      - name: First run with the default gate (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          pipx inject --pip-args="--no-cache-dir" quorus-ai pytest
+          QUORUS_PYTHON="$(pipx environment --value PIPX_LOCAL_VENVS)/quorus-ai/bin/python" \
+            sh scripts/wheel_first_run.sh
+
       - name: Cold-install smoke (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

@@ -5,6 +5,43 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.12] — 2026-10-25
+
+### Fixed
+
+- The first minute with the gate on is quiet. The owner's "Review gate on" line, and the
+  lines `quorus agent remove` posts about a removed reviewer, are now status messages, so
+  they wake nobody; before, the line named both agents and each spent a turn saying hi.
+- A held commit is announced once. Every later turn of the builder re-posted the same
+  "awaiting @<reviewer>'s review of <sha>" line, its @-mention woke the reviewer, whose
+  reply woke the builder, until the chatter guard stopped them. The daemon now records what
+  it announced (the tip plus the reviewer's full stamped identity: name, tenant and key or
+  participant id) only after the post that carried that exact line succeeded, and says the
+  line again only for a new tip, a rebase, a different reviewer, a rotated key or a post
+  that failed.
+- `quorus agent remove` on a room's reviewer (or its second) says what is left. For each
+  room pinned to that agent it prints, and posts to the room, how commits get through now:
+  pin another reviewer, publish one yourself with `quorus review publish <sha>
+  --unreviewed`, or `quorus room reviewer <room> --none`. The gate itself is unchanged.
+  It reads every reviewers file a daemon on this machine uses before the agent's record is
+  deleted, and uses no room membership, so it works when the agent has already left or the
+  relay is down; an unreadable file is reported and the removal still completes.
+
+### Docs
+
+- llms.txt: `quorus agent add <tool> --room <room> --reviewer` pins a new agent from its
+  own key, sets no second, and keeps an existing gate unless `--replace` is given.
+
+### CI
+
+- The first run is checked on the installed package, not the checkout. On every pull
+  request the cold-install job (Ubuntu and macOS) runs `scripts/wheel_first_run.sh`: plain
+  `quorus` from a fresh install, in a pty with a tmp HOME and stub codex and opencode,
+  through the default gate question, the "Review gate on" line naming the second, a fix
+  held off main, the reviewer's `✅ GO on <sha>`, and the "reviewed by" publish, plus the
+  announced-once episode above. The script also runs locally against this checkout's
+  wheel, a prebuilt wheel, or an interpreter that already has quorus-ai installed.
+
 ## [0.7.11] — 2026-10-25
 
 ### Docs

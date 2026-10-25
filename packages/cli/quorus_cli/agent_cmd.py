@@ -798,8 +798,12 @@ def _remove(args: Any, console: Any) -> None:
     was_running = (plist.exists()
                    or agent_proc.live_pid(_agents_dir(), args.name) is not None)
     relay_url = (load_config().get("relay_url") or "").strip()
-    # Before the state record goes: it names one of the dirs a key may be saved in.
+    # Before the state record goes: it names one of the dirs a key may be saved in,
+    # and one of the reviewers files the agent may be pinned in.
     held = agent_release.held_keys(args.name, relay_url) if relay_url else {}
+    from quorus_cli import gate_setup
+
+    gated, unreadable = gate_setup.pinned_as(args.name)
     if _launchd_ok():  # no launchctl elsewhere: it crashed `remove` on Linux
         subprocess.run(["launchctl", "bootout", f"gui/{_uid()}/{label}"],
                        capture_output=True, check=False, timeout=15)
@@ -809,6 +813,7 @@ def _remove(args: Any, console: Any) -> None:
     _drop_lead_everywhere(args.name)
     left = _leave_all_rooms(args.name)
     freed = agent_release.release(args.name, relay_url, held) if relay_url else None
+    _say_gates(args.name, gated, unreadable, console)
     if not was_running and not left:
         console.print(f"[error]✗[/] no agent @{args.name} here — see [accent]quorus agent "
                       "list[/]")
@@ -822,6 +827,30 @@ def _remove(args: Any, console: Any) -> None:
                       f"it left {rooms}")
     if freed:
         console.print(freed)
+
+
+def _say_gates(name: str, gated: list[tuple[str, str, str]], unreadable: list[str],
+               console: Any) -> None:
+    """Tell the owner (and the room, best effort) what a removed reviewer leaves
+    behind (docs/plans/remove-reviewer.md). The gate stays as it is."""
+    from quorus_cli import gate_setup
+
+    for path in unreadable:
+        console.print(f"[warning]![/] couldn't check the review gate in {path}")
+    if not gated:
+        return
+    cfg = load_config()
+    me = (cfg.get("instance_name") or "").strip()
+    try:
+        bearer = (cfg["relay_secret"] if cfg.get("relay_secret")
+                  else _bearer(cfg, cfg.get("api_key") or "", False))
+    except Exception:  # can't sign in: the terminal still says it
+        bearer = None
+    for room, role, reviewer in gated:
+        line = gate_setup.removed_line(room, role, name, reviewer)
+        console.print(f"[warning]![/] {line}")
+        if bearer:
+            gate_setup.post({"cfg": cfg, "room": room, "me": me, "bearer": bearer}, line)
 
 
 def _leave_all_rooms(name: str) -> list[str]:

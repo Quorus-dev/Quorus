@@ -253,6 +253,56 @@ def pin_reviewer(prep: dict[str, Any], *, replace: bool = False,
     return pin
 
 
+def pinned_as(name: str) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Where *name* is pinned on this machine: ``[(room, role, reviewer)]`` with
+    role "reviewer" or "second" (then *reviewer* is whose commits it reviewed),
+    plus the reviewers files that couldn't be read. Every file a daemon here
+    reads (the CLI's and each recorded state dir's), not the agent's rooms: it
+    may have left them, or the relay may be down (codex, plan review of
+    edba2161). Call it before `agent remove` drops the agent's state record."""
+    import json
+
+    found: list[tuple[str, str, str]] = []
+    bad: list[str] = []
+    for f in reviewer_files(_recorded()):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError):
+            bad.append(str(f))
+            continue
+        if not isinstance(data, dict):
+            bad.append(str(f))
+            continue
+        for room, entry in data.items():
+            if not isinstance(entry, dict):
+                continue
+            second = entry.get("second")
+            if entry.get("name") == name:
+                hit = (str(room), "reviewer", name)
+            elif isinstance(second, dict) and second.get("name") == name:
+                hit = (str(room), "second", str(entry.get("name") or "?"))
+            else:
+                continue
+            if hit not in found:
+                found.append(hit)
+    return found, bad
+
+
+def removed_line(room: str, role: str, name: str, reviewer: str) -> str:
+    """What `agent remove` says about a gate the removed agent was part of. The
+    gate itself is kept: removing an agent never quietly turns it off."""
+    if role == "second":
+        return (f"@{reviewer}'s own commits in #{room} now wait for you (`quorus review "
+                f"publish <sha> --unreviewed`); pin another with `quorus room reviewer "
+                f"{room} {reviewer} --second <name>`.")
+    return (f"#{room}'s commits now wait for a reviewer that's gone (@{name}). Pick "
+            f"another: `quorus room reviewer {room} <name>`, publish one yourself: "
+            f"`quorus review publish <sha> --unreviewed`, or turn the gate off: "
+            f"`quorus room reviewer {room} --none`.")
+
+
 def gate_line(room: str, reviewer: str, repo: Any, second: str | None = None) -> str:
     where = f"commits in {repo}" if repo else f"commits in #{room}'s repo"
     if second:
@@ -280,7 +330,10 @@ def post(prep: dict[str, Any], text: str) -> None:
     cfg = prep["cfg"]
     try:
         _relay_http.post(f"{cfg['relay_url'].rstrip('/')}/rooms/{prep['room']}/messages",
-                         json={"from_name": prep["me"], "content": text},
+                         # A status line: it names the agents, and a chat line woke
+                         # both just to say hi (first-ten-minutes.md, item 2).
+                         json={"from_name": prep["me"], "content": text,
+                               "message_type": "status"},
                          headers={"Authorization": f"Bearer {prep['bearer']}"}, timeout=10,
                          follow_redirects=False)
     except Exception:  # best effort: the line is printed either way
