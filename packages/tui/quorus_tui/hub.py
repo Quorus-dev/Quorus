@@ -3637,17 +3637,24 @@ def _main_input_loop(
                 hold_render = True
                 continue
 
+            # Inside a room, typed text is a message: only slash commands (and
+            # quit/help above) are commands. The letter shortcuts and English
+            # phrases below belong to the home view; in a room they ate real
+            # replies ("l" left the room, "1" switched rooms, "make room for
+            # tests" created a room: tui-polish.md defect 7).
+            in_room = state.get_selected_room() is not None
+
             # ── Welcome-view single-key shortcuts ──────────────────────────
             # These mirror the [j] [r] [s] [d] entries in the home action
             # menu. They prompt inline for any required argument and call
             # the EXISTING relay endpoints — no new endpoints are created.
-            if cmd_lower == "r":
+            if not in_room and cmd_lower == "r":
                 # /rooms — print the numbered room menu inline.
                 _print_room_menu(state, console)
                 hold_render = True
                 continue
 
-            if cmd_lower == "j":
+            if not in_room and cmd_lower == "j":
                 # Join by invite: an ABCD-EFGH code (what `quorus share`
                 # prints); a 0.5.x quorus:// link or quorus_join_ token still works.
                 # It used to reject codes and never actually joined anything.
@@ -3675,7 +3682,7 @@ def _main_input_loop(
                 last_render = 0
                 continue
 
-            if cmd_lower == "s":
+            if not in_room and cmd_lower == "s":
                 # Share — the easier path the user asked for. Behavior:
                 #   * In a room → mint + show card immediately, no prompt.
                 #   * Welcome view, exactly one room → share that one.
@@ -3715,30 +3722,7 @@ def _main_input_loop(
                 last_render = 0
                 continue
 
-            # In-room single-key shortcuts: i (info), m (members), l (leave).
-            # Only act when the user is *inside* a room — the welcome view
-            # owns its own letters (n/j/r/s/d). Skip when an in-progress
-            # message would be ambiguous (we already passed the "submit"
-            # gate, so single-letter input here is intentional).
-            if cmd_lower in {"i", "m", "l"} and state.get_selected_room():
-                from . import slash as _slash_mod
-
-                if cmd_lower == "l":
-                    _slash_mod.slash_leave(
-                        "", state, relay_url, secret, agent_name, console,
-                    )
-                else:
-                    # 'i' and 'm' both surface the info pane — members are
-                    # the dominant fact in it, and there's no separate
-                    # "members" endpoint to query.
-                    _slash_mod.slash_info(
-                        "", state, relay_url, secret, agent_name, console,
-                    )
-                    hold_render = True
-                last_render = 0
-                continue
-
-            if cmd_lower == "d":
+            if not in_room and cmd_lower == "d":
                 # Delete <room> — destructive, gated by an explicit
                 # confirmation prompt. Uses DELETE /rooms/{id}.
                 console.print()
@@ -3797,7 +3781,7 @@ def _main_input_loop(
                 continue
 
             # Number → jump to room by index from the /rooms menu.
-            if cmd.isdigit():
+            if not in_room and cmd.isdigit():
                 idx = int(cmd) - 1
                 rooms_snap = state.get_rooms()
                 if 0 <= idx < len(rooms_snap):
@@ -3852,7 +3836,7 @@ def _main_input_loop(
                 continue
 
             # join / go to <room>  — "join dev-room", "go to design", "switch to dev"
-            join_match = re.match(
+            join_match = None if in_room else re.match(
                 r"^(?:join|go\s+to|switch\s+to|enter)\s+#?(\S+)$",
                 cmd_lower,
             )
@@ -3874,12 +3858,12 @@ def _main_input_loop(
                 continue
 
             # create / new room called <name>
-            create_match = re.match(
+            create_match = None if in_room else re.match(
                 r"^(?:create|new\s+room(?:\s+called)?|make(?:\s+room)?)\s+#?(\S+)$",
                 cmd_lower,
             )
             # Also handle bare "n" shortcut from old UX
-            if not create_match and cmd_lower == "n":
+            if not in_room and not create_match and cmd_lower == "n":
                 # Prompt inline
                 console.print()
                 new_name = Prompt.ask("  Room name").strip()
@@ -3922,18 +3906,6 @@ def _main_input_loop(
                         )
                 else:
                     state.set_status_bar("Room names: letters, numbers, hyphens, underscores only.")
-                last_render = 0
-                continue
-
-            # invite <name> — points to /share. It used to print a quorus_join_
-            # token that base64-encoded the relay secret, for the user to hand
-            # to someone (0.7.5 security fix). /share mints a join code that
-            # redeems into the invitee's own key and fails closed.
-            if re.match(r"^invite\s+(\S+)$", cmd_lower):
-                state.set_status_bar(
-                    "To invite someone, use /share: it makes a join code that gives "
-                    "them their own key."
-                )
                 last_render = 0
                 continue
 

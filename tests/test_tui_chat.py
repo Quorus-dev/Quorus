@@ -133,9 +133,9 @@ def test_app_bar_includes_room_name_and_member_count():
     ], width=120)
     assert "#general" in out
     assert "3 members" in out
-    # Each action shortcut surfaces as `(s)hare`, `(i)nfo`, etc.
-    for ch in ("s", "i", "m", "l"):
-        assert f"({ch})" in out
+    # Each action surfaces as its slash command: a bare letter is a message.
+    for cmd in ("/share", "/info", "/leave"):
+        assert cmd in out
 
 
 def test_app_bar_singular_member():
@@ -430,7 +430,7 @@ def test_app_bar_idle_dot_when_no_recent_post():
 
 
 def test_app_bar_includes_action_keys():
-    """Polish-tier app-bar exposes (s)hare/(i)nfo/(m)embers/(l)eave."""
+    """The app bar shows /share /info /leave, the commands that work in a room."""
     out = _render_to_str(
         [chat.render_app_bar(
             room_name="general", member_count=1,
@@ -438,8 +438,9 @@ def test_app_bar_includes_action_keys():
         )],
         width=120,
     )
-    for ch in ("(s)", "(i)", "(m)", "(l)"):
-        assert ch in out
+    for cmd in ("/share", "/info", "/leave"):
+        assert cmd in out
+    assert "(s)" not in out
 
 
 # ── Polish-pass: empty-room state ────────────────────────────────────────────
@@ -688,5 +689,6 @@ def test_golden_app_bar_layout_at_120_cols():
     assert "#dev" in out
     assert "4 members" in out
     assert "active 2m ago" in out
-    for ch in ("(s)", "(i)", "(m)", "(l)"):
-        assert ch in out
+    for cmd in ("/share", "/info", "/leave"):
+        assert cmd in out
+    assert "(s)" not in out

@@ -176,11 +176,11 @@ def render_app_bar(
         right.append(" ", style="")
         right.append("live" if daemon_connected else "offline", style="muted")
         right.append("    ", style="")
-    for ch, label in (("s", "hare"), ("i", "nfo"), ("m", "embers"), ("l", "eave")):
-        right.append("(", style="dim")
-        right.append(ch, style="kbd")
-        right.append(")", style="dim")
-        right.append(label, style="muted")
+    # Slash commands, not letters: in a room a bare "s" or "l" is a message
+    # (tui-polish.md defect 7), so the bar shows what actually works.
+    for name in ("share", "info", "leave"):
+        right.append("/", style="kbd")
+        right.append(name, style="muted")
         right.append("  ", style="")
     return two_col(left, right, total_width=max(40, console_width))
 

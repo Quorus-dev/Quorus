@@ -290,10 +290,9 @@ def test_snapshot_app_bar_typical_room_at_80_cols():
         "3 members",            # member-count phrasing
         "active 2m ago",        # last-active phrasing
         "live",                 # daemon-status copy
-        "(s)hare",              # action affordance
-        "(i)nfo",
-        "(m)embers",
-        "(l)eave",
+        "/share",               # action affordances: slash commands, since a
+        "/info",                # bare letter in a room is a message
+        "/leave",
     )
     for frag in expected_fragments:
         assert frag in out, f"expected fragment missing: {frag!r}\n--- render ---\n{out}"
