@@ -143,7 +143,11 @@ def test_pinned_key_under_another_name_cannot_approve():
     f"✅ GO on {TIP[:8]}; not a GO until docs land",
 ])
 def test_not_a_go(text):
-    assert rg.verdict(_m(text), PIN, PENDING) is None
+    # None, or "retract" (a not-current GO that cancels an earlier one)
+    assert rg.verdict(_m(text), PIN, PENDING) in (None, "retract")
+    go = _m(f"✅ GO on {TIP[:8]}", ts="2026-10-25T05:00:00", mid="go")
+    assert rg.decide([_m(text)], PIN, PENDING)[0] != "go"
+    assert rg.decide([go], PIN, PENDING)[0] == "go"
 
 
 def test_go_clause_ignores_later_negation():
@@ -194,3 +198,26 @@ def test_decide_folds_in_time_order():
     assert rg.decide([go, late_block], PIN, PENDING) == ("blocked", "blk")
     assert rg.decide([], PIN, PENDING) == ("waiting", None)
     assert rg.decide([go], PIN, []) == ("waiting", None)
+
+
+def test_a_later_retraction_cancels_an_earlier_go():
+    go = _m(f"✅ GO on {TIP[:8]}", ts="2026-10-25T06:00:00", mid="go")
+    back = _m(f"GO on {TIP[:8]}; correction: no GO yet", ts="2026-10-25T06:01:00", mid="r")
+    cond = _m(f"GO on {TIP[:8]} after CI passes", ts="2026-10-25T06:01:00", mid="c")
+    assert rg.verdict(back, PIN, PENDING) == "retract"
+    assert rg.decide([go, back], PIN, PENDING) == ("waiting", None)
+    assert rg.decide([go, cond], PIN, PENDING) == ("waiting", None)
+    rego = _m(f"✅ GO on {TIP[:8]}", ts="2026-10-25T06:02:00", mid="go2")
+    assert rg.decide([go, back, rego], PIN, PENDING) == ("go", "go2")
+
+
+def test_retraction_never_clears_a_block():
+    block = _m(f"/disagree blocking on {TIP[:8]}", ts="2026-10-25T06:00:00", mid="b")
+    back = _m(f"scratch that GO on {TIP[:8]}", ts="2026-10-25T06:01:00", mid="r")
+    assert rg.decide([block, back], PIN, PENDING) == ("blocked", "b")
+
+
+def test_unrelated_retraction_does_not_cancel():
+    go = _m(f"✅ GO on {TIP[:8]}", ts="2026-10-25T06:00:00", mid="go")
+    other = _m(f"@x correction: no GO yet on {'c' * 8}", ts="2026-10-25T06:01:00", mid="o")
+    assert rg.decide([go, other], PIN, PENDING) == ("go", "go")

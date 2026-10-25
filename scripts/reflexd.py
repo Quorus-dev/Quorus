@@ -281,6 +281,9 @@ def _answer_only(triage: Any, envelope: dict[str, Any], me: str, lead: str | Non
     return not is_agent_participant(envelope.get("from_name") or "")
 
 
+_REVIEW_CHANGED = "the review is no longer a GO: "
+
+
 def _review_gate_for(room: str, repo: Path, *,
                      bindings_path: Path | None = None) -> tuple[str, dict[str, str]] | None:
     """(gated room, reviewer pin) when *room*, or any room bound to the same
@@ -4836,16 +4839,35 @@ class Reflexd:
         if held is not None:
             return held
 
+        loop = asyncio.get_running_loop()
+
         def check() -> str | None:  # under the repo lock, right before the merge
             now = _review_gate.load_marker(runtime, wt.repo, wt.branch)
             if not now or now.get("tip") != tip:
                 return "the held tip changed"
             if _review_gate.reviewer_for(room) != pin:
                 return "the room's reviewer changed"
-            return None
+            # Re-read the room under the lock: a block that landed after the
+            # first read (or while this waited for the lock) must win (codex,
+            # review of 4bc515ba). Can't read it: hold, never publish blind.
+            try:
+                fresh = asyncio.run_coroutine_threadsafe(
+                    fetch(room=room, limit=reflexd_held.HISTORY_LIMIT), loop).result(60)
+            except Exception as exc:
+                return f"the room couldn't be re-read before publishing ({exc.__class__.__name__})"
+            listed_now = reflexd_wake._git("rev-list", "--reverse", f"{wt.main}..{tip}",
+                                           cwd=wt.repo)
+            pending_now = listed_now.stdout.split() if listed_now.returncode == 0 else []
+            verdict, _ref = _review_gate.decide(fresh, pin, pending_now)
+            return None if verdict == "go" else _REVIEW_CHANGED + verdict
 
         res = await asyncio.to_thread(_review_publish.publish_approved, runtime, wt.repo,
                                       wt.main, wt.branch, tip, check)
+        if res.status == "held" and res.detail == _REVIEW_CHANGED + "blocked":
+            return (f"{reflexd_wake.STATUS_PREFIX} held: @{who} /disagree blocking on "
+                    f"{tip[:12]}; not on main")
+        if res.status == "held" and res.detail.startswith(_REVIEW_CHANGED):
+            return None  # the GO is no longer current: keep waiting, nothing to say
         if res.status in ("published", "already"):
             await asyncio.to_thread(_review_gate.clear_marker, runtime, wt.repo, wt.branch)
         if res.status == "already":

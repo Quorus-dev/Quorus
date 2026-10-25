@@ -198,28 +198,35 @@ def _named(clause: str, pending: list[str]) -> set[str]:
 
 def verdict(msg: dict[str, Any], pin: dict[str, str] | None,
             pending: list[str]) -> str | None:
-    """``"block"``, ``"go"`` or None for one room message.
+    """``"block"``, ``"go"``, ``"retract"`` or None for one room message.
 
     *pending* is ``main..tip`` as full shas, tip last. Only the pinned
     reviewer's own stamped messages count. A ``/disagree blocking`` naming
     any pending commit is a block, and wins over a GO in the same message. A
     GO names the tip itself in a clause that says GO, has no negation, no
     condition, no question and no ``/disagree``, and no later clause on its
-    line opens with a condition or asks a question."""
+    line opens with a condition or asks a question. A line naming the tip
+    that retracts a GO, or a GO that isn't current (conditional, negated, a
+    question), is ``"retract"``: it cancels an earlier GO."""
     if not pending or not from_reviewer(msg, pin):
         return None
     tip = pending[-1]
     lines = _lines(msg.get("content") or "")
     if any(_BLOCK.search(c) and _named(c, pending) for line in lines for c in line):
         return "block"
+    retracted = False
     for line in lines:
+        names_tip = any(tip in _named(c, pending) for c in line)
+        if names_tip and _RETRACT.search(" ".join(line)):
+            retracted = True
         for i, clause in enumerate(line):
             if not _GO.search(clause) or tip not in _named(clause, pending):
                 continue
             if _DISAGREE.search(clause) or _pending(line, i):
+                retracted = True  # a conditional or taken-back GO: not current
                 continue
             return "go"
-    return None
+    return "retract" if retracted else None
 
 
 def decide(history: Iterable[dict[str, Any]], pin: dict[str, str] | None,
@@ -227,7 +234,7 @@ def decide(history: Iterable[dict[str, Any]], pin: dict[str, str] | None,
     """Fold the room's history into ``("go" | "blocked" | "waiting", msg id)``.
 
     In time order a block holds until a later GO on the tip; a GO followed by
-    a block is blocked."""
+    a block is blocked; a GO followed by a retraction is waiting again."""
     state, ref = "waiting", None
     for msg in sorted(history, key=lambda m: review_prefs._ts(m.get("timestamp"))):
         said = verdict(msg, pin, pending)
@@ -235,6 +242,8 @@ def decide(history: Iterable[dict[str, Any]], pin: dict[str, str] | None,
             state, ref = "blocked", msg.get("id")
         elif said == "go":
             state, ref = "go", msg.get("id")
+        elif said == "retract" and state == "go":
+            state, ref = "waiting", None
     return state, ref
 
 

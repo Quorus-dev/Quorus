@@ -411,3 +411,91 @@ def test_reviewed_room_not_bound_at_all_does_not_gate(env):
     d, repo, _wt, cfg = env
     _pin(cfg, room="unbound")
     assert reflexd._review_gate_for("r", repo) is None
+
+
+# ── the decision is re-read under the repo lock (codex, review of 4bc515ba) ──
+
+
+class _Changing(_Room):
+    """The first *keep* history reads show only the GO; later reads add more."""
+
+    def __init__(self, go: dict[str, Any], later: list[dict[str, Any]], keep: int) -> None:
+        super().__init__([go])
+        self.later, self.keep, self.reads = later, keep, 0
+
+    async def fetch_history(self, **_kw: Any) -> list[dict[str, Any]]:
+        self.reads += 1
+        return list(self.history) + (self.later if self.reads > self.keep else [])
+
+
+def test_block_seen_by_the_guards_read_wins(env):
+    d, repo, _wt, main, tip = _held(env)
+    block = _say(f"/disagree blocking on {tip[:8]}", mid="b1", ts="2026-10-25T08:05:00")
+    relay = _Changing(_say(f"✅ GO on {tip[:8]}"), [block], keep=1)
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main
+    assert relay.reads >= 3  # decide, the publish guard, and the re-read under the lock
+    assert [p["content"] for p in relay.posted] == [
+        f"(quorus) held: @rev-codex /disagree blocking on {tip[:12]}; not on main"]
+
+
+def test_block_that_lands_while_waiting_for_the_lock_wins(env):
+    import threading
+
+    from quorus.runtime import review_publish as rp
+    d, repo, _wt, main, tip = _held(env)
+    relay = _Room([_say(f"✅ GO on {tip[:8]}")])
+    taken, done = threading.Event(), threading.Event()
+
+    def hold_lock() -> None:
+        with rp.repo_lock(d.config.runtime_dir, repo):
+            taken.set()
+            done.wait(10)
+
+    t = threading.Thread(target=hold_lock)
+    t.start()
+    taken.wait(5)
+
+    async def go() -> None:
+        tick = asyncio.create_task(d._review_tick(relay, "r"))
+        await asyncio.sleep(0.5)  # the tick is now waiting for the lock
+        relay.history.append(_say(f"/disagree blocking on {tip[:8]}", mid="b1",
+                                  ts="2026-10-25T08:05:00"))
+        done.set()
+        await tick
+
+    try:
+        asyncio.run(go())
+    finally:
+        done.set()
+        t.join()
+    assert _git(repo, "rev-parse", "main") == main
+    assert any("/disagree blocking" in p["content"] for p in relay.posted)
+
+
+def test_retraction_after_the_first_read_holds(env):
+    d, repo, _wt, main, tip = _held(env)
+    retract = _say(f"GO on {tip[:8]}; correction: no GO yet", mid="r1",
+                   ts="2026-10-25T08:05:00")
+    relay = _Changing(_say(f"✅ GO on {tip[:8]}"), [retract], keep=2)
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main
+
+
+def test_room_unreadable_under_the_lock_holds(env):
+    d, repo, _wt, main, tip = _held(env)
+
+    class Flaky(_Room):
+        reads = 0
+
+        async def fetch_history(self, **_kw: Any) -> list[dict[str, Any]]:
+            self.reads += 1
+            if self.reads > 2:
+                raise RuntimeError("relay down")
+            return list(self.history)
+
+    relay = Flaky([_say(f"✅ GO on {tip[:8]}")])
+    _tick(d, relay)
+    assert _git(repo, "rev-parse", "main") == main
+    [status] = [p["content"] for p in relay.posted]
+    assert "couldn't be re-read before publishing" in status
