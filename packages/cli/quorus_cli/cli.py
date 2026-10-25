@@ -7198,7 +7198,8 @@ def _cmd_quickstart(args):
     console.print(f"  Relay: {relay_url}")
     console.print(f"  Room: {room_name}")
     console.print(f"  Agents: {agent_count}")
-    console.print(f"  Secret: {secret}")
+    # Never the secret itself (0.7.5): a pasted or recorded terminal would carry it.
+    console.print(f"  Secret: saved as relay_secret in {config_dir / 'config.json'}")
     console.print("\n[dim]Press Ctrl+C to stop the relay.[/dim]")
     console.print(f"[dim]Watch the room: quorus chat {room_name}[/dim]\n")
 
