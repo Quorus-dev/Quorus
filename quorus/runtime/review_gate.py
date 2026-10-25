@@ -119,12 +119,17 @@ def pinned(pin: dict[str, str] | None) -> bool:
 
 
 def save_reviewer(room: str, name: str, *, tenant: str = "", claim_id: str = "",
-                  participant_id: str = "", path: Path | None = None) -> None:
+                  participant_id: str = "", path: Path | None = None,
+                  repo: Path | str | None = None) -> None:
     """Record *name* as *room*'s reviewer. With neither a claim nor a
-    participant id the room is gated but unpinned: owner override only."""
+    participant id the room is gated but unpinned: owner override only. *repo*
+    records the repo *room* gates, so a daemon whose own bindings name only a
+    sibling room on that repo still finds the gate (codex, review of aa965c81)."""
     if not name:
         raise ValueError("reviewer name required")
     entry: dict[str, Any] = {"name": name, "tenant": tenant}
+    if repo:
+        entry["repo"] = str(Path(repo).expanduser().resolve())
     if claim_id:
         entry["claim_id"] = claim_id
     elif participant_id:
@@ -132,6 +137,17 @@ def save_reviewer(room: str, name: str, *, tenant: str = "", claim_id: str = "",
     else:
         entry["unpinned"] = True
     _write(path, lambda data: data.__setitem__(room, entry))
+
+
+def reviewer_repo(room: str, path: Path | None = None) -> Path | None:
+    """The repo *room*'s reviewer entry says it gates, or None."""
+    try:
+        data = json.loads((path or reviewers_path()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    entry = data.get(room) if isinstance(data, dict) else None
+    raw = entry.get("repo") if isinstance(entry, dict) else None
+    return Path(raw) if isinstance(raw, str) and raw else None
 
 
 def clear_reviewer(room: str, path: Path | None = None) -> None:

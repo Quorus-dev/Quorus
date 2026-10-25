@@ -350,8 +350,12 @@ def test_a_builder_bound_to_a_sibling_room_on_the_same_repo_gets_the_pin(cfg, mo
     repo = _repo(cfg)
     _bind_cli({"general": repo})
     builder = _builder(cfg, "a-claude", {"side": repo})
-    gate_setup.pin_reviewer(_prep("codex"))
-    assert rg.reviewer_for("general", builder / "room-reviewers.json") is not None
+    gate_setup.pin_reviewer(_prep("codex", repo=str(repo)))
+    path = builder / "room-reviewers.json"
+    assert rg.reviewer_for("general", path) is not None
+    # The pin names the repo, which is what makes that builder's own gate check hold
+    # (tests/test_review_gate_daemon.py: a sibling-only daemon is held).
+    assert rg.reviewer_repo("general", path) == repo.resolve()
 
 
 def test_a_builder_on_another_repo_is_left_alone(cfg, monkeypatch):

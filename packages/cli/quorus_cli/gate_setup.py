@@ -68,6 +68,17 @@ def _bound(state: Path | None) -> dict[str, Path] | None:
     return out
 
 
+def _room_repo(room: str, prep: dict[str, Any]) -> Path | None:
+    """The repo *room* gates: the prepared agent's binding, else the CLI's."""
+    if prep.get("repo"):
+        return Path(prep["repo"]).expanduser().resolve()
+    for state in (prep.get("state_dir"), None):
+        view = _bound(state)
+        if view and room in view:
+            return view[room]
+    return None
+
+
 def daemon_state_dirs(room: str) -> list[Path]:
     """Every recorded agent ``--state-dir`` on this machine whose daemon gates
     *room*'s repo: it binds *room*, or any room bound to the same repo (the gate
@@ -145,7 +156,7 @@ def pin_reviewer(prep: dict[str, Any], *, replace: bool = False,
     try:
         for f in files:
             _gate.save_reviewer(room, name, tenant=pin["tenant"], claim_id=pin["claim_id"],
-                                path=f)
+                                path=f, repo=_room_repo(room, prep))
     except (OSError, ValueError) as exc:
         for f, data in before.items():
             try:
