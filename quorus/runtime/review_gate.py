@@ -335,7 +335,11 @@ def awaiting_status(pin: dict[str, str], tip: str, count: int, me: str = "") -> 
     if not pinned(pin):
         return (f"{_STATUS} {tip[:12]} ({count} commit(s)) is held: review by @{who} can't "
                 "be authenticated on this relay; owner override only. Not on main.")
-    return f"{_STATUS} awaiting @{who}'s review of {tip[:12]} ({count} commit(s)); not on main"
+    # Say how to approve: a first-run reviewer was never told, so a "/vote approve"
+    # or "LGTM" held the fix forever (gate-by-default slice C).
+    return (f"{_STATUS} awaiting @{who}'s review of {tip[:12]} ({count} commit(s)); not on "
+            f"main. @{who}: reply `✅ GO on {tip[:12]}` to publish it, or "
+            f"`/disagree blocking` with why.")
 
 
 def update_marker(runtime_dir: Path, repo: Path, branch: str, **fields: Any) -> None:

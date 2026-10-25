@@ -103,7 +103,8 @@ def test_reviewed_room_holds_the_turn(env):
     status = _publish(d, wt)
     tip = _git(repo, "rev-parse", wt.branch)
     assert status == (f"(quorus) awaiting @rev-codex's review of {tip[:12]} "
-                      "(2 commit(s)); not on main")
+                      f"(2 commit(s)); not on main. @rev-codex: reply `✅ GO on {tip[:12]}` "
+                      "to publish it, or `/disagree blocking` with why.")
     assert _git(repo, "rev-parse", "main") == main
     marker = rg.load_marker(d.config.runtime_dir, repo, wt.branch)
     assert marker is not None
