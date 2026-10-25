@@ -263,21 +263,37 @@ for (let i = 0; i < 20; i++) {
 await page2.waitForTimeout(4000);  // more than one poll: the chat column and the chips re-render
 const cls = await page2.evaluate(() => window.__cls);
 const shifts = await page2.evaluate(() => window.__shifts);
-const focus = await page2.evaluate(() => {
-  const ring = (el) => {
-    const cs = getComputedStyle(el);
-    return (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0) || cs.boxShadow !== "none";
-  };
-  const missing = [];
-  for (const el of document.querySelectorAll("button, input, [tabindex], summary, a[href]")) {
-    if (el.closest("[hidden]") || el.offsetParent === null) continue;
-    el.focus();
-    if (document.activeElement !== el) continue;
-    if (!el.matches(":focus-visible") && !ring(el)) continue;  // programmatic focus may not count
-    if (!ring(el)) missing.push(el.id || el.className || el.tagName);
+// Focus rings, by real keyboard focus (Codex on 843ab799): Tab through the page until it
+// cycles; a control has a ring when its outline or box-shadow differs from its own
+// unfocused style. Then a negative control: with the ring styles removed, the same walk must
+// report misses, or the gate proves nothing.
+const tabWalk = async () => {
+  await page2.evaluate(() => { if (document.activeElement) document.activeElement.blur(); });
+  const seen = [], missing = [];
+  for (let i = 0; i < 80; i++) {
+    await page2.keyboard.press("Tab");
+    const info = await page2.evaluate(() => {
+      const el = document.activeElement;
+      if (!el || el === document.body) return null;
+      const style = () => { const cs = getComputedStyle(el); return cs.outlineStyle + "|" + cs.outlineWidth + "|" + cs.boxShadow; };
+      const focused = style();
+      el.blur();
+      const blurred = style();
+      el.focus();
+      return { id: el.id || el.className || el.tagName, ring: focused !== blurred };
+    });
+    if (!info) continue;
+    if (seen.includes(info.id)) break;  // the Tab order cycled
+    seen.push(info.id);
+    if (!info.ring) missing.push(info.id);
   }
-  return missing;
-});
+  return { seen, missing };
+};
+const focusWalk = await tabWalk();
+const noRing = await page2.addStyleTag({ content: ":focus-visible{outline:none!important}.inbox:focus-visible{box-shadow:none!important}" });
+const negative = await tabWalk();
+await noRing.evaluate((el) => el.remove());
+
 // A phone: the inbox fits 390 px with no horizontal overflow, and axe is clean there too.
 await page2.setViewportSize({ width: 390, height: 844 });
 await page2.click("#modeInbox");
@@ -330,17 +346,21 @@ const checks = {
   // Chromium reports a 2e-6 shift with no attributable node (window.__shifts) on this page;
   // that is below a hundredth of a pixel. The gate is "no visible shift", so < 0.001.
   "CLS ~0 while 20 messages arrive": cls < 0.001,
-  "every control shows a focus ring": focus.length === 0,
+  "every Tab-reachable control shows a focus ring": focusWalk.seen.length >= 6 && focusWalk.missing.length === 0
+    && focusWalk.seen.includes("inboxList") && focusWalk.seen.includes("msgInput"),
+  "the ring gate fails when the ring is removed": negative.missing.length >= 3 && negative.missing.includes("inboxList"),
   "no page error (JWT page)": problems2.length === 0,
 };
 console.log(`timing: cold diff fetch ${coldMs.toFixed(0)} ms; Enter → 50 lines on screen ${diffMs.toFixed(0)} ms, `
   + `of which the page's fetch ${fetchMs.toFixed(0)} ms and the render ${renderMs.toFixed(0)} ms; CLS ${cls.toFixed(6)}`);
+console.log(`focus: Tab reached ${focusWalk.seen.length} controls [${focusWalk.seen.join(", ")}], `
+  + `${focusWalk.missing.length} without a ring; with rings removed ${negative.missing.length} of ${negative.seen.length} miss`);
 let failed = 0;
 for (const [name, ok] of Object.entries(checks)) { console.log((ok ? "ok   " : "FAIL ") + name); if (!ok) failed++; }
 if (failed) {
   console.log(JSON.stringify({ seen, typed, problems, scripts: [...scripts], inboxFirst, firstPaint, decided,
     kinds, selectedKind, socialState, phone, problems2, scripts2: [...scripts2], diffMs, diff,
-    axeWide, axePhone, cls, shifts, focus, coldMs, fetchMs, renderMs }, null, 1));
+    axeWide, axePhone, cls, shifts, focusWalk, negative, coldMs, fetchMs, renderMs }, null, 1));
   console.log(relayLog.split("\n").slice(-20).join("\n"));
 }
 process.exit(failed ? 1 : 0);
