@@ -592,6 +592,7 @@ def worktree_instructions(wt: Worktree, *, dirty: bool = False) -> str:
 
 STATUS_PREFIX = "(quorus)"  # not "[quorus]": the TUI renders [..] as Rich markup
 CONFLICT_MARK = f"{STATUS_PREFIX} conflict:"
+REVIEW_READY = f"{STATUS_PREFIX} review-ready:"  # internal: never posted
 
 RESOLVE_PROMPT = (
     "Quorus tried to publish your branch but `{main}` moved and your changes "
@@ -701,8 +702,13 @@ def merge_in_progress(wt: Worktree) -> bool:
 
 
 def publish_worktree(wt: Worktree, participant: str = "quorus",
-                     provenance: dict[str, Any] | None = None) -> str | None:
+                     provenance: dict[str, Any] | None = None,
+                     hold: bool = False) -> str | None:
     """Rebase the agent's branch onto main if needed, then fast-forward main.
+
+    *hold* (a room with a reviewer, docs/plans/review-gate.md): rebase but
+    never fast-forward; return ``f"{REVIEW_READY} <tip> <n>"`` so the caller
+    records the tip for review. Main moves only through ``publish_approved``.
 
     Done by the daemon, not the agent: Codex's sandbox blocks the main
     checkout's .git and the worktree's rebase state, and a deterministic
@@ -741,6 +747,10 @@ def publish_worktree(wt: Worktree, participant: str = "quorus",
                 if merged_main.returncode != 0:
                     return (f"{CONFLICT_MARK} {wt.branch} conflicts with {wt.main}; "
                             "merge left in progress for the agent to resolve")
+        if hold:
+            tip = _git("rev-parse", wt.branch, cwd=wt.repo).stdout.strip()
+            count = _git("rev-list", "--count", f"{wt.main}..{wt.branch}", cwd=wt.repo)
+            return f"{REVIEW_READY} {tip} {count.stdout.strip() or n}"
         dirty = _git("status", "--porcelain", "--untracked-files=no", cwd=wt.repo)
         if dirty.stdout.strip():
             return (f"{STATUS_PREFIX} not publishing {wt.branch}: the main checkout "

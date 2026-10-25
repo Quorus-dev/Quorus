@@ -341,3 +341,138 @@ def test_no_usable_model_exits_nonzero(monkeypatch, tmp_path) -> None:
     assert exc.value.code == 1
     assert any("all busy" in line for line in said)
     assert not (tmp_path / "demo").exists()  # the throwaway folder is still removed
+
+
+def test_task_tells_the_reviewer_what_a_go_looks_like() -> None:
+    task = demo_cmd.task_for("demo-claude", "demo-review-codex")
+    assert "fix the bug in calc.py" in task and "`GO on <hash>`" in task
+    assert "/disagree blocking on <hash>" in task
+    assert "@demo-review-codex" not in task  # still not woken by the human's message
+
+
+def _fake_post(responses: dict[str, dict]):
+    import json as _json
+
+    class R:
+        def __init__(self, status: int, body: dict) -> None:
+            self.status_code, self._body = status, body
+
+        def json(self) -> dict:
+            return self._body
+
+    def post(url: str, **kw):
+        for suffix, body in responses.items():
+            if url.endswith(suffix):
+                assert kw.get("follow_redirects") is False, "credential calls never follow"
+                return R(200, body)
+        return R(404, {})
+
+    post.jwt = "h." + __import__("base64").urlsafe_b64encode(
+        _json.dumps({"sub": "demo-review-opencode", "pk_claim": "claim-77"}).encode()
+    ).decode().rstrip("=") + ".s"
+    return post
+
+
+def test_mint_keys_where_the_daemons_look_and_pin_the_reviewer(tmp_path: Path,
+                                                               monkeypatch) -> None:
+    """review-gate.md slice 4: each demo agent gets its own key (so its messages are
+    stamped `key`), and the reviewer is pinned to the claim inside its own JWT."""
+    from quorus import bundle_client
+    from quorus.runtime import review_gate
+
+    post = _fake_post({})
+    post_map = {"/v1/auth/claim-name": {"name": "x", "participant_key": "quorus_pk_test"},
+                "/v1/auth/token": {"token": post.jwt}}
+    post = _fake_post(post_map)
+    monkeypatch.setattr(demo_cmd.httpx, "post", post)
+    home = tmp_path / "home"
+    keys = demo_cmd.mint_agent_keys("http://127.0.0.1:1", "secret", home,
+                                    (demo_cmd.BUILDER, demo_cmd.REVIEWER))
+    assert set(keys) == {demo_cmd.BUILDER, demo_cmd.REVIEWER}
+    for name in keys:
+        assert bundle_client.load_participant_key(
+            "http://127.0.0.1:1", name, demo_cmd.agent_key_dir(home, name)) == "quorus_pk_test"
+    pin = demo_cmd.pin_reviewer("http://127.0.0.1:1", home, demo_cmd.REVIEWER,
+                                keys[demo_cmd.REVIEWER])
+    assert pin == {"name": demo_cmd.REVIEWER, "tenant": "_legacy", "claim_id": "claim-77"}
+    assert review_gate.reviewer_for(demo_cmd.ROOM, demo_cmd.reviewers_file(home)) == pin
+    assert review_gate.pinned(pin)
+
+
+def test_held_tip_and_the_review_before_main_check(tmp_path: Path) -> None:
+    repo = demo_cmd.make_sample_repo(tmp_path)
+    full = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True,
+                          text=True).stdout.strip()
+    history = [_m("demo-opencode", f"(quorus) awaiting @{demo_cmd.REVIEWER}'s review of "
+                                    f"{full[:12]} (1 commit(s)); not on main")]
+    assert demo_cmd.held_tip(history, repo) == full
+    assert demo_cmd.held_tip([_m("x", "nothing held")], repo) is None
+    assert demo_cmd.held_tip([_m("x", "awaiting @r's review of 0000000 (1 commit(s))")],
+                             repo) is None  # not a commit here
+    go = dict(_m(demo_cmd.REVIEWER, f"✅ GO on {full[:7]}"), id="g1")
+    pub = dict(_m("demo-opencode", "(quorus) published 1 commit(s) from quorus/demo-opencode "
+                                   f"to main; reviewed by @{demo_cmd.REVIEWER} (GO g1)"), id="p1")
+    assert demo_cmd.published_after_review([go, pub], demo_cmd.REVIEWER, "g1")
+    assert not demo_cmd.published_after_review([pub, go], demo_cmd.REVIEWER, "g1")  # main first
+    assert not demo_cmd.published_after_review([go, pub], demo_cmd.REVIEWER, None)
+    plain = dict(_m("demo-opencode", "(quorus) published 1 commit(s) from quorus/demo-opencode "
+                                     "to main"), id="p2")
+    assert not demo_cmd.published_after_review([go, plain], demo_cmd.REVIEWER, "g1")
+
+
+def test_the_verdict_is_read_from_the_hold_when_the_room_is_gated() -> None:
+    """With the review gate the GO comes while the commit is held, before the publish
+    note; a later reviewer line (woken again by the publish) must not replace it."""
+    held = _m("demo-opencode", "(quorus) awaiting @demo-review-opencode's review of abc1234567 "
+                               "(1 commit(s)); not on main")
+    go = _m("demo-review-opencode", "✅ GO on abc1234: add() returns a + b now; reviewed.")
+    pub = _m("demo-opencode", "(quorus) published 1 commit(s) from quorus/demo-opencode to "
+                              "main; reviewed by @demo-review-opencode (GO g1)")
+    later = _m("demo-review-opencode", "I'm read-only for this request too; @you please approve.")
+    assert demo_cmd.review_of([held, go, pub, later]).startswith("✅ GO on abc1234")
+
+
+def test_a_go_and_publish_between_two_reads_is_still_review_before_main(tmp_path: Path,
+                                                                         monkeypatch) -> None:
+    """Codex on 09dd399a: the room is read, then main is checked; a GO and its publish
+    landing in between looked like a bypass. When main already moved, the room is read
+    once more before judging; a real bypass (no GO in the second read) still fails."""
+    from quorus.runtime import review_gate
+
+    repo = demo_cmd.make_sample_repo(tmp_path)
+    full = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True,
+                          text=True).stdout.strip()
+    pin = {"name": demo_cmd.REVIEWER, "tenant": "_legacy", "claim_id": "c1"}
+    stamp = {"sender_auth": "key", "sender_claim_id": "c1", "sender_tenant": "_legacy"}
+    held = dict(_m("demo-opencode", f"(quorus) awaiting @{demo_cmd.REVIEWER}'s review of "
+                                    f"{full[:12]} (1 commit(s)); not on main"), id="h1")
+    go = dict(_m(demo_cmd.REVIEWER, f"✅ GO on {full[:7]}: fine"), id="g1", **stamp)
+    pub = dict(_m("demo-opencode", "(quorus) published 1 commit(s) from quorus/demo-opencode to "
+                                   f"main; reviewed by @{demo_cmd.REVIEWER} (GO g1)"), id="p1")
+    assert review_gate.decide([held, go], pin, [full]) == ("go", "g1")  # the pin matches
+    reads = iter([[held], [held, go, pub]])  # first read: no GO yet; main moves meanwhile
+    monkeypatch.setattr(demo_cmd, "is_fixed", lambda r: True)
+    standing, history, tip, go_id = demo_cmd.review_standing(lambda: next(reads), pin, None,
+                                                             demo_cmd.REVIEWER, repo)
+    assert (standing, tip, go_id, len(history)) == ("reviewed", full, "g1", 3)
+    # Main moved and even the second read has no GO: that is a bypass, and it says so.
+    reads = iter([[held], [held]])
+    assert demo_cmd.review_standing(lambda: next(reads), pin, None, demo_cmd.REVIEWER,
+                                    repo)[0] == "unreviewed"
+    # Codex on 1182b513: the daemon fast-forwards main before posting the receipt. A GO
+    # with no receipt yet is not a bypass: keep polling, and the receipt completes it.
+    reads = iter([[held, go], [held, go], [held, go, pub]])
+    first = demo_cmd.review_standing(lambda: next(reads), pin, None, demo_cmd.REVIEWER, repo)
+    assert first[0] == "receipt_pending" and first[3] == "g1"
+    assert demo_cmd.review_standing(lambda: next(reads), pin, full, demo_cmd.REVIEWER,
+                                    repo)[0] == "receipt_pending"
+    assert demo_cmd.review_standing(lambda: next(reads), pin, full, demo_cmd.REVIEWER,
+                                    repo)[0] == "reviewed"
+    # A block is a block, whatever main says; and nothing fixed is just waiting.
+    block = dict(_m(demo_cmd.REVIEWER, f"/disagree blocking on {full[:7]}: no"), id="b1",
+                 **stamp)
+    assert demo_cmd.review_standing(lambda: [held, block], pin, None, demo_cmd.REVIEWER,
+                                    repo)[0] == "blocked"
+    monkeypatch.setattr(demo_cmd, "is_fixed", lambda r: False)
+    assert demo_cmd.review_standing(lambda: [held], pin, None, demo_cmd.REVIEWER,
+                                    repo)[0] == "waiting"

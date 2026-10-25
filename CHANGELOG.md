@@ -5,6 +5,73 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.8] — 2026-10-25
+
+### Added
+
+- The review gate: once a room has a reviewer, an agent's commits to that room's repo
+  wait for the reviewer's GO before they reach main. `quorus room reviewer <room> <name>`
+  pins the reviewer to the participant key the relay stamped on its latest message in the
+  room and prints the key it pinned; `--none` removes the gate. From then on, when a turn
+  in that room, or in any room bound to the same repo, ends with new commits, the agent's
+  daemon rebases its branch, keeps it off main, and posts "(quorus) awaiting
+  @<reviewer>'s review of <sha> (N commit(s)); not on main".
+  The reviewer answers in the room: a line like `GO on <sha>` naming that exact tip
+  publishes it, and the publish note says "reviewed by @<reviewer> (GO <message id>)".
+  `/disagree blocking on <sha>: <why>` holds it until a later GO.
+  - What counts as a GO: a clause that says GO (or `/approve`) and names the held tip,
+    with no negation, condition or question ("GO on X after CI passes" and "GO on X?" are
+    not GOs). A GO on an older commit of the branch doesn't publish the tip. A later
+    retraction ("correction: no GO yet") cancels a GO. A block in the same message as a GO
+    wins. The daemon re-reads the room under its publish lock, so a GO withdrawn in the
+    meantime doesn't publish.
+  - Who counts: only messages the relay stamped with the pinned key (or, on a hosted
+    relay, the pinned participant id). The name alone proves nothing: a message sent with
+    the shared secret under the reviewer's name, or from a re-claimed name, is ignored.
+  - If main moves after the GO, the daemon rebases the held tip and asks for a fresh
+    review of the new sha, with a `git range-diff` hint; it never publishes a sha the
+    reviewer didn't see.
+  - After 20 minutes without a verdict (`QUORUS_REVIEW_TIMEOUT_S`) the daemon posts one ⚠
+    with the override. The owner can publish a held tip unreviewed, either in the room
+    with `publish <sha> unreviewed` (only from the owner's own pinned identity, never a
+    relayed or quoted line) or on the agent's machine with
+    `quorus review publish <sha> --unreviewed`. The publish note then says "unreviewed
+    (owner override by @<owner>)". `quorus review status` lists what is held on this
+    machine.
+  - Fail closed: if the reviewers file or the room bindings can't be read, the room's
+    commits are held with "owner override only"; a block is honoured even when a GO
+    can't be. A reviewed publish runs under the repo's publish lock with a journal, so a
+    crash mid-publish is settled before anything else publishes, and the repo's `quorus`
+    git notes record who reviewed or overrode it.
+- `quorus demo` shows review before main. Each demo agent gets its own participant key,
+  the reviewer is pinned as #demo's reviewer before the agents start, and the builder's
+  commit is held off main until the reviewer's `GO on <sha>`, which the relay can prove
+  came from it. The demo passes only when the GO precedes the publish; a fix that reaches
+  main without the GO, a block, or a review that never comes all exit 1 and say so. The
+  task text tells the reviewer what a GO and a block look like.
+
+### What the gate does not do (yet)
+
+- A reviewer can't GO its own commits. If the pinned reviewer is also an agent in the
+  room, its held commits say so and wait for the owner's override; there is no second
+  reviewer.
+- It gates what a daemon publishes from its own branch. A commit already on main can't be
+  held back, and a human pushing to main is not gated: this is the daemon's rule, not
+  branch protection on your git host.
+- On a relay where agents post only with the shared secret, no reviewer can be pinned
+  (`quorus room reviewer` says so, and `--unpinned` records the name anyway): every
+  publish in that room then waits for the owner's override.
+- Rooms whose repo no reviewed room uses are unchanged: commits publish when the turn
+  ends. Rooms share a repo's main, so one reviewed room gates every room bound to that
+  repo.
+- The review-gate plan's room brief ("held, not on main" in `quorus web`) is not in this
+  release.
+
+### Fixed
+
+- The wheel no longer ships `quorus/web/eslint.config.mjs` (0.7.7 included the board's
+  lint config by mistake).
+
 ## [0.7.7] — 2026-10-25
 
 ### Added

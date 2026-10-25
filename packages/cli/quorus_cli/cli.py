@@ -1332,6 +1332,12 @@ def _cmd_room(args):
         cmd_room_add(args)
         return
 
+    if action == "reviewer":
+        from quorus_cli.review_cmd import cmd_room_reviewer
+
+        cmd_room_reviewer(args)
+        return
+
     _ui.error(f"room: unknown subcommand {action!r}")
     raise SystemExit(5)
 
@@ -1418,6 +1424,21 @@ def _cmd_track_report(args):
     from quorus_cli.track_report_cmd import cmd_track_report
 
     sys.exit(cmd_track_report(args, console))
+
+
+def _cmd_review(args):
+    """`quorus review status|publish`: held tips waiting for a reviewer's GO."""
+    from quorus_cli import review_cmd
+
+    if getattr(args, "review_action", None) == "publish":
+        review_cmd.cmd_review_publish(args)
+    elif getattr(args, "review_action", None) == "status":
+        review_cmd.cmd_review_status(args)
+    else:
+        _ui.error("review: missing subcommand.",
+                  hint="usage: [accent]quorus review status[/] | "
+                       "[accent]quorus review publish <sha> --unreviewed[/]")
+        raise SystemExit(5)
 
 
 def _cmd_invites(args):
@@ -9599,6 +9620,24 @@ def main():
     p_room_unbind = room_sub.add_parser("unbind", help="Remove a binding")
     p_room_unbind.add_argument("room", help="Room name or id")
     room_sub.add_parser("bindings", help="List bindings on this host")
+    p_room_reviewer = room_sub.add_parser(
+        "reviewer", help="Make an agent's GO required before this room's commits reach main")
+    p_room_reviewer.add_argument("room", help="Room name or id")
+    p_room_reviewer.add_argument("name", nargs="?",
+                                 help="Reviewer to pin (leave out to show the current one)")
+    p_room_reviewer.add_argument("--none", action="store_true",
+                                 help="Remove the reviewer: commits publish when a turn ends")
+    p_room_reviewer.add_argument("--unpinned", action="store_true",
+                                 help="Record a reviewer with no key to pin: every publish "
+                                      "then waits for your override")
+    p_review = sub.add_parser("review", help="Commits waiting for a reviewer's GO")
+    review_sub = p_review.add_subparsers(dest="review_action")
+    review_sub.add_parser("status", help="List held commits on this machine")
+    p_review_publish = review_sub.add_parser(
+        "publish", help="Publish a held commit without its review (owner override)")
+    p_review_publish.add_argument("sha", help="The held tip (7+ characters)")
+    p_review_publish.add_argument("--unreviewed", action="store_true",
+                                  help="Required: you are skipping the reviewer")
 
     p_web = sub.add_parser("web", help="Open your rooms and the needs-you board in this browser")
     p_web.add_argument("room", nargs="?", help="Room to open (default: the room list)")
@@ -10048,6 +10087,7 @@ def main():
         "approve": _cmd_approve,
         "deny": _cmd_deny,
         "room": _cmd_room,
+        "review": _cmd_review,
         "handoff": _cmd_handoff,
         "agent": _cmd_agent,
         "scorecard": _cmd_scorecard,

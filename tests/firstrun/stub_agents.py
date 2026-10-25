@@ -45,7 +45,10 @@ def act(prompt, can_write):
     asked = prompt.rsplit("# Triggering message", 1)[-1]
     sha = re.search(r"review ([0-9a-f]{7,40})", asked)
     if sha:
-        return "✅ /vote approve %%s: add() returns a + b now; reviewed." %% sha.group(1)
+        # The review gate counts a GO that names the commit (quorus/runtime/review_gate.py);
+        # the vote line stays for the ledger and the case study.
+        return ("✅ GO on %%s: add() returns a + b now; reviewed. /vote approve %%s"
+                %% (sha.group(1), sha.group(1)))
     if PICKED in prompt:
         return "NO_REPLY"  # unaddressed agent chatter: the instructions say add or stay quiet
     if "this turn is READ-ONLY" in prompt:  # not the owner's request (0.6.0's rule)
