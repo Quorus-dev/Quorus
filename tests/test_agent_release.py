@@ -154,3 +154,36 @@ def test_the_relay_record_keeps_its_url_and_claims_dir(home, monkeypatch) -> Non
     local_relay._record(home / "cfg", 7, 8080, claims, "http://localhost:8080")
     rec = json.loads((home / "cfg" / "relay.pid").read_text())
     assert rec["url"] == "http://localhost:8080" and rec["data_dir"] == str(home / "r")
+
+
+def test_a_relative_history_db_is_recorded_where_the_relay_reads_it(home, monkeypatch,
+                                                                    tmp_path) -> None:
+    """The relay runs in HOME, so it resolves a relative QUORUS_HISTORY_DB there.
+    The record resolved it against the CLI's cwd, naming another claims file
+    (codex, review of f6028a57)."""
+    elsewhere = tmp_path / "cli-cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("QUORUS_HISTORY_DB", "relative/history.db")
+    seen: dict[str, Any] = {}
+
+    class _Proc:
+        pid = 4242
+
+        def poll(self) -> None:
+            return None
+
+    def _popen(argv: list[str], **kw: Any) -> _Proc:
+        seen.update(env=kw["env"], cwd=kw["cwd"])
+        return _Proc()
+
+    answers = iter([False, True])
+    monkeypatch.setattr(local_relay, "_healthy", lambda url, t=2.0: next(answers))
+    monkeypatch.setattr(local_relay.subprocess, "Popen", _popen)
+    monkeypatch.setattr(local_relay, "_ps", lambda pid, field: "x")
+    assert local_relay.ensure_local_relay(URL, "s")[0]
+    relay_home = Path(seen["cwd"])
+    want = (relay_home / "relative").resolve()
+    assert seen["env"]["QUORUS_HISTORY_DB"] == str(want / "history.db")
+    rec = json.loads((home / "cfg" / "relay.pid").read_text())
+    assert rec["data_dir"] == str(want) and not rec["data_dir"].startswith(str(elsewhere))

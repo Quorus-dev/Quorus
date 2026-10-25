@@ -68,11 +68,13 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
     env = {**os.environ, "RELAY_SECRET": secret, "PORT": str(parsed.port or 8080),
            "HOST": "127.0.0.1", "ALLOW_LEGACY_AUTH": "1",
            "MESSAGES_FILE": str(cfg / "relay-state.json"), "LOG_LEVEL": "WARNING"}
+    home = Path.home()
+    _absolute_state_paths(env, home)
     log = (cfg / "relay.log").open("ab")
     try:
         proc = subprocess.Popen([sys.executable, "-m", "quorus.relay_cli"], env=env,
                                 stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-                                start_new_session=True, cwd=str(Path.home()))
+                                start_new_session=True, cwd=str(home))
     except OSError as exc:
         return False, f"couldn't start the local relay ({exc}); run `quorus relay` yourself"
     for _ in range(40):
@@ -92,6 +94,20 @@ def ensure_local_relay(relay_url: str, secret: str) -> tuple[bool, str]:
     # leave an untracked relay running (codex, review of e409ee1a).
     _stop_spawned(proc)
     return False, f"the local relay didn't start — see {cfg / 'relay.log'}"
+
+
+STATE_PATH_VARS = ("QUORUS_HISTORY_DB", "MURMUR_HISTORY_DB", "MESSAGES_FILE")
+
+
+def _absolute_state_paths(env: dict[str, str], cwd: Path) -> None:
+    """Make the relay's state paths absolute against its own *cwd*, in place.
+    The relay resolves a relative one against its cwd; recording its claims
+    dir from this process resolved it against ours, so `agent remove` could
+    release a name in another relay's claims file (codex, review of f6028a57)."""
+    for var in STATE_PATH_VARS:
+        raw = env.get(var)
+        if raw and not Path(raw).expanduser().is_absolute():
+            env[var] = str((cwd / Path(raw).expanduser()).resolve())
 
 
 def _stop_spawned(proc: subprocess.Popen) -> None:
