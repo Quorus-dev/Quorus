@@ -488,6 +488,14 @@ def cmd_agent(args: Any, console: Any) -> None:
 
 
 def _add(args: Any, console: Any) -> None:
+    """`quorus agent add`: prepare (name, credentials, join, binding), then start."""
+    _start(_prepare(args, console), console)
+
+
+def _prepare(args: Any, console: Any) -> dict[str, Any]:
+    """Everything before the daemon starts: name, credentials, join, binding and
+    lead. Split from :func:`_start` so the first-run wizard can pin a reviewer
+    between the two, before any agent can publish (docs/plans/gate-by-default.md)."""
     cfg = _on_owned_address(load_config())
     me = (cfg.get("instance_name") or "").strip()
     if not me or me == "default":
@@ -558,6 +566,17 @@ def _add(args: Any, console: Any) -> None:
         swap = f" [dim](was @{previous})[/]" if previous and previous != name else ""
         console.print(f"[success]✓[/] @{name} leads #{args.room}: it splits your requests "
                       f"into tasks and assigns them{swap}")
+    return {"cfg": cfg, "me": me, "name": name, "room": args.room, "repo": repo,
+            "model": model, "state_dir": state_dir, "existing": existing,
+            "cred": cred, "legacy": legacy, "bearer": bearer}
+
+
+def _start(prep: dict[str, Any], console: Any) -> None:
+    """Start (or reuse) the prepared agent's daemon."""
+    cfg, me, name, room = prep["cfg"], prep["me"], prep["name"], prep["room"]
+    repo, model, state_dir = prep["repo"], prep["model"], prep["state_dir"]
+    existing, cred, legacy, bearer = (prep["existing"], prep["cred"], prep["legacy"],
+                                      prep["bearer"])
     if existing:
         console.print(f"[success]✓[/] @{name} is already running [dim]({existing})[/] "
                       "— it now also listens to this room")
@@ -571,12 +590,12 @@ def _add(args: Any, console: Any) -> None:
                  "keeps running after you close this terminal, but not after a "
                  "reboot: run this command again then")
         console.print(f"[success]✓[/] @{name} is running [dim]({lasts})[/]")
-    if repo is not None or _room_bound(args.room, state_dir):
-        console.print(f"\n[dim]Try it:[/] quorus say {args.room} \"@{name} hello, what "
+    if repo is not None or _room_bound(room, state_dir):
+        console.print(f"\n[dim]Try it:[/] quorus say {room} \"@{name} hello, what "
                       "can you do in this repo\"")
     else:
         console.print(f"\n[dim]Give it a repo to work in:[/] quorus room bind "
-                      f"{args.room} <path>")
+                      f"{room} <path>")
 
 
 def _room_bound(room: str, state_dir: Path | None = None) -> bool:
