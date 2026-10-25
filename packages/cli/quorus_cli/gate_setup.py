@@ -155,7 +155,12 @@ def write_all(files: list[Path], change: Any) -> None:
     """``change(file)`` on every file, all or nothing: a daemon reading a file
     the change didn't reach would gate differently from what the room was told.
     On a failure what was written is put back, and IdentityError names the file."""
-    before = {f: (f.read_bytes() if f.exists() else None) for f in files}
+    before: dict[Path, bytes | None] = {}
+    for f in files:
+        try:
+            before[f] = f.read_bytes() if f.exists() else None
+        except OSError as exc:  # nothing written yet: say which file, not a traceback
+            raise agent_identity.IdentityError(f"couldn't read {f} ({exc})") from exc
     for f in files:
         try:
             change(f)

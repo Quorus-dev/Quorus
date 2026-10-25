@@ -257,3 +257,15 @@ def test_disagreeing_dirs_are_reported(cfg, pinning, capsys):
     review_cmd.cmd_room_reviewer(_args())
     out = " ".join(capsys.readouterr().out.split())
     assert "differs" in out and "@rev" in out and "@old" in out
+
+
+def test_a_file_that_cant_be_read_is_a_cross_not_a_traceback(cfg, pinning, capsys):
+    """codex, advisory on dea25093: the snapshot read raised past the ✗."""
+    state = _builder(cfg, "a-claude", {"r": pinning})
+    (state / "room-reviewers.json").mkdir()  # exists, can't be read as a file
+    with pytest.raises(SystemExit) as exc:
+        review_cmd.cmd_room_reviewer(_args(name="rev"))
+    assert exc.value.code == 1
+    out = " ".join(capsys.readouterr().out.split())
+    assert "✗" in out and "couldn't read" in out
+    assert rg.reviewer_for("r") is None
