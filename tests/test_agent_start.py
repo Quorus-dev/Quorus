@@ -105,8 +105,11 @@ def test_a_healthy_daemon_is_running(home, monkeypatch) -> None:
     _launchd(monkeypatch, fake, pid=4242)
     assert agent_cmd._start_daemon({"relay_url": "http://r"}, NAME, SECRET, True) == LABEL
     assert (home / "LA" / f"{LABEL}.plist").exists()
-    # A crashed job of ours is still loaded: it's booted out before the bootstrap.
-    assert [c[1] for c in fake.calls] == ["bootout", "bootstrap"]
+    # Its own label only: enabled (a retire may have disabled it), booted out (a
+    # crashed job is still loaded), then bootstrapped.
+    target = f"gui/{agent_cmd._uid()}/{LABEL}"
+    assert [c[1:3] for c in fake.calls] == [["enable", target], ["bootout", target],
+                                            ["bootstrap", f"gui/{agent_cmd._uid()}"]]
 
 
 def test_a_crash_loop_never_settles() -> None:
@@ -154,3 +157,4 @@ def test_a_private_key_longer_than_the_tail_is_redacted(tmp_path, end) -> None:
     tail = agent_start.log_tail(log, len("old\n"))
     assert "[redacted]" in tail
     assert not any(line[:7] in tail for line in body)
+

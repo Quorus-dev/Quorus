@@ -490,6 +490,10 @@ def _start_daemon(cfg: dict[str, Any], name: str, cred: str, legacy: bool,
     _LA.mkdir(parents=True, exist_ok=True)
     plist = _LA / f"{label}.plist"
     target = f"gui/{_uid()}/{label}"
+    # Adding the agent is the owner asking it to run: lift a disable an earlier
+    # retire left on its own label, or bootstrap fails (FRICTION #99 (2)).
+    subprocess.run(["launchctl", "enable", target], capture_output=True, check=False,
+                   timeout=15)
     # A crashed job of ours is still loaded, and bootstrap refuses a loaded label.
     subprocess.run(["launchctl", "bootout", target], capture_output=True, check=False,
                    timeout=15)
