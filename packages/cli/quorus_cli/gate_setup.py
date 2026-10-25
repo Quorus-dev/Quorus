@@ -330,7 +330,10 @@ def post(prep: dict[str, Any], text: str) -> None:
     cfg = prep["cfg"]
     try:
         _relay_http.post(f"{cfg['relay_url'].rstrip('/')}/rooms/{prep['room']}/messages",
-                         json={"from_name": prep["me"], "content": text},
+                         # A status line: it names the agents, and a chat line woke
+                         # both just to say hi (first-ten-minutes.md, item 2).
+                         json={"from_name": prep["me"], "content": text,
+                               "message_type": "status"},
                          headers={"Authorization": f"Bearer {prep['bearer']}"}, timeout=10,
                          follow_redirects=False)
     except Exception:  # best effort: the line is printed either way
