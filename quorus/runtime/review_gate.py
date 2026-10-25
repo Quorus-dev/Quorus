@@ -214,19 +214,27 @@ def verdict(msg: dict[str, Any], pin: dict[str, str] | None,
     lines = _lines(msg.get("content") or "")
     if any(_BLOCK.search(c) and _named(c, pending) for line in lines for c in line):
         return "block"
-    retracted = False
+    # The whole message first: a retraction or open condition on ANY own line
+    # that names the tip, or names no commit at all, outranks a GO on another
+    # line ("GO on X\nCorrection: no GO yet on X": codex, review of b116d1a2).
+    gos, retracted = 0, False
     for line in lines:
+        text = " ".join(line)
+        shas = {t for t in _SHA.findall(text.lower()) if len(t) >= MIN_SHA}
         names_tip = any(tip in _named(c, pending) for c in line)
-        if names_tip and _RETRACT.search(" ".join(line)):
+        if (names_tip or not shas) and (_RETRACT.search(text) or (
+                line and (_CONDITION.match(line[0]) or review_prefs._UNCERTAIN.match(line[0])))):
             retracted = True
         for i, clause in enumerate(line):
             if not _GO.search(clause) or tip not in _named(clause, pending):
                 continue
             if _DISAGREE.search(clause) or _pending(line, i):
                 retracted = True  # a conditional or taken-back GO: not current
-                continue
-            return "go"
-    return "retract" if retracted else None
+            else:
+                gos += 1
+    if retracted:
+        return "retract"
+    return "go" if gos else None
 
 
 def decide(history: Iterable[dict[str, Any]], pin: dict[str, str] | None,

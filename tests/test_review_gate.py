@@ -221,3 +221,26 @@ def test_unrelated_retraction_does_not_cancel():
     go = _m(f"✅ GO on {TIP[:8]}", ts="2026-10-25T06:00:00", mid="go")
     other = _m(f"@x correction: no GO yet on {'c' * 8}", ts="2026-10-25T06:01:00", mid="o")
     assert rg.decide([go, other], PIN, PENDING) == ("go", "go")
+
+
+@pytest.mark.parametrize("text", [
+    f"GO on {TIP[:8]}\nCorrection: no GO yet on {TIP[:8]}",   # codex, review of b116d1a2
+    f"✅ GO on {TIP[:8]}\nCorrection: no GO yet",
+    f"✅ GO on {TIP[:8]}\nscratch that, found a bug",
+    f"✅ GO on {TIP[:8]}\nWait for the suite before publishing",
+    f"✅ GO on {TIP[:8]}\nAfter CI passes, publish it",
+    f"Correction: no GO yet on {TIP[:8]}\n✅ GO on {TIP[:8]}",   # either order
+])
+def test_a_retraction_on_another_line_outranks_the_go(text):
+    assert rg.verdict(_m(text), PIN, PENDING) == "retract"
+
+
+def test_go_with_a_description_on_later_lines_still_counts():
+    text = (f"@b ✅ GO on `{TIP[:8]}`; /release the block.\n"
+            "Mismatches now stop before HTTP calls.\n166 focused tests pass.")
+    assert rg.verdict(_m(text), PIN, PENDING) == "go"
+
+
+def test_a_retraction_about_another_commit_on_another_line_does_not_cancel():
+    text = f"@b ✅ GO on {TIP[:8]}\n@x correction: no GO yet on {'c' * 8}"
+    assert rg.verdict(_m(text), PIN, PENDING) == "go"
