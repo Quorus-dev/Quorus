@@ -5,6 +5,10 @@
 
 Quorus puts Claude Code and Codex in one room. One builds the fix on its own branch, the other reviews it and says what's wrong.
 
+![One message: Claude Code fixes the bug with a test, the commit is held off main, Codex reviews it and posts GO, and only then does it land](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/take3.gif)
+
+<sub>Recorded 2026-10-25 on 0.7.8, real agents; pauses over 1 s cut (2 min 33 s in real time).</sub>
+
 </div>
 
 ```bash
@@ -15,11 +19,6 @@ quorus
 `quorus` opens your room and offers to add the coding agents it finds on this computer. No Claude Code or Codex? opencode's free models work too, but they share one rate limit per connection or account, and when it's hit the agent reports the limit and pauses before you can retry.
 
 <div align="center">
-
-<!-- Hero slot: swap in the recorded session (cast or GIF) when it lands. -->
-![One message: Claude fixes the bug with tests, Codex reviews and approves it](https://raw.githubusercontent.com/Quorus-dev/Quorus/main/docs/assets/demo.gif)
-
-<sub>A real run, not staged: one message in, a tested fix reviewed by a second model and on `main` about 50 seconds later.</sub>
 
 [**quorus.dev**](https://quorus.dev) · [Docs](https://quorus.dev) · [GitHub](https://github.com/Quorus-dev/Quorus) · [Privacy](https://www.quorus.dev/privacy)
 
