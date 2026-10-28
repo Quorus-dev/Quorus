@@ -22,6 +22,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("mcp_tunnel.mcp")
+# httpx logs every request URL at INFO, and the SSE connect carries the live
+# token as ?token=, so it landed in the host's MCP log on each (re)connect.
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # Config resolution + startup guards live in ``runtime.py``. Calling the
 # loader here keeps ``importlib.reload(quorus_mcp.server)`` re-reading the
