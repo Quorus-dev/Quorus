@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 import httpx
 
 from quorus.config import load_config, same_relay, withheld_credential_message
+from quorus.http_hints import ApiKeyRejected  # noqa: F401  (server raises it as runtime.*)
 from quorus_mcp.sse import SSEListener, process_sse_event_data
 
 if TYPE_CHECKING:
@@ -149,8 +150,31 @@ def setup_problem(exc: SystemExit) -> str:
 
 def unconfigured_settings() -> dict[str, Any]:
     return {"config_file": str(Path.home() / ".quorus" / "config.json"), "relay_url": "",
-            "relay_secret": "", "api_key": "", "instance_name": "", "sse_enabled": False,
+            "relay_url_origin": "", "relay_secret": "", "api_key": "", "api_key_from": "",
+            "instance_name": "",
+            "sse_enabled": False,
             "push_notification_method": "", "push_notification_channel": ""}
+
+
+def relay_url_origin(source: str, config_file: str, profile: str = "") -> str:
+    """Where the relay URL came from and how to change it, for errors that name
+    the URL. A stale project .mcp.json pointed the server at a relay that was
+    long gone, and "Cannot reach relay server at …" didn't say why (overseer,
+    2026-10-28)."""
+    named = f" (profile {profile})" if profile else ""
+    if source == "env:QUORUS_RELAY_URL":
+        return ("It comes from QUORUS_RELAY_URL in this MCP server's entry: a project "
+                ".mcp.json, or the client's MCP config. Start that relay, or fix or "
+                "remove that entry and restart the client.")
+    if source == "env:RELAY_URL":
+        return ("It comes from the RELAY_URL environment variable. Start that relay, "
+                "or unset or fix RELAY_URL and restart the client.")
+    if source == "default":
+        return (f"No relay is set in QUORUS_RELAY_URL or {config_file}{named}, so this "
+                "is the built-in default. Run `quorus` to set one up, or set "
+                "QUORUS_RELAY_URL in this MCP server's entry.")
+    return (f"It comes from relay_url in {config_file}{named}. Start that relay, or "
+            "fix relay_url there (or set QUORUS_RELAY_URL in this MCP server's entry).")
 
 
 def settings_or_setup_problem() -> tuple[dict[str, Any], str]:
@@ -195,6 +219,9 @@ def load_runtime_config() -> dict[str, Any]:
 
     env_relay = _clean_env("QUORUS_RELAY_URL")
     relay_url = env_relay or config["relay_url"]
+    origin = relay_url_origin("env:QUORUS_RELAY_URL" if env_relay
+                              else config.get("relay_url_source", "file"),
+                              config["config_file"], _clean_env("QUORUS_PROFILE"))
     # A saved secret or key belongs to the relay it was saved with. When
     # QUORUS_RELAY_URL names another relay (a plugin field, a hand-written MCP
     # entry), a blank QUORUS_* credential must not fall back to the saved one:
@@ -210,6 +237,11 @@ def load_runtime_config() -> dict[str, Any]:
     relay_secret = _resolve_auth("QUORUS_RELAY_SECRET", secret_fallback,
                                  label="Relay secret")
     api_key = _resolve_auth("QUORUS_API_KEY", key_fallback, label="API key")
+    # Which env var the key came from ("" = the saved config), for the error a
+    # relay's refusal turns into: a shell-wide QUORUS_API_KEY broke every tool
+    # on a secret-auth relay and nothing said where the key came from.
+    api_key_from = ("QUORUS_API_KEY" if _clean_env("QUORUS_API_KEY") is not None
+                    else "API_KEY" if api_key and config["api_key_from_env"] else "")
     instance_name = _clean_env("QUORUS_INSTANCE_NAME") or config["instance_name"]
     sse_enabled = os.environ.get("SSE_ENABLED", "true").strip().lower() not in {
         "0", "false", "no", "off",
@@ -253,8 +285,10 @@ def load_runtime_config() -> dict[str, Any]:
     return {
         "config_file": config["config_file"],
         "relay_url": relay_url,
+        "relay_url_origin": origin,
         "relay_secret": relay_secret,
         "api_key": api_key,
+        "api_key_from": api_key_from,
         "instance_name": instance_name,
         "sse_enabled": sse_enabled,
         "push_notification_method": config["push_notification_method"],

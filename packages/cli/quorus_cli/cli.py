@@ -313,7 +313,7 @@ _WITHHELD_WARNED = False
 
 def _auth_headers() -> dict[str, str]:
     """Get auth headers — JWT from API key, or legacy secret for local dev."""
-    global _cached_jwt, _WITHHELD_WARNED
+    global _cached_jwt, _WITHHELD_WARNED, API_KEY
     if _config.get("credentials_withheld") and not (API_KEY or RELAY_SECRET) \
             and not _WITHHELD_WARNED:
         from quorus.config import withheld_credential_message
@@ -337,7 +337,27 @@ def _auth_headers() -> dict[str, str]:
                          "check the relay URL (quorus init)",
                 )
                 sys.exit(3)
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError:
+                from quorus.http_hints import (
+                    ApiKeyRejected,
+                    key_auth_unavailable,
+                    rejected_key_message,
+                )
+                if key_auth_unavailable(resp) and RELAY_SECRET:
+                    # No key can sign in on a relay without accounts; the secret
+                    # saved for this same relay is what we'd use without the key.
+                    print("quorus: this relay has no API-key accounts; using its relay "
+                          "secret instead of the API key", file=sys.stderr)
+                    API_KEY = ""
+                    return {"Authorization": f"Bearer {RELAY_SECRET}"}
+                if resp.status_code != 401 and resp.status_code < 500:
+                    raise
+                key_from = "API_KEY" if _config.get("api_key_from_env") else ""
+                raise ApiKeyRejected(
+                    rejected_key_message(resp, relay_url=RELAY_URL, key_from=key_from),
+                    request=resp.request, response=resp) from None
             _cached_jwt = resp.json()["token"]
         return {"Authorization": f"Bearer {_cached_jwt}"}
     return {"Authorization": f"Bearer {RELAY_SECRET}"}
@@ -4012,6 +4032,7 @@ def _register_mcp_everywhere(
     mcp_args: list[str],
     ui,
     profile: str = "",
+    project_fallback: bool = True,
 ) -> list[str]:
     """Auto-wire every installed MCP-compatible client in one sweep.
 
@@ -4100,7 +4121,16 @@ def _register_mcp_everywhere(
                 hint=r.detail or "check file permissions + JSON syntax",
             )
 
-    if not installed:
+    if not installed and not project_fallback:
+        # `quorus join` runs from wherever the user happens to be. A project
+        # .mcp.json there pinned QUORUS_INSTANCE_NAME for every later session
+        # opened in that folder (and older versions put the relay secret in
+        # it), so join only ever writes user-scope config.
+        ui.console.print(
+            "  [muted]No MCP client detected, so nothing was registered. Install "
+            "Claude Code or Codex, then: quorus connect claude|codex <room> <name>[/]"
+        )
+    elif not installed:
         # No known client installed — fall back to project-level .mcp.json
         # so a bare directory can still plug into any MCP client that
         # honors the project file.
@@ -5856,6 +5886,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         mcp_command=mcp_command,
         mcp_args=mcp_args,
         ui=_reg_ui,
+        project_fallback=False,  # never a .mcp.json in the user's cwd
     )
 
     # 3. Join the room (human + all registered agents)
@@ -10199,6 +10230,14 @@ def _explain_http_error(exc: "httpx.HTTPStatusError") -> int:
     """One readable line for any relay error a command didn't handle itself.
     Before this, a wrong secret or missing room dumped a Python traceback."""
     code = exc.response.status_code
+    from rich.markup import escape as _esc
+
+    from quorus.http_hints import ApiKeyRejected
+    if isinstance(exc, ApiKeyRejected):
+        message = str(exc)
+        _ui.error("The relay refused your API key",
+                  hint=_esc(message[:1].upper() + message[1:]))
+        return 3
     try:
         detail = exc.response.json().get("detail")
     except ValueError:

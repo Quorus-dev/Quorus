@@ -126,8 +126,10 @@ def test_load_runtime_config_has_no_polling_keys():
     assert set(settings) == {
         "config_file",
         "relay_url",
+        "relay_url_origin",
         "relay_secret",
         "api_key",
+        "api_key_from",
         "instance_name",
         "sse_enabled",
         "push_notification_method",
