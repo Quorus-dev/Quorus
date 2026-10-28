@@ -221,7 +221,8 @@ def load_runtime_config() -> dict[str, Any]:
     relay_url = env_relay or config["relay_url"]
     origin = relay_url_origin("env:QUORUS_RELAY_URL" if env_relay
                               else config.get("relay_url_source", "file"),
-                              config["config_file"], _clean_env("QUORUS_PROFILE"))
+                              config.get("relay_url_config_file", config["config_file"]),
+                              config.get("relay_url_profile", _clean_env("QUORUS_PROFILE")))
     # A saved secret or key belongs to the relay it was saved with. When
     # QUORUS_RELAY_URL names another relay (a plugin field, a hand-written MCP
     # entry), a blank QUORUS_* credential must not fall back to the saved one:

@@ -44,6 +44,35 @@ def test_from_the_saved_config(home):
     assert str(home / "config.json") in origin and "relay_url" in origin
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_profile_origin_names_the_file_that_supplied_the_url(home, monkeypatch, explicit):
+    (home / "config.json").write_text(json.dumps({"current": "work"}))
+    profiles = home / "profiles"
+    profiles.mkdir()
+    profile = profiles / "work.json"
+    profile.write_text(json.dumps({"instance_name": "alice", "relay_url": "http://saved.test",
+                                   "relay_secret": "synthetic-secret"}))
+    if explicit:
+        monkeypatch.setenv("QUORUS_PROFILE", "work")
+    origin = runtime.load_runtime_config()["relay_url_origin"]
+    assert str(profile) in origin and "profile work" in origin
+    assert str(home / "config.json") not in origin
+
+
+@pytest.mark.parametrize("env", ["QUORUS_RELAY_URL", "RELAY_URL"])
+def test_environment_origin_wins_over_a_current_profile(home, monkeypatch, env):
+    (home / "config.json").write_text(json.dumps({"current": "work"}))
+    (home / "profiles").mkdir()
+    (home / "profiles" / "work.json").write_text(json.dumps({
+        "instance_name": "alice", "relay_url": "http://saved.test", "relay_secret": "s"}))
+    monkeypatch.setenv(env, "http://override.test")
+    monkeypatch.setenv("QUORUS_RELAY_SECRET", "synthetic-secret")
+    settings = runtime.load_runtime_config()
+    assert settings["relay_url"] == "http://override.test"
+    assert env in settings["relay_url_origin"]
+    assert "It comes from relay_url in" not in settings["relay_url_origin"]
+
+
 def test_from_the_default(home, monkeypatch):
     _save(home)
     monkeypatch.setenv("QUORUS_RELAY_SECRET", "s")

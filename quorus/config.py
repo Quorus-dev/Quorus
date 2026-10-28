@@ -193,6 +193,8 @@ class ConfigManager:
     ) -> None:
         self._explicit_path = path
         self._profile = profile
+        self._loaded_path: Path | None = None
+        self._loaded_profile = ""
 
     @property
     def path(self) -> Path:
@@ -208,6 +210,10 @@ class ConfigManager:
     def load(self, *, migrate: bool = True) -> dict[str, Any]:
         """Return the active config. ``migrate=False`` never writes: a legacy
         flat config is read as-is instead of being moved into profiles/."""
+        # Keep provenance alongside this read: the pointer can change before
+        # a caller formats an error, and config.json may hold no relay_url.
+        self._loaded_path = self.path
+        self._loaded_profile = ""
         # Explicit-path callers (tests, CLI --config pointing at a file)
         # get raw file contents, no profile resolution.
         if self._explicit_path is not None:
@@ -220,6 +226,7 @@ class ConfigManager:
         # Explicit profile kwarg — read that profile or empty.
         if self._profile is not None:
             data = pm.get(self._profile)
+            self._loaded_profile = self._profile
             return data or {}
 
         # Default behavior: auto-migrate legacy, then return current.
@@ -229,9 +236,13 @@ class ConfigManager:
                 return legacy
         else:
             pm.migrate_legacy_if_needed()
-        current = pm.current_profile()
+        current = pm.current()
         if current is not None:
-            return current
+            data = pm.get(current)
+            if data is not None:
+                self._loaded_path = pm.profiles_dir / f"{current}.json"
+                self._loaded_profile = current
+                return data
         # No profiles and no legacy to migrate → empty.
         return {}
 
@@ -377,6 +388,8 @@ def load_config(profile: str | None = None, *, migrate: bool = True) -> dict[str
         "api_key": env_key or (saved_key if bound else ""),
         "saved_relay_url": saved_relay_url,
         "relay_url_source": relay_url_source,
+        "relay_url_config_file": str(manager._loaded_path or config_file),
+        "relay_url_profile": manager._loaded_profile,
         "credentials_withheld": bool(not bound and (saved_secret or saved_key)),
         "relay_secret_from_env": bool(env_secret),
         "api_key_from_env": bool(env_key),
