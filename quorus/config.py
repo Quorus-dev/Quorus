@@ -362,6 +362,8 @@ def load_config(profile: str | None = None, *, migrate: bool = True) -> dict[str
 
     saved_relay_url = file_config.get("relay_url") or DEFAULT_RELAY_URL
     relay_url = os.environ.get("RELAY_URL") or saved_relay_url
+    relay_url_source = ("env:RELAY_URL" if os.environ.get("RELAY_URL")
+                        else "file" if file_config.get("relay_url") else "default")
     bound = same_relay(relay_url, saved_relay_url)
     saved_secret = file_config.get("relay_secret") or ""
     saved_key = file_config.get("api_key") or ""
@@ -374,6 +376,7 @@ def load_config(profile: str | None = None, *, migrate: bool = True) -> dict[str
         "relay_secret": env_secret or (saved_secret if bound else ""),
         "api_key": env_key or (saved_key if bound else ""),
         "saved_relay_url": saved_relay_url,
+        "relay_url_source": relay_url_source,
         "credentials_withheld": bool(not bound and (saved_secret or saved_key)),
         "relay_secret_from_env": bool(env_secret),
         "api_key_from_env": bool(env_key),

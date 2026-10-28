@@ -35,6 +35,7 @@ for _noisy in ("httpx", "httpcore"):
 _settings, SETUP_PROBLEM = runtime.settings_or_setup_problem()
 CONFIG_FILE = Path(_settings["config_file"])
 RELAY_URL = _settings["relay_url"]
+RELAY_URL_ORIGIN = _settings.get("relay_url_origin", "")
 RELAY_SECRET = _settings["relay_secret"]
 API_KEY = _settings["api_key"]
 INSTANCE_NAME = _settings["instance_name"]
@@ -210,7 +211,8 @@ async def _retry_as_participant(resp: httpx.Response, send) -> httpx.Response:
 
 def _relay_error_message(exc: Exception) -> str:
     if isinstance(exc, httpx.ConnectError):
-        return f"Error: Cannot reach relay server at {RELAY_URL}"
+        where = f" {RELAY_URL_ORIGIN}" if RELAY_URL_ORIGIN else ""
+        return f"Error: Cannot reach relay server at {RELAY_URL}.{where}"
     if isinstance(exc, httpx.TimeoutException):
         return f"Error: Relay request timed out at {RELAY_URL}"
     if isinstance(exc, httpx.HTTPStatusError):
