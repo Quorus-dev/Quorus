@@ -5,6 +5,34 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.13] — 2026-10-27
+
+### Security
+
+- The MCP server no longer writes the live SSE token to its log. httpx logged every request
+  URL at INFO, including the stream connect's `?token=`, on each (re)connect; httpx and
+  httpcore now log at WARNING.
+- `quorus join` no longer writes a `.mcp.json` into the folder it runs from. With no MCP
+  client detected it fell back to a project file there, which pinned
+  `QUORUS_INSTANCE_NAME` for every Claude Code session later opened in that folder. Join
+  now writes only user-scope config (`~/.quorus`, and the MCP configs of clients it
+  detects in your home directory) and, with no client found, says how to connect one
+  later. `quorus init` keeps its secret-free project fallback.
+
+### Fixed
+
+- A `QUORUS_API_KEY` exported in your shell no longer breaks every tool on a relay that
+  runs on its relay secret (no database). The relay answers 401 with an
+  `X-Quorus-Auth-Mode: secret` header and how to sign in, on `/v1/auth/token` and
+  `/v1/auth/register-agent`, where register-agent answered 500; `/v1/auth/signup`
+  answers 400 there instead of 500. On that answer the MCP server and the CLI use the
+  relay secret already resolved for that same relay. Any other refusal of the key is an
+  error that names the env var it came from (`QUORUS_API_KEY` for the MCP server,
+  `API_KEY` for the CLI) and says to unset it or set it to `""`; the key is never shown.
+- "Cannot reach relay server at <url>" from the MCP server now says where that URL came
+  from (`QUORUS_RELAY_URL` in the MCP entry, `RELAY_URL`, the saved config file, or the
+  built-in default) and how to change it.
+
 ## [0.7.12] — 2026-10-25
 
 ### Fixed
