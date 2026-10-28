@@ -5,6 +5,18 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.14] — 2026-10-28
+
+### Fixed
+
+- "Cannot reach relay server at <url>" now names the profile file that supplied the URL
+  (`~/.quorus/profiles/<name>.json`), including a profile picked as `current` in
+  `config.json`. It used to point at `config.json`, which only names the profile.
+- Sharing and fetching a branch from the MCP server works when a `QUORUS_API_KEY` is
+  refused by a relay that runs on its relay secret. The bundle tools sent the bare relay
+  secret instead of a participant token, starting with the first bundle call after the
+  fallback; they now sign in by name with the secret, like the other tools.
+
 ## [0.7.13] — 2026-10-27
 
 ### Security
