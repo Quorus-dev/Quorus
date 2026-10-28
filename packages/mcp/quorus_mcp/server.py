@@ -38,6 +38,7 @@ RELAY_URL = _settings["relay_url"]
 RELAY_URL_ORIGIN = _settings.get("relay_url_origin", "")
 RELAY_SECRET = _settings["relay_secret"]
 API_KEY = _settings["api_key"]
+API_KEY_FROM = _settings.get("api_key_from", "")
 INSTANCE_NAME = _settings["instance_name"]
 SSE_ENABLED = _settings["sse_enabled"]
 PUSH_NOTIFICATION_METHOD = _settings["push_notification_method"]
@@ -132,12 +133,30 @@ async def _set_active_session(session) -> None:
 
 
 async def _exchange_api_key_for_jwt() -> str:
-    global _cached_jwt
+    global _cached_jwt, API_KEY
     resp = await _get_http_client().post(
         f"{RELAY_URL}/v1/auth/token",
         json={"api_key": API_KEY}, timeout=10,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError:
+        from quorus.http_hints import key_auth_unavailable, rejected_key_message
+
+        if key_auth_unavailable(resp) and RELAY_SECRET:
+            # The relay has no API-key accounts, so no key can sign in there;
+            # the relay secret resolved for this same relay is what this
+            # session would use without the key. Switch to it for the session.
+            logger.warning("Relay %s has no API-key accounts; using the relay secret "
+                           "(the API key%s is ignored).", RELAY_URL,
+                           f" from {API_KEY_FROM}" if API_KEY_FROM else "")
+            API_KEY, _cached_jwt = "", None
+            return RELAY_SECRET
+        if resp.status_code != 401 and resp.status_code < 500:
+            raise
+        raise runtime.ApiKeyRejected(
+            rejected_key_message(resp, relay_url=RELAY_URL, key_from=API_KEY_FROM),
+            request=resp.request, response=resp) from None
     _cached_jwt = resp.json()["token"]
     return _cached_jwt
 
@@ -215,6 +234,8 @@ def _relay_error_message(exc: Exception) -> str:
         return f"Error: Cannot reach relay server at {RELAY_URL}.{where}"
     if isinstance(exc, httpx.TimeoutException):
         return f"Error: Relay request timed out at {RELAY_URL}"
+    if isinstance(exc, runtime.ApiKeyRejected):
+        return f"Error: {exc}"
     if isinstance(exc, httpx.HTTPStatusError):
         # Why, not the raw body: agents got "Relay returned 429: {...}" with no
         # retry time (0.5.1 live check). Same wording as the CLI.

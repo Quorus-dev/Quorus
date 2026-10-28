@@ -19,6 +19,28 @@ from quorus.storage.postgres import get_db_session
 logger = logging.getLogger("quorus.auth")
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
+_NO_ACCOUNTS_DETAIL = (
+    "This relay has no API-key accounts (it runs without a database). Sign in "
+    "with a participant key (quorus_pk_...) from `quorus join`, or send the "
+    "relay secret as the Bearer token. If your shell sets QUORUS_API_KEY or "
+    "API_KEY, unset it (or set it to \"\").")
+
+
+def _refuse_without_accounts(status_code: int = 401, detail: str = _NO_ACCOUNTS_DETAIL) -> None:
+    """File-mode relay (RELAY_SECRET, no DATABASE_URL): there are no accounts to
+    look up. Answer *status_code* with how to sign in, not a 500 from
+    get_db_session ("Database not initialized": 22,704 times on the team relay,
+    2026-10-22). The header lets clients tell this from a bad key."""
+    from quorus.http_hints import AUTH_MODE_HEADER, SECRET_AUTH_ONLY
+    from quorus.storage import postgres
+
+    # Only the real session factory can be missing; a substituted
+    # get_db_session (a test double, another backend) brings its own.
+    if get_db_session is postgres.get_db_session and postgres._session_factory is None:
+        raise HTTPException(status_code=status_code, detail=detail,
+                            headers={AUTH_MODE_HEADER: SECRET_AUTH_ONLY})
+
+
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$")
 _NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -216,6 +238,9 @@ async def signup(
             headers={"Retry-After": str(_SIGNUP_WINDOW)},
         )
 
+    _refuse_without_accounts(400, (
+        "This relay has no accounts (it runs without a database), so it can't sign "
+        "you up. Join with an invite code from `quorus share`, or use the relay secret."))
     async with get_db_session() as session:
         # If joining an existing tenant via invite code
         if req.join_tenant_id:
@@ -347,16 +372,7 @@ async def exchange_api_key(req: TokenRequest, request: Request):
 
         return await participant_token(request, raw_key)
 
-    from quorus.storage import postgres
-
-    if postgres._session_factory is None:
-        # File-mode relay (RELAY_SECRET, no DATABASE_URL): there are no API-key
-        # accounts to look up. Every non-participant key used to 500 here with
-        # "Database not initialized" (22,704 times on the team relay, 2026-10-22).
-        raise HTTPException(status_code=401, detail=(
-            "This relay has no API-key accounts (it runs without a database). Sign in "
-            "with a participant key (quorus_pk_...) from `quorus join`, or send the "
-            "relay secret as the Bearer token."))
+    _refuse_without_accounts()
 
     try:
         prefix = extract_key_prefix(raw_key)
@@ -448,6 +464,7 @@ async def register_agent(
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
     parent_key = authorization[7:].strip()
+    _refuse_without_accounts()
 
     try:
         prefix = extract_key_prefix(parent_key)

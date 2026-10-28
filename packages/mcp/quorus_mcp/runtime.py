@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 import httpx
 
 from quorus.config import load_config, same_relay, withheld_credential_message
+from quorus.http_hints import ApiKeyRejected  # noqa: F401  (server raises it as runtime.*)
 from quorus_mcp.sse import SSEListener, process_sse_event_data
 
 if TYPE_CHECKING:
@@ -149,7 +150,8 @@ def setup_problem(exc: SystemExit) -> str:
 
 def unconfigured_settings() -> dict[str, Any]:
     return {"config_file": str(Path.home() / ".quorus" / "config.json"), "relay_url": "",
-            "relay_url_origin": "", "relay_secret": "", "api_key": "", "instance_name": "",
+            "relay_url_origin": "", "relay_secret": "", "api_key": "", "api_key_from": "",
+            "instance_name": "",
             "sse_enabled": False,
             "push_notification_method": "", "push_notification_channel": ""}
 
@@ -235,6 +237,11 @@ def load_runtime_config() -> dict[str, Any]:
     relay_secret = _resolve_auth("QUORUS_RELAY_SECRET", secret_fallback,
                                  label="Relay secret")
     api_key = _resolve_auth("QUORUS_API_KEY", key_fallback, label="API key")
+    # Which env var the key came from ("" = the saved config), for the error a
+    # relay's refusal turns into: a shell-wide QUORUS_API_KEY broke every tool
+    # on a secret-auth relay and nothing said where the key came from.
+    api_key_from = ("QUORUS_API_KEY" if _clean_env("QUORUS_API_KEY") is not None
+                    else "API_KEY" if api_key and config["api_key_from_env"] else "")
     instance_name = _clean_env("QUORUS_INSTANCE_NAME") or config["instance_name"]
     sse_enabled = os.environ.get("SSE_ENABLED", "true").strip().lower() not in {
         "0", "false", "no", "off",
@@ -281,6 +288,7 @@ def load_runtime_config() -> dict[str, Any]:
         "relay_url_origin": origin,
         "relay_secret": relay_secret,
         "api_key": api_key,
+        "api_key_from": api_key_from,
         "instance_name": instance_name,
         "sse_enabled": sse_enabled,
         "push_notification_method": config["push_notification_method"],
