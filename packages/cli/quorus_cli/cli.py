@@ -4032,6 +4032,7 @@ def _register_mcp_everywhere(
     mcp_args: list[str],
     ui,
     profile: str = "",
+    project_fallback: bool = True,
 ) -> list[str]:
     """Auto-wire every installed MCP-compatible client in one sweep.
 
@@ -4120,7 +4121,16 @@ def _register_mcp_everywhere(
                 hint=r.detail or "check file permissions + JSON syntax",
             )
 
-    if not installed:
+    if not installed and not project_fallback:
+        # `quorus join` runs from wherever the user happens to be. A project
+        # .mcp.json there pinned QUORUS_INSTANCE_NAME for every later session
+        # opened in that folder (and older versions put the relay secret in
+        # it), so join only ever writes user-scope config.
+        ui.console.print(
+            "  [muted]No MCP client detected, so nothing was registered. Install "
+            "Claude Code or Codex, then: quorus connect claude|codex <room> <name>[/]"
+        )
+    elif not installed:
         # No known client installed — fall back to project-level .mcp.json
         # so a bare directory can still plug into any MCP client that
         # honors the project file.
@@ -5876,6 +5886,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         mcp_command=mcp_command,
         mcp_args=mcp_args,
         ui=_reg_ui,
+        project_fallback=False,  # never a .mcp.json in the user's cwd
     )
 
     # 3. Join the room (human + all registered agents)
