@@ -18,7 +18,12 @@ async def _bearer() -> str:
     from quorus_mcp import server
 
     if server.API_KEY:
-        return await server._get_bearer_token()
+        token = await server._get_bearer_token()
+        # Exchange may discover a secret-only relay and clear API_KEY. Its
+        # shared-secret fallback is not a participant JWT; bundles still need
+        # the name-claim path below, including on this first call.
+        if server.API_KEY:
+            return token
     return await asyncio.to_thread(_bc.bearer, server.RELAY_URL,
                                    secret=server.RELAY_SECRET, name=server.INSTANCE_NAME)
 

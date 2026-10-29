@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from quorus import bundle_client
 from quorus.auth.tokens import create_jwt
@@ -171,13 +172,17 @@ async def test_mcp_tools_share_and_fetch_like_the_cli(
     assert {"share_branch", "fetch_bundle"} <= names
 
 
+@pytest.mark.parametrize("api_key", ["", "mct_synthetic_wrong_relay"])
 async def test_mcp_tools_work_on_a_shared_secret_relay(
-        room: str, laptop2: Path, tmp_path: Path, monkeypatch) -> None:
-    """No API key: the MCP claims its own name once and shares as that name."""
+        room: str, laptop1: Path, laptop2: Path, tmp_path: Path, monkeypatch, api_key) -> None:
+    """Secret auth, including fallback during the first bundle call, must
+    claim a participant identity before uploading or downloading."""
     from quorus_mcp import bundle_tools, server
 
     from quorus.auth.participant_keys import ParticipantKeyStore
+    from quorus.storage import postgres
 
+    monkeypatch.setattr(postgres, "_session_factory", None)
     app.state.participant_keys = ParticipantKeyStore(tmp_path / "relay")
     legacy = {"Authorization": "Bearer test-secret"}
     relay = TestClient(app)
@@ -186,8 +191,19 @@ async def test_mcp_tools_work_on_a_shared_secret_relay(
     relay.post(f"/rooms/{shared_room}/join", json={"participant": "bob"}, headers=legacy)
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setattr(server, "RELAY_URL", RELAY)
-    monkeypatch.setattr(server, "API_KEY", "")
+    monkeypatch.setattr(server, "API_KEY", api_key)
+    monkeypatch.setattr(server, "API_KEY_FROM", "QUORUS_API_KEY")
+    monkeypatch.setattr(server, "_cached_jwt", None)
+    monkeypatch.setattr(server, "SETUP_PROBLEM", "")
     monkeypatch.setattr(server, "RELAY_SECRET", "test-secret")
     monkeypatch.setattr(server, "INSTANCE_NAME", "bob")
-    out = await bundle_tools.share_branch_impl(shared_room, str(laptop2))
-    assert out.startswith("Shared fix/relay"), out
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=RELAY) as client:
+        monkeypatch.setattr(server, "_get_http_client", lambda: client)
+        out = await bundle_tools.share_branch_impl(shared_room, str(laptop2))
+        assert out.startswith("Shared fix/relay"), out
+        bundle_id = out.split(" as ")[1].split(" ")[0]
+        fetched = await bundle_tools.fetch_bundle_impl(shared_room, bundle_id, str(laptop1))
+    assert "refs/quorus/bob/fix/relay" in fetched, fetched
+    assert _git(laptop1, "rev-parse", "refs/quorus/bob/fix/relay") == \
+        _git(laptop2, "rev-parse", "fix/relay")
+    assert _git(laptop1, "rev-parse", "--abbrev-ref", "HEAD") == "main"
