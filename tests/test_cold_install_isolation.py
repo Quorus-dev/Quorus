@@ -154,6 +154,7 @@ def test_cold_install_smoke_has_home_override() -> None:
         "the mcp writers will clobber the user's real ~/.gemini etc. "
         "Restore the HOME isolation block before merging."
     )
+    assert 'env["CLAUDE_CONFIG_DIR"]' in src and 'env["APPDATA"]' in src
     assert "HOST_CONFIG_PATHS" in src, (
         "scripts/cold_install_smoke.py no longer snapshots host configs — "
         "restore the atexit safety net."

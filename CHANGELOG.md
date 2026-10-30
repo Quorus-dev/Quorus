@@ -5,6 +5,13 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP setup uses Claude Desktop's OS-specific config and Claude Code's supported
+  user-scope CLI. Existing Quorus identities and relay URLs are kept unless
+  `quorus connect <platform> <room> <name> --force` explicitly replaces them.
+  Config writes create private timestamped backups; direct writes are atomic.
+
 ## [0.7.14] — 2026-10-28
 
 ### Fixed

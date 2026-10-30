@@ -37,6 +37,7 @@ def _make_init_args(name="alice", relay_url="http://localhost:8080", secret="TYP
 def hub_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A throwaway HOME wired the way the first-run hub leaves it."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
     monkeypatch.setattr("quorus.cli.shutil.which", lambda _: None)
     monkeypatch.setattr("quorus.cli._is_platform_installed", lambda p: False)

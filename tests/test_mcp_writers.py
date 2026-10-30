@@ -23,7 +23,6 @@ from quorus_cli.mcp_writers import (
     _repair_codex_toml,
     register_all,
     register_claude_code,
-    register_claude_desktop,
     register_codex,
     register_continue,
     register_cursor,
@@ -114,28 +113,28 @@ class TestAutoDetect:
     def test_writes_when_file_exists(
         self, fake_home: Path, env: McpEnv
     ):
-        p = fake_home / ".claude" / "settings.json"
+        p = fake_home / ".cursor" / "mcp.json"
         p.parent.mkdir(parents=True)
         p.write_text(json.dumps({"other": "keep-me"}))
-        r = register_claude_code(env)
+        r = register_cursor(env)
         assert r.status == "wrote"
         data = json.loads(p.read_text())
         assert data["other"] == "keep-me"  # preserved
         assert data["mcpServers"]["quorus"]["command"] == "uv"
         assert (
             data["mcpServers"]["quorus"]["env"]["QUORUS_INSTANCE_NAME"]
-            == "arav-claude"
+            == "arav-cursor"
         )
 
     def test_updated_when_quorus_already_present(
         self, fake_home: Path, env: McpEnv
     ):
-        p = fake_home / ".claude" / "settings.json"
+        p = fake_home / ".cursor" / "mcp.json"
         p.parent.mkdir(parents=True)
         p.write_text(json.dumps({
             "mcpServers": {"quorus": {"stale": True}, "other": {}},
         }))
-        r = register_claude_code(env)
+        r = register_cursor(env, force=True)
         assert r.status == "updated"
         data = json.loads(p.read_text())
         # Our write replaced the quorus entry but kept the other one.
@@ -167,7 +166,6 @@ class TestAutoDetect:
         assert p.read_text() == "{bad json"
 
     @pytest.mark.parametrize("writer,path_suffix,platform_key", [
-        (register_claude_desktop, ".claude.json", "claude-desktop"),
         (register_cursor, ".cursor/mcp.json", "cursor"),
         (register_windsurf, ".codeium/windsurf/mcp_config.json", "windsurf"),
         (register_gemini_cli, ".gemini/settings.json", "gemini"),
@@ -215,7 +213,7 @@ class TestContinue:
                 ]
             }
         }))
-        r = register_continue(env)
+        r = register_continue(env, force=True)
         assert r.status == "updated"
         data = json.loads(p.read_text())
         servers = data["experimental"]["modelContextProtocolServers"]

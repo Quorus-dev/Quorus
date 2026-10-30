@@ -235,6 +235,8 @@ def run(port: int, timeout: int) -> None:
     # configs.
     env["HOME"] = str(fake_home)
     env["USERPROFILE"] = str(fake_home)  # Windows analogue
+    env["APPDATA"] = str(fake_home / "AppData" / "Roaming")
+    env["CLAUDE_CONFIG_DIR"] = str(fake_home / ".claude")
     # XDG_CONFIG_HOME defaults to ~/.config which `Path.home()` would now
     # resolve under fake_home — but be explicit so any tool that reads XDG
     # directly also gets isolated.

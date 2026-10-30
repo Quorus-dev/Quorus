@@ -79,14 +79,18 @@ def test_no_client_fallback_mcp_json_has_no_secret_and_still_works(machine, monk
 
 
 def test_client_configs_init_writes_have_no_secret(machine, monkeypatch):
+    from quorus_cli.mcp_claude import desktop_config_path
+
     home, project = machine
-    (home / ".claude.json").write_text("{}")
+    desktop = desktop_config_path()
+    desktop.parent.mkdir(parents=True)
+    desktop.write_text("{}")
     (home / ".cursor").mkdir()
     (home / ".cursor" / "mcp.json").write_text("{}")
     monkeypatch.setattr("quorus.cli._is_platform_installed",
-                        lambda p: p in ("claude", "cursor"))
+                        lambda p: p in ("claude-desktop", "cursor"))
     _init()
-    env = _mcp_env(home / ".claude.json")
+    env = _mcp_env(desktop)
     assert "QUORUS_RELAY_SECRET" not in env and "QUORUS_RELAY_SECRET" not in _mcp_env(
         home / ".cursor" / "mcp.json")
     assert [p for p in _files_holding(home, SECRET)
