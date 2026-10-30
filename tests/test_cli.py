@@ -2739,7 +2739,7 @@ def test_cmd_share_quotes_relay_supplied_commands(capsys, monkeypatch):
     from quorus_cli import ui
 
     monkeypatch.setattr(ui.console, "width", 400)  # no wrapping inside a command
-    args = MagicMock(room="r", ttl=1, uses=1, copy=False)
+    args = MagicMock(room="r", ttl=1, uses=1, copy=False, relay_url=None)
 
     _cmd_share(args)
 
@@ -2761,7 +2761,7 @@ def test_cmd_share_drops_a_non_http_install_url(capsys, monkeypatch):
     monkeypatch.setattr("quorus.cli._auth_headers", lambda: {})
     monkeypatch.setattr("quorus.cli.httpx.post", lambda *a, **kw: resp)
 
-    _cmd_share(MagicMock(room="r", ttl=1, uses=1, copy=False))
+    _cmd_share(MagicMock(room="r", ttl=1, uses=1, copy=False, relay_url=None))
 
     out = capsys.readouterr().out
     assert "quorus join ABCD-EFGH" in out

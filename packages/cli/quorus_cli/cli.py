@@ -5507,6 +5507,16 @@ def _cmd_share(args):
         _ui.error("--uses must be 1 to 20")
         return
 
+    from quorus_cli.share_url import is_loopback_url, public_relay_url
+
+    advertised_relay = getattr(args, "relay_url", None)
+    if advertised_relay is not None:
+        try:
+            advertised_relay = public_relay_url(advertised_relay)
+        except ValueError as exc:
+            _ui.error(str(exc))
+            sys.exit(2)
+
     # Call the mint endpoint — admin-only, auth via our configured
     # relay secret or API key. The relay checks the room exists and
     # returns 404 if not, so we don't need a pre-flight /rooms call.
@@ -5581,16 +5591,22 @@ def _cmd_share(args):
     if normalize_code(str(code)) is None:
         _ui.error("The relay returned an invalid invite code", hint="try again")
         return
-    relay_flag = f" --relay {shlex.quote(RELAY_URL)}"
+    relay_flag = f" --relay {shlex.quote(advertised_relay or RELAY_URL)}"
     join_cmd = f"quorus join {code} --name <their-name>{relay_flag}"
-    if any(h in RELAY_URL for h in ("127.0.0.1", "localhost", "0.0.0.0")):
-        ui.console.print(
-            "  [warning]![/] [muted]your relay runs on this machine only — a teammate "
-            "on another computer needs a relay they can reach (a shared server, or "
-            "`quorus relay --host 0.0.0.0` on your network).[/]\n"
-        )
     from rich.markup import escape as _escape
 
+    if not advertised_relay and is_loopback_url(RELAY_URL):
+        ui.console.print(
+            "  [warning]![/] [muted]your relay runs on this machine only — a teammate "
+            "on another computer needs an address they can reach. Run:[/]"
+        )
+        tunnel_cmd = "cloudflared tunnel --url " + shlex.quote(RELAY_URL)
+        ui.console.print(f"    [accent]{_escape(tunnel_cmd)}[/]")
+        ui.console.print(f"    [accent]{_escape('quorus share ' + shlex.quote(room))} "
+                         "--relay-url https://<the-tunnel-host>[/]\n")
+
+    if advertised_relay:
+        install_url = f"{advertised_relay}/v1/join/install/{code}.sh"
     install_cmd = install_command(str(install_url or ""))
     ui.console.print(f"    [accent]{_escape(join_cmd)}[/]")
     if install_cmd:
@@ -9417,6 +9433,8 @@ def main():
         help_text="Generate a short invite code for a room",
     ))
     p_share.add_argument("room", help="Room name")
+    p_share.add_argument("--relay-url", default=None,
+                        help="Public http(s) origin to print; mint via the configured relay")
     p_share.add_argument(
         "--ttl", type=int, default=1,
         help="Code expiry in days (default: 1, max 7)",

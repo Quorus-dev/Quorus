@@ -5,6 +5,13 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- `quorus share <room> --relay-url https://<host>` prints a teammate-reachable
+  address in both join and install commands while minting through the configured
+  relay. The override accepts only non-loopback http(s) origins. Local-only
+  defaults now show concrete `cloudflared tunnel` and share commands.
+
 ### Fixed
 
 - MCP setup uses Claude Desktop's OS-specific config and Claude Code's supported
