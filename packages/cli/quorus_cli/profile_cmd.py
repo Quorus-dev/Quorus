@@ -17,16 +17,17 @@ _SECRET_FIELDS = ("relay_secret", "api_key", "agent_api_keys")
 
 
 def _relay_label(url: object) -> str:
-    """Scheme, host and port only: never URL credentials or query tokens."""
+    """Scheme, host and port only: never URL credentials, paths or query tokens."""
     try:
         parts = urlsplit(str(url or ""))
+        host = parts.hostname
+        port = f":{parts.port}" if parts.port else ""
     except ValueError:
         return "?"
-    if not parts.hostname:
+    if not host:
         return "?"
-    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
-    port = f":{parts.port}" if parts.port else ""
-    return urlunsplit((parts.scheme, host + port, parts.path, "", "")) or "?"
+    host = f"[{host}]" if ":" in host else host
+    return urlunsplit((parts.scheme, host + port, "", "", "")) or "?"
 
 
 def _list(pm: ProfileManager) -> int:

@@ -24,8 +24,8 @@ from quorus_cli import ui as _ui
 from quorus_cli.http_hints import hint as _http_hint
 
 console = _ui.console
-_env_aliases.apply()
-_config = load_config()
+with _env_aliases.applied():
+    _config = load_config()
 RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
 API_KEY = _config.get("api_key", "")

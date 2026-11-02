@@ -88,3 +88,10 @@ def test_list_with_no_profiles_points_at_init(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         run()
     assert "quorus init" in capsys.readouterr().out + capsys.readouterr().err
+
+
+def test_relay_label_drops_paths_and_survives_bad_ports():
+    """Reviewer A4/A5: a token in the path is never printed; a bad port can't crash list."""
+    assert profile_cmd._relay_label("https://host.test/secret-token?x=1") == "https://host.test"
+    assert profile_cmd._relay_label("https://host.test:99999") == "?"
+    assert profile_cmd._relay_label("") == "?"
