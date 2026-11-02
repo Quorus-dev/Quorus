@@ -25,7 +25,7 @@ def mint(monkeypatch):
                              json={"code": CODE,
                                    "install_url": LOCAL + f"/v1/join/install/{CODE}.sh"})
     post = Mock(return_value=response)
-    monkeypatch.setattr(cli._relay_http, "post", post)
+    monkeypatch.setattr(cli.httpx, "post", post)
     monkeypatch.setattr(ui.console, "width", 400)
     return post
 
@@ -52,7 +52,7 @@ def test_flag_changes_join_and_install_but_mints_locally(mint, capsys):
 
 
 @pytest.mark.parametrize("url", [
-    "ftp://relay.test", "https://relay.test/", "https://relay.test/path",
+    "ftp://relay.test", "https://relay.test//", "https://relay.test/path",
     "https://relay.test?token=synthetic", "https://relay.test?", "https://relay.test#x",
     "https://user:synthetic-password@relay.test", "https://user@relay.test",
     "https://relay.test:99999", "https://relay.test:", "https://relay.test:0", "",
@@ -111,3 +111,10 @@ def test_share_parser_exposes_relay_url(monkeypatch):
     monkeypatch.setattr("sys.argv", ["quorus", "share", "applications", "--relay-url", PUBLIC])
     cli.main()
     assert captured[0].relay_url == PUBLIC
+
+
+def test_one_trailing_slash_is_accepted(mint, capsys):
+    cli._cmd_share(args(relay_url=PUBLIC + "/"))
+    shown = capsys.readouterr().out
+    assert f"--relay {PUBLIC}" in shown and f"{PUBLIC}//" not in shown
+    assert public_relay_url(PUBLIC + "/") == PUBLIC

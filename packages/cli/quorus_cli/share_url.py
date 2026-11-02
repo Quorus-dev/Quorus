@@ -30,6 +30,9 @@ def is_loopback_url(value: str) -> bool:
 
 
 def public_relay_url(value: str) -> str:
+    # People paste origins with one trailing slash; accept that, nothing longer.
+    if isinstance(value, str) and value.endswith("/") and not value.endswith("//"):
+        value = value[:-1]
     if not isinstance(value, str) or any(c.isspace() for c in value) or any(
             c in value for c in ("?", "#", "\\", "%")):
         raise ValueError(_INVALID)
