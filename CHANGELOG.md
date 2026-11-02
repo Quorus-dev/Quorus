@@ -7,6 +7,10 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Added
 
+- `quorus profile` lists your saved relays and identities, `quorus profile use <name>`
+  switches between them, and `quorus profile show [name]` prints one with its
+  secrets reported only as set or not set. Switching used to mean hand-editing
+  `~/.quorus/config.json`.
 - `quorus share <room> --relay-url https://<host>` prints a teammate-reachable
   address in both join and install commands while minting through the configured
   relay. The override accepts only non-loopback http(s) origins. Local-only

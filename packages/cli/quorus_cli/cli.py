@@ -3256,6 +3256,11 @@ def _cmd_kick(args):
     asyncio.run(_kick(args.room, args.name))
 
 
+def _cmd_profile(args):
+    from quorus_cli import profile_cmd
+    profile_cmd.run(args)
+
+
 def _cmd_destroy(args):
     asyncio.run(_destroy(args.room))
 
@@ -8308,6 +8313,7 @@ def _print_grouped_help():
             ("phone",              "Open your rooms on your phone"),
             ("web [room]",         "Your rooms and the needs-you board in this browser"),
             ("whoami",             "Your name, workspace and relay"),
+            ("profile [use <name>]", "List or switch saved relays and identities"),
         ]),
         ("MEASURE", [
             ("scorecard",          "Whose work holds up in this repo, by agent/vendor"),
@@ -9477,6 +9483,9 @@ def main():
     p_kick.add_argument("room", help="Room name")
     p_kick.add_argument("name", help="Participant to kick")
 
+    from quorus_cli import profile_cmd as _profile_cmd
+    _profile_cmd.add_parser(sub)
+
     p_destroy = sub.add_parser("destroy", help="Delete a room and its history (admin)")
     p_destroy.add_argument("room", help="Room name")
 
@@ -10098,6 +10107,7 @@ def main():
         "quickjoin": _cmd_quickjoin,
         "kick": _cmd_kick,
         "destroy": _cmd_destroy,
+        "profile": _cmd_profile,
         "rename": _cmd_rename,
         "add-agent": _cmd_add_agent,
         "connect": _cmd_connect,
