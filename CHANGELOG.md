@@ -5,6 +5,8 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.15] — 2026-11-02
+
 ### Added
 
 - `quorus profile` lists your saved relays and identities, `quorus profile use <name>`
