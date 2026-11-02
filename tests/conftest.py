@@ -291,6 +291,25 @@ def _no_live_opencode_catalog():
     opencode_free.reset_cache()
 
 
+@pytest.fixture(autouse=True)
+def _no_real_claude_cli():
+    """Tests never run the developer's real `claude mcp add-json` (0.7.15 setup
+    registers Claude Code through its CLI when it's on PATH). CI has no `claude`,
+    so only laptops hit it: init tests ran it and one forbids any subprocess
+    (overseer, release/0.7.15 suite). By default Claude Code looks absent; a test
+    that stubs shutil.which itself still decides. Private MonkeyPatch, as above.
+    """
+    import shutil
+
+    from quorus_cli import mcp_claude
+
+    real_which = shutil.which
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(mcp_claude, "_claude_binary",
+                   lambda: shutil.which("claude") if shutil.which is not real_which else None)
+        yield
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _the_real_home_config_is_never_touched():
     """A test rewrote the overseer's real ``~/.quorus/config.json`` (2026-10-20:

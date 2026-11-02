@@ -75,9 +75,14 @@ def register_claude_desktop(env: McpEnv, *, force=False, create=False) -> WriteR
                            "Could not safely update Desktop config")
 
 
+def _claude_binary() -> str | None:
+    """Claude Code's CLI on PATH, if installed (one place, so tests can hide it)."""
+    return shutil.which("claude")
+
+
 def register_claude_code(env: McpEnv, *, force=False, create=False) -> WriteResult:
     path = code_config_path()
-    binary = shutil.which("claude")
+    binary = _claude_binary()
     if not binary and not (force or create or path.exists() or (Path.home() / ".claude").exists()):
         return WriteResult("Claude Code", "not_installed", path)
     entry = _entry(env, "claude")
