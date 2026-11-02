@@ -3,8 +3,7 @@
 One writer per supported agent. Each ``register_*`` function:
 
 * Is idempotent — if the ``quorus`` entry already exists in the
-  target config, it updates the env block in place rather than
-  duplicating the server.
+  target config, a different identity is kept unless force is explicit.
 * Preserves every other key / server the user has configured.
 * Writes atomically (temp file + rename) so a crash mid-write can't
   corrupt the user's agent.
@@ -22,137 +21,38 @@ etc.) without a shared-identity collision.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
-import tempfile
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
-WriteStatus = Literal["wrote", "updated", "not_installed", "error"]
-
-
-@dataclass
-class WriteResult:
-    """Outcome of registering the Quorus MCP server with one client."""
-
-    platform: str
-    status: WriteStatus
-    path: Path | None = None
-    detail: str = ""
-
-    @property
-    def ok(self) -> bool:
-        return self.status in ("wrote", "updated")
-
-
-@dataclass
-class McpEnv:
-    """Everything a writer needs to produce a working MCP entry.
-
-    ``instance_name_base`` is the human's name (e.g. ``arav``). Each
-    writer derives its own agent identity by suffixing the platform
-    key (``arav-claude``, ``arav-codex``) so the relay sees each
-    client as a separate participant.
-
-    If ``per_platform_keys`` is provided, each platform gets its own
-    API key (fetched from ``/v1/auth/register-agent``). Otherwise
-    all platforms share the same key (legacy behavior, causes identity
-    mismatch errors on the relay).
-    """
-
-    command: str
-    args: list[str]
-    relay_url: str
-    api_key: str = ""
-    relay_secret: str = ""
-    instance_name_base: str = ""
-    per_platform_keys: dict[str, str] | None = None  # platform_key -> api_key
-
-    def agent_identity(self, platform_key: str) -> str:
-        base = self.instance_name_base.strip()
-        if not base:
-            return platform_key
-        if base.endswith(f"-{platform_key}"):
-            return base
-        return f"{base}-{platform_key}"
-
-    def env_block(self, platform_key: str) -> dict[str, str]:
-        env: dict[str, str] = {
-            "QUORUS_RELAY_URL": self.relay_url,
-            "QUORUS_INSTANCE_NAME": self.agent_identity(platform_key),
-        }
-        # Use per-platform key if available, else fall back to shared key
-        platform_api_key = (
-            self.per_platform_keys.get(platform_key)
-            if self.per_platform_keys
-            else None
-        )
-        if platform_api_key:
-            env["QUORUS_API_KEY"] = platform_api_key
-        elif self.api_key:
-            env["QUORUS_API_KEY"] = self.api_key
-        elif self.relay_secret:
-            env["QUORUS_RELAY_SECRET"] = self.relay_secret
-        return env
-
+from quorus_cli.mcp_claude import register_claude_code, register_claude_desktop
+from quorus_cli.mcp_config_io import atomic_text, kept_identity, read_json_snapshot, snapshot
+from quorus_cli.mcp_writer_types import McpEnv, WriteResult
 
 # ---------------------------------------------------------------------------
 # Shared JSON helpers
 # ---------------------------------------------------------------------------
 
 def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text() or "{}")
-    except (json.JSONDecodeError, ValueError):
-        # The user's config is malformed — don't silently nuke it.
-        # Raise so the calling writer can report the platform as
-        # "error" instead of steam-rolling hand-edited JSON.
-        raise
+    return read_json_snapshot(path)[0]
 
 
-def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Write to a tmp file in the same dir, then rename — rename is
-    # atomic on POSIX, so a crash mid-write leaves the old config.
-    fd, tmp_path = tempfile.mkstemp(prefix=".quorus-", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
-        os.replace(tmp_path, path)
-    except BaseException:
-        # Don't leave stray tmp files if the rename fails.
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+def _atomic_write_json(path: Path, data: dict[str, Any], *, original: bytes | None) -> None:
+    atomic_text(path, json.dumps(data, indent=2) + "\n", original=original)
 
 
-def _write_json_mcp_entry(
-    path: Path,
-    key: str,
-    entry: dict[str, Any],
-    container: str = "mcpServers",
-) -> WriteStatus:
-    """Merge ``{container: {key: entry}}`` into an existing JSON file.
-
-    Returns ``"updated"`` if the server was already present (we merge
-    the fresh entry's env), ``"wrote"`` if it was brand-new.
-    """
-    try:
-        existing = _read_json(path)
-    except (json.JSONDecodeError, ValueError):
-        return "error"
-    existing.setdefault(container, {})
-    already = key in existing[container]
-    existing[container][key] = entry
-    _atomic_write_json(path, existing)
-    return "updated" if already else "wrote"
+def _write_json_mcp_entry(path, key, entry, container="mcpServers", *,
+                          force=False, platform="quorus"):
+    existing, original = read_json_snapshot(path)
+    servers = existing.setdefault(container, {})
+    old = servers.get(key)
+    detail = kept_identity(old, entry, platform, force=force)
+    if detail:
+        return "kept", detail
+    servers[key] = entry
+    _atomic_write_json(path, existing, original=original)
+    return ("updated" if old is not None else "wrote"), ""
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +81,7 @@ def _register_json_mcpservers(
     env: McpEnv,
     *,
     require_existing: bool = True,
+    force: bool = False,
 ) -> WriteResult:
     """Writer for every client using the standard ``mcpServers`` JSON shape.
 
@@ -193,39 +94,22 @@ def _register_json_mcpservers(
         return WriteResult(platform, "not_installed", config_path)
     entry = _standard_mcp_entry(env, platform_key)
     try:
-        status = _write_json_mcp_entry(config_path, "quorus", entry)
+        status, detail = _write_json_mcp_entry(config_path, "quorus", entry,
+                                               force=force, platform=platform_key)
     except Exception as exc:  # pragma: no cover - defensive
         return WriteResult(platform, "error", config_path, str(exc))
-    return WriteResult(platform, status, config_path)
+    return WriteResult(platform, status, config_path, detail)
 
 
-def register_claude_code(env: McpEnv, *, force: bool = False) -> WriteResult:
-    return _register_json_mcpservers(
-        "Claude Code", "claude",
-        Path.home() / ".claude" / "settings.json",
-        env, require_existing=not force,
-    )
-
-
-def register_claude_desktop(env: McpEnv, *, force: bool = False) -> WriteResult:
-    # The old `~/.claude.json` path is still the one we've been writing
-    # historically — keeping for compatibility.
-    return _register_json_mcpservers(
-        "Claude Desktop", "claude-desktop",
-        Path.home() / ".claude.json",
-        env, require_existing=not force,
-    )
-
-
-def register_cursor(env: McpEnv, *, force: bool = False) -> WriteResult:
+def register_cursor(env: McpEnv, *, force: bool = False, create: bool = False) -> WriteResult:
     return _register_json_mcpservers(
         "Cursor", "cursor",
         Path.home() / ".cursor" / "mcp.json",
-        env, require_existing=not force,
+        env, require_existing=not (force or create), force=force,
     )
 
 
-def register_windsurf(env: McpEnv, *, force: bool = False) -> WriteResult:
+def register_windsurf(env: McpEnv, *, force: bool = False, create: bool = False) -> WriteResult:
     """Tier-B writer (MCP-only, manual-trigger).
 
     Windsurf has no canonical headless CLI as of 2026-05 — Codeium's vendor
@@ -242,19 +126,19 @@ def register_windsurf(env: McpEnv, *, force: bool = False) -> WriteResult:
     return _register_json_mcpservers(
         "Windsurf", "windsurf",
         Path.home() / ".codeium" / "windsurf" / "mcp_config.json",
-        env, require_existing=not force,
+        env, require_existing=not (force or create), force=force,
     )
 
 
-def register_gemini_cli(env: McpEnv, *, force: bool = False) -> WriteResult:
+def register_gemini_cli(env: McpEnv, *, force: bool = False, create: bool = False) -> WriteResult:
     return _register_json_mcpservers(
         "Gemini CLI", "gemini",
         Path.home() / ".gemini" / "settings.json",
-        env, require_existing=not force,
+        env, require_existing=not (force or create), force=force,
     )
 
 
-def register_cline(env: McpEnv, *, force: bool = False) -> WriteResult:
+def register_cline(env: McpEnv, *, force: bool = False, create: bool = False) -> WriteResult:
     """Tier-A writer (fully proactive after wave-7).
 
     Cline ships a standalone CLI (``npm install -g cline``, then
@@ -270,20 +154,20 @@ def register_cline(env: McpEnv, *, force: bool = False) -> WriteResult:
     """
     candidate = Path.home() / ".cline" / "mcp.json"
     return _register_json_mcpservers(
-        "Cline", "cline", candidate, env, require_existing=not force,
+        "Cline", "cline", candidate, env, require_existing=not (force or create), force=force,
     )
 
 
-def register_continue(env: McpEnv, *, force: bool = False) -> WriteResult:
+def register_continue(env: McpEnv, *, force: bool = False, create: bool = False) -> WriteResult:
     """Continue uses ``~/.continue/config.json`` with a nested
     ``experimental.modelContextProtocolServers`` list rather than
     ``mcpServers``.  We hand-roll that shape here.
     """
     path = Path.home() / ".continue" / "config.json"
-    if not path.exists() and not force:
+    if not path.exists() and not (force or create):
         return WriteResult("Continue", "not_installed", path)
     try:
-        data = _read_json(path)
+        data, original = read_json_snapshot(path)
     except (json.JSONDecodeError, ValueError) as exc:
         return WriteResult("Continue", "error", path, str(exc))
     experimental = data.setdefault("experimental", {})
@@ -301,13 +185,17 @@ def register_continue(env: McpEnv, *, force: bool = False) -> WriteResult:
     already = False
     for i, srv in enumerate(list(servers)):
         if isinstance(srv, dict) and srv.get("name") == "quorus":
+            detail = kept_identity(srv.get("transport"), entry["transport"], "continue",
+                                   force=force)
+            if detail:
+                return WriteResult("Continue", "kept", path, detail)
             servers[i] = entry
             already = True
             break
     if not already:
         servers.append(entry)
     try:
-        _atomic_write_json(path, data)
+        _atomic_write_json(path, data, original=original)
     except Exception as exc:  # pragma: no cover
         return WriteResult("Continue", "error", path, str(exc))
     return WriteResult(
@@ -315,7 +203,7 @@ def register_continue(env: McpEnv, *, force: bool = False) -> WriteResult:
     )
 
 
-def register_opencode(env: McpEnv, *, force: bool = False) -> WriteResult:
+def register_opencode(env: McpEnv, *, force: bool = False, create: bool = False) -> WriteResult:
     """Tier-A writer (fully proactive after wave-7).
 
     Opencode ships a real headless CLI (``opencode run "<prompt>"``) per the
@@ -335,17 +223,21 @@ def register_opencode(env: McpEnv, *, force: bool = False) -> WriteResult:
     ]
     target = next((p for p in candidates if p.exists()), None)
     if target is None:
-        if not force:
+        if not (force or create):
             return WriteResult("Opencode", "not_installed", candidates[0])
         target = candidates[0]
     try:
-        data = _read_json(target) if target.exists() else {
-            "$schema": "https://opencode.ai/config.json",
-        }
+        data, original = read_json_snapshot(target)
+        if original is None:
+            data["$schema"] = "https://opencode.ai/config.json"
     except (json.JSONDecodeError, ValueError) as exc:
         return WriteResult("Opencode", "error", target, str(exc))
     mcp_block = data.setdefault("mcp", {})
     already = "quorus" in mcp_block
+    detail = kept_identity(mcp_block.get("quorus"), _standard_mcp_entry(env, "opencode"),
+                           "opencode", force=force)
+    if detail:
+        return WriteResult("Opencode", "kept", target, detail)
     mcp_block["quorus"] = {
         "type": "local",
         "command": [env.command, *env.args],
@@ -353,7 +245,7 @@ def register_opencode(env: McpEnv, *, force: bool = False) -> WriteResult:
         "env": env.env_block("opencode"),
     }
     try:
-        _atomic_write_json(target, data)
+        _atomic_write_json(target, data, original=original)
     except Exception as exc:  # pragma: no cover
         return WriteResult("Opencode", "error", target, str(exc))
     return WriteResult(
@@ -416,8 +308,11 @@ def _read_codex_toml(path: Path) -> dict[str, Any]:
         repaired = _repair_codex_toml(raw)
         if repaired == raw:
             raise
-        path.write_text(repaired)
-        return _read_toml(path)
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib
+        return tomllib.loads(repaired)
 
 
 def _toml_escape(s: str) -> str:
@@ -508,39 +403,30 @@ def _render_codex_toml(data: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def register_codex(env: McpEnv, *, force: bool = False) -> WriteResult:
+def register_codex(env: McpEnv, *, force: bool = False, create: bool = False) -> WriteResult:
     """Write an ``[mcp_servers.quorus]`` entry to ``~/.codex/config.toml``."""
     path = Path.home() / ".codex" / "config.toml"
     codex_installed = path.exists() or shutil.which("codex") is not None
-    if not codex_installed and not force:
+    if not codex_installed and not (force or create):
         return WriteResult("Codex CLI", "not_installed", path)
     try:
+        original = snapshot(path)
         data = _read_codex_toml(path)
     except Exception as exc:
         return WriteResult("Codex CLI", "error", path, str(exc))
     servers = data.setdefault("mcp_servers", {})
     already = "quorus" in servers
+    detail = kept_identity(servers.get("quorus"), _standard_mcp_entry(env, "codex"),
+                           "codex", force=force)
+    if detail:
+        return WriteResult("Codex CLI", "kept", path, detail)
     servers["quorus"] = {
         "command": env.command,
         "args": list(env.args),
         "env": env.env_block("codex"),
     }
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Atomic write, same tmp+rename dance as JSON.
-        fd, tmp_path = tempfile.mkstemp(
-            prefix=".quorus-", dir=str(path.parent),
-        )
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write(_render_codex_toml(data))
-            os.replace(tmp_path, path)
-        except BaseException:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        atomic_text(path, _render_codex_toml(data), original=original)
     except Exception as exc:  # pragma: no cover
         return WriteResult("Codex CLI", "error", path, str(exc))
     return WriteResult(
@@ -572,12 +458,12 @@ ALL_WRITERS: list[tuple[str, WriterFn]] = [
 WRITER_BY_KEY: dict[str, WriterFn] = {k: fn for k, fn in ALL_WRITERS}
 
 
-def register_all(env: McpEnv) -> list[WriteResult]:
+def register_all(env: McpEnv, *, force: bool = False) -> list[WriteResult]:
     """Run every writer in auto-detect mode. Returns one result per platform."""
     results: list[WriteResult] = []
     for _key, writer in ALL_WRITERS:
         try:
-            results.append(writer(env))
+            results.append(writer(env, force=force))
         except Exception as exc:  # pragma: no cover
             # A single writer exploding should never take the whole
             # registration down — record and keep going.
@@ -585,12 +471,18 @@ def register_all(env: McpEnv) -> list[WriteResult]:
     return results
 
 
-def register_one(key: str, env: McpEnv, *, force: bool = True) -> WriteResult:
-    """Force-write a specific client's config, regardless of install detection."""
+def register_one(key: str, env: McpEnv, *, force: bool = False) -> WriteResult:
+    """Create a client's config, preserving a different identity unless forced."""
     writer = WRITER_BY_KEY.get(key)
     if writer is None:
         return WriteResult(
             key, "error", None,
             f"no writer for platform '{key}'",
         )
-    return writer(env, force=force)
+    return writer(env, force=force, create=True)
+
+
+def report_kept(results: list[WriteResult], console) -> None:
+    for result in results:
+        if result.status in ("kept", "manual"):
+            console.print(f"{result.platform}: {result.detail}", markup=False, highlight=False)

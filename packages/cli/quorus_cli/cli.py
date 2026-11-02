@@ -19,11 +19,13 @@ from rich.table import Table
 
 from quorus.config import load_config
 from quorus.profiles import ProfileManager
+from quorus_cli import env_aliases as _env_aliases
 from quorus_cli import ui as _ui
 from quorus_cli.http_hints import hint as _http_hint
 
 console = _ui.console
-_config = load_config()
+with _env_aliases.applied():
+    _config = load_config()
 RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]
 API_KEY = _config.get("api_key", "")
@@ -3139,36 +3141,11 @@ def _cmd_connect(args):
             # identity — this is the explicit agent-identity flow
             # (no `-<platform>` suffix), so the user's chosen name
             # shows up verbatim in the room.
-            instance_name_base="",
+            instance_name_base=name,
+            explicit_name=True,
         )
-        # Override identity generation: treat `name` as the final
-        # agent identity instead of deriving from base.
-        env.instance_name_base = name
-        # Tell the writer to use the bare name (no platform suffix).
-        object.__setattr__(env, "_explicit_identity", True)
-
-        # Monkey-patch the platform-suffix behavior for this one call:
-        # `quorus connect cursor --name arav-cursor` already names the
-        # agent explicitly, so we want the env to use `arav-cursor`
-        # verbatim, not `arav-cursor-cursor`.
-        original_env_block = env.env_block
-
-        def _explicit_env_block(_platform_key: str) -> dict[str, str]:
-            block = {
-                "QUORUS_RELAY_URL": env.relay_url,
-                "QUORUS_INSTANCE_NAME": name,
-            }
-            if env.api_key:
-                block["QUORUS_API_KEY"] = env.api_key
-            elif env.relay_secret:
-                block["QUORUS_RELAY_SECRET"] = env.relay_secret
-            return block
-
-        env.env_block = _explicit_env_block  # type: ignore[method-assign]
-        # Keep reference for lint.
-        _ = original_env_block
-
-        result = register_one(auto_write_platforms[platform], env, force=True)
+        result = register_one(auto_write_platforms[platform], env,
+                              force=getattr(args, "force", False))
         if result.ok:
             _ui.success(
                 f"Wired [primary]{result.platform}[/] → "
@@ -3188,6 +3165,8 @@ def _cmd_connect(args):
                         "  [muted]Future Quorus-managed Codex launches will "
                         "use saved autonomous runner defaults.[/]"
                     )
+        elif result.status in ("kept", "manual"):
+            _ui.console.print(result.detail, markup=False, highlight=False)
         else:
             _ui.error(
                 f"Couldn't wire {result.platform}",
@@ -3275,6 +3254,11 @@ async def _rename(room_name: str, new_name: str) -> None:
 
 def _cmd_kick(args):
     asyncio.run(_kick(args.room, args.name))
+
+
+def _cmd_profile(args):
+    from quorus_cli import profile_cmd
+    profile_cmd.run(args)
 
 
 def _cmd_destroy(args):
@@ -3881,9 +3865,13 @@ def _cmd_stats(args):
 def _is_platform_installed(platform_key: str) -> bool:
     """Quick check if a platform's config file exists (signals installation)."""
     from pathlib import Path
+
+    from quorus_cli.mcp_claude import code_config_path, desktop_config_path
+    if platform_key == "claude":
+        return bool(shutil.which("claude") or code_config_path().exists()
+                    or (Path.home() / ".claude").exists())
     paths = {
-        "claude": Path.home() / ".claude" / "settings.json",
-        "claude-desktop": Path.home() / ".claude.json",
+        "claude-desktop": desktop_config_path(),
         "cursor": Path.home() / ".cursor" / "mcp.json",
         "codex": Path.home() / ".codex" / "config.toml",
         "gemini": Path.home() / ".gemini" / "settings.json",
@@ -4054,7 +4042,7 @@ def _register_mcp_everywhere(
     for this relay, and quorus-mcp reads it from there. ``profile`` pins the
     project-level fallback to the profile holding the key.
     """
-    from quorus_cli.mcp_writers import ALL_WRITERS, McpEnv, register_all
+    from quorus_cli.mcp_writers import ALL_WRITERS, McpEnv, register_all, report_kept
 
     # Step 1: Detect which platforms are installed by checking paths
     # (We need to know this BEFORE writing so we can fetch per-platform keys)
@@ -4099,6 +4087,8 @@ def _register_mcp_everywhere(
         per_platform_keys=per_platform_keys if per_platform_keys else None,
     )
     results = register_all(env)
+    report_kept(results, ui.console)
+    preserved = any(r.status in ("kept", "manual") for r in results)
 
     installed = [r for r in results if r.ok]
     skipped = [r for r in results if r.status == "not_installed"]
@@ -4121,7 +4111,7 @@ def _register_mcp_everywhere(
                 hint=r.detail or "check file permissions + JSON syntax",
             )
 
-    if not installed and not project_fallback:
+    if not installed and not preserved and not project_fallback:
         # `quorus join` runs from wherever the user happens to be. A project
         # .mcp.json there pinned QUORUS_INSTANCE_NAME for every later session
         # opened in that folder (and older versions put the relay secret in
@@ -4130,7 +4120,7 @@ def _register_mcp_everywhere(
             "  [muted]No MCP client detected, so nothing was registered. Install "
             "Claude Code or Codex, then: quorus connect claude|codex <room> <name>[/]"
         )
-    elif not installed:
+    elif not installed and not preserved:
         # No known client installed — fall back to project-level .mcp.json
         # so a bare directory can still plug into any MCP client that
         # honors the project file.
@@ -4154,7 +4144,13 @@ def _register_mcp_everywhere(
                 **({"QUORUS_PROFILE": profile} if profile else {}),
             },
         }
-        mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n")
+        from quorus_cli.mcp_writers import _write_json_mcp_entry
+        entry = existing["mcpServers"]["quorus"]
+        status, detail = _write_json_mcp_entry(mcp_json_path, "quorus", entry,
+                                              platform="claude")
+        if status == "kept":
+            ui.console.print(detail, markup=False, highlight=False)
+            return [], {}
         ui.info(f"MCP config written to project-level [dim]{mcp_json_path}[/]")
         ui.console.print(
             "  [muted]No MCP client detected — use this config with "
@@ -5322,28 +5318,16 @@ def _cmd_join(args):
 
     # 2. Register MCP server with Claude Code (only if setting up fresh)
     if need_fresh_setup:
-        claude_config_path = Path.home() / ".claude.json"
-        if claude_config_path.exists():
-            try:
-                claude_config = json.loads(claude_config_path.read_text())
-            except (json.JSONDecodeError, ValueError):
-                claude_config = {}
-        else:
-            claude_config = {}
+        from quorus_cli.mcp_writers import McpEnv, register_one
 
-        if "mcpServers" not in claude_config:
-            claude_config["mcpServers"] = {}
-
-        # quorus_cli/mcp_server.py never existed in the package: use the real server.
         mcp_cmd, mcp_args = _mcp_server_command()
-        claude_config["mcpServers"]["quorus"] = {
-            "type": "stdio",
-            "command": mcp_cmd,
-            "args": mcp_args,
-            "env": {},
-        }
-        claude_config_path.write_text(json.dumps(claude_config, indent=2))
-        console.print("[green]MCP server registered in ~/.claude.json[/green]")
+        result = register_one("claude", McpEnv(
+            command=mcp_cmd, args=mcp_args, relay_url=relay_url,
+            instance_name_base=name, explicit_name=True))
+        if result.ok:
+            console.print("[green]MCP server registered with Claude Code[/green]")
+        else:
+            console.print(result.detail, markup=False, highlight=False)
 
     # 3. Join the room
     async def _do_join():
@@ -5530,6 +5514,16 @@ def _cmd_share(args):
         _ui.error("--uses must be 1 to 20")
         return
 
+    from quorus_cli.share_url import is_loopback_url, public_relay_url
+
+    advertised_relay = getattr(args, "relay_url", None)
+    if advertised_relay is not None:
+        try:
+            advertised_relay = public_relay_url(advertised_relay)
+        except ValueError as exc:
+            _ui.error(str(exc))
+            sys.exit(2)
+
     # Call the mint endpoint — admin-only, auth via our configured
     # relay secret or API key. The relay checks the room exists and
     # returns 404 if not, so we don't need a pre-flight /rooms call.
@@ -5604,16 +5598,22 @@ def _cmd_share(args):
     if normalize_code(str(code)) is None:
         _ui.error("The relay returned an invalid invite code", hint="try again")
         return
-    relay_flag = f" --relay {shlex.quote(RELAY_URL)}"
+    relay_flag = f" --relay {shlex.quote(advertised_relay or RELAY_URL)}"
     join_cmd = f"quorus join {code} --name <their-name>{relay_flag}"
-    if any(h in RELAY_URL for h in ("127.0.0.1", "localhost", "0.0.0.0")):
-        ui.console.print(
-            "  [warning]![/] [muted]your relay runs on this machine only — a teammate "
-            "on another computer needs a relay they can reach (a shared server, or "
-            "`quorus relay --host 0.0.0.0` on your network).[/]\n"
-        )
     from rich.markup import escape as _escape
 
+    if not advertised_relay and is_loopback_url(RELAY_URL):
+        ui.console.print(
+            "  [warning]![/] [muted]your relay runs on this machine only — a teammate "
+            "on another computer needs an address they can reach. Run:[/]"
+        )
+        tunnel_cmd = "cloudflared tunnel --url " + shlex.quote(RELAY_URL)
+        ui.console.print(f"    [accent]{_escape(tunnel_cmd)}[/]")
+        ui.console.print(f"    [accent]{_escape('quorus share ' + shlex.quote(room))} "
+                         "--relay-url https://<the-tunnel-host>[/]\n")
+
+    if advertised_relay:
+        install_url = f"{advertised_relay}/v1/join/install/{code}.sh"
     install_cmd = install_command(str(install_url or ""))
     ui.console.print(f"    [accent]{_escape(join_cmd)}[/]")
     if install_cmd:
@@ -6347,7 +6347,7 @@ def _cmd_register_agents(args):
 
     # Step 3: Write MCP configs with per-agent keys
     mcp_command, mcp_args = _mcp_server_command()
-    from quorus_cli.mcp_writers import McpEnv, register_all
+    from quorus_cli.mcp_writers import McpEnv, register_all, report_kept
 
     env = McpEnv(
         command=mcp_command,
@@ -6359,6 +6359,7 @@ def _cmd_register_agents(args):
         per_platform_keys=agent_keys,
     )
     results = register_all(env)
+    report_kept(results, console)
 
     wrote = [r for r in results if r.ok]
     if wrote:
@@ -8312,6 +8313,7 @@ def _print_grouped_help():
             ("phone",              "Open your rooms on your phone"),
             ("web [room]",         "Your rooms and the needs-you board in this browser"),
             ("whoami",             "Your name, workspace and relay"),
+            ("profile [use <name>]", "List or switch saved relays and identities"),
         ]),
         ("MEASURE", [
             ("scorecard",          "Whose work holds up in this repo, by agent/vendor"),
@@ -9439,6 +9441,8 @@ def main():
         help_text="Generate a short invite code for a room",
     ))
     p_share.add_argument("room", help="Room name")
+    p_share.add_argument("--relay-url", default=None,
+                        help="Public http(s) origin to print; mint via the configured relay")
     p_share.add_argument(
         "--ttl", type=int, default=1,
         help="Code expiry in days (default: 1, max 7)",
@@ -9479,6 +9483,9 @@ def main():
     p_kick.add_argument("room", help="Room name")
     p_kick.add_argument("name", help="Participant to kick")
 
+    from quorus_cli import profile_cmd as _profile_cmd
+    _profile_cmd.add_parser(sub)
+
     p_destroy = sub.add_parser("destroy", help="Delete a room and its history (admin)")
     p_destroy.add_argument("room", help="Room name")
 
@@ -9498,6 +9505,7 @@ def main():
         "platform",
         choices=[
             "claude",
+            "claude-desktop",
             "cursor",
             "gemini",
             "windsurf",
@@ -9514,6 +9522,8 @@ def main():
     )
     p_connect.add_argument("room", help="Room name")
     p_connect.add_argument("name", help="Agent name")
+    p_connect.add_argument("--force", action="store_true",
+                           help="Replace a Quorus MCP entry with a different identity or relay")
 
     p_brief = sub.add_parser("brief", help="Drop a task brief into a room")
     p_brief.add_argument("room", help="Room name")
@@ -10097,6 +10107,7 @@ def main():
         "quickjoin": _cmd_quickjoin,
         "kick": _cmd_kick,
         "destroy": _cmd_destroy,
+        "profile": _cmd_profile,
         "rename": _cmd_rename,
         "add-agent": _cmd_add_agent,
         "connect": _cmd_connect,

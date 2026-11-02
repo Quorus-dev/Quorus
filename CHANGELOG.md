@@ -5,6 +5,34 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.15] — 2026-11-02
+
+### Added
+
+- `quorus profile` lists your saved relays and identities, `quorus profile use <name>`
+  switches between them, and `quorus profile show [name]` prints one with its
+  secrets reported only as set or not set. Switching used to mean hand-editing
+  `~/.quorus/config.json`.
+- `quorus share <room> --relay-url https://<host>` prints a teammate-reachable
+  address in both join and install commands while minting through the configured
+  relay. The override accepts only non-loopback http(s) origins. Local-only
+  defaults now show concrete `cloudflared tunnel` and share commands.
+
+### Fixed
+
+- The CLI honors `QUORUS_RELAY_URL` with its `QUORUS_RELAY_SECRET`, `QUORUS_API_KEY`
+  and `QUORUS_INSTANCE_NAME`, the names MCP entries use. With only those set it used to
+  fall back to localhost:8080 and say "start the relay". They apply only together with
+  `QUORUS_RELAY_URL`, so a lone shell-wide `QUORUS_API_KEY` stays ignored. If `RELAY_URL`
+  names another relay, none of them apply, so a credential never reaches the wrong relay.
+  Agents and daemons started from the CLI don't inherit the copies.
+- `quorus share --relay-url` accepts one trailing slash.
+
+- MCP setup uses Claude Desktop's OS-specific config and Claude Code's supported
+  user-scope CLI. Existing Quorus identities and relay URLs are kept unless
+  `quorus connect <platform> <room> <name> --force` explicitly replaces them.
+  Config writes create private timestamped backups; direct writes are atomic.
+
 ## [0.7.14] — 2026-10-28
 
 ### Fixed

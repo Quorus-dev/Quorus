@@ -83,16 +83,19 @@ async def test_join_with_no_mcp_client_leaves_no_project_mcp_json(relay, machine
 
 
 async def test_join_with_claude_code_registers_user_scope_only(relay, machine) -> None:
+    from quorus_cli.mcp_claude import desktop_config_path
+
     cli, home, project = machine
-    (home / ".claude").mkdir()
-    (home / ".claude" / "settings.json").write_text("{}")
+    desktop = desktop_config_path()
+    desktop.parent.mkdir(parents=True)
+    desktop.write_text("{}")
     r = await relay.post("/v1/join/mint", json={"room": "build"}, headers=ADMIN)
     args = argparse.Namespace(token=r.json()["code"], name="gina",
                               relay_url="http://192.168.1.20:8080")
     await asyncio.to_thread(cli._cmd_join, args)
 
     assert list(project.iterdir()) == []
-    entry = json.loads((home / ".claude" / "settings.json").read_text())["mcpServers"]["quorus"]
+    entry = json.loads(desktop.read_text())["mcpServers"]["quorus"]
     assert "QUORUS_RELAY_SECRET" not in entry["env"]
     assert "test-secret" not in json.dumps(entry)
 

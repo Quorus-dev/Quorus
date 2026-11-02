@@ -13,7 +13,9 @@ def _close_coro(coro):
 
 
 @pytest.fixture(autouse=True)
-def configure_cli(monkeypatch):
+def configure_cli(monkeypatch, tmp_path, request):
+    if request.node.name.startswith(("test_cmd_init", "test_cmd_join")):
+        monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("quorus.cli.RELAY_URL", "http://test-relay:8080")
     monkeypatch.setattr("quorus.cli.RELAY_SECRET", "test-secret")
     monkeypatch.setattr("quorus.cli.API_KEY", "")
@@ -611,10 +613,11 @@ def test_connect_ollama(capsys):
 
 
 def test_connect_claude(capsys, tmp_path, monkeypatch):
-    """`connect claude` auto-writes ~/.claude/settings.json."""
+    """Without the Claude CLI, connect prints the supported command and writes nothing."""
     from quorus.cli import _cmd_connect
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("shutil.which", lambda _: None)
 
     args = MagicMock()
     args.platform = "claude"
@@ -627,13 +630,11 @@ def test_connect_claude(capsys, tmp_path, monkeypatch):
         _cmd_connect(args)
 
     captured = capsys.readouterr()
-    assert "Wired Claude Code" in captured.out
+    assert "mcp add-json quorus" in captured.out
     assert "claude-bot" in captured.out
-    import json as _json
     config = tmp_path / ".claude" / "settings.json"
-    assert config.exists()
-    data = _json.loads(config.read_text())
-    assert data["mcpServers"]["quorus"]["env"]["QUORUS_INSTANCE_NAME"] == "claude-bot"
+    assert not config.exists()
+    assert not (tmp_path / ".claude.json").exists()
 
 
 def test_register_mcp_everywhere_reuses_matching_codex_identity(monkeypatch):
@@ -2066,20 +2067,23 @@ def _make_init_args(
 
 
 def test_cmd_init_happy_path(tmp_path, monkeypatch):
-    """Init writes config, registers MCP into ~/.claude.json, and prints a success summary."""
+    """Init writes config and registers Desktop at its own config path."""
     from quorus.cli import _cmd_init
 
     monkeypatch.setattr("quorus.cli.Path.home", lambda: tmp_path)
     monkeypatch.setenv("QUORUS_CONFIG_DIR", str(tmp_path / ".quorus"))
     # uv available
-    monkeypatch.setattr("quorus.cli.shutil.which", lambda _: "/usr/bin/uv")
+    monkeypatch.setattr("quorus.cli.shutil.which",
+                        lambda name: "/usr/bin/uv" if name == "uv" else None)
     # relay reachable
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     monkeypatch.setattr("quorus.cli.httpx.get", lambda *a, **kw: mock_resp)
 
     # Pre-create ~/.claude.json so the registration lands there
-    claude_json = tmp_path / ".claude.json"
+    from quorus_cli.mcp_claude import desktop_config_path
+    claude_json = desktop_config_path()
+    claude_json.parent.mkdir(parents=True)
     claude_json.write_text("{}")
 
     args = _make_init_args()
@@ -2118,7 +2122,9 @@ def test_cmd_init_falls_back_to_python_when_uv_missing(tmp_path, monkeypatch, ca
     monkeypatch.setattr("quorus.cli.httpx.get", lambda *a, **kw: mock_resp)
 
     # Pre-create ~/.claude.json so the registration lands there
-    claude_json = tmp_path / ".claude.json"
+    from quorus_cli.mcp_claude import desktop_config_path
+    claude_json = desktop_config_path()
+    claude_json.parent.mkdir(parents=True)
     claude_json.write_text("{}")
 
     _cmd_init(_make_init_args())
@@ -2520,7 +2526,7 @@ def test_cmd_join_uses_explicit_auth_for_room_lookup_and_join(
 
 
 def test_cmd_join_registers_mcp_on_first_config_write(tmp_path, monkeypatch, capsys):
-    """Fresh join should write the Claude MCP registration after config creation."""
+    """Fresh join uses the supported manual command when Claude isn't installed."""
     from quorus.cli import _cmd_join
 
     config_dir = tmp_path / ".quorus"
@@ -2529,6 +2535,7 @@ def test_cmd_join_registers_mcp_on_first_config_write(tmp_path, monkeypatch, cap
     monkeypatch.setattr("quorus.cli.RELAY_SECRET", "secret")
     monkeypatch.setattr("quorus.cli.API_KEY", "")
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("shutil.which", lambda _: None)
 
     mock_client = _mock_client(200, [{"id": "r1", "name": "dev-room"}])
     monkeypatch.setattr("quorus.cli._get_client", lambda: mock_client)
@@ -2544,9 +2551,8 @@ def test_cmd_join_registers_mcp_on_first_config_write(tmp_path, monkeypatch, cap
     _cmd_join(args)
 
     claude_config = tmp_path / ".claude.json"
-    assert claude_config.exists()
-    data = json.loads(claude_config.read_text())
-    assert "quorus" in data["mcpServers"]
+    assert not claude_config.exists()
+    assert "mcp add-json quorus" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -2733,7 +2739,7 @@ def test_cmd_share_quotes_relay_supplied_commands(capsys, monkeypatch):
     from quorus_cli import ui
 
     monkeypatch.setattr(ui.console, "width", 400)  # no wrapping inside a command
-    args = MagicMock(room="r", ttl=1, uses=1, copy=False)
+    args = MagicMock(room="r", ttl=1, uses=1, copy=False, relay_url=None)
 
     _cmd_share(args)
 
@@ -2755,7 +2761,7 @@ def test_cmd_share_drops_a_non_http_install_url(capsys, monkeypatch):
     monkeypatch.setattr("quorus.cli._auth_headers", lambda: {})
     monkeypatch.setattr("quorus.cli.httpx.post", lambda *a, **kw: resp)
 
-    _cmd_share(MagicMock(room="r", ttl=1, uses=1, copy=False))
+    _cmd_share(MagicMock(room="r", ttl=1, uses=1, copy=False, relay_url=None))
 
     out = capsys.readouterr().out
     assert "quorus join ABCD-EFGH" in out
