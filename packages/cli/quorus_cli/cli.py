@@ -19,10 +19,12 @@ from rich.table import Table
 
 from quorus.config import load_config
 from quorus.profiles import ProfileManager
+from quorus_cli import env_aliases as _env_aliases
 from quorus_cli import ui as _ui
 from quorus_cli.http_hints import hint as _http_hint
 
 console = _ui.console
+_env_aliases.apply()
 _config = load_config()
 RELAY_URL = _config["relay_url"]
 RELAY_SECRET = _config["relay_secret"]

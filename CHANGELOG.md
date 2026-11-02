@@ -14,6 +14,13 @@ All notable changes to Quorus are documented here. This project follows
 
 ### Fixed
 
+- The CLI honors `QUORUS_RELAY_URL`, `QUORUS_RELAY_SECRET` and `QUORUS_INSTANCE_NAME`,
+  the names MCP entries use. With only those set it used to fall back to
+  localhost:8080 and say "start the relay". The unprefixed names still win, with a
+  warning if they differ. A shell-wide `QUORUS_API_KEY` is still ignored unless
+  `QUORUS_RELAY_URL` is set too.
+- `quorus share --relay-url` accepts one trailing slash.
+
 - MCP setup uses Claude Desktop's OS-specific config and Claude Code's supported
   user-scope CLI. Existing Quorus identities and relay URLs are kept unless
   `quorus connect <platform> <room> <name> --force` explicitly replaces them.
